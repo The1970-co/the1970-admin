@@ -1,15 +1,14 @@
 "use client";
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
 const currentUser = { name: "Admin The 1970", role: "ADMIN" };
 
-const hasPermission = (role, group, keyword) => {
+const hasPermission = (role: any, group: string, keyword: string) => {
   const items = role?.permissions?.[group] || [];
   return items.some((item) => item.toLowerCase().includes(keyword.toLowerCase()));
 };
 
-const canAccessTab = (role, tabId) => {
+const canAccessTab = (role: any, tabId: string) => {
   if (!role) return false;
   if (role.id === "admin") return true;
   switch (tabId) {
@@ -382,7 +381,14 @@ function Panel({ children, className = "" }) {
   return <div className={`rounded-3xl border border-neutral-200 bg-white shadow-sm ${className}`}>{children}</div>;
 }
 
-function Button({ children, onClick, variant = "primary", className = "", disabled = false, type = "button" }) {
+function Button({
+  children,
+  onClick,
+  variant = "primary",
+  className = "",
+  disabled = false,
+  type = "button" as "button" | "submit" | "reset",
+}) {
   const base = "inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-medium transition";
   const tone =
     variant === "primary"
@@ -419,7 +425,7 @@ function StatCard({ title, value, sub }) {
   );
 }
 
-function SectionTitle({ title, description, action }) {
+function SectionTitle({ title, description, action = null }) {
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
       <div>
@@ -473,7 +479,7 @@ function toneForStatus(value) {
   return "gray";
 }
 
-function DashboardPage({ setTab, activities }) {
+function DashboardPanel({ setTab, activities }) {
   const [selectedDay, setSelectedDay] = useState("25");
   const [range, setRange] = useState("30d");
   const [channelFilter, setChannelFilter] = useState("all");
@@ -487,7 +493,7 @@ function DashboardPage({ setTab, activities }) {
   const [floatingApprovalOpen, setFloatingApprovalOpen] = useState(true);
   const [soundAlertsEnabled, setSoundAlertsEnabled] = useState(true);
   const [autoMode, setAutoMode] = useState("SEMI");
-  const [pendingApprovals, setPendingApprovals] = useState([
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([
     {
       id: "apr-001",
       title: "Scale QS794 Palm",
@@ -1034,21 +1040,21 @@ function DashboardPage({ setTab, activities }) {
   const playAlertSound = (tone = "soft") => {
     if (!soundAlertsEnabled || typeof window === "undefined") return;
     try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = tone === "critical" ? 880 : 660;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (tone === "critical" ? 0.35 : 0.2));
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + (tone === "critical" ? 0.35 : 0.2));
-    } catch (e) {}
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioCtx) return;
+  const ctx = new (AudioCtx as any)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = tone === "critical" ? 880 : 660;
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (tone === "critical" ? 0.35 : 0.2));
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + (tone === "critical" ? 0.35 : 0.2));
+} catch (e) {}
   };
 
   const undoLastAction = (logId) => {
@@ -1823,7 +1829,21 @@ function ProductsPage({ products, onCreateProduct, onAddVariant, onToggleProduct
               {branches.map((branch) => (
                 <div key={branch.id}>
                   <label className="mb-2 block text-xs text-neutral-500">{branch.name}</label>
-                  <input className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none" type="number" value={form.defaultBranchStocks?.[branch.id] || ""} onChange={(e) => setForm({ ...form, defaultBranchStocks: { ...(form.defaultBranchStocks || {}), [branch.id]: e.target.value } })} placeholder="0" />
+                  <input
+  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+  type="number"
+  value={form.defaultBranchStocks?.[branch.id] || ""}
+  onChange={(e) =>
+    setForm({
+      ...form,
+      defaultBranchStocks: {
+        ...(form.defaultBranchStocks || { b1: "", b2: "", b3: "" }),
+        [branch.id]: e.target.value,
+      } as { b1: string; b2: string; b3: string },
+    })
+  }
+  placeholder="0"
+/>
                 </div>
               ))}
             </div>
@@ -1872,7 +1892,21 @@ function ProductsPage({ products, onCreateProduct, onAddVariant, onToggleProduct
               {branches.map((branch) => (
                 <div key={branch.id}>
                   <label className="mb-2 block text-xs text-neutral-500">{branch.name}</label>
-                  <input className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none" type="number" value={variantForm.branchStocks?.[branch.id] ?? activeProduct?.defaultBranchStocks?.[branch.id] ?? ""} onChange={(e) => setVariantForm({ ...variantForm, branchStocks: { ...(variantForm.branchStocks || {}), [branch.id]: e.target.value } })} placeholder="0" />
+                  <input
+  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+  type="number"
+  value={variantForm.branchStocks?.[branch.id] ?? activeProduct?.defaultBranchStocks?.[branch.id] ?? ""}
+  onChange={(e) =>
+    setVariantForm({
+      ...variantForm,
+      branchStocks: {
+        ...(variantForm.branchStocks || { b1: "", b2: "", b3: "" }),
+        [branch.id]: e.target.value,
+      } as { b1: string; b2: string; b3: string },
+    })
+  }
+  placeholder="0"
+/>
                 </div>
               ))}
             </div>
@@ -4152,19 +4186,103 @@ export default function The1970AdminStarter() {
   const pushActivity = (message) => setActivities((prev) => [{ id: `a${Date.now()}`, message, time: formatDate() }, ...prev]);
   const createProduct = (payload) => {
     if (!payload.name || !payload.slug) return;
-    const next = { id: `p${Date.now()}`, name: payload.name, slug: payload.slug, category: payload.category, productType: payload.productType, brand: payload.brand, weight: Number(payload.weight || 0), imageUrl: payload.imageUrl, description: payload.description, defaultPrice: Number(payload.defaultPrice || 0), defaultCostPrice: Number(payload.defaultCostPrice || 0), defaultBranchStocks: Object.fromEntries(branches.map((branch) => [branch.id, Number(payload.defaultBranchStocks?.[branch.id] || 0)])), colorOptions: String(payload.colorOptions || "").split(",").map((s) => s.trim()).filter(Boolean), sizeOptions: String(payload.sizeOptions || "").split(",").map((s) => s.trim()).filter(Boolean), status: "ACTIVE", variants: [] };
+    const next = {
+  id: `p${Date.now()}`,
+  name: payload.name,
+  slug: payload.slug,
+  category: payload.category,
+  productType: payload.productType,
+  brand: payload.brand,
+  weight: Number(payload.weight || 0),
+  imageUrl: payload.imageUrl,
+  description: payload.description,
+  defaultPrice: Number(payload.defaultPrice || 0),
+  defaultCostPrice: Number(payload.defaultCostPrice || 0),
+  defaultBranchStocks: Object.fromEntries(
+    branches.map((branch) => [branch.id, Number(payload.defaultBranchStocks?.[branch.id] || 0)])
+  ) as { b1: number; b2: number; b3: number },
+  colorOptions: String(payload.colorOptions || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  sizeOptions: String(payload.sizeOptions || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  status: "ACTIVE",
+  variants: [],
+};
     setProducts((prev) => [next, ...prev]);
     pushActivity(`Đã thêm sản phẩm ${payload.name}.`);
   };
-  const addVariant = (productId, payload) => {
-    if (!payload.sku || !payload.color || !payload.size) return;
-    const productRef = products.find((p) => p.id === productId);
-    const baseStocks = Object.fromEntries(branches.map((branch) => [branch.id, Number(payload.branchStocks?.[branch.id] ?? productRef?.defaultBranchStocks?.[branch.id] ?? 0)]));
-    const totalStock = Object.values(baseStocks).reduce((sum, n) => sum + Number(n || 0), 0);
-    setProducts((prev) => prev.map((product) => product.id === productId ? { ...product, variants: [...product.variants, { id: `v${Date.now()}`, sku: payload.sku, color: payload.color, size: payload.size, price: Number(payload.price || product.defaultPrice || 0), costPrice: sessionIsAdmin ? Number(payload.costPrice || product.defaultCostPrice || 0) : (product.defaultCostPrice || 0), stock: totalStock, branchStocks: baseStocks }] } : product));
-    setProductAuditLogs((prev) => [{ id: `log${Date.now()}`, productId, sku: payload.sku, actor: currentUser.name, time: formatDate(), message: `Tạo variant với giá bán ${currency(payload.price || productRef?.defaultPrice || 0)}${sessionIsAdmin ? ` · giá nhập ${currency(payload.costPrice || productRef?.defaultCostPrice || 0)}` : ""}` }, ...prev]);
-    pushActivity(`Đã thêm variant ${payload.sku}.`);
-  };
+const addVariant = (productId, payload) => {
+  if (!payload.sku || !payload.color || !payload.size) return;
+
+  const productRef = products.find((p) => p.id === productId);
+
+  const baseStocks = Object.fromEntries(
+  branches.map((branch) => [
+    branch.id,
+    Number(
+      payload.branchStocks?.[branch.id] ??
+        (productRef as any)?.defaultBranchStocks?.[branch.id] ??
+        0
+    ),
+  ])
+) as { b1: number; b2: number; b3: number };
+
+  const totalStock = Object.values(baseStocks).reduce(
+    (sum, n) => sum + Number(n || 0),
+    0
+  );
+
+  setProducts((prev) =>
+  prev.map((product) =>
+    product.id === productId
+      ? {
+          ...product,
+          variants: [
+            ...product.variants,
+            {
+              id: `v${Date.now()}`,
+              sku: payload.sku,
+              color: payload.color,
+              size: payload.size,
+              price: Number(payload.price || (product as any).defaultPrice || 0),
+costPrice: sessionIsAdmin
+  ? Number(payload.costPrice || (product as any).defaultCostPrice || 0)
+  : (product as any).defaultCostPrice || 0,
+              stock: totalStock,
+              branchStocks: baseStocks as { b1: number; b2: number; b3: number },
+            } as any,
+          ],
+        }
+      : product
+  )
+);
+
+  setProductAuditLogs((prev) => [
+    {
+      id: `log${Date.now()}`,
+      productId,
+      sku: payload.sku,
+      actor: currentUser.name,
+      time: formatDate(),
+message: `Tạo variant với giá bán ${currency(
+  payload.price || (productRef as any)?.defaultPrice || 0
+)}${
+  sessionIsAdmin
+    ? ` · giá nhập ${currency(
+        payload.costPrice || (productRef as any)?.defaultCostPrice || 0
+      )}`
+    : ""
+}`,
+    },
+    ...prev,
+  ]);
+
+  pushActivity(`Đã thêm variant ${payload.sku}.`);
+};
 
   const updateVariantPricing = (productId, variantId, patch) => {
     if (!sessionIsAdmin) return;
@@ -4212,15 +4330,63 @@ export default function The1970AdminStarter() {
   };
   const adjustStock = (variantId, diff) => {
     let touchedSku = "";
-    setProducts((prev) => prev.map((product) => ({ ...product, variants: product.variants.map((variant) => { if (variant.id !== variantId) return variant; touchedSku = variant.sku; const nextTotal = Math.max(0, variant.stock + diff); const currentBranch = "b1"; const nextBranchStocks = { ...(variant.branchStocks || {}), [currentBranch]: Math.max(0, (variant.branchStocks?.[currentBranch] || 0) + diff) }; return { ...variant, stock: nextTotal, branchStocks: nextBranchStocks }; }) })));
+   setProducts((prev) =>
+  prev.map((product) => ({
+    ...product,
+    variants: product.variants.map((variant) => {
+      if (variant.id !== variantId) return variant;
+
+      touchedSku = variant.sku;
+      const nextTotal = Math.max(0, variant.stock + diff);
+      const currentBranch = "b1";
+
+      const nextBranchStocks = {
+        ...(variant.branchStocks || { b1: 0, b2: 0, b3: 0 }),
+        [currentBranch]: Math.max(
+          0,
+          ((variant.branchStocks as any)?.[currentBranch] || 0) + diff
+        ),
+      } as { b1: number; b2: number; b3: number };
+
+      return {
+        ...variant,
+        stock: nextTotal,
+        branchStocks: nextBranchStocks,
+      } as any;
+    }),
+  }))
+);
     pushActivity(`Đã điều chỉnh tồn kho ${touchedSku} ${diff > 0 ? `+${diff}` : diff}.`);
   };
-  const createStocktake = (branchId, variant, countedStock, meta = {}) => {
+  const createStocktake = (branchId, variant, countedStock, meta: any = {}) => {
     const systemStock = variant.branchStocks?.[branchId] || 0;
     const diff = countedStock - systemStock;
     const newStocktake = { id: `st${Date.now()}`, branchId, createdAt: formatDate(), status: "COMPLETED", note: meta.sessionNote || "", lines: [{ sku: variant.sku, systemStock, countedStock, diff, reason: meta.reason || "", note: meta.note || "", scannedBy: meta.scannedBy || currentUser.name, scannedAt: meta.scannedAt || formatDate() }] };
     setStocktakes((prev) => [newStocktake, ...prev]);
-    setProducts((prev) => prev.map((product) => ({ ...product, variants: product.variants.map((item) => { if (item.id !== variant.id) return item; const nextBranchStocks = { ...(item.branchStocks || {}), [branchId]: countedStock }; const nextTotal = Object.values(nextBranchStocks).reduce((s, n) => s + Number(n || 0), 0); return { ...item, branchStocks: nextBranchStocks, stock: nextTotal }; }) })));
+    setProducts((prev) =>
+  prev.map((product) => ({
+    ...product,
+    variants: product.variants.map((item) => {
+      if (item.id !== variant.id) return item;
+
+      const nextBranchStocks = {
+        ...(item.branchStocks || { b1: 0, b2: 0, b3: 0 }),
+        [branchId]: Number(countedStock || 0),
+      } as { b1: number; b2: number; b3: number };
+
+      const nextTotalStock = Object.values(nextBranchStocks).reduce(
+        (sum, n) => sum + Number(n || 0),
+        0
+      );
+
+      return {
+        ...item,
+        branchStocks: nextBranchStocks,
+        stock: nextTotalStock,
+      } as any;
+    }),
+  }))
+);
     pushActivity(`Đã kiểm kho ${variant.sku} tại ${branchName(branchId)}.`);
   };
   const finishStocktakeSession = ({ branchId, mode, note, totalRows, mismatchCount, notFoundCount }) => {
@@ -4232,9 +4398,56 @@ export default function The1970AdminStarter() {
     const qty = items[0].qty;
     const variant = products.flatMap((p) => p.variants.map((v) => ({ ...v, productName: p.name }))).find((v) => v.id === variantId);
     if (!variant || qty > variant.stock) return;
-    const newOrder = { id: `o${Date.now()}`, orderCode: `ORD-${Math.floor(Math.random() * 100000)}`, createdAt: formatDate(), salesChannel, paymentStatus: salesChannel === "ADMIN" ? "PENDING_COD" : "AWAITING_PAYMENT", orderStatus: "PENDING", customerName, customerPhone, branchId, note, grandTotal: variant.price * qty, items: [{ variantId: variant.id, sku: variant.sku, productName: variant.productName, color: variant.color, size: variant.size, qty, unitPrice: variant.price, lineTotal: variant.price * qty }] };
-    setOrders((prev) => [newOrder, ...prev]);
-    setProducts((prev) => prev.map((p) => ({ ...p, variants: p.variants.map((v) => { if (v.id !== variantId) return v; const nextBranchStocks = { ...(v.branchStocks || {}), [branchId]: Math.max(0, (v.branchStocks?.[branchId] || 0) - qty) }; const nextTotal = Object.values(nextBranchStocks).reduce((s, n) => s + Number(n || 0), 0); return { ...v, stock: nextTotal, branchStocks: nextBranchStocks }; }) })));
+const newOrder = {
+  id: `o${Date.now()}`,
+  orderCode: `ORD-${Math.floor(Math.random() * 100000)}`,
+  createdAt: formatDate(),
+  salesChannel,
+  paymentStatus: salesChannel === "ADMIN" ? "PENDING_COD" : "AWAITING_PAYMENT",
+  orderStatus: "PENDING",
+  customerName,
+  customerPhone,
+  branchId,
+  note,
+  grandTotal: variant.price * qty,
+  items: [
+    {
+      variantId: variant.id,
+      sku: variant.sku,
+      productName: variant.productName,
+      color: variant.color,
+      size: variant.size,
+      qty,
+      unitPrice: variant.price,
+      lineTotal: variant.price * qty,
+    },
+  ],
+};
+
+setOrders((prev) => [newOrder, ...prev]);
+
+setProducts((prev) =>
+  prev.map((p) => ({
+    ...p,
+    variants: p.variants.map((v) => {
+      if (v.id !== variant.id) return v;
+
+      const nextBranchStocks = {
+        ...(v.branchStocks || { b1: 0, b2: 0, b3: 0 }),
+        [branchId as "b1" | "b2" | "b3"]: Math.max(
+          0,
+          Number((v.branchStocks as any)?.[branchId] || 0) - qty
+        ),
+      } as { b1: number; b2: number; b3: number };
+
+      return {
+        ...v,
+        stock: Math.max(0, Number(v.stock || 0) - qty),
+        branchStocks: nextBranchStocks,
+      } as any;
+    }),
+  }))
+);
     pushActivity(`Đã tạo đơn ${newOrder.orderCode} cho ${customerName}.`);
     setTab("orders");
   };
@@ -4248,47 +4461,148 @@ export default function The1970AdminStarter() {
         </aside>
         <main className="p-4 lg:p-8">
           <Header search={globalSearch} setSearch={setGlobalSearch} user={currentUser} employees={employees.filter((e) => e.status === "WORKING")} activeEmployeeId={activeEmployeeId} setActiveEmployeeId={setActiveEmployeeId} />
-          {tab === "dashboard" && <DashboardPage products={visibleScopedProducts} orders={visibleOrders} lowStockVariants={lowStockVariants} activities={activities} setTab={setTab} />}
+          {tab === "dashboard" && <DashboardPanel setTab={setTab} activities={activities} />}
           {tab === "reports" && canAccessTab(activeRole, "reports") && <ReportsPage orders={visibleOrders} products={scopedProducts} />}
-          {tab === "products" && <ProductsPage products={visibleScopedProducts} onCreateProduct={createProduct} onAddVariant={addVariant} onToggleProductStatus={toggleProductStatus} onUpdateVariantPricing={updateVariantPricing} productAuditLogs={productAuditLogs} isAdmin={sessionIsAdmin} onGenerateVariants={(productId) => {
-            setProducts((prev) => prev.map((product) => {
-              if (product.id !== productId) return product;
-              const colors = product.colorOptions || [];
-              const sizes = product.sizeOptions || [];
-              const existingKeys = new Set(product.variants.map((v) => `${v.color}__${v.size}`));
-              const nextVariants = [...product.variants];
-              colors.forEach((color) => {
-                sizes.forEach((size) => {
-                  const key = `${color}__${size}`;
-                  if (existingKeys.has(key)) return;
-                  const slugPart = String(product.slug || product.name).replace(/[^a-zA-Z0-9]+/g, "-").toUpperCase();
-                  const colorPart = String(color).replace(/[^a-zA-Z0-9]+/g, "").toUpperCase();
-                  const sizePart = String(size).replace(/[^a-zA-Z0-9]+/g, "").toUpperCase();
-                  const branchStocks = Object.fromEntries(branches.map((branch) => [branch.id, Number(product.defaultBranchStocks?.[branch.id] || 0)]));
-                  nextVariants.push({
-                    id: `v${Date.now()}_${colorPart}_${sizePart}`,
-                    sku: `${slugPart}-${colorPart}-${sizePart}`,
-                    color,
-                    size,
-                    price: Number(product.defaultPrice || 0),
-                    costPrice: Number(product.defaultCostPrice || 0),
-                    stock: Object.values(branchStocks).reduce((sum, n) => sum + Number(n || 0), 0),
-                    branchStocks,
-                  });
-                });
-              });
-              return { ...product, variants: nextVariants };
-            }));
-            setProductAuditLogs((prev) => [{ id: `log${Date.now()}`, productId, sku: "AUTO", actor: currentUser.name, time: formatDate(), message: "Generate variants tự động từ màu × size, lấy theo giá bán mặc định + tồn mặc định từng kho" }, ...prev]);
-            pushActivity("Đã generate variants tự động từ màu × size.");
-          }} />}
-          {tab === "orders" && <OrdersPage orders={visibleOrders} onUpdateOrderStatus={updateOrderStatus} onUpdatePaymentStatus={updatePaymentStatus} canEditOrders={hasPermission(activeRole, "orders", "sửa đơn") || hasPermission(activeRole, "orders", "duyệt đơn") || sessionIsAdmin} canPushShipping={hasPermission(activeRole, "orders", "hãng vận chuyển") || sessionIsAdmin} />}
-          {tab === "create-order" && <CreateOrderPage products={visibleScopedProducts} onCreateOrder={createOrder} />}
-          {tab === "inventory" && <InventoryPage products={scopedProducts} onOpenStocktake={() => setTab("stocktake")} />}
-          {tab === "stocktake" && <StocktakePage products={scopedProducts} stocktakes={stocktakes.filter((item) => scopedBranchIds.includes(item.branchId))} onCreateStocktake={createStocktake} onFinishStocktakeSession={finishStocktakeSession} currentUser={currentUser} canApproveStocktake={hasPermission(activeRole, "inventory", "xác nhận kiểm kho") || sessionIsAdmin} />}
-          {tab === "ads" && canAccessTab(activeRole, "ads") && <AdsPage mappings={adsMappings} setMappings={setAdsMappings} currentUser={currentUser} pushActivity={pushActivity} />}
-          {tab === "ai-content" && canAccessTab(activeRole, "ai-content") && <AIContentPage products={scopedProducts} orders={visibleOrders} adsMappings={adsMappings} pushActivity={pushActivity} />}
-          {tab === "permissions" && canAccessTab(activeRole, "permissions") && <PermissionsPage employees={employees} setEmployees={setEmployees} />}
+          {tab === "products" && (
+  <ProductsPage
+    products={visibleScopedProducts}
+    onCreateProduct={createProduct}
+    onAddVariant={addVariant}
+    onToggleProductStatus={toggleProductStatus}
+    onUpdateVariantPricing={updateVariantPricing}
+    productAuditLogs={productAuditLogs}
+    isAdmin={sessionIsAdmin}
+    onGenerateVariants={(productId) => {
+      setProducts((prev) =>
+        prev.map((product) => {
+          if (product.id !== productId) return product;
+
+          const colors = (product as any).colorOptions || [];
+          const sizes = (product as any).sizeOptions || [];
+          const existingKeys = new Set(
+            product.variants.map((v) => `${v.color}__${v.size}`)
+          );
+          const nextVariants = [...product.variants];
+
+          colors.forEach((color) => {
+            sizes.forEach((size) => {
+              const key = `${color}__${size}`;
+              if (existingKeys.has(key)) return;
+
+              const slugPart = String((product as any).slug || (product as any).name)
+                .replace(/[^a-zA-Z0-9]+/g, "-")
+                .toUpperCase();
+
+              const colorPart = String(color)
+                .replace(/[^a-zA-Z0-9]+/g, "")
+                .toUpperCase();
+
+              const sizePart = String(size)
+                .replace(/[^a-zA-Z0-9]+/g, "")
+                .toUpperCase();
+
+              const branchStocks = Object.fromEntries(
+                branches.map((branch) => [
+                  branch.id,
+                  Number((product as any).defaultBranchStocks?.[branch.id] || 0),
+                ])
+              ) as { b1: number; b2: number; b3: number };
+
+              nextVariants.push({
+                id: `v${Date.now()}_${colorPart}_${sizePart}`,
+                sku: `${slugPart}-${colorPart}-${sizePart}`,
+                color,
+                size,
+                price: Number((product as any).defaultPrice || 0),
+                costPrice: Number((product as any).defaultCostPrice || 0),
+                stock: Object.values(branchStocks).reduce(
+                  (sum, n) => sum + Number(n || 0),
+                  0
+                ),
+                branchStocks,
+              } as any);
+            });
+          });
+
+          return { ...product, variants: nextVariants };
+        })
+      );
+
+      setProductAuditLogs((prev) => [
+        {
+          id: `log${Date.now()}`,
+          productId,
+          sku: "AUTO",
+          actor: currentUser.name,
+          time: formatDate(),
+          message:
+            "Generate variants tự động từ màu × size, lấy theo giá bán mặc định + tồn mặc định từng kho",
+        },
+        ...prev,
+      ]);
+
+      pushActivity("Đã generate variants tự động từ màu × size.");
+    }}
+  />
+)}
+{tab === "orders" && (
+  <OrdersPage
+    orders={visibleOrders}
+    onUpdateOrderStatus={updateOrderStatus}
+    onUpdatePaymentStatus={updatePaymentStatus}
+    canEditOrders={
+      hasPermission(activeRole, "orders", "sửa đơn") ||
+      hasPermission(activeRole, "orders", "duyệt đơn") ||
+      sessionIsAdmin
+    }
+    canPushShipping={
+      hasPermission(activeRole, "orders", "hãng vận chuyển") || sessionIsAdmin
+    }
+  />
+)}
+
+{tab === "create-order" && (
+  <CreateOrderPage products={visibleScopedProducts} onCreateOrder={createOrder} />
+)}
+
+{tab === "inventory" && (
+  <InventoryPage products={scopedProducts} onOpenStocktake={() => setTab("stocktake")} />
+)}
+
+{tab === "stocktake" && (
+  <StocktakePage
+    products={scopedProducts}
+    stocktakes={stocktakes.filter((item) => scopedBranchIds.includes(item.branchId))}
+    onCreateStocktake={createStocktake}
+    onFinishStocktakeSession={finishStocktakeSession}
+    currentUser={currentUser}
+    canApproveStocktake={
+      hasPermission(activeRole, "inventory", "xác nhận kiểm kho") || sessionIsAdmin
+    }
+  />
+)}
+
+{tab === "ads" && canAccessTab(activeRole, "ads") && (
+  <AdsPage
+    mappings={adsMappings}
+    setMappings={setAdsMappings}
+    currentUser={currentUser}
+    pushActivity={pushActivity}
+  />
+)}
+
+{tab === "ai-content" && canAccessTab(activeRole, "ai-content") && (
+  <AIContentPage
+    products={scopedProducts}
+    orders={visibleOrders}
+    adsMappings={adsMappings}
+    pushActivity={pushActivity}
+  />
+)}
+
+{tab === "permissions" && canAccessTab(activeRole, "permissions") && (
+  <PermissionsPage employees={employees} setEmployees={setEmployees} />
+)}
         </main>
       </div>
     </div>
