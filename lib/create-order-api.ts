@@ -445,3 +445,64 @@ export async function trackGhnShipment(payload: {
     body: JSON.stringify(payload),
   });
 }
+export type GhnProvince = {
+  ProvinceID: number;
+  ProvinceName: string;
+};
+
+export type GhnDistrict = {
+  DistrictID: number;
+  DistrictName: string;
+  ProvinceID?: number;
+};
+
+export type GhnWard = {
+  WardCode: string;
+  WardName: string;
+  DistrictID?: number;
+};
+
+export async function getGhnProvinces(): Promise<GhnProvince[]> {
+  const data = await request<any>("/addresses/ghn/provinces");
+  return Array.isArray(data) ? data : data?.data || [];
+}
+
+export async function getGhnDistricts(
+  provinceId: number
+): Promise<GhnDistrict[]> {
+  const data = await request<any>(
+    `/addresses/ghn/districts?provinceId=${provinceId}`
+  );
+  return Array.isArray(data) ? data : data?.data || [];
+}
+
+export async function getGhnWards(districtId: number): Promise<GhnWard[]> {
+  const data = await request<any>(
+    `/addresses/ghn/wards?districtId=${districtId}`
+  );
+  return Array.isArray(data) ? data : data?.data || [];
+}
+export async function searchCustomers(query = ""): Promise<SearchCustomerItem[]> {
+  const cleaned = String(query || "").trim();
+
+  const candidates = cleaned
+    ? [
+        `/customers/search?q=${encodeURIComponent(cleaned)}`,
+        `/customers/search?phone=${encodeURIComponent(cleaned)}`,
+        `/customers?search=${encodeURIComponent(cleaned)}`,
+      ]
+    : ["/customers/search", "/customers"];
+
+  for (const path of candidates) {
+    try {
+      const data = await request<any>(path);
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.items)) return data.items;
+      if (Array.isArray(data?.data)) return data.data;
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}

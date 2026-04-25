@@ -576,7 +576,7 @@ const deliveryRequirementOptions: Array<{
 ];
 
 export default function CreateOrderPageClient() {
-  const applyShippingRef = useRef<(payload: ShippingQuoteApplyPayload) => void>();
+  const applyShippingRef = useRef<((payload: ShippingQuoteApplyPayload) => void) | null>(null);
   const phoneLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phoneSuggestionRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();

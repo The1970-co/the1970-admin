@@ -115,9 +115,12 @@ const MENU: MenuItem[] = [
 
 export default function AdminShell({
   children,
+  title,
 }: {
-  children: ReactNode;
+  children: React.ReactNode;
+  title?: string;
 }) {
+  
   const [currentUser, setCurrentUser] = useState<any>(null);
   const pathname = usePathname();
 

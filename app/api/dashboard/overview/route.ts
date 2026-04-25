@@ -199,7 +199,7 @@ export async function GET() {
 
 const alerts: Array<{
   id: string;
-  level: "critical" | "warning" | "info";
+level: "critical" | "warning" | "info" | "safe";
   title: string;
   description: string;
   ctaLabel?: string;

@@ -991,11 +991,11 @@ const payload: AddVariantPayload = {
   color: variantColor.trim(),
   size: variantSize.trim(),
   price: Number(variantPrice || 0),
-  ...(canViewCost ? { costPrice: Number(variantCostPrice || 0) } : {}),
+  costPrice: Number(variantCostPrice || 0),
   branchStocks: Object.fromEntries(
-    branches.map((branch) => [
-      branch.id,
-      Number(variantBranchStocks[branch.id] || 0),
+    Object.entries(variantBranchStocks).map(([key, value]) => [
+      key,
+      Number(value || 0),
     ])
   ),
 };

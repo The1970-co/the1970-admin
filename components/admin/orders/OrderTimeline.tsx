@@ -4,7 +4,7 @@ import {
   ORDER_TIMELINE,
   getTimelineStepIndex,
   OrderStatus,
-} from "@/lib/orders/order-status";
+} from "@/lib/order-status";
 
 type Props = {
   status: OrderStatus;
