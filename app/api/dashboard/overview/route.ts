@@ -197,7 +197,13 @@ export async function GET() {
       stockRiskCount: topProducts.filter((p) => p.stockLeft <= 5).length,
     }));
 
-    const alerts: DashboardOverview["alerts"] = [];
+    const alerts: Array<{
+  level: "critical" | "warning" | "info";
+  title: string;
+  message: string;
+  actionLabel?: string;
+  href?: string;
+}> = [];
 
     if (ordersToday > 0 && revenueYesterday > 0 && revenueToday < revenueYesterday) {
       alerts.push({
