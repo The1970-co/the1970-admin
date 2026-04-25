@@ -17,15 +17,22 @@ export type PermissionKey =
   | "products.view"
   | "products.create"
   | "products.edit"
+  | "products.price.edit"
   | "products.cost.view"
+  | "products.delete"
   | "inventory.view"
   | "inventory.logs.view"
+  | "inventory.value.view"
   | "stocktake.view"
   | "stocktake.apply"
   | "permissions.view"
   | "reports.view"
   | "customers.view"
   | "system.manage"
+  | "settings.payment_sources.view"
+  | "settings.payment_sources.manage"
+  | "reconciliation.view"
+  | "reconciliation.manage"
   | "ai_content.view"
   | "shipments.cod.edit"
   | "autopilot.view";
@@ -62,18 +69,32 @@ const GLOBAL_PERMISSIONS: PermissionKey[] = [
   "orders.create",
   "orders.update_status",
   "orders.cancel",
+
   "products.view",
   "products.create",
   "products.edit",
+  "products.price.edit",
   "products.cost.view",
+  "products.delete",
+
   "inventory.view",
   "inventory.logs.view",
+  "inventory.value.view",
+
   "stocktake.view",
   "stocktake.apply",
+
   "permissions.view",
   "reports.view",
   "customers.view",
   "system.manage",
+
+  "settings.payment_sources.view",
+  "settings.payment_sources.manage",
+
+  "reconciliation.view",
+  "reconciliation.manage",
+
   "ai_content.view",
   "autopilot.view",
   "shipments.cod.edit",
@@ -86,50 +107,65 @@ export const ROLE_DEFINITIONS: Record<AppRole, RoleDefinition> = {
     scope: "global",
     permissions: GLOBAL_PERMISSIONS,
   },
+
   admin: {
     id: "admin",
     label: "Admin / Owner",
     scope: "global",
     permissions: GLOBAL_PERMISSIONS,
   },
+
   "branch-manager": {
     id: "branch-manager",
     label: "Quản lý chi nhánh",
     scope: "branch",
     permissions: [
       "dashboard.view",
+
       "orders.view",
       "orders.create",
       "orders.update_status",
       "orders.cancel",
+
       "products.view",
       "products.create",
       "products.edit",
+      "products.price.edit",
+
       "inventory.view",
       "inventory.logs.view",
+
       "stocktake.view",
       "stocktake.apply",
+
       "reports.view",
       "customers.view",
       "ai_content.view",
+      "shipments.cod.edit",
     ],
   },
-fulltime: {
-  id: "fulltime",
-  label: "Nhân viên fulltime",
-  scope: "branch",
-  permissions: [
-    "orders.view",
-    "orders.create",
-    "orders.update_status",
-    "products.view",
-    "products.edit",
-    "inventory.view",
-    "inventory.logs.view",
-    "stocktake.view",
-    "shipments.cod.edit",
-  ],
-},
+
+  fulltime: {
+    id: "fulltime",
+    label: "Nhân viên fulltime",
+    scope: "branch",
+    permissions: [
+      "orders.view",
+      "orders.create",
+      "orders.update_status",
+
+      "products.view",
+      "products.edit",
+      "products.create",
+      "inventory.view",
+      "inventory.logs.view",
+
+      "stocktake.view",
+
+      "shipments.cod.edit",
+    ],
+  },
+
   "retail-staff": {
     id: "retail-staff",
     label: "Nhân viên bán lẻ",
@@ -138,8 +174,10 @@ fulltime: {
       "orders.view",
       "orders.create",
       "products.view",
+      "inventory.view",
     ],
   },
+
   "stock-auditor": {
     id: "stock-auditor",
     label: "Nhân viên kiểm kho",
@@ -190,9 +228,11 @@ export function canAccessBranch(
 export function getScopedBranchIds(user: CurrentUserProfile): BranchId[] {
   const roleDefinition = ROLE_DEFINITIONS[user.role];
   if (!roleDefinition) return [];
+
   if (roleDefinition.scope === "global") {
     return ["b1", "b2", "b3"];
   }
+
   return user.branchIds || [];
 }
 
@@ -203,8 +243,10 @@ export function filterRowsByBranch<T extends { branchId?: string | null }>(
   const roleDefinition = ROLE_DEFINITIONS[user.role];
   if (!roleDefinition) return [];
   if (roleDefinition.scope === "global") return rows;
+
   return rows.filter((row) => canAccessBranch(user, row.branchId));
 }
+
 export async function changeMyPassword(newPassword: string) {
   const res = await fetch(
     `${process.env.NEXT_PUBLIC_API_URL}/auth/me/password`,

@@ -351,7 +351,10 @@ type ImportPreviewRow = {
   imageUrl: string;
   retailPrice: number;
   importPrice: number;
-  stock: number;
+  stockCL: number;
+  stockXD: number;
+  stockQO: number;
+  stockTH: number;
 };
 
 function normalizeNumber(value: any) {
@@ -448,7 +451,10 @@ function downloadProductTemplate() {
       "Ảnh đại diện",
       "PL_Giá bán lẻ",
       "PL_Giá nhập",
-      "LC_CN5_Tồn kho ban đầu*",
+      "LC_CN1_Tồn kho ban đầu*",
+      "LC_CN2_Tồn kho ban đầu*",
+      "LC_CN3_Tồn kho ban đầu*",
+      "LC_CN4_Tồn kho ban đầu*",
     ],
     [
       "Áo sơ mi kẻ SM936",
@@ -461,8 +467,11 @@ function downloadProductTemplate() {
       300,
       "https://example.com/sm936.jpg",
       600000,
-      0,
-      0,
+      0,   // Giá nhập
+      0,   // CHÙA LÁNG
+      0,   // XÃ ĐÀN
+      0,   // QUỐC OAI
+      0,   // THÁI HÀ
     ],
   ];
 
@@ -581,7 +590,7 @@ export default function ProductsPageClient() {
   const canCreateProduct = hasPermission(role, "products.create");
   const canEditProduct = hasPermission(role, "products.edit");
   const canViewCost = hasPermission(role, "products.cost.view");
-
+  const canViewInventoryValue = hasPermission(role, "inventory.value.view");
   const loadBranches = async () => {
     try {
       setLoadingBranches(true);
@@ -987,18 +996,18 @@ export default function ProductsPageClient() {
       setSavingVariant(true);
       setActionMessage("");
 
-const payload: AddVariantPayload = {
-  color: variantColor.trim(),
-  size: variantSize.trim(),
-  price: Number(variantPrice || 0),
-  costPrice: Number(variantCostPrice || 0),
-  branchStocks: Object.fromEntries(
-    Object.entries(variantBranchStocks).map(([key, value]) => [
-      key,
-      Number(value || 0),
-    ])
-  ),
-};
+      const payload: AddVariantPayload = {
+        color: variantColor.trim(),
+        size: variantSize.trim(),
+        price: Number(variantPrice || 0),
+        costPrice: Number(variantCostPrice || 0),
+        branchStocks: Object.fromEntries(
+          Object.entries(variantBranchStocks).map(([key, value]) => [
+            key,
+            Number(value || 0),
+          ])
+        ),
+      };
 
       await addVariant(activeProductId, payload);
       setVariantOpen(false);
@@ -1050,30 +1059,30 @@ const payload: AddVariantPayload = {
     }
   };
 
-const handleEditImageUpload = async (file: File | null) => {
-  console.log("handleEditImageUpload file:", file);
+  const handleEditImageUpload = async (file: File | null) => {
+    console.log("handleEditImageUpload file:", file);
 
-  if (!file) {
-    setActionMessage("Chưa chọn file ảnh.");
-    return;
-  }
+    if (!file) {
+      setActionMessage("Chưa chọn file ảnh.");
+      return;
+    }
 
-  try {
-    setUploadingEditImage(true);
-    setActionMessage("Đang upload ảnh...");
+    try {
+      setUploadingEditImage(true);
+      setActionMessage("Đang upload ảnh...");
 
-    const result = await uploadProductImage(file);
-    console.log("uploadProductImage result:", result);
+      const result = await uploadProductImage(file);
+      console.log("uploadProductImage result:", result);
 
-    setEditImageUrl(result.url);
-    setActionMessage("Đã upload ảnh sản phẩm.");
-  } catch (err) {
-    console.error("upload edit image error:", err);
-    setActionMessage(err instanceof Error ? err.message : "Upload ảnh thất bại.");
-  } finally {
-    setUploadingEditImage(false);
-  }
-};
+      setEditImageUrl(result.url);
+      setActionMessage("Đã upload ảnh sản phẩm.");
+    } catch (err) {
+      console.error("upload edit image error:", err);
+      setActionMessage(err instanceof Error ? err.message : "Upload ảnh thất bại.");
+    } finally {
+      setUploadingEditImage(false);
+    }
+  };
 
   const parseProductRows = (rows: ParsedRow[]) => {
     const errors: string[] = [];
@@ -1145,12 +1154,20 @@ const handleEditImageUpload = async (file: File | null) => {
         ])
       );
 
-      const stock = normalizeNumber(
-        findValue(row, [
-          "LC_CN5_Tồn kho ban đầu*",
-          "lc cn5 ton kho ban dau",
-          "ton kho ban dau",
-        ])
+      const stockCL = normalizeNumber(
+        findValue(row, ["LC_CN1_Tồn kho ban đầu*", "lc cn1 ton kho ban dau"])
+      );
+
+      const stockXD = normalizeNumber(
+        findValue(row, ["LC_CN2_Tồn kho ban đầu*", "lc cn2 ton kho ban dau"])
+      );
+
+      const stockQO = normalizeNumber(
+        findValue(row, ["LC_CN3_Tồn kho ban đầu*", "lc cn3 ton kho ban dau"])
+      );
+
+      const stockTH = normalizeNumber(
+        findValue(row, ["LC_CN4_Tồn kho ban đầu*", "lc cn4 ton kho ban dau"])
       );
 
       const hasAnyUsefulValue =
@@ -1162,7 +1179,10 @@ const handleEditImageUpload = async (file: File | null) => {
         sku ||
         retailPrice ||
         importPrice ||
-        stock ||
+        stockCL ||
+        stockXD ||
+        stockQO ||
+        stockTH ||
         imageUrl;
 
       if (!hasAnyUsefulValue) continue;
@@ -1188,7 +1208,10 @@ const handleEditImageUpload = async (file: File | null) => {
         imageUrl,
         retailPrice,
         importPrice,
-        stock,
+        stockCL,
+        stockXD,
+        stockQO,
+        stockTH,
       });
     }
 
@@ -1244,8 +1267,12 @@ const handleEditImageUpload = async (file: File | null) => {
         const { normalized, errors } = parseProductRows(rawRows);
         previewRows.push(...normalized.slice(0, 30));
         previewErrors.push(...errors.slice(0, 30));
-      } catch {
-        previewErrors.push(`${file.name}: không đọc được file.`);
+      } catch (err) {
+        console.error("Preview Excel error:", err);
+        previewErrors.push(
+          `${file.name}: không đọc được file. ${err instanceof Error ? err.message : ""
+          }`
+        );
       }
     }
 
@@ -1320,15 +1347,6 @@ const handleEditImageUpload = async (file: File | null) => {
         }
       />
 
-      {!canCreateProduct || !canEditProduct || !canViewCost ? (
-        <Panel className="p-4">
-          <p className="text-sm text-amber-700">
-            Role hiện tại: <strong>{role}</strong>. Một số hành động hoặc dữ liệu
-            nhạy cảm đang bị giới hạn theo phân quyền.
-          </p>
-        </Panel>
-      ) : null}
-
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Sản phẩm active" value={activeCount} sub="Đang cho phép bán" />
         <StatCard
@@ -1337,11 +1355,14 @@ const handleEditImageUpload = async (file: File | null) => {
           sub="Tất cả size / màu đang có"
         />
         <StatCard title="SKU tồn thấp" value={lowStockCount} sub="<= 3 sản phẩm" />
-        <StatCard
-          title="Giá trị catalog"
-          value={currency(catalogValue)}
-          sub="Giá bán × tồn kho"
-        />
+
+        {canViewInventoryValue ? (
+          <StatCard
+            title="Giá trị catalog"
+            value={currency(catalogValue)}
+            sub="Giá bán × tồn kho"
+          />
+        ) : null}
       </div>
 
       <Panel className="p-4">
@@ -1570,7 +1591,7 @@ const handleEditImageUpload = async (file: File | null) => {
                             </Button>
                           </RoleGuard>
 
-                          <RoleGuard permission="products.edit">
+                          <RoleGuard permission="products.delete">
                             <Button
                               variant="danger"
                               onClick={() => void handleDeleteProduct(product)}
@@ -1580,7 +1601,6 @@ const handleEditImageUpload = async (file: File | null) => {
                               {deletingProductId === product.id ? "Đang xóa..." : "Xóa"}
                             </Button>
                           </RoleGuard>
-
                           <RoleGuard permission="products.edit">
                             <Button
                               variant={product.status === "ACTIVE" ? "danger" : "success"}
@@ -1720,18 +1740,18 @@ const handleEditImageUpload = async (file: File | null) => {
                   type="file"
                   accept="image/*"
                   className="hidden"
-onChange={async (e) => {
-  const input = e.currentTarget;
-  const file = input.files?.[0] || null;
+                  onChange={async (e) => {
+                    const input = e.currentTarget;
+                    const file = input.files?.[0] || null;
 
-  console.log("input file change:", file);
+                    console.log("input file change:", file);
 
-  try {
-    await handleEditImageUpload(file);
-  } finally {
-    if (input) input.value = "";
-  }
-}}
+                    try {
+                      await handleEditImageUpload(file);
+                    } finally {
+                      if (input) input.value = "";
+                    }
+                  }}
                 />
               </label>
             </div>
@@ -1968,18 +1988,18 @@ onChange={async (e) => {
                   type="file"
                   accept="image/*"
                   className="hidden"
-onChange={async (e) => {
-  const input = e.currentTarget;
-  const file = input.files?.[0] || null;
+                  onChange={async (e) => {
+                    const input = e.currentTarget;
+                    const file = input.files?.[0] || null;
 
-  console.log("input file change:", file);
+                    console.log("input file change:", file);
 
-  try {
-    await handleEditImageUpload(file);
-  } finally {
-    if (input) input.value = "";
-  }
-}}
+                    try {
+                      await handleCreateImageUpload(file);
+                    } finally {
+                      if (input) input.value = "";
+                    }
+                  }}
                 />
               </label>
             </div>
@@ -2348,7 +2368,12 @@ onChange={async (e) => {
                         <td className="px-4 py-3">{row.sku || "—"}</td>
                         <td className="px-4 py-3">{currency(row.retailPrice || 0)}</td>
                         <td className="px-4 py-3">{currency(row.importPrice || 0)}</td>
-                        <td className="px-4 py-3">{row.stock || 0}</td>
+                        <td className="px-4 py-3 text-xs space-y-1">
+                          <div>CL: {row.stockCL || 0}</div>
+                          <div>XD: {row.stockXD || 0}</div>
+                          <div>QO: {row.stockQO || 0}</div>
+                          <div>TH: {row.stockTH || 0}</div>
+                        </td>
                         <td className="px-4 py-3">
                           {row.imageUrl ? (
                             <a

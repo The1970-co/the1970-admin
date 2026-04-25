@@ -65,11 +65,11 @@ export default function LoginPage() {
     router.replace("/control");
     const role = String(user.role || "").toLowerCase();
 
-if (role === "owner" || role === "admin") {
-  router.replace("/control");
-} else {
-  router.replace("/create-order");
-}
+    if (role === "owner" || role === "admin") {
+      router.replace("/control");
+    } else {
+      router.replace("/create-order");
+    }
   };
 
   const handleLogin = async (e?: React.FormEvent) => {
@@ -249,9 +249,8 @@ if (role === "owner" || role === "admin") {
                   <button
                     type="submit"
                     disabled={loading}
-                    className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${
-                      loading ? "cursor-not-allowed opacity-70" : ""
-                    }`}
+                    className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${loading ? "cursor-not-allowed opacity-70" : ""
+                      }`}
                   >
                     {loading ? "Đang đăng nhập..." : "Vào hệ thống"}
                   </button>
@@ -296,9 +295,8 @@ if (role === "owner" || role === "admin") {
                   <button
                     type="submit"
                     disabled={loading || !secondPassword}
-                    className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${
-                      loading ? "cursor-not-allowed opacity-70" : ""
-                    }`}
+                    className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${loading ? "cursor-not-allowed opacity-70" : ""
+                      }`}
                   >
                     {loading ? "Đang xác thực..." : "Xác nhận bảo mật"}
                   </button>

@@ -41,7 +41,7 @@ const MENU: MenuItem[] = [
     children: [
       { href: "/products", label: "Danh sách", permission: "products.view" },
       { href: "/control/product-categories", label: "Danh mục", permission: "products.view" },
-      { href: "/control/suppliers", label: "Nhà cung cấp", permission: "products.view" },
+      { href: "/control/suppliers", label: "Nhà cung cấp", permission: "system.manage" },
       { href: "/control/purchase-receipts", label: "Phiếu nhập", permission: "inventory.view" },
       { href: "/control/stock-transfers", label: "Phiếu chuyển kho", permission: "inventory.view" },
     ],
