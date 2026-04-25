@@ -197,11 +197,12 @@ export async function GET() {
       stockRiskCount: topProducts.filter((p) => p.stockLeft <= 5).length,
     }));
 
-    const alerts: Array<{
+const alerts: Array<{
+  id: string;
   level: "critical" | "warning" | "info";
   title: string;
-  message: string;
-  actionLabel?: string;
+  description: string;
+  ctaLabel?: string;
   href?: string;
 }> = [];
 
