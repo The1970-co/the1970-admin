@@ -127,7 +127,6 @@ fulltime: {
     "inventory.view",
     "inventory.logs.view",
     "stocktake.view",
-    "customers.view",
     "shipments.cod.edit",
   ],
 },
@@ -139,7 +138,6 @@ fulltime: {
       "orders.view",
       "orders.create",
       "products.view",
-      "customers.view",
     ],
   },
   "stock-auditor": {
@@ -206,4 +204,21 @@ export function filterRowsByBranch<T extends { branchId?: string | null }>(
   if (!roleDefinition) return [];
   if (roleDefinition.scope === "global") return rows;
   return rows.filter((row) => canAccessBranch(user, row.branchId));
+}
+export async function changeMyPassword(newPassword: string) {
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_API_URL}/auth/me/password`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+      body: JSON.stringify({ newPassword }),
+    }
+  );
+
+  if (!res.ok) throw new Error("Đổi mật khẩu thất bại");
+
+  return res.json();
 }

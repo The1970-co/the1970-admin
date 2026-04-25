@@ -84,7 +84,9 @@ export default function ShippingQuoteModal({
         const width = 20;
         const height = 10;
 
-        const res = await fetch("http://localhost:3001/shipments/ghn/quote", {
+        const res = await fetch(
+  `${process.env.NEXT_PUBLIC_API_URL}/shipments/ghn/quote`,
+  {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

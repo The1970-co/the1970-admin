@@ -44,9 +44,33 @@ export default function LoginPage() {
 
   const [employeeCode, setEmployeeCode] = useState("");
   const [password, setPassword] = useState("");
+  const [secondPassword, setSecondPassword] = useState("");
+  const [tempToken, setTempToken] = useState("");
+  const [step, setStep] = useState<"login" | "second">("login");
+
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const saveSession = (data: any) => {
+    const token = data?.token || data?.accessToken || data?.access_token;
+    const user = data?.user || data?.staff || data?.data?.user;
+
+    if (!token) throw new Error("Backend không trả về token.");
+    if (!user) throw new Error("Backend không trả về user.");
+
+    setTokenToStorage(token);
+    setCurrentUserToStorage(user);
+
+    router.replace("/control");
+    const role = String(user.role || "").toLowerCase();
+
+if (role === "owner" || role === "admin") {
+  router.replace("/control");
+} else {
+  router.replace("/create-order");
+}
+  };
 
   const handleLogin = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -58,9 +82,7 @@ export default function LoginPage() {
 
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: employeeCode.trim(),
           password,
@@ -73,19 +95,48 @@ export default function LoginPage() {
         throw new Error(data?.message || "Đăng nhập thất bại.");
       }
 
-      const token = data?.token || data?.accessToken || data?.access_token;
-      const user = data?.user || data?.staff || data?.data?.user;
+      if (data?.needsSecondPassword) {
+        setTempToken(data.tempToken);
+        setSecondPassword("");
+        setStep("second");
+        return;
+      }
 
-      if (!token) throw new Error("Backend không trả về token.");
-      if (!user) throw new Error("Backend không trả về user.");
-
-      setTokenToStorage(token);
-      setCurrentUserToStorage(user);
-
-      router.replace("/control");
-      router.refresh();
+      saveSession(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSecondPassword = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+
+    if (!/^\d{6}$/.test(secondPassword)) {
+      setError("Mã bảo mật lớp 2 phải gồm đúng 6 số.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+
+      const res = await fetch(`${API_BASE}/auth/second-password/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tempToken, secondPassword }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.message || "Mã bảo mật lớp 2 không đúng.");
+      }
+
+      saveSession(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Xác thực lớp 2 thất bại.");
     } finally {
       setLoading(false);
     }
@@ -96,6 +147,7 @@ export default function LoginPage() {
       <div className="grid min-h-screen xl:grid-cols-[1.1fr_0.9fr]">
         <div className="relative hidden overflow-hidden bg-neutral-950 xl:block">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.12),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.06),_transparent_26%)]" />
+
           <div className="relative flex h-full flex-col justify-between p-12 text-white">
             <div>
               <p className="text-[13px] font-medium uppercase tracking-[0.34em] text-white/42">
@@ -121,7 +173,8 @@ export default function LoginPage() {
                   Restricted Access
                 </p>
                 <p className="mt-3 text-base leading-7 text-white/58">
-                  Truy cập theo tài khoản nhân viên đã được cấp quyền trong hệ thống.
+                  Truy cập theo tài khoản nhân viên đã được cấp quyền trong hệ
+                  thống.
                 </p>
               </div>
             </div>
@@ -136,67 +189,140 @@ export default function LoginPage() {
                   Admin panel
                 </p>
                 <h2 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-neutral-900">
-                  Đăng nhập nhân viên
+                  {step === "login"
+                    ? "Đăng nhập nhân viên"
+                    : "Xác thực bảo mật"}
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-neutral-500">
-                  Đăng nhập bằng tài khoản thật từ backend.
+                  {step === "login"
+                    ? "Đăng nhập bằng tài khoản nhân viên được cấp quyền."
+                    : "Nhập mã bảo mật lớp 2 để tiếp tục."}
                 </p>
               </div>
 
-              <form onSubmit={handleLogin} className="mt-8 space-y-5">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-neutral-700">
-                    Mã đăng nhập
-                  </label>
-                  <input
-                    value={employeeCode}
-                    onChange={(e) => setEmployeeCode(e.target.value)}
-                    placeholder="NV001 / ADMIN / email"
-                    className="h-14 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none transition focus:border-neutral-900"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-neutral-700">
-                    Mật khẩu
-                  </label>
-                  <div className="relative">
+              {step === "login" ? (
+                <form onSubmit={handleLogin} className="mt-8 space-y-5">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      Tài khoản nhân viên
+                    </label>
                     <input
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Nhập mật khẩu"
-                      className="h-14 w-full rounded-2xl border border-neutral-300 px-4 pr-12 text-sm outline-none transition focus:border-neutral-900"
+                      value={employeeCode}
+                      onChange={(e) => setEmployeeCode(e.target.value)}
+                      placeholder="VD: NV001 / ADMIN"
+                      autoComplete="off"
+                      name="staff-code-1970"
+                      className="h-14 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none transition focus:border-neutral-900"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-500 transition hover:text-neutral-900"
-                    >
-                      <EyeIcon open={showPassword} />
-                    </button>
                   </div>
-                </div>
 
-                {error ? (
-                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {error}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      Mật khẩu
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Nhập mật khẩu"
+                        autoComplete="current-password"
+                        name="password"
+                        className="h-14 w-full rounded-2xl border border-neutral-300 px-4 pr-12 text-sm outline-none transition focus:border-neutral-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-500 transition hover:text-neutral-900"
+                      >
+                        <EyeIcon open={showPassword} />
+                      </button>
+                    </div>
                   </div>
-                ) : null}
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${
-                    loading ? "cursor-not-allowed opacity-70" : ""
-                  }`}
-                >
-                  {loading ? "Đang đăng nhập..." : "Vào hệ thống"}
-                </button>
-              </form>
+                  {error ? (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {error}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${
+                      loading ? "cursor-not-allowed opacity-70" : ""
+                    }`}
+                  >
+                    {loading ? "Đang đăng nhập..." : "Vào hệ thống"}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleSecondPassword} className="mt-8 space-y-5">
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Tài khoản này đã bật bảo mật lớp 2. Không lưu mã này trên
+                    trình duyệt.
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      Mã bảo mật lớp 2
+                    </label>
+                    <input
+                      type="text"
+                      name="the1970-security-code"
+                      autoComplete="off"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={secondPassword}
+                      onChange={(e) => {
+                        const val = e.target.value
+                          .replace(/\D/g, "")
+                          .slice(0, 6);
+                        setSecondPassword(val);
+                      }}
+                      placeholder="Nhập mã bảo mật lớp 2"
+                      className="h-14 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none transition focus:border-neutral-900"
+                    />
+                  </div>
+
+                  {error ? (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {error}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="submit"
+                    disabled={loading || !secondPassword}
+                    className={`inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-900 text-sm font-medium text-white transition hover:bg-neutral-800 ${
+                      loading ? "cursor-not-allowed opacity-70" : ""
+                    }`}
+                  >
+                    {loading ? "Đang xác thực..." : "Xác nhận bảo mật"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStep("login");
+                      setTempToken("");
+                      setSecondPassword("");
+                      setError("");
+                    }}
+                    className="inline-flex h-14 w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+                  >
+                    Quay lại đăng nhập
+                  </button>
+                </form>
+              )}
 
               <div className="mt-6 text-xs text-neutral-400">
-                API: {API_BASE}/auth/login
+                API:{" "}
+                {step === "login"
+                  ? `${API_BASE}/auth/login`
+                  : `${API_BASE}/auth/second-password/verify`}
               </div>
             </div>
           </div>

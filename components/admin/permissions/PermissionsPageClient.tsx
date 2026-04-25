@@ -341,9 +341,8 @@ function groupPermissionSummary(role: RoleItem, groupKey: PermissionGroupKey) {
   const current = role.permissions[groupKey] || [];
   if (!current.length) return "Chưa có quyền";
   if (current.length <= 3) return `Có quyền: ${current.join(", ")}`;
-  return `Có quyền: ${current.slice(0, 3).join(", ")} +${
-    current.length - 3
-  } quyền khác`;
+  return `Có quyền: ${current.slice(0, 3).join(", ")} +${current.length - 3
+    } quyền khác`;
 }
 
 function roleSummary(role: RoleItem) {
@@ -374,7 +373,8 @@ export default function PermissionsPageClient() {
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [selectedRoleId, setSelectedRoleId] = useState("fulltime");
   const [message, setMessage] = useState("");
-
+  const [secondPasswordForId, setSecondPasswordForId] = useState<string | null>(null);
+  const [secondPassword, setSecondPassword] = useState("");
   const [quickName, setQuickName] = useState("");
   const [quickCode, setQuickCode] = useState("");
   const [quickPassword, setQuickPassword] = useState("");
@@ -759,11 +759,10 @@ export default function PermissionsPageClient() {
                     <tr
                       key={role.id}
                       onClick={() => setSelectedRoleId(role.id)}
-                      className={`cursor-pointer border-b border-neutral-100 transition ${
-                        selectedRoleId === role.id
+                      className={`cursor-pointer border-b border-neutral-100 transition ${selectedRoleId === role.id
                           ? "bg-neutral-50"
                           : "hover:bg-neutral-50"
-                      }`}
+                        }`}
                     >
                       <td className="py-4">
                         <div className="font-medium text-neutral-900">
@@ -980,32 +979,99 @@ export default function PermissionsPageClient() {
                           </Button>
                         </div>
                       ) : null}
-                    </div>
+{secondPasswordForId === employee.id ? (
+  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+    <input
+      type="text"
+      name="staff-security-pin"
+      autoComplete="off"
+      data-lpignore="true"
+      data-1p-ignore="true"
+      inputMode="numeric"
+      maxLength={6}
+      value={secondPassword}
+      onChange={(e) => {
+        const value = e.target.value.replace(/\D/g, "").slice(0, 6);
+        setSecondPassword(value);
+      }}
+      className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+      placeholder="PIN bảo mật 6 số"
+    />
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() => startEditEmployee(employee)}
-                      >
-                        Sửa gán role
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setResetPasswordForId(employee.id);
-                          setNewPassword("");
-                        }}
-                      >
-                        Đổi mật khẩu
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => toggleEmployee(employee.id)}
-                      >
-                        {employee.status === "ACTIVE"
-                          ? "Cho nghỉ"
-                          : "Kích hoạt lại"}
-                      </Button>
+    <Button
+      variant="primary"
+      onClick={async () => {
+        if (!/^\d{6}$/.test(secondPassword)) {
+          setMessage("PIN phải gồm đúng 6 số.");
+          return;
+        }
+
+        if (["000000", "111111", "123456", "654321"].includes(secondPassword)) {
+          setMessage("PIN quá dễ đoán, hãy đặt mã khác.");
+          return;
+        }
+
+        await apiJson(`/staff/${employee.id}/second-password`, {
+          method: "PATCH",
+          body: JSON.stringify({ secondPassword }),
+        });
+
+        setSecondPassword("");
+        setSecondPasswordForId(null);
+        setMessage("Đã set PIN bảo mật cho nhân viên.");
+      }}
+    >
+      Lưu PIN
+    </Button>
+
+    <Button
+      variant="secondary"
+      onClick={() => {
+        setSecondPasswordForId(null);
+        setSecondPassword("");
+      }}
+    >
+      Hủy
+    </Button>
+  </div>
+) : null}
+
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => startEditEmployee(employee)}
+                        >
+                          Sửa gán role
+                        </Button>
+
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setResetPasswordForId(employee.id);
+                            setNewPassword("");
+                          }}
+                        >
+                          Đổi mật khẩu
+                        </Button>
+
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setSecondPasswordForId(employee.id);
+                            setSecondPassword("");
+                          }}
+                        >
+                          Đặt/Reset PIN
+                        </Button>
+
+                        <Button
+                          variant="secondary"
+                          onClick={() => toggleEmployee(employee.id)}
+                        >
+                          {employee.status === "ACTIVE" ? "Cho nghỉ" : "Kích hoạt lại"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1100,11 +1166,10 @@ export default function PermissionsPageClient() {
                           return (
                             <label
                               key={permissionName}
-                              className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm ${
-                                isReportsGroupLocked
+                              className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm ${isReportsGroupLocked
                                   ? "border-neutral-200 bg-neutral-50 text-neutral-400"
                                   : "border-neutral-200 text-neutral-700"
-                              }`}
+                                }`}
                             >
                               <input
                                 type="checkbox"
