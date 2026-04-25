@@ -1,12 +1,24 @@
-import OrdersPageClient from "../orders-page-client";
-import { getOrders } from "../../lib/orders-api";
+"use client";
 
-export default async function OrdersPage() {
-  const orders = await getOrders();
+import dynamic from "next/dynamic";
+import AdminShell from "../../components/admin/AdminShell";
 
+const OrdersPageClient = dynamic(
+  () => import("../../components/admin/orders/OrdersPageClient"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <p className="text-sm text-neutral-500">Đang tải OrdersPageClient...</p>
+      </div>
+    ),
+  }
+);
+
+export default function OrdersPage() {
   return (
-    <main className="p-10">
-      <OrdersPageClient initialOrders={orders} />
-    </main>
+    <AdminShell title="Đơn hàng">
+      <OrdersPageClient />
+    </AdminShell>
   );
 }

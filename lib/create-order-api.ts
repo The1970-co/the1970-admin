@@ -1,27 +1,447 @@
-const API_URL = "http://localhost:3000";
+export type CreateOrderMode = "draft" | "approve" | "ship";
 
-// lấy sản phẩm để search
-export async function getProducts() {
-  const res = await fetch(`${API_URL}/products`, {
+export type OrderProductVariant = {
+  id: string;
+  sku: string;
+  color?: string;
+  size?: string;
+  price: number;
+  stock: number;
+  branchStocks?: Record<string, number>;
+};
+
+export type OrderProduct = {
+  id: string;
+  name: string;
+  slug?: string;
+  imageUrl?: string;
+  variants: OrderProductVariant[];
+};
+
+export type CreateOrderShippingSnapshot = {
+  shippingAddressId?: string;
+  shippingRecipientName?: string;
+  shippingPhone?: string;
+  shippingAddressLine1?: string;
+  shippingAddressLine2?: string;
+  shippingWard?: string;
+  shippingDistrict?: string;
+  shippingProvince?: string;
+  shippingPostalCode?: string;
+  shippingGhnDistrictId?: number;
+  shippingGhnWardCode?: string;
+  shippingPartner?: string;
+  shippingPayer?: string;
+  requiredNote?: string;
+  selectedServiceId?: number;
+  selectedServiceTypeId?: number;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+};
+
+export type CreateOrderPayload = {
+  customerId?: string;
+  salesChannel: string;
+  branchId: string;
+  customerName: string;
+  customerPhone: string;
+  note?: string;
+  mode?: CreateOrderMode;
+  items: Array<{
+    variantId: string;
+    qty: number;
+  }>;
+  shippingSnapshot?: CreateOrderShippingSnapshot;
+};
+
+export type CreatedOrder = {
+  id: string;
+  orderCode: string;
+};
+
+export type CustomerLookupResult = {
+  id: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  totalOrders?: number;
+  totalSpent?: number | string;
+  addresses?: any[];
+  pricePolicyName?: string;
+  defaultDiscountPercent?: number;
+};
+
+export type CreateCustomerPayload = {
+  legacyCode?: string;
+  fullName: string;
+  phone: string;
+  email?: string;
+  source?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  ward?: string;
+  district?: string;
+  province?: string;
+  postalCode?: string;
+  recipientName?: string;
+  customerNote?: string;
+  label?: string;
+  isDefaultAddress?: boolean;
+};
+
+export type SearchCustomerItem = {
+  id: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  addresses?: any[];
+  pricePolicyName?: string;
+  defaultDiscountPercent?: number;
+};
+
+export type ShipmentQuoteItem = {
+  name: string;
+  quantity: number;
+  length: number;
+  width: number;
+  height: number;
+  weight: number;
+};
+
+export type ShipmentQuotePayload = {
+  toDistrictId: number;
+  toWardCode: string;
+  insuranceValue?: number;
+  length: number;
+  width: number;
+  height: number;
+  weight: number;
+  items?: ShipmentQuoteItem[];
+};
+
+export type ShipmentQuoteResult = {
+  serviceId: number;
+  serviceTypeId: number;
+  shortName?: string;
+  fee?: any;
+  leadtime?: any;
+};
+
+export type ResolveGhnAddressPayload = {
+  province?: string;
+  district?: string;
+  ward?: string;
+};
+
+export type ResolveGhnAddressResult = {
+  provinceId?: number;
+  districtId?: number;
+  wardCode?: string;
+  provinceName?: string;
+  districtName?: string;
+  wardName?: string;
+};
+
+export type CreateGhnShipmentPayload = {
+  toName: string;
+  toPhone: string;
+  toAddress: string;
+  toDistrictId: number;
+  toWardCode: string;
+  codAmount: number;
+  clientOrderCode: string;
+  note?: string;
+  content?: string;
+  requiredNote?: string;
+  weight: number;
+  length: number;
+  width: number;
+  height: number;
+  insuranceValue?: number;
+  items: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    length: number;
+    width: number;
+    height: number;
+    weight: number;
+    category?: string;
+  }>;
+};
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:3001";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
     cache: "no-store",
   });
 
-  if (!res.ok) throw new Error("Fetch products failed");
+  if (!res.ok) {
+    let message = `Request failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      message = Array.isArray(data?.message)
+        ? data.message.join(", ")
+        : data?.message || message;
+    } catch {}
+    throw new Error(message);
+  }
 
   return res.json();
 }
 
-// tạo đơn
-export async function createOrder(data: any) {
-  const res = await fetch(`${API_URL}/orders`, {
+function toNumber(value: unknown) {
+  if (typeof value === "number") return value;
+  return Number(value || 0);
+}
+
+function normalizeBranchStocks(input: unknown): Record<string, number> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return Object.fromEntries(
+    Object.entries(input as Record<string, unknown>).map(([key, value]) => [
+      key,
+      toNumber(value),
+    ])
+  );
+}
+
+function normalizeSalesChannel(input: string) {
+  return input === "ADMIN"
+    ? "SHOWROOM"
+    : input === "FACEBOOK"
+      ? "FACEBOOK_MANUAL"
+      : input;
+}
+
+export async function getProductsForOrder(): Promise<OrderProduct[]> {
+  const products = await request<any[]>("/products");
+
+  return products.map((product) => ({
+    id: String(product.id),
+    name: String(product.name || ""),
+    slug: product.slug || "",
+    imageUrl: product.imageUrl || "",
+    variants: Array.isArray(product.variants)
+      ? product.variants.map((variant: any) => {
+          const branchStocks = normalizeBranchStocks(variant.inventoryByBranch);
+
+          const stock =
+            Object.keys(branchStocks).length > 0
+              ? Object.values(branchStocks).reduce(
+                  (sum, qty) => sum + toNumber(qty),
+                  0
+                )
+              : Array.isArray(variant.inventoryItems)
+                ? variant.inventoryItems.reduce(
+                    (sum: number, item: any) =>
+                      sum + toNumber(item.availableQty),
+                    0
+                  )
+                : toNumber(variant.stock ?? 0);
+
+          return {
+            id: String(variant.id),
+            sku: String(variant.sku || ""),
+            color: variant.color || "",
+            size: variant.size || "",
+            price: toNumber(variant.price),
+            stock,
+            branchStocks:
+              Object.keys(branchStocks).length > 0
+                ? branchStocks
+                : Array.isArray(variant.inventoryItems)
+                  ? Object.fromEntries(
+                      variant.inventoryItems.map((item: any) => [
+                        String(item.branchId),
+                        toNumber(item.availableQty),
+                      ])
+                    )
+                  : {},
+          };
+        })
+      : [],
+  }));
+}
+
+export async function findCustomerByPhone(
+  phone: string
+): Promise<any[]> {
+  const cleaned = String(phone || "").replace(/\D/g, "");
+
+  const candidates = cleaned
+    ? [
+        `/customers/search?phone=${cleaned}`,
+        `/customers/search?q=${cleaned}`,
+        `/customers?search=${cleaned}`,
+        `/customers?phone=${cleaned}`,
+      ]
+    : [
+        `/customers/search`,
+        `/customers/search?phone=`,
+        `/customers`,
+      ];
+
+  for (const path of candidates) {
+    try {
+      const data = await request<any>(path);
+
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.items)) return data.items;
+      if (Array.isArray(data?.data)) return data.data;
+      if (data) return [data];
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
+export async function createCustomer(
+  payload: CreateCustomerPayload
+): Promise<CustomerLookupResult> {
+  const body = {
+    legacyCode: payload.legacyCode?.trim() || undefined,
+    fullName: payload.fullName.trim(),
+    phone: String(payload.phone || "").replace(/\D/g, ""),
+    email: payload.email?.trim() || undefined,
+    source: payload.source || "ADMIN",
+    addressLine1: payload.addressLine1?.trim() || undefined,
+    addressLine2: payload.addressLine2?.trim() || undefined,
+    ward: payload.ward?.trim() || undefined,
+    district: payload.district?.trim() || undefined,
+    province: payload.province?.trim() || undefined,
+    postalCode: payload.postalCode?.trim() || undefined,
+    recipientName: payload.recipientName?.trim() || undefined,
+    customerNote: payload.customerNote?.trim() || undefined,
+    label: payload.label?.trim() || undefined,
+    isDefaultAddress: payload.isDefaultAddress ?? true,
+  };
+
+  const data = await request<any>("/customers", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
+    body: JSON.stringify(body),
   });
 
-  if (!res.ok) throw new Error("Create order failed");
+  return {
+    id: String(data.id),
+    fullName: String(data.fullName || ""),
+    phone: data.phone || null,
+    email: data.email || null,
+    totalOrders: typeof data.totalOrders === "number" ? data.totalOrders : 0,
+    totalSpent: data.totalSpent ?? 0,
+    addresses: Array.isArray(data.addresses) ? data.addresses : [],
+    pricePolicyName: data.pricePolicyName || "",
+    defaultDiscountPercent: Number(data.defaultDiscountPercent || 0),
+  };
+}
 
-  return res.json();
+export async function createOrder(
+  payload: CreateOrderPayload
+): Promise<CreatedOrder> {
+  const body = {
+    customerId: payload.customerId,
+    salesChannel: normalizeSalesChannel(payload.salesChannel),
+    note: payload.note || "",
+    customerName: payload.customerName,
+    customerPhone: String(payload.customerPhone || "").replace(/\D/g, ""),
+    branchId: payload.branchId,
+    mode: payload.mode || "draft",
+    shippingSnapshot: payload.shippingSnapshot
+      ? {
+          shippingAddressId: payload.shippingSnapshot.shippingAddressId,
+          shippingRecipientName:
+            payload.shippingSnapshot.shippingRecipientName,
+          shippingPhone: payload.shippingSnapshot.shippingPhone,
+          shippingAddressLine1:
+            payload.shippingSnapshot.shippingAddressLine1,
+          shippingAddressLine2:
+            payload.shippingSnapshot.shippingAddressLine2,
+          shippingWard: payload.shippingSnapshot.shippingWard,
+          shippingDistrict: payload.shippingSnapshot.shippingDistrict,
+          shippingProvince: payload.shippingSnapshot.shippingProvince,
+          shippingPostalCode: payload.shippingSnapshot.shippingPostalCode,
+          ghnDistrictId: payload.shippingSnapshot.shippingGhnDistrictId,
+          ghnWardCode: payload.shippingSnapshot.shippingGhnWardCode,
+          shippingPartner: payload.shippingSnapshot.shippingPartner,
+          shippingPayer: payload.shippingSnapshot.shippingPayer,
+          requiredNote: payload.shippingSnapshot.requiredNote,
+          selectedServiceId: payload.shippingSnapshot.selectedServiceId,
+          selectedServiceTypeId:
+            payload.shippingSnapshot.selectedServiceTypeId,
+          weight: payload.shippingSnapshot.weight,
+          length: payload.shippingSnapshot.length,
+          width: payload.shippingSnapshot.width,
+          height: payload.shippingSnapshot.height,
+        }
+      : undefined,
+    items: payload.items.map((item) => ({
+      variantId: item.variantId,
+      qty: Number(item.qty || 0),
+    })),
+  };
+
+  const data = await request<any>("/orders", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+  return {
+    id: String(data.id),
+    orderCode: String(data.orderCode || ""),
+  };
+}
+
+export async function resolveGhnAddress(
+  payload: ResolveGhnAddressPayload
+): Promise<ResolveGhnAddressResult> {
+  return request<ResolveGhnAddressResult>("/shipments/ghn/resolve-address", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function quoteShipment(
+  payload: ShipmentQuotePayload
+): Promise<ShipmentQuoteResult[]> {
+  const data = await request<any[]>("/shipments/ghn/quote", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createGhnShipment(
+  orderId: string,
+  payload: CreateGhnShipmentPayload
+) {
+  return request<any>(`/shipments/${orderId}/ghn/create`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function trackGhnShipment(payload: {
+  orderCode?: string;
+  clientOrderCode?: string;
+}) {
+  return request<any>("/shipments/ghn/track", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
