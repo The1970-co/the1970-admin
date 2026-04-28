@@ -37,10 +37,10 @@ export async function getProvinces(): Promise<ProvinceItem[]> {
   return request("/address/provinces");
 }
 
-export async function getDistricts(provinceId: number) {
-  return request(`/address/districts?provinceId=${provinceId}`);
+export async function getDistricts(provinceId: number): Promise<DistrictItem[]> {
+  return request<DistrictItem[]>(`/address/districts?provinceId=${provinceId}`);
 }
 
-export async function getWards(districtId: number) {
-  return request(`/address/wards?districtId=${districtId}`);
+export async function getWards(districtId: number): Promise<WardItem[]> {
+  return request<WardItem[]>(`/address/wards?districtId=${districtId}`);
 }

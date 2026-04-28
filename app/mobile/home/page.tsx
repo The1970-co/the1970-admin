@@ -57,7 +57,6 @@ type HomeResponse = {
   finance?: HomeFinance;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "${API_BASE}";
 
 function getTokenFromStorage(): string | null {
   if (typeof window === "undefined") return null;
