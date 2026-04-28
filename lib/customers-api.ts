@@ -1,3 +1,4 @@
+import { API_BASE } from "@/lib/api-base";
 export type CustomerAddressItem = {
   id: string;
   label?: string | null;
@@ -141,10 +142,6 @@ export type UpdateCustomerAddressPayload = {
   isDefault?: boolean;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:3001";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =

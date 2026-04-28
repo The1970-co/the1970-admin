@@ -1,3 +1,4 @@
+import { API_BASE } from "@/lib/api-base";
 export type CreateOrderMode = "draft" | "approve" | "ship";
 
 export type OrderProductVariant = {
@@ -7,7 +8,9 @@ export type OrderProductVariant = {
   size?: string;
   price: number;
   stock: number;
+  productCode?: string;
   branchStocks?: Record<string, number>;
+
 };
 
 export type OrderProduct = {
@@ -172,10 +175,6 @@ export type CreateGhnShipmentPayload = {
   }>;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =
@@ -198,7 +197,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
         : data?.message || message;
-    } catch {}
+    } catch { }
     throw new Error(message);
   }
 
@@ -229,53 +228,75 @@ function normalizeSalesChannel(input: string) {
 }
 
 export async function getProductsForOrder(): Promise<OrderProduct[]> {
-  const products = await request<any[]>("/products");
+  const raw = await request<any>("/products");
 
-  return products.map((product) => ({
-    id: String(product.id),
-    name: String(product.name || ""),
-    slug: product.slug || "",
-    imageUrl: product.imageUrl || "",
-    variants: Array.isArray(product.variants)
-      ? product.variants.map((variant: any) => {
-          const branchStocks = normalizeBranchStocks(variant.inventoryByBranch);
+  const products = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.data)
+      ? raw.data
+      : Array.isArray(raw?.items)
+        ? raw.items
+        : [];
 
-          const stock =
-            Object.keys(branchStocks).length > 0
-              ? Object.values(branchStocks).reduce(
-                  (sum, qty) => sum + toNumber(qty),
-                  0
-                )
-              : Array.isArray(variant.inventoryItems)
-                ? variant.inventoryItems.reduce(
-                    (sum: number, item: any) =>
-                      sum + toNumber(item.availableQty),
+  return products.map((product: any) => {
+    const productCode = String(
+      product.sku ||
+        product.code ||
+        product.productCode ||
+        product.mainSku ||
+        product.slug ||
+        ""
+    );
+
+    return {
+      id: String(product.id),
+      name: String(product.name || ""),
+      slug: product.slug || "",
+      imageUrl: product.imageUrl || product.thumbnailUrl || "",
+      variants: Array.isArray(product.variants)
+        ? product.variants.map((variant: any) => {
+            const branchStocks = normalizeBranchStocks(
+              variant.inventoryByBranch || variant.branchStocks
+            );
+
+            const stock =
+              Object.keys(branchStocks).length > 0
+                ? Object.values(branchStocks).reduce(
+                    (sum, qty) => sum + toNumber(qty),
                     0
                   )
-                : toNumber(variant.stock ?? 0);
-
-          return {
-            id: String(variant.id),
-            sku: String(variant.sku || ""),
-            color: variant.color || "",
-            size: variant.size || "",
-            price: toNumber(variant.price),
-            stock,
-            branchStocks:
-              Object.keys(branchStocks).length > 0
-                ? branchStocks
                 : Array.isArray(variant.inventoryItems)
-                  ? Object.fromEntries(
-                      variant.inventoryItems.map((item: any) => [
-                        String(item.branchId),
-                        toNumber(item.availableQty),
-                      ])
+                  ? variant.inventoryItems.reduce(
+                      (sum: number, item: any) =>
+                        sum + toNumber(item.availableQty),
+                      0
                     )
-                  : {},
-          };
-        })
-      : [],
-  }));
+                  : toNumber(variant.stock ?? variant.availableQty ?? 0);
+
+            return {
+              id: String(variant.id),
+              sku: String(variant.sku || ""),
+              productCode,
+              color: variant.color || "",
+              size: variant.size || "",
+              price: toNumber(variant.price),
+              stock,
+              branchStocks:
+                Object.keys(branchStocks).length > 0
+                  ? branchStocks
+                  : Array.isArray(variant.inventoryItems)
+                    ? Object.fromEntries(
+                        variant.inventoryItems.map((item: any) => [
+                          String(item.branchId),
+                          toNumber(item.availableQty),
+                        ])
+                      )
+                    : {},
+            };
+          })
+        : [],
+    };
+  });
 }
 
 export async function findCustomerByPhone(
@@ -285,16 +306,16 @@ export async function findCustomerByPhone(
 
   const candidates = cleaned
     ? [
-        `/customers/search?phone=${cleaned}`,
-        `/customers/search?q=${cleaned}`,
-        `/customers?search=${cleaned}`,
-        `/customers?phone=${cleaned}`,
-      ]
+      `/customers/search?phone=${cleaned}`,
+      `/customers/search?q=${cleaned}`,
+      `/customers?search=${cleaned}`,
+      `/customers?phone=${cleaned}`,
+    ]
     : [
-        `/customers/search`,
-        `/customers/search?phone=`,
-        `/customers`,
-      ];
+      `/customers/search`,
+      `/customers/search?phone=`,
+      `/customers`,
+    ];
 
   for (const path of candidates) {
     try {
@@ -364,31 +385,31 @@ export async function createOrder(
     mode: payload.mode || "draft",
     shippingSnapshot: payload.shippingSnapshot
       ? {
-          shippingAddressId: payload.shippingSnapshot.shippingAddressId,
-          shippingRecipientName:
-            payload.shippingSnapshot.shippingRecipientName,
-          shippingPhone: payload.shippingSnapshot.shippingPhone,
-          shippingAddressLine1:
-            payload.shippingSnapshot.shippingAddressLine1,
-          shippingAddressLine2:
-            payload.shippingSnapshot.shippingAddressLine2,
-          shippingWard: payload.shippingSnapshot.shippingWard,
-          shippingDistrict: payload.shippingSnapshot.shippingDistrict,
-          shippingProvince: payload.shippingSnapshot.shippingProvince,
-          shippingPostalCode: payload.shippingSnapshot.shippingPostalCode,
-          ghnDistrictId: payload.shippingSnapshot.shippingGhnDistrictId,
-          ghnWardCode: payload.shippingSnapshot.shippingGhnWardCode,
-          shippingPartner: payload.shippingSnapshot.shippingPartner,
-          shippingPayer: payload.shippingSnapshot.shippingPayer,
-          requiredNote: payload.shippingSnapshot.requiredNote,
-          selectedServiceId: payload.shippingSnapshot.selectedServiceId,
-          selectedServiceTypeId:
-            payload.shippingSnapshot.selectedServiceTypeId,
-          weight: payload.shippingSnapshot.weight,
-          length: payload.shippingSnapshot.length,
-          width: payload.shippingSnapshot.width,
-          height: payload.shippingSnapshot.height,
-        }
+        shippingAddressId: payload.shippingSnapshot.shippingAddressId,
+        shippingRecipientName:
+          payload.shippingSnapshot.shippingRecipientName,
+        shippingPhone: payload.shippingSnapshot.shippingPhone,
+        shippingAddressLine1:
+          payload.shippingSnapshot.shippingAddressLine1,
+        shippingAddressLine2:
+          payload.shippingSnapshot.shippingAddressLine2,
+        shippingWard: payload.shippingSnapshot.shippingWard,
+        shippingDistrict: payload.shippingSnapshot.shippingDistrict,
+        shippingProvince: payload.shippingSnapshot.shippingProvince,
+        shippingPostalCode: payload.shippingSnapshot.shippingPostalCode,
+        ghnDistrictId: payload.shippingSnapshot.shippingGhnDistrictId,
+        ghnWardCode: payload.shippingSnapshot.shippingGhnWardCode,
+        shippingPartner: payload.shippingSnapshot.shippingPartner,
+        shippingPayer: payload.shippingSnapshot.shippingPayer,
+        requiredNote: payload.shippingSnapshot.requiredNote,
+        selectedServiceId: payload.shippingSnapshot.selectedServiceId,
+        selectedServiceTypeId:
+          payload.shippingSnapshot.selectedServiceTypeId,
+        weight: payload.shippingSnapshot.weight,
+        length: payload.shippingSnapshot.length,
+        width: payload.shippingSnapshot.width,
+        height: payload.shippingSnapshot.height,
+      }
       : undefined,
     items: payload.items.map((item) => ({
       variantId: item.variantId,
@@ -487,10 +508,10 @@ export async function searchCustomers(query = ""): Promise<SearchCustomerItem[]>
 
   const candidates = cleaned
     ? [
-        `/customers/search?q=${encodeURIComponent(cleaned)}`,
-        `/customers/search?phone=${encodeURIComponent(cleaned)}`,
-        `/customers?search=${encodeURIComponent(cleaned)}`,
-      ]
+      `/customers/search?q=${encodeURIComponent(cleaned)}`,
+      `/customers/search?phone=${encodeURIComponent(cleaned)}`,
+      `/customers?search=${encodeURIComponent(cleaned)}`,
+    ]
     : ["/customers/search", "/customers"];
 
   for (const path of candidates) {

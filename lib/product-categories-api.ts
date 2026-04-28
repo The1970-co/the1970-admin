@@ -1,7 +1,4 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
+import { API_BASE } from "@/lib/api-base";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =

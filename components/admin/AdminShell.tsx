@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -20,10 +21,6 @@ type MenuItem = {
   children?: MenuItem[];
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:3001";
 
 const MENU: MenuItem[] = [
   { href: "/control", label: "Tổng quan", permission: "dashboard.view" },

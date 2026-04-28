@@ -1,7 +1,4 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
+import { API_BASE } from "@/lib/api-base";
 
 export type ProvinceItem = {
   id: number;
@@ -31,28 +28,19 @@ async function request<T>(path: string): Promise<T> {
     cache: "no-store",
   });
 
-  if (!res.ok) {
-    let message = `Request failed: ${res.status}`;
-    try {
-      const data = await res.json();
-      message = Array.isArray(data?.message)
-        ? data.message.join(", ")
-        : data?.message || message;
-    } catch {}
-    throw new Error(message);
-  }
+  if (!res.ok) throw new Error("API error");
 
   return res.json();
 }
 
 export async function getProvinces(): Promise<ProvinceItem[]> {
-  return request<ProvinceItem[]>("/address/provinces");
+  return request("/address/provinces");
 }
 
-export async function getDistricts(provinceId: number): Promise<DistrictItem[]> {
-  return request<DistrictItem[]>(`/address/districts?provinceId=${provinceId}`);
+export async function getDistricts(provinceId: number) {
+  return request(`/address/districts?provinceId=${provinceId}`);
 }
 
-export async function getWards(districtId: number): Promise<WardItem[]> {
-  return request<WardItem[]>(`/address/wards?districtId=${districtId}`);
+export async function getWards(districtId: number) {
+  return request(`/address/wards?districtId=${districtId}`);
 }

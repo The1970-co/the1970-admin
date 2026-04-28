@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -16,7 +17,7 @@ type MobileOrder = {
   createdAt: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "${API_BASE}";
 
 function money(v: number) {
   return new Intl.NumberFormat("vi-VN").format(v || 0);

@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -11,7 +12,7 @@ import {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:3001";
+  "${API_BASE}";
 
 function EyeIcon({ open }: { open: boolean }) {
   return (

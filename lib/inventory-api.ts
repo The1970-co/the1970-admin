@@ -1,3 +1,4 @@
+import { API_BASE } from "@/lib/api-base";
 import { getTokenFromStorage, clearCurrentUserFromStorage } from "@/lib/current-user";
 
 export type InventoryMovement = {
@@ -15,11 +16,6 @@ export type InventoryMovement = {
   size?: string;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_CORE_API_URL ||
-  "http://localhost:3001";
 
 function getAuthHeaders(initHeaders?: HeadersInit): HeadersInit {
   const token = getTokenFromStorage();

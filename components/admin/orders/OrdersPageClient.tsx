@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE } from "@/lib/api-base";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
 import {
@@ -756,7 +757,7 @@ export default function OrdersPageClient() {
       if (dateTo) params.set("dateTo", dateTo);
 
       const res = await fetch(
-        `http://localhost:3001/orders?${params.toString()}`,
+        `${API_BASE}/orders?${params.toString()}`,
         {
           method: "GET",
           headers: {
@@ -1020,7 +1021,7 @@ export default function OrdersPageClient() {
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    const res = await fetch(`http://localhost:3001/shipments/${id}/create`, {
+    const res = await fetch(`${API_BASE}/shipments/${id}/create`, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -1046,7 +1047,7 @@ export default function OrdersPageClient() {
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    const res = await fetch(`http://localhost:3001/shipments/${id}/cancel`, {
+    const res = await fetch(`${API_BASE}/shipments/${id}/cancel`, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -1072,7 +1073,7 @@ export default function OrdersPageClient() {
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    const res = await fetch(`http://localhost:3001/orders/${id}`, {
+    const res = await fetch(`${API_BASE}/orders/${id}`, {
       method: "DELETE",
       headers: {
         Accept: "application/json",

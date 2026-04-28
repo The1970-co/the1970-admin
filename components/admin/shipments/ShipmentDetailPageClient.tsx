@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
@@ -378,12 +379,12 @@ export default function ShipmentDetailPageClient({
       };
 
       const [detailRes, trackingRes] = await Promise.all([
-        fetch(`http://localhost:3001/shipments/${shipmentId}`, {
+        fetch(`${API_BASE}/shipments/${shipmentId}`, {
           headers,
           cache: "no-store",
         }),
         fetch(
-          `http://localhost:3001/shipments/${shipmentId}/tracking${
+          `${API_BASE}/shipments/${shipmentId}/tracking${
             force ? "?force=1" : ""
           }`,
           {

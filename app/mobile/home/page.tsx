@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -56,7 +57,7 @@ type HomeResponse = {
   finance?: HomeFinance;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "${API_BASE}";
 
 function getTokenFromStorage(): string | null {
   if (typeof window === "undefined") return null;

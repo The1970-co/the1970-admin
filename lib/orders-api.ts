@@ -1,3 +1,4 @@
+import { API_BASE } from "@/lib/api-base";
 export type OrderStatus =
   | "NEW"
   | "APPROVED"
@@ -153,11 +154,6 @@ export type CreateShipmentPayload = {
   items: CreateShipmentItemPayload[];
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_CORE_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =

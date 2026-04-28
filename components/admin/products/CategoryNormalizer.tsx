@@ -1,12 +1,9 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 function normalizeHeader(value: unknown) {
   return String(value ?? "")

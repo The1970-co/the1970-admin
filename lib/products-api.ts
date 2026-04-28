@@ -1,3 +1,4 @@
+import { API_BASE } from "@/lib/api-base";
 export type BranchStockMap = Record<string, number>;
 
 export type ProductVariant = {
@@ -71,10 +72,6 @@ export type AddVariantPayload = {
   branchStocks: Record<string, number>;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token =

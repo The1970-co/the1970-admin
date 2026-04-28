@@ -1,7 +1,6 @@
+import { API_BASE } from "@/lib/api-base";
 import { getTokenFromStorage, clearCurrentUserFromStorage } from "@/lib/current-user";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_CORE_API_URL || "http://localhost:3001";
 
 type RequestOptions = RequestInit & {
   auth?: boolean;

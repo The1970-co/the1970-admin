@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useMemo, useState } from "react";
 
 type TotpSetupResponse = {
@@ -94,7 +95,7 @@ export default function GoogleAuthPage() {
         throw new Error("Không tìm thấy token đăng nhập.");
       }
 
-      const res = await fetch("http://localhost:3001/auth/totp/setup", {
+      const res = await fetch("${API_BASE}/auth/totp/setup", {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -132,7 +133,7 @@ export default function GoogleAuthPage() {
         throw new Error("Nhập mã authen 6 số trước khi xác nhận.");
       }
 
-      const res = await fetch("http://localhost:3001/auth/totp/verify-setup", {
+      const res = await fetch("${API_BASE}/auth/totp/verify-setup", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

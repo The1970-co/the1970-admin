@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import ProductPicker from "./ProductPicker";
@@ -708,7 +709,7 @@ export default function OrderDetailPageClient({
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    const res = await fetch("http://localhost:3001/shipping-addresses/provinces", {
+    const res = await fetch("${API_BASE}/shipping-addresses/provinces", {
       headers: {
         Accept: "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -729,7 +730,7 @@ export default function OrderDetailPageClient({
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
     const res = await fetch(
-      `http://localhost:3001/shipping-addresses/districts?provinceId=${provinceId}`,
+      `${API_BASE}/shipping-addresses/districts?provinceId=${provinceId}`,
       {
         headers: {
           Accept: "application/json",
@@ -752,7 +753,7 @@ export default function OrderDetailPageClient({
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
     const res = await fetch(
-      `http://localhost:3001/shipping-addresses/wards?districtId=${districtId}`,
+      `${API_BASE}/shipping-addresses/wards?districtId=${districtId}`,
       {
         headers: {
           Accept: "application/json",
@@ -771,7 +772,7 @@ export default function OrderDetailPageClient({
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
     const provinceRes = await fetch(
-      "http://localhost:3001/shipping-addresses/provinces",
+      "${API_BASE}/shipping-addresses/provinces",
       {
         headers: {
           Accept: "application/json",
@@ -786,7 +787,7 @@ export default function OrderDetailPageClient({
 
     for (const province of provinceList) {
       const districtRes = await fetch(
-        `http://localhost:3001/shipping-addresses/districts?provinceId=${province.id}`,
+        `${API_BASE}/shipping-addresses/districts?provinceId=${province.id}`,
         {
           headers: {
             Accept: "application/json",
@@ -959,7 +960,7 @@ export default function OrderDetailPageClient({
         let lastMessage = "Không tải được chi tiết đơn hàng.";
 
         for (let attempt = 0; attempt < (created ? 4 : 1); attempt += 1) {
-          const res = await fetch(`http://localhost:3001/orders/${orderId}`, {
+          const res = await fetch(`${API_BASE}/orders/${orderId}`, {
             headers: {
               Accept: "application/json",
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -1372,7 +1373,7 @@ export default function OrderDetailPageClient({
       const nextCod = parseVndInput(shipmentDraft.codAmountInput);
 
       const res = await fetch(
-        `http://localhost:3001/shipments/${order.id}/cod/verify-and-update`,
+        `${API_BASE}/shipments/${order.id}/cod/verify-and-update`,
         {
           method: "POST",
           headers: {
@@ -1500,7 +1501,7 @@ export default function OrderDetailPageClient({
       let savedRecord: any = null;
 
       try {
-        const res = await fetch("http://localhost:3001/partial-delivery", {
+        const res = await fetch("${API_BASE}/partial-delivery", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1629,7 +1630,7 @@ export default function OrderDetailPageClient({
         items: sanitizedItems,
       };
 
-      const res = await fetch(`http://localhost:3001/orders/${order.id}`, {
+      const res = await fetch(`${API_BASE}/orders/${order.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

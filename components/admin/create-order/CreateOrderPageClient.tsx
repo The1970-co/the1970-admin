@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -227,7 +228,7 @@ function getApiBaseUrl() {
   return (
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "http://localhost:3001"
+    "${API_BASE}"
   ).replace(/\/$/, "");
 }
 

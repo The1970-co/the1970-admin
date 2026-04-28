@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import CategoryNormalizer from "@/components/admin/products/CategoryNormalizer";
@@ -28,10 +29,6 @@ import RoleGuard from "@/components/admin/RoleGuard";
 import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";

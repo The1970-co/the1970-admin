@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { AdminOrder, OrderPaymentStatus, OrderStatus } from "@/lib/orders-api";
@@ -546,7 +547,7 @@ export default function OrdersPageClient() {
         return;
       }
 
-      const res = await fetch("http://localhost:3001/orders", {
+      const res = await fetch("${API_BASE}/orders", {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -747,7 +748,7 @@ export default function OrdersPageClient() {
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    const res = await fetch(`http://localhost:3001/orders/${id}/send-ghn`, {
+    const res = await fetch(`${API_BASE}/orders/${id}/send-ghn`, {
       method: "POST",
       headers: {
         Accept: "application/json",

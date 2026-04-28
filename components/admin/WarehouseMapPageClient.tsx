@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState } from "react";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 import WarehouseMap3D from "@/components/admin/WarehouseMap3D";
@@ -181,10 +182,6 @@ type WarehouseDoorLite = {
   width: number;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 function getTokenFromStorage() {
   if (typeof window === "undefined") return null;

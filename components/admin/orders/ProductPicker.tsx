@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { memo, useEffect, useRef, useState } from "react";
 
 type ProductVariant = {
@@ -60,7 +61,7 @@ function ProductPicker({
             : null;
 
         const res = await fetch(
-          `http://localhost:3001/products?q=${encodeURIComponent(keyword)}`,
+          `${API_BASE}/products?q=${encodeURIComponent(keyword)}`,
           {
             headers: {
               Accept: "application/json",

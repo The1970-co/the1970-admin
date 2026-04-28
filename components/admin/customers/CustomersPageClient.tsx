@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import {
@@ -14,7 +15,7 @@ import RoleGuard from "@/components/admin/RoleGuard";
 import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "${API_BASE}";
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";

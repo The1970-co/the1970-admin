@@ -1,11 +1,8 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useMemo, useState } from "react";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:3001";
 
 const ISSUE_LABELS: Record<string, string> = {
   NOT_FOUND_INTERNAL_ORDER: "Chưa tìm thấy đơn nội bộ",

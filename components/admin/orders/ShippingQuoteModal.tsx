@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState } from "react";
 
 type Props = {
@@ -154,7 +155,7 @@ export default function ShippingQuoteModal({
       const token =
         typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-      const res = await fetch(`http://localhost:3001/shipments/${order.id}/create`, {
+      const res = await fetch(`${API_BASE}/shipments/${order.id}/create`, {
         method: "POST",
         headers: {
           Accept: "application/json",

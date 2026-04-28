@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -51,7 +52,7 @@ type OrderDetail = {
   shipment: Shipment | null;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "${API_BASE}";
 
 function money(v: number | null | undefined) {
   return new Intl.NumberFormat("vi-VN").format(Number(v || 0));

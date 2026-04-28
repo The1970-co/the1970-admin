@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState } from "react";
 import {
   getBranches,
@@ -20,10 +21,6 @@ import {
   type StockTransfer,
 } from "@/lib/stock-transfers-api";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001";
 
 function Panel({
   children,

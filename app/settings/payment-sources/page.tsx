@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useState } from "react";
 
 type Item = {
@@ -9,7 +10,7 @@ type Item = {
   type: string;
 };
 
-const API = "http://localhost:3001";
+const API = "${API_BASE}";
 
 export default function PaymentSourcesPage() {
   const [items, setItems] = useState<Item[]>([]);
