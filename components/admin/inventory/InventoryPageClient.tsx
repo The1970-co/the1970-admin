@@ -80,9 +80,8 @@ function Button({
   return (
     <button
       disabled={disabled}
-      className={`${className} ${
-        disabled ? "cursor-not-allowed opacity-50" : ""
-      }`}
+      className={`${className} ${disabled ? "cursor-not-allowed opacity-50" : ""
+        }`}
     >
       {children}
     </button>
@@ -160,8 +159,8 @@ export default function InventoryPageClient() {
       try {
         setLoading(true);
         setError(null);
-        const data = await getProducts();
-        setProducts(data);
+        const result = await getProducts({ page: 1, limit: 1000 });
+        setProducts(Array.isArray(result) ? result : result.data || []);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Không tải được dữ liệu kho."
@@ -432,11 +431,10 @@ export default function InventoryPageClient() {
 
           <button
             onClick={() => setLowStockOnly((v) => !v)}
-            className={`rounded-2xl border px-4 py-3 text-sm font-medium transition ${
-              lowStockOnly
+            className={`rounded-2xl border px-4 py-3 text-sm font-medium transition ${lowStockOnly
                 ? "border-amber-300 bg-amber-50 text-amber-700"
                 : "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50"
-            }`}
+              }`}
           >
             {lowStockOnly ? "Đang lọc tồn thấp" : "Lọc tồn thấp"}
           </button>
@@ -461,7 +459,7 @@ export default function InventoryPageClient() {
             {isOwner
               ? "Toàn hệ thống"
               : visibleBranches.map((b) => b.name).join(", ") ||
-                "Chưa gán chi nhánh"}
+              "Chưa gán chi nhánh"}
           </p>
         </div>
 

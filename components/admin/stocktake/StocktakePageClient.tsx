@@ -41,7 +41,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
         : data?.message || message;
-    } catch {}
+    } catch { }
 
     throw new Error(message);
   }
@@ -275,8 +275,8 @@ export default function StocktakePageClient() {
       try {
         setLoading(true);
         setError(null);
-        const data = await getProducts();
-        setProducts(data);
+        const result = await getProducts({ page: 1, limit: 1000 });
+        setProducts(Array.isArray(result) ? result : result.data || []);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Không tải được dữ liệu sản phẩm."
@@ -312,7 +312,7 @@ export default function StocktakePageClient() {
   const getVariantTotalStock = (variant: any) => {
     if (!variant?.branchStocks) return 0;
 
-    return Object.values(variant.branchStocks).reduce(
+    return Object.values(variant.branchStocks).reduce<number>(
       (sum, value) => sum + Number(value || 0),
       0
     );
@@ -621,8 +621,7 @@ export default function StocktakePageClient() {
       await refreshSession(session.id);
 
       setMessage(
-        `Đã chốt kiểm kho. Điều chỉnh ${result.adjustedCount} dòng, tổng delta ${
-          result.totalDelta > 0 ? `+${result.totalDelta}` : result.totalDelta
+        `Đã chốt kiểm kho. Điều chỉnh ${result.adjustedCount} dòng, tổng delta ${result.totalDelta > 0 ? `+${result.totalDelta}` : result.totalDelta
         }.`
       );
     } catch (err) {
@@ -735,18 +734,17 @@ export default function StocktakePageClient() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-<button
-  type="button"
-  onClick={createRealtimeSession}
-  disabled={Boolean(session)}
-  className={`rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm transition ${
-    session
-      ? "cursor-not-allowed bg-neutral-200 text-neutral-500"
-      : "bg-green-600 text-white hover:bg-green-500"
-  }`}
->
-  🚀 Tạo phiên realtime
-</button>
+          <button
+            type="button"
+            onClick={createRealtimeSession}
+            disabled={Boolean(session)}
+            className={`rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm transition ${session
+              ? "cursor-not-allowed bg-neutral-200 text-neutral-500"
+              : "bg-green-600 text-white hover:bg-green-500"
+              }`}
+          >
+            🚀 Tạo phiên realtime
+          </button>
           <Button
             variant="secondary"
             onClick={joinExistingSession}
@@ -762,34 +760,34 @@ export default function StocktakePageClient() {
           </Button>
         </div>
 
-{session ? (
-  <div className="mt-4 rounded-3xl border border-green-200 bg-green-50 p-5">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <p className="text-lg font-semibold text-green-800">
-          ✅ Phiên kiểm kho đang chạy
-        </p>
-        <p className="mt-1 text-sm text-green-700">
-          Có thể bắt đầu scan. Session ID:{" "}
-          <span className="font-mono font-semibold">{session.id}</span>
-        </p>
-      </div>
+        {session ? (
+          <div className="mt-4 rounded-3xl border border-green-200 bg-green-50 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-lg font-semibold text-green-800">
+                  ✅ Phiên kiểm kho đang chạy
+                </p>
+                <p className="mt-1 text-sm text-green-700">
+                  Có thể bắt đầu scan. Session ID:{" "}
+                  <span className="font-mono font-semibold">{session.id}</span>
+                </p>
+              </div>
 
-      <div className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-green-700 shadow-sm">
-        {session.workers?.length || 1} người kiểm
-      </div>
-    </div>
-  </div>
-) : (
-  <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-5">
-    <p className="text-lg font-semibold text-amber-800">
-      Chưa bắt đầu phiên kiểm kho
-    </p>
-    <p className="mt-1 text-sm text-amber-700">
-      Bấm “Tạo phiên realtime” để bắt đầu.
-    </p>
-  </div>
-)}
+              <div className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-green-700 shadow-sm">
+                {session.workers?.length || 1} người kiểm
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-5">
+            <p className="text-lg font-semibold text-amber-800">
+              Chưa bắt đầu phiên kiểm kho
+            </p>
+            <p className="mt-1 text-sm text-amber-700">
+              Bấm “Tạo phiên realtime” để bắt đầu.
+            </p>
+          </div>
+        )}
         <div className="mt-4 flex flex-wrap gap-2">
           <Badge tone={session ? "green" : "amber"}>
             {session ? `Session: ${session.id}` : "Chưa có session"}
@@ -909,13 +907,12 @@ export default function StocktakePageClient() {
         <Panel className="p-5">
           <p className="text-sm text-neutral-500">Tổng lệch</p>
           <h3
-            className={`mt-2 text-2xl font-semibold ${
-              totalDiff === 0
-                ? "text-green-700"
-                : totalDiff > 0
-                  ? "text-blue-700"
-                  : "text-red-700"
-            }`}
+            className={`mt-2 text-2xl font-semibold ${totalDiff === 0
+              ? "text-green-700"
+              : totalDiff > 0
+                ? "text-blue-700"
+                : "text-red-700"
+              }`}
           >
             {totalDiff > 0 ? `+${totalDiff}` : totalDiff}
           </h3>
@@ -1012,9 +1009,8 @@ export default function StocktakePageClient() {
                 {visibleRows.map((row) => (
                   <tr
                     key={row.sku}
-                    className={`border-t border-neutral-200 align-top transition ${
-                      row.sku === lastScannedSku ? "bg-amber-50" : ""
-                    }`}
+                    className={`border-t border-neutral-200 align-top transition ${row.sku === lastScannedSku ? "bg-amber-50" : ""
+                      }`}
                   >
                     <td className="px-4 py-3">
                       <p className="font-medium">{row.sku}</p>
@@ -1038,13 +1034,12 @@ export default function StocktakePageClient() {
                     <td className="px-4 py-3 font-semibold">{row.counted}</td>
 
                     <td
-                      className={`px-4 py-3 font-medium ${
-                        row.diff === 0
-                          ? "text-emerald-600"
-                          : row.diff > 0
-                            ? "text-blue-600"
-                            : "text-red-500"
-                      }`}
+                      className={`px-4 py-3 font-medium ${row.diff === 0
+                        ? "text-emerald-600"
+                        : row.diff > 0
+                          ? "text-blue-600"
+                          : "text-red-500"
+                        }`}
                     >
                       {row.diff > 0 ? `+${row.diff}` : row.diff}
                     </td>
