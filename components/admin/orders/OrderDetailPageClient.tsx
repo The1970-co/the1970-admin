@@ -49,6 +49,12 @@ type ShipmentItem = {
   shippingStatus?: string | null;
   codAmount?: number | null;
   shippingFee?: number | null;
+  codReconciliationStatus?: string | null;
+  codReconciledAt?: string | null;
+  codReconciliationBatchId?: string | null;
+  codReconciliationRowId?: string | null;
+  codReconciliationIssue?: string | null;
+  codReconciliationAmount?: number | null;
 };
 
 type CustomerItem = {
@@ -137,7 +143,32 @@ type OrderHistoryEntry = {
 function currency(n?: number | null) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
 }
+function codReconciliationLabel(status?: string | null) {
+  if (status === "MATCHED") return "Đã đối soát";
+  if (status === "MATCHED_BY_PARTIAL_DELIVERY") return "Đã đối soát qua giao 1 phần";
+  if (status === "MISMATCH") return "Đối soát lệch";
+  if (status === "NOT_FOUND") return "Không tìm thấy trong phiên GHN";
+  return "Chưa đối soát";
+}
 
+function codReconciliationTone(
+  status?: string | null
+): "gray" | "green" | "amber" | "red" | "blue" {
+  if (status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY") return "green";
+  if (status === "MISMATCH" || status === "NOT_FOUND") return "red";
+  return "gray";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(value));
+}
 function formatVndInput(value: string | number | null | undefined) {
   const digits = String(value ?? "").replace(/\D/g, "");
   if (!digits) return "";
@@ -216,9 +247,8 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={() => void onClick?.()}
-      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${
-        disabled ? "cursor-not-allowed opacity-45" : ""
-      }`}
+      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${disabled ? "cursor-not-allowed opacity-45" : ""
+        }`}
     >
       {children}
     </button>
@@ -487,11 +517,10 @@ function Timeline({ status }: { status?: string | null }) {
           <div key={step.key} className="flex items-center">
             <div className="flex flex-col items-center">
               <div
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${
-                  active
-                    ? "bg-blue-600 text-white"
-                    : "bg-neutral-200 text-neutral-500"
-                }`}
+                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${active
+                  ? "bg-blue-600 text-white"
+                  : "bg-neutral-200 text-neutral-500"
+                  }`}
               >
                 {step.key}
               </div>
@@ -502,9 +531,8 @@ function Timeline({ status }: { status?: string | null }) {
 
             {!last ? (
               <div
-                className={`mx-1.5 h-[2px] w-6 md:w-8 ${
-                  current > step.key ? "bg-blue-600" : "bg-neutral-200"
-                }`}
+                className={`mx-1.5 h-[2px] w-6 md:w-8 ${current > step.key ? "bg-blue-600" : "bg-neutral-200"
+                  }`}
               />
             ) : null}
           </div>
@@ -579,22 +607,22 @@ function isPartialDelivery(order?: OrderDetail | null) {
 }
 
 function buildShipmentEditDraft(order?: OrderDetail | null): ShipmentEditDraft {
-return {
-  recipientName: order?.shippingRecipientName || order?.customerName || "",
-  phone: order?.shippingPhone || order?.customerPhone || "",
-  addressLine1: order?.shippingAddressLine1 || "",
-  addressLine2: order?.shippingAddressLine2 || "",
-  ward: order?.shippingWard || "",
-  district: order?.shippingDistrict || "",
-  province: order?.shippingProvince || "",
-  postalCode: order?.shippingPostalCode || "",
-  shippingNote: parseStructuredNote(order?.note).shippingNote || "",
-  codAmountInput: formatVndInput(order?.shipment?.codAmount || 0),
-  ghnDistrictId: order?.shippingGhnDistrictId
-    ? String(order.shippingGhnDistrictId)
-    : "",
-  ghnWardCode: order?.shippingGhnWardCode || "",
-};
+  return {
+    recipientName: order?.shippingRecipientName || order?.customerName || "",
+    phone: order?.shippingPhone || order?.customerPhone || "",
+    addressLine1: order?.shippingAddressLine1 || "",
+    addressLine2: order?.shippingAddressLine2 || "",
+    ward: order?.shippingWard || "",
+    district: order?.shippingDistrict || "",
+    province: order?.shippingProvince || "",
+    postalCode: order?.shippingPostalCode || "",
+    shippingNote: parseStructuredNote(order?.note).shippingNote || "",
+    codAmountInput: formatVndInput(order?.shipment?.codAmount || 0),
+    ghnDistrictId: order?.shippingGhnDistrictId
+      ? String(order.shippingGhnDistrictId)
+      : "",
+    ghnWardCode: order?.shippingGhnWardCode || "",
+  };
 }
 
 function buildPartialDeliveryDraft(
@@ -658,14 +686,14 @@ export default function OrderDetailPageClient({
 }) {
   const router = useRouter();
   const currentUser = getCurrentUserFromStorage();
-  
-const [provinceOptions, setProvinceOptions] = useState<ProvinceOption[]>([]);
-const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
-const [wardOptions, setWardOptions] = useState<WardOption[]>([]);
 
-const [selectedProvinceId, setSelectedProvinceId] = useState("");
-const [selectedDistrictId, setSelectedDistrictId] = useState("");
-const [selectedWardCode, setSelectedWardCode] = useState("");
+  const [provinceOptions, setProvinceOptions] = useState<ProvinceOption[]>([]);
+  const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
+  const [wardOptions, setWardOptions] = useState<WardOption[]>([]);
+
+  const [selectedProvinceId, setSelectedProvinceId] = useState("");
+  const [selectedDistrictId, setSelectedDistrictId] = useState("");
+  const [selectedWardCode, setSelectedWardCode] = useState("");
 
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [draftOrder, setDraftOrder] = useState<OrderDetail | null>(null);
@@ -676,89 +704,32 @@ const [selectedWardCode, setSelectedWardCode] = useState("");
   const [message, setMessage] = useState("");
   const [showCreatedToast, setShowCreatedToast] = useState(false);
   const createdToastShownRef = useRef(false);
-const loadProvinces = async () => {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const loadProvinces = async () => {
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-  const res = await fetch("http://localhost:3001/shipping-addresses/provinces", {
-    headers: {
-      Accept: "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-
-  const json = await res.json().catch(() => []);
-  setProvinceOptions(Array.isArray(json) ? json : []);
-};
-
-const loadDistricts = async (provinceId: string) => {
-  if (!provinceId) {
-    setDistrictOptions([]);
-    return;
-  }
-
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const res = await fetch(
-    `http://localhost:3001/shipping-addresses/districts?provinceId=${provinceId}`,
-    {
+    const res = await fetch("http://localhost:3001/shipping-addresses/provinces", {
       headers: {
         Accept: "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+    });
+
+    const json = await res.json().catch(() => []);
+    setProvinceOptions(Array.isArray(json) ? json : []);
+  };
+
+  const loadDistricts = async (provinceId: string) => {
+    if (!provinceId) {
+      setDistrictOptions([]);
+      return;
     }
-  );
 
-  const json = await res.json().catch(() => []);
-  setDistrictOptions(Array.isArray(json) ? json : []);
-};
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-const loadWards = async (districtId: string) => {
-  if (!districtId) {
-    setWardOptions([]);
-    return;
-  }
-
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const res = await fetch(
-    `http://localhost:3001/shipping-addresses/wards?districtId=${districtId}`,
-    {
-      headers: {
-        Accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    }
-  );
-
-  const json = await res.json().catch(() => []);
-  setWardOptions(Array.isArray(json) ? json : []);
-};
-const resolveProvinceIdByDistrictId = async (districtId: string) => {
-  if (!districtId) return "";
-
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const provinceRes = await fetch(
-    "http://localhost:3001/shipping-addresses/provinces",
-    {
-      headers: {
-        Accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    }
-  );
-
-  const provinces = await provinceRes.json().catch(() => []);
-  const provinceList = Array.isArray(provinces) ? provinces : [];
-  setProvinceOptions(provinceList);
-
-  for (const province of provinceList) {
-    const districtRes = await fetch(
-      `http://localhost:3001/shipping-addresses/districts?provinceId=${province.id}`,
+    const res = await fetch(
+      `http://localhost:3001/shipping-addresses/districts?provinceId=${provinceId}`,
       {
         headers: {
           Accept: "application/json",
@@ -767,82 +738,139 @@ const resolveProvinceIdByDistrictId = async (districtId: string) => {
       }
     );
 
-    const districts = await districtRes.json().catch(() => []);
-    const districtList = Array.isArray(districts) ? districts : [];
+    const json = await res.json().catch(() => []);
+    setDistrictOptions(Array.isArray(json) ? json : []);
+  };
 
-    const found = districtList.find(
-      (d: any) => String(d.id) === String(districtId)
+  const loadWards = async (districtId: string) => {
+    if (!districtId) {
+      setWardOptions([]);
+      return;
+    }
+
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+    const res = await fetch(
+      `http://localhost:3001/shipping-addresses/wards?districtId=${districtId}`,
+      {
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }
     );
 
-    if (found) {
-      setDistrictOptions(districtList);
-      return String(province.id);
+    const json = await res.json().catch(() => []);
+    setWardOptions(Array.isArray(json) ? json : []);
+  };
+  const resolveProvinceIdByDistrictId = async (districtId: string) => {
+    if (!districtId) return "";
+
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+    const provinceRes = await fetch(
+      "http://localhost:3001/shipping-addresses/provinces",
+      {
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }
+    );
+
+    const provinces = await provinceRes.json().catch(() => []);
+    const provinceList = Array.isArray(provinces) ? provinces : [];
+    setProvinceOptions(provinceList);
+
+    for (const province of provinceList) {
+      const districtRes = await fetch(
+        `http://localhost:3001/shipping-addresses/districts?provinceId=${province.id}`,
+        {
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }
+      );
+
+      const districts = await districtRes.json().catch(() => []);
+      const districtList = Array.isArray(districts) ? districts : [];
+
+      const found = districtList.find(
+        (d: any) => String(d.id) === String(districtId)
+      );
+
+      if (found) {
+        setDistrictOptions(districtList);
+        return String(province.id);
+      }
     }
-  }
 
-  return "";
-};
-const handleProvinceChange = async (provinceId: string) => {
-  setSelectedProvinceId(provinceId);
-  setSelectedDistrictId("");
-  setSelectedWardCode("");
-  setDistrictOptions([]);
-  setWardOptions([]);
+    return "";
+  };
+  const handleProvinceChange = async (provinceId: string) => {
+    setSelectedProvinceId(provinceId);
+    setSelectedDistrictId("");
+    setSelectedWardCode("");
+    setDistrictOptions([]);
+    setWardOptions([]);
 
-  const province = provinceOptions.find((p) => String(p.id) === provinceId);
+    const province = provinceOptions.find((p) => String(p.id) === provinceId);
 
-  setShipmentDraft((prev) => ({
-    ...prev,
-    province: province?.name || "",
-    district: "",
-    ward: "",
-    ghnDistrictId: "",
-    ghnWardCode: "",
-  }));
+    setShipmentDraft((prev) => ({
+      ...prev,
+      province: province?.name || "",
+      district: "",
+      ward: "",
+      ghnDistrictId: "",
+      ghnWardCode: "",
+    }));
 
-  await loadDistricts(provinceId);
-};
+    await loadDistricts(provinceId);
+  };
 
-const handleDistrictChange = async (districtId: string) => {
-  setSelectedDistrictId(districtId);
-  setSelectedWardCode("");
+  const handleDistrictChange = async (districtId: string) => {
+    setSelectedDistrictId(districtId);
+    setSelectedWardCode("");
 
-  const district = districtOptions.find((d) => String(d.id) === districtId);
+    const district = districtOptions.find((d) => String(d.id) === districtId);
 
-  setShipmentDraft((prev) => ({
-    ...prev,
-    district: district?.name || "",
-    ward: "",
-    ghnDistrictId: districtId,
-    ghnWardCode: "",
-  }));
+    setShipmentDraft((prev) => ({
+      ...prev,
+      district: district?.name || "",
+      ward: "",
+      ghnDistrictId: districtId,
+      ghnWardCode: "",
+    }));
 
-  await loadWards(districtId);
-};
-const handleWardChange = (wardCode: string) => {
-  setSelectedWardCode(wardCode);
+    await loadWards(districtId);
+  };
+  const handleWardChange = (wardCode: string) => {
+    setSelectedWardCode(wardCode);
 
-  const ward = wardOptions.find((w) => w.code === wardCode);
+    const ward = wardOptions.find((w) => w.code === wardCode);
 
-  setShipmentDraft((prev) => ({
-    ...prev,
-    ward: ward?.name || "",
-    ghnWardCode: wardCode,
-  }));
-};
+    setShipmentDraft((prev) => ({
+      ...prev,
+      ward: ward?.name || "",
+      ghnWardCode: wardCode,
+    }));
+  };
 
-const handleEditProvinceChange = async (provinceId: string) => {
-  setSelectedProvinceId(provinceId);
-  setSelectedDistrictId("");
-  setSelectedWardCode("");
-  setDistrictOptions([]);
-  setWardOptions([]);
+  const handleEditProvinceChange = async (provinceId: string) => {
+    setSelectedProvinceId(provinceId);
+    setSelectedDistrictId("");
+    setSelectedWardCode("");
+    setDistrictOptions([]);
+    setWardOptions([]);
 
-  const province = provinceOptions.find((p) => String(p.id) === provinceId);
+    const province = provinceOptions.find((p) => String(p.id) === provinceId);
 
-  setDraftOrder((prev) =>
-    prev
-      ? {
+    setDraftOrder((prev) =>
+      prev
+        ? {
           ...prev,
           shippingProvince: province?.name || "",
           shippingDistrict: "",
@@ -850,49 +878,49 @@ const handleEditProvinceChange = async (provinceId: string) => {
           shippingGhnDistrictId: null,
           shippingGhnWardCode: null,
         }
-      : prev
-  );
+        : prev
+    );
 
-  await loadDistricts(provinceId);
-};
+    await loadDistricts(provinceId);
+  };
 
-const handleEditDistrictChange = async (districtId: string) => {
-  setSelectedDistrictId(districtId);
-  setSelectedWardCode("");
-  setWardOptions([]);
+  const handleEditDistrictChange = async (districtId: string) => {
+    setSelectedDistrictId(districtId);
+    setSelectedWardCode("");
+    setWardOptions([]);
 
-  const district = districtOptions.find((d) => String(d.id) === districtId);
+    const district = districtOptions.find((d) => String(d.id) === districtId);
 
-  setDraftOrder((prev) =>
-    prev
-      ? {
+    setDraftOrder((prev) =>
+      prev
+        ? {
           ...prev,
           shippingDistrict: district?.name || "",
           shippingWard: "",
           shippingGhnDistrictId: districtId ? Number(districtId) : null,
           shippingGhnWardCode: null,
         }
-      : prev
-  );
+        : prev
+    );
 
-  await loadWards(districtId);
-};
+    await loadWards(districtId);
+  };
 
-const handleEditWardChange = (wardCode: string) => {
-  setSelectedWardCode(wardCode);
+  const handleEditWardChange = (wardCode: string) => {
+    setSelectedWardCode(wardCode);
 
-  const ward = wardOptions.find((w) => w.code === wardCode);
+    const ward = wardOptions.find((w) => w.code === wardCode);
 
-  setDraftOrder((prev) =>
-    prev
-      ? {
+    setDraftOrder((prev) =>
+      prev
+        ? {
           ...prev,
           shippingWard: ward?.name || "",
           shippingGhnWardCode: wardCode || null,
         }
-      : prev
-  );
-};
+        : prev
+    );
+  };
   const [showShipmentEditModal, setShowShipmentEditModal] = useState(false);
   const [showAuthConfirmModal, setShowAuthConfirmModal] = useState(false);
   const [showCodSuccessToast, setShowCodSuccessToast] = useState(false);
@@ -1085,23 +1113,23 @@ const handleEditWardChange = (wardCode: string) => {
     ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
     : 0;
 
-const computedFinalAmount =
-  itemsSubtotal -
-  Number(viewOrder?.discountAmount || 0) +
-  Number(viewOrder?.shippingFee || 0);
+  const computedFinalAmount =
+    itemsSubtotal -
+    Number(viewOrder?.discountAmount || 0) +
+    Number(viewOrder?.shippingFee || 0);
 
-const shipmentCodAmount = Number(viewOrder?.shipment?.codAmount || 0);
+  const shipmentCodAmount = Number(viewOrder?.shipment?.codAmount || 0);
 
-const shownFinalAmount =
-  shipmentCodAmount > 0
-    ? shipmentCodAmount
-    : isEditing
-      ? computedFinalAmount
-      : Number(viewOrder?.finalAmount || 0);
+  const shownFinalAmount =
+    shipmentCodAmount > 0
+      ? shipmentCodAmount
+      : isEditing
+        ? computedFinalAmount
+        : Number(viewOrder?.finalAmount || 0);
 
-const amountDue = Math.max(shownFinalAmount - customerPaid, 0);
+  const amountDue = Math.max(shownFinalAmount - customerPaid, 0);
 
-const partialDelivery = useMemo(() => isPartialDelivery(viewOrder), [viewOrder]);
+  const partialDelivery = useMemo(() => isPartialDelivery(viewOrder), [viewOrder]);
 
   const canEdit =
     !!order &&
@@ -1201,39 +1229,39 @@ const partialDelivery = useMemo(() => isPartialDelivery(viewOrder), [viewOrder])
     setMessage("");
   };
 
-const handleOpenShipmentEdit = async () => {
-  if (!order) return;
+  const handleOpenShipmentEdit = async () => {
+    if (!order) return;
 
-  const draft = buildShipmentEditDraft(order);
-  setShipmentDraft(draft);
-  setEditMode("full");
-  setAuthCode("");
-  setShowAuthConfirmModal(false);
+    const draft = buildShipmentEditDraft(order);
+    setShipmentDraft(draft);
+    setEditMode("full");
+    setAuthCode("");
+    setShowAuthConfirmModal(false);
 
-  const nextDistrictId = draft.ghnDistrictId || "";
-  const nextWardCode = draft.ghnWardCode || "";
+    const nextDistrictId = draft.ghnDistrictId || "";
+    const nextWardCode = draft.ghnWardCode || "";
 
-  let nextProvinceId = "";
-  if (nextDistrictId) {
-    nextProvinceId = await resolveProvinceIdByDistrictId(nextDistrictId);
-  } else {
-    await loadProvinces();
-  }
+    let nextProvinceId = "";
+    if (nextDistrictId) {
+      nextProvinceId = await resolveProvinceIdByDistrictId(nextDistrictId);
+    } else {
+      await loadProvinces();
+    }
 
-  setSelectedProvinceId(nextProvinceId);
-  setSelectedDistrictId(nextDistrictId);
-  setSelectedWardCode(nextWardCode);
+    setSelectedProvinceId(nextProvinceId);
+    setSelectedDistrictId(nextDistrictId);
+    setSelectedWardCode(nextWardCode);
 
-  if (nextProvinceId) {
-    await loadDistricts(nextProvinceId);
-  }
+    if (nextProvinceId) {
+      await loadDistricts(nextProvinceId);
+    }
 
-  if (nextDistrictId) {
-    await loadWards(nextDistrictId);
-  }
+    if (nextDistrictId) {
+      await loadWards(nextDistrictId);
+    }
 
-  setShowShipmentEditModal(true);
-};
+    setShowShipmentEditModal(true);
+  };
   const handleOpenCodEdit = () => {
     if (!order) return;
     setShipmentDraft(buildShipmentEditDraft(order));
@@ -1268,49 +1296,49 @@ const handleOpenShipmentEdit = async () => {
         shipmentDraft.shippingNote
       );
 
-const nextOrder: OrderDetail = {
-  ...order,
-  shippingRecipientName: shipmentDraft.recipientName,
-  shippingPhone: shipmentDraft.phone,
-  shippingAddressLine1: shipmentDraft.addressLine1,
-  shippingAddressLine2: shipmentDraft.addressLine2,
-  shippingWard: shipmentDraft.ward,
-  shippingDistrict: shipmentDraft.district,
-  shippingProvince: shipmentDraft.province,
-  shippingPostalCode: shipmentDraft.postalCode,
-  shippingGhnDistrictId: shipmentDraft.ghnDistrictId
-    ? Number(shipmentDraft.ghnDistrictId)
-    : null,
-  shippingGhnWardCode: shipmentDraft.ghnWardCode || null,
-  note: nextNote,
-  shipment: {
-    ...order.shipment,
-    codAmount: order.shipment?.codAmount,
-  },
-};
+      const nextOrder: OrderDetail = {
+        ...order,
+        shippingRecipientName: shipmentDraft.recipientName,
+        shippingPhone: shipmentDraft.phone,
+        shippingAddressLine1: shipmentDraft.addressLine1,
+        shippingAddressLine2: shipmentDraft.addressLine2,
+        shippingWard: shipmentDraft.ward,
+        shippingDistrict: shipmentDraft.district,
+        shippingProvince: shipmentDraft.province,
+        shippingPostalCode: shipmentDraft.postalCode,
+        shippingGhnDistrictId: shipmentDraft.ghnDistrictId
+          ? Number(shipmentDraft.ghnDistrictId)
+          : null,
+        shippingGhnWardCode: shipmentDraft.ghnWardCode || null,
+        note: nextNote,
+        shipment: {
+          ...order.shipment,
+          codAmount: order.shipment?.codAmount,
+        },
+      };
       setOrder(nextOrder);
 
       if (draftOrder) {
-      setDraftOrder({
-  ...draftOrder,
-  shippingRecipientName: shipmentDraft.recipientName,
-  shippingPhone: shipmentDraft.phone,
-  shippingAddressLine1: shipmentDraft.addressLine1,
-  shippingAddressLine2: shipmentDraft.addressLine2,
-  shippingWard: shipmentDraft.ward,
-  shippingDistrict: shipmentDraft.district,
-  shippingProvince: shipmentDraft.province,
-  shippingPostalCode: shipmentDraft.postalCode,
-  shippingGhnDistrictId: shipmentDraft.ghnDistrictId
-    ? Number(shipmentDraft.ghnDistrictId)
-    : null,
-  shippingGhnWardCode: shipmentDraft.ghnWardCode || null,
-  note: nextNote,
-  shipment: {
-    ...draftOrder.shipment,
-    codAmount: draftOrder.shipment?.codAmount,
-  },
-});
+        setDraftOrder({
+          ...draftOrder,
+          shippingRecipientName: shipmentDraft.recipientName,
+          shippingPhone: shipmentDraft.phone,
+          shippingAddressLine1: shipmentDraft.addressLine1,
+          shippingAddressLine2: shipmentDraft.addressLine2,
+          shippingWard: shipmentDraft.ward,
+          shippingDistrict: shipmentDraft.district,
+          shippingProvince: shipmentDraft.province,
+          shippingPostalCode: shipmentDraft.postalCode,
+          shippingGhnDistrictId: shipmentDraft.ghnDistrictId
+            ? Number(shipmentDraft.ghnDistrictId)
+            : null,
+          shippingGhnWardCode: shipmentDraft.ghnWardCode || null,
+          note: nextNote,
+          shipment: {
+            ...draftOrder.shipment,
+            codAmount: draftOrder.shipment?.codAmount,
+          },
+        });
       }
       setShowShipmentEditModal(false);
       setMessage("Đã cập nhật giao hàng trên giao diện.");
@@ -1319,7 +1347,7 @@ const nextOrder: OrderDetail = {
       setShipmentSaving(false);
     }
   };
-  
+
   const handleOpenAuthConfirm = () => {
     if (!codChanged) {
       setMessage("COD chưa thay đổi.");
@@ -1365,33 +1393,33 @@ const nextOrder: OrderDetail = {
         throw new Error(json?.message || "Xác thực hoặc cập nhật COD thất bại.");
       }
 
-const nextNote = upsertStructuredNotePart(
-  order.note,
-  "Tình trạng giao:",
-  nextCod < computedFinalAmount ? "Giao hàng 1 phần" : ""
-);
+      const nextNote = upsertStructuredNotePart(
+        order.note,
+        "Tình trạng giao:",
+        nextCod < computedFinalAmount ? "Giao hàng 1 phần" : ""
+      );
 
-const nextOrder: OrderDetail = {
-  ...order,
-  finalAmount: nextCod,
-  note: nextNote,
-  shipment: {
-    ...order.shipment,
-    codAmount: nextCod,
-  },
-};
+      const nextOrder: OrderDetail = {
+        ...order,
+        finalAmount: nextCod,
+        note: nextNote,
+        shipment: {
+          ...order.shipment,
+          codAmount: nextCod,
+        },
+      };
 
-if (draftOrder) {
-  setDraftOrder({
-    ...draftOrder,
-    finalAmount: nextCod,
-    note: nextNote,
-    shipment: {
-      ...draftOrder.shipment,
-      codAmount: nextCod,
-    },
-  });
-}
+      if (draftOrder) {
+        setDraftOrder({
+          ...draftOrder,
+          finalAmount: nextCod,
+          note: nextNote,
+          shipment: {
+            ...draftOrder.shipment,
+            codAmount: nextCod,
+          },
+        });
+      }
 
       setCodSuccessText(
         `Đã cập nhật COD từ ${currency(oldCod)} → ${currency(nextCod)}`
@@ -1430,12 +1458,12 @@ if (draftOrder) {
       items: prev.items.map((item) =>
         item.orderItemId === orderItemId
           ? {
-              ...item,
-              deliveredQty: Math.max(
-                0,
-                Math.min(Number(deliveredQty || 0), item.orderedQty)
-              ),
-            }
+            ...item,
+            deliveredQty: Math.max(
+              0,
+              Math.min(Number(deliveredQty || 0), item.orderedQty)
+            ),
+          }
           : item
       ),
     }));
@@ -1590,7 +1618,7 @@ if (draftOrder) {
         shippingProvince: draftOrder.shippingProvince || "",
         shippingPostalCode: draftOrder.shippingPostalCode || "",
         shippingGhnDistrictId: draftOrder.shippingGhnDistrictId || null,
-shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
+        shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
         shippingFee: Number(draftOrder.shippingFee || 0),
         discountAmount: Number(draftOrder.discountAmount || 0),
         totalAmount,
@@ -1768,8 +1796,8 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
               {viewOrder.paymentStatus || "—"}
             </Badge>
             {partialDelivery ? (
-  <Badge tone="amber">Giao hàng 1 phần</Badge>
-) : null}
+              <Badge tone="amber">Giao hàng 1 phần</Badge>
+            ) : null}
           </div>
         </div>
 
@@ -1832,13 +1860,12 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
       {message ? (
         <Panel className="px-4 py-3">
           <p
-            className={`text-sm ${
-              message.includes("Đã lưu") ||
+            className={`text-sm ${message.includes("Đã lưu") ||
               message.includes("Đã cập nhật") ||
               message.includes("Đã xác thực")
-                ? "text-emerald-600"
-                : "text-red-600"
-            }`}
+              ? "text-emerald-600"
+              : "text-red-600"
+              }`}
           >
             {message}
           </p>
@@ -1884,44 +1911,44 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
                         onChange={(v) => updateDraft("shippingAddressLine2", v)}
                       />
                     </div>
-<div>
-  <p className="mb-1 text-[11px] text-neutral-500">Tỉnh / thành</p>
-  <EditSelect
-    value={selectedProvinceId}
-    onChange={handleEditProvinceChange}
-    options={provinceOptions.map((item) => ({
-      value: String(item.id),
-      label: item.name,
-    }))}
-    placeholder="Chọn tỉnh / thành"
-  />
-</div>
+                    <div>
+                      <p className="mb-1 text-[11px] text-neutral-500">Tỉnh / thành</p>
+                      <EditSelect
+                        value={selectedProvinceId}
+                        onChange={handleEditProvinceChange}
+                        options={provinceOptions.map((item) => ({
+                          value: String(item.id),
+                          label: item.name,
+                        }))}
+                        placeholder="Chọn tỉnh / thành"
+                      />
+                    </div>
 
-<div>
-  <p className="mb-1 text-[11px] text-neutral-500">Quận / huyện</p>
-  <EditSelect
-    value={selectedDistrictId}
-    onChange={handleEditDistrictChange}
-    options={districtOptions.map((item) => ({
-      value: String(item.id),
-      label: item.name,
-    }))}
-    placeholder="Chọn quận / huyện"
-  />
-</div>
+                    <div>
+                      <p className="mb-1 text-[11px] text-neutral-500">Quận / huyện</p>
+                      <EditSelect
+                        value={selectedDistrictId}
+                        onChange={handleEditDistrictChange}
+                        options={districtOptions.map((item) => ({
+                          value: String(item.id),
+                          label: item.name,
+                        }))}
+                        placeholder="Chọn quận / huyện"
+                      />
+                    </div>
 
-<div>
-  <p className="mb-1 text-[11px] text-neutral-500">Phường / xã</p>
-  <EditSelect
-    value={selectedWardCode}
-    onChange={handleEditWardChange}
-    options={wardOptions.map((item) => ({
-      value: item.code,
-      label: item.name,
-    }))}
-    placeholder="Chọn phường / xã"
-  />
-</div>
+                    <div>
+                      <p className="mb-1 text-[11px] text-neutral-500">Phường / xã</p>
+                      <EditSelect
+                        value={selectedWardCode}
+                        onChange={handleEditWardChange}
+                        options={wardOptions.map((item) => ({
+                          value: item.code,
+                          label: item.name,
+                        }))}
+                        placeholder="Chọn phường / xã"
+                      />
+                    </div>
                     <div>
                       <p className="mb-1 text-[11px] text-neutral-500">Mã bưu chính</p>
                       <EditInput
@@ -2101,6 +2128,9 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
                 <Badge tone={viewOrder.shipment?.shippingStatus ? "amber" : "gray"}>
                   {viewOrder.shipment?.shippingStatus || "Chưa đẩy trạng thái"}
                 </Badge>
+                <Badge tone={codReconciliationTone(viewOrder.shipment?.codReconciliationStatus)}>
+                  {codReconciliationLabel(viewOrder.shipment?.codReconciliationStatus)}
+                </Badge>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
@@ -2157,7 +2187,34 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
                     }
                   />
                   <DataRow label="Phí ship" value={currency(viewOrder.shippingFee)} />
-                  <DataRow label="Đối soát" value="Chưa đối soát" />
+                  <DataRow
+                    label="Đối soát"
+                    value={
+                      <div className="space-y-1">
+                        <Badge tone={codReconciliationTone(viewOrder.shipment?.codReconciliationStatus)}>
+                          {codReconciliationLabel(viewOrder.shipment?.codReconciliationStatus)}
+                        </Badge>
+
+                        {viewOrder.shipment?.codReconciledAt ? (
+                          <div className="text-[11px] text-neutral-500">
+                            {formatDateTime(viewOrder.shipment.codReconciledAt)}
+                          </div>
+                        ) : null}
+
+                        {viewOrder.shipment?.codReconciliationAmount ? (
+                          <div className="text-[11px] text-neutral-500">
+                            Số tiền: {currency(viewOrder.shipment.codReconciliationAmount)}
+                          </div>
+                        ) : null}
+
+                        {viewOrder.shipment?.codReconciliationIssue ? (
+                          <div className="text-[11px] text-red-600">
+                            {viewOrder.shipment.codReconciliationIssue}
+                          </div>
+                        ) : null}
+                      </div>
+                    }
+                  />
                 </div>
               </div>
             </div>
@@ -2427,13 +2484,12 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
                         <p className="text-[13px] font-semibold text-neutral-900">{entry.title}</p>
                         <p className="mt-1 text-[12px] text-neutral-600">{entry.description}</p>
                       </div>
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${
-                        entry.tone === "success"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : entry.tone === "warning"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-neutral-200 text-neutral-700"
-                      }`}>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${entry.tone === "success"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : entry.tone === "warning"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-neutral-200 text-neutral-700"
+                        }`}>
                         {entry.tone === "success"
                           ? "Đã lưu"
                           : entry.tone === "warning"
@@ -2690,7 +2746,7 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
               <div className="px-4 py-4">
                 <div>
                   <p className="mb-1 text-[11px] text-neutral-500">COD mới</p>
-                  
+
                   <EditInput
                     value={shipmentDraft.codAmountInput}
                     onChange={(v) =>
@@ -2771,44 +2827,44 @@ shippingGhnWardCode: draftOrder.shippingGhnWardCode || null,
                   />
                 </div>
 
-<div>
-  <p className="mb-1 text-[11px] text-neutral-500">Tỉnh / thành</p>
-  <EditSelect
-    value={selectedProvinceId}
-    onChange={handleProvinceChange}
-    options={provinceOptions.map((item) => ({
-      value: String(item.id),
-      label: item.name,
-    }))}
-    placeholder="Chọn tỉnh / thành"
-  />
-</div>
+                <div>
+                  <p className="mb-1 text-[11px] text-neutral-500">Tỉnh / thành</p>
+                  <EditSelect
+                    value={selectedProvinceId}
+                    onChange={handleProvinceChange}
+                    options={provinceOptions.map((item) => ({
+                      value: String(item.id),
+                      label: item.name,
+                    }))}
+                    placeholder="Chọn tỉnh / thành"
+                  />
+                </div>
 
-<div>
-  <p className="mb-1 text-[11px] text-neutral-500">Quận / huyện</p>
-  <EditSelect
-    value={selectedDistrictId}
-    onChange={handleDistrictChange}
-    options={districtOptions.map((item) => ({
-      value: String(item.id),
-      label: item.name,
-    }))}
-    placeholder="Chọn quận / huyện"
-  />
-</div>
+                <div>
+                  <p className="mb-1 text-[11px] text-neutral-500">Quận / huyện</p>
+                  <EditSelect
+                    value={selectedDistrictId}
+                    onChange={handleDistrictChange}
+                    options={districtOptions.map((item) => ({
+                      value: String(item.id),
+                      label: item.name,
+                    }))}
+                    placeholder="Chọn quận / huyện"
+                  />
+                </div>
 
-<div>
-  <p className="mb-1 text-[11px] text-neutral-500">Phường / xã</p>
-  <EditSelect
-    value={selectedWardCode}
-    onChange={handleWardChange}
-    options={wardOptions.map((item) => ({
-      value: item.code,
-      label: item.name,
-    }))}
-    placeholder="Chọn phường / xã"
-  />
-</div>
+                <div>
+                  <p className="mb-1 text-[11px] text-neutral-500">Phường / xã</p>
+                  <EditSelect
+                    value={selectedWardCode}
+                    onChange={handleWardChange}
+                    options={wardOptions.map((item) => ({
+                      value: item.code,
+                      label: item.name,
+                    }))}
+                    placeholder="Chọn phường / xã"
+                  />
+                </div>
 
                 <div>
                   <p className="mb-1 text-[11px] text-neutral-500">Mã bưu chính</p>

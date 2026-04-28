@@ -33,6 +33,11 @@ const MENU: MenuItem[] = [
     children: [
       { href: "/orders", label: "Danh sách", permission: "orders.view" },
       { href: "/create-order", label: "Tạo đơn", permission: "orders.create" },
+      {
+        label: "POS bán tại quầy",
+        href: "/pos",
+        permission: "orders.create",
+      }
     ],
   },
   {
@@ -53,12 +58,34 @@ const MENU: MenuItem[] = [
       { href: "/inventory", label: "Kho hàng", permission: "inventory.view" },
       { href: "/inventory-logs", label: "Lịch sử kho", permission: "inventory.logs.view" },
       { href: "/stocktake", label: "Kiểm kho", permission: "stocktake.view" },
+       { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: "inventory.view" },
     ],
   },
   {
     label: "Tài chính",
     permission: "reports.view",
-    children: [{ href: "/finance/daily", label: "Đối soát", permission: "reports.view" }],
+    children: [
+      {
+        href: "/finance/daily",
+        label: "Tổng quan dòng tiền",
+        permission: "reports.view",
+      },
+      {
+        href: "/finance/ghn-reconciliation",
+        label: "Đối soát COD GHN",
+        permission: "reports.view",
+      },
+      {
+        href: "/finance/payment-sources",
+        label: "Nguồn tiền",
+        permission: "reports.view",
+      },
+      {
+        href: "/finance/revenue",
+        label: "Báo cáo doanh thu",
+        permission: "reports.view",
+      },
+    ],
   },
   {
     label: "Vận hành nâng cao",
@@ -257,11 +284,10 @@ export default function AdminShell({
                 return (
                   <div
                     key={item.label}
-                    className={`rounded-[26px] border px-3 py-3 transition ${
-                      parentActive
-                        ? "border-neutral-300 bg-neutral-50"
-                        : "border-neutral-200 bg-white"
-                    }`}
+                    className={`rounded-[26px] border px-3 py-3 transition ${parentActive
+                      ? "border-neutral-300 bg-neutral-50"
+                      : "border-neutral-200 bg-white"
+                      }`}
                   >
                     <div className="px-2 pb-2 text-sm font-semibold text-neutral-950">
                       {item.label}
@@ -275,11 +301,10 @@ export default function AdminShell({
                           <Link
                             key={child.href}
                             href={child.href!}
-                            className={`block rounded-2xl px-3 py-2.5 text-sm transition ${
-                              isActive
-                                ? "bg-neutral-900 font-medium text-white shadow-sm"
-                                : "text-neutral-700 hover:bg-neutral-100"
-                            }`}
+                            className={`block rounded-2xl px-3 py-2.5 text-sm transition ${isActive
+                              ? "bg-neutral-900 font-medium text-white shadow-sm"
+                              : "text-neutral-700 hover:bg-neutral-100"
+                              }`}
                           >
                             {child.label}
                           </Link>
@@ -296,11 +321,10 @@ export default function AdminShell({
                 <Link
                   key={item.href}
                   href={item.href!}
-                  className={`block rounded-2xl px-4 py-3 text-sm transition ${
-                    isActive
-                      ? "bg-neutral-900 font-medium text-white shadow-sm"
-                      : "text-neutral-800 hover:bg-neutral-100"
-                  }`}
+                  className={`block rounded-2xl px-4 py-3 text-sm transition ${isActive
+                    ? "bg-neutral-900 font-medium text-white shadow-sm"
+                    : "text-neutral-800 hover:bg-neutral-100"
+                    }`}
                 >
                   {item.label}
                 </Link>
@@ -451,15 +475,14 @@ export default function AdminShell({
                     {[1, 2, 3, 4, 5].map((item) => (
                       <div
                         key={item}
-                        className={`h-2 flex-1 rounded-full ${
-                          passwordScore >= item
-                            ? passwordScore <= 2
-                              ? "bg-red-500"
-                              : passwordScore <= 4
-                                ? "bg-amber-500"
-                                : "bg-emerald-500"
-                            : "bg-neutral-200"
-                        }`}
+                        className={`h-2 flex-1 rounded-full ${passwordScore >= item
+                          ? passwordScore <= 2
+                            ? "bg-red-500"
+                            : passwordScore <= 4
+                              ? "bg-amber-500"
+                              : "bg-emerald-500"
+                          : "bg-neutral-200"
+                          }`}
                       />
                     ))}
                   </div>
@@ -496,9 +519,8 @@ export default function AdminShell({
 
                 {confirmPassword ? (
                   <p
-                    className={`mt-2 text-xs ${
-                      passwordMatch ? "text-emerald-600" : "text-red-600"
-                    }`}
+                    className={`mt-2 text-xs ${passwordMatch ? "text-emerald-600" : "text-red-600"
+                      }`}
                   >
                     {passwordMatch
                       ? "Mật khẩu nhập lại khớp."

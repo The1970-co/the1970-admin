@@ -1,5 +1,6 @@
 "use client";
 import { getBranches, type BranchItem } from "@/lib/products-api";
+import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
 import {
   useDeferredValue,
   useEffect,
@@ -94,6 +95,7 @@ type NormalizedOrder = AdminOrder & {
   _createdAtDate: Date | null;
 };
 
+
 const COLUMN_DEFS: ColumnDef[] = [
   { key: "orderCode", label: "Mã đơn", defaultVisible: true },
   { key: "createdAt", label: "Ngày tạo", defaultVisible: true },
@@ -174,9 +176,8 @@ function Button({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 border font-semibold transition ${tones} ${sizes} ${
-        disabled ? "cursor-not-allowed opacity-50" : ""
-      }`}
+      className={`inline-flex items-center justify-center gap-2 border font-semibold transition ${tones} ${sizes} ${disabled ? "cursor-not-allowed opacity-50" : ""
+        }`}
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
       <span>{children}</span>
@@ -196,11 +197,10 @@ function SmallChip({
   return (
     <button
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-        active
-          ? "border-neutral-900 bg-neutral-900 text-white"
-          : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
-      }`}
+      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${active
+        ? "border-neutral-900 bg-neutral-900 text-white"
+        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+        }`}
     >
       {children}
     </button>
@@ -216,11 +216,10 @@ function SummaryIcon({
 }) {
   return (
     <div
-      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${
-        active
-          ? "border-neutral-900 bg-neutral-900 text-white"
-          : "border-neutral-200 bg-neutral-50 text-neutral-700"
-      }`}
+      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${active
+        ? "border-neutral-900 bg-neutral-900 text-white"
+        : "border-neutral-200 bg-neutral-50 text-neutral-700"
+        }`}
     >
       {children}
     </div>
@@ -243,11 +242,10 @@ function SummaryCard({
   return (
     <button
       onClick={onClick}
-      className={`rounded-[24px] border px-4 py-4 text-left transition ${
-        active
-          ? "border-neutral-900 bg-neutral-50 shadow-sm"
-          : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm"
-      }`}
+      className={`rounded-[24px] border px-4 py-4 text-left transition ${active
+        ? "border-neutral-900 bg-neutral-50 shadow-sm"
+        : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm"
+        }`}
     >
       <div className="flex items-center gap-4">
         <SummaryIcon active={active}>{icon}</SummaryIcon>
@@ -600,7 +598,12 @@ export default function OrdersPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
-
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("");
+  const [confirmDescription, setConfirmDescription] = useState("");
+  const [confirmText, setConfirmText] = useState("Xác nhận");
+  const [confirmDanger, setConfirmDanger] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -1092,70 +1095,81 @@ export default function OrdersPageClient() {
   };
 
   const handleDeleteOrder = async (id: string) => {
-    const ok = window.confirm("Chỉ nên xóa đơn đã hủy. Xác nhận xóa đơn này?");
-    if (!ok) return;
+    const order = normalizedOrders.find((o) => o.id === id);
 
-    try {
-      setDeletingOrders(true);
-      setActionMessage("");
-      await deleteOneOrder(id);
-      await loadOrders();
-      setActionMessage("Đã xóa đơn.");
-    } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : "Lỗi xóa đơn.");
-    } finally {
-      setDeletingOrders(false);
-    }
+    setConfirmTitle("Xóa đơn hàng");
+    setConfirmDescription(
+      `Bạn có chắc muốn xóa đơn ${order?.orderCode || ""}? Chỉ đơn đã hủy mới có thể xóa.`
+    );
+    setConfirmText("Xóa đơn");
+    setConfirmDanger(true);
+    setConfirmAction(() => async () => {
+      try {
+        setDeletingOrders(true);
+        setActionMessage("");
+        await deleteOneOrder(id);
+        await loadOrders();
+        setActionMessage("Đã xóa đơn.");
+      } catch (err) {
+        setActionMessage(err instanceof Error ? err.message : "Lỗi xóa đơn.");
+      } finally {
+        setDeletingOrders(false);
+      }
+    });
+    setConfirmOpen(true);
   };
 
   const handleBulkDelete = async () => {
     if (!checkedIds.length) return;
 
-    const ok = window.confirm(
-      `Xóa ${checkedIds.length} đơn đã chọn? Chỉ đơn đã hủy mới xóa được.`
+    setConfirmTitle("Xóa đơn hàng");
+    setConfirmDescription(
+      `Bạn đang xóa ${checkedIds.length} đơn đã chọn. Chỉ đơn đã hủy mới có thể xóa. Hành động này không thể hoàn tác.`
     );
-    if (!ok) return;
+    setConfirmText("Xóa đơn");
+    setConfirmDanger(true);
+    setConfirmAction(() => async () => {
+      try {
+        setDeletingOrders(true);
+        setActionMessage("");
 
-    try {
-      setDeletingOrders(true);
-      setActionMessage("");
+        let successCount = 0;
+        const failed: string[] = [];
 
-      let successCount = 0;
-      const failed: string[] = [];
+        for (const id of checkedIds) {
+          const order = normalizedOrders.find((o) => o.id === id);
+          if (!order) continue;
 
-      for (const id of checkedIds) {
-        const order = normalizedOrders.find((o) => o.id === id);
-        if (!order) continue;
+          try {
+            await deleteOneOrder(id);
+            successCount += 1;
+          } catch (err) {
+            failed.push(
+              `${order.orderCode}: ${err instanceof Error ? err.message : "Lỗi không rõ"
+              }`
+            );
+          }
+        }
 
-        try {
-          await deleteOneOrder(id);
-          successCount += 1;
-        } catch (err) {
-          failed.push(
-            `${order.orderCode}: ${
-              err instanceof Error ? err.message : "Lỗi không rõ"
-            }`
+        await loadOrders();
+        setCheckedIds([]);
+
+        if (failed.length === 0) {
+          setActionMessage(`Đã xóa ${successCount} đơn.`);
+        } else {
+          setActionMessage(
+            `Đã xóa ${successCount} đơn. Lỗi: ${failed.join(" | ")}`
           );
         }
-      }
-
-      await loadOrders();
-      setCheckedIds([]);
-
-      if (failed.length === 0) {
-        setActionMessage(`Đã xóa ${successCount} đơn.`);
-      } else {
+      } catch (err) {
         setActionMessage(
-          `Đã xóa ${successCount} đơn. Lỗi: ${failed.join(" | ")}`
+          err instanceof Error ? err.message : "Lỗi xóa đơn hàng loạt."
         );
+      } finally {
+        setDeletingOrders(false);
       }
-    } catch (err) {
-      setActionMessage(
-        err instanceof Error ? err.message : "Lỗi xóa đơn hàng loạt."
-      );
-    } finally {
-      setDeletingOrders(false);
-    }
+    });
+    setConfirmOpen(true);
   };
 
   const handleBulkSendToCarrier = async () => {
@@ -1198,12 +1212,16 @@ export default function OrdersPageClient() {
     }
   };
 
-  const handleBulkCancel = async () => {
-    if (!checkedIds.length) return;
+const handleBulkCancel = async () => {
+  if (!checkedIds.length) return;
 
-    const ok = window.confirm(`Xác nhận hủy ${checkedIds.length} đơn đã chọn?`);
-    if (!ok) return;
-
+setConfirmTitle("Xác nhận huỷ");
+setConfirmDescription(
+  `Huỷ ${checkedIds.length} đơn đã chọn? Nếu đơn đã có mã vận đơn, hệ thống sẽ gửi yêu cầu huỷ sang GHN.`
+);
+setConfirmText("Huỷ");
+setConfirmDanger(false);
+  setConfirmAction(() => async () => {
     try {
       setSavingOrderStatus(true);
       setActionMessage("");
@@ -1248,8 +1266,10 @@ export default function OrdersPageClient() {
     } finally {
       setSavingOrderStatus(false);
     }
-  };
+  });
 
+  setConfirmOpen(true);
+};
   const handlePrint = (type: "shipping" | "sales", paper: PrintPaperSize) => {
     if (!checkedOrders.length) return;
 
@@ -2014,8 +2034,8 @@ export default function OrdersPageClient() {
                           >
                             {shortText(
                               meta.noteText ||
-                                meta.shippingNote ||
-                                order.note,
+                              meta.shippingNote ||
+                              order.note,
                               34
                             )}
                           </span>
@@ -2117,6 +2137,20 @@ export default function OrdersPageClient() {
           <p className="mt-1 text-lg font-semibold">{currency(paidRevenue)}</p>
         </Panel>
       ) : null}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={confirmTitle}
+        description={confirmDescription}
+        confirmText={confirmText}
+        cancelText="Đóng"
+        danger={confirmDanger}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={async () => {
+          await confirmAction?.();
+          setConfirmOpen(false);
+        }}
+      />
     </div>
   );
 }

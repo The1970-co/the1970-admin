@@ -500,7 +500,7 @@ export default function ProductsPageClient() {
   const [groupFilter, setGroupFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(50);
   const [totalProducts, setTotalProducts] = useState(0);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -1691,7 +1691,6 @@ export default function ProductsPageClient() {
                     setPage(1);
                   }}
                 >
-                  <option value={20}>20 dòng</option>
                   <option value={50}>50 dòng</option>
                   <option value={100}>100 dòng</option>
                   <option value={200}>200 dòng</option>

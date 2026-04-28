@@ -63,13 +63,23 @@ export default function LoginPage() {
     setCurrentUserToStorage(user);
 
     router.replace("/control");
-    const role = String(user.role || "").toLowerCase();
+    const role = String(user?.role || user?.appRole || user?.type || "").toLowerCase();
+    if (role === "retail-staff") {
+      router.replace("/pos");
+      return;
+    }
+
+    if (role === "fulltime") {
+      router.replace("/create-order");
+      return;
+    }
 
     if (role === "owner" || role === "admin") {
       router.replace("/control");
-    } else {
-      router.replace("/create-order");
+      return;
     }
+
+    setError("Tài khoản chưa được gán màn hình truy cập. Vui lòng liên hệ quản trị viên.");
   };
 
   const handleLogin = async (e?: React.FormEvent) => {

@@ -148,17 +148,38 @@ export async function getBranches(): Promise<BranchItem[]> {
   }));
 }
 
-export async function getProducts(): Promise<ProductItem[]> {
-const role = getCurrentRole();
-const showCost = canViewCost(role);
+export async function getProducts(params?: {
+  page?: number;
+  limit?: number;
+  q?: string;
+  category?: string;
+  status?: string;
+}) {
+  const role = getCurrentRole();
+  const showCost = canViewCost(role);
 
-  const products = await request<any[]>("/products");
+  const search = new URLSearchParams();
 
-  return products.map((product) => {
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.q) search.set("q", params.q);
+  if (params?.category && params.category !== "ALL") {
+    search.set("category", params.category);
+  }
+  if (params?.status && params.status !== "ALL") {
+    search.set("status", params.status);
+  }
+
+  const result = await request<any>(
+    `/products${search.toString() ? `?${search.toString()}` : ""}`
+  );
+
+  const rawProducts = Array.isArray(result) ? result : result?.data || [];
+
+  const data: ProductItem[] = rawProducts.map((product: any) => {
     const variants: ProductVariant[] = Array.isArray(product.variants)
       ? product.variants.map((variant: any) => {
-          const branchStocks =
-            normalizeBranchStocks(variant.inventoryByBranch) || {};
+          const branchStocks = normalizeBranchStocks(variant.inventoryByBranch) || {};
 
           const stock =
             Object.keys(branchStocks).length > 0
@@ -168,36 +189,31 @@ const showCost = canViewCost(role);
                 )
               : Array.isArray(variant.inventoryItems)
                 ? variant.inventoryItems.reduce(
-                    (sum: number, item: any) =>
-                      sum + toNumber(item.availableQty),
+                    (sum: number, item: any) => sum + toNumber(item.availableQty),
                     0
                   )
                 : 0;
 
-return {
-  id: String(variant.id),
-  sku: String(variant.sku || ""),
-  color: variant.color || "",
-  size: variant.size || "",
-  price: toNumber(variant.price),
-  ...(showCost
-    ? {
-        costPrice: toNumber(variant.costPrice),
-      }
-    : {}),
-  stock,
-  branchStocks:
-    Object.keys(branchStocks).length > 0
-      ? branchStocks
-      : Array.isArray(variant.inventoryItems)
-        ? Object.fromEntries(
-            variant.inventoryItems.map((item: any) => [
-              String(item.branchId),
-              toNumber(item.availableQty),
-            ])
-          )
-        : {},
-};
+          return {
+            id: String(variant.id),
+            sku: String(variant.sku || ""),
+            color: variant.color || "",
+            size: variant.size || "",
+            price: toNumber(variant.price),
+            ...(showCost ? { costPrice: toNumber(variant.costPrice) } : {}),
+            stock,
+            branchStocks:
+              Object.keys(branchStocks).length > 0
+                ? branchStocks
+                : Array.isArray(variant.inventoryItems)
+                  ? Object.fromEntries(
+                      variant.inventoryItems.map((item: any) => [
+                        String(item.branchId),
+                        toNumber(item.availableQty),
+                      ])
+                    )
+                  : {},
+          };
         })
       : [];
 
@@ -215,7 +231,15 @@ return {
       variants,
     };
   });
+
+  return {
+    data,
+    total: Number(result?.total ?? data.length),
+    page: Number(result?.page ?? params?.page ?? 1),
+    limit: Number(result?.limit ?? params?.limit ?? data.length),
+  };
 }
+
 
 export async function createProduct(payload: CreateProductPayload) {
   return request<any>("/products", {
@@ -309,4 +333,9 @@ export async function uploadProductImage(file: File) {
     url: string;
     public_id?: string;
   };
+}
+export async function syncProductCategories() {
+  return request<any>("/products/sync-categories", {
+    method: "POST",
+  });
 }

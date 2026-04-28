@@ -174,10 +174,10 @@ const ADMIN_MERGE_ALIASES: Record<string, string> = {
 function getFeeNumber(row: ShipmentQuoteResult) {
   return Number(
     (row as any)?.fee?.total ||
-      (row as any)?.fee?.total_fee ||
-      (row as any)?.fee?.service_fee ||
-      (row as any)?.fee ||
-      0
+    (row as any)?.fee?.total_fee ||
+    (row as any)?.fee?.service_fee ||
+    (row as any)?.fee ||
+    0
   );
 }
 
@@ -535,27 +535,27 @@ const shippingUiModeOptions: Array<{
   label: string;
   description: string;
 }> = [
-  {
-    value: "carrier",
-    label: "Đẩy qua hãng vận chuyển",
-    description: "Ưu tiên GHN để lấy phí ship và đẩy đơn.",
-  },
-  {
-    value: "external",
-    label: "Đẩy vận chuyển ngoài",
-    description: "Shipper ngoài / đối tác ngoài hệ thống.",
-  },
-  {
-    value: "pickup",
-    label: "Khách nhận tại cửa hàng",
-    description: "Không tính phí ship.",
-  },
-  {
-    value: "schedule",
-    label: "Giao hàng sau",
-    description: "Tạo đơn trước, xử lý ship sau.",
-  },
-];
+    {
+      value: "carrier",
+      label: "Đẩy qua hãng vận chuyển",
+      description: "Ưu tiên GHN để lấy phí ship và đẩy đơn.",
+    },
+    {
+      value: "external",
+      label: "Đẩy vận chuyển ngoài",
+      description: "Shipper ngoài / đối tác ngoài hệ thống.",
+    },
+    {
+      value: "pickup",
+      label: "Khách nhận tại cửa hàng",
+      description: "Không tính phí ship.",
+    },
+    {
+      value: "schedule",
+      label: "Giao hàng sau",
+      description: "Tạo đơn trước, xử lý ship sau.",
+    },
+  ];
 
 const shippingPartnerOptions = [
   { value: "ghn", label: "GHN", enabled: true },
@@ -570,10 +570,10 @@ const deliveryRequirementOptions: Array<{
   value: DeliveryRequirement;
   label: string;
 }> = [
-  { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
-  { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
-  { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
-];
+    { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
+    { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
+    { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
+  ];
 
 export default function CreateOrderPageClient() {
   const applyShippingRef = useRef<((payload: ShippingQuoteApplyPayload) => void) | null>(null);
@@ -607,9 +607,9 @@ export default function CreateOrderPageClient() {
   const [customerDiscountPercent, setCustomerDiscountPercent] = useState(0);
   const [customerSuggestions, setCustomerSuggestions] = useState<CustomerSuggestionItem[]>([]);
   const [customerSuggestionOpen, setCustomerSuggestionOpen] = useState(false);
-const [customerDefaultSuggestions, setCustomerDefaultSuggestions] = useState<
-  CustomerSuggestionItem[]
->([]);
+  const [customerDefaultSuggestions, setCustomerDefaultSuggestions] = useState<
+    CustomerSuggestionItem[]
+  >([]);
   const [customerAddresses, setCustomerAddresses] = useState<CustomerAddressItem[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
 
@@ -653,7 +653,7 @@ const [customerDefaultSuggestions, setCustomerDefaultSuggestions] = useState<
   const [couponCode, setCouponCode] = useState("");
   const [customerPaid, setCustomerPaid] = useState("0");
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
-const [paymentSourceId, setPaymentSourceId] = useState("");
+  const [paymentSourceId, setPaymentSourceId] = useState("");
   const [shippingMode, setShippingMode] = useState<ShippingMode>("partner");
   const [shippingPayer, setShippingPayer] = useState<ShippingPayer>("customer");
   const [shippingUiMode, setShippingUiMode] = useState<ShippingUiMode>("carrier");
@@ -718,35 +718,35 @@ const [paymentSourceId, setPaymentSourceId] = useState("");
   useEffect(() => {
     void loadProducts();
   }, []);
-useEffect(() => {
-  const run = async () => {
-    try {
-      const apiBase = getApiBaseUrl();
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const apiBase = getApiBaseUrl();
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-      const res = await fetch(`${apiBase}/payment-sources`, {
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
+        const res = await fetch(`${apiBase}/payment-sources`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
 
-      if (!res.ok) return;
+        if (!res.ok) return;
 
-      const data = await res.json();
-      const rows = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.items)
-        ? data.items
-        : [];
+        const data = await res.json();
+        const rows = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : [];
 
-      setPaymentSources(rows);
-    } catch {}
-  };
+        setPaymentSources(rows);
+      } catch { }
+    };
 
-  void run();
-}, []);
+    void run();
+  }, []);
 
   useEffect(() => {
     const currentUser = getCurrentUserFromStorage();
@@ -756,106 +756,106 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
-  const run = async () => {
-    const currentUser = getCurrentUserFromStorage();
-    const canPickAll = isOwnerUser(currentUser);
-    const apiBase = getApiBaseUrl();
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const run = async () => {
+      const currentUser = getCurrentUserFromStorage();
+      const canPickAll = isOwnerUser(currentUser);
+      const apiBase = getApiBaseUrl();
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    try {
-      setBranchLoading(true);
+      try {
+        setBranchLoading(true);
 
-      const candidates = [
-        `${apiBase}/branches`,
-        `${apiBase}/settings/branches`,
-        `${apiBase}/warehouses`,
-        `${apiBase}/settings/warehouses`,
-      ];
+        const candidates = [
+          `${apiBase}/branches`,
+          `${apiBase}/settings/branches`,
+          `${apiBase}/warehouses`,
+          `${apiBase}/settings/warehouses`,
+        ];
 
-      let rows: any[] = [];
+        let rows: any[] = [];
 
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, {
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            cache: "no-store",
-          });
+        for (const url of candidates) {
+          try {
+            const res = await fetch(url, {
+              headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              cache: "no-store",
+            });
 
-          if (!res.ok) continue;
+            if (!res.ok) continue;
 
-          const json = await res.json();
-          const list = Array.isArray(json)
-            ? json
-            : Array.isArray(json?.items)
-              ? json.items
-              : Array.isArray(json?.data)
-                ? json.data
-                : [];
+            const json = await res.json();
+            const list = Array.isArray(json)
+              ? json
+              : Array.isArray(json?.items)
+                ? json.items
+                : Array.isArray(json?.data)
+                  ? json.data
+                  : [];
 
-          if (list.length) {
-            rows = list;
-            break;
+            if (list.length) {
+              rows = list;
+              break;
+            }
+          } catch {
+            continue;
           }
-        } catch {
-          continue;
         }
-      }
 
-      const mapped: BranchOption[] = rows
-        .map((row: any) => ({
-          value: String(
-            row?.id ??
+        const mapped: BranchOption[] = rows
+          .map((row: any) => ({
+            value: String(
+              row?.id ??
               row?.branchId ??
               row?.warehouseId ??
               row?.code ??
               row?.slug ??
               ""
-          ),
-          label: branchLabelFromAny(row),
-          code: row?.code ? String(row.code) : undefined,
-          type: row?.type ? String(row.type) : undefined,
-          isActive: row?.isActive !== false,
-        }))
-        .filter((item) => item.value);
+            ),
+            label: branchLabelFromAny(row),
+            code: row?.code ? String(row.code) : undefined,
+            type: row?.type ? String(row.type) : undefined,
+            isActive: row?.isActive !== false,
+          }))
+          .filter((item) => item.value);
 
-      const filtered =
-        mapped.length > 0
-          ? canPickAll
-            ? mapped
-            : mapped.filter(
+        const filtered =
+          mapped.length > 0
+            ? canPickAll
+              ? mapped
+              : mapped.filter(
                 (item) =>
                   userBranchIds.includes(item.value) ||
                   (item.code && userBranchIds.includes(item.code))
               )
-          : Object.entries(BRANCH_LABELS)
+            : Object.entries(BRANCH_LABELS)
               .filter(([id]) => canPickAll || userBranchIds.includes(id))
               .map(([id, label]) => ({ value: id, label }));
 
-      setBranchOptions(filtered);
-      setBranchId((prev) => {
-        if (prev && filtered.some((item) => item.value === prev)) return prev;
-        return filtered[0]?.value || "";
-      });
-    } catch {
-      const fallback = Object.entries(BRANCH_LABELS)
-        .filter(([id]) => canPickAll || userBranchIds.includes(id))
-        .map(([id, label]) => ({ value: id, label }));
+        setBranchOptions(filtered);
+        setBranchId((prev) => {
+          if (prev && filtered.some((item) => item.value === prev)) return prev;
+          return filtered[0]?.value || "";
+        });
+      } catch {
+        const fallback = Object.entries(BRANCH_LABELS)
+          .filter(([id]) => canPickAll || userBranchIds.includes(id))
+          .map(([id, label]) => ({ value: id, label }));
 
-      setBranchOptions(fallback);
-      setBranchId((prev) => prev || fallback[0]?.value || "");
-    } finally {
-      setBranchLoading(false);
+        setBranchOptions(fallback);
+        setBranchId((prev) => prev || fallback[0]?.value || "");
+      } finally {
+        setBranchLoading(false);
+      }
+    };
+
+    if (userBranchIds.length || isOwnerUser(getCurrentUserFromStorage())) {
+      void run();
     }
-  };
-
-  if (userBranchIds.length || isOwnerUser(getCurrentUserFromStorage())) {
-    void run();
-  }
-}, [userBranchIds]);
+  }, [userBranchIds]);
 
   useEffect(() => {
     const run = async () => {
@@ -1076,24 +1076,49 @@ useEffect(() => {
   const totalDiscount = lineDiscountTotal + manualDiscount;
   const customerMustPay = Math.max(0, subtotal - totalDiscount + fee);
   const remaining = Math.max(0, customerMustPay - paid);
-useEffect(() => {
-  const selected = paymentSources.find((s) => s.id === paymentSourceId);
-  if (!selected) return;
+  useEffect(() => {
+    const selected = paymentSources.find((s) => s.id === paymentSourceId);
+    if (!selected) return;
 
-  if (selected.type === "COD") {
-    setCustomerPaid("0");
-  }
+    if (selected.type === "COD") {
+      setCustomerPaid("0");
+    }
 
-  if (selected.type === "CASH" || selected.type === "BANK") {
-    setCustomerPaid(String(customerMustPay));
-  }
-}, [paymentSourceId, paymentSources, customerMustPay]);
+    if (selected.type === "CASH" || selected.type === "BANK") {
+      setCustomerPaid(String(customerMustPay));
+    }
+  }, [paymentSourceId, paymentSources, customerMustPay]);
+
+  const visiblePaymentSources = useMemo(() => {
+    return paymentSources.filter((s) => {
+      if (s.isActive === false) return false;
+
+      const sourceBranchId =
+        s.branchId || s.branch?.id || s.warehouseId || s.storeId;
+
+      if (!sourceBranchId) return true;
+
+      return String(sourceBranchId) === String(branchId);
+    });
+  }, [paymentSources, branchId]);
+
+  useEffect(() => {
+    if (!paymentSourceId) return;
+
+    const stillValid = visiblePaymentSources.some(
+      (s) => String(s.id) === String(paymentSourceId)
+    );
+
+    if (!stillValid) setPaymentSourceId("");
+  }, [visiblePaymentSources, paymentSourceId]);
+
   const previewBranch =
     branchOptions.find((item) => item.value === branchId)?.label || branchId || "—";
 
   const selectedAddress =
     customerAddresses.find((item) => item.id === selectedAddressId) || null;
-
+  const customerAddressDisplay =
+    formatAddress(selectedAddress) || "";
   const currentProvinceRaw = selectedAddress?.province || addressProvince;
   const currentDistrictRaw = (selectedAddress as any)?.district || addressDistrict;
   const currentWardRaw = selectedAddress?.ward || addressWard;
@@ -1193,19 +1218,19 @@ useEffect(() => {
     if (customer.id) {
       try {
         await loadCustomerAddressBook(customer.id);
-      } catch {}
+      } catch { }
     }
   };
 
- const clearCustomerLookupState = () => {
-  setCustomerId(null);
-  setCustomerPolicyLabel("");
-  setCustomerDiscountPercent(0);
-  setCustomerAddresses([]);
-  setSelectedAddressId(null);
-  setCustomerSuggestions(customerDefaultSuggestions);
-  setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
-};
+  const clearCustomerLookupState = () => {
+    setCustomerId(null);
+    setCustomerPolicyLabel("");
+    setCustomerDiscountPercent(0);
+    setCustomerAddresses([]);
+    setSelectedAddressId(null);
+    setCustomerSuggestions(customerDefaultSuggestions);
+    setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
+  };
 
   const buildCustomerSuggestion = (customer: any): CustomerSuggestionItem => {
     const fullName = String(
@@ -1229,59 +1254,10 @@ useEffect(() => {
       subLabel: [email, address].filter(Boolean).join(" · "),
     };
   };
-  
-const loadDefaultCustomerSuggestions = async () => {
-  try {
-    const result: any = await findCustomerByPhone("");
 
-    const rows = Array.isArray(result)
-      ? result
-      : Array.isArray(result?.items)
-        ? result.items
-        : Array.isArray(result?.data)
-          ? result.data
-          : result
-            ? [result]
-            : [];
-
-    const normalizedRows = rows
-      .filter(Boolean)
-      .map(buildCustomerSuggestion)
-      .slice(0, 12);
-
-    setCustomerDefaultSuggestions(normalizedRows);
-    setCustomerSuggestions(normalizedRows);
-    setCustomerSuggestionOpen(normalizedRows.length > 0);
-  } catch {
-    setCustomerDefaultSuggestions([]);
-    setCustomerSuggestions([]);
-    setCustomerSuggestionOpen(false);
-  }
-};
-
-  const handlePhoneChange = (value: string) => {
-  setCustomerPhone(value);
-  setCustomerHint("");
-
-  if (phoneLookupTimerRef.current) {
-    clearTimeout(phoneLookupTimerRef.current);
-    phoneLookupTimerRef.current = null;
-  }
-
-  const cleaned = normalizePhone(value);
-
-  if (cleaned.length < 1) {
-    setCustomerSuggestions(customerDefaultSuggestions);
-    setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
-    setCustomerHint("");
-    return;
-  }
-
-  phoneLookupTimerRef.current = setTimeout(async () => {
+  const loadDefaultCustomerSuggestions = async () => {
     try {
-      setPhoneSearching(true);
-
-      const result: any = await findCustomerByPhone(cleaned);
+      const result: any = await findCustomerByPhone("");
 
       const rows = Array.isArray(result)
         ? result
@@ -1296,35 +1272,84 @@ const loadDefaultCustomerSuggestions = async () => {
       const normalizedRows = rows
         .filter(Boolean)
         .map(buildCustomerSuggestion)
-        .filter((item) => {
-          const phone = normalizePhone(item.phone);
-          const name = removeVietnameseTones(String(item.fullName || ""))
-            .toLowerCase()
-            .trim();
-          const keyword = removeVietnameseTones(String(value || ""))
-            .toLowerCase()
-            .trim();
-
-          return phone.includes(cleaned) || name.includes(keyword);
-        })
         .slice(0, 12);
 
+      setCustomerDefaultSuggestions(normalizedRows);
       setCustomerSuggestions(normalizedRows);
       setCustomerSuggestionOpen(normalizedRows.length > 0);
-      setCustomerHint(
-        normalizedRows.length
-          ? `Tìm thấy ${normalizedRows.length} khách.`
-          : "Chưa có khách cũ cho từ khóa này."
-      );
     } catch {
+      setCustomerDefaultSuggestions([]);
       setCustomerSuggestions([]);
       setCustomerSuggestionOpen(false);
-      setCustomerHint("");
-    } finally {
-      setPhoneSearching(false);
     }
-  }, 120);
-};
+  };
+
+  const handlePhoneChange = (value: string) => {
+    setCustomerPhone(value);
+    setCustomerHint("");
+
+    if (phoneLookupTimerRef.current) {
+      clearTimeout(phoneLookupTimerRef.current);
+      phoneLookupTimerRef.current = null;
+    }
+
+    const cleaned = normalizePhone(value);
+
+    if (cleaned.length < 1) {
+      setCustomerSuggestions(customerDefaultSuggestions);
+      setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
+      setCustomerHint("");
+      return;
+    }
+
+    phoneLookupTimerRef.current = setTimeout(async () => {
+      try {
+        setPhoneSearching(true);
+
+        const result: any = await findCustomerByPhone(cleaned);
+
+        const rows = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.items)
+            ? result.items
+            : Array.isArray(result?.data)
+              ? result.data
+              : result
+                ? [result]
+                : [];
+
+        const normalizedRows = rows
+          .filter(Boolean)
+          .map(buildCustomerSuggestion)
+          .filter((item) => {
+            const phone = normalizePhone(item.phone);
+            const name = removeVietnameseTones(String(item.fullName || ""))
+              .toLowerCase()
+              .trim();
+            const keyword = removeVietnameseTones(String(value || ""))
+              .toLowerCase()
+              .trim();
+
+            return phone.includes(cleaned) || name.includes(keyword);
+          })
+          .slice(0, 12);
+
+        setCustomerSuggestions(normalizedRows);
+        setCustomerSuggestionOpen(normalizedRows.length > 0);
+        setCustomerHint(
+          normalizedRows.length
+            ? `Tìm thấy ${normalizedRows.length} khách.`
+            : "Chưa có khách cũ cho từ khóa này."
+        );
+      } catch {
+        setCustomerSuggestions([]);
+        setCustomerSuggestionOpen(false);
+        setCustomerHint("");
+      } finally {
+        setPhoneSearching(false);
+      }
+    }, 120);
+  };
 
   const handlePickSuggestedCustomer = async (customer: CustomerSuggestionItem) => {
     setCustomerSuggestions([]);
@@ -1333,190 +1358,190 @@ const loadDefaultCustomerSuggestions = async () => {
   };
 
   const handleSmartAddressApply = async (rawValue: string) => {
-  const raw = String(rawValue || "").trim();
-  setSmartAddressInput(raw);
+    const raw = String(rawValue || "").trim();
+    setSmartAddressInput(raw);
 
-  if (!raw) {
-    setSmartAddressHint("");
-    return;
-  }
-
-  try {
-    setSmartAddressLoading(true);
-    setSmartAddressHint("");
-
-    const parsed = parseRecipientPhoneAndAddress(raw);
-
-   if (parsed.recipientName) {
-  setAddressRecipientName(parsed.recipientName);
-  setCustomerName(parsed.recipientName);
-}
-
-if (parsed.phone) {
-  setAddressPhone(parsed.phone);
-  setCustomerPhone(parsed.phone);
-}
-
-    const addressOnly = parsed.addressText || raw;
-    setShippingAddress(addressOnly);
-
-    const provinceName = findBestProvinceName(addressOnly, provinceOptions);
-    if (!provinceName) {
-      setAddressLine1(addressOnly);
-      setSmartAddressHint("Đã lấy tên/sđt, nhưng chưa nhận ra tỉnh / thành.");
+    if (!raw) {
+      setSmartAddressHint("");
       return;
     }
 
-    setAddressProvince(provinceName);
-    const province = provinceOptions.find((item) => item.name === provinceName);
-    if (!province?.id) return;
+    try {
+      setSmartAddressLoading(true);
+      setSmartAddressHint("");
 
-    const districts = await getDistricts(province.id);
-    setAddressDistrictOptions(districts);
+      const parsed = parseRecipientPhoneAndAddress(raw);
 
-    const districtName = findBestDistrictName(addressOnly, districts);
-    if (!districtName) {
-      setAddressLine1(addressOnly);
-      setAddressDistrict("");
-      setAddressWard("");
-      setSmartAddressHint("Đã lấy tên/sđt và nhận diện tỉnh / thành, chưa chắc quận huyện.");
-      return;
-    }
+      if (parsed.recipientName) {
+        setAddressRecipientName(parsed.recipientName);
+        setCustomerName(parsed.recipientName);
+      }
 
-    setAddressDistrict(districtName);
-    const district = districts.find((item) => item.name === districtName);
-    if (!district?.id) return;
+      if (parsed.phone) {
+        setAddressPhone(parsed.phone);
+        setCustomerPhone(parsed.phone);
+      }
 
-    const wards = await getWards(district.id);
-    setAddressWardOptions(wards);
+      const addressOnly = parsed.addressText || raw;
+      setShippingAddress(addressOnly);
 
-    const wardName = findBestWardName(addressOnly, wards);
-    if (wardName) {
-      setAddressWard(wardName);
-    } else {
-      setAddressWard("");
-    }
+      const provinceName = findBestProvinceName(addressOnly, provinceOptions);
+      if (!provinceName) {
+        setAddressLine1(addressOnly);
+        setSmartAddressHint("Đã lấy tên/sđt, nhưng chưa nhận ra tỉnh / thành.");
+        return;
+      }
 
-    const detail = extractDetailAddress(addressOnly, [
-      provinceName,
-      districtName,
-      wardName || "",
-    ]);
+      setAddressProvince(provinceName);
+      const province = provinceOptions.find((item) => item.name === provinceName);
+      if (!province?.id) return;
 
-    setAddressLine1(cleanupDetailAddress(detail || addressOnly));
+      const districts = await getDistricts(province.id);
+      setAddressDistrictOptions(districts);
 
-    const normalizedRaw = normalizeAddressToken(addressOnly);
-    const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
-      normalizedRaw.includes(key)
-    );
+      const districtName = findBestDistrictName(addressOnly, districts);
+      if (!districtName) {
+        setAddressLine1(addressOnly);
+        setAddressDistrict("");
+        setAddressWard("");
+        setSmartAddressHint("Đã lấy tên/sđt và nhận diện tỉnh / thành, chưa chắc quận huyện.");
+        return;
+      }
 
-    setSmartAddressHint(
-      wardName
-        ? aliasMatched
-          ? "Đã tự map tên người nhận, sđt và địa chỉ cũ sang địa chỉ sau sáp nhập."
-          : "Đã tự nhận diện người nhận, sđt, tỉnh / huyện / xã."
-        : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã."
-    );
-  } catch {
-    setSmartAddressHint("Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết được.");
-  } finally {
-    setSmartAddressLoading(false);
-  }
-};
-const handleNewCustomerSmartAddressApply = async (rawValue: string) => {
-  const raw = String(rawValue || "").trim();
-  setNewCustomerSmartAddressInput(raw);
+      setAddressDistrict(districtName);
+      const district = districts.find((item) => item.name === districtName);
+      if (!district?.id) return;
 
-  if (!raw) {
-    setNewCustomerSmartAddressHint("");
-    return;
-  }
+      const wards = await getWards(district.id);
+      setAddressWardOptions(wards);
 
-  try {
-    setNewCustomerSmartAddressLoading(true);
-    setNewCustomerSmartAddressHint("");
+      const wardName = findBestWardName(addressOnly, wards);
+      if (wardName) {
+        setAddressWard(wardName);
+      } else {
+        setAddressWard("");
+      }
 
-    const parsed = parseRecipientPhoneAndAddress(raw);
+      const detail = extractDetailAddress(addressOnly, [
+        provinceName,
+        districtName,
+        wardName || "",
+      ]);
 
-    if (parsed.recipientName) {
-      setNewCustomerRecipientName(parsed.recipientName);
-      setCustomerName(parsed.recipientName);
-    }
+      setAddressLine1(cleanupDetailAddress(detail || addressOnly));
 
-    if (parsed.phone) {
-      setNewCustomerPhone(parsed.phone);
-    }
-
-    const addressOnly = parsed.addressText || raw;
-
-    const provinceName = findBestProvinceName(addressOnly, provinceOptions);
-    if (!provinceName) {
-      setNewCustomerAddressLine(addressOnly);
-      setNewCustomerSmartAddressHint("Đã lấy tên/sđt, nhưng chưa nhận ra tỉnh / thành.");
-      return;
-    }
-
-    setNewCustomerProvince(provinceName);
-    const province = provinceOptions.find((item) => item.name === provinceName);
-    if (!province?.id) return;
-
-    const districts = await getDistricts(province.id);
-    setNewCustomerDistrictOptions(districts);
-
-    const districtName = findBestDistrictName(addressOnly, districts);
-    if (!districtName) {
-      setNewCustomerAddressLine(addressOnly);
-      setNewCustomerDistrict("");
-      setNewCustomerWard("");
-      setNewCustomerSmartAddressHint(
-        "Đã lấy tên/sđt và nhận diện tỉnh / thành, cần kiểm tra thêm quận huyện."
+      const normalizedRaw = normalizeAddressToken(addressOnly);
+      const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
+        normalizedRaw.includes(key)
       );
+
+      setSmartAddressHint(
+        wardName
+          ? aliasMatched
+            ? "Đã tự map tên người nhận, sđt và địa chỉ cũ sang địa chỉ sau sáp nhập."
+            : "Đã tự nhận diện người nhận, sđt, tỉnh / huyện / xã."
+          : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã."
+      );
+    } catch {
+      setSmartAddressHint("Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết được.");
+    } finally {
+      setSmartAddressLoading(false);
+    }
+  };
+  const handleNewCustomerSmartAddressApply = async (rawValue: string) => {
+    const raw = String(rawValue || "").trim();
+    setNewCustomerSmartAddressInput(raw);
+
+    if (!raw) {
+      setNewCustomerSmartAddressHint("");
       return;
     }
 
-    setNewCustomerDistrict(districtName);
-    const district = districts.find((item) => item.name === districtName);
-    if (!district?.id) return;
+    try {
+      setNewCustomerSmartAddressLoading(true);
+      setNewCustomerSmartAddressHint("");
 
-    const wards = await getWards(district.id);
-    setNewCustomerWardOptions(wards);
+      const parsed = parseRecipientPhoneAndAddress(raw);
 
-    const wardName = findBestWardName(addressOnly, wards);
-    if (wardName) {
-      setNewCustomerWard(wardName);
-    } else {
-      setNewCustomerWard("");
+      if (parsed.recipientName) {
+        setNewCustomerRecipientName(parsed.recipientName);
+        setCustomerName(parsed.recipientName);
+      }
+
+      if (parsed.phone) {
+        setNewCustomerPhone(parsed.phone);
+      }
+
+      const addressOnly = parsed.addressText || raw;
+
+      const provinceName = findBestProvinceName(addressOnly, provinceOptions);
+      if (!provinceName) {
+        setNewCustomerAddressLine(addressOnly);
+        setNewCustomerSmartAddressHint("Đã lấy tên/sđt, nhưng chưa nhận ra tỉnh / thành.");
+        return;
+      }
+
+      setNewCustomerProvince(provinceName);
+      const province = provinceOptions.find((item) => item.name === provinceName);
+      if (!province?.id) return;
+
+      const districts = await getDistricts(province.id);
+      setNewCustomerDistrictOptions(districts);
+
+      const districtName = findBestDistrictName(addressOnly, districts);
+      if (!districtName) {
+        setNewCustomerAddressLine(addressOnly);
+        setNewCustomerDistrict("");
+        setNewCustomerWard("");
+        setNewCustomerSmartAddressHint(
+          "Đã lấy tên/sđt và nhận diện tỉnh / thành, cần kiểm tra thêm quận huyện."
+        );
+        return;
+      }
+
+      setNewCustomerDistrict(districtName);
+      const district = districts.find((item) => item.name === districtName);
+      if (!district?.id) return;
+
+      const wards = await getWards(district.id);
+      setNewCustomerWardOptions(wards);
+
+      const wardName = findBestWardName(addressOnly, wards);
+      if (wardName) {
+        setNewCustomerWard(wardName);
+      } else {
+        setNewCustomerWard("");
+      }
+
+      const detail = extractDetailAddress(addressOnly, [
+        provinceName,
+        districtName,
+        wardName || "",
+      ]);
+
+      setNewCustomerAddressLine(cleanupDetailAddress(detail || addressOnly));
+
+      const normalizedRaw = normalizeAddressToken(addressOnly);
+      const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
+        normalizedRaw.includes(key)
+      );
+
+      setNewCustomerSmartAddressHint(
+        wardName
+          ? aliasMatched
+            ? "Đã tự map tên người nhận, sđt và địa chỉ cũ sang địa chỉ sau sáp nhập."
+            : "Đã tự nhận diện người nhận, sđt, tỉnh / huyện / xã."
+          : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã."
+      );
+    } catch {
+      setNewCustomerAddressLine(raw);
+      setNewCustomerSmartAddressHint(
+        "Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết."
+      );
+    } finally {
+      setNewCustomerSmartAddressLoading(false);
     }
-
-    const detail = extractDetailAddress(addressOnly, [
-      provinceName,
-      districtName,
-      wardName || "",
-    ]);
-
-    setNewCustomerAddressLine(cleanupDetailAddress(detail || addressOnly));
-
-    const normalizedRaw = normalizeAddressToken(addressOnly);
-    const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
-      normalizedRaw.includes(key)
-    );
-
-    setNewCustomerSmartAddressHint(
-      wardName
-        ? aliasMatched
-          ? "Đã tự map tên người nhận, sđt và địa chỉ cũ sang địa chỉ sau sáp nhập."
-          : "Đã tự nhận diện người nhận, sđt, tỉnh / huyện / xã."
-        : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã."
-    );
-  } catch {
-    setNewCustomerAddressLine(raw);
-    setNewCustomerSmartAddressHint(
-      "Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết."
-    );
-  } finally {
-    setNewCustomerSmartAddressLoading(false);
-  }
-};
+  };
   useEffect(() => {
     if (customerDiscountPercent > 0 && subtotal > 0) {
       setDiscountTotal(String(Math.floor((subtotal * customerDiscountPercent) / 100)));
@@ -1533,9 +1558,9 @@ const handleNewCustomerSmartAddressApply = async (rawValue: string) => {
         return prev.map((line) =>
           line.variantId === variantId
             ? {
-                ...line,
-                qty: Math.min(line.qty + 1, line.stock || line.qty + 1),
-              }
+              ...line,
+              qty: Math.min(line.qty + 1, line.stock || line.qty + 1),
+            }
             : line
         );
       }
@@ -2125,22 +2150,22 @@ const handleNewCustomerSmartAddressApply = async (rawValue: string) => {
         ghnWardCode ? `GHN WardCode: ${ghnWardCode}` : "",
       ].filter(Boolean);
 
-const payload: CreateOrderPayload = {
-  ...(customerId ? ({ customerId } as any) : {}),
-  salesChannel: salesChannel as any,
-  branchId,
-  customerName: customerName.trim(),
-  customerPhone: customerPhone.trim(),
-  note: extraNoteParts.join(" | "),
-  mode,
-  items: lines.map((line) => ({
-    variantId: line.variantId,
-    qty: Number(line.qty),
-  })),
+      const payload: CreateOrderPayload = {
+        ...(customerId ? ({ customerId } as any) : {}),
+        salesChannel: salesChannel as any,
+        branchId,
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
+        note: extraNoteParts.join(" | "),
+        mode,
+        items: lines.map((line) => ({
+          variantId: line.variantId,
+          qty: Number(line.qty),
+        })),
 
-  paymentSourceId,
-  paidAmount: Number(customerPaid || 0),
-  paymentNote: note,
+        paymentSourceId,
+        paidAmount: Number(customerPaid || 0),
+        paymentNote: note,
 
         shippingSnapshot: {
           shippingAddressId: selectedAddress?.id || undefined,
@@ -2169,78 +2194,78 @@ const payload: CreateOrderPayload = {
         },
       };
 
-const created = await createOrder(payload);
+      const created = await createOrder(payload);
 
-let ghnTrackingCode = "";
+      let ghnTrackingCode = "";
 
-if (
-  mode === "ship" &&
-  shippingUiMode === "carrier" &&
-  shippingPartner === "ghn"
-) {
-  const ghnCreated = await createGhnShipment(created.id, {
-    toName: selectedAddress?.recipientName || customerName.trim(),
-    toPhone: selectedAddress?.phone || customerPhone.trim(),
-    toAddress:
-      selectedAddress?.addressLine1 ||
-      addressLine1.trim() ||
-      shippingAddress.trim(),
-    toDistrictId: Number(ghnDistrictId),
-    toWardCode: String(ghnWardCode),
-    codAmount: remaining > 0 ? remaining : 0,
-    insuranceValue: customerMustPay,
-    note: note.trim() || "",
-    requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
-    clientOrderCode: created.orderCode,
-    content: `Đơn hàng ${created.orderCode}`,
-    weight: shippingWeight,
-    length: shippingLength,
-    width: shippingWidth,
-    height: shippingHeight,
-    items: lines.map((line) => ({
-      name: line.productName || line.sku || "Sản phẩm",
-      quantity: Number(line.qty || 0),
-      price: Number(line.price || 0),
-      length: Number(shippingLength || 10),
-      width: Number(shippingWidth || 10),
-      height: Number(shippingHeight || 10),
-      weight: Math.max(
-        1,
-        Math.floor(
-          Number(shippingWeight || 200) / Math.max(lines.length, 1)
-        )
-      ),
-      category: "Hàng hóa",
-    })),
-  });
+      if (
+        mode === "ship" &&
+        shippingUiMode === "carrier" &&
+        shippingPartner === "ghn"
+      ) {
+        const ghnCreated = await createGhnShipment(created.id, {
+          toName: selectedAddress?.recipientName || customerName.trim(),
+          toPhone: selectedAddress?.phone || customerPhone.trim(),
+          toAddress:
+            selectedAddress?.addressLine1 ||
+            addressLine1.trim() ||
+            shippingAddress.trim(),
+          toDistrictId: Number(ghnDistrictId),
+          toWardCode: String(ghnWardCode),
+          codAmount: remaining > 0 ? remaining : 0,
+          insuranceValue: customerMustPay,
+          note: note.trim() || "",
+          requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          clientOrderCode: created.orderCode,
+          content: `Đơn hàng ${created.orderCode}`,
+          weight: shippingWeight,
+          length: shippingLength,
+          width: shippingWidth,
+          height: shippingHeight,
+          items: lines.map((line) => ({
+            name: line.productName || line.sku || "Sản phẩm",
+            quantity: Number(line.qty || 0),
+            price: Number(line.price || 0),
+            length: Number(shippingLength || 10),
+            width: Number(shippingWidth || 10),
+            height: Number(shippingHeight || 10),
+            weight: Math.max(
+              1,
+              Math.floor(
+                Number(shippingWeight || 200) / Math.max(lines.length, 1)
+              )
+            ),
+            category: "Hàng hóa",
+          })),
+        });
 
-  ghnTrackingCode =
-    ghnCreated?.shipment?.trackingCode ||
-    ghnCreated?.trackingCode ||
-    ghnCreated?.ghn?.order_code ||
-    ghnCreated?.ghn?.order_code_return ||
-    "";
-}
+        ghnTrackingCode =
+          ghnCreated?.shipment?.trackingCode ||
+          ghnCreated?.trackingCode ||
+          ghnCreated?.ghn?.order_code ||
+          ghnCreated?.ghn?.order_code_return ||
+          "";
+      }
 
-setModePickerOpen(false);
+      setModePickerOpen(false);
 
-const nextSearch = new URLSearchParams({
-  created: "1",
-});
+      const nextSearch = new URLSearchParams({
+        created: "1",
+      });
 
-if (ghnTrackingCode) {
-  nextSearch.set("tracking", ghnTrackingCode);
-}
+      if (ghnTrackingCode) {
+        nextSearch.set("tracking", ghnTrackingCode);
+      }
 
-router.push(`/orders/${encodeURIComponent(created.id)}?${nextSearch.toString()}`);
-return;
+      router.push(`/orders/${encodeURIComponent(created.id)}?${nextSearch.toString()}`);
+      return;
 
-} catch (err: any) {
-  setError(err?.message || "Tạo đơn thất bại.");
-} finally {
-  setSaving(false);
-}
-};
+    } catch (err: any) {
+      setError(err?.message || "Tạo đơn thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const compactCustomerSummary = [customerName || "Khách lẻ", customerPhone || "", customerPolicyLabel || ""]
     .filter(Boolean)
@@ -2309,19 +2334,19 @@ return;
                         value={customerPhone}
                         onChange={(e) => handlePhoneChange(e.target.value)}
                         onFocus={() => {
-  if (customerPhone.trim()) {
-    if (customerSuggestions.length) setCustomerSuggestionOpen(true);
-    return;
-  }
+                          if (customerPhone.trim()) {
+                            if (customerSuggestions.length) setCustomerSuggestionOpen(true);
+                            return;
+                          }
 
-  if (customerDefaultSuggestions.length) {
-    setCustomerSuggestions(customerDefaultSuggestions);
-    setCustomerSuggestionOpen(true);
-    return;
-  }
+                          if (customerDefaultSuggestions.length) {
+                            setCustomerSuggestions(customerDefaultSuggestions);
+                            setCustomerSuggestionOpen(true);
+                            return;
+                          }
 
-  void loadDefaultCustomerSuggestions();
-}}
+                          void loadDefaultCustomerSuggestions();
+                        }}
                         placeholder="Nhập sđt để tìm khách cũ"
                       />
 
@@ -2351,57 +2376,41 @@ return;
                   </div>
 
                   <div className="rounded-2xl border border-neutral-300 p-4">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-neutral-900">
-                          Địa chỉ giao hàng
-                        </p>
-                        <p className="mt-1 text-xs text-neutral-500">
-                          Chọn từ sổ địa chỉ khách hoặc tạo mới ngay tại đây.
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button variant="ghost" onClick={() => void openAddressSelector()}>
-                          Thay đổi
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            if (!customerId) {
-                              setCustomerHint("Cần chọn khách hàng trước.");
-                              return;
-                            }
-                            openCreateAddressModal();
-                          }}
-                          disabled={!customerId}
-                        >
-                          + Địa chỉ mới
-                        </Button>
-                      </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        className="rounded-2xl border border-neutral-200 px-3 py-2 text-sm font-medium"
+                        onClick={() => void openAddressSelector()}
+                      >
+                        Thay đổi
+                      </Button>
+
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          if (!customerId) {
+                            setCustomerHint("Cần chọn khách hàng trước.");
+                            return;
+                          }
+
+                          openCreateAddressModal();
+                        }}
+                        disabled={!customerId}
+                      >
+                        + Địa chỉ mới
+                      </Button>
                     </div>
 
-                    <div className="mb-3">
-                      <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ thông minh</p>
-                      <textarea
-                        className="min-h-[84px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-                        value={smartAddressInput}
-                        onChange={(e) => setSmartAddressInput(e.target.value)}
-                        onBlur={(e) => void handleSmartAddressApply(e.target.value)}
-                        placeholder="Paste nguyên địa chỉ khách vào đây để tự map tỉnh / huyện / xã"
-                      />
-                      {smartAddressHint ? (
-                        <p className="mt-2 text-xs text-neutral-500">
-                          {smartAddressLoading ? "Đang phân tích..." : smartAddressHint}
-                        </p>
-                      ) : null}
+                    <div className="mt-3 min-h-[54px] rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-6 text-neutral-800">
+                      {customerAddressDisplay ? (
+                        customerAddressDisplay
+                      ) : (
+                        <span className="text-neutral-400">
+                          Chưa có địa chỉ khách hàng
+                        </span>
+                      )}
                     </div>
-
-                    <textarea
-                      className="min-h-[90px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-                      value={shippingAddress}
-                      onChange={(e) => setShippingAddress(e.target.value)}
-                      placeholder="Địa chỉ giao hàng"
-                    />
 
                     <div className="mt-3 flex flex-wrap gap-2">
                       {selectedAddress ? (
@@ -2789,11 +2798,10 @@ return;
                     key={item.value}
                     type="button"
                     onClick={() => setShippingUiMode(item.value)}
-                    className={`rounded-2xl border p-3 text-left transition ${
-                      shippingUiMode === item.value
-                        ? "border-neutral-900 bg-neutral-50"
-                        : "border-neutral-200 hover:bg-neutral-50"
-                    }`}
+                    className={`rounded-2xl border p-3 text-left transition ${shippingUiMode === item.value
+                      ? "border-neutral-900 bg-neutral-50"
+                      : "border-neutral-200 hover:bg-neutral-50"
+                      }`}
                   >
                     <div className="text-sm font-medium text-neutral-900">{item.label}</div>
                     <div className="mt-1 text-xs text-neutral-500">{item.description}</div>
@@ -2808,11 +2816,10 @@ return;
                     type="button"
                     disabled={!item.enabled}
                     onClick={() => item.enabled && setShippingPartner(item.value)}
-                    className={`rounded-2xl border px-3 py-3 text-left transition ${
-                      shippingPartner === item.value
-                        ? "border-neutral-900 bg-neutral-50"
-                        : "border-neutral-200"
-                    } ${item.enabled ? "hover:bg-neutral-50" : "cursor-not-allowed opacity-50"}`}
+                    className={`rounded-2xl border px-3 py-3 text-left transition ${shippingPartner === item.value
+                      ? "border-neutral-900 bg-neutral-50"
+                      : "border-neutral-200"
+                      } ${item.enabled ? "hover:bg-neutral-50" : "cursor-not-allowed opacity-50"}`}
                   >
                     <div className="text-sm font-medium">{item.label}</div>
                     <div className="mt-1 text-xs text-neutral-500">
@@ -2908,9 +2915,8 @@ return;
                             ghnWardCode,
                           })
                         }
-                        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${
-                          active ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
-                        }`}
+                        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${active ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
+                          }`}
                       >
                         <div>
                           <div className="text-sm font-semibold text-neutral-900">
@@ -3000,24 +3006,24 @@ return;
                       onChange={(e) => setCustomerPaid(e.target.value)}
                     />
                     {/* 🔥 Nguồn tiền */}
-<div className="mt-3">
-  <label className="text-xs font-medium text-neutral-500">
-    Nguồn tiền
-  </label>
+                    <div className="mt-3">
+                      <label className="text-xs font-medium text-neutral-500">
+                        Nguồn tiền
+                      </label>
 
-  <select
-    value={paymentSourceId}
-    onChange={(e) => setPaymentSourceId(e.target.value)}
-    className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"
-  >
-    <option value="">Chọn nguồn tiền</option>
-    {paymentSources.map((s) => (
-      <option key={s.id} value={s.id}>
-        {s.name}
-      </option>
-    ))}
-  </select>
-</div>
+                      <select
+                        value={paymentSourceId}
+                        onChange={(e) => setPaymentSourceId(e.target.value)}
+                        className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+                      >
+                        <option value="">Chọn nguồn tiền</option>
+                        {visiblePaymentSources.map((source) => (
+                          <option key={source.id} value={source.id}>
+                            {source.name || source.label || source.code}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between text-base font-semibold">
@@ -3264,9 +3270,8 @@ return;
                 return (
                   <div
                     key={address.id}
-                    className={`rounded-2xl border p-4 ${
-                      isActive ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
-                    }`}
+                    className={`rounded-2xl border p-4 ${isActive ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-2">
