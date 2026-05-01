@@ -61,6 +61,11 @@ export type WarehouseRack = {
   status: "PENDING" | "IN_PROGRESS" | "FINISHED" | "MISMATCH" | string;
   note?: string | null;
   shelves?: WarehouseShelf[];
+  variantLocations?: any[];
+  skuCount?: number;
+  totalSku?: number;
+  totalSkus?: number;
+  totalQty?: number;
 };
 
 export type WarehouseFloor = {
@@ -112,6 +117,13 @@ export type WarehouseMap = {
   doors?: WarehouseDoor[];
 };
 
+export type FullWarehouseMap = WarehouseMap & {
+  racks: WarehouseRack[];
+  floors: WarehouseFloor[];
+  zones: WarehouseZone[];
+  doors: WarehouseDoor[];
+};
+
 export type CustomLayoutAisle = {
   aisle: string;
   rackCount: number;
@@ -128,7 +140,7 @@ export async function getWarehouseMap(id: string) {
 }
 
 export async function getFullWarehouseMap(id: string) {
-  return request<WarehouseMap>(`/warehouse-map/${id}/full`);
+  return request<FullWarehouseMap>(`/warehouse-map/${id}/full`);
 }
 
 export async function createWarehouseMap(payload: {
@@ -265,4 +277,195 @@ export async function deleteWarehouseDoor(doorId: string) {
   return request<{ ok: boolean }>(`/warehouse-map/doors/${doorId}`, {
     method: "DELETE",
   });
+}
+
+// ================================
+// WMS OPERATION TYPES/APIs
+// ================================
+
+export type WarehouseVariantOption = {
+  id: string;
+  sku: string;
+  productName: string;
+  color?: string;
+  size?: string;
+  price?: number;
+  costPrice?: number;
+  availableQty?: number;
+};
+
+export type RackInventoryItem = {
+  locationId: string;
+  rackId?: string;
+  rackCode?: string;
+  shelfId?: string | null;
+  shelfCode?: string | null;
+  shelfLabel?: string | null;
+  floorNo?: number | null;
+  isPrimary: boolean;
+  note?: string | null;
+  variantId: string;
+  sku: string;
+  productName: string;
+  color: string;
+  size: string;
+  availableQty: number;
+  reservedQty: number;
+  incomingQty: number;
+  totalInventory?: number;
+};
+
+export type RackInventoryResponse = {
+  rack: Pick<WarehouseRack, "id" | "code" | "name" | "branchId" | "aisle" | "rackNo" | "floors" | "status"> & {
+    shelves?: WarehouseShelf[];
+  };
+  totalSku?: number;
+  totalSkus?: number;
+  totalQty: number;
+  shelves?: WarehouseShelf[];
+  items: RackInventoryItem[];
+};
+
+export type WarehouseHeatmapRack = {
+  rackId: string;
+  rackCode: string;
+  rackName?: string;
+  name?: string;
+  aisle: string;
+  rackNo: string;
+  skuCount: number;
+  qty: number;
+  heat?: "EMPTY" | "LOW" | "NORMAL" | "HIGH" | string;
+  level?: "EMPTY" | "LOW" | "MEDIUM" | "HIGH" | string;
+  color: string;
+  x?: number;
+  y?: number;
+};
+
+export type WarehouseHeatmapResponse = {
+  mapId: string;
+  totalRacks: number;
+  emptyRacks: number;
+  lowRacks: number;
+  highRacks: number;
+  racks: WarehouseHeatmapRack[];
+};
+
+export type PickingRouteItem = {
+  step?: number;
+  sku: string;
+  productName: string;
+  variantId?: string;
+  rackId: string;
+  rackCode?: string;
+  rackName?: string;
+  aisle?: string;
+  rackNo?: string;
+  shelfCode?: string | null;
+  shelfLabel?: string | null;
+  floorNo?: number | null;
+  x: number;
+  y: number;
+};
+
+export type PickingRouteResponse = {
+  totalRequested?: number;
+  totalFound?: number;
+  missingSkus: string[];
+  route: PickingRouteItem[];
+  path?: Array<{ rackId?: string; x: number; y: number; sku?: string }>;
+};
+
+export async function getRackInventory(rackId: string) {
+  return request<RackInventoryResponse>(`/warehouse-map/racks/${rackId}/inventory`);
+}
+
+export async function assignSkuToRack(payload: {
+  rackId: string;
+  variantId?: string;
+  sku?: string;
+  shelfId?: string;
+  floorNo?: number;
+  isPrimary?: boolean;
+  note?: string;
+}) {
+  const { rackId, ...body } = payload;
+  return request<RackInventoryResponse>(`/warehouse-map/racks/${rackId}/assign-sku`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function removeSkuFromRack(locationId: string) {
+  return request<{ ok: boolean }>(`/warehouse-map/locations/${locationId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function searchWarehouseVariants(payload: {
+  q: string;
+  branchId?: string;
+  limit?: number;
+}) {
+  const qs = new URLSearchParams();
+  if (payload.q) qs.set("q", payload.q);
+  if (payload.branchId) qs.set("branchId", payload.branchId);
+  if (payload.limit) qs.set("limit", String(payload.limit));
+
+  return request<WarehouseVariantOption[]>(`/warehouse-map/variants/search?${qs.toString()}`);
+}
+
+export async function scanWarehouseRack(payload: {
+  mapId: string;
+  code: string;
+  branchId?: string;
+}) {
+  return request<{
+    found?: boolean;
+    rack: WarehouseRack;
+    inventory?: RackInventoryResponse;
+    scanRackCode: string;
+    shortCode: string;
+  }>(`/warehouse-map/${payload.mapId}/scan-rack`, {
+    method: "POST",
+    body: JSON.stringify({ code: payload.code, branchId: payload.branchId }),
+  });
+}
+
+export async function getWarehouseHeatmap(mapId: string) {
+  return request<WarehouseHeatmapResponse>(`/warehouse-map/${mapId}/heatmap`);
+}
+
+export async function getPickingRoute(
+  mapId: string,
+  payload: { skus: string[]; branchId?: string }
+) {
+  return request<PickingRouteResponse>(`/warehouse-map/${mapId}/picking-route`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getRebalanceSuggestions(mapId: string) {
+  return request<{
+    totalSuggestions?: number;
+    emptyRacks?: number;
+    emptySlots?: WarehouseHeatmapRack[];
+    crowdedRacks?: WarehouseHeatmapRack[];
+    lowRacks?: WarehouseHeatmapRack[];
+    suggestions: Array<{
+      type: string;
+      priority?: string;
+      rackId?: string;
+      rackName?: string;
+      fromRackId?: string;
+      fromRackCode?: string;
+      toRackId?: string | null;
+      toRackCode?: string | null;
+      targetRackId?: string | null;
+      targetRackName?: string | null;
+      reason?: string;
+      message?: string;
+    }>;
+  }>(`/warehouse-map/${mapId}/rebalance-suggestions`);
 }

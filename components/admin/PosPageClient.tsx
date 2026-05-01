@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createOrder,
@@ -77,7 +77,7 @@ function getApiBaseUrl() {
   return (
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "${API_BASE}"
+    API_BASE
   ).replace(/\/$/, "");
 }
 
@@ -96,7 +96,17 @@ function branchLabelFromAny(row: any) {
 
 export default function PosPageClient() {
   const router = useRouter();
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
+  const barcodeBufferRef = useRef("");
+  const barcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraScanning, setCameraScanning] = useState(false);
+  const [offlineReady, setOfflineReady] = useState(false);
   const [products, setProducts] = useState<OrderProduct[]>([]);
   const [productSearch, setProductSearch] = useState("");
   const [lines, setLines] = useState<PosLine[]>([]);
@@ -121,7 +131,7 @@ export default function PosPageClient() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
+  const [successMessage, setSuccessMessage] = useState("");
   const [promoOpen, setPromoOpen] = useState(false);
   const [promoType, setPromoType] = useState<"amount" | "percent">("amount");
   const [promoValue, setPromoValue] = useState("");
@@ -341,9 +351,12 @@ export default function PosPageClient() {
             ...variant,
             productName: product.name,
             productCode:
+              variant.productCode ||
               (product as any).sku ||
               (product as any).code ||
-              (product as any).slug ||
+              (product as any).productCode ||
+              (product as any).mainSku ||
+              product.slug ||
               "",
             imageUrl: (product as any).imageUrl,
             stock,
@@ -378,6 +391,7 @@ export default function PosPageClient() {
       .filter((v: any) => {
         return (
           String(v.sku || "").toLowerCase().includes(q) ||
+          String(v.productCode || "").toLowerCase().includes(q) ||
           String(v.productName || "").toLowerCase().includes(q) ||
           String(v.color || "").toLowerCase().includes(q) ||
           String(v.size || "").toLowerCase().includes(q)
@@ -385,6 +399,23 @@ export default function PosPageClient() {
       })
       .slice(0, 20);
   }, [allVariants, exchangeSearch]);
+
+  const playScanSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.value = 880;
+      gain.gain.value = 0.08;
+
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.08);
+    } catch { }
+  };
 
   const addVariant = (variant: any) => {
     setLines((prev) => {
@@ -416,7 +447,25 @@ export default function PosPageClient() {
 
     setProductSearch("");
     setError("");
+    setHighlightId(variant.id);
+    playScanSound();
+
+    setTimeout(() => setHighlightId(null), 650);
+    setTimeout(() => searchRef.current?.focus(), 0);
   };
+
+  useEffect(() => {
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return;
+    if (filteredVariants.length !== 1) return;
+
+    const variant = filteredVariants[0];
+    const isExact =
+      String(variant.sku || "").toLowerCase() === q ||
+      String(variant.productCode || "").toLowerCase() === q;
+
+    if (isExact) addVariant(variant);
+  }, [filteredVariants, productSearch]);
 
   const addExchangeVariant = (variant: any) => {
     setExchangeLines((prev) => {
@@ -537,7 +586,7 @@ export default function PosPageClient() {
     const token = localStorage.getItem("token");
 
     const res = await fetch(
-      `${apiBase}/orders?search=${encodeURIComponent(returnSearch)}&limit=20`,
+      `${apiBase}/orders?search=${encodeURIComponent(returnSearch)}&limit=20&status=COMPLETED`,
       {
         headers: {
           "Content-Type": "application/json",
@@ -576,25 +625,64 @@ export default function PosPageClient() {
       cache: "no-store",
     });
 
-    const detail = res.ok ? await res.json() : order;
-    const items = detail.items || detail.orderItems || detail.lines || [];
+    const rawDetail = res.ok ? await res.json() : order;
+    const detail = rawDetail?.data || rawDetail?.order || rawDetail;
+
+    const items =
+      (Array.isArray(detail?.items) && detail.items) ||
+      (Array.isArray(detail?.orderItems) && detail.orderItems) ||
+      (Array.isArray(detail?.lines) && detail.lines) ||
+      (Array.isArray(rawDetail?.items) && rawDetail.items) ||
+      (Array.isArray(rawDetail?.orderItems) && rawDetail.orderItems) ||
+      (Array.isArray(rawDetail?.lines) && rawDetail.lines) ||
+      [];
+
+    console.log("RETURN DETAIL RAW:", rawDetail);
+    console.log("RETURN DETAIL:", detail);
+    console.log("RETURN ITEMS:", items);
+
+    const mappedReturnLines = items.map((item: any) => {
+      const variant = item.variant || item.productVariant || {};
+      const product = item.product || variant.product || {};
+      const orderedQty = Number(item.qty || item.quantity || item.orderedQty || 1);
+
+      return {
+        id: String(item.id || item.variantId || variant.id || crypto.randomUUID()),
+        variantId: item.variantId || variant.id,
+        sku: item.sku || variant.sku || "",
+        productName:
+          item.productName ||
+          item.name ||
+          product.name ||
+          variant.productName ||
+          "Sản phẩm",
+        color: item.color || variant.color || "",
+        size: item.size || variant.size || "",
+        price: Number(
+          item.price ||
+          item.unitPrice ||
+          item.salePrice ||
+          item.finalPrice ||
+          item.priceAtSale ||
+          0
+        ),
+        orderedQty,
+        returnQty: orderedQty,
+      };
+    });
 
     setSelectedReturnOrder(detail);
-    setReturnLines(
-      items.map((item: any) => ({
-        id: item.id || item.variantId || item.variant?.id,
-        variantId: item.variantId || item.variant?.id,
-        sku: item.sku || item.variant?.sku,
-        productName: item.productName || item.product?.name || item.name,
-        color: item.color || item.variant?.color,
-        size: item.size || item.variant?.size,
-        price: Number(item.price || item.unitPrice || item.salePrice || 0),
-        orderedQty: Number(item.qty || item.quantity || 1),
-        returnQty: 0,
-      }))
-    );
-
+    setReturnLines(mappedReturnLines);
     setExchangeLines([]);
+    setReturnNote("");
+    setReturnReceived(true);
+    setCustomerName(
+      detail.customerName ||
+      detail.customer?.fullName ||
+      detail.customer?.name ||
+      customerName
+    );
+    setCustomerPhone(detail.customerPhone || detail.customer?.phone || customerPhone);
     setReturnPickerOpen(false);
     setReturnFormOpen(true);
   };
@@ -628,64 +716,251 @@ export default function PosPageClient() {
     { label: "Tất cả thao tác", action: () => setError("Menu thao tác nâng cao sẽ làm sau.") },
   ];
 
-  const handlePay = async () => {
-    if (!branchId) {
-      setError("Chưa có chi nhánh.");
-      return;
+  const stopCameraScan = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
     }
 
-    if (!lines.length) {
-      setError("Chưa có sản phẩm trong đơn.");
-      return;
-    }
+    setCameraScanning(false);
+    setCameraOpen(false);
+  };
 
-    if (!paymentSourceId) {
-      setError("Chưa chọn nguồn tiền.");
-      return;
-    }
-
+  const startCameraScan = async () => {
     try {
-      setSaving(true);
       setError("");
+      setCameraOpen(true);
+      setCameraScanning(true);
 
-      const created = await createOrder({
-        salesChannel: "SHOWROOM" as any,
-        branchId,
-        customerName: customerName.trim() || "Khách lẻ",
-        customerPhone: customerPhone.trim() || "",
-        note: [
-          "Đơn POS bán tại quầy",
-          note.trim() ? `Ghi chú: ${note.trim()}` : "",
-          discountNumber ? `Giảm giá POS: ${discountNumber}` : "",
-        ]
-          .filter(Boolean)
-          .join(" | "),
-        mode: "approve" as any,
-        paymentSourceId,
-        paidAmount: paid,
-        paymentNote: "Thanh toán POS",
-        items: lines.map((line) => ({
-          variantId: line.variantId,
-          qty: Number(line.qty),
-        })),
-      } as any);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
 
-      router.push(`/orders/${encodeURIComponent(created.id)}?created=1&pos=1`);
-    } catch (err: any) {
-      setError(err?.message || "Thanh toán thất bại.");
-    } finally {
-      setSaving(false);
+      cameraStreamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      const BarcodeDetectorClass = (window as any).BarcodeDetector;
+
+      if (!BarcodeDetectorClass) {
+        setError("Trình duyệt này chưa hỗ trợ camera scan. Dùng máy quét barcode hoặc nhập SKU.");
+        return;
+      }
+
+      const detector = new BarcodeDetectorClass({
+        formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e"],
+      });
+
+      const scanLoop = async () => {
+        if (!videoRef.current || !cameraStreamRef.current) return;
+
+        try {
+          const codes = await detector.detect(videoRef.current);
+          const rawValue = codes?.[0]?.rawValue;
+
+          if (rawValue) {
+            const code = String(rawValue).trim().toLowerCase();
+            const found = allVariants.find(
+              (v: any) =>
+                String(v.sku || "").toLowerCase() === code ||
+                String(v.productCode || "").toLowerCase() === code
+            );
+
+            if (found) {
+              addVariant(found);
+              stopCameraScan();
+              return;
+            }
+
+            setProductSearch(rawValue);
+          }
+        } catch { }
+
+        requestAnimationFrame(scanLoop);
+      };
+
+      requestAnimationFrame(scanLoop);
+    } catch {
+      setCameraScanning(false);
+      setError("Không mở được camera. Kiểm tra quyền camera của trình duyệt.");
     }
   };
 
+  useEffect(() => {
+    if (!products.length) return;
+
+    try {
+      localStorage.setItem("the1970_pos_products_cache", JSON.stringify(products));
+      setOfflineReady(true);
+    } catch {
+      setOfflineReady(false);
+    }
+  }, [products]);
+
+  useEffect(() => {
+    if (products.length) return;
+
+    try {
+      const cached = localStorage.getItem("the1970_pos_products_cache");
+      if (!cached) return;
+      const rows = JSON.parse(cached);
+      if (Array.isArray(rows) && rows.length) {
+        setProducts(rows);
+        setOfflineReady(true);
+      }
+    } catch {
+      setOfflineReady(false);
+    }
+  }, [products.length]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT";
+
+      if (e.key === "F1") {
+        e.preventDefault();
+        void handlePay();
+        return;
+      }
+
+      if (e.key === "F2") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (cameraOpen) {
+          e.preventDefault();
+          stopCameraScan();
+          return;
+        }
+        if (returnFormOpen) {
+          e.preventDefault();
+          setReturnFormOpen(false);
+          return;
+        }
+        if (returnPickerOpen) {
+          e.preventDefault();
+          setReturnPickerOpen(false);
+          return;
+        }
+      }
+
+      if (e.key === "Enter" && document.activeElement === searchRef.current) {
+        e.preventDefault();
+        if (filteredVariants[0]) addVariant(filteredVariants[0]);
+        return;
+      }
+
+      if (isTyping && document.activeElement !== searchRef.current) return;
+
+      if (e.key.length === 1) {
+        barcodeBufferRef.current += e.key;
+
+        if (barcodeTimerRef.current) clearTimeout(barcodeTimerRef.current);
+
+        barcodeTimerRef.current = setTimeout(() => {
+          const code = barcodeBufferRef.current.trim().toLowerCase();
+          barcodeBufferRef.current = "";
+
+          if (code.length < 4) return;
+
+          const found = allVariants.find(
+            (v: any) =>
+              String(v.sku || "").toLowerCase() === code ||
+              String(v.productCode || "").toLowerCase() === code
+          );
+
+          if (found) addVariant(found);
+          else setProductSearch(code);
+        }, 90);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [allVariants, filteredVariants, cameraOpen, returnPickerOpen, returnFormOpen, lines, branchId, paymentSourceId, paid, discountNumber, note, customerName, customerPhone]);
+
+  useEffect(() => {
+    return () => stopCameraScan();
+  }, []);
+const handlePay = async () => {
+  if (!branchId) {
+    setError("Chưa có chi nhánh.");
+    return;
+  }
+
+  if (!lines.length) {
+    setError("Chưa có sản phẩm trong đơn.");
+    return;
+  }
+
+  if (!customerPhone.trim() && !customerName.trim()) {
+    setError("Cần nhập SĐT hoặc tên khách hàng trước khi thanh toán.");
+    return;
+  }
+
+  if (!paymentSourceId) {
+    setError("Chưa chọn nguồn tiền.");
+    return;
+  }
+
+  try {
+    setSaving(true);
+    setError("");
+    setSuccessMessage("");
+
+    const created = await createOrder({
+      salesChannel: "POS" as any, // giữ cái backend đang chạy được
+      branchId,
+      customerName: customerName.trim() || "Khách POS",
+      customerPhone: customerPhone.trim() || "",
+      note: [
+        "Đơn POS bán tại quầy",
+        note.trim() ? `Ghi chú: ${note.trim()}` : "",
+        discountNumber ? `Giảm giá POS: ${discountNumber}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      mode: "approve" as any,
+      paymentSourceId,
+      paidAmount: mustPay,
+      paymentNote: "Thanh toán POS",
+      items: lines.map((line) => ({
+        variantId: line.variantId,
+        qty: Number(line.qty),
+      })),
+    } as any);
+
+    setSuccessMessage("Tạo đơn POS thành công. Đang mở chi tiết đơn...");
+
+    setTimeout(() => {
+      router.push(`/orders/${encodeURIComponent(created.id)}?created=1&pos=1`);
+    }, 500);
+  } catch (err: any) {
+    setError(err?.message || "Thanh toán thất bại.");
+  } finally {
+    setSaving(false);
+  }
+};
+
   return (
-    <div className="h-[calc(100vh-72px)] overflow-hidden bg-[#f5f5f3]">
-      <div className="grid h-full grid-cols-[1fr_360px] overflow-hidden">
+    <div className="h-[calc(100vh-145px)] overflow-hidden rounded-[28px] border border-neutral-200 bg-[#f5f5f3] shadow-sm">
+      <div className="grid h-full grid-cols-[minmax(0,1fr)_390px] overflow-hidden">
         <main className="flex min-w-0 flex-col overflow-hidden">
           <div className="shrink-0 border-b border-neutral-200 bg-white px-3 py-2">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <input
+                  ref={searchRef}
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
                   onKeyDown={(e) => {
@@ -694,7 +969,7 @@ export default function PosPageClient() {
                     }
                   }}
                   placeholder="Thêm sản phẩm vào đơn / quét SKU..."
-                  className="h-10 w-full rounded-2xl border border-neutral-300 bg-white px-4 text-sm text-neutral-900 outline-none focus:border-black"
+                  className="h-12 w-full rounded-[20px] border border-neutral-300 bg-white px-5 text-[15px] font-medium text-neutral-900 outline-none transition focus:border-neutral-900 focus:ring-4 focus:ring-neutral-100"
                   autoFocus
                 />
 
@@ -751,8 +1026,18 @@ export default function PosPageClient() {
                 type="button"
                 onClick={createNewTab}
                 className="h-10 w-10 rounded-2xl bg-neutral-950 text-xl font-semibold text-white"
+                title="Tạo tab đơn mới"
               >
                 +
+              </button>
+
+              <button
+                type="button"
+                onClick={startCameraScan}
+                className="h-10 rounded-2xl border border-neutral-300 bg-white px-4 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+                title="Scan bằng camera"
+              >
+                Camera
               </button>
             </div>
           </div>
@@ -777,7 +1062,8 @@ export default function PosPageClient() {
               lines.map((line, index) => (
                 <div
                   key={line.variantId}
-                  className="grid grid-cols-[48px_64px_120px_1fr_100px_110px_120px_40px] items-center border-b border-neutral-100 px-4 py-2 text-sm hover:bg-neutral-50"
+                  className={`grid grid-cols-[48px_64px_120px_1fr_100px_110px_120px_40px] items-center border-b border-neutral-100 px-4 py-2 text-sm transition ${highlightId === line.variantId ? "bg-amber-100" : "hover:bg-neutral-50"
+                    }`}
                 >
                   <div className="text-neutral-500">{index + 1}</div>
 
@@ -844,14 +1130,14 @@ export default function PosPageClient() {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-neutral-200 bg-white p-2">
-            <div className="grid grid-cols-6 gap-2">
+          <div className="shrink-0 border-t border-neutral-200 bg-white p-3">
+            <div className="grid grid-cols-5 gap-3">
               {quickActions.map((item) => (
                 <button
                   key={item.label}
                   type="button"
                   onClick={item.action}
-                  className="h-9 rounded-2xl bg-neutral-100 text-xs font-medium text-neutral-700 hover:bg-neutral-200"
+                  className="h-11 rounded-2xl bg-neutral-100 px-3 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200"
                 >
                   {item.label}
                 </button>
@@ -860,7 +1146,7 @@ export default function PosPageClient() {
           </div>
         </main>
 
-        <aside className="h-full overflow-hidden border-l border-neutral-200 bg-white p-3">
+        <aside className="h-full overflow-hidden border-l border-neutral-200 bg-white p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
               <div className="text-lg font-semibold">Thanh toán POS</div>
@@ -869,8 +1155,15 @@ export default function PosPageClient() {
               </div>
             </div>
 
-            <div className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">
-              F1
+            <div className="flex items-center gap-2">
+              {offlineReady ? (
+                <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Offline ready
+                </div>
+              ) : null}
+              <div className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">
+                F1
+              </div>
             </div>
           </div>
 
@@ -999,11 +1292,17 @@ export default function PosPageClient() {
             </div>
           ) : null}
 
+          {successMessage ? (
+            <div className="mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+              {successMessage}
+            </div>
+          ) : null}
+
           <button
             type="button"
             onClick={handlePay}
             disabled={saving || !lines.length}
-            className="mt-3 h-12 w-full rounded-2xl bg-blue-600 text-base font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-neutral-300"
+            className="mt-4 h-14 w-full rounded-[22px] bg-neutral-950 text-base font-bold text-white shadow-lg shadow-neutral-200 transition hover:bg-neutral-800 disabled:bg-neutral-300 disabled:shadow-none"
           >
             {saving ? "ĐANG LƯU..." : "THANH TOÁN (F1)"}
           </button>
@@ -1011,12 +1310,42 @@ export default function PosPageClient() {
           <button
             type="button"
             onClick={clearOrder}
-            className="mt-2 h-10 w-full rounded-2xl border border-neutral-200 text-sm font-medium"
+            className="mt-3 h-11 w-full rounded-[18px] border border-neutral-200 bg-white text-sm font-semibold text-neutral-600 transition hover:bg-neutral-50"
           >
             Reset
           </button>
         </aside>
       </div>
+
+      {cameraOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-xl rounded-3xl bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Scan barcode bằng camera</h3>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Đưa mã vạch/QR vào giữa khung. Nhấn Esc để đóng.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={stopCameraScan}
+                className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-600 hover:bg-neutral-50"
+              >
+                Đóng
+              </button>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl bg-black">
+              <video ref={videoRef} className="h-[360px] w-full object-cover" muted playsInline />
+            </div>
+
+            <div className="mt-3 text-center text-xs text-neutral-500">
+              {cameraScanning ? "Đang quét..." : "Đang chờ quyền camera..."}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {promoOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
@@ -1122,11 +1451,27 @@ export default function PosPageClient() {
       ) : null}
 
       {returnPickerOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-          <div className="w-full max-w-4xl rounded-3xl bg-white p-5 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+          onClick={() => setReturnPickerOpen(false)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[82vh] overflow-hidden rounded-3xl bg-white p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xl font-semibold">Chọn đơn đổi trả</h3>
-              <button onClick={() => setReturnPickerOpen(false)}>×</button>
+              <div>
+                <h3 className="text-xl font-semibold">Chọn đơn đổi trả</h3>
+                <p className="mt-1 text-sm text-neutral-500">Chọn đơn là tự tick trả toàn bộ. ESC hoặc click ngoài để đóng.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReturnPickerOpen(false)}
+                className="h-10 w-10 rounded-full bg-neutral-100 text-lg font-semibold hover:bg-neutral-200"
+                title="Đóng"
+              >
+                ×
+              </button>
             </div>
 
             <div className="flex gap-3">
@@ -1152,7 +1497,7 @@ export default function PosPageClient() {
               </button>
             </div>
 
-            <div className="mt-4 overflow-hidden rounded-2xl border border-neutral-200">
+            <div className="mt-4 max-h-[58vh] overflow-auto rounded-2xl border border-neutral-200">
               <div className="grid grid-cols-[140px_140px_1fr_140px_110px] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase text-neutral-500">
                 <div>Mã đơn</div>
                 <div>Ngày tạo</div>
@@ -1192,8 +1537,14 @@ export default function PosPageClient() {
       ) : null}
 
       {returnFormOpen && selectedReturnOrder ? (
-        <div className="fixed inset-0 z-50 overflow-auto bg-black/35 p-4">
-          <div className="mx-auto w-full max-w-6xl rounded-3xl bg-white p-5 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 overflow-auto bg-black/35 p-4"
+          onClick={() => setReturnFormOpen(false)}
+        >
+          <div
+            className="mx-auto w-full max-w-6xl rounded-3xl bg-white p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold">Tạo phiếu đổi trả hàng</h3>
@@ -1201,13 +1552,41 @@ export default function PosPageClient() {
                   Đơn gốc: {selectedReturnOrder.orderCode || selectedReturnOrder.code}
                 </p>
               </div>
-              <button onClick={() => setReturnFormOpen(false)}>×</button>
+              <button
+                type="button"
+                onClick={() => setReturnFormOpen(false)}
+                className="h-10 w-10 rounded-full bg-neutral-100 text-lg font-semibold hover:bg-neutral-200"
+                title="Đóng"
+              >
+                ×
+              </button>
             </div>
 
             <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
               <div className="space-y-4">
                 <div className="rounded-3xl border border-neutral-200 p-4">
-                  <h4 className="font-semibold">Sản phẩm trả</h4>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h4 className="font-semibold">Sản phẩm trả</h4>
+                      <p className="mt-1 text-xs text-neutral-500">Mặc định đã chọn trả toàn bộ. Có thể chỉnh số lượng từng dòng.</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReturnLines((prev) => prev.map((line) => ({ ...line, returnQty: line.orderedQty })))}
+                        className="rounded-2xl border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-neutral-50"
+                      >
+                        Trả toàn bộ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReturnLines((prev) => prev.map((line) => ({ ...line, returnQty: 0 })))}
+                        className="rounded-2xl border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-neutral-50"
+                      >
+                        Bỏ chọn
+                      </button>
+                    </div>
+                  </div>
 
                   <div className="mt-3 overflow-hidden rounded-2xl border border-neutral-200">
                     <div className="grid grid-cols-[1fr_100px_120px_120px] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase text-neutral-500">
@@ -1366,7 +1745,8 @@ export default function PosPageClient() {
               </div>
 
               <aside className="rounded-3xl border border-neutral-200 p-4">
-                <h4 className="font-semibold">Hoàn tiền / bù tiền</h4>
+                <h4 className="font-semibold">Tự tính hoàn tiền / bù tiền</h4>
+                <p className="mt-1 text-xs text-neutral-500">POS tự ghi chú hoàn tiền hoặc khách bù thêm theo chênh lệch.</p>
 
                 {(() => {
                   const returnTotal = returnLines.reduce(
@@ -1409,7 +1789,14 @@ export default function PosPageClient() {
 
                 <button
                   onClick={() => {
-                    const returnTotal = returnLines.reduce(
+                    const returnedItems = returnLines.filter((line) => line.returnQty > 0);
+
+                    if (!returnedItems.length) {
+                      setError("Chưa chọn sản phẩm trả.");
+                      return;
+                    }
+
+                    const returnTotal = returnedItems.reduce(
                       (sum, line) => sum + line.price * line.returnQty,
                       0
                     );
@@ -1419,17 +1806,25 @@ export default function PosPageClient() {
                     );
                     const diff = returnTotal - exchangeTotal;
 
+                    const refundText =
+                      diff > 0
+                        ? `Tự động hoàn khách: ${currency(diff)}`
+                        : diff < 0
+                          ? `Khách cần bù thêm: ${currency(Math.abs(diff))}`
+                          : "Đổi ngang: không phát sinh hoàn/bù";
+
                     setNote((prev) =>
                       [
                         prev,
-                        `Đổi trả đơn ${selectedReturnOrder.orderCode || selectedReturnOrder.code
-                        }`,
+                        `Đổi trả đơn ${selectedReturnOrder.orderCode || selectedReturnOrder.code}`,
                         returnReceived ? "Đã nhận hàng trả" : "Chưa nhận hàng trả",
+                        `Sản phẩm trả: ${returnedItems.map((line) => `${line.sku || line.productName} x${line.returnQty}`).join(", ")}`,
+                        exchangeLines.length
+                          ? `Sản phẩm đổi: ${exchangeLines.map((line) => `${line.sku || line.productName} x${line.qty}`).join(", ")}`
+                          : "Không có sản phẩm đổi",
                         `Tiền hàng trả: ${currency(returnTotal)}`,
                         `Tiền hàng đổi: ${currency(exchangeTotal)}`,
-                        diff >= 0
-                          ? `Cần hoàn khách: ${currency(diff)}`
-                          : `Khách trả thêm: ${currency(Math.abs(diff))}`,
+                        refundText,
                         returnNote ? `Ghi chú: ${returnNote}` : "",
                       ]
                         .filter(Boolean)
@@ -1439,16 +1834,28 @@ export default function PosPageClient() {
                     setLines(exchangeLines);
 
                     if (diff > 0) {
-                      setDiscount(String(Math.min(diff, exchangeTotal)));
+                      setDiscount(String(exchangeTotal));
+                      setPaidAmount("0");
+                    } else if (diff < 0) {
+                      setDiscount(String(returnTotal));
+                      setPaidAmount(String(Math.abs(diff)));
                     } else {
-                      setDiscount("0");
+                      setDiscount(String(exchangeTotal));
+                      setPaidAmount("0");
                     }
 
                     setReturnFormOpen(false);
+                    setError(
+                      diff > 0
+                        ? `Đã áp dụng đổi trả. Cần hoàn khách ${currency(diff)}.`
+                        : diff < 0
+                          ? `Đã áp dụng đổi trả. Khách cần bù ${currency(Math.abs(diff))}.`
+                          : "Đã áp dụng đổi ngang."
+                    );
                   }}
-                  className="mt-5 h-12 w-full rounded-2xl bg-blue-600 font-semibold text-white"
+                  className="mt-5 h-12 w-full rounded-2xl bg-neutral-950 font-semibold text-white hover:bg-neutral-800"
                 >
-                  Áp dụng phiếu đổi trả
+                  Áp dụng 1 click
                 </button>
               </aside>
             </div>

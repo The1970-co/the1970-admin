@@ -228,7 +228,7 @@ function normalizeSalesChannel(input: string) {
 }
 
 export async function getProductsForOrder(): Promise<OrderProduct[]> {
-  const raw = await request<any>("/products");
+const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
 
   const products = Array.isArray(raw)
     ? raw

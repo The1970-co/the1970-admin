@@ -10,6 +10,7 @@ export type ProductVariant = {
   costPrice?: number;
   stock: number;
   branchStocks?: BranchStockMap;
+  inventoryByBranch?: BranchStockMap;
 };
 
 export type ProductItem = {
@@ -61,6 +62,7 @@ export type UpdateProductPayload = {
   colors?: string[];
   sizes?: string[];
   branchStocks?: Record<string, number>;
+  inventoryByBranch?: Record<string, number>;
   applyPriceToAllVariants?: boolean;
 };
 
@@ -197,9 +199,20 @@ export async function getProducts(params?: {
             color: variant.color || "",
             size: variant.size || "",
             price: toNumber(variant.price),
-            ...(showCost ? { costPrice: toNumber(variant.costPrice) } : {}),
+            costPrice: toNumber(variant.costPrice),
             stock,
             branchStocks:
+              Object.keys(branchStocks).length > 0
+                ? branchStocks
+                : Array.isArray(variant.inventoryItems)
+                  ? Object.fromEntries(
+                      variant.inventoryItems.map((item: any) => [
+                        String(item.branchId),
+                        toNumber(item.availableQty),
+                      ])
+                    )
+                  : {},
+            inventoryByBranch:
               Object.keys(branchStocks).length > 0
                 ? branchStocks
                 : Array.isArray(variant.inventoryItems)

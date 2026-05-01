@@ -3,6 +3,7 @@
 import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import CategoryNormalizer from "@/components/admin/products/CategoryNormalizer";
 import * as XLSX from "xlsx";
 import {
@@ -354,7 +355,12 @@ type ImportPreviewRow = {
   stockQO: number;
   stockTH: number;
 };
-
+type ProductSummary = {
+  totalProducts: number;
+  totalVariants: number;
+  lowStockSkus: number;
+  totalInventoryValue: number;
+};
 function normalizeNumber(value: any) {
   if (value === null || value === undefined || value === "") return 0;
   const raw = String(value).replace(/[^\d.-]/g, "");
@@ -387,6 +393,40 @@ function findValue(row: ParsedRow, keys: string[]) {
     }
   }
   return "";
+}
+
+
+function getImportPriceFromRow(row: ParsedRow) {
+  // Ưu tiên giá nhập/vốn toàn cục; nếu trống thì lấy giá vốn khởi tạo theo chi nhánh SAPO.
+  return normalizeNumber(
+    findValue(row, [
+      "PL_Giá nhập",
+      "PL_Giá nhập*",
+      "pl gia nhap",
+      "gia nhap",
+      "PL_Giá vốn",
+      "PL_Giá vốn*",
+      "pl gia von",
+      "gia von",
+      "LC_CN1_Giá vốn khởi tạo*",
+      "LC_CN1_Giá vốn khởi tạo",
+      "lc cn1 gia von khoi tao",
+      "LC_CN2_Giá vốn khởi tạo*",
+      "LC_CN2_Giá vốn khởi tạo",
+      "lc cn2 gia von khoi tao",
+      "LC_CN3_Giá vốn khởi tạo*",
+      "LC_CN3_Giá vốn khởi tạo",
+      "lc cn3 gia von khoi tao",
+      "LC_CN4_Giá vốn khởi tạo*",
+      "LC_CN5_Tồn kho ban đầu*",
+      "LC_CN5_Giá vốn khởi tạo*",
+      "LC_CN4_Giá vốn khởi tạo",
+      "lc cn4 gia von khoi tao",
+      "LC_CN5_Giá vốn khởi tạo*",
+      "LC_CN5_Giá vốn khởi tạo",
+      "lc cn5 gia von khoi tao",
+    ])
+  );
 }
 
 function detectHeaderRowIndex(sheetData: any[][]) {
@@ -450,9 +490,15 @@ function downloadProductTemplate() {
       "PL_Giá bán lẻ",
       "PL_Giá nhập",
       "LC_CN1_Tồn kho ban đầu*",
+      "LC_CN1_Giá vốn khởi tạo*",
       "LC_CN2_Tồn kho ban đầu*",
+      "LC_CN2_Giá vốn khởi tạo*",
       "LC_CN3_Tồn kho ban đầu*",
+      "LC_CN3_Giá vốn khởi tạo*",
       "LC_CN4_Tồn kho ban đầu*",
+      "LC_CN4_Giá vốn khởi tạo*",
+      "LC_CN5_Tồn kho ban đầu*",
+      "LC_CN5_Giá vốn khởi tạo*",
     ],
     [
       "Áo sơ mi kẻ SM936",
@@ -466,10 +512,16 @@ function downloadProductTemplate() {
       "https://example.com/sm936.jpg",
       600000,
       0,   // Giá nhập
-      0,   // CHÙA LÁNG
-      0,   // XÃ ĐÀN
-      0,   // QUỐC OAI
-      0,   // THÁI HÀ
+      0,   // CHÙA LÁNG tồn
+      0,   // CHÙA LÁNG giá vốn
+      0,   // XÃ ĐÀN tồn
+      0,   // XÃ ĐÀN giá vốn
+      0,   // QUỐC OAI tồn
+      0,   // QUỐC OAI giá vốn
+      0,   // THÁI HÀ tồn
+      0,   // THÁI HÀ giá vốn
+      0,   // CN5 tồn nếu file SAPO có
+      0,   // CN5 giá vốn nếu file SAPO có
     ],
   ];
 
@@ -480,6 +532,8 @@ function downloadProductTemplate() {
 }
 
 export default function ProductsPageClient() {
+  const searchParams = useSearchParams();
+  const categoryFromUrl = searchParams.get("category") || "ALL";
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [categories, setCategories] = useState<ProductCategoryItem[]>([]);
@@ -494,12 +548,12 @@ export default function ProductsPageClient() {
   const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
-  const [groupFilter, setGroupFilter] = useState("ALL");
+  const [groupFilter, setGroupFilter] = useState(categoryFromUrl);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [totalProducts, setTotalProducts] = useState(0);
-
+  const [summary, setSummary] = useState<ProductSummary | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [variantOpen, setVariantOpen] = useState(false);
@@ -573,6 +627,12 @@ export default function ProductsPageClient() {
     setCurrentBranchId(currentUser?.branchId || null);
   }, []);
 
+  useEffect(() => {
+    const nextCategory = searchParams.get("category") || "ALL";
+    setGroupFilter(nextCategory);
+    setPage(1);
+  }, [searchParams]);
+
   const isOwner = role === "admin" || role === "owner";
 
   const visibleBranches = useMemo(() => {
@@ -593,8 +653,8 @@ export default function ProductsPageClient() {
 
   const canCreateProduct = hasPermission(role, "products.create");
   const canEditProduct = hasPermission(role, "products.edit");
-  const canViewCost = hasPermission(role, "products.cost.view");
-  const canViewInventoryValue = hasPermission(role, "inventory.value.view");
+  const canViewCost = isOwner || hasPermission(role, "products.cost.view");
+  const canViewInventoryValue = isOwner || hasPermission(role, "inventory.value.view");
   const loadBranches = async () => {
     try {
       setLoadingBranches(true);
@@ -637,7 +697,24 @@ export default function ProductsPageClient() {
       setCategoryOptions([]);
     }
   };
+  const loadProductSummary = async () => {
+    try {
+      const params = new URLSearchParams();
 
+      if (query.trim()) params.set("q", query.trim());
+      if (groupFilter !== "ALL") params.set("category", groupFilter);
+      if (statusFilter !== "ALL") params.set("status", statusFilter);
+
+      const res = await fetch(`${API_BASE}/products/summary?${params.toString()}`);
+
+      if (!res.ok) throw new Error("Không tải được tổng quan sản phẩm.");
+
+      const data = await res.json();
+      setSummary(data);
+    } catch {
+      setSummary(null);
+    }
+  };
   const loadProducts = async (nextPage = page, nextLimit = limit) => {
     try {
       setLoading(true);
@@ -678,6 +755,7 @@ export default function ProductsPageClient() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadProducts(page, limit);
+      void loadProductSummary();
     }, 250);
 
     return () => window.clearTimeout(timer);
@@ -707,23 +785,9 @@ export default function ProductsPageClient() {
     return Number(variant.branchStocks?.[currentBranchId || ""] || 0);
   };
 
-  const totalVariants = filteredProducts.reduce(
-    (sum, p) => sum + p.variants.length,
-    0
-  );
-  const lowStockCount = filteredProducts
-    .flatMap((p) => p.variants)
-    .filter((v) => getVariantScopedStock(v) <= 3).length;
-
-  const catalogValue = filteredProducts.reduce(
-    (sum, p) =>
-      sum +
-      p.variants.reduce(
-        (variantSum, v) => variantSum + Number(v.price || 0) * getVariantScopedStock(v),
-        0
-      ),
-    0
-  );
+  const totalVariants = summary?.totalVariants ?? 0;
+  const lowStockCount = summary?.lowStockSkus ?? 0;
+  const catalogValue = summary?.totalInventoryValue ?? 0;
 
   const resetCreateForm = () => {
     const first = categories.find((c) => c.isActive) || categories[0];
@@ -1172,15 +1236,7 @@ export default function ProductsPageClient() {
         findValue(row, ["PL_Giá bán lẻ", "pl gia ban le", "gia ban le"])
       );
 
-      const importPrice = normalizeNumber(
-        findValue(row, [
-          "PL_Giá nhập",
-          "pl gia nhap",
-          "gia nhap",
-          "PL_Giá vốn",
-          "pl gia von",
-        ])
-      );
+      const importPrice = getImportPriceFromRow(row);
 
       const stockCL = normalizeNumber(
         findValue(row, ["LC_CN1_Tồn kho ban đầu*", "lc cn1 ton kho ban dau"])
@@ -1391,7 +1447,7 @@ export default function ProductsPageClient() {
           <StatCard
             title="Giá trị catalog"
             value={currency(catalogValue)}
-            sub="Giá bán × tồn kho"
+            sub="Giá nhập × tồn kho"
           />
         ) : null}
       </div>
@@ -1691,9 +1747,18 @@ export default function ProductsPageClient() {
                   <option value={20}>20 dòng</option>
                   <option value={50}>50 dòng</option>
                   <option value={100}>100 dòng</option>
-                  <option value={200}>200 dòng</option>
                 </select>
 
+                {/* về đầu */}
+                <Button
+                  variant="secondary"
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage(1)}
+                >
+                  Đầu
+                </Button>
+
+                {/* lùi */}
                 <Button
                   variant="secondary"
                   disabled={page <= 1 || loading}
@@ -1702,6 +1767,24 @@ export default function ProductsPageClient() {
                   Trước
                 </Button>
 
+                {/* input nhảy trang */}
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.max(1, Math.ceil(totalProducts / limit))}
+                  value={page}
+                  onChange={(e) => {
+                    const maxPage = Math.max(1, Math.ceil(totalProducts / limit));
+                    const nextPage = Math.min(
+                      maxPage,
+                      Math.max(1, Number(e.target.value || 1))
+                    );
+                    setPage(nextPage);
+                  }}
+                  className="w-20 rounded-xl border border-neutral-300 px-3 py-2 text-center outline-none"
+                />
+
+                {/* tiến */}
                 <Button
                   variant="secondary"
                   disabled={page >= Math.max(1, Math.ceil(totalProducts / limit)) || loading}
@@ -1712,6 +1795,15 @@ export default function ProductsPageClient() {
                   }
                 >
                   Sau
+                </Button>
+
+                {/* về cuối */}
+                <Button
+                  variant="secondary"
+                  disabled={page >= Math.max(1, Math.ceil(totalProducts / limit)) || loading}
+                  onClick={() => setPage(Math.max(1, Math.ceil(totalProducts / limit)))}
+                >
+                  Cuối
                 </Button>
               </div>
             </div>

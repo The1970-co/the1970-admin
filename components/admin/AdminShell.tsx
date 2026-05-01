@@ -55,7 +55,7 @@ const MENU: MenuItem[] = [
       { href: "/inventory", label: "Kho hàng", permission: "inventory.view" },
       { href: "/inventory-logs", label: "Lịch sử kho", permission: "inventory.logs.view" },
       { href: "/stocktake", label: "Kiểm kho", permission: "stocktake.view" },
-       { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: "inventory.view" },
+      { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: "inventory.3d.view" },
     ],
   },
   {
@@ -395,8 +395,7 @@ export default function AdminShell({
               </div>
             </div>
           </header>
-
-          <main className="min-w-0 flex-1 overflow-y-auto p-6">
+          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6">
             {children}
           </main>
         </div>

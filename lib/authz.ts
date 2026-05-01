@@ -23,6 +23,7 @@ export type PermissionKey =
   | "inventory.view"
   | "inventory.logs.view"
   | "inventory.value.view"
+  | "inventory.3d.view"
   | "stocktake.view"
   | "stocktake.apply"
   | "permissions.view"
@@ -65,6 +66,7 @@ export const BRANCH_LABELS: Record<BranchId, string> = {
 
 const GLOBAL_PERMISSIONS: PermissionKey[] = [
   "dashboard.view",
+
   "orders.view",
   "orders.create",
   "orders.update_status",
@@ -80,6 +82,7 @@ const GLOBAL_PERMISSIONS: PermissionKey[] = [
   "inventory.view",
   "inventory.logs.view",
   "inventory.value.view",
+  "inventory.3d.view",
 
   "stocktake.view",
   "stocktake.apply",
@@ -157,6 +160,7 @@ export const ROLE_DEFINITIONS: Record<AppRole, RoleDefinition> = {
       "products.view",
       "products.edit",
       "products.create",
+
       "inventory.view",
       "inventory.logs.view",
 

@@ -1089,7 +1089,8 @@ export default function OrderDetailPageClient({
   }, [created, loading, viewOrder, orderId, router]);
 
   const meta = useMemo(() => parseStructuredNote(viewOrder?.note), [viewOrder?.note]);
-
+  const isPOSOrder = String(viewOrder?.salesChannel || "").toUpperCase() === "POS";
+  const isPaidOrder = String(viewOrder?.paymentStatus || "").toUpperCase() === "PAID";
   const fullAddress = useMemo(
     () => (viewOrder ? buildAddress(viewOrder, meta) : "—"),
     [viewOrder, meta]
@@ -1110,9 +1111,12 @@ export default function OrderDetailPageClient({
     [viewOrder]
   );
 
-  const customerPaid = meta.customerPaidText
-    ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
-    : 0;
+  const customerPaid =
+    isPOSOrder || isPaidOrder
+      ? Number(viewOrder?.finalAmount || 0)
+      : meta.customerPaidText
+        ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
+        : 0;
 
   const computedFinalAmount =
     itemsSubtotal -
@@ -2063,163 +2067,89 @@ export default function OrderDetailPageClient({
             </div>
           </Panel>
 
-          <Panel>
-            <SectionHeader
-              title="Đóng gói và giao hàng"
-              subtitle="Mã vận đơn, đối tác, phí ship."
-              action={
-                <div className="flex flex-wrap gap-2">
-                  {shipmentEditable ? (
-                    <ActionButton onClick={handleOpenShipmentEdit}>
-                      Sửa giao hàng
-                    </ActionButton>
-                  ) : null}
+          {!isPOSOrder ? (
+            <Panel>
+              <SectionHeader
+                title="Đóng gói và giao hàng"
+                subtitle="Mã vận đơn, đối tác, phí ship."
+                action={
+                  <div className="flex flex-wrap gap-2">
+                    {shipmentEditable ? (
+                      <ActionButton onClick={handleOpenShipmentEdit}>
+                        Sửa giao hàng
+                      </ActionButton>
+                    ) : null}
 
-                  {codEditable ? (
-                    <ActionButton tone="danger" onClick={handleOpenCodEdit}>
-                      Sửa COD giao hàng 1 phần
-                    </ActionButton>
-                  ) : null}
+                    {codEditable ? (
+                      <ActionButton tone="danger" onClick={handleOpenCodEdit}>
+                        Sửa COD giao hàng 1 phần
+                      </ActionButton>
+                    ) : null}
 
-                  {redeliveryAvailable ? (
-                    <ActionButton
-                      tone="dark"
-                      onClick={() => setMessage("Flow giao lại sẽ làm ở bước sau")}
+                    {redeliveryAvailable ? (
+                      <ActionButton
+                        tone="dark"
+                        onClick={() =>
+                          setMessage("Flow giao lại sẽ làm ở bước sau")
+                        }
+                      >
+                        Giao lại
+                      </ActionButton>
+                    ) : null}
+                  </div>
+                }
+              />
+
+              <div className="space-y-3 px-4 py-3">
+                <div className="grid gap-2 md:grid-cols-3">
+                  <MiniStat
+                    label="Cho sửa giao hàng"
+                    value={shipmentEditable ? "Có" : "Không"}
+                    tone={shipmentEditable ? "success" : "default"}
+                  />
+                  <MiniStat
+                    label="Cho sửa COD"
+                    value={codEditable ? "Có" : "Không"}
+                    tone={codEditable ? "success" : "default"}
+                  />
+                  <MiniStat
+                    label="Cho giao lại"
+                    value={redeliveryAvailable ? "Có" : "Không"}
+                    tone={redeliveryAvailable ? "danger" : "default"}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {viewOrder.shipment?.id ? (
+                    <Link
+                      href={`/control/shipments/${viewOrder.shipment.id}`}
+                      className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
                     >
-                      Giao lại
-                    </ActionButton>
-                  ) : null}
-                </div>
-              }
-            />
+                      {viewOrder.shipment?.trackingCode || tracking || "Chưa có mã vận đơn"}
+                    </Link>
+                  ) : (
+                    <Badge tone={viewOrder.shipment?.trackingCode ? "blue" : "gray"}>
+                      {viewOrder.shipment?.trackingCode || tracking || "Chưa có mã vận đơn"}
+                    </Badge>
+                  )}
 
-            <div className="space-y-3 px-4 py-3">
-              <div className="grid gap-2 md:grid-cols-3">
-                <MiniStat
-                  label="Cho sửa giao hàng"
-                  value={shipmentEditable ? "Có" : "Không"}
-                  tone={shipmentEditable ? "success" : "default"}
-                />
-                <MiniStat
-                  label="Cho sửa COD"
-                  value={codEditable ? "Có" : "Không"}
-                  tone={codEditable ? "success" : "default"}
-                />
-                <MiniStat
-                  label="Cho giao lại"
-                  value={redeliveryAvailable ? "Có" : "Không"}
-                  tone={redeliveryAvailable ? "danger" : "default"}
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {viewOrder.shipment?.id ? (
-                  <Link
-                    href={`/control/shipments/${viewOrder.shipment.id}`}
-                    className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
-                  >
-                    {viewOrder.shipment?.trackingCode || tracking || "Chưa có mã vận đơn"}
-                  </Link>
-                ) : (
-                  <Badge tone={viewOrder.shipment?.trackingCode ? "blue" : "gray"}>
-                    {viewOrder.shipment?.trackingCode || tracking || "Chưa có mã vận đơn"}
+                  <Badge tone={viewOrder.shipment?.shippingStatus ? "amber" : "gray"}>
+                    {viewOrder.shipment?.shippingStatus || "Chưa đẩy trạng thái"}
                   </Badge>
-                )}
 
-                <Badge tone={viewOrder.shipment?.shippingStatus ? "amber" : "gray"}>
-                  {viewOrder.shipment?.shippingStatus || "Chưa đẩy trạng thái"}
-                </Badge>
-                <Badge tone={codReconciliationTone(viewOrder.shipment?.codReconciliationStatus)}>
-                  {codReconciliationLabel(viewOrder.shipment?.codReconciliationStatus)}
-                </Badge>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2.5">
-                  <DataRow
-                    label="Mã đóng gói"
-                    value={
-                      viewOrder.shipment?.id ? (
-                        <Link
-                          href={`/control/shipments/${viewOrder.shipment.id}`}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {viewOrder.shipment?.trackingCode || tracking || "—"}
-                        </Link>
-                      ) : (
-                        viewOrder.shipment?.trackingCode || tracking || "—"
-                      )
-                    }
-                  />
-                  <DataRow
-                    label="ĐV vận chuyển"
-                    value={viewOrder.shipment?.carrier || meta.shippingPartner || "—"}
-                  />
-                  <DataRow
-                    label="Trạng thái"
-                    value={viewOrder.shipment?.shippingStatus || "—"}
-                  />
-                  <DataRow label="Cách giao" value={meta.shippingMode || "—"} />
-                  <DataRow label="Người trả phí" value={meta.shippingPayer || "—"} />
-                </div>
-
-                <div className="space-y-2.5">
-                  <DataRow
-                    label="Phí ĐTVC"
-                    value={currency(viewOrder.shipment?.shippingFee || viewOrder.shippingFee)}
-                  />
-                  <DataRow
-                    label="Thu hộ COD"
-                    value={currency(viewOrder.shipment?.codAmount)}
-                  />
-                  <DataRow
-                    label="Mã vận đơn"
-                    value={
-                      viewOrder.shipment?.id ? (
-                        <Link
-                          href={`/control/shipments/${viewOrder.shipment.id}`}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {viewOrder.shipment?.trackingCode || tracking || "—"}
-                        </Link>
-                      ) : (
-                        viewOrder.shipment?.trackingCode || tracking || "—"
-                      )
-                    }
-                  />
-                  <DataRow label="Phí ship" value={currency(viewOrder.shippingFee)} />
-                  <DataRow
-                    label="Đối soát"
-                    value={
-                      <div className="space-y-1">
-                        <Badge tone={codReconciliationTone(viewOrder.shipment?.codReconciliationStatus)}>
-                          {codReconciliationLabel(viewOrder.shipment?.codReconciliationStatus)}
-                        </Badge>
-
-                        {viewOrder.shipment?.codReconciledAt ? (
-                          <div className="text-[11px] text-neutral-500">
-                            {formatDateTime(viewOrder.shipment.codReconciledAt)}
-                          </div>
-                        ) : null}
-
-                        {viewOrder.shipment?.codReconciliationAmount ? (
-                          <div className="text-[11px] text-neutral-500">
-                            Số tiền: {currency(viewOrder.shipment.codReconciliationAmount)}
-                          </div>
-                        ) : null}
-
-                        {viewOrder.shipment?.codReconciliationIssue ? (
-                          <div className="text-[11px] text-red-600">
-                            {viewOrder.shipment.codReconciliationIssue}
-                          </div>
-                        ) : null}
-                      </div>
-                    }
-                  />
+                  <Badge
+                    tone={codReconciliationTone(
+                      viewOrder.shipment?.codReconciliationStatus
+                    )}
+                  >
+                    {codReconciliationLabel(
+                      viewOrder.shipment?.codReconciliationStatus
+                    )}
+                  </Badge>
                 </div>
               </div>
-            </div>
-          </Panel>
+            </Panel>
+          ) : null}
 
           {(viewOrder.isPartialDelivery || partialDelivery) ? (
             <Panel>

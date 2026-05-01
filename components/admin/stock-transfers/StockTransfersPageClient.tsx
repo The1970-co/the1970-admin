@@ -11,7 +11,6 @@ import {
 import {
   cancelStockTransfer,
   confirmStockTransfer,
-  createSelectedOutboundTransfersFromSuggestions,
   createStockTransfer,
   getStockTransferDetail,
   getStockTransfers,
@@ -127,6 +126,84 @@ function statusBadge(status: StockTransfer["status"]) {
   return <Badge tone="amber">Nháp</Badge>;
 }
 
+
+const MAIN_CATEGORY_GROUPS = [
+  {
+    key: "summer",
+    title: "Mùa hè",
+    subtitle: "Áo phông, polo, sơ mi, short, linen...",
+    tone: "blue",
+    keywords: [
+      "áo phông",
+      "ao phong",
+      "polo",
+      "sơ mi",
+      "so mi",
+      "shirt",
+      "tee",
+      "t-shirt",
+      "short",
+      "quần short",
+      "quan short",
+      "linen",
+      "đũi",
+      "dui",
+      "ba lỗ",
+      "ba lo",
+      "cộc tay",
+      "coc tay",
+    ],
+  },
+  {
+    key: "winter",
+    title: "Mùa đông",
+    subtitle: "Áo khoác, hoodie, sweater, denim, gió...",
+    tone: "amber",
+    keywords: [
+      "áo khoác",
+      "ao khoac",
+      "jacket",
+      "hoodie",
+      "sweater",
+      "len",
+      "nỉ",
+      "ni",
+      "denim",
+      "gió",
+      "gio",
+      "parka",
+      "blazer",
+      "suit",
+      "dài tay",
+      "dai tay",
+    ],
+  },
+] as const;
+
+function normalizeCategoryName(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+function getProductCategoryName(product: any) {
+  const rawCategory =
+    product?.categoryName ||
+    product?.category?.name ||
+    product?.category?.title ||
+    product?.category ||
+    product?.categoryId ||
+    product?.type ||
+    product?.productType ||
+    "";
+
+  const categoryName = String(rawCategory || "").trim();
+  if (!categoryName || categoryName === "—" || categoryName === "undefined") return "";
+  return categoryName;
+}
+
 export default function StockTransfersPageClient() {
   const [rows, setRows] = useState<StockTransfer[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -137,6 +214,7 @@ export default function StockTransfersPageClient() {
   const [saving, setSaving] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [fromBranchId, setFromBranchId] = useState("QO");
@@ -172,6 +250,16 @@ export default function StockTransfersPageClient() {
     "CL",
   ]);
   const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>([]);
+  const [selectedCategoryGroupMap, setSelectedCategoryGroupMap] = useState<Record<string, string[]>>({
+    summer: [],
+    winter: [],
+    other: [],
+  });
+  const [activeCategoryGroupMap, setActiveCategoryGroupMap] = useState<Record<string, boolean>>({
+    summer: true,
+    winter: false,
+    other: false,
+  });
   const [salesVelocityDays, setSalesVelocityDays] = useState(14);
   const [minSoldQty, setMinSoldQty] = useState(0);
   const [autoEnabled, setAutoEnabled] = useState(false);
@@ -193,7 +281,7 @@ const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
 const canManageAutoTransfer =
   userRoleText.includes("owner") || userRoleText.includes("admin");
 
-const isQOWarehouseUser = userBranchId || "";
+const isQOWarehouseUser = userBranchId === "QO";
 const currentBranchId = userBranchId || "";
 
 
@@ -214,14 +302,101 @@ const currentBranchId = userBranchId || "";
     const set = new Set<string>();
 
     for (const product of products as any[]) {
-      const categoryName =
-        product.categoryName || product.category?.name || product.category || "";
-
-      if (categoryName) set.add(String(categoryName));
+      const categoryName = getProductCategoryName(product);
+      if (categoryName) set.add(categoryName);
     }
 
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [products]);
+
+  const categoryGroups = useMemo(() => {
+    // Mỗi nhóm mùa đều dùng cùng một danh sách danh mục đầy đủ.
+    // Nhờ vậy m có thể tích áo phông ở Mùa hè nhưng bỏ áo phông ở Mùa đông.
+    return [
+      {
+        key: "summer",
+        title: "Mùa hè",
+        subtitle: "Chọn danh mục dùng cho hàng hè.",
+        tone: "blue" as const,
+        categories: dynamicCategories,
+      },
+      {
+        key: "winter",
+        title: "Mùa đông",
+        subtitle: "Chọn danh mục dùng cho hàng đông.",
+        tone: "amber" as const,
+        categories: dynamicCategories,
+      },
+      {
+        key: "other",
+        title: "Danh mục khác",
+        subtitle: "Preset phụ, vẫn dùng chung danh mục đầy đủ.",
+        tone: "gray" as const,
+        categories: dynamicCategories,
+      },
+    ];
+  }, [dynamicCategories]);
+
+  function buildActiveCategoryNames(
+    groups: Record<string, string[]>,
+    activeGroups: Record<string, boolean>
+  ) {
+    const activeNames = Object.entries(groups)
+      .filter(([groupKey]) => Boolean(activeGroups[groupKey]))
+      .flatMap(([, names]) => names);
+
+    return Array.from(new Set(activeNames));
+  }
+
+  function syncActiveSelectedCategories(
+    groups: Record<string, string[]>,
+    activeGroups: Record<string, boolean>
+  ) {
+    setSelectedCategoryNames(buildActiveCategoryNames(groups, activeGroups));
+  }
+
+  function setGroupEnabled(groupKey: string, enabled: boolean) {
+    setActiveCategoryGroupMap((prev) => {
+      // LEVEL 5: mỗi lần chỉ bật 1 preset mùa để tránh hè/đông bị quét lẫn.
+      // Nếu cần quét tất cả vẫn dùng nút "Bật tất cả" phía trên.
+      const nextActive = enabled
+        ? { summer: false, winter: false, other: false, [groupKey]: true }
+        : { ...prev, [groupKey]: false };
+
+      syncActiveSelectedCategories(selectedCategoryGroupMap, nextActive);
+      return nextActive;
+    });
+  }
+
+  function setGroupCategories(groupKey: string, nextList: string[]) {
+    setSelectedCategoryGroupMap((prev) => {
+      const next = {
+        ...prev,
+        [groupKey]: Array.from(new Set(nextList)),
+      };
+
+      syncActiveSelectedCategories(next, activeCategoryGroupMap);
+
+      return next;
+    });
+  }
+
+  function clearAllCategoryGroups() {
+    setSelectedCategoryGroupMap({ summer: [], winter: [], other: [] });
+    setActiveCategoryGroupMap({ summer: false, winter: false, other: false });
+    setSelectedCategoryNames([]);
+  }
+
+  function selectAllCategoryGroups() {
+    const next = {
+      summer: dynamicCategories,
+      winter: dynamicCategories,
+      other: dynamicCategories,
+    };
+    setSelectedCategoryGroupMap(next);
+    setActiveCategoryGroupMap({ summer: true, winter: true, other: true });
+    setSelectedCategoryNames(dynamicCategories);
+  }
 
   const variantOptions = useMemo(() => {
     const q = searchVariant.trim().toLowerCase();
@@ -297,12 +472,12 @@ async function loadCurrentUser() {
       const [transfersData, branchesData, productsData] = await Promise.all([
         getStockTransfers(),
         getBranches(),
-        getProducts(),
+        getProducts({ page: 1, limit: 10000 } as any),
       ]);
 
       setRows(Array.isArray(transfersData) ? transfersData : []);
       setBranches(Array.isArray(branchesData) ? branchesData : []);
-      setProducts(Array.isArray(productsData) ? productsData : []);
+      setProducts(Array.isArray(productsData) ? productsData : ((productsData as any)?.data || []));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được phiếu chuyển kho.");
     } finally {
@@ -314,8 +489,10 @@ async function loadCurrentUser() {
     if (!canManageAutoTransfer) return;
 
     try {
+      const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE}/stock-transfers/auto-rebalance/config`, {
         cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
 
       if (!res.ok) return;
@@ -335,6 +512,11 @@ async function loadCurrentUser() {
 
       if (Array.isArray(data.categoryNames)) {
         setSelectedCategoryNames(data.categoryNames);
+        setSelectedCategoryGroupMap({
+          summer: data.categoryNames,
+          winter: [],
+          other: [],
+        });
       }
 
       if (data.branchMinTargets) {
@@ -347,9 +529,13 @@ async function loadNotifications() {
   try {
     if (!userBranchId) return; // 👈 thêm dòng này
 
+    const token = localStorage.getItem("token");
     const res = await fetch(
       `${API_BASE}/branch-notifications?branchId=${userBranchId}`,
-      { cache: "no-store" }
+      {
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }
     );
 
     if (!res.ok) return;
@@ -362,7 +548,19 @@ async function loadNotifications() {
 useEffect(() => {
   void loadCurrentUser();
   void loadAll();
-  void loadAutoConfig();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+useEffect(() => {
+  if (canManageAutoTransfer) {
+    void loadAutoConfig();
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [canManageAutoTransfer]);
+
+useEffect(() => {
+  if (!userBranchId) return;
+
   void loadNotifications();
 
   const timer = window.setInterval(() => {
@@ -371,7 +569,7 @@ useEffect(() => {
 
   return () => window.clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+}, [userBranchId]);
 
   function resetForm() {
     setFromBranchId("QO");
@@ -507,6 +705,41 @@ useEffect(() => {
     }
   }
 
+  async function handleDeleteTransfer(id: string, transferCode?: string) {
+    if (!canManageAutoTransfer) return;
+
+    const ok = window.confirm(
+      `Xóa hẳn phiếu ${transferCode || id}? Chỉ nên dùng để dọn phiếu test. Hành động này không hoàn tác.`
+    );
+    if (!ok) return;
+
+    try {
+      setDeletingId(id);
+      setError(null);
+      setNotice(null);
+
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/stock-transfers/${id}`, {
+        method: "DELETE",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.message || "Không xóa được phiếu chuyển kho.");
+      }
+
+      setNotice(`Đã xóa phiếu ${transferCode || id}.`);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xóa được phiếu chuyển kho.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   async function openDetail(id: string) {
     try {
       setDetailLoading(true);
@@ -524,9 +757,13 @@ useEffect(() => {
     setNotifications((prev) => prev.filter((item) => item.id !== id));
 
     try {
+      const token = localStorage.getItem("token");
       await fetch(`${API_BASE}/branch-notifications/mark-read`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ notificationId: id }),
       });
     } catch {}
@@ -535,8 +772,14 @@ useEffect(() => {
   async function handlePreviewSuggestions() {
     if (!canManageAutoTransfer) return;
 
+    if (selectedTargetBranches.length === 0) {
+      setError("Chưa chọn chi nhánh để quét.");
+      setSuggestionOpen(true);
+      return;
+    }
+
     if (selectedCategoryNames.length === 0) {
-      setError("Chưa chọn danh mục sản phẩm để quét.");
+      setError("Chưa bật nhóm mùa hoặc chưa chọn danh mục nào để quét.");
       setSuggestionOpen(true);
       return;
     }
@@ -550,6 +793,7 @@ useEffect(() => {
         maxPerVariant,
         branchMinTargets: branchTargets,
         toBranchIds: selectedTargetBranches,
+        // Không chọn danh mục = quét tất cả. Không block user nữa.
         categoryNames: selectedCategoryNames,
         salesVelocityDays,
         minSoldQty,
@@ -600,14 +844,34 @@ useEffect(() => {
         return;
       }
 
-      await createSelectedOutboundTransfersFromSuggestions({
-        createdById: "web-admin",
-        createdByName: "Auto Rebalance",
-        items: selectedItems,
-      });
+      // LEVEL 4: gom theo chi nhánh nhận.
+      // Mỗi kho/chi nhánh nhận chỉ tạo 1 phiếu, tránh tình trạng 1 SKU = 1 phiếu.
+      const itemsByBranch = selectedItems.reduce<
+        Record<string, Array<{ variantId: string; qty: number }>>
+      >((acc, item) => {
+        if (!acc[item.toBranchId]) acc[item.toBranchId] = [];
+        acc[item.toBranchId].push({
+          variantId: item.variantId,
+          qty: item.qty,
+        });
+        return acc;
+      }, {});
+
+      const targetBranchIds = Object.keys(itemsByBranch);
+
+      for (const targetBranchId of targetBranchIds) {
+        await createStockTransfer({
+          fromBranchId: "QO",
+          toBranchId: targetBranchId,
+          note: `Auto cấp hàng thông minh · ${itemsByBranch[targetBranchId].length} SKU`,
+          items: itemsByBranch[targetBranchId],
+        });
+      }
 
       setSuggestionOpen(false);
-      setNotice("Đã tạo phiếu cấp hàng tự động theo danh sách đã chọn.");
+      setNotice(
+        `Đã tạo ${targetBranchIds.length} phiếu cấp hàng tự động: mỗi chi nhánh nhận 1 phiếu.`
+      );
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tạo được phiếu tự động.");
@@ -619,8 +883,13 @@ useEffect(() => {
   async function handleSaveAutoConfig() {
     if (!canManageAutoTransfer) return;
 
+    if (selectedTargetBranches.length === 0) {
+      setError("Chưa chọn chi nhánh để cấu hình tự động.");
+      return;
+    }
+
     if (selectedCategoryNames.length === 0) {
-      setError("Chưa chọn danh mục sản phẩm cho cấu hình tự động.");
+      setError("Chưa bật nhóm mùa hoặc chưa chọn danh mục nào cho cấu hình tự động.");
       return;
     }
 
@@ -629,14 +898,19 @@ useEffect(() => {
       setError(null);
       setNotice(null);
 
+      const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE}/stock-transfers/auto-rebalance/config`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           isEnabled: autoEnabled,
           runHour,
           runMinute,
           toBranchIds: selectedTargetBranches,
+          // [] = quét tất cả danh mục. Nếu có chọn thì backend filter theo list này.
           categoryNames: selectedCategoryNames,
           branchMinTargets: branchTargets,
           maxPerVariant,
@@ -848,9 +1122,9 @@ useEffect(() => {
             </label>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
             <div>
-              <p className="mb-2 text-xs font-medium text-neutral-500">Chi nhánh quét</p>
+              <p className="mb-2 text-sm font-semibold text-neutral-800">Chi nhánh quét</p>
               <div className="flex flex-wrap gap-2">
                 {[
                   { id: "TH", name: "THÁI HÀ" },
@@ -870,10 +1144,10 @@ useEffect(() => {
                             : [...prev, branch.id]
                         )
                       }
-                      className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
                         checked
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300 hover:text-neutral-800"
+                          ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
+                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
                       }`}
                     >
                       {branch.name}
@@ -883,44 +1157,44 @@ useEffect(() => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs text-neutral-500">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm font-semibold text-neutral-800">
                 Ngày bán gần nhất
                 <input
                   type="number"
                   min={1}
                   value={salesVelocityDays}
                   onChange={(e) => setSalesVelocityDays(Number(e.target.value || 1))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
                 />
               </label>
 
-              <label className="text-xs text-neutral-500">
+              <label className="text-sm font-semibold text-neutral-800">
                 Tối thiểu đã bán
                 <input
                   type="number"
                   min={0}
                   value={minSoldQty}
                   onChange={(e) => setMinSoldQty(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
                 />
               </label>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <label className="text-xs text-neutral-500">
+            <div className="grid grid-cols-3 gap-3">
+              <label className="text-sm font-semibold text-neutral-800">
                 Bật auto
                 <select
                   value={autoEnabled ? "on" : "off"}
                   onChange={(e) => setAutoEnabled(e.target.value === "on")}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
                 >
                   <option value="off">Tắt</option>
                   <option value="on">Bật</option>
                 </select>
               </label>
 
-              <label className="text-xs text-neutral-500">
+              <label className="text-sm font-semibold text-neutral-800">
                 Giờ
                 <input
                   type="number"
@@ -928,11 +1202,11 @@ useEffect(() => {
                   max={23}
                   value={runHour}
                   onChange={(e) => setRunHour(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
                 />
               </label>
 
-              <label className="text-xs text-neutral-500">
+              <label className="text-sm font-semibold text-neutral-800">
                 Phút
                 <input
                   type="number"
@@ -940,70 +1214,189 @@ useEffect(() => {
                   max={59}
                   value={runMinute}
                   onChange={(e) => setRunMinute(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
                 />
               </label>
             </div>
           </div>
 
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                <p className="text-sm font-bold uppercase tracking-wide text-neutral-800">
                   Danh mục sản phẩm quét
                 </p>
-                <p className="mt-0.5 text-xs text-neutral-400">
-                  Chỉ những danh mục được chọn mới được đưa vào đề xuất.
+                <p className="mt-1 text-xs font-medium text-neutral-500">
+                  Gọn lại theo nhóm mùa. Bấm mở từng nhóm để chọn danh mục con, tránh rối màn hình.
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedCategoryNames([])}
-                className="text-xs font-medium text-neutral-400 underline underline-offset-2 hover:text-neutral-700"
-              >
-                Bỏ chọn tất cả
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={selectAllCategoryGroups}
+                  disabled={dynamicCategories.length === 0}
+                  className="text-xs font-semibold text-blue-700 underline underline-offset-2 hover:text-blue-900 disabled:text-neutral-300"
+                >
+                  Bật tất cả
+                </button>
+                <button
+                  type="button"
+                  onClick={clearAllCategoryGroups}
+                  className="text-xs font-semibold text-neutral-600 underline underline-offset-2 hover:text-neutral-900"
+                >
+                  Tắt tất cả
+                </button>
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {dynamicCategories.length === 0 ? (
-                <p className="text-xs text-neutral-400">Chưa có danh mục sản phẩm.</p>
-              ) : (
-                dynamicCategories.map((name) => {
-                  const checked = selectedCategoryNames.includes(name);
+            {selectedCategoryNames.length > 0 ? (
+              <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold uppercase tracking-wide text-blue-800">
+                    Đang chọn để AI Rebalance quét
+                  </p>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-blue-700 ring-1 ring-blue-200">
+                    {selectedCategoryNames.length} danh mục
+                  </span>
+                </div>
+                <div className="flex max-h-20 flex-wrap gap-1.5 overflow-auto">
+                  {selectedCategoryNames.map((name) => (
+                    <span
+                      key={`selected-${name}`}
+                      className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700"
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {dynamicCategories.length === 0 ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-700">
+                Không lấy được danh mục từ API sản phẩm. Hệ thống vẫn có thể quét tất cả sản phẩm.
+              </div>
+            ) : (
+              <div className="grid gap-3 xl:grid-cols-3">
+                {categoryGroups.map((group, index) => {
+                  const groupSelected = selectedCategoryGroupMap[group.key] || [];
+                  const groupEnabled = Boolean(activeCategoryGroupMap[group.key]);
+                  const selectedCount = group.categories.filter((name) =>
+                    groupSelected.includes(name)
+                  ).length;
+                  const allChecked = group.categories.length > 0 && selectedCount === group.categories.length;
+                  const groupTone =
+                    group.tone === "blue"
+                      ? "border-blue-200 bg-blue-50"
+                      : group.tone === "amber"
+                        ? "border-amber-200 bg-amber-50"
+                        : "border-neutral-200 bg-white";
 
                   return (
-                    <label
-                      key={name}
-                      className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition ${
-                        checked
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300 hover:text-neutral-800"
-                      }`}
+                    <details
+                      key={group.key}
+                      open
+                      className={`rounded-2xl border ${groupTone}`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          setSelectedCategoryNames((prev) =>
-                            checked ? prev.filter((x) => x !== name) : [...prev, name]
-                          )
-                        }
-                        className="h-3.5 w-3.5 accent-blue-600"
-                      />
-                      <span className="font-medium">{name}</span>
-                    </label>
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                        <div>
+                          <p className="text-sm font-bold text-neutral-900">
+                            {group.title}
+                            <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-neutral-600 ring-1 ring-neutral-200">
+                              {groupEnabled ? `${selectedCount}/${group.categories.length}` : "Tắt"}
+                            </span>
+                          </p>
+                          <p className="mt-0.5 text-xs font-medium text-neutral-600">
+                            {group.subtitle}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-xs font-bold text-neutral-500">Mở</span>
+                      </summary>
+
+                      <div className="border-t border-white/70 px-4 pb-4 pt-3">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-bold text-neutral-800">
+                            <input
+                              type="checkbox"
+                              checked={groupEnabled}
+                              onChange={(e) => setGroupEnabled(group.key, e.target.checked)}
+                              className="h-3.5 w-3.5 accent-blue-600"
+                            />
+                            Bật quét nhóm này
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setGroupCategories(
+                                group.key,
+                                allChecked ? [] : group.categories
+                              )
+                            }
+                            disabled={!groupEnabled}
+                            className="rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {allChecked ? "Bỏ nhóm" : `Chọn nhóm (${group.categories.length})`}
+                          </button>
+                        </div>
+
+                        <div className="max-h-56 overflow-auto rounded-xl border border-white/80 bg-white/80 p-2">
+                          <div className="grid gap-2">
+                            {[...group.categories]
+                              .sort((a, b) => {
+                                const aSelected = groupSelected.includes(a) ? 1 : 0;
+                                const bSelected = groupSelected.includes(b) ? 1 : 0;
+                                if (aSelected !== bSelected) return bSelected - aSelected;
+                                return a.localeCompare(b);
+                              })
+                              .map((name) => {
+                              const checked = groupSelected.includes(name);
+
+                              return (
+                                <label
+                                  key={`${group.key}-${name}`}
+                                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                                    checked
+                                      ? "border-blue-300 bg-blue-50 text-blue-700"
+                                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={!groupEnabled}
+                                    onChange={() =>
+                                      setGroupCategories(
+                                        group.key,
+                                        checked
+                                          ? groupSelected.filter((x) => x !== name)
+                                          : [...groupSelected, name]
+                                      )
+                                    }
+                                    className="h-3.5 w-3.5 accent-blue-600"
+                                  />
+                                  <span className="truncate">{name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </details>
                   );
-                })
-              )}
-            </div>
+                })}
+              </div>
+            )}
 
             {selectedCategoryNames.length === 0 ? (
-              <p className="mt-2 text-xs text-amber-600">
-                Chưa chọn danh mục nào. Hệ thống sẽ không quét đề xuất.
+              <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                Chưa bật nhóm mùa hoặc chưa chọn danh mục, hệ thống sẽ không quét tự động.
               </p>
-            ) : null}
+            ) : (
+              <p className="mt-3 rounded-2xl border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700">
+                AI Rebalance đang quét {selectedCategoryNames.length}/{dynamicCategories.length} danh mục đã chọn. Danh mục được tick sẽ được ưu tiên hiển thị lên trên.
+              </p>
+            )}
           </div>
         </Panel>
       ) : null}
@@ -1073,6 +1466,16 @@ useEffect(() => {
                     >
                       Xem phiếu
                     </button>
+
+                    {canManageAutoTransfer ? (
+                      <button
+                        onClick={() => void handleDeleteTransfer(transfer.id, transfer.transferCode)}
+                        disabled={deletingId === transfer.id}
+                        className="rounded-xl border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deletingId === transfer.id ? "Đang xóa..." : "Xóa phiếu"}
+                      </button>
+                    ) : null}
 
                     {transfer.status === "DRAFT" || transfer.status === "PENDING" ? (
                       <>
@@ -1186,6 +1589,8 @@ useEffect(() => {
                     <th className="px-3 py-2.5 font-medium">Đã bán</th>
                     <th className="px-3 py-2.5 font-medium">Ngưỡng</th>
                     <th className="px-3 py-2.5 font-medium">Tồn QO</th>
+                    <th className="px-3 py-2.5 font-medium">AI</th>
+                    <th className="px-3 py-2.5 font-medium">Lý do</th>
                     <th className="px-3 py-2.5 font-medium">SL cấp</th>
                   </tr>
                 </thead>
@@ -1193,7 +1598,7 @@ useEffect(() => {
                 <tbody>
                   {suggestions.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="px-3 py-6 text-center text-sm text-neutral-500">
+                      <td colSpan={13} className="px-3 py-6 text-center text-sm text-neutral-500">
                         Không có đề xuất phù hợp.
                       </td>
                     </tr>
@@ -1229,6 +1634,22 @@ useEffect(() => {
                           <td className="px-3 py-2.5">{item.branchMinTarget}</td>
                           <td className="px-3 py-2.5">{item.qoAvailableQty ?? "—"}</td>
                           <td className="px-3 py-2.5">
+                            <span
+                              className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${
+                                Number((item as any).aiScore || 0) >= 80
+                                  ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+                                  : Number((item as any).aiScore || 0) >= 60
+                                    ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                                    : "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
+                              }`}
+                            >
+                              {(item as any).aiScore ?? "—"}
+                            </span>
+                          </td>
+                          <td className="max-w-[220px] px-3 py-2.5 text-xs text-neutral-500">
+                            {(item as any).aiReason || item.reason || "—"}
+                          </td>
+                          <td className="px-3 py-2.5">
                             <input
                               type="number"
                               min={1}
@@ -1252,8 +1673,8 @@ useEffect(() => {
             </div>
           </Panel>
 
-          <div className="rounded-2xl bg-green-50 p-3 text-xs text-green-700">
-            Hệ thống sẽ chỉ tạo phiếu từ những dòng được tick và theo đúng số lượng đã chỉnh.
+          <div className="rounded-2xl bg-green-50 p-3 text-xs font-medium text-green-700">
+            Level 5 AI Rebalance: hệ thống xếp hạng theo mức thiếu hàng, tốc độ bán, tồn QO và ngưỡng chi nhánh. Chỉ tạo phiếu từ những dòng được tick và theo đúng số lượng đã chỉnh.
           </div>
         </div>
       </Modal>

@@ -23,6 +23,7 @@ type WarehouseItem = {
   allowRetailSale: boolean;
   allowOnlineAllocation: boolean;
   note: string;
+  email?: string;
 };
 
 type ShippingProviderItem = {
@@ -212,16 +213,16 @@ export default function SettingsPage() {
 
   const [mapping, setMapping] = useState<OperationMapping>(mappingSeed);
 
-const [paymentSources, setPaymentSources] = useState<PaymentSourceItem[]>([]);
-const [paymentSourceForm, setPaymentSourceForm] = useState({
-  code: "",
-  name: "",
-  type: "CASH" as PaymentSourceItem["type"],
-  branchId: "",
-  sortOrder: 0,
-  note: "",
-});
-const [savingPaymentSource, setSavingPaymentSource] = useState(false);
+  const [paymentSources, setPaymentSources] = useState<PaymentSourceItem[]>([]);
+  const [paymentSourceForm, setPaymentSourceForm] = useState({
+    code: "",
+    name: "",
+    type: "CASH" as PaymentSourceItem["type"],
+    branchId: "",
+    sortOrder: 0,
+    note: "",
+  });
+  const [savingPaymentSource, setSavingPaymentSource] = useState(false);
 
   const [newWarehouse, setNewWarehouse] = useState<Omit<WarehouseItem, "id">>({
     code: "",
@@ -260,20 +261,20 @@ const [savingPaymentSource, setSavingPaymentSource] = useState(false);
 
       const mapped: WarehouseItem[] = Array.isArray(data)
         ? data.map((b) => ({
-            id: String(b.id),
-            code: String(b.id),
-            name: String(b.name || b.id),
-            type: "STORE",
-            address: String(b.address || ""),
-            manager: "",
-            phone: "",
-            isActive: Boolean(
-              typeof b.isActive === "boolean" ? b.isActive : true
-            ),
-            allowRetailSale: true,
-            allowOnlineAllocation: true,
-            note: "",
-          }))
+          id: String(b.id),
+          code: String(b.id),
+          name: String(b.name || b.id),
+          type: "STORE",
+          address: String(b.address || ""),
+          manager: "",
+          phone: String(b.phone || ""),
+          isActive: Boolean(
+            typeof b.isActive === "boolean" ? b.isActive : true
+          ),
+          allowRetailSale: true,
+          allowOnlineAllocation: true,
+          note: "",
+        }))
         : [];
 
       setWarehouses(mapped);
@@ -299,60 +300,60 @@ const [savingPaymentSource, setSavingPaymentSource] = useState(false);
     }
   };
 
-useEffect(() => {
-  void loadBranches();
-  void loadPaymentSources();
-}, []);
-const loadPaymentSources = async () => {
-  try {
-    const data = await apiJson<PaymentSourceItem[]>("/payment-sources");
-    setPaymentSources(Array.isArray(data) ? data : []);
-  } catch (err) {
-    setMessage(
-      err instanceof Error ? err.message : "Không load được nguồn tiền."
-    );
-  }
-};
+  useEffect(() => {
+    void loadBranches();
+    void loadPaymentSources();
+  }, []);
+  const loadPaymentSources = async () => {
+    try {
+      const data = await apiJson<PaymentSourceItem[]>("/payment-sources");
+      setPaymentSources(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Không load được nguồn tiền."
+      );
+    }
+  };
 
-const createPaymentSource = async () => {
-  if (!paymentSourceForm.code.trim() || !paymentSourceForm.name.trim()) {
-    setMessage("Thiếu mã nguồn tiền hoặc tên hiển thị.");
-    return;
-  }
+  const createPaymentSource = async () => {
+    if (!paymentSourceForm.code.trim() || !paymentSourceForm.name.trim()) {
+      setMessage("Thiếu mã nguồn tiền hoặc tên hiển thị.");
+      return;
+    }
 
-  try {
-    setSavingPaymentSource(true);
-    setMessage("");
+    try {
+      setSavingPaymentSource(true);
+      setMessage("");
 
-    await apiJson("/payment-sources", {
-      method: "POST",
-      body: JSON.stringify({
-        code: paymentSourceForm.code.trim(),
-        name: paymentSourceForm.name.trim(),
-        type: paymentSourceForm.type,
-        branchId: paymentSourceForm.branchId || null,
-        sortOrder: Number(paymentSourceForm.sortOrder || 0),
-        note: paymentSourceForm.note.trim() || null,
-      }),
-    });
+      await apiJson("/payment-sources", {
+        method: "POST",
+        body: JSON.stringify({
+          code: paymentSourceForm.code.trim(),
+          name: paymentSourceForm.name.trim(),
+          type: paymentSourceForm.type,
+          branchId: paymentSourceForm.branchId || null,
+          sortOrder: Number(paymentSourceForm.sortOrder || 0),
+          note: paymentSourceForm.note.trim() || null,
+        }),
+      });
 
-    setPaymentSourceForm({
-      code: "",
-      name: "",
-      type: "CASH",
-      branchId: "",
-      sortOrder: 0,
-      note: "",
-    });
+      setPaymentSourceForm({
+        code: "",
+        name: "",
+        type: "CASH",
+        branchId: "",
+        sortOrder: 0,
+        note: "",
+      });
 
-    await loadPaymentSources();
-    setMessage("Đã thêm nguồn tiền.");
-  } catch (err) {
-    setMessage(err instanceof Error ? err.message : "Tạo nguồn tiền thất bại.");
-  } finally {
-    setSavingPaymentSource(false);
-  }
-};
+      await loadPaymentSources();
+      setMessage("Đã thêm nguồn tiền.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Tạo nguồn tiền thất bại.");
+    } finally {
+      setSavingPaymentSource(false);
+    }
+  };
   const saveWarehouseDetail = <K extends keyof WarehouseItem>(
     field: K,
     value: WarehouseItem[K]
@@ -368,10 +369,13 @@ const createPaymentSource = async () => {
   };
 
   const saveWarehouseToDb = async () => {
-    if (!selectedWarehouse) return;
+    if (!selectedWarehouseId) return;
 
-    const newId = selectedWarehouse.code.trim();
-    const newName = selectedWarehouse.name.trim();
+    const latestWarehouse = warehouses.find((w) => w.id === selectedWarehouseId);
+    if (!latestWarehouse) return;
+
+    const newId = latestWarehouse.code.trim();
+    const newName = latestWarehouse.name.trim();
 
     if (!newId) {
       setMessage("Thiếu mã kho.");
@@ -387,12 +391,14 @@ const createPaymentSource = async () => {
       setSavingWarehouse(true);
       setMessage("");
 
-      await apiJson(`/branches/${selectedWarehouse.id}`, {
+      await apiJson(`/branches/${latestWarehouse.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           newId,
           name: newName,
-          address: selectedWarehouse.address.trim(),
+          address: latestWarehouse.address?.trim() || "",
+          phone: latestWarehouse.phone?.trim() || "",
+          email: latestWarehouse.email?.trim() || "",
         }),
       });
 
@@ -408,44 +414,44 @@ const createPaymentSource = async () => {
     }
   };
 
-  const addWarehouse = async () => {
-    if (!newWarehouse.code.trim() || !newWarehouse.name.trim()) {
-      setMessage("Thiếu mã kho hoặc tên kho.");
-      return;
-    }
+const addWarehouse = async () => {
+  if (!newWarehouse.code.trim() || !newWarehouse.name.trim()) {
+    setMessage("Thiếu mã kho hoặc tên kho.");
+    return;
+  }
 
-    try {
-      await apiJson("/branches", {
-        method: "POST",
-        body: JSON.stringify({
-          id: newWarehouse.code.trim(),
-          name: newWarehouse.name.trim(),
-          address: newWarehouse.address.trim(),
-        }),
-      });
+  try {
+    await apiJson("/branches", {
+      method: "POST",
+      body: JSON.stringify({
+        id: newWarehouse.code.trim(),
+        name: newWarehouse.name.trim(),
+        address: newWarehouse.address?.trim() || "",
+        phone: newWarehouse.phone?.trim() || "",
+      }),
+    });
 
-      await loadBranches();
+    await loadBranches();
+    setSelectedWarehouseId(newWarehouse.code.trim());
 
-      setSelectedWarehouseId(newWarehouse.code.trim());
+    setNewWarehouse({
+      code: "",
+      name: "",
+      type: "STORE",
+      address: "",
+      manager: "",
+      phone: "",
+      isActive: true,
+      allowRetailSale: true,
+      allowOnlineAllocation: true,
+      note: "",
+    });
 
-      setNewWarehouse({
-        code: "",
-        name: "",
-        type: "STORE",
-        address: "",
-        manager: "",
-        phone: "",
-        isActive: true,
-        allowRetailSale: true,
-        allowOnlineAllocation: true,
-        note: "",
-      });
-
-      setMessage("Đã thêm kho mới vào database.");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Tạo kho thất bại.");
-    }
-  };
+    setMessage("Đã thêm kho mới vào database.");
+  } catch (err) {
+    setMessage(err instanceof Error ? err.message : "Tạo kho thất bại.");
+  }
+};
 
   const toggleWarehouse = async (warehouseId: string) => {
     try {
@@ -555,56 +561,51 @@ const createPaymentSource = async () => {
         <div className="flex flex-wrap gap-2 p-4">
           <button
             onClick={() => setTab("warehouses")}
-            className={`rounded-full px-4 py-2 text-sm font-medium ${
-              tab === "warehouses"
-                ? "bg-neutral-900 text-white"
-                : "border border-neutral-300 bg-white text-neutral-700"
-            }`}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "warehouses"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
           >
             Kho hàng
           </button>
           <button
             onClick={() => setTab("shipping")}
-            className={`rounded-full px-4 py-2 text-sm font-medium ${
-              tab === "shipping"
-                ? "bg-neutral-900 text-white"
-                : "border border-neutral-300 bg-white text-neutral-700"
-            }`}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "shipping"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
           >
             Hãng vận chuyển
           </button>
           <button
             onClick={() => setTab("mapping")}
-            className={`rounded-full px-4 py-2 text-sm font-medium ${
-              tab === "mapping"
-                ? "bg-neutral-900 text-white"
-                : "border border-neutral-300 bg-white text-neutral-700"
-            }`}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "mapping"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
           >
             Mapping vận hành
           </button>
           <button
             onClick={() => setTab("printing")}
-            className={`rounded-full px-4 py-2 text-sm font-medium ${
-              tab === "printing"
-                ? "bg-neutral-900 text-white"
-                : "border border-neutral-300 bg-white text-neutral-700"
-            }`}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "printing"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
           >
             Mẫu in
           </button>
           <button
-  onClick={() => setTab("paymentSources")}
-  className={`rounded-full px-4 py-2 text-sm font-medium ${
-    tab === "paymentSources"
-      ? "bg-neutral-900 text-white"
-      : "border border-neutral-300 bg-white text-neutral-700"
-  }`}
->
-  Nguồn tiền
-</button>
+            onClick={() => setTab("paymentSources")}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "paymentSources"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
+          >
+            Nguồn tiền
+          </button>
         </div>
-        
+
       </Panel>
 
       {tab === "warehouses" && (
@@ -638,11 +639,10 @@ const createPaymentSource = async () => {
                       <tr
                         key={warehouse.id}
                         onClick={() => setSelectedWarehouseId(warehouse.id)}
-                        className={`cursor-pointer border-b border-neutral-100 transition ${
-                          selectedWarehouseId === warehouse.id
-                            ? "bg-neutral-50"
-                            : "hover:bg-neutral-50"
-                        }`}
+                        className={`cursor-pointer border-b border-neutral-100 transition ${selectedWarehouseId === warehouse.id
+                          ? "bg-neutral-50"
+                          : "hover:bg-neutral-50"
+                          }`}
                       >
                         <td className="py-4">
                           <div className="font-medium text-neutral-900">
@@ -978,11 +978,10 @@ const createPaymentSource = async () => {
                       <tr
                         key={provider.id}
                         onClick={() => setSelectedProviderId(provider.id)}
-                        className={`cursor-pointer border-b border-neutral-100 transition ${
-                          selectedProviderId === provider.id
-                            ? "bg-neutral-50"
-                            : "hover:bg-neutral-50"
-                        }`}
+                        className={`cursor-pointer border-b border-neutral-100 transition ${selectedProviderId === provider.id
+                          ? "bg-neutral-50"
+                          : "hover:bg-neutral-50"
+                          }`}
                       >
                         <td className="py-4">
                           <div className="font-medium text-neutral-900">
@@ -1211,151 +1210,151 @@ const createPaymentSource = async () => {
           </Panel>
         </div>
       )}
-{tab === "paymentSources" && (
-  <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-    <Panel className="overflow-hidden">
-      <div className="p-5">
-        <h3 className="text-xl font-semibold text-neutral-900">
-          Danh sách nguồn tiền
-        </h3>
-        <p className="mt-1 text-sm text-neutral-500">
-          Các nguồn tiền này sẽ hiện trong màn tạo đơn.
-        </p>
+      {tab === "paymentSources" && (
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <Panel className="overflow-hidden">
+            <div className="p-5">
+              <h3 className="text-xl font-semibold text-neutral-900">
+                Danh sách nguồn tiền
+              </h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                Các nguồn tiền này sẽ hiện trong màn tạo đơn.
+              </p>
 
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-neutral-200 text-sm text-neutral-400">
-                <th className="pb-3 font-medium">Nguồn tiền</th>
-                <th className="pb-3 font-medium">Loại</th>
-                <th className="pb-3 font-medium">Chi nhánh</th>
-                <th className="pb-3 font-medium">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paymentSources.map((item) => (
-                <tr key={item.id} className="border-b border-neutral-100">
-                  <td className="py-4">
-                    <div className="font-medium text-neutral-900">
-                      {item.name}
-                    </div>
-                    <div className="mt-1 text-xs text-neutral-400">
-                      {item.code}
-                    </div>
-                  </td>
-                  <td className="py-4 text-sm text-neutral-700">{item.type}</td>
-                  <td className="py-4 text-sm text-neutral-700">
-                    {warehouses.find((w) => w.id === item.branchId)?.name ||
-                      item.branchId ||
-                      "Tất cả"}
-                  </td>
-                  <td className="py-4">
-                    <Badge tone={item.isActive ? "green" : "gray"}>
-                      {item.isActive ? "ACTIVE" : "INACTIVE"}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-neutral-200 text-sm text-neutral-400">
+                      <th className="pb-3 font-medium">Nguồn tiền</th>
+                      <th className="pb-3 font-medium">Loại</th>
+                      <th className="pb-3 font-medium">Chi nhánh</th>
+                      <th className="pb-3 font-medium">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentSources.map((item) => (
+                      <tr key={item.id} className="border-b border-neutral-100">
+                        <td className="py-4">
+                          <div className="font-medium text-neutral-900">
+                            {item.name}
+                          </div>
+                          <div className="mt-1 text-xs text-neutral-400">
+                            {item.code}
+                          </div>
+                        </td>
+                        <td className="py-4 text-sm text-neutral-700">{item.type}</td>
+                        <td className="py-4 text-sm text-neutral-700">
+                          {warehouses.find((w) => w.id === item.branchId)?.name ||
+                            item.branchId ||
+                            "Tất cả"}
+                        </td>
+                        <td className="py-4">
+                          <Badge tone={item.isActive ? "green" : "gray"}>
+                            {item.isActive ? "ACTIVE" : "INACTIVE"}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel className="p-5">
+            <h3 className="text-xl font-semibold text-neutral-900">
+              Thêm nguồn tiền
+            </h3>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={paymentSourceForm.code}
+                onChange={(e) =>
+                  setPaymentSourceForm((prev) => ({ ...prev, code: e.target.value }))
+                }
+                placeholder="Mã nguồn tiền, VD: BANK_QO"
+              />
+
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={paymentSourceForm.name}
+                onChange={(e) =>
+                  setPaymentSourceForm((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder="Tên hiển thị, VD: Quốc Oai - CK"
+              />
+
+              <select
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={paymentSourceForm.type}
+                onChange={(e) =>
+                  setPaymentSourceForm((prev) => ({
+                    ...prev,
+                    type: e.target.value as PaymentSourceItem["type"],
+                  }))
+                }
+              >
+                <option value="CASH">Tiền mặt</option>
+                <option value="BANK">Chuyển khoản</option>
+                <option value="CARD">Quẹt thẻ</option>
+                <option value="COD">COD</option>
+                <option value="PARTIAL">Thanh toán một phần</option>
+                <option value="EXCHANGE">Đổi hàng</option>
+                <option value="OTHER">Khác</option>
+              </select>
+
+              <select
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={paymentSourceForm.branchId}
+                onChange={(e) =>
+                  setPaymentSourceForm((prev) => ({
+                    ...prev,
+                    branchId: e.target.value,
+                  }))
+                }
+              >
+                <option value="">Tất cả chi nhánh</option>
+                {warehouses.map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.name}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={paymentSourceForm.sortOrder}
+                onChange={(e) =>
+                  setPaymentSourceForm((prev) => ({
+                    ...prev,
+                    sortOrder: Number(e.target.value || 0),
+                  }))
+                }
+                placeholder="Thứ tự"
+              />
+
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={paymentSourceForm.note}
+                onChange={(e) =>
+                  setPaymentSourceForm((prev) => ({ ...prev, note: e.target.value }))
+                }
+                placeholder="Ghi chú"
+              />
+            </div>
+
+            <div className="mt-4">
+              <Button
+                onClick={() => void createPaymentSource()}
+                disabled={savingPaymentSource}
+              >
+                {savingPaymentSource ? "Đang thêm..." : "Thêm nguồn tiền"}
+              </Button>
+            </div>
+          </Panel>
         </div>
-      </div>
-    </Panel>
-
-    <Panel className="p-5">
-      <h3 className="text-xl font-semibold text-neutral-900">
-        Thêm nguồn tiền
-      </h3>
-
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <input
-          className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-          value={paymentSourceForm.code}
-          onChange={(e) =>
-            setPaymentSourceForm((prev) => ({ ...prev, code: e.target.value }))
-          }
-          placeholder="Mã nguồn tiền, VD: BANK_QO"
-        />
-
-        <input
-          className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-          value={paymentSourceForm.name}
-          onChange={(e) =>
-            setPaymentSourceForm((prev) => ({ ...prev, name: e.target.value }))
-          }
-          placeholder="Tên hiển thị, VD: Quốc Oai - CK"
-        />
-
-        <select
-          className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-          value={paymentSourceForm.type}
-          onChange={(e) =>
-            setPaymentSourceForm((prev) => ({
-              ...prev,
-              type: e.target.value as PaymentSourceItem["type"],
-            }))
-          }
-        >
-          <option value="CASH">Tiền mặt</option>
-          <option value="BANK">Chuyển khoản</option>
-          <option value="CARD">Quẹt thẻ</option>
-          <option value="COD">COD</option>
-          <option value="PARTIAL">Thanh toán một phần</option>
-          <option value="EXCHANGE">Đổi hàng</option>
-          <option value="OTHER">Khác</option>
-        </select>
-
-        <select
-          className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-          value={paymentSourceForm.branchId}
-          onChange={(e) =>
-            setPaymentSourceForm((prev) => ({
-              ...prev,
-              branchId: e.target.value,
-            }))
-          }
-        >
-          <option value="">Tất cả chi nhánh</option>
-          {warehouses.map((warehouse) => (
-            <option key={warehouse.id} value={warehouse.id}>
-              {warehouse.name}
-            </option>
-          ))}
-        </select>
-
-        <input
-          className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-          value={paymentSourceForm.sortOrder}
-          onChange={(e) =>
-            setPaymentSourceForm((prev) => ({
-              ...prev,
-              sortOrder: Number(e.target.value || 0),
-            }))
-          }
-          placeholder="Thứ tự"
-        />
-
-        <input
-          className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-          value={paymentSourceForm.note}
-          onChange={(e) =>
-            setPaymentSourceForm((prev) => ({ ...prev, note: e.target.value }))
-          }
-          placeholder="Ghi chú"
-        />
-      </div>
-
-      <div className="mt-4">
-        <Button
-          onClick={() => void createPaymentSource()}
-          disabled={savingPaymentSource}
-        >
-          {savingPaymentSource ? "Đang thêm..." : "Thêm nguồn tiền"}
-        </Button>
-      </div>
-    </Panel>
-  </div>
-)}
+      )}
       {tab === "printing" && <PrintTemplatesTab />}
     </div>
   );
