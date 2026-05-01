@@ -698,8 +698,11 @@ export default function StocktakePageClient() {
   const totalSystem = rows.reduce((sum, row) => sum + row.system, 0);
   const movementDuring = rows.reduce((sum, row) => sum + row.movementDuringStocktake, 0);
   const projectedFinal = rows.reduce((sum, row) => sum + row.finalQty, 0);
-  const snapshotSkuCount = rows.filter((row) => row.system > 0).length;
-  const snapshotReady = Boolean(session?.id && (snapshotSkuCount > 0 || totalSystem > 0));
+  const snapshotSkuCount = rows.filter(
+    (row) => row.system !== null && row.system !== undefined
+  ).length;
+
+  const snapshotReady = Boolean(session?.id && snapshotSkuCount > 0);
 
   const branchScopedVariantCount = useMemo(() => {
     const countedSkuSet = new Set(rows.map((row) => row.sku));
@@ -847,6 +850,16 @@ export default function StocktakePageClient() {
         const sessionData = await apiRequest<RealtimeSession>(
           `/stocktake-sessions/${restoreSessionId}`
         );
+        if (isClosedStatus(sessionData.status)) {
+          clearStocktakeResumeState();
+          setSession(null);
+          setWorker(null);
+          setSummary([]);
+          setWorkerSummary([]);
+          setStableWorkerSummary([]);
+          setMessage("");
+          return;
+        }
 
         setSession(sessionData);
         setBranchId(savedBranchId || sessionData.branchId || branchId);
@@ -912,6 +925,15 @@ export default function StocktakePageClient() {
     try {
       setMessage("");
 
+      // ❌ clear session cũ (rất quan trọng)
+      clearStocktakeResumeState();
+      setSession(null);
+      setWorker(null);
+      setSummary([]);
+      setWorkerSummary([]);
+      setStableWorkerSummary([]);
+
+      // ✅ tạo session mới
       const created = await apiRequest<RealtimeSession>("/stocktake-sessions", {
         method: "POST",
         body: JSON.stringify({
@@ -921,6 +943,7 @@ export default function StocktakePageClient() {
         }),
       });
 
+      // ✅ join worker
       const joined = await apiRequest<RealtimeWorker>(
         `/stocktake-sessions/${created.id}/join`,
         {
@@ -933,19 +956,31 @@ export default function StocktakePageClient() {
         }
       );
 
+      // ✅ start session
       await apiRequest(`/stocktake-sessions/${created.id}/start`, {
         method: "PATCH",
       });
 
+      // ✅ set state
       setSession(created);
       setWorker(joined);
       setSummary([]);
       setWorkerSummary([]);
       setStableWorkerSummary([]);
       setSummaryMode("WORKER");
+
+      // 🔥 QUAN TRỌNG NHẤT: lưu session mới để không restore nhầm session cũ
+      saveStocktakeResumeState({
+        sessionId: created.id,
+        workerId: joined.id,
+        branchId,
+      });
+
       setMessage(`Đã tạo phiên tổng và phiên con cho máy này: ${joined.name}.`);
+
       await refreshSession(created.id);
       await refreshWorkerSummary(created.id, joined.id);
+
       window.setTimeout(() => scanInputRef.current?.focus(), 100);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không tạo được phiên.");
@@ -1428,8 +1463,8 @@ export default function StocktakePageClient() {
               onClick={createRealtimeSession}
               disabled={!canCreateNewSession}
               className={`rounded-xl px-4 py-2 text-sm font-bold ${!canCreateNewSession
-                  ? "cursor-not-allowed border border-neutral-200 bg-neutral-100 text-neutral-400"
-                  : "border border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800"
+                ? "cursor-not-allowed border border-neutral-200 bg-neutral-100 text-neutral-400"
+                : "border border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800"
                 }`}
             >
               Tạo phiên tổng
@@ -1598,8 +1633,8 @@ export default function StocktakePageClient() {
                     type="button"
                     onClick={() => void setActiveWorker(item)}
                     className={`min-w-[220px] rounded-2xl border p-4 text-left transition ${active
-                        ? "border-neutral-950 bg-neutral-950 text-white shadow-sm"
-                        : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"
+                      ? "border-neutral-950 bg-neutral-950 text-white shadow-sm"
+                      : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"
                       }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -1612,8 +1647,8 @@ export default function StocktakePageClient() {
 
                       <span
                         className={`rounded-full px-2 py-1 text-[11px] font-bold ${active
-                            ? "bg-white/15 text-white"
-                            : "bg-green-50 text-green-700"
+                          ? "bg-white/15 text-white"
+                          : "bg-green-50 text-green-700"
                           }`}
                       >
                         {active ? "Máy này" : "Online"}
@@ -1821,8 +1856,8 @@ export default function StocktakePageClient() {
                 type="button"
                 onClick={() => setSummaryMode("SESSION")}
                 className={`rounded-full border px-3 py-1.5 text-xs font-bold ${summaryMode === "SESSION"
-                    ? "border-neutral-950 bg-neutral-950 text-white"
-                    : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                  ? "border-neutral-950 bg-neutral-950 text-white"
+                  : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
                   }`}
               >
                 Toàn phiên
@@ -1835,8 +1870,8 @@ export default function StocktakePageClient() {
                 }}
                 disabled={!worker}
                 className={`rounded-full border px-3 py-1.5 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${summaryMode === "WORKER"
-                    ? "border-neutral-950 bg-neutral-950 text-white"
-                    : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                  ? "border-neutral-950 bg-neutral-950 text-white"
+                  : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
                   }`}
               >
                 Phiên con của máy này
@@ -1848,8 +1883,8 @@ export default function StocktakePageClient() {
                   type="button"
                   onClick={() => setRowFilter(item)}
                   className={`rounded-full border px-3 py-1.5 text-xs font-bold ${rowFilter === item
-                      ? "border-blue-600 bg-blue-600 text-white"
-                      : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                    ? "border-blue-600 bg-blue-600 text-white"
+                    : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
                     }`}
                 >
                   {item === "ALL"
@@ -1903,12 +1938,12 @@ export default function StocktakePageClient() {
                       <tr
                         key={`${row.workerId || "all"}-${row.sku}`}
                         className={`border-t border-neutral-200 align-top transition ${row.sku === lastScannedSku
-                            ? "bg-green-100 ring-2 ring-green-300"
-                            : row.status === "MISMATCH"
-                              ? "bg-amber-50/40"
-                              : row.status === "NOT_FOUND"
-                                ? "bg-red-50/40"
-                                : ""
+                          ? "bg-green-100 ring-2 ring-green-300"
+                          : row.status === "MISMATCH"
+                            ? "bg-amber-50/40"
+                            : row.status === "NOT_FOUND"
+                              ? "bg-red-50/40"
+                              : ""
                           }`}
                       >
                         <td className="px-4 py-3 text-neutral-500">{index + 1}</td>
@@ -1927,10 +1962,10 @@ export default function StocktakePageClient() {
                         <td className="px-4 py-3 font-extrabold text-neutral-950">{row.finalQty}</td>
                         <td
                           className={`px-4 py-3 font-extrabold ${row.diff === 0
-                              ? "text-neutral-500"
-                              : row.diff > 0
-                                ? "text-green-700"
-                                : "text-red-700"
+                            ? "text-neutral-500"
+                            : row.diff > 0
+                              ? "text-green-700"
+                              : "text-red-700"
                             }`}
                         >
                           {diffText(row.diff)}
