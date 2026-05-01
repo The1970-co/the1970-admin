@@ -133,7 +133,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
         : data?.message || message;
-    } catch {}
+    } catch { }
 
     throw new Error(message);
   }
@@ -716,7 +716,9 @@ export default function StocktakePageClient() {
   const runningSession = Boolean(session && isRunningStatus(session.status));
   const paused = isPausedStatus(session?.status);
   const closed = isClosedStatus(session?.status);
-
+  const canCreateNewSession = !session || closed;
+  const canCreateWorker = Boolean(session?.id && !closed);
+  const canEditSessionMeta = !session || closed;
   const refreshWorkerSummary = async (sessionId?: string, workerId?: string) => {
     const id = sessionId || session?.id;
     const selectedWorkerId = workerId || worker?.id;
@@ -1238,8 +1240,7 @@ export default function StocktakePageClient() {
       await refreshSession(session.id);
 
       setMessage(
-        `Đã chốt kiểm kho. Điều chỉnh ${result.adjustedCount} dòng, tổng delta ${
-          result.totalDelta > 0 ? `+${result.totalDelta}` : result.totalDelta
+        `Đã chốt kiểm kho. Điều chỉnh ${result.adjustedCount} dòng, tổng delta ${result.totalDelta > 0 ? `+${result.totalDelta}` : result.totalDelta
         }.`
       );
     } catch (err) {
@@ -1425,12 +1426,11 @@ export default function StocktakePageClient() {
             <button
               type="button"
               onClick={createRealtimeSession}
-              disabled={Boolean(session)}
-              className={`rounded-xl px-4 py-2 text-sm font-bold ${
-                session
+              disabled={!canCreateNewSession}
+              className={`rounded-xl px-4 py-2 text-sm font-bold ${!canCreateNewSession
                   ? "cursor-not-allowed border border-neutral-200 bg-neutral-100 text-neutral-400"
                   : "border border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800"
-              }`}
+                }`}
             >
               Tạo phiên tổng
             </button>
@@ -1438,7 +1438,7 @@ export default function StocktakePageClient() {
             <button
               type="button"
               onClick={() => setWorkerModalOpen(true)}
-              disabled={!session}
+              disabled={!canCreateWorker}
               className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               + Tạo phiên con
@@ -1503,7 +1503,7 @@ export default function StocktakePageClient() {
                 className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
                 value={sessionName}
                 onChange={(e) => setSessionName(e.target.value)}
-                disabled={Boolean(session)}
+                disabled={!canEditSessionMeta}
               />
             </label>
 
@@ -1556,7 +1556,7 @@ export default function StocktakePageClient() {
             value={sessionNote}
             onChange={(e) => setSessionNote(e.target.value)}
             placeholder="Ghi chú phiên, ví dụ: kiểm cuối ngày, chia 5 người theo khu"
-            disabled={Boolean(session)}
+            disabled={!canEditSessionMeta}
           />
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -1597,11 +1597,10 @@ export default function StocktakePageClient() {
                     key={item.id}
                     type="button"
                     onClick={() => void setActiveWorker(item)}
-                    className={`min-w-[220px] rounded-2xl border p-4 text-left transition ${
-                      active
+                    className={`min-w-[220px] rounded-2xl border p-4 text-left transition ${active
                         ? "border-neutral-950 bg-neutral-950 text-white shadow-sm"
                         : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"
-                    }`}
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -1612,11 +1611,10 @@ export default function StocktakePageClient() {
                       </div>
 
                       <span
-                        className={`rounded-full px-2 py-1 text-[11px] font-bold ${
-                          active
+                        className={`rounded-full px-2 py-1 text-[11px] font-bold ${active
                             ? "bg-white/15 text-white"
                             : "bg-green-50 text-green-700"
-                        }`}
+                          }`}
                       >
                         {active ? "Máy này" : "Online"}
                       </span>
@@ -1822,11 +1820,10 @@ export default function StocktakePageClient() {
               <button
                 type="button"
                 onClick={() => setSummaryMode("SESSION")}
-                className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
-                  summaryMode === "SESSION"
+                className={`rounded-full border px-3 py-1.5 text-xs font-bold ${summaryMode === "SESSION"
                     ? "border-neutral-950 bg-neutral-950 text-white"
                     : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
-                }`}
+                  }`}
               >
                 Toàn phiên
               </button>
@@ -1837,11 +1834,10 @@ export default function StocktakePageClient() {
                   void refreshWorkerSummary();
                 }}
                 disabled={!worker}
-                className={`rounded-full border px-3 py-1.5 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${
-                  summaryMode === "WORKER"
+                className={`rounded-full border px-3 py-1.5 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${summaryMode === "WORKER"
                     ? "border-neutral-950 bg-neutral-950 text-white"
                     : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
-                }`}
+                  }`}
               >
                 Phiên con của máy này
               </button>
@@ -1851,11 +1847,10 @@ export default function StocktakePageClient() {
                   key={item}
                   type="button"
                   onClick={() => setRowFilter(item)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
-                    rowFilter === item
+                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${rowFilter === item
                       ? "border-blue-600 bg-blue-600 text-white"
                       : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
-                  }`}
+                    }`}
                 >
                   {item === "ALL"
                     ? "Tất cả"
@@ -1907,15 +1902,14 @@ export default function StocktakePageClient() {
                     visibleRows.map((row, index) => (
                       <tr
                         key={`${row.workerId || "all"}-${row.sku}`}
-                        className={`border-t border-neutral-200 align-top transition ${
-                          row.sku === lastScannedSku
+                        className={`border-t border-neutral-200 align-top transition ${row.sku === lastScannedSku
                             ? "bg-green-100 ring-2 ring-green-300"
                             : row.status === "MISMATCH"
                               ? "bg-amber-50/40"
                               : row.status === "NOT_FOUND"
                                 ? "bg-red-50/40"
                                 : ""
-                        }`}
+                          }`}
                       >
                         <td className="px-4 py-3 text-neutral-500">{index + 1}</td>
                         <td className="px-4 py-3 font-bold text-neutral-950">{row.sku}</td>
@@ -1932,13 +1926,12 @@ export default function StocktakePageClient() {
                         <td className="px-4 py-3 font-semibold">{diffText(row.movementDuringStocktake)}</td>
                         <td className="px-4 py-3 font-extrabold text-neutral-950">{row.finalQty}</td>
                         <td
-                          className={`px-4 py-3 font-extrabold ${
-                            row.diff === 0
+                          className={`px-4 py-3 font-extrabold ${row.diff === 0
                               ? "text-neutral-500"
                               : row.diff > 0
                                 ? "text-green-700"
                                 : "text-red-700"
-                          }`}
+                            }`}
                         >
                           {diffText(row.diff)}
                         </td>
