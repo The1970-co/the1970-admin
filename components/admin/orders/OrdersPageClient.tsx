@@ -490,6 +490,7 @@ function amountCustomerStillOwes(order: AdminOrder) {
 
 function getCreatedByName(order: any) {
   return (
+    order?.createdByStaffName ||
     order?.createdByName ||
     order?.createdBy?.name ||
     order?.createdBy?.fullName ||

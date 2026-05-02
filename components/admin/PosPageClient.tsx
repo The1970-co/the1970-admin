@@ -39,6 +39,12 @@ type ReturnLine = {
   returnQty: number;
 };
 
+type PaymentRow = {
+  id: string;
+  paymentSourceId: string;
+  amount: string;
+};
+
 type BranchOption = {
   value: string;
   label: string;
@@ -119,7 +125,9 @@ export default function PosPageClient() {
   const [activeTabId, setActiveTabId] = useState("1");
 
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
-  const [paymentSourceId, setPaymentSourceId] = useState("");
+  const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([
+    { id: "pay-1", paymentSourceId: "", amount: "0" },
+  ]);
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -164,8 +172,11 @@ export default function PosPageClient() {
 
   const discountNumber = moneyNumber(discount);
   const mustPay = Math.max(0, subtotal - discountNumber);
-  const paid = moneyNumber(paidAmount);
-  const change = Math.max(0, paid - mustPay);
+  const totalPaid = useMemo(
+    () => paymentRows.reduce((sum, row) => sum + moneyNumber(row.amount), 0),
+    [paymentRows]
+  );
+  const change = Math.max(0, totalPaid - mustPay);
 
   const currentBranchLabel =
     branchOptions.find((item) => item.value === branchId)?.label || branchId;
@@ -320,22 +331,32 @@ export default function PosPageClient() {
   useEffect(() => {
     const first = visiblePaymentSources[0];
 
-    if (!paymentSourceId && first?.id) {
-      setPaymentSourceId(String(first.id));
-      return;
-    }
+    setPaymentRows((prev) => {
+      const rows = prev.length
+        ? prev
+        : [{ id: `pay-${Date.now()}`, paymentSourceId: "", amount: "0" }];
 
-    const stillValid = visiblePaymentSources.some(
-      (s) => String(s.id) === String(paymentSourceId)
-    );
+      return rows.map((row, index) => {
+        const stillValid = visiblePaymentSources.some(
+          (source) => String(source.id) === String(row.paymentSourceId)
+        );
 
-    if (paymentSourceId && !stillValid) {
-      setPaymentSourceId(first?.id ? String(first.id) : "");
-    }
-  }, [visiblePaymentSources, paymentSourceId]);
+        if (row.paymentSourceId && stillValid) return row;
+
+        return {
+          ...row,
+          paymentSourceId: index === 0 && first?.id ? String(first.id) : "",
+        };
+      });
+    });
+  }, [visiblePaymentSources]);
 
   useEffect(() => {
     setPaidAmount(String(mustPay));
+    setPaymentRows((prev) => {
+      if (prev.length !== 1) return prev;
+      return [{ ...prev[0], amount: String(mustPay) }];
+    });
   }, [mustPay]);
 
   const allVariants = useMemo(() => {
@@ -532,6 +553,7 @@ export default function PosPageClient() {
     setCustomerPhone("");
     setCustomerSuggestions([]);
     setPaidAmount("0");
+    setPaymentRows([{ id: "pay-1", paymentSourceId: visiblePaymentSources[0]?.id ? String(visiblePaymentSources[0].id) : "", amount: "0" }]);
     setDiscount("0");
     setNote("");
     setError("");
@@ -694,6 +716,35 @@ export default function PosPageClient() {
       (n) => n > 0
     );
   }, [mustPay]);
+
+  const updatePaymentRow = (
+    id: string,
+    patch: Partial<Pick<PaymentRow, "paymentSourceId" | "amount">>
+  ) => {
+    setPaymentRows((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row))
+    );
+  };
+
+  const addPaymentRow = () => {
+    const remaining = Math.max(0, mustPay - totalPaid);
+    setPaymentRows((prev) => [
+      ...prev,
+      {
+        id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        paymentSourceId: visiblePaymentSources[0]?.id
+          ? String(visiblePaymentSources[0].id)
+          : "",
+        amount: remaining ? String(remaining) : "0",
+      },
+    ]);
+  };
+
+  const removePaymentRow = (id: string) => {
+    setPaymentRows((prev) =>
+      prev.length <= 1 ? prev : prev.filter((row) => row.id !== id)
+    );
+  };
 
   const quickActions = [
     { label: "Thêm dịch vụ", action: () => setError("Tính năng thêm dịch vụ sẽ làm sau.") },
@@ -887,7 +938,7 @@ export default function PosPageClient() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [allVariants, filteredVariants, cameraOpen, returnPickerOpen, returnFormOpen, lines, branchId, paymentSourceId, paid, discountNumber, note, customerName, customerPhone]);
+  }, [allVariants, filteredVariants, cameraOpen, returnPickerOpen, returnFormOpen, lines, branchId, paymentRows, totalPaid, discountNumber, note, customerName, customerPhone]);
 
   useEffect(() => {
     return () => stopCameraScan();
@@ -908,8 +959,20 @@ const handlePay = async () => {
     return;
   }
 
-  if (!paymentSourceId) {
-    setError("Chưa chọn nguồn tiền.");
+  const validPayments = paymentRows
+    .map((row) => ({
+      paymentSourceId: row.paymentSourceId,
+      amount: moneyNumber(row.amount),
+    }))
+    .filter((row) => row.paymentSourceId && row.amount > 0);
+
+  if (!validPayments.length) {
+    setError("Chưa nhập nguồn tiền thanh toán.");
+    return;
+  }
+
+  if (validPayments.reduce((sum, row) => sum + row.amount, 0) < mustPay) {
+    setError("Tổng tiền khách thanh toán chưa đủ.");
     return;
   }
 
@@ -931,8 +994,9 @@ const handlePay = async () => {
         .filter(Boolean)
         .join(" | "),
       mode: "approve" as any,
-      paymentSourceId,
-      paidAmount: mustPay,
+      payments: validPayments,
+      paymentSourceId: validPayments[0]?.paymentSourceId || "",
+      paidAmount: validPayments.reduce((sum, row) => sum + row.amount, 0),
       paymentNote: "Thanh toán POS",
       items: lines.map((line) => ({
         variantId: line.variantId,
@@ -1240,33 +1304,71 @@ const handlePay = async () => {
 
           <div className="my-3 border-t border-neutral-100" />
 
-          <label className="text-sm font-semibold">Nguồn tiền</label>
-          <select
-            value={paymentSourceId}
-            onChange={(e) => setPaymentSourceId(e.target.value)}
-            className="mt-2 h-10 w-full rounded-2xl border border-neutral-200 px-4 text-sm outline-none"
-          >
-            <option value="">Chọn nguồn tiền</option>
-            {visiblePaymentSources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.name || source.label || source.displayName || source.code}
-              </option>
-            ))}
-          </select>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <label className="text-sm font-semibold">Nguồn tiền</label>
+            <button
+              type="button"
+              onClick={addPaymentRow}
+              className="rounded-xl border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+            >
+              + Thêm nguồn
+            </button>
+          </div>
 
-          <label className="mt-3 block text-sm font-semibold">Khách đưa</label>
-          <input
-            value={formatMoneyInput(paidAmount)}
-            onChange={(e) => setPaidAmount(String(moneyNumber(e.target.value)))}
-            className="mt-2 h-11 w-full rounded-2xl border border-neutral-200 px-4 text-right text-lg font-semibold outline-none"
-          />
+          <div className="mt-2 space-y-2">
+            {paymentRows.map((row, index) => (
+              <div key={row.id} className="grid grid-cols-[1fr_132px_30px] gap-2">
+                <select
+                  value={row.paymentSourceId}
+                  onChange={(e) =>
+                    updatePaymentRow(row.id, { paymentSourceId: e.target.value })
+                  }
+                  className="h-10 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
+                >
+                  <option value="">Chọn nguồn tiền</option>
+                  {visiblePaymentSources.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.name || source.label || source.displayName || source.code}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  value={formatMoneyInput(row.amount)}
+                  onChange={(e) =>
+                    updatePaymentRow(row.id, {
+                      amount: String(moneyNumber(e.target.value)),
+                    })
+                  }
+                  placeholder="Số tiền"
+                  className="h-10 rounded-2xl border border-neutral-200 px-3 text-right text-sm font-semibold outline-none"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => removePaymentRow(row.id)}
+                  disabled={paymentRows.length <= 1}
+                  className="h-10 rounded-xl text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
+                  title={index === 0 ? "Nguồn chính" : "Xoá nguồn"}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
 
           <div className="mt-2 grid grid-cols-3 gap-2">
             {quickAmounts.map((amount) => (
               <button
                 key={amount}
                 type="button"
-                onClick={() => setPaidAmount(String(amount))}
+                onClick={() =>
+                  setPaymentRows((prev) =>
+                    prev.length
+                      ? [{ ...prev[0], amount: String(amount) }, ...prev.slice(1)]
+                      : [{ id: "pay-1", paymentSourceId: "", amount: String(amount) }]
+                  )
+                }
                 className="rounded-xl bg-neutral-100 px-2 py-2 text-xs font-medium hover:bg-neutral-200"
               >
                 {currency(amount).replace("đ", "")}
@@ -1274,9 +1376,17 @@ const handlePay = async () => {
             ))}
           </div>
 
-          <div className="mt-3 flex justify-between text-sm">
-            <span>Tiền thừa trả khách</span>
-            <strong>{currency(change)}</strong>
+          <div className="mt-3 space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span>Khách đã thanh toán</span>
+              <strong>{currency(totalPaid)}</strong>
+            </div>
+            <div className="flex justify-between">
+              <span>{totalPaid >= mustPay ? "Tiền thừa trả khách" : "Còn thiếu"}</span>
+              <strong className={totalPaid >= mustPay ? "" : "text-red-600"}>
+                {currency(totalPaid >= mustPay ? change : mustPay - totalPaid)}
+              </strong>
+            </div>
           </div>
 
           <textarea
@@ -1836,12 +1946,23 @@ const handlePay = async () => {
                     if (diff > 0) {
                       setDiscount(String(exchangeTotal));
                       setPaidAmount("0");
+                      setPaymentRows((prev) =>
+                        prev.length ? [{ ...prev[0], amount: "0" }, ...prev.slice(1)] : prev
+                      );
                     } else if (diff < 0) {
                       setDiscount(String(returnTotal));
                       setPaidAmount(String(Math.abs(diff)));
+                      setPaymentRows((prev) =>
+                        prev.length
+                          ? [{ ...prev[0], amount: String(Math.abs(diff)) }, ...prev.slice(1)]
+                          : [{ id: "pay-1", paymentSourceId: "", amount: String(Math.abs(diff)) }]
+                      );
                     } else {
                       setDiscount(String(exchangeTotal));
                       setPaidAmount("0");
+                      setPaymentRows((prev) =>
+                        prev.length ? [{ ...prev[0], amount: "0" }, ...prev.slice(1)] : prev
+                      );
                     }
 
                     setReturnFormOpen(false);

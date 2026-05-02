@@ -58,6 +58,22 @@ type ShipmentItem = {
   codReconciliationAmount?: number | null;
 };
 
+type PaymentItem = {
+  id?: string;
+  method?: string | null;
+  amount?: number | null;
+  status?: string | null;
+  paidAt?: string | null;
+  note?: string | null;
+  paymentSourceId?: string | null;
+  paymentSource?: {
+    id?: string;
+    code?: string | null;
+    name?: string | null;
+    type?: string | null;
+  } | null;
+};
+
 type CustomerItem = {
   id?: string;
   fullName?: string | null;
@@ -69,6 +85,9 @@ type OrderDetail = {
   orderCode: string;
   createdAt?: string;
   updatedAt?: string;
+  soldAt?: string | null;
+  createdByStaffId?: string | null;
+  createdByStaffName?: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   note?: string | null;
@@ -98,6 +117,7 @@ type OrderDetail = {
   items?: OrderItem[];
   shipment?: ShipmentItem | null;
   customer?: CustomerItem | null;
+  payments?: PaymentItem[];
 };
 
 type ShipmentEditDraft = {
@@ -170,6 +190,36 @@ function formatDateTime(value?: string | null) {
     year: "numeric",
   }).format(new Date(value));
 }
+
+function paymentSourceLabel(payment: PaymentItem) {
+  return (
+    payment.paymentSource?.name ||
+    payment.paymentSource?.code ||
+    payment.method ||
+    payment.paymentSourceId ||
+    "Nguồn tiền"
+  );
+}
+
+function paymentStatusText(status?: string | null) {
+  switch (status) {
+    case "PAID":
+      return "Đã thanh toán";
+    case "PARTIAL":
+      return "Một phần";
+    case "PENDING_COD":
+      return "Chờ COD";
+    case "REFUNDED":
+      return "Đã hoàn";
+    case "FAILED":
+      return "Lỗi";
+    case "UNPAID":
+      return "Chưa thanh toán";
+    default:
+      return status || "—";
+  }
+}
+
 function formatVndInput(value: string | number | null | undefined) {
   const digits = String(value ?? "").replace(/\D/g, "");
   if (!digits) return "";
@@ -1111,8 +1161,19 @@ export default function OrderDetailPageClient({
     [viewOrder]
   );
 
-  const customerPaid =
-    isPOSOrder || isPaidOrder
+  const paymentLines = useMemo(
+    () => (Array.isArray(viewOrder?.payments) ? viewOrder.payments : []),
+    [viewOrder?.payments]
+  );
+
+  const paymentsTotal = useMemo(
+    () => paymentLines.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+    [paymentLines]
+  );
+
+  const customerPaid = paymentLines.length
+    ? paymentsTotal
+    : isPOSOrder || isPaidOrder
       ? Number(viewOrder?.finalAmount || 0)
       : meta.customerPaidText
         ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
@@ -1813,6 +1874,13 @@ export default function OrderDetailPageClient({
           <div className="flex flex-wrap gap-2">
             <ActionButton onClick={handlePrint}>In đơn hàng</ActionButton>
 
+            <Link
+              href={`/returns/create?orderId=${viewOrder.id}`}
+              className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+            >
+              Đổi / Trả hàng
+            </Link>
+
             {!isEditing ? (
               <ActionButton
                 disabled={!canEdit}
@@ -2063,6 +2131,45 @@ export default function OrderDetailPageClient({
                     COD {currency(viewOrder.shipment.codAmount)}
                   </span>
                 ) : null}
+              </div>
+
+              <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-[12px] font-semibold text-neutral-900">
+                    Chi tiết nguồn tiền
+                  </p>
+                  <span className="text-[11px] text-neutral-500">
+                    Tổng {currency(paymentsTotal)}
+                  </span>
+                </div>
+
+                {paymentLines.length ? (
+                  <div className="space-y-2">
+                    {paymentLines.map((payment, index) => (
+                      <div
+                        key={payment.id || `${payment.paymentSourceId || "pay"}-${index}`}
+                        className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-[12px]"
+                      >
+                        <div>
+                          <p className="font-semibold text-neutral-900">
+                            {paymentSourceLabel(payment)}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-neutral-500">
+                            {paymentStatusText(payment.status)}
+                            {payment.paidAt ? ` · ${formatDateTime(payment.paidAt)}` : ""}
+                          </p>
+                        </div>
+                        <p className="font-semibold text-neutral-900">
+                          {currency(payment.amount)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-neutral-500">
+                    Chưa có dòng thanh toán chi tiết.
+                  </p>
+                )}
               </div>
             </div>
           </Panel>
@@ -2381,8 +2488,10 @@ export default function OrderDetailPageClient({
                     />
                   </div>
                   <DataRow label="Mã đơn" value={viewOrder.orderCode} />
+                  <DataRow label="Ngày bán" value={formatDateTime(viewOrder.soldAt) || viewOrder.createdAt || "—"} />
                   <DataRow label="Ngày tạo" value={viewOrder.createdAt || "—"} />
                   <DataRow label="Cập nhật" value={viewOrder.updatedAt || "—"} />
+                  <DataRow label="Nhân viên" value={viewOrder.createdByStaffName || "—"} />
                   <DataRow label="Trạng thái" value={viewOrder.status || "—"} />
                   <DataRow label="Thanh toán" value={viewOrder.paymentStatus || "—"} />
                   <DataRow label="Giao vận" value={viewOrder.fulfillmentStatus || "—"} />
@@ -2391,14 +2500,23 @@ export default function OrderDetailPageClient({
               ) : (
                 <>
                   <DataRow label="Mã đơn" value={viewOrder.orderCode} />
+                  <DataRow label="Ngày bán" value={formatDateTime(viewOrder.soldAt) || viewOrder.createdAt || "—"} />
                   <DataRow label="Ngày tạo" value={viewOrder.createdAt || "—"} />
                   <DataRow label="Cập nhật" value={viewOrder.updatedAt || "—"} />
+                  <DataRow label="Nhân viên" value={viewOrder.createdByStaffName || "—"} />
                   <DataRow label="Trạng thái" value={viewOrder.status || "—"} />
                   <DataRow label="Thanh toán" value={viewOrder.paymentStatus || "—"} />
                   <DataRow label="Giao vận" value={viewOrder.fulfillmentStatus || "—"} />
                   <DataRow label="Chi nhánh" value={viewOrder.branchId || "—"} />
                   <DataRow label="Kênh bán" value={viewOrder.salesChannel || "—"} />
-                  <DataRow label="Nguồn" value={viewOrder.salesChannel || "—"} />
+                  <DataRow
+                    label="Nguồn tiền"
+                    value={
+                      paymentLines.length
+                        ? paymentLines.map((p) => `${paymentSourceLabel(p)}: ${currency(p.amount)}`).join(" · ")
+                        : "—"
+                    }
+                  />
                 </>
               )}
             </div>

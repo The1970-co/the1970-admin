@@ -21,7 +21,6 @@ type MenuItem = {
   children?: MenuItem[];
 };
 
-
 const MENU: MenuItem[] = [
   { href: "/control", label: "Tổng quan", permission: "dashboard.view" },
   {
@@ -34,7 +33,12 @@ const MENU: MenuItem[] = [
         label: "POS bán tại quầy",
         href: "/pos",
         permission: "orders.create",
-      }
+      },
+      {
+        label: "Đơn trả hàng",
+        href: "/returns",
+        permission: "orders.view",
+      },
     ],
   },
   {
