@@ -91,6 +91,257 @@ type DashboardData = {
   floatingApproval: { count: string; title: string; subtitle: string };
 };
 
+
+type DashboardOverviewApi = {
+  success?: boolean;
+  branchId?: string;
+  cards?: {
+    revenue?: number;
+    totalOrders?: number;
+    newOrders?: number;
+    completedOrders?: number;
+    cancelledOrders?: number;
+    productCount?: number;
+    variantCount?: number;
+    availableQty?: number;
+    reservedQty?: number;
+    incomingQty?: number;
+    lowStockItems?: number;
+    outOfStockItems?: number;
+    pendingTransfers?: number;
+  };
+  recentOrders?: Array<{
+    id: string;
+    code?: string | null;
+    customerName?: string | null;
+    phone?: string | null;
+    status?: string | null;
+    paymentStatus?: string | null;
+    fulfillmentStatus?: string | null;
+    finalAmount?: number | string | null;
+    salesChannel?: string | null;
+    branchId?: string | null;
+    createdAt?: string | null;
+  }>;
+};
+
+const DASHBOARD_API_BASE = (
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_CORE_API_URL ||
+  ""
+).replace(/\/$/, "");
+
+function toNumber(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoneyShort(value: unknown) {
+  const amount = toNumber(value);
+  if (amount >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(1)}B`;
+  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)}M`;
+  if (amount >= 1_000) return `${Math.round(amount / 1_000)}K`;
+  return String(Math.round(amount));
+}
+
+function formatQty(value: unknown) {
+  return new Intl.NumberFormat("vi-VN").format(toNumber(value));
+}
+
+function buildDashboardFromOverview(base: DashboardData, overview: DashboardOverviewApi): DashboardData {
+  const cards = overview.cards || {};
+  const revenue = toNumber(cards.revenue);
+  const totalOrders = toNumber(cards.totalOrders);
+  const completedOrders = toNumber(cards.completedOrders);
+  const cancelledOrders = toNumber(cards.cancelledOrders);
+  const newOrders = toNumber(cards.newOrders);
+  const availableQty = toNumber(cards.availableQty);
+  const reservedQty = toNumber(cards.reservedQty);
+  const incomingQty = toNumber(cards.incomingQty);
+  const lowStockItems = toNumber(cards.lowStockItems);
+  const outOfStockItems = toNumber(cards.outOfStockItems);
+  const pendingTransfers = toNumber(cards.pendingTransfers);
+  const productCount = toNumber(cards.productCount);
+  const variantCount = toNumber(cards.variantCount);
+
+  const inventoryTone: Tone = outOfStockItems > 0 ? "critical" : lowStockItems > 0 ? "warning" : "safe";
+  const systemTone: Tone = inventoryTone === "critical" || cancelledOrders > 0 ? "critical" : inventoryTone;
+  const statusTitle = systemTone === "safe" ? "SYSTEM STATUS: SAFE" : systemTone === "critical" ? "SYSTEM STATUS: CRITICAL" : "SYSTEM STATUS: WARNING";
+
+  const recentOrders = overview.recentOrders || [];
+  const decisionCards = [
+    ...(lowStockItems > 0
+      ? [
+          {
+            id: "live-low-stock",
+            eyebrow: "Bảo vệ tồn",
+            title: `${lowStockItems} SKU sắp hết`,
+            desc: `Có ${lowStockItems} SKU tồn thấp, ${outOfStockItems} SKU đã hết hàng. Nên kiểm tra nhập hàng hoặc điều chuyển kho.`,
+            source: "Inventory",
+            score: outOfStockItems > 0 ? "99%" : "94%",
+            tag: outOfStockItems > 0 ? "Khẩn cấp" : "Cảnh báo",
+            tone: inventoryTone,
+          },
+        ]
+      : []),
+    ...(newOrders > 0
+      ? [
+          {
+            id: "live-new-orders",
+            eyebrow: "Xử lý đơn",
+            title: `${newOrders} đơn mới cần xử lý`,
+            desc: `Có ${newOrders} đơn mới trong hệ thống. Ưu tiên duyệt, đóng gói và xuất kho đúng luồng.`,
+            source: "Orders",
+            score: "91%",
+            tag: "Theo dõi",
+            tone: "warning" as Tone,
+          },
+        ]
+      : []),
+    ...(pendingTransfers > 0
+      ? [
+          {
+            id: "live-transfers",
+            eyebrow: "Điều chuyển",
+            title: `${pendingTransfers} phiếu chuyển kho đang chờ`,
+            desc: `Có ${pendingTransfers} phiếu chuyển kho chưa hoàn tất. Cần kiểm tra để tồn kho giữa chi nhánh khớp dữ liệu.`,
+            source: "Stock Transfer",
+            score: "88%",
+            tag: "Cần xử lý",
+            tone: "warning" as Tone,
+          },
+        ]
+      : []),
+    {
+      id: "live-revenue",
+      eyebrow: "Doanh thu",
+      title: `Doanh thu ghi nhận ${formatMoneyShort(revenue)}`,
+      desc: `${totalOrders} đơn · ${completedOrders} hoàn thành · ${cancelledOrders} huỷ.`,
+      source: "Orders",
+      score: "86%",
+      tag: revenue > 0 ? "Live data" : "Chưa có doanh thu",
+      tone: revenue > 0 ? ("safe" as Tone) : ("warning" as Tone),
+    },
+  ];
+
+  const dailyRows = [
+    {
+      day: new Date().getDate().toString().padStart(2, "0"),
+      note: "Hôm nay",
+      revenue: formatMoneyShort(revenue),
+      profit: "—",
+      orders: formatQty(totalOrders),
+      roas: "—",
+      compare: "Live",
+      positive: revenue > 0,
+      isToday: true,
+    },
+    ...base.dailyRows.slice(1),
+  ];
+
+  const lowStockRows = [
+    lowStockItems > 0 ? `${lowStockItems} SKU sắp hết` : "Không có SKU sắp hết",
+    outOfStockItems > 0 ? `${outOfStockItems} SKU hết hàng` : "Không có SKU hết hàng",
+    pendingTransfers > 0 ? `${pendingTransfers} phiếu chuyển kho chờ xử lý` : "Không có phiếu chuyển kho chờ xử lý",
+  ];
+
+  return {
+    ...base,
+    hero: {
+      ...base.hero,
+      status: systemTone,
+      title: statusTitle,
+      subtitle: `Doanh thu ${formatMoneyShort(revenue)} · ${totalOrders} đơn · ${lowStockItems} SKU cảnh báo tồn`,
+      chips: [
+        `${totalOrders} đơn`,
+        `${formatMoneyShort(revenue)} doanh thu`,
+        `${lowStockItems} SKU cảnh báo tồn`,
+      ],
+      metaMode: "DISCONNECTED",
+      metaAccount: "Meta Ads chưa nối live data",
+    },
+    warningSummary: {
+      ...base.warningSummary,
+      level: systemTone,
+      title: systemTone === "safe" ? "Hệ thống đang ổn định" : "Có tín hiệu rủi ro cần theo dõi sát",
+      subtitle: `Live từ backend: ${totalOrders} đơn, ${availableQty} tồn khả dụng, ${lowStockItems} SKU sắp hết.`,
+      revenue: revenue > 0 ? formatMoneyShort(revenue) : "Chưa ghi nhận",
+      roas: "Chưa nối Meta",
+      inventory: `${lowStockItems} SKU sắp hết`,
+    },
+    decisionCards,
+    insightRow: [
+      {
+        id: "i1",
+        title: "Tổng quan đơn hàng live",
+        desc: `${totalOrders} đơn · ${newOrders} đơn mới · ${completedOrders} hoàn thành · ${cancelledOrders} huỷ.`,
+        tone: cancelledOrders > 0 ? "warning" : "safe",
+        badge: "Orders",
+      },
+      {
+        id: "i2",
+        title: "Tồn kho hệ thống",
+        desc: `${formatQty(availableQty)} khả dụng · ${formatQty(reservedQty)} đang giữ · ${formatQty(incomingQty)} sắp về.`,
+        tone: inventoryTone,
+        badge: "Inventory",
+      },
+      {
+        id: "i3",
+        title: "Sản phẩm & biến thể",
+        desc: `${formatQty(productCount)} sản phẩm · ${formatQty(variantCount)} biến thể đang có trong hệ thống.`,
+        tone: "safe",
+        badge: "Catalog",
+      },
+    ],
+    realtime: {
+      ...base.realtime,
+      delta: formatMoneyShort(revenue),
+      deltaPct: "Live",
+      checkoutPurchase: totalOrders ? `${completedOrders}/${totalOrders}` : "0/0",
+      chokeLabel: "Đơn hoàn thành / tổng đơn",
+      lowStock: lowStockRows,
+    },
+    kpis: [
+      { id: "k1", label: "Doanh thu", value: formatMoneyShort(revenue), delta: "Live" },
+      { id: "k2", label: "Đơn hàng", value: formatQty(totalOrders), delta: `${newOrders} mới` },
+      { id: "k3", label: "Tồn khả dụng", value: formatQty(availableQty), delta: `${reservedQty} giữ` },
+      { id: "k4", label: "SKU sắp hết", value: formatQty(lowStockItems), delta: `${outOfStockItems} hết` },
+      { id: "k5", label: "Phiếu chuyển chờ", value: formatQty(pendingTransfers), delta: "Transfer" },
+    ],
+    dailyRows,
+    drilldown: [
+      { label: "Doanh thu", value: formatMoneyShort(revenue) },
+      { label: "Đơn hàng", value: formatQty(totalOrders) },
+      { label: "Đơn mới", value: formatQty(newOrders) },
+      { label: "Hoàn thành", value: formatQty(completedOrders), tone: "dark" },
+      { label: "Tồn khả dụng", value: formatQty(availableQty), tone: "mint" },
+    ],
+    topProducts: recentOrders.slice(0, 4).map((order, index) => ({
+      rank: index + 1,
+      name: order.code || order.id,
+      meta: `${order.customerName || "Khách lẻ"} · ${order.salesChannel || "OTHER"}`,
+      qty: order.status || "NEW",
+      revenue: formatMoneyShort(order.finalAmount),
+    })).concat(base.topProducts).slice(0, 4),
+    warehouseMix: [
+      { name: "Tồn khả dụng", value: formatQty(availableQty), note: "Số lượng có thể bán" },
+      { name: "Tồn đang giữ", value: formatQty(reservedQty), note: "Đang giữ cho đơn hàng" },
+      { name: "Hàng sắp về", value: formatQty(incomingQty), note: "Incoming inventory" },
+    ],
+    quickInsights: [
+      `Backend đã nối live: ${totalOrders} đơn, doanh thu ${formatMoneyShort(revenue)}.`,
+      lowStockItems > 0 ? `${lowStockItems} SKU đang sắp hết, nên xử lý nhập/điều chuyển.` : "Tồn kho chưa có SKU chạm ngưỡng sắp hết.",
+      pendingTransfers > 0 ? `${pendingTransfers} phiếu chuyển kho đang chờ xác nhận.` : "Không có phiếu chuyển kho đang chờ.",
+    ],
+    floatingApproval: {
+      count: `${pendingTransfers + lowStockItems} pending`,
+      title: lowStockItems > 0 ? "Xử lý cảnh báo tồn" : "Không có cảnh báo lớn",
+      subtitle: `Orders ${totalOrders} · Inventory ${availableQty}`,
+    },
+  };
+}
+
 function Panel({
   children,
   className = "",
@@ -152,268 +403,117 @@ function metricTone(delta: string) {
 }
 
 function fallbackData(): DashboardData {
+  const today = new Date().getDate().toString().padStart(2, "0");
+
   return {
     hero: {
-      status: "warning",
-      title: "SYSTEM STATUS: WARNING",
-      subtitle: "ROAS ổn · Doanh thu giảm · 1 SKU cảnh báo tồn",
-      chips: ["ROAS ổn", "Doanh thu giảm", "1 SKU cảnh báo tồn"],
+      status: "safe",
+      title: "Đang tải dữ liệu tổng quan",
+      subtitle: "Đang kết nối backend...",
+      chips: [],
       autoMode: "SEMI",
-      metaMode: "DRY RUN",
-      metaAccount: "act_2384_The1970",
-      scheduler: { label: "2 lịch chạy", times: ["09:00 / 20:00"] },
+      metaMode: "DISCONNECTED",
+      metaAccount: "Chưa nối Meta Ads",
+      scheduler: { label: "Chưa có lịch live", times: [] },
     },
     warningSummary: {
-      level: "warning",
-      title: "Có tín hiệu rủi ro cần theo dõi sát",
-      subtitle: "Một số chỉ số đã chạm ngưỡng cảnh báo.",
-      revenue: "Đang giảm",
-      roas: "An toàn",
-      inventory: "1 SKU sắp hết",
+      level: "safe",
+      title: "Đang tải dữ liệu",
+      subtitle: "Dashboard sẽ hiển thị dữ liệu thật sau khi API phản hồi.",
+      revenue: "—",
+      roas: "Chưa nối Meta",
+      inventory: "—",
     },
     filters: {
       range: "30 ngày",
       channel: "Tất cả kênh",
       warehouse: "Tất cả chi nhánh / kho",
     },
-    decisionCards: [
-      {
-        id: "d1",
-        eyebrow: "Bảo vệ tồn",
-        title: "Sắp hết hàng QS794 Palm",
-        desc: "ROAS TB 4.01x · tồn 22 sp · lãi ước tính 4.6M · còn 22 sp · ước tính hết sau 3 ngày",
-        source: "Website",
-        score: "96%",
-        tag: "Cảnh báo",
-        tone: "warning",
-      },
-      {
-        id: "d2",
-        eyebrow: "Bảo vệ tồn",
-        title: "Sắp hết hàng SM902 Rêu Đen",
-        desc: "còn 8 sp · ước tính hết sau 2 ngày",
-        source: "Facebook Ads",
-        score: "96%",
-        tag: "Cảnh báo",
-        tone: "warning",
-      },
-      {
-        id: "d3",
-        eyebrow: "Fix checkout",
-        title: "Tối ưu bước checkout",
-        desc: "Checkout → Purchase mới 28.9%. Nên kiểm tra phí ship và UX thanh toán.",
-        source: "Funnel system",
-        score: "93%",
-        tag: "Cảnh báo",
-        tone: "warning",
-      },
-      {
-        id: "d4",
-        eyebrow: "Bảo vệ tồn",
-        title: "Sắp hết hàng Vintage Olive Tee",
-        desc: "còn 15 sp · ước tính hết sau 4 ngày",
-        source: "Website",
-        score: "88%",
-        tag: "Ưu tiên cao",
-        tone: "warning",
-      },
-    ],
+    decisionCards: [],
     commandCenter: {
       title: "Hành động ngay trên Tổng quan",
       subtitle: "Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý tại đây.",
     },
     insightRow: [
       {
-        id: "i1",
-        title: "Doanh thu hôm nay đang thấp hơn hôm qua",
-        desc: "42.8M so với 49.5M. Nên kiểm tra ads và checkout ngay.",
-        tone: "critical",
-        badge: "Cảnh báo",
-      },
-      {
-        id: "i2",
-        title: "ROAS hôm nay vẫn ở mức tốt",
-        desc: "ROAS hiện tại 3.92x, vẫn đủ dư địa để giữ ngân sách.",
+        id: "loading-orders",
+        title: "Đang tải đơn hàng",
+        desc: "Chờ dữ liệu từ backend.",
         tone: "safe",
-        badge: "Ổn định",
+        badge: "Loading",
       },
       {
-        id: "i3",
-        title: "Có SKU cần theo dõi tồn kho gấp",
-        desc: "SM902 Rêu Đen đang tồn thấp, nên cân nhắc nhập thêm hoặc giảm ads.",
-        tone: "warning",
-        badge: "Theo dõi",
+        id: "loading-inventory",
+        title: "Đang tải tồn kho",
+        desc: "Chờ dữ liệu từ backend.",
+        tone: "safe",
+        badge: "Loading",
+      },
+      {
+        id: "loading-products",
+        title: "Đang tải sản phẩm",
+        desc: "Chờ dữ liệu từ backend.",
+        tone: "safe",
+        badge: "Loading",
       },
     ],
     realtime: {
-      delta: "-6.7M",
-      deltaPct: "-13.5%",
-      checkoutPurchase: "28.9%",
-      chokeLabel: "Điểm nghẽn funnel",
-      lowStock: ["SM902 Rêu Đen • 2 ngày", "QS794 Palm • 3 ngày", "Vintage Olive Tee • 4 ngày"],
+      delta: "—",
+      deltaPct: "—",
+      checkoutPurchase: "—",
+      chokeLabel: "Chờ dữ liệu",
+      lowStock: ["Đang tải cảnh báo tồn kho"],
     },
     kpis: [
-      { id: "k1", label: "Doanh thu hôm nay", value: "42.8M", delta: "+12.4%" },
-      { id: "k2", label: "Đơn hàng", value: "128", delta: "+8.1%" },
-      { id: "k3", label: "AOV", value: "334K", delta: "+4.7%" },
-      { id: "k4", label: "ROAS", value: "3.92x", delta: "+0.31" },
-      { id: "k5", label: "Lợi nhuận ước tính", value: "11.6M", delta: "+9.2%" },
+      { id: "k1", label: "Doanh thu", value: "—", delta: "Live" },
+      { id: "k2", label: "Đơn hàng", value: "—", delta: "Live" },
+      { id: "k3", label: "Tồn khả dụng", value: "—", delta: "Live" },
+      { id: "k4", label: "SKU sắp hết", value: "—", delta: "Live" },
+      { id: "k5", label: "Phiếu chuyển chờ", value: "—", delta: "Live" },
     ],
     dailyRows: [
       {
-        day: "25",
+        day: today,
         note: "Hôm nay",
-        revenue: "42.8M",
-        profit: "13.7M",
-        orders: "128",
-        roas: "3.92x",
-        compare: "-13.5%",
-        positive: false,
+        revenue: "—",
+        profit: "—",
+        orders: "—",
+        roas: "—",
+        compare: "Live",
+        positive: true,
         isToday: true,
-      },
-      {
-        day: "24",
-        note: "Hôm qua",
-        revenue: "49.5M",
-        profit: "15.4M",
-        orders: "108",
-        roas: "4.19x",
-        compare: "+13.3%",
-        positive: true,
-      },
-      {
-        day: "23",
-        note: "Trong tháng",
-        revenue: "43.7M",
-        profit: "12.9M",
-        orders: "95",
-        roas: "3.90x",
-        compare: "-7.6%",
-        positive: false,
-      },
-      {
-        day: "22",
-        note: "Trong tháng",
-        revenue: "47.3M",
-        profit: "14.8M",
-        orders: "102",
-        roas: "4.11x",
-        compare: "+13.2%",
-        positive: true,
-      },
-      {
-        day: "21",
-        note: "Trong tháng",
-        revenue: "41.8M",
-        profit: "12.1M",
-        orders: "91",
-        roas: "3.62x",
-        compare: "-7.3%",
-        positive: false,
-      },
-      {
-        day: "20",
-        note: "Trong tháng",
-        revenue: "45.1M",
-        profit: "13.6M",
-        orders: "96",
-        roas: "4.05x",
-        compare: "+14.5%",
-        positive: true,
-      },
-      {
-        day: "19",
-        note: "Trong tháng",
-        revenue: "39.4M",
-        profit: "11.5M",
-        orders: "86",
-        roas: "3.41x",
-        compare: "-7.5%",
-        positive: false,
-      },
-      {
-        day: "18",
-        note: "Trong tháng",
-        revenue: "42.6M",
-        profit: "12.8M",
-        orders: "92",
-        roas: "3.88x",
-        compare: "+12.4%",
-        positive: true,
-      },
-      {
-        day: "17",
-        note: "Trong tháng",
-        revenue: "37.9M",
-        profit: "10.9M",
-        orders: "83",
-        roas: "3.33x",
-        compare: "-7.1%",
-        positive: false,
       },
     ],
     drilldown: [
-      { label: "Doanh thu", value: "42.8M" },
-      { label: "Đơn hàng", value: "128" },
-      { label: "Chi phí ads", value: "10.9M" },
-      { label: "ROAS ngày", value: "3.92x", tone: "dark" },
-      { label: "Lợi nhuận ước tính", value: "13.7M", tone: "mint" },
+      { label: "Doanh thu", value: "—" },
+      { label: "Đơn hàng", value: "—" },
+      { label: "Đơn mới", value: "—" },
+      { label: "Hoàn thành", value: "—", tone: "dark" },
+      { label: "Tồn khả dụng", value: "—", tone: "mint" },
     ],
     funnel: [
-      { label: "Visits", value: "18.4K", width: "100%" },
-      { label: "Add to cart", value: "2.96K", width: "68%" },
-      { label: "Checkout", value: "1.12K", width: "42%" },
-      { label: "Purchase", value: "324", width: "22%" },
+      { label: "Visits", value: "—", width: "0%" },
+      { label: "Add to cart", value: "—", width: "0%" },
+      { label: "Checkout", value: "—", width: "0%" },
+      { label: "Purchase", value: "—", width: "0%" },
     ],
     moneyFlow: [
       {
-        channel: "Facebook",
-        text: "Chi 52% ngân sách nhưng mang về 30% doanh thu.",
-        badge: "Inefficient",
-        tone: "red",
-      },
-      {
-        channel: "Website",
-        text: "Chi 31% ngân sách nhưng mang về 52% doanh thu.",
-        badge: "Efficient",
-        tone: "green",
-      },
-      {
-        channel: "Shopify checkout",
-        text: "Chi 2% ngân sách nhưng mang về 6% doanh thu.",
-        badge: "Balanced",
-        tone: "amber",
-      },
-      {
-        channel: "TikTok",
-        text: "Chi 15% ngân sách nhưng mang về 12% doanh thu.",
-        badge: "Balanced",
+        channel: "Chưa nối dữ liệu kênh",
+        text: "Chưa có dữ liệu live từ ads/payment channels.",
+        badge: "Pending",
         tone: "amber",
       },
     ],
-    topProducts: [
-      { rank: 1, name: "QS794 Palm", meta: "T-Shirt · Tồn kho: 22", qty: "48 sp", revenue: "14.4M" },
-      { rank: 2, name: "SM902 Rêu Đen", meta: "Shirt · Tồn kho: 8", qty: "33 sp", revenue: "12.1M" },
-      { rank: 3, name: "Vintage Olive Tee", meta: "T-Shirt · Tồn kho: 15", qty: "29 sp", revenue: "8.7M" },
-      { rank: 4, name: "Heritage Sage Tee", meta: "T-Shirt · Tồn kho: 11", qty: "21 sp", revenue: "6.5M" },
-    ],
-    channelRevenue: [
-      { name: "Website", width: "72%", value: "61.2M" },
-      { name: "Facebook", width: "45%", value: "34.8M" },
-      { name: "TikTok", width: "20%", value: "14.5M" },
-      { name: "Shopify checkout", width: "8%", value: "7.1M" },
-    ],
+    topProducts: [],
+    channelRevenue: [],
     warehouseMix: [
-      { name: "Kho Hà Nội", value: "46%", note: "Tỷ trọng tồn kho hiện tại" },
-      { name: "Kho Sài Gòn", value: "32%", note: "Tỷ trọng tồn kho hiện tại" },
-      { name: "Kho Online", value: "22%", note: "Tỷ trọng tồn kho hiện tại" },
+      { name: "Tồn khả dụng", value: "—", note: "Chờ backend" },
+      { name: "Tồn đang giữ", value: "—", note: "Chờ backend" },
+      { name: "Hàng sắp về", value: "—", note: "Chờ backend" },
     ],
-    quickInsights: [
-      "Website đang đóng góp 52% doanh thu toàn kênh.",
-      "Mẫu SM902 Rêu Đen chỉ còn tồn thấp, nên nhập thêm sớm.",
-      "Funnel từ checkout → purchase cần tối ưu thêm hôm nay.",
-    ],
-    floatingApproval: { count: "1 pending", title: "Scale QS794 Palm", subtitle: "scale15" },
+    quickInsights: ["Đang tải dữ liệu tổng quan từ backend."],
+    floatingApproval: { count: "0 pending", title: "Không có approval", subtitle: "Chờ dữ liệu live" },
   };
 }
 
@@ -425,7 +525,7 @@ export default function DashboardPage() {
   const [soundAlert, setSoundAlert] = useState(true);
   const [autoMode, setAutoMode] = useState<"SAFE" | "SEMI" | "LIVE">("SEMI");
   const [selectedDecisionId, setSelectedDecisionId] = useState<string>("");
-  const [approvalOpen, setApprovalOpen] = useState(true);
+  const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState<"pending" | "approved" | "rejected">("pending");
   const [commandNote, setCommandNote] = useState<string>(
     "Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý tại đây."
@@ -435,60 +535,36 @@ export default function DashboardPage() {
   const [selectedChannel, setSelectedChannel] = useState("Tất cả kênh");
   const [selectedWarehouse, setSelectedWarehouse] = useState("Tất cả chi nhánh / kho");
   const [selectedInsightId, setSelectedInsightId] = useState("i1");
-  const [selectedDay, setSelectedDay] = useState("25");
+  const [selectedDay, setSelectedDay] = useState(new Date().getDate().toString().padStart(2, "0"));
   const [selectedProductRank, setSelectedProductRank] = useState(1);
   const [selectedMoneyFlowChannel, setSelectedMoneyFlowChannel] = useState("Website");
 
   const [actionLog, setActionLog] = useState<
     Array<{ id: string; title: string; desc: string; time: string }>
-  >([
-    {
-      id: "log-1",
-      title: "SIM • Rà soát ngay • BẢO VỆ TỒN",
-      desc: "Đưa vào danh sách kiểm tra trong ngày",
-      time: "Bây giờ",
-    },
-    {
-      id: "log-2",
-      title: "Tăng ngân sách QS794 Palm",
-      desc: "Tăng ngân sách theo điều kiện scale hiện tại",
-      time: "Bây giờ",
-    },
-    {
-      id: "log-3",
-      title: "Theo dõi checkout",
-      desc: "Đánh dấu cần kiểm tra phí ship",
-      time: "Bây giờ",
-    },
-  ]);
+  >([]);
   const [scaleLocked, setScaleLocked] = useState(false);
   const [decisionFlag, setDecisionFlag] = useState<"normal" | "low_stock" | "review">("normal");
   const [schedulerEnabled, setSchedulerEnabled] = useState(true);
   const [pendingApprovals, setPendingApprovals] = useState<
     Array<{ id: string; title: string; actionType: string; createdAt: string }>
-  >([
-    { id: "pa-1", title: "Scale QS794 Palm", actionType: "scale15", createdAt: "09:26" },
-  ]);
+  >([]);
 
   useEffect(() => {
     let ignore = false;
 
     async function load() {
       try {
-        const res = await fetch("/api/dashboard/overview", { cache: "no-store" });
+        const endpoint = `${DASHBOARD_API_BASE}/dashboard/overview`;
+        const res = await fetch(endpoint, { cache: "no-store" });
         if (!res.ok) return;
-        const json = await res.json();
+
+        const json: DashboardOverviewApi = await res.json();
         if (!ignore) {
           const base = fallbackData();
-          setData({
-            ...base,
-            ...json,
-            hero: { ...base.hero, ...(json.hero || {}) },
-          });
-          if (json?.hero?.autoMode) setAutoMode(json.hero.autoMode);
+          setData(buildDashboardFromOverview(base, json));
         }
       } catch {
-        // fallback
+        // Giữ fallback để dashboard không trắng màn hình khi backend chưa chạy.
       }
     }
 
@@ -1176,9 +1252,7 @@ export default function DashboardPage() {
           <div className="rounded-[24px] bg-neutral-50 p-5">
             <p className="text-sm text-neutral-500">Sắp hết hàng</p>
             <div className="mt-4 space-y-3 text-[15px] font-medium text-neutral-700">
-              {(warRoomTab === "forecast"
-                ? ["QS794 Palm • 3 ngày", "SM902 Rêu Đen • 2 ngày", "Vintage Olive Tee • 4 ngày"]
-                : data.realtime.lowStock
+              {(data.realtime.lowStock
               ).map((row) => (
                 <div key={row}>{row}</div>
               ))}
