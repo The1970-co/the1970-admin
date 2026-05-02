@@ -272,6 +272,34 @@ function inventoryRowsFromProduct(product: ProductItem | null): InventoryProduct
 }
 
 
+function filterInventoryRowsForProduct(
+  product: ProductItem | null,
+  rows: InventoryProductStockRow[]
+): InventoryProductStockRow[] {
+  if (!product) return [];
+
+  const variantIds = new Set(
+    (product.variants || [])
+      .map((variant: any) => String(variant.id || ""))
+      .filter(Boolean)
+  );
+
+  if (!variantIds.size) return [];
+
+  return rows.filter((row) => variantIds.has(String(row.variantId || "")));
+}
+
+function getProductInventoryRows(
+  product: ProductItem | null,
+  apiRows: InventoryProductStockRow[]
+): InventoryProductStockRow[] {
+  const filteredApiRows = filterInventoryRowsForProduct(product, apiRows);
+  if (filteredApiRows.length) return filteredApiRows;
+
+  return filterInventoryRowsForProduct(product, inventoryRowsFromProduct(product));
+}
+
+
 export default function ProductDetailPageClient({ productId }: { productId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -343,7 +371,7 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
 
       const nextBranches = Array.isArray(branchData) ? branchData : [];
       const nextCategories = Array.isArray(categoryData) ? categoryData : [];
-      const nextInventoryRows = inventoryData.length ? inventoryData : inventoryRowsFromProduct(productData);
+      const nextInventoryRows = getProductInventoryRows(productData, inventoryData);
 
       setBranches(nextBranches);
       setCategories(nextCategories);
@@ -402,17 +430,6 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
 
-  useEffect(() => {
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!hasUnsavedChanges) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [hasUnsavedChanges]);
-
   const totalStock = useMemo(() => {
     return inventoryRows.reduce((sum, row) => sum + Number(row.availableQty || 0), 0);
   }, [inventoryRows]);
@@ -461,6 +478,17 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
 
   const hasUnsavedChanges = Boolean(product && initialSnapshot && currentSnapshot !== initialSnapshot);
 
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
   const saveProduct = async (stay = true) => {
     if (!product || !canEditProduct) return;
     if (!name.trim()) {
@@ -499,7 +527,7 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
 
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
-      const normalizedInventoryRows = nextInventoryRows.length ? nextInventoryRows : inventoryRowsFromProduct(next);
+      const normalizedInventoryRows = getProductInventoryRows(next, nextInventoryRows);
 
       setProduct(next);
       setInventoryRows(normalizedInventoryRows);
@@ -555,7 +583,7 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       await addVariant(product.id, payload);
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
-      const normalizedInventoryRows = nextInventoryRows.length ? nextInventoryRows : inventoryRowsFromProduct(next);
+      const normalizedInventoryRows = getProductInventoryRows(next, nextInventoryRows);
 
       setProduct(next);
       setInventoryRows(normalizedInventoryRows);
@@ -580,7 +608,7 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       await toggleProductStatus(product.id);
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
-      const normalizedInventoryRows = nextInventoryRows.length ? nextInventoryRows : inventoryRowsFromProduct(next);
+      const normalizedInventoryRows = getProductInventoryRows(next, nextInventoryRows);
 
       setProduct(next);
       setInventoryRows(normalizedInventoryRows);

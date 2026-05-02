@@ -1,24 +1,15 @@
-"use client";
+export const dynamic = "force-dynamic";
 
-import dynamic from "next/dynamic";
+import { Suspense } from "react";
 import AdminShell from "../../components/admin/AdminShell";
-
-const OrdersPageClient = dynamic(
-  () => import("../../components/admin/orders/OrdersPageClient"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-        <p className="text-sm text-neutral-500">Đang tải OrdersPageClient...</p>
-      </div>
-    ),
-  }
-);
+import OrdersPageClient from "../../components/admin/orders/OrdersPageClient";
 
 export default function OrdersPage() {
   return (
     <AdminShell title="Đơn hàng">
-      <OrdersPageClient />
+      <Suspense fallback={<div className="p-6">Đang tải đơn hàng...</div>}>
+        <OrdersPageClient />
+      </Suspense>
     </AdminShell>
   );
 }

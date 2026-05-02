@@ -585,6 +585,11 @@ const deliveryRequirementOptions: Array<{
 
 export default function CreateOrderPageClient() {
   const applyShippingRef = useRef<((payload: ShippingQuoteApplyPayload) => void) | null>(null);
+  const shippingStateRef = useRef({
+    shippingUiMode: "carrier" as ShippingUiMode,
+    shippingMode: "partner" as ShippingMode,
+    shippingPartner: "ghn",
+  });
   const phoneLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phoneSuggestionRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
@@ -1084,6 +1089,8 @@ export default function CreateOrderPageClient() {
   const totalDiscount = lineDiscountTotal + manualDiscount;
   const customerMustPay = Math.max(0, subtotal - totalDiscount + fee);
   const remaining = Math.max(0, customerMustPay - paid);
+  const orderValueForInsurance = Math.max(0, subtotal - totalDiscount);
+
   useEffect(() => {
     const selected = paymentSources.find((s) => s.id === paymentSourceId);
     if (!selected) return;
@@ -1920,6 +1927,14 @@ export default function CreateOrderPageClient() {
   };
 
   useEffect(() => {
+    shippingStateRef.current = {
+      shippingUiMode,
+      shippingMode,
+      shippingPartner,
+    };
+  }, [shippingUiMode, shippingMode, shippingPartner]);
+
+  useEffect(() => {
     applyShippingRef.current = (payload: ShippingQuoteApplyPayload) => {
       setShippingFee(String(payload.shippingFee || 0));
       setShippingMode(payload.shippingMode === "pickup" ? "pickup" : "partner");
@@ -1936,15 +1951,27 @@ export default function CreateOrderPageClient() {
   }, []);
 
   useEffect(() => {
-    if (shippingUiMode === "pickup") {
+    const isPickupShipping = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
+
+    if (isPickupShipping) {
       setShippingFee("0");
       setShippingHint("Khách nhận tại cửa hàng nên không tính phí ship.");
       setShippingError("");
+      setShippingLoading(false);
       setShippingQuotes([]);
       setSelectedShippingServiceId(undefined);
       setSelectedShippingServiceTypeId(undefined);
+      setGhnDistrictId(undefined);
+      setGhnWardCode(undefined);
       setShippingMode("pickup");
       setShippingPartner("pickup");
+      setError((prev) => {
+        if (!prev) return prev;
+        const text = prev.toLowerCase();
+        return text.includes("ghn") || text.includes("giao hàng") || text.includes("địa chỉ")
+          ? null
+          : prev;
+      });
       return;
     }
 
@@ -2011,18 +2038,36 @@ export default function CreateOrderPageClient() {
           );
         }
 
+        const currentShippingStateAfterResolve = shippingStateRef.current;
+        if (
+          currentShippingStateAfterResolve.shippingUiMode !== "carrier" ||
+          currentShippingStateAfterResolve.shippingMode === "pickup" ||
+          currentShippingStateAfterResolve.shippingPartner !== "ghn"
+        ) {
+          return;
+        }
+
         setShippingHint("Đang lấy báo giá GHN...");
 
         const rows = await quoteShipment({
           toDistrictId: Number(resolved.districtId),
           toWardCode: String(resolved.wardCode),
-          insuranceValue: customerMustPay,
+          insuranceValue: orderValueForInsurance,
           length: Number(shippingLength || 10),
           width: Number(shippingWidth || 10),
           height: Number(shippingHeight || 10),
           weight: Number(shippingWeight || 200),
           items: quoteItems,
         });
+
+        const currentShippingStateAfterQuote = shippingStateRef.current;
+        if (
+          currentShippingStateAfterQuote.shippingUiMode !== "carrier" ||
+          currentShippingStateAfterQuote.shippingMode === "pickup" ||
+          currentShippingStateAfterQuote.shippingPartner !== "ghn"
+        ) {
+          return;
+        }
 
         const data = Array.isArray(rows) ? rows : [];
         setShippingQuotes(data);
@@ -2072,12 +2117,13 @@ export default function CreateOrderPageClient() {
     quoteDistrict,
     quoteWard,
     quoteItems,
-    customerMustPay,
+    orderValueForInsurance,
     shippingLength,
     shippingWidth,
     shippingHeight,
     shippingWeight,
     shippingUiMode,
+    shippingMode,
     shippingPartner,
   ]);
 
@@ -2133,6 +2179,13 @@ export default function CreateOrderPageClient() {
       setError(null);
       setSuccessMessage("");
 
+      const effectivePaymentSourceId =
+        paymentSourceId ||
+        (isPickupOrder ? String(visiblePaymentSources[0]?.id || "") : "");
+      const effectivePaidAmount = isPickupOrder
+        ? customerMustPay
+        : Number(customerPaid || 0);
+
       const extraNoteParts = [
         note.trim() ? `Ghi chú: ${note.trim()}` : "",
         shippingAddress.trim() ? `Địa chỉ: ${shippingAddress.trim()}` : "",
@@ -2167,7 +2220,7 @@ export default function CreateOrderPageClient() {
 
       const payload = {
         ...(customerId ? ({ customerId } as any) : {}),
-        salesChannel: salesChannel as any,
+        salesChannel: (isPickupOrder ? "POS" : salesChannel) as any,
         branchId,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
@@ -2184,8 +2237,10 @@ export default function CreateOrderPageClient() {
           qty: Number(line.qty),
         })),
 
-        paymentSourceId,
-        paidAmount: Number(customerPaid || 0),
+        ...(effectivePaymentSourceId
+          ? { paymentSourceId: effectivePaymentSourceId }
+          : {}),
+        paidAmount: effectivePaidAmount,
         paymentNote: note,
 
         shippingSnapshot: {
@@ -2301,6 +2356,16 @@ export default function CreateOrderPageClient() {
     .filter(Boolean)
     .join(" · ");
 
+  const isPickupView = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
+  const shouldShowGlobalError =
+    Boolean(error) &&
+    !(
+      isPickupView &&
+      (String(error).toLowerCase().includes("ghn") ||
+        String(error).toLowerCase().includes("giao hàng") ||
+        String(error).toLowerCase().includes("địa chỉ"))
+    );
+
   return (
     <>
       <form onSubmit={(e) => e.preventDefault()} className="space-y-5 p-6">
@@ -2311,7 +2376,7 @@ export default function CreateOrderPageClient() {
           </p>
         </div>
 
-        {error ? (
+        {shouldShowGlobalError ? (
           <Panel className="p-4">
             <p className="text-sm text-red-600">{error}</p>
           </Panel>
@@ -2916,7 +2981,7 @@ export default function CreateOrderPageClient() {
                 </div>
               ) : null}
 
-              {shippingError ? (
+              {shippingError && shippingUiMode !== "pickup" ? (
                 <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {shippingError}
                 </div>
@@ -3088,6 +3153,7 @@ export default function CreateOrderPageClient() {
         onSelect={async (mode) => {
           if (saving) return;
           setCreateMode(mode);
+          setModePickerOpen(false);
           await handleSubmit(mode);
         }}
       />

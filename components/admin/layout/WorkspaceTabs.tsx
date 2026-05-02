@@ -1,15 +1,19 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { useWorkspaceTabs } from "@/hooks/useWorkspaceTabs";
 
-export default function WorkspaceTabs() {
+function WorkspaceTabsInner() {
   const { tabs, removeTab } = useWorkspaceTabs();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const currentPath = `${pathname}${searchParams?.toString() ? `?${searchParams.toString()}` : ""}`;
+
+  const currentPath = `${pathname}${
+    searchParams?.toString() ? `?${searchParams.toString()}` : ""
+  }`;
 
   if (!tabs.length) return null;
 
@@ -53,5 +57,13 @@ export default function WorkspaceTabs() {
         })}
       </div>
     </div>
+  );
+}
+
+export default function WorkspaceTabs() {
+  return (
+    <Suspense fallback={null}>
+      <WorkspaceTabsInner />
+    </Suspense>
   );
 }
