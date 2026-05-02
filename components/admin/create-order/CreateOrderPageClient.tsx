@@ -453,10 +453,12 @@ function CreateModePicker({
   open,
   onClose,
   onSelect,
+  saving = false,
 }: {
   open: boolean;
   onClose: () => void;
   onSelect: (mode: CreateOrderMode) => void | Promise<void>;
+  saving?: boolean;
 }) {
   if (!open) return null;
 
@@ -492,7 +494,8 @@ function CreateModePicker({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl px-3 py-2 text-neutral-500 hover:bg-neutral-100"
+            disabled={saving}
+            className={`rounded-xl px-3 py-2 text-neutral-500 hover:bg-neutral-100 ${saving ? "cursor-not-allowed opacity-40" : ""}`}
           >
             ✕
           </button>
@@ -503,8 +506,12 @@ function CreateModePicker({
             <button
               key={item.value}
               type="button"
-              onClick={() => void onSelect(item.value)}
-              className="flex w-full items-start justify-between rounded-2xl border border-neutral-200 p-4 text-left transition hover:border-black hover:bg-neutral-50"
+              onClick={() => {
+                if (saving) return;
+                void onSelect(item.value);
+              }}
+              disabled={saving}
+              className={`flex w-full items-start justify-between rounded-2xl border border-neutral-200 p-4 text-left transition hover:border-black hover:bg-neutral-50 ${saving ? "pointer-events-none opacity-50" : ""}`}
             >
               <div>
                 <div className="text-base font-semibold">{item.title}</div>
@@ -514,7 +521,7 @@ function CreateModePicker({
               </div>
 
               <div className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white">
-                Chọn
+                {saving ? "Đang xử lý..." : "Chọn"}
               </div>
             </button>
           ))}
@@ -2075,6 +2082,8 @@ export default function CreateOrderPageClient() {
   ]);
 
   const handleSubmit = async (mode: CreateOrderMode) => {
+    if (saving) return;
+
     const currentUser = getCurrentUserFromStorage();
 
     if (!isOwnerUser(currentUser) && !userBranchIds.includes(branchId)) {
@@ -2103,7 +2112,11 @@ export default function CreateOrderPageClient() {
       return;
     }
 
-    if (mode === "ship" && shippingUiMode === "carrier" && shippingPartner === "ghn") {
+    const isPickupOrder = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
+    const finalCreateMode: CreateOrderMode =
+      isPickupOrder && mode !== "draft" ? "ship" : mode;
+
+    if (!isPickupOrder && mode === "ship" && shippingUiMode === "carrier" && shippingPartner === "ghn") {
       if (!shippingAddress.trim()) {
         setError("Thiếu địa chỉ giao hàng.");
         return;
@@ -2139,6 +2152,7 @@ export default function CreateOrderPageClient() {
         `Kiểu vận chuyển UI: ${shippingUiMode}`,
         `Cách giao: ${shippingMode}`,
         `Đơn vị giao: ${shippingPartner}`,
+        isPickupOrder ? "Nhận tại cửa hàng: true" : "",
         `Người trả ship: ${shippingPayer}`,
         `Yêu cầu giao hàng: ${requiredNoteLabel(deliveryRequirement)}`,
         selectedShippingServiceId ? `GHN ServiceId: ${selectedShippingServiceId}` : "",
@@ -2151,14 +2165,20 @@ export default function CreateOrderPageClient() {
         ghnWardCode ? `GHN WardCode: ${ghnWardCode}` : "",
       ].filter(Boolean);
 
-      const payload: CreateOrderPayload = {
+      const payload = {
         ...(customerId ? ({ customerId } as any) : {}),
         salesChannel: salesChannel as any,
         branchId,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
         note: extraNoteParts.join(" | "),
-        mode,
+        mode: finalCreateMode,
+
+        // Pickup phải được gửi rõ xuống backend để backend set COMPLETED + FULFILLED như POS.
+        deliveryMethod: isPickupOrder ? "PICKUP" : "DELIVERY",
+        shippingMethod: isPickupOrder ? "PICKUP" : shippingPartner,
+        fulfillmentType: isPickupOrder ? "PICKUP" : "DELIVERY",
+
         items: lines.map((line) => ({
           variantId: line.variantId,
           qty: Number(line.qty),
@@ -2169,38 +2189,48 @@ export default function CreateOrderPageClient() {
         paymentNote: note,
 
         shippingSnapshot: {
-          shippingAddressId: selectedAddress?.id || undefined,
+          shippingAddressId: isPickupOrder ? undefined : selectedAddress?.id || undefined,
           shippingRecipientName:
             selectedAddress?.recipientName || customerName.trim(),
           shippingPhone: selectedAddress?.phone || customerPhone.trim(),
-          shippingAddressLine1:
-            selectedAddress?.addressLine1 || addressLine1.trim() || shippingAddress.trim() || undefined,
-          shippingAddressLine2:
-            selectedAddress?.addressLine2 || addressLine2.trim() || undefined,
-          shippingWard: quoteWard || undefined,
-          shippingDistrict: quoteDistrict || undefined,
-          shippingProvince: quoteProvince || undefined,
-          shippingPostalCode: selectedAddress?.postalCode || addressPostalCode || undefined,
-          shippingGhnDistrictId: ghnDistrictId ?? undefined,
-          shippingGhnWardCode: ghnWardCode || undefined,
-          shippingPartner,
+          shippingAddressLine1: isPickupOrder
+            ? "Khách nhận tại cửa hàng"
+            : selectedAddress?.addressLine1 ||
+              addressLine1.trim() ||
+              shippingAddress.trim() ||
+              undefined,
+          shippingAddressLine2: isPickupOrder
+            ? undefined
+            : selectedAddress?.addressLine2 || addressLine2.trim() || undefined,
+          shippingWard: isPickupOrder ? undefined : quoteWard || undefined,
+          shippingDistrict: isPickupOrder ? undefined : quoteDistrict || undefined,
+          shippingProvince: isPickupOrder ? undefined : quoteProvince || undefined,
+          shippingPostalCode: isPickupOrder
+            ? undefined
+            : selectedAddress?.postalCode || addressPostalCode || undefined,
+          shippingGhnDistrictId: isPickupOrder ? undefined : ghnDistrictId ?? undefined,
+          shippingGhnWardCode: isPickupOrder ? undefined : ghnWardCode || undefined,
+          shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
           shippingPayer,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
-          selectedServiceId: selectedShippingServiceId,
-          selectedServiceTypeId: selectedShippingServiceTypeId,
+          selectedServiceId: isPickupOrder ? undefined : selectedShippingServiceId,
+          selectedServiceTypeId: isPickupOrder
+            ? undefined
+            : selectedShippingServiceTypeId,
           weight: shippingWeight,
           length: shippingLength,
           width: shippingWidth,
           height: shippingHeight,
         },
-      };
+      } as CreateOrderPayload & Record<string, any>;
 
       const created = await createOrder(payload);
 
       let ghnTrackingCode = "";
 
       if (
-        mode === "ship" &&
+        !isPickupOrder &&
+        finalCreateMode === "ship" &&
         shippingUiMode === "carrier" &&
         shippingPartner === "ghn"
       ) {
@@ -2263,7 +2293,6 @@ export default function CreateOrderPageClient() {
 
     } catch (err: any) {
       setError(err?.message || "Tạo đơn thất bại.");
-    } finally {
       setSaving(false);
     }
   };
@@ -3041,7 +3070,7 @@ export default function CreateOrderPageClient() {
                   {saving ? "Đang tạo..." : "Tạo đơn"}
                 </Button>
 
-                <Button variant="secondary" className="w-full" onClick={resetForm}>
+                <Button variant="secondary" className="w-full" onClick={resetForm} disabled={saving}>
                   Reset
                 </Button>
               </div>
@@ -3052,12 +3081,24 @@ export default function CreateOrderPageClient() {
 
       <CreateModePicker
         open={modePickerOpen}
-        onClose={() => setModePickerOpen(false)}
+        saving={saving}
+        onClose={() => {
+          if (!saving) setModePickerOpen(false);
+        }}
         onSelect={async (mode) => {
+          if (saving) return;
           setCreateMode(mode);
           await handleSubmit(mode);
         }}
       />
+
+      {saving ? (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/10 px-4 pb-8">
+          <div className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-neutral-800 shadow-2xl">
+            Đang xử lý đơn hàng, không tắt trình duyệt...
+          </div>
+        </div>
+      ) : null}
 
       <Modal
         open={newCustomerOpen}

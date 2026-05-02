@@ -4,7 +4,6 @@ import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  createOrder,
   findCustomerByPhone,
   getProductsForOrder,
   type OrderProduct,
@@ -103,6 +102,7 @@ function branchLabelFromAny(row: any) {
 export default function PosPageClient() {
   const router = useRouter();
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const customerSearchVersionRef = useRef(0);
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
   const barcodeBufferRef = useRef("");
@@ -572,34 +572,39 @@ export default function PosPageClient() {
     setActiveTabId(next.id);
   };
 
-  const handleCustomerPhoneChange = async (value: string) => {
-    setCustomerPhone(value);
+const handleCustomerPhoneChange = async (value: string) => {
+  const version = ++customerSearchVersionRef.current;
+  setCustomerPhone(value);
 
-    const phone = value.replace(/\D/g, "");
-    if (phone.length < 3) {
-      setCustomerSuggestions([]);
-      return;
-    }
+  const phone = value.replace(/\D/g, "");
+  if (phone.length < 3) {
+    setCustomerSuggestions([]);
+    return;
+  }
 
-    try {
-      setCustomerSearching(true);
-      const result: any = await findCustomerByPhone(phone);
+  try {
+    setCustomerSearching(true);
+    const result: any = await findCustomerByPhone(phone);
 
-      const rows = Array.isArray(result)
-        ? result
-        : Array.isArray(result?.items)
-          ? result.items
-          : Array.isArray(result?.data)
-            ? result.data
-            : result
-              ? [result]
-              : [];
+    if (version !== customerSearchVersionRef.current) return;
 
-      setCustomerSuggestions(rows.slice(0, 8));
-    } finally {
+    const rows = Array.isArray(result)
+      ? result
+      : Array.isArray(result?.items)
+        ? result.items
+        : Array.isArray(result?.data)
+          ? result.data
+          : result
+            ? [result]
+            : [];
+
+    setCustomerSuggestions(rows.slice(0, 8));
+  } finally {
+    if (version === customerSearchVersionRef.current) {
       setCustomerSearching(false);
     }
-  };
+  }
+};
 
   const searchReturnOrders = async () => {
     if (!returnSearch.trim()) return;
@@ -692,19 +697,25 @@ export default function PosPageClient() {
         returnQty: orderedQty,
       };
     });
+    customerSearchVersionRef.current++;
 
     setSelectedReturnOrder(detail);
     setReturnLines(mappedReturnLines);
     setExchangeLines([]);
     setReturnNote("");
     setReturnReceived(true);
+
     setCustomerName(
       detail.customerName ||
-      detail.customer?.fullName ||
-      detail.customer?.name ||
-      customerName
+        detail.customer?.fullName ||
+        detail.customer?.name ||
+        customerName
     );
+
     setCustomerPhone(detail.customerPhone || detail.customer?.phone || customerPhone);
+    setCustomerSuggestions([]);
+    setCustomerSearching(false);
+
     setReturnPickerOpen(false);
     setReturnFormOpen(true);
   };
@@ -981,8 +992,9 @@ const handlePay = async () => {
     setError("");
     setSuccessMessage("");
 
-    const created = await createOrder({
-      salesChannel: "POS" as any, // giữ cái backend đang chạy được
+    const payload = {
+      salesChannel: "POS" as any,
+      isPosSale: true,
       branchId,
       customerName: customerName.trim() || "Khách POS",
       customerPhone: customerPhone.trim() || "",
@@ -1002,12 +1014,38 @@ const handlePay = async () => {
         variantId: line.variantId,
         qty: Number(line.qty),
       })),
-    } as any);
+    };
+
+    const apiBase = getApiBaseUrl();
+    const token = localStorage.getItem("token");
+
+    const posPayStartedAt = performance.now();
+
+    const res = await fetch(`${apiBase}/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const created = await res.json().catch(() => null);
+
+    console.log(
+      "[POS PAY] /orders request ms:",
+      Math.round(performance.now() - posPayStartedAt)
+    );
+
+    if (!res.ok) {
+      throw new Error(created?.message || "Thanh toán thất bại.");
+    }
 
     setSuccessMessage("Tạo đơn POS thành công. Đang mở chi tiết đơn...");
 
     setTimeout(() => {
-      router.push(`/orders/${encodeURIComponent(created.id)}?created=1&pos=1`);
+      const createdOrder = created?.data || created?.order || created;
+      router.push(`/orders/${encodeURIComponent(createdOrder.id)}?created=1&pos=1`);
     }, 500);
   } catch (err: any) {
     setError(err?.message || "Thanh toán thất bại.");
@@ -1247,9 +1285,11 @@ const handlePay = async () => {
                       key={customer.id || customer.phone}
                       type="button"
                       onClick={() => {
+                        customerSearchVersionRef.current++;
                         setCustomerName(customer.fullName || customer.name || "");
                         setCustomerPhone(customer.phone || "");
                         setCustomerSuggestions([]);
+                        setCustomerSearching(false);
                       }}
                       className="block w-full border-b border-neutral-100 px-4 py-3 text-left text-sm hover:bg-neutral-50"
                     >
@@ -1317,13 +1357,13 @@ const handlePay = async () => {
 
           <div className="mt-2 space-y-2">
             {paymentRows.map((row, index) => (
-              <div key={row.id} className="grid grid-cols-[1fr_132px_30px] gap-2">
+              <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_128px_28px] gap-2">
                 <select
                   value={row.paymentSourceId}
                   onChange={(e) =>
                     updatePaymentRow(row.id, { paymentSourceId: e.target.value })
                   }
-                  className="h-10 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
+                  className="h-10 min-w-0 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
                 >
                   <option value="">Chọn nguồn tiền</option>
                   {visiblePaymentSources.map((source) => (

@@ -29,6 +29,8 @@ import {
 import RoleGuard from "@/components/admin/RoleGuard";
 import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
+import { useScrollRestore } from "@/hooks/useScrollRestore";
+import { addWorkspaceTab } from "@/lib/workspace-tabs";
 
 
 function currency(n: number) {
@@ -532,6 +534,8 @@ function downloadProductTemplate() {
 }
 
 export default function ProductsPageClient() {
+  useScrollRestore("products-list");
+
   const searchParams = useSearchParams();
   const categoryFromUrl = searchParams.get("category") || "ALL";
   const [products, setProducts] = useState<ProductItem[]>([]);
@@ -914,6 +918,19 @@ export default function ProductsPageClient() {
     }
   };
 
+  const openProductDetail = (product: ProductItem) => {
+    const href = `/products/${encodeURIComponent(product.id)}`;
+
+    addWorkspaceTab({
+      id: product.id,
+      title: product.name || product.slug || "Sản phẩm",
+      href,
+      type: "product",
+    });
+
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
+
   const handleOpenEdit = (product: ProductItem) => {
     const uniqueColors = uniqueValues(product.variants.map((variant) => variant.color));
     const uniqueSizes = uniqueValues(product.variants.map((variant) => variant.size));
@@ -994,10 +1011,17 @@ export default function ProductsPageClient() {
         applyPriceToAllVariants,
       });
 
+      const currentScrollY = typeof window !== "undefined" ? window.scrollY : 0;
+
       setEditOpen(false);
       setEditingProductId(null);
       await loadCategories();
       await loadProducts(page, limit);
+
+      if (typeof window !== "undefined") {
+        requestAnimationFrame(() => window.scrollTo(0, currentScrollY));
+      }
+
       setActionMessage("Đã cập nhật sản phẩm.");
     } catch (err) {
       setActionMessage(
@@ -1593,11 +1617,25 @@ export default function ProductsPageClient() {
                       className="align-top bg-white text-sm hover:bg-neutral-50"
                     >
                       <td className="border-b border-neutral-100 px-3 py-3">
-                        <ProductImage src={product.imageUrl} alt={product.name} />
+                        <button
+                          type="button"
+                          onClick={() => openProductDetail(product)}
+                          className="block rounded-2xl transition hover:opacity-80"
+                          title="Mở chi tiết sản phẩm trong tab mới"
+                        >
+                          <ProductImage src={product.imageUrl} alt={product.name} />
+                        </button>
                       </td>
 
                       <td className="min-w-[260px] border-b border-neutral-100 px-3 py-3">
-                        <div className="font-medium text-neutral-900">{product.name}</div>
+                        <button
+                          type="button"
+                          onClick={() => openProductDetail(product)}
+                          className="text-left font-medium text-neutral-900 underline-offset-2 hover:underline"
+                          title="Mở chi tiết sản phẩm trong tab mới"
+                        >
+                          {product.name}
+                        </button>
                         <div className="mt-1 text-xs text-neutral-500">
                           /{product.slug || "—"} · {product.weight || 0}g
                         </div>
@@ -1673,13 +1711,21 @@ export default function ProductsPageClient() {
 
                       <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
                         <div className="flex flex-col gap-2">
+                          <Button
+                            variant="secondary"
+                            onClick={() => openProductDetail(product)}
+                            className="w-full"
+                          >
+                            Chi tiết
+                          </Button>
+
                           <RoleGuard permission="products.edit">
                             <Button
                               variant="secondary"
                               onClick={() => handleOpenEdit(product)}
                               className="w-full"
                             >
-                              Sửa
+                              Sửa nhanh
                             </Button>
                           </RoleGuard>
 

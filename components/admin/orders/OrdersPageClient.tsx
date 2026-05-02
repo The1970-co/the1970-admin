@@ -2,6 +2,7 @@
 import { API_BASE } from "@/lib/api-base";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
+import { addWorkspaceTab } from "@/lib/workspace-tabs";
 import {
   useDeferredValue,
   useEffect,
@@ -657,6 +658,20 @@ export default function OrdersPageClient() {
   const branchLabel = (branchId?: string | null) => {
     if (!branchId) return "All";
     return branches.find((b) => b.id === branchId)?.name || branchId;
+  };
+
+  const openOrderInNewTab = (order: AdminOrder, action?: string) => {
+    const baseHref = `/orders/${encodeURIComponent(order.id)}`;
+    const href = action ? `${baseHref}?action=${encodeURIComponent(action)}` : baseHref;
+
+    addWorkspaceTab({
+      id: action ? `${order.id}-${action}` : order.id,
+      title: action === "redelivery" ? `${order.orderCode} · Giao lại` : order.orderCode,
+      href,
+      type: "order",
+    });
+
+    window.open(href, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {
@@ -1895,12 +1910,13 @@ setConfirmDanger(false);
 
                       {isColumnVisible("orderCode") ? (
                         <td className="border-b border-neutral-100 px-3 py-3 font-semibold whitespace-nowrap">
-                          <Link
-                            href={`/orders/${encodeURIComponent(order.id)}`}
-                            className="text-neutral-900 underline-offset-2 hover:underline"
+                          <button
+                            type="button"
+                            onClick={() => openOrderInNewTab(order)}
+                            className="text-left font-semibold text-neutral-900 underline-offset-2 hover:underline"
                           >
                             {order.orderCode}
-                          </Link>
+                          </button>
                         </td>
                       ) : null}
 
@@ -2070,20 +2086,22 @@ setConfirmDanger(false);
 
                       <td className="border-b border-neutral-100 px-3 py-3">
                         <div className="flex justify-end gap-2">
-                          <Link
-                            href={`/orders/${encodeURIComponent(order.id)}`}
+                          <button
+                            type="button"
+                            onClick={() => openOrderInNewTab(order)}
                             className="inline-flex items-center rounded-xl border border-neutral-300 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
                           >
                             Chi tiết
-                          </Link>
+                          </button>
 
                           {canShowRedelivery ? (
-                            <Link
-                              href={`/orders/${encodeURIComponent(order.id)}?action=redelivery`}
+                            <button
+                              type="button"
+                              onClick={() => openOrderInNewTab(order, "redelivery")}
                               className="inline-flex items-center rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
                             >
                               Giao lại
-                            </Link>
+                            </button>
                           ) : null}
 
                           {canDeleteOrder ? (

@@ -759,7 +759,7 @@ export default function OrderDetailPageClient({
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-    const res = await fetch("${API_BASE}/shipping-addresses/provinces", {
+    const res = await fetch(`${API_BASE}/shipping-addresses/provinces`, {
       headers: {
         Accept: "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -822,7 +822,7 @@ export default function OrderDetailPageClient({
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
     const provinceRes = await fetch(
-      "${API_BASE}/shipping-addresses/provinces",
+      `${API_BASE}/shipping-addresses/provinces`,
       {
         headers: {
           Accept: "application/json",
@@ -1566,7 +1566,7 @@ export default function OrderDetailPageClient({
       let savedRecord: any = null;
 
       try {
-        const res = await fetch("${API_BASE}/partial-delivery", {
+        const res = await fetch(`${API_BASE}/partial-delivery`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

@@ -12,6 +12,8 @@ type PaymentRow = {
   paymentSourceId?: string | null;
   paymentSource?: {
     id?: string | null;
+
+    
     name?: string | null;
     code?: string | null;
     type?: string | null;
@@ -90,6 +92,14 @@ function money(value?: number | string | null) {
 
 function toNumber(value: unknown) {
   return Number(value || 0);
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 function getToken() {
@@ -197,16 +207,35 @@ export default function ReturnCreatePageClient({ orderId }: { orderId: string })
     return paymentSources.filter((source) => source.isActive !== false);
   }, [paymentSources]);
 
-  const visiblePaymentSources = useMemo(() => {
-    const branchId = receiveBranchId || exchangeIssueBranchId;
+  const paymentSourcesForBranch = (targetBranchId: string) => {
+    if (!targetBranchId) return activePaymentSources;
 
-    if (!branchId) return activePaymentSources;
+    const targetBranch = branches.find((branch) => branch.id === targetBranchId);
+    const targetCode = targetBranch?.code || targetBranch?.id || targetBranchId;
+    const targetName = targetBranch?.name || targetBranchId;
 
     return activePaymentSources.filter((source) => {
-      if (!source.branchId) return true;
-      return String(source.branchId) === String(branchId);
+      const sourceBranch = source.branchId || "";
+      if (!sourceBranch) return true;
+
+      return (
+        String(sourceBranch) === String(targetBranchId) ||
+        String(sourceBranch) === String(targetCode) ||
+        normalizeText(sourceBranch) === normalizeText(targetName) ||
+        normalizeText(sourceBranch) === "all" ||
+        normalizeText(sourceBranch) === "tat ca"
+      );
     });
-  }, [activePaymentSources, receiveBranchId, exchangeIssueBranchId]);
+  };
+
+  const refundPaymentSources = useMemo(() => {
+    return paymentSourcesForBranch(receiveBranchId);
+  }, [activePaymentSources, branches, receiveBranchId]);
+
+  const extraChargePaymentSources = useMemo(() => {
+    // Thu thêm là tiền đi vào quầy/chi nhánh xử lý, không phụ thuộc kho xuất hàng đổi.
+    return paymentSourcesForBranch(receiveBranchId);
+  }, [activePaymentSources, branches, receiveBranchId]);
 
   const returnTotal = useMemo(() => {
     return returnLines.reduce((sum, line) => {
@@ -324,19 +353,25 @@ export default function ReturnCreatePageClient({ orderId }: { orderId: string })
 
   useEffect(() => {
     if (refundAmount <= 0) return;
-    if (refundPaymentSourceId) return;
-    if (visiblePaymentSources[0]?.id) {
-      setRefundPaymentSourceId(visiblePaymentSources[0].id);
-    }
-  }, [refundAmount, refundPaymentSourceId, visiblePaymentSources]);
+    const stillValid = refundPaymentSources.some(
+      (source) => String(source.id) === String(refundPaymentSourceId)
+    );
+
+    if (refundPaymentSourceId && stillValid) return;
+
+    setRefundPaymentSourceId(refundPaymentSources[0]?.id || "");
+  }, [refundAmount, refundPaymentSourceId, refundPaymentSources]);
 
   useEffect(() => {
     if (extraChargeAmount <= 0) return;
-    if (extraChargePaymentSourceId) return;
-    if (visiblePaymentSources[0]?.id) {
-      setExtraChargePaymentSourceId(visiblePaymentSources[0].id);
-    }
-  }, [extraChargeAmount, extraChargePaymentSourceId, visiblePaymentSources]);
+    const stillValid = extraChargePaymentSources.some(
+      (source) => String(source.id) === String(extraChargePaymentSourceId)
+    );
+
+    if (extraChargePaymentSourceId && stillValid) return;
+
+    setExtraChargePaymentSourceId(extraChargePaymentSources[0]?.id || "");
+  }, [extraChargeAmount, extraChargePaymentSourceId, extraChargePaymentSources]);
 
   useEffect(() => {
     const keyword = exchangeSearch.trim();
@@ -960,9 +995,9 @@ export default function ReturnCreatePageClient({ orderId }: { orderId: string })
                   className="mt-2 h-11 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none focus:border-neutral-900"
                 >
                   <option value="">Chọn nguồn tiền hoàn</option>
-                  {visiblePaymentSources.map((source) => (
+                  {refundPaymentSources.map((source) => (
                     <option key={source.id} value={source.id}>
-                      {source.name}
+                      {source.name}{source.type ? ` · ${source.type}` : ""}
                     </option>
                   ))}
                 </select>
@@ -980,9 +1015,9 @@ export default function ReturnCreatePageClient({ orderId }: { orderId: string })
                   className="mt-2 h-11 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none focus:border-neutral-900"
                 >
                   <option value="">Chọn nguồn tiền thu thêm</option>
-                  {visiblePaymentSources.map((source) => (
+                  {extraChargePaymentSources.map((source) => (
                     <option key={source.id} value={source.id}>
-                      {source.name}
+                      {source.name}{source.type ? ` · ${source.type}` : ""}
                     </option>
                   ))}
                 </select>

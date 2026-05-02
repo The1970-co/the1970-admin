@@ -4,6 +4,7 @@ import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
+import WorkspaceTabs from "@/components/admin/layout/WorkspaceTabs";
 import {
   getRoleLabel,
   hasPermission,
@@ -399,6 +400,7 @@ export default function AdminShell({
               </div>
             </div>
           </header>
+          <WorkspaceTabs />
           <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6">
             {children}
           </main>
