@@ -6,10 +6,12 @@ import { getBranches, type BranchItem } from "@/lib/products-api";
 
 type PermissionGroupKey = "products" | "orders" | "inventory" | "customers";
 
+type RoleScope = "ALL_BRANCHES" | "ONE_BRANCH";
+
 type RoleItem = {
   id: string;
   name: string;
-  scope: "ALL_BRANCHES" | "ONE_BRANCH";
+  scope: RoleScope;
   description: string;
   createdAt: string;
   updatedAt: string;
@@ -39,6 +41,19 @@ type BranchPermission = {
   note?: string | null;
 };
 
+type BranchPermissionKey = Exclude<
+  keyof BranchPermission,
+  "id" | "staffId" | "branchId" | "note"
+>;
+
+type BranchRoleItem = {
+  id?: string;
+  staffId?: string;
+  branchId: string;
+  roleCode: string;
+  branch?: BranchItem | null;
+};
+
 type EmployeeItem = {
   id: string;
   code: string;
@@ -53,6 +68,7 @@ type EmployeeItem = {
   branchId?: string | null;
   branch: string;
   branchPermissions: BranchPermission[];
+  branchRoles: BranchRoleItem[];
   status: "ACTIVE" | "INACTIVE";
   lastLoginAt?: string | null;
 };
@@ -62,6 +78,8 @@ type PermissionGroupMeta = {
   desc: string;
   allPermissions: string[];
 };
+
+const ROLE_STORAGE_KEY = "the1970.permission.roleTemplates.v2";
 
 function Panel({
   children,
@@ -84,6 +102,8 @@ function Button({
   onClick,
   variant = "primary",
   disabled = false,
+  isLoading = false,
+  loadingText,
   className = "",
   type = "button",
 }: {
@@ -91,27 +111,31 @@ function Button({
   onClick?: () => void;
   variant?: "primary" | "secondary" | "danger";
   disabled?: boolean;
+  isLoading?: boolean;
+  loadingText?: string;
   className?: string;
   type?: "button" | "submit" | "reset";
 }) {
+  const inactive = disabled || isLoading;
   const base =
-    "inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-medium transition";
+    "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium transition active:scale-[0.98]";
   const tone =
     variant === "primary"
-      ? "bg-neutral-900 text-white hover:bg-neutral-800"
+      ? "bg-neutral-900 text-white shadow-sm hover:bg-neutral-800 hover:shadow-md"
       : variant === "danger"
         ? "border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-        : "border border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50";
-  const state = disabled ? "cursor-not-allowed opacity-50" : "";
-
+        : "border border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50 hover:shadow-sm";
   return (
     <button
       type={type}
       onClick={onClick}
-      disabled={disabled}
-      className={`${base} ${tone} ${state} ${className}`}
+      disabled={inactive}
+      className={`${base} ${tone} ${inactive ? "cursor-not-allowed opacity-60" : ""} ${className}`}
     >
-      {children}
+      {isLoading ? (
+        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+      ) : null}
+      <span>{isLoading && loadingText ? loadingText : children}</span>
     </button>
   );
 }
@@ -121,7 +145,7 @@ function Badge({
   tone = "gray",
 }: {
   children: React.ReactNode;
-  tone?: "gray" | "green" | "amber" | "red" | "blue";
+  tone?: "gray" | "green" | "amber" | "red" | "blue" | "purple";
 }) {
   const styles = {
     gray: "bg-neutral-100 text-neutral-600 border-neutral-200",
@@ -129,8 +153,8 @@ function Badge({
     amber: "bg-amber-50 text-amber-700 border-amber-200",
     red: "bg-red-50 text-red-700 border-red-200",
     blue: "bg-blue-50 text-blue-700 border-blue-200",
+    purple: "bg-purple-50 text-purple-700 border-purple-200",
   };
-
   return (
     <span
       className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${styles[tone]}`}
@@ -165,12 +189,12 @@ function StatCard({
 const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
   products: {
     title: "Sản phẩm / Dữ liệu",
-    desc: "Quyền xem dữ liệu sản phẩm trong chi nhánh. Các quyền tạo/sửa sản phẩm là quyền hệ thống, không cấp theo từng chi nhánh ở màn này.",
+    desc: "Quyền xem dữ liệu sản phẩm. Quyền tạo/sửa sản phẩm sẽ xử lý ở module sản phẩm theo role cao hơn.",
     allPermissions: ["Xem sản phẩm"],
   },
   orders: {
     title: "Đơn hàng / POS",
-    desc: "Bán tại quầy, tạo đơn, duyệt/hủy và xử lý đổi trả.",
+    desc: "Bán tại quầy, tạo đơn, giới hạn xem đơn theo nhân viên/chi nhánh, duyệt/hủy và xử lý đổi trả.",
     allPermissions: [
       "Bán hàng / POS",
       "Xem đơn của mình",
@@ -183,7 +207,7 @@ const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
   },
   inventory: {
     title: "Kho / Kiểm kho",
-    desc: "Xem tồn, quản kho, kiểm kho, chuyển và nhận hàng.",
+    desc: "Xem tồn, quản kho, kiểm kho, chuyển kho và nhận hàng.",
     allPermissions: [
       "Xem tồn kho",
       "Quản kho",
@@ -198,6 +222,90 @@ const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
     allPermissions: ["Xem khách hàng", "Sửa khách hàng"],
   },
 };
+
+const permissionToBranchKey: Record<string, BranchPermissionKey> = {
+  "Xem sản phẩm": "canView",
+  "Bán hàng / POS": "canSell",
+  "Xem đơn của mình": "canViewOwnOrders",
+  "Xem đơn chi nhánh": "canViewBranchOrders",
+  "Tạo đơn hàng": "canCreateOrder",
+  "Duyệt đơn hàng": "canApproveOrder",
+  "Hủy đơn hàng": "canCancelOrder",
+  "Đổi trả hàng": "canHandleReturn",
+  "Xem tồn kho": "canViewStock",
+  "Quản kho": "canManageStock",
+  "Kiểm kho": "canStocktake",
+  "Chuyển kho": "canTransferStock",
+  "Nhận kho": "canReceiveStock",
+  "Xem khách hàng": "canViewCustomer",
+  "Sửa khách hàng": "canEditCustomer",
+};
+
+const branchPermissionGroups: {
+  id: PermissionGroupKey;
+  title: string;
+  desc: string;
+  tone: "blue" | "green" | "amber" | "gray";
+  permissions: { key: BranchPermissionKey; label: string; hint?: string }[];
+}[] = [
+  {
+    id: "products",
+    title: "Sản phẩm / Dữ liệu",
+    desc: "Xem dữ liệu sản phẩm và dữ liệu vận hành cơ bản tại chi nhánh.",
+    tone: "blue",
+    permissions: [{ key: "canView", label: "Xem sản phẩm" }],
+  },
+  {
+    id: "orders",
+    title: "Đơn hàng / POS",
+    desc: "Bán tại quầy, giới hạn xem đơn theo mình/chi nhánh, duyệt/hủy và đổi trả.",
+    tone: "green",
+    permissions: [
+      { key: "canSell", label: "Bán hàng / POS" },
+      {
+        key: "canViewOwnOrders",
+        label: "Xem đơn của mình",
+        hint: "Chỉ thấy đơn do chính nhân viên này tạo.",
+      },
+      {
+        key: "canViewBranchOrders",
+        label: "Xem đơn chi nhánh",
+        hint: "Thấy đơn của chi nhánh được cấp quyền.",
+      },
+      { key: "canCreateOrder", label: "Tạo đơn hàng" },
+      { key: "canApproveOrder", label: "Duyệt đơn hàng" },
+      { key: "canCancelOrder", label: "Hủy đơn hàng" },
+      { key: "canHandleReturn", label: "Đổi trả hàng" },
+    ],
+  },
+  {
+    id: "inventory",
+    title: "Kho / Kiểm kho",
+    desc: "Xem tồn, quản kho, kiểm kho, chuyển và nhận hàng.",
+    tone: "amber",
+    permissions: [
+      { key: "canViewStock", label: "Xem tồn kho" },
+      { key: "canManageStock", label: "Quản kho" },
+      { key: "canStocktake", label: "Kiểm kho" },
+      { key: "canTransferStock", label: "Chuyển kho" },
+      { key: "canReceiveStock", label: "Nhận kho" },
+    ],
+  },
+  {
+    id: "customers",
+    title: "Khách hàng",
+    desc: "Xem và cập nhật thông tin khách hàng tại chi nhánh.",
+    tone: "gray",
+    permissions: [
+      { key: "canViewCustomer", label: "Xem khách hàng" },
+      { key: "canEditCustomer", label: "Sửa khách hàng" },
+    ],
+  },
+];
+
+const branchPermissionColumns = branchPermissionGroups.flatMap(
+  (group) => group.permissions,
+);
 
 const rolesSeed: RoleItem[] = [
   {
@@ -226,23 +334,9 @@ const rolesSeed: RoleItem[] = [
     note: "Theo chi nhánh",
     permissions: {
       products: ["Xem sản phẩm"],
-      orders: [
-        "Bán hàng / POS",
-        "Xem đơn của mình",
-        "Xem đơn chi nhánh",
-        "Tạo đơn hàng",
-        "Duyệt đơn hàng",
-        "Hủy đơn hàng",
-        "Đổi trả hàng",
-      ],
-      inventory: [
-        "Xem tồn kho",
-        "Quản kho",
-        "Kiểm kho",
-        "Chuyển kho",
-        "Nhận kho",
-      ],
-      customers: ["Xem khách hàng", "Sửa khách hàng"],
+      orders: [...permissionGroupMeta.orders.allPermissions],
+      inventory: [...permissionGroupMeta.inventory.allPermissions],
+      customers: [...permissionGroupMeta.customers.allPermissions],
     },
   },
   {
@@ -250,7 +344,7 @@ const rolesSeed: RoleItem[] = [
     name: "Nhân viên fulltime",
     scope: "ONE_BRANCH",
     description:
-      "Vận hành mạnh hơn bán lẻ, được xử lý đơn và đẩy sang hãng vận chuyển.",
+      "Vận hành mạnh hơn bán lẻ, được xử lý đơn và thao tác kho cơ bản.",
     createdAt: "07/08/2025",
     updatedAt: "02/05/2026",
     note: "Không xem báo cáo",
@@ -261,18 +355,10 @@ const rolesSeed: RoleItem[] = [
         "Xem đơn của mình",
         "Xem đơn chi nhánh",
         "Tạo đơn hàng",
-        "Duyệt đơn hàng",
-        "Hủy đơn hàng",
         "Đổi trả hàng",
       ],
-      inventory: [
-        "Xem tồn kho",
-        "Quản kho",
-        "Kiểm kho",
-        "Chuyển kho",
-        "Nhận kho",
-      ],
-      customers: ["Xem khách hàng", "Sửa khách hàng"],
+      inventory: ["Xem tồn kho", "Kiểm kho", "Chuyển kho", "Nhận kho"],
+      customers: ["Xem khách hàng"],
     },
   },
   {
@@ -286,7 +372,12 @@ const rolesSeed: RoleItem[] = [
     note: "Không xem báo cáo, không đụng kho",
     permissions: {
       products: ["Xem sản phẩm"],
-      orders: ["Bán hàng / POS", "Xem đơn của mình", "Tạo đơn hàng", "Đổi trả hàng"],
+      orders: [
+        "Bán hàng / POS",
+        "Xem đơn của mình",
+        "Tạo đơn hàng",
+        "Đổi trả hàng",
+      ],
       inventory: ["Xem tồn kho"],
       customers: ["Xem khách hàng"],
     },
@@ -330,103 +421,26 @@ const rolesSeed: RoleItem[] = [
   },
 ];
 
-function scopeBadge(scope: RoleItem["scope"]) {
+const exclusiveRoles = ["owner", "admin", "branch-manager"];
+
+function scopeBadge(scope: RoleScope) {
   return scope === "ALL_BRANCHES" ? "Toàn hệ thống" : "Theo chi nhánh";
 }
 
-function groupHasAllPermissions(role: RoleItem, groupKey: PermissionGroupKey) {
-  const current = role.permissions[groupKey] || [];
-  const all = permissionGroupMeta[groupKey].allPermissions;
-  return all.length > 0 && all.every((item) => current.includes(item));
+function isExclusiveRole(roleId: string) {
+  return exclusiveRoles.includes(roleId);
 }
 
-function groupPermissionSummary(role: RoleItem, groupKey: PermissionGroupKey) {
-  const current = role.permissions[groupKey] || [];
-  if (!current.length) return "Chưa có quyền";
-  if (current.length <= 3) return `Có quyền: ${current.join(", ")}`;
-  return `Có quyền: ${current.slice(0, 3).join(", ")} +${
-    current.length - 3
-  } quyền khác`;
-}
-
-function roleSummary(role: RoleItem) {
-  return (Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map(
-    (key) => {
-      const count = role.permissions[key]?.length || 0;
-      return {
-        key,
-        title: permissionGroupMeta[key].title,
-        count,
-        enabled: count > 0,
-      };
-    },
+function normalizeSelectedRoles(roleIds: string[]) {
+  const cleaned = Array.from(
+    new Set(
+      roleIds.map((roleId) => String(roleId).toLowerCase()).filter(Boolean),
+    ),
   );
+  const selectedExclusive = cleaned.find(isExclusiveRole);
+  if (selectedExclusive) return [selectedExclusive];
+  return cleaned;
 }
-
-function formatLastLogin(value?: string | null) {
-  if (!value) return "Chưa đăng nhập";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "Chưa đăng nhập";
-  return d.toLocaleString("vi-VN");
-}
-
-const branchPermissionGroups: {
-  id: string;
-  title: string;
-  desc: string;
-  tone: "blue" | "green" | "amber" | "gray";
-  permissions: { key: keyof BranchPermission; label: string; hint?: string }[];
-}[] = [
-  {
-    id: "base",
-    title: "Sản phẩm / Dữ liệu",
-    desc: "Xem dữ liệu sản phẩm và dữ liệu vận hành cơ bản tại chi nhánh.",
-    tone: "blue",
-    permissions: [{ key: "canView", label: "Xem sản phẩm" }],
-  },
-  {
-    id: "orders",
-    title: "Đơn hàng / POS",
-    desc: "Bán tại quầy, giới hạn xem đơn theo mình/chi nhánh, duyệt/hủy và xử lý đổi trả. Đổi trả tra SĐT vẫn có thể tìm đơn toàn hệ thống để chăm khách.",
-    tone: "green",
-    permissions: [
-      { key: "canSell", label: "Bán hàng / POS" },
-      { key: "canViewOwnOrders", label: "Xem đơn của mình", hint: "Chỉ thấy đơn do chính nhân viên này tạo trong danh sách đơn hàng." },
-      { key: "canViewBranchOrders", label: "Xem đơn chi nhánh", hint: "Thấy đơn của chi nhánh được cấp quyền trong danh sách đơn hàng." },
-      { key: "canCreateOrder", label: "Tạo đơn hàng" },
-      { key: "canApproveOrder", label: "Duyệt đơn hàng" },
-      { key: "canCancelOrder", label: "Hủy đơn hàng" },
-      { key: "canHandleReturn", label: "Đổi trả hàng" },
-    ],
-  },
-  {
-    id: "inventory",
-    title: "Kho / Kiểm kho",
-    desc: "Xem tồn, quản kho, kiểm kho, chuyển và nhận hàng.",
-    tone: "amber",
-    permissions: [
-      { key: "canViewStock", label: "Xem tồn kho" },
-      { key: "canManageStock", label: "Quản kho" },
-      { key: "canStocktake", label: "Kiểm kho" },
-      { key: "canTransferStock", label: "Chuyển kho" },
-      { key: "canReceiveStock", label: "Nhận kho" },
-    ],
-  },
-  {
-    id: "customers",
-    title: "Khách hàng",
-    desc: "Xem và cập nhật thông tin khách hàng tại chi nhánh.",
-    tone: "gray",
-    permissions: [
-      { key: "canViewCustomer", label: "Xem khách hàng" },
-      { key: "canEditCustomer", label: "Sửa khách hàng" },
-    ],
-  },
-];
-
-const branchPermissionColumns = branchPermissionGroups.flatMap(
-  (group) => group.permissions,
-);
 
 function defaultBranchPermission(branchId: string): BranchPermission {
   return {
@@ -467,336 +481,281 @@ function hasAnyBranchPermission(row: BranchPermission) {
   return branchPermissionColumns.some((col) => Boolean(row[col.key]));
 }
 
-function normalizePermissionPayload(
-  roles: string[],
-  permissions: Record<string, BranchPermission>,
-) {
-  const rows = Object.values(permissions)
-    .filter(hasAnyBranchPermission)
-    .map((row) => ({
-      ...row,
-      id: undefined,
-      staffId: undefined,
-    }))
-    .sort((a, b) => String(a.branchId).localeCompare(String(b.branchId)));
+function formatLastLogin(value?: string | null) {
+  if (!value) return "Chưa đăng nhập";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "Chưa đăng nhập";
+  return d.toLocaleString("vi-VN");
+}
 
-  return JSON.stringify({
-    roles: [...roles].map((role) => String(role).toLowerCase()).sort(),
-    branchPermissions: rows,
+function roleSummary(role: RoleItem) {
+  return (Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map(
+    (key) => {
+      const count = role.permissions[key]?.length || 0;
+      return {
+        key,
+        title: permissionGroupMeta[key].title,
+        count,
+        enabled: count > 0,
+      };
+    },
+  );
+}
+
+function getRolePermissionCount(role: RoleItem) {
+  return (Object.keys(permissionGroupMeta) as PermissionGroupKey[]).reduce(
+    (sum, key) => sum + (role.permissions[key]?.length || 0),
+    0,
+  );
+}
+
+function groupHasAllPermissions(role: RoleItem, groupKey: PermissionGroupKey) {
+  const current = role.permissions[groupKey] || [];
+  const all = permissionGroupMeta[groupKey].allPermissions;
+  return all.length > 0 && all.every((item) => current.includes(item));
+}
+
+function groupPermissionSummary(role: RoleItem, groupKey: PermissionGroupKey) {
+  const current = role.permissions[groupKey] || [];
+  if (!current.length) return "Chưa có quyền";
+  if (current.length <= 3) return `Có quyền: ${current.join(", ")}`;
+  return `Có quyền: ${current.slice(0, 3).join(", ")} +${current.length - 3} quyền khác`;
+}
+
+function applySmartDependencies(
+  row: BranchPermission,
+  key: BranchPermissionKey,
+  checked: boolean,
+) {
+  const next: BranchPermission = { ...row, [key]: checked };
+  if (!checked) return next;
+
+  if (["canSell", "canCreateOrder"].includes(String(key))) {
+    next.canView = true;
+    next.canViewOwnOrders = true;
+    next.canViewStock = true;
+    next.canViewCustomer = true;
+  }
+
+  if (key === "canHandleReturn") {
+    next.canView = true;
+    next.canViewCustomer = true;
+  }
+
+  if (key === "canViewBranchOrders") {
+    next.canViewOwnOrders = true;
+  }
+
+  if (["canApproveOrder", "canCancelOrder"].includes(String(key))) {
+    next.canViewOwnOrders = true;
+    next.canViewBranchOrders = true;
+  }
+
+  if (
+    [
+      "canViewStock",
+      "canManageStock",
+      "canStocktake",
+      "canTransferStock",
+      "canReceiveStock",
+    ].includes(String(key))
+  ) {
+    next.canView = true;
+    next.canViewStock = true;
+  }
+
+  if (key === "canEditCustomer") {
+    next.canView = true;
+    next.canViewCustomer = true;
+  }
+
+  return next;
+}
+
+function roleToBranchPermission(role: RoleItem, branchId: string) {
+  let row = defaultBranchPermission(branchId);
+  (Object.keys(permissionGroupMeta) as PermissionGroupKey[]).forEach(
+    (groupKey) => {
+      role.permissions[groupKey].forEach((permissionName) => {
+        const key = permissionToBranchKey[permissionName];
+        if (key) row = applySmartDependencies(row, key, true);
+      });
+    },
+  );
+  return row;
+}
+
+function rolesToBranchPermission(
+  roles: RoleItem[],
+  roleIds: string[],
+  branchId: string,
+) {
+  let row = defaultBranchPermission(branchId);
+  normalizeSelectedRoles(roleIds).forEach((roleId) => {
+    const role = roles.find((item) => item.id === roleId);
+    if (!role) return;
+    const roleRow = roleToBranchPermission(role, branchId);
+    branchPermissionColumns.forEach((col) => {
+      if (roleRow[col.key]) row = applySmartDependencies(row, col.key, true);
+    });
   });
+  return row;
+}
+
+function sanitizeBranchPermissionForApi(row: BranchPermission) {
+  const clean: BranchPermission = { ...row };
+  delete clean.id;
+  delete clean.staffId;
+  return clean;
 }
 
 function getBranchModes(row: BranchPermission) {
   const modes: { label: string; tone: "blue" | "green" | "amber" | "gray" }[] =
     [];
-
-  if (row.canSell || row.canCreateOrder || row.canHandleReturn) {
+  if (row.canSell || row.canCreateOrder || row.canHandleReturn)
     modes.push({ label: "POS mode", tone: "green" });
-  }
-
   if (
     row.canViewStock ||
     row.canManageStock ||
     row.canStocktake ||
     row.canTransferStock ||
     row.canReceiveStock
-  ) {
+  )
     modes.push({ label: "Kho mode", tone: "amber" });
-  }
-
   if (
     row.canApproveOrder ||
     row.canCancelOrder ||
     row.canManageStock ||
     row.canEditCustomer
-  ) {
+  )
     modes.push({ label: "Quản lý mode", tone: "blue" });
-  }
-
   if (!modes.length) modes.push({ label: "Chưa cấp quyền", tone: "gray" });
-
   return modes;
 }
 
 function getPermissionWarnings(row: BranchPermission) {
   const warnings: string[] = [];
-
-  if ((row.canSell || row.canCreateOrder) && !row.canView) {
-    warnings.push("Bán/tạo đơn nên có quyền xem dữ liệu.");
-  }
-
-  if ((row.canSell || row.canCreateOrder) && !row.canViewOwnOrders) {
+  if ((row.canSell || row.canCreateOrder) && !row.canViewOwnOrders)
     warnings.push("Bán/tạo đơn nên có quyền xem đơn của mình.");
-  }
-
-  if ((row.canApproveOrder || row.canCancelOrder) && !row.canViewBranchOrders) {
+  if ((row.canApproveOrder || row.canCancelOrder) && !row.canViewBranchOrders)
     warnings.push("Duyệt/hủy đơn nên có quyền xem đơn chi nhánh.");
-  }
-
-  if (row.canSell && !row.canViewStock) {
+  if (row.canSell && !row.canViewStock)
     warnings.push("Bán hàng nên được xem tồn để tránh bán thiếu hàng.");
-  }
-
-  if (row.canEditCustomer && !row.canViewCustomer) {
+  if (row.canEditCustomer && !row.canViewCustomer)
     warnings.push("Sửa khách nên đi kèm quyền xem khách.");
-  }
-
-  if (row.canApproveOrder && row.canCancelOrder && row.canManageStock) {
+  if (row.canApproveOrder && row.canCancelOrder && row.canManageStock)
     warnings.push("Quyền khá rộng: duyệt/hủy đơn + quản kho.");
-  }
-
   return warnings;
 }
 
-function isHighRole(roles: string[]) {
-  return roles.some((role) =>
-    ["owner", "admin", "branch-manager", "fulltime"].includes(role),
-  );
-}
-
-function getLockedReason(roles: string[], key: keyof BranchPermission) {
-  if (roles.includes("owner") || roles.includes("admin")) return "";
-
-  const managerOnly: (keyof BranchPermission)[] = [
-    "canApproveOrder",
-    "canCancelOrder",
-    "canManageStock",
-    "canEditCustomer",
-  ];
-
-  if (managerOnly.includes(key) && !isHighRole(roles)) {
-    return "Quyền này chỉ nên cấp cho quản lý/fulltime trở lên.";
-  }
-
-  return "";
-}
-
-
-
-type RoleTemplate = Partial<Record<keyof BranchPermission, boolean>>;
-
-const rolePermissionTemplates: Record<string, RoleTemplate> = {
-  owner: {
-    canView: true,
-    canSell: true,
-    canViewOwnOrders: true,
-    canViewBranchOrders: true,
-    canCreateOrder: true,
-    canApproveOrder: true,
-    canCancelOrder: true,
-    canHandleReturn: true,
-    canViewStock: true,
-    canManageStock: true,
-    canStocktake: true,
-    canTransferStock: true,
-    canReceiveStock: true,
-    canViewCustomer: true,
-    canEditCustomer: true,
-  },
-  admin: {
-    canView: true,
-    canSell: true,
-    canViewOwnOrders: true,
-    canViewBranchOrders: true,
-    canCreateOrder: true,
-    canApproveOrder: true,
-    canCancelOrder: true,
-    canHandleReturn: true,
-    canViewStock: true,
-    canManageStock: true,
-    canStocktake: true,
-    canTransferStock: true,
-    canReceiveStock: true,
-    canViewCustomer: true,
-    canEditCustomer: true,
-  },
-  "branch-manager": {
-    canView: true,
-    canSell: true,
-    canViewOwnOrders: true,
-    canViewBranchOrders: true,
-    canCreateOrder: true,
-    canApproveOrder: true,
-    canCancelOrder: true,
-    canHandleReturn: true,
-    canViewStock: true,
-    canManageStock: true,
-    canStocktake: true,
-    canTransferStock: true,
-    canReceiveStock: true,
-    canViewCustomer: true,
-    canEditCustomer: true,
-  },
-  fulltime: {
-    canView: true,
-    canSell: true,
-    canViewOwnOrders: true,
-    canViewBranchOrders: true,
-    canCreateOrder: true,
-    canHandleReturn: true,
-    canViewStock: true,
-    canStocktake: true,
-    canTransferStock: true,
-    canReceiveStock: true,
-    canViewCustomer: true,
-  },
-  "retail-staff": {
-    canView: true,
-    canSell: true,
-    canViewOwnOrders: true,
-    canViewBranchOrders: false,
-    canCreateOrder: true,
-    canHandleReturn: true,
-    canViewStock: true,
-    canViewCustomer: true,
-  },
-  "stock-auditor": {
-    canView: true,
-    canViewStock: true,
-    canStocktake: true,
-  },
-  "stock-staff": {
-    canView: true,
-    canViewStock: true,
-    canManageStock: true,
-    canStocktake: true,
-    canTransferStock: true,
-    canReceiveStock: true,
-  },
-};
-
-const exclusiveRoles = ["owner", "admin", "branch-manager"];
-
-function isExclusiveRole(roleId: string) {
-  return exclusiveRoles.includes(roleId);
-}
-
-function normalizeSelectedRoles(roleIds: string[]) {
-  const cleaned = Array.from(
-    new Set(roleIds.map((roleId) => String(roleId).toLowerCase()).filter(Boolean)),
-  );
-
-  const selectedExclusive = cleaned.find(isExclusiveRole);
-
-  if (selectedExclusive) {
-    return [selectedExclusive];
-  }
-
-  return cleaned;
-}
-
-function buildRoleTemplate(roleIds: string[]) {
-  const template: RoleTemplate = {};
-
-  normalizeSelectedRoles(roleIds).forEach((roleId) => {
-    const roleTemplate = rolePermissionTemplates[roleId] || {};
-
-    Object.entries(roleTemplate).forEach(([key, value]) => {
-      if (value) {
-        template[key as keyof BranchPermission] = true;
-      }
+function loadRoleTemplatesFromStorage() {
+  if (typeof window === "undefined") return rolesSeed;
+  try {
+    const raw = localStorage.getItem(ROLE_STORAGE_KEY);
+    if (!raw) return rolesSeed;
+    const parsed = JSON.parse(raw) as RoleItem[];
+    if (!Array.isArray(parsed)) return rolesSeed;
+    return rolesSeed.map((seed) => {
+      const saved = parsed.find((role) => role.id === seed.id);
+      if (!saved) return seed;
+      return {
+        ...seed,
+        permissions: {
+          products: Array.isArray(saved.permissions?.products)
+            ? saved.permissions.products
+            : seed.permissions.products,
+          orders: Array.isArray(saved.permissions?.orders)
+            ? saved.permissions.orders
+            : seed.permissions.orders,
+          inventory: Array.isArray(saved.permissions?.inventory)
+            ? saved.permissions.inventory
+            : seed.permissions.inventory,
+          customers: Array.isArray(saved.permissions?.customers)
+            ? saved.permissions.customers
+            : seed.permissions.customers,
+        },
+        updatedAt: saved.updatedAt || seed.updatedAt,
+      };
     });
-  });
-
-  return template;
-}
-
-function countRoleTemplatePermissions(roleIds: string[]) {
-  const template = buildRoleTemplate(roleIds);
-  return branchPermissionColumns.filter((column) => Boolean(template[column.key]))
-    .length;
-}
-
-function applyRoleTemplateDiffToRow(
-  row: BranchPermission,
-  previousRoles: string[],
-  nextRoles: string[],
-) {
-  const previousTemplate = buildRoleTemplate(previousRoles);
-  const nextTemplate = buildRoleTemplate(nextRoles);
-  let next: BranchPermission = { ...row };
-
-  branchPermissionColumns.forEach((column) => {
-    const key = column.key;
-    const wasFromPreviousRole = Boolean(previousTemplate[key]);
-    const shouldComeFromNextRole = Boolean(nextTemplate[key]);
-
-    if (shouldComeFromNextRole) {
-      next = applySmartDependencies(next, key, true);
-      return;
-    }
-
-    if (wasFromPreviousRole && Boolean(next[key])) {
-      next = { ...next, [key]: false };
-    }
-  });
-
-  return next;
-}
-
-function applyRoleTemplateToRow(row: BranchPermission, roleIds: string[]) {
-  let next: BranchPermission = { ...row };
-  const template = buildRoleTemplate(roleIds);
-
-  branchPermissionColumns.forEach((column) => {
-    if (template[column.key]) {
-      next = applySmartDependencies(next, column.key, true);
-    }
-  });
-
-  return next;
-}
-function applySmartDependencies(
-  row: BranchPermission,
-  key: keyof BranchPermission,
-  checked: boolean,
-) {
-  const next: BranchPermission = { ...row, [key]: checked };
-
-  if (checked) {
-    if (
-      ["canSell", "canCreateOrder"].includes(String(key))
-    ) {
-      next.canView = true;
-      next.canViewOwnOrders = true;
-      next.canViewStock = true;
-      next.canViewCustomer = true;
-    }
-
-    if (key === "canHandleReturn") {
-      next.canView = true;
-      next.canViewCustomer = true;
-    }
-
-    if (key === "canViewBranchOrders") {
-      next.canViewOwnOrders = true;
-    }
-
-    if (["canApproveOrder", "canCancelOrder"].includes(String(key))) {
-      next.canViewOwnOrders = true;
-      next.canViewBranchOrders = true;
-    }
-
-    if (
-      [
-        "canViewStock",
-        "canManageStock",
-        "canStocktake",
-        "canTransferStock",
-        "canReceiveStock",
-      ].includes(String(key))
-    ) {
-      next.canView = true;
-      next.canViewStock = true;
-    }
-
-    if (key === "canEditCustomer") {
-      next.canView = true;
-      next.canViewCustomer = true;
-    }
+  } catch {
+    return rolesSeed;
   }
+}
 
-  return next;
+function RolePermissionPreview({ row }: { row: BranchPermission }) {
+  const activeCount = branchPermissionColumns.filter((column) =>
+    Boolean(row[column.key]),
+  ).length;
+  return (
+    <div className="rounded-3xl border border-blue-100 bg-blue-50/30 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={activeCount ? "blue" : "gray"}>
+            {activeCount ? `${activeCount} quyền` : "Chưa cấp quyền"}
+          </Badge>
+          {getBranchModes(row).map((mode) => (
+            <Badge key={mode.label} tone={mode.tone}>
+              {mode.label}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {branchPermissionGroups.map((group) => {
+          const checkedCount = group.permissions.filter((permission) =>
+            Boolean(row[permission.key]),
+          ).length;
+          return (
+            <div
+              key={group.id}
+              className="rounded-3xl border border-neutral-200 bg-white p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h6 className="font-semibold text-neutral-900">
+                      {group.title}
+                    </h6>
+                    <Badge tone={checkedCount ? group.tone : "gray"}>
+                      {checkedCount}/{group.permissions.length}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-neutral-500">{group.desc}</p>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {group.permissions.map((permission) => {
+                  const checked = Boolean(row[permission.key]);
+                  return (
+                    <div
+                      key={permission.key}
+                      className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm ${
+                        checked
+                          ? "border-blue-200 bg-blue-50 text-neutral-900"
+                          : "border-neutral-200 bg-white text-neutral-400"
+                      }`}
+                    >
+                      <span>{permission.label}</span>
+                      <span
+                        className={`h-4 w-4 rounded border ${checked ? "border-blue-500 bg-blue-500" : "border-neutral-300 bg-white"}`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {getPermissionWarnings(row).length ? (
+        <div className="mt-3 space-y-1 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {getPermissionWarnings(row).map((warning) => (
+            <p key={warning}>⚠ {warning}</p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function PermissionsPageClient() {
@@ -806,10 +765,8 @@ export default function PermissionsPageClient() {
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [selectedRoleId, setSelectedRoleId] = useState("fulltime");
   const [message, setMessage] = useState("");
-  const [secondPasswordForId, setSecondPasswordForId] = useState<string | null>(
-    null,
-  );
-  const [secondPassword, setSecondPassword] = useState("");
+  const [roleTemplateDirty, setRoleTemplateDirty] = useState(false);
+
   const [quickName, setQuickName] = useState("");
   const [quickCode, setQuickCode] = useState("");
   const [quickUsername, setQuickUsername] = useState("");
@@ -820,14 +777,36 @@ export default function PermissionsPageClient() {
   const [quickRoleIds, setQuickRoleIds] = useState<string[]>(["retail-staff"]);
   const [quickBranchId, setQuickBranchId] = useState("");
 
-  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(
+  const [profileEmployeeId, setProfileEmployeeId] = useState<string | null>(
     null,
   );
+  const [permissionEmployeeId, setPermissionEmployeeId] = useState<
+    string | null
+  >(null);
   const [editRoleIds, setEditRoleIds] = useState<string[]>([]);
-  const [editBranchPermissions, setEditBranchPermissions] = useState<
-    Record<string, BranchPermission>
+  const [editBranchIds, setEditBranchIds] = useState<string[]>([]);
+  const [editBranchRoleMap, setEditBranchRoleMap] = useState<
+    Record<string, string>
   >({});
-  const [editPermissionSnapshot, setEditPermissionSnapshot] = useState("");
+  const [branchRoleDirty, setBranchRoleDirty] = useState(false);
+  const [savingBranchRolesForId, setSavingBranchRolesForId] = useState<
+    string | null
+  >(null);
+  const [savedBranchRolesForId, setSavedBranchRolesForId] = useState<
+    string | null
+  >(null);
+  const [savingRoleTemplates, setSavingRoleTemplates] = useState(false);
+  const [creatingStaff, setCreatingStaff] = useState(false);
+  const [savingProfileForId, setSavingProfileForId] = useState<string | null>(
+    null,
+  );
+  const [savingPasswordForId, setSavingPasswordForId] = useState<string | null>(
+    null,
+  );
+  const [savingPinForId, setSavingPinForId] = useState<string | null>(null);
+  const [togglingEmployeeForId, setTogglingEmployeeForId] = useState<
+    string | null
+  >(null);
   const [editName, setEditName] = useState("");
   const [editCode, setEditCode] = useState("");
   const [editUsername, setEditUsername] = useState("");
@@ -841,12 +820,23 @@ export default function PermissionsPageClient() {
     null,
   );
   const [newPassword, setNewPassword] = useState("");
+  const [secondPasswordForId, setSecondPasswordForId] = useState<string | null>(
+    null,
+  );
+  const [secondPassword, setSecondPassword] = useState("");
 
   const selectedRole = useMemo(
     () => roles.find((role) => role.id === selectedRoleId) || roles[0],
     [roles, selectedRoleId],
   );
-
+  const selectedRoleBranchPreview = useMemo(
+    () => roleToBranchPermission(selectedRole, "__preview__"),
+    [selectedRole],
+  );
+  const selectedRoleSummary = useMemo(
+    () => roleSummary(selectedRole),
+    [selectedRole],
+  );
   const roleEmployees = useMemo(
     () =>
       employees.filter(
@@ -857,23 +847,11 @@ export default function PermissionsPageClient() {
     [employees, selectedRoleId],
   );
 
-  const currentEditPayload = useMemo(
-    () => normalizePermissionPayload(editRoleIds, editBranchPermissions),
-    [editRoleIds, editBranchPermissions],
-  );
-
-  const hasUnsavedPermissionChanges = Boolean(
-    editingEmployeeId &&
-    editPermissionSnapshot &&
-    currentEditPayload !== editPermissionSnapshot,
-  );
-
   const totalWorking = employees.filter((e) => e.status === "ACTIVE").length;
   const totalInactive = employees.filter((e) => e.status === "INACTIVE").length;
   const branchRoles = roles.filter(
     (role) => role.scope === "ONE_BRANCH",
   ).length;
-  const summary = roleSummary(selectedRole);
 
   const getBranchName = (branchId?: string | null) => {
     if (!branchId) return "Toàn hệ thống";
@@ -882,7 +860,6 @@ export default function PermissionsPageClient() {
 
   function mapApiStaffToEmployee(item: any): EmployeeItem {
     const normalizedRoles = normalizeStaffRoles(item);
-
     return {
       id: item.id,
       code: item.code,
@@ -905,6 +882,7 @@ export default function PermissionsPageClient() {
       branchPermissions: Array.isArray(item.branchPermissions)
         ? item.branchPermissions
         : [],
+      branchRoles: Array.isArray(item.branchRoles) ? item.branchRoles : [],
       status: item.isActive ? "ACTIVE" : "INACTIVE",
       lastLoginAt: item.lastLoginAt ?? null,
     };
@@ -914,7 +892,6 @@ export default function PermissionsPageClient() {
     try {
       const data = await getBranches();
       setBranches(data);
-
       setQuickBranchId((prev) => prev || data[0]?.id || "");
     } catch {
       setMessage("Không tải được danh sách chi nhánh.");
@@ -939,13 +916,12 @@ export default function PermissionsPageClient() {
   };
 
   useEffect(() => {
+    setRoles(loadRoleTemplatesFromStorage());
     void loadBranches();
   }, []);
 
   useEffect(() => {
-    if (branches.length > 0) {
-      void loadEmployees();
-    }
+    if (branches.length > 0) void loadEmployees();
   }, [branches.length]);
 
   const toggleRoleId = (
@@ -955,353 +931,39 @@ export default function PermissionsPageClient() {
   ) => {
     const rawNext = current.includes(roleId)
       ? current.filter((item) => item !== roleId)
-      : [...(isExclusiveRole(roleId) ? [] : current.filter((item) => !isExclusiveRole(item))), roleId];
+      : [
+          ...(isExclusiveRole(roleId)
+            ? []
+            : current.filter((item) => !isExclusiveRole(item))),
+          roleId,
+        ];
     const next = normalizeSelectedRoles(rawNext);
-    setter(next);
+    setter(next.length ? next : ["retail-staff"]);
   };
 
-  const toggleEditRoleId = (roleId: string) => {
-    const previousRoles = editRoleIds;
-    const rawNext = previousRoles.includes(roleId)
-      ? previousRoles.filter((item) => item !== roleId)
-      : [...(isExclusiveRole(roleId) ? [] : previousRoles.filter((item) => !isExclusiveRole(item))), roleId];
-    const nextRoles = normalizeSelectedRoles(rawNext);
+  const saveRoleTemplates = () => {
+    if (savingRoleTemplates) return;
+    setSavingRoleTemplates(true);
+    setMessage("Đang lưu mẫu quyền role...");
 
-    if (!nextRoles.length) {
-      setMessage("Cần giữ ít nhất 1 vai trò cho nhân viên.");
-      return;
-    }
-
-    setEditRoleIds(nextRoles);
-    setEditBranchPermissions((prev) => {
-      const nextMap: Record<string, BranchPermission> = {};
-      const activeBranchIds = new Set(
-        Object.values(prev)
-          .filter(hasAnyBranchPermission)
-          .map((row) => row.branchId),
+    window.setTimeout(() => {
+      if (typeof window !== "undefined") {
+        localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(roles));
+      }
+      setRoleTemplateDirty(false);
+      setSavingRoleTemplates(false);
+      setMessage(
+        "Đã lưu mẫu quyền role. Tạo/sửa nhân viên sau đó sẽ ăn theo mẫu mới.",
       );
+    }, 350);
+  };
 
-      branches.forEach((branch) => {
-        const current = prev[branch.id] || defaultBranchPermission(branch.id);
-        const shouldApplyTemplate =
-          activeBranchIds.size === 0 || activeBranchIds.has(branch.id);
-
-        nextMap[branch.id] = shouldApplyTemplate
-          ? applyRoleTemplateDiffToRow(current, previousRoles, nextRoles)
-          : current;
-      });
-
-      return nextMap;
-    });
+  const resetRoleTemplates = () => {
+    setRoles(rolesSeed);
+    setRoleTemplateDirty(true);
     setMessage(
-      "Đã cập nhật vai trò. Bộ quyền theo chi nhánh đã tự cộng/trừ theo vai trò mới.",
+      "Đã hoàn tác mẫu quyền về mặc định. Bấm Lưu mẫu quyền để áp dụng.",
     );
-  };
-
-  const quickAssignUser = async () => {
-    if (!quickName.trim() || !quickCode.trim() || !quickPassword.trim()) {
-      setMessage("Thiếu tên, mã nhân viên hoặc mật khẩu.");
-      return;
-    }
-
-    if (!quickRoleIds.length) {
-      setMessage("Cần chọn ít nhất 1 vai trò.");
-      return;
-    }
-
-    try {
-      await apiJson("/staff", {
-        method: "POST",
-        body: JSON.stringify({
-          code: quickCode.trim(),
-          name: quickName.trim(),
-          username: quickUsername.trim() || null,
-          email: quickEmail.trim() || null,
-          phone: quickPhone.trim() || null,
-          address: quickAddress.trim() || null,
-          role: quickRoleIds[0],
-          roles: quickRoleIds,
-          branchId: quickBranchId || null,
-          password: quickPassword.trim(),
-        }),
-      });
-
-      await loadEmployees();
-      setSelectedRoleId(quickRoleIds[0]);
-      setQuickName("");
-      setQuickCode("");
-      setQuickUsername("");
-      setQuickEmail("");
-      setQuickPhone("");
-      setQuickAddress("");
-      setQuickPassword("");
-      setMessage("Đã lưu nhân viên vào database.");
-    } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Lưu nhân viên thất bại.",
-      );
-    }
-  };
-
-  const toggleEmployee = async (employeeId: string) => {
-    const current = employees.find((e) => e.id === employeeId);
-    if (!current) return;
-
-    const nextStatus = current.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
-
-    try {
-      await apiJson(`/staff/${employeeId}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          status: nextStatus,
-        }),
-      });
-
-      await loadEmployees();
-      setMessage("Đã cập nhật trạng thái nhân viên.");
-    } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Cập nhật trạng thái thất bại.",
-      );
-    }
-  };
-
-  const startEditEmployee = (employee: EmployeeItem) => {
-    setEditingEmployeeId(employee.id);
-    setEditName(employee.name || "");
-    setEditCode(employee.code || "");
-    setEditUsername(employee.username || "");
-    setEditEmail(employee.email || "");
-    setEditPhone(employee.phone || "");
-    setEditAddress(employee.address || "");
-    setEditNote(employee.note || "");
-    setEditMainBranchId(employee.branchId || branches[0]?.id || "");
-    setEditRoleIds(
-      employee.roles.length
-        ? employee.roles
-        : [employee.roleId].filter(Boolean),
-    );
-
-    const map: Record<string, BranchPermission> = {};
-    branches.forEach((branch) => {
-      map[branch.id] = defaultBranchPermission(branch.id);
-    });
-
-    employee.branchPermissions.forEach((permission) => {
-      map[permission.branchId] = {
-        ...defaultBranchPermission(permission.branchId),
-        ...permission,
-      };
-    });
-
-    if (!employee.branchPermissions.length && employee.branchId && map[employee.branchId]) {
-      const starterRoles = employee.roles.length
-        ? employee.roles
-        : [employee.roleId].filter(Boolean);
-      map[employee.branchId] = applyRoleTemplateToRow(
-        map[employee.branchId],
-        starterRoles,
-      );
-    }
-
-    setEditBranchPermissions(map);
-    setEditPermissionSnapshot(
-      normalizePermissionPayload(
-        employee.roles.length
-          ? employee.roles
-          : [employee.roleId].filter(Boolean),
-        map,
-      ),
-    );
-  };
-
-  const toggleEditBranchPermission = (
-    branchId: string,
-    key: keyof BranchPermission,
-  ) => {
-    const lockedReason = getLockedReason(editRoleIds, key);
-
-    if (lockedReason) {
-      setMessage(lockedReason);
-      return;
-    }
-
-    setEditBranchPermissions((prev) => {
-      const row = prev[branchId] || defaultBranchPermission(branchId);
-      const next = applySmartDependencies(row, key, !Boolean(row[key]));
-
-      return {
-        ...prev,
-        [branchId]: {
-          ...next,
-          branchId,
-        },
-      };
-    });
-  };
-
-  const applyBranchPreset = (
-    branchId: string,
-    preset: "sell" | "stock" | "full" | "clear",
-  ) => {
-    setEditBranchPermissions((prev) => {
-      const base = defaultBranchPermission(branchId);
-
-      const next: BranchPermission =
-        preset === "sell"
-          ? {
-              ...base,
-              canView: true,
-              canSell: true,
-              canViewOwnOrders: true,
-              canCreateOrder: true,
-              canHandleReturn: true,
-              canViewStock: true,
-              canViewCustomer: true,
-            }
-          : preset === "stock"
-            ? {
-                ...base,
-                canView: true,
-                canViewStock: true,
-                canManageStock: true,
-                canStocktake: true,
-                canTransferStock: true,
-                canReceiveStock: true,
-              }
-            : preset === "full"
-              ? {
-                  ...base,
-                  canView: true,
-                  canSell: true,
-                  canViewOwnOrders: true,
-                  canViewBranchOrders: true,
-                  canCreateOrder: true,
-                  canApproveOrder: true,
-                  canCancelOrder: true,
-                  canHandleReturn: true,
-                  canViewStock: true,
-                  canManageStock: true,
-                  canStocktake: true,
-                  canTransferStock: true,
-                  canReceiveStock: true,
-                  canViewCustomer: true,
-                  canEditCustomer: true,
-                }
-              : base;
-
-      return {
-        ...prev,
-        [branchId]: next,
-      };
-    });
-  };
-
-  const saveEmployeeProfile = async () => {
-    if (!editingEmployeeId) return;
-
-    if (!editName.trim() || !editCode.trim()) {
-      setMessage("Thiếu tên hoặc mã nhân viên.");
-      return;
-    }
-
-    try {
-      await apiJson(`/staff/${editingEmployeeId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: editName.trim(),
-          code: editCode.trim(),
-          username: editUsername.trim() || null,
-          email: editEmail.trim() || null,
-          phone: editPhone.trim() || null,
-          address: editAddress.trim() || null,
-          note: editNote.trim() || null,
-          branchId: editMainBranchId || null,
-          role: editRoleIds[0],
-        }),
-      });
-
-      await loadEmployees();
-      setMessage("Đã lưu thông tin nhân viên.");
-    } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Lưu thông tin nhân viên thất bại.",
-      );
-    }
-  };
-
-  const saveEmployeeRoleAssignment = async () => {
-    if (!editingEmployeeId) return;
-
-    if (!editRoleIds.length) {
-      setMessage("Cần chọn ít nhất 1 vai trò.");
-      return;
-    }
-
-    const branchPermissions = Object.values(editBranchPermissions).filter(
-      hasAnyBranchPermission,
-    );
-
-    if (!editName.trim() || !editCode.trim()) {
-      setMessage("Thiếu tên hoặc mã nhân viên.");
-      return;
-    }
-
-    try {
-      await apiJson(`/staff/${editingEmployeeId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: editName.trim(),
-          code: editCode.trim(),
-          username: editUsername.trim() || null,
-          email: editEmail.trim() || null,
-          phone: editPhone.trim() || null,
-          address: editAddress.trim() || null,
-          note: editNote.trim() || null,
-          branchId: editMainBranchId || null,
-          role: editRoleIds[0],
-        }),
-      });
-
-      await apiJson(`/staff/${editingEmployeeId}/permissions`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          roles: editRoleIds,
-          branchPermissions,
-        }),
-      });
-
-      await loadEmployees();
-      setSelectedRoleId(editRoleIds[0]);
-      setEditingEmployeeId(null);
-      setMessage("Đã cập nhật vai trò và quyền chi nhánh cho nhân viên.");
-    } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Cập nhật phân quyền thất bại.",
-      );
-    }
-  };
-
-  const changePassword = async (employeeId: string) => {
-    if (!newPassword.trim() || newPassword.trim().length < 4) {
-      setMessage("Mật khẩu mới tối thiểu 4 ký tự.");
-      return;
-    }
-
-    try {
-      await apiJson(`/staff/${employeeId}/password`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          password: newPassword.trim(),
-        }),
-      });
-
-      setNewPassword("");
-      setResetPasswordForId(null);
-      setMessage("Đã đổi mật khẩu nhân viên.");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Đổi mật khẩu thất bại.");
-    }
   };
 
   const updateRolePermission = (
@@ -1313,12 +975,9 @@ export default function PermissionsPageClient() {
     setRoles((prev) =>
       prev.map((role) => {
         if (role.id !== roleId) return role;
-
         const currentSet = new Set(role.permissions[groupKey] || []);
-
         if (checked) currentSet.add(permissionName);
         else currentSet.delete(permissionName);
-
         return {
           ...role,
           updatedAt: new Date().toLocaleDateString("vi-VN"),
@@ -1329,8 +988,7 @@ export default function PermissionsPageClient() {
         };
       }),
     );
-
-    setMessage("Đã cập nhật quyền của role.");
+    setRoleTemplateDirty(true);
   };
 
   const togglePermissionGroup = (
@@ -1341,7 +999,6 @@ export default function PermissionsPageClient() {
     setRoles((prev) =>
       prev.map((role) => {
         if (role.id !== roleId) return role;
-
         return {
           ...role,
           updatedAt: new Date().toLocaleDateString("vi-VN"),
@@ -1354,8 +1011,604 @@ export default function PermissionsPageClient() {
         };
       }),
     );
+    setRoleTemplateDirty(true);
+  };
 
-    setMessage("Đã cập nhật nhóm quyền.");
+  const quickAssignUser = async () => {
+    if (creatingStaff) return;
+    if (!quickName.trim() || !quickCode.trim() || !quickPassword.trim()) {
+      setMessage("Thiếu tên, mã nhân viên hoặc mật khẩu.");
+      return;
+    }
+    if (!quickRoleIds.length) {
+      setMessage("Cần chọn ít nhất 1 vai trò.");
+      return;
+    }
+    try {
+      setCreatingStaff(true);
+      setMessage("Đang tạo nhân viên mới...");
+      const primaryRole = quickRoleIds[0];
+      const created: any = await apiJson("/staff", {
+        method: "POST",
+        body: JSON.stringify({
+          code: quickCode.trim(),
+          name: quickName.trim(),
+          username: quickUsername.trim() || null,
+          email: quickEmail.trim() || null,
+          phone: quickPhone.trim() || null,
+          address: quickAddress.trim() || null,
+          role: primaryRole,
+          roles: [primaryRole],
+          branchId: quickBranchId || null,
+          branchRoles: quickBranchId
+            ? [{ branchId: quickBranchId, roleCode: primaryRole }]
+            : [],
+          password: quickPassword.trim(),
+        }),
+      });
+
+      const createdId = created?.id;
+      if (createdId && quickBranchId) {
+        await apiJson(`/staff/${createdId}/branch-roles`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            branchRoles: [{ branchId: quickBranchId, roleCode: primaryRole }],
+          }),
+        });
+      }
+
+      await loadEmployees();
+      setSelectedRoleId(primaryRole);
+      setQuickName("");
+      setQuickCode("");
+      setQuickUsername("");
+      setQuickEmail("");
+      setQuickPhone("");
+      setQuickAddress("");
+      setQuickPassword("");
+      setMessage("Đã tạo nhân viên và áp mẫu quyền theo role.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Lưu nhân viên thất bại.",
+      );
+    } finally {
+      setCreatingStaff(false);
+    }
+  };
+
+  const toggleEmployee = async (employeeId: string) => {
+    if (togglingEmployeeForId) return;
+    const current = employees.find((e) => e.id === employeeId);
+    if (!current) return;
+    const nextStatus = current.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    try {
+      setTogglingEmployeeForId(employeeId);
+      setMessage(
+        nextStatus === "ACTIVE"
+          ? "Đang kích hoạt lại nhân viên..."
+          : "Đang cho nhân viên nghỉ...",
+      );
+      await apiJson(`/staff/${employeeId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      await loadEmployees();
+      setMessage("Đã cập nhật trạng thái nhân viên.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Cập nhật trạng thái thất bại.",
+      );
+    } finally {
+      setTogglingEmployeeForId(null);
+    }
+  };
+
+  const openProfileEditor = (employee: EmployeeItem) => {
+    setProfileEmployeeId(employee.id);
+    setPermissionEmployeeId(null);
+    setEditName(employee.name || "");
+    setEditCode(employee.code || "");
+    setEditUsername(employee.username || "");
+    setEditEmail(employee.email || "");
+    setEditPhone(employee.phone || "");
+    setEditAddress(employee.address || "");
+    setEditNote(employee.note || "");
+    setEditMainBranchId(employee.branchId || branches[0]?.id || "");
+  };
+
+  const openPermissionEditor = (employee: EmployeeItem) => {
+    setPermissionEmployeeId(employee.id);
+    setProfileEmployeeId(null);
+
+    const map: Record<string, string> = {};
+
+    if (Array.isArray(employee.branchRoles) && employee.branchRoles.length) {
+      employee.branchRoles.forEach((row) => {
+        if (row.branchId && row.roleCode) {
+          map[row.branchId] = String(row.roleCode).toLowerCase();
+        }
+      });
+    } else if (employee.branchPermissions.length) {
+      const fallbackRole =
+        employee.roles[0] || employee.roleId || "retail-staff";
+      employee.branchPermissions
+        .filter(hasAnyBranchPermission)
+        .forEach((row) => {
+          map[row.branchId] = fallbackRole;
+        });
+    } else if (employee.branchId) {
+      map[employee.branchId] =
+        employee.roles[0] || employee.roleId || "retail-staff";
+    }
+
+    const activeBranchIds = Object.keys(map);
+    setEditBranchRoleMap(map);
+    setEditBranchIds(activeBranchIds);
+    setEditRoleIds(Array.from(new Set(Object.values(map))).filter(Boolean));
+    setEditMainBranchId(
+      employee.branchId || activeBranchIds[0] || branches[0]?.id || "",
+    );
+    setBranchRoleDirty(false);
+    setSavedBranchRolesForId(null);
+  };
+
+  const saveEmployeeProfile = async () => {
+    if (!profileEmployeeId || savingProfileForId) return;
+    if (!editName.trim() || !editCode.trim()) {
+      setMessage("Thiếu tên hoặc mã nhân viên.");
+      return;
+    }
+    try {
+      const currentEmployeeId = profileEmployeeId;
+      setSavingProfileForId(currentEmployeeId);
+      setMessage("Đang lưu thông tin nhân viên...");
+      await apiJson(`/staff/${profileEmployeeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName.trim(),
+          code: editCode.trim(),
+          username: editUsername.trim() || null,
+          email: editEmail.trim() || null,
+          phone: editPhone.trim() || null,
+          address: editAddress.trim() || null,
+          note: editNote.trim() || null,
+          branchId: editMainBranchId || null,
+        }),
+      });
+      await loadEmployees();
+      setProfileEmployeeId(null);
+      setMessage("Đã lưu thông tin nhân viên.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Lưu thông tin nhân viên thất bại.",
+      );
+    } finally {
+      setSavingProfileForId(null);
+    }
+  };
+
+  const saveEmployeeRoleAssignment = async () => {
+    if (!permissionEmployeeId || savingBranchRolesForId) return;
+
+    const currentEmployeeId = permissionEmployeeId;
+    const branchRoles = Object.entries(editBranchRoleMap)
+      .filter(([, roleCode]) => Boolean(roleCode))
+      .map(([branchId, roleCode]) => ({ branchId, roleCode }));
+
+    if (!branchRoles.length) {
+      setMessage("Cần chọn ít nhất 1 chi nhánh và vai trò áp dụng.");
+      return;
+    }
+
+    try {
+      setSavingBranchRolesForId(currentEmployeeId);
+      setSavedBranchRolesForId(null);
+      setMessage("Đang lưu role theo từng chi nhánh...");
+
+      const primary = branchRoles[0];
+
+      await apiJson(`/staff/${currentEmployeeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          role: primary.roleCode,
+          branchId: editMainBranchId || primary.branchId || null,
+        }),
+      });
+
+      await apiJson(`/staff/${currentEmployeeId}/branch-roles`, {
+        method: "PATCH",
+        body: JSON.stringify({ branchRoles }),
+      });
+
+      await loadEmployees();
+      setSelectedRoleId(primary.roleCode);
+      setBranchRoleDirty(false);
+      setSavedBranchRolesForId(currentEmployeeId);
+      setMessage("Đã lưu role theo từng chi nhánh cho nhân viên.");
+
+      window.setTimeout(() => {
+        setSavedBranchRolesForId((current) =>
+          current === currentEmployeeId ? null : current,
+        );
+      }, 2200);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Cập nhật phân quyền thất bại.",
+      );
+    } finally {
+      setSavingBranchRolesForId(null);
+    }
+  };
+
+  const changePassword = async (employeeId: string) => {
+    if (savingPasswordForId) return;
+    if (!newPassword.trim() || newPassword.trim().length < 4) {
+      setMessage("Mật khẩu mới tối thiểu 4 ký tự.");
+      return;
+    }
+    try {
+      setSavingPasswordForId(employeeId);
+      setMessage("Đang đổi mật khẩu nhân viên...");
+      await apiJson(`/staff/${employeeId}/password`, {
+        method: "PATCH",
+        body: JSON.stringify({ password: newPassword.trim() }),
+      });
+      setNewPassword("");
+      setResetPasswordForId(null);
+      setMessage("Đã đổi mật khẩu nhân viên.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Đổi mật khẩu thất bại.");
+    } finally {
+      setSavingPasswordForId(null);
+    }
+  };
+
+  const renderRolePicker = (
+    value: string[],
+    onChange: (next: string[]) => void,
+  ) => (
+    <div className="flex flex-wrap gap-2">
+      {roles.map((role) => {
+        const active = value.includes(role.id);
+        return (
+          <button
+            type="button"
+            key={role.id}
+            onClick={() => toggleRoleId(role.id, value, onChange)}
+            className={`rounded-2xl border px-3 py-2 text-sm transition ${
+              active
+                ? "border-neutral-900 bg-neutral-900 text-white"
+                : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
+            }`}
+          >
+            {role.name}
+            {active ? (
+              <span className="ml-2 text-xs opacity-70">
+                +{getRolePermissionCount(role)}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const renderBranchPicker = (
+    value: string[],
+    onChange: (next: string[]) => void,
+  ) => (
+    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      {branches.map((branch) => {
+        const active = value.includes(branch.id);
+        const preview = rolesToBranchPermission(
+          roles,
+          editRoleIds.length ? editRoleIds : quickRoleIds,
+          branch.id,
+        );
+        const count = branchPermissionColumns.filter((col) =>
+          Boolean(preview[col.key]),
+        ).length;
+        return (
+          <button
+            type="button"
+            key={branch.id}
+            onClick={() =>
+              onChange(
+                active
+                  ? value.filter((id) => id !== branch.id)
+                  : [...value, branch.id],
+              )
+            }
+            className={`rounded-3xl border p-4 text-left transition ${
+              active
+                ? "border-blue-200 bg-blue-50 text-neutral-900"
+                : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold">{branch.name}</span>
+              <span
+                className={`h-5 w-5 rounded-md border ${active ? "border-blue-500 bg-blue-500" : "border-neutral-300 bg-white"}`}
+              />
+            </div>
+            <p className="mt-2 text-xs text-neutral-500">
+              {active ? `Áp dụng ${count} quyền từ role` : "Chưa áp dụng"}
+            </p>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const renderProfileEditor = (employee: EmployeeItem) => {
+    if (profileEmployeeId !== employee.id) return null;
+    return (
+      <Panel className="mt-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h4 className="text-lg font-semibold text-neutral-900">
+              Sửa thông tin nhân viên
+            </h4>
+            <p className="mt-1 text-sm text-neutral-500">
+              Tách riêng khỏi phân quyền. Chỉ sửa hồ sơ, không đụng quyền.
+            </p>
+          </div>
+          <Badge tone="blue">Staff profile</Badge>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            placeholder="Tên nhân viên"
+          />
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+            value={editCode}
+            onChange={(e) => setEditCode(e.target.value)}
+            placeholder="Mã nhân viên"
+          />
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+            value={editUsername}
+            onChange={(e) => setEditUsername(e.target.value)}
+            placeholder="Tên đăng nhập"
+          />
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+            value={editEmail}
+            onChange={(e) => setEditEmail(e.target.value)}
+            placeholder="Email"
+          />
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+            value={editPhone}
+            onChange={(e) => setEditPhone(e.target.value)}
+            placeholder="Số điện thoại"
+          />
+          <select
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+            value={editMainBranchId}
+            onChange={(e) => setEditMainBranchId(e.target.value)}
+          >
+            <option value="">Chưa gán chi nhánh chính</option>
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>
+                {branch.name}
+              </option>
+            ))}
+          </select>
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none md:col-span-2"
+            value={editAddress}
+            onChange={(e) => setEditAddress(e.target.value)}
+            placeholder="Địa chỉ"
+          />
+          <input
+            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none md:col-span-2"
+            value={editNote}
+            onChange={(e) => setEditNote(e.target.value)}
+            placeholder="Ghi chú"
+          />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-neutral-100 pt-4">
+          <Button
+            onClick={saveEmployeeProfile}
+            isLoading={savingProfileForId === profileEmployeeId}
+            loadingText="Đang lưu..."
+          >
+            Lưu thông tin nhân viên
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setProfileEmployeeId(null)}
+          >
+            Hủy
+          </Button>
+        </div>
+      </Panel>
+    );
+  };
+
+  const renderBranchRoleMatrix = () => (
+    <div className="space-y-3">
+      {branches.map((branch) => {
+        const roleCode = editBranchRoleMap[branch.id] || "";
+        const role = roles.find((item) => item.id === roleCode);
+        const preview = role
+          ? roleToBranchPermission(role, branch.id)
+          : defaultBranchPermission(branch.id);
+        const count = branchPermissionColumns.filter((col) =>
+          Boolean(preview[col.key]),
+        ).length;
+
+        return (
+          <div
+            key={branch.id}
+            className={`rounded-3xl border p-4 transition ${
+              roleCode
+                ? "border-blue-200 bg-blue-50/40"
+                : "border-neutral-200 bg-white"
+            }`}
+          >
+            <div className="grid gap-3 md:grid-cols-[1fr_260px_140px] md:items-center">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h5 className="font-semibold text-neutral-900">
+                    {branch.name}
+                  </h5>
+                  {roleCode ? (
+                    <Badge tone="blue">{count} quyền</Badge>
+                  ) : (
+                    <Badge tone="gray">Chưa gán</Badge>
+                  )}
+                  {role ? <Badge tone="green">{role.name}</Badge> : null}
+                </div>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Mỗi chi nhánh chỉ có 1 role. Quyền tự sinh theo role đã chọn.
+                </p>
+              </div>
+
+              <select
+                className="h-11 rounded-2xl border border-neutral-300 bg-white px-4 text-sm outline-none"
+                value={roleCode}
+                onChange={(event) => {
+                  const nextRole = event.target.value;
+                  setEditBranchRoleMap((prev) => {
+                    const next = { ...prev };
+                    if (!nextRole) delete next[branch.id];
+                    else next[branch.id] = nextRole;
+                    setEditBranchIds(Object.keys(next));
+                    setEditRoleIds(
+                      Array.from(new Set(Object.values(next))).filter(Boolean),
+                    );
+                    setBranchRoleDirty(true);
+                    setSavedBranchRolesForId(null);
+                    return next;
+                  });
+                }}
+              >
+                <option value="">Chưa gán role</option>
+                {roles
+                  .filter((roleItem) => roleItem.id !== "owner")
+                  .map((roleItem) => (
+                    <option key={roleItem.id} value={roleItem.id}>
+                      {roleItem.name}
+                    </option>
+                  ))}
+              </select>
+
+              <button
+                type="button"
+                className="rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                onClick={() =>
+                  setEditBranchRoleMap((prev) => {
+                    const next = { ...prev };
+                    delete next[branch.id];
+                    setEditBranchIds(Object.keys(next));
+                    setEditRoleIds(
+                      Array.from(new Set(Object.values(next))).filter(Boolean),
+                    );
+                    setBranchRoleDirty(true);
+                    setSavedBranchRolesForId(null);
+                    return next;
+                  })
+                }
+              >
+                Bỏ gán
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderPermissionEditor = (employee: EmployeeItem) => {
+    if (permissionEmployeeId !== employee.id) return null;
+
+    const assignedRoles = Object.values(editBranchRoleMap).filter(Boolean);
+    const roleLabels = Array.from(new Set(assignedRoles)).map((roleId) =>
+      roleLabel(roles, roleId),
+    );
+
+    return (
+      <Panel className="mt-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h4 className="text-lg font-semibold text-neutral-900">
+              Gán role theo từng chi nhánh
+            </h4>
+            <p className="mt-1 text-sm text-neutral-500">
+              Chuẩn V2: 1 nhân viên + 1 chi nhánh = 1 role duy nhất. Không còn
+              lẫn nhiều role trong cùng chi nhánh.
+            </p>
+          </div>
+          <Badge tone="green">Branch role V2</Badge>
+        </div>
+
+        <div className="mt-4 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-600">
+            <span className="font-semibold text-neutral-900">Đang gán:</span>
+            {roleLabels.length ? (
+              roleLabels.map((label) => (
+                <Badge key={label} tone="blue">
+                  {label}
+                </Badge>
+              ))
+            ) : (
+              <Badge tone="gray">Chưa có role</Badge>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5">{renderBranchRoleMatrix()}</div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
+          <Button
+            onClick={saveEmployeeRoleAssignment}
+            disabled={savingBranchRolesForId === permissionEmployeeId}
+            className={`min-w-[190px] ${branchRoleDirty ? "shadow-md shadow-neutral-300/50 ring-2 ring-neutral-900/10" : ""}`}
+          >
+            {savingBranchRolesForId === permissionEmployeeId
+              ? "Đang lưu..."
+              : branchRoleDirty
+                ? "Lưu thay đổi"
+                : "Lưu role theo chi nhánh"}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={savingBranchRolesForId === permissionEmployeeId}
+            onClick={() => {
+              setPermissionEmployeeId(null);
+              setBranchRoleDirty(false);
+              setSavedBranchRolesForId(null);
+            }}
+          >
+            Hủy
+          </Button>
+
+          {savingBranchRolesForId === permissionEmployeeId ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-blue-600" />
+              Đang đồng bộ quyền...
+            </span>
+          ) : savedBranchRolesForId === permissionEmployeeId ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-3 py-2 text-xs font-medium text-green-700">
+              <span className="h-2 w-2 rounded-full bg-green-600" />
+              Đã lưu thành công
+            </span>
+          ) : branchRoleDirty ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              Có thay đổi chưa lưu
+            </span>
+          ) : null}
+        </div>
+      </Panel>
+    );
   };
 
   return (
@@ -1365,8 +1618,8 @@ export default function PermissionsPageClient() {
           Phân quyền
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Gán user vào role, nhìn nhanh role đang có quyền gì và chỉnh quyền chi
-          tiết theo từng nhóm.
+          Role System V2: chỉnh mẫu quyền theo vai trò, sau đó chỉ gán role +
+          chi nhánh cho nhân viên.
         </p>
       </div>
 
@@ -1374,12 +1627,12 @@ export default function PermissionsPageClient() {
         <StatCard
           title="Tổng vai trò"
           value={roles.length}
-          sub="Bản tinh gọn"
+          sub="Mẫu quyền có thể chỉnh"
         />
         <StatCard
           title="Role theo chi nhánh"
           value={branchRoles}
-          sub="Chỉ thấy dữ liệu chi nhánh phụ trách"
+          sub="Áp dụng theo branch"
         />
         <StatCard
           title="Nhân sự đang làm"
@@ -1400,7 +1653,19 @@ export default function PermissionsPageClient() {
       ) : null}
 
       <Panel>
-        <div className="p-4">
+        <div className="p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-semibold text-neutral-900">
+                Tạo nhân viên mới
+              </h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                Nhập thông tin cơ bản. Chọn vai trò và chi nhánh, hệ thống tự áp
+                mẫu quyền role.
+              </p>
+            </div>
+            <Badge tone="purple">Role template → Staff</Badge>
+          </div>
           <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr]">
             <input
               className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
@@ -1457,35 +1722,27 @@ export default function PermissionsPageClient() {
               ))}
             </select>
           </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-neutral-600">
-              Vai trò:
-            </span>
-            {roles.map((role) => (
-              <label
-                key={role.id}
-                className="flex cursor-pointer items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm text-neutral-700"
-              >
-                <input
-                  type="checkbox"
-                  checked={quickRoleIds.includes(role.id)}
-                  onChange={() =>
-                    toggleRoleId(role.id, quickRoleIds, setQuickRoleIds)
-                  }
-                />
-                {role.name}
-              </label>
-            ))}
-            <Button onClick={quickAssignUser} className="ml-auto h-12">
+          <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_auto] xl:items-end">
+            <div>
+              <p className="mb-2 text-sm font-semibold text-neutral-800">
+                Chọn vai trò
+              </p>
+              {renderRolePicker(quickRoleIds, setQuickRoleIds)}
+            </div>
+            <Button
+              onClick={quickAssignUser}
+              className="h-12 min-w-[150px]"
+              isLoading={creatingStaff}
+              loadingText="Đang tạo..."
+            >
               + Tạo nhân viên
             </Button>
           </div>
         </div>
       </Panel>
 
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <Panel className="overflow-hidden">
+      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <Panel className="overflow-hidden xl:sticky xl:top-4 xl:self-start">
           <div className="p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1493,843 +1750,168 @@ export default function PermissionsPageClient() {
                   Danh sách vai trò
                 </h3>
                 <p className="mt-1 text-sm text-neutral-500">
-                  Chọn role để xem phạm vi, user được gán và quyền chi tiết.
+                  Click role để chỉnh mẫu quyền và xem nhân viên đang dùng role
+                  đó.
                 </p>
               </div>
-              <Badge tone="blue">Role → User → Branch</Badge>
+              <Badge tone="blue">Role V2</Badge>
             </div>
-
-            <div className="mt-5 overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-neutral-200 text-sm text-neutral-400">
-                    <th className="pb-3 font-medium">Vai trò</th>
-                    <th className="pb-3 font-medium">Đang làm</th>
-                    <th className="pb-3 font-medium">Phạm vi</th>
-                    <th className="pb-3 font-medium">Ghi chú</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {roles.map((role) => (
-                    <tr
-                      key={role.id}
-                      onClick={() => setSelectedRoleId(role.id)}
-                      className={`cursor-pointer border-b border-neutral-100 transition ${
-                        selectedRoleId === role.id
-                          ? "bg-neutral-50"
-                          : "hover:bg-neutral-50"
-                      }`}
-                    >
-                      <td className="py-4">
-                        <div className="font-medium text-neutral-900">
+            <div className="mt-5 space-y-2">
+              {roles.map((role) => {
+                const active = selectedRoleId === role.id;
+                const count = getRolePermissionCount(role);
+                return (
+                  <button
+                    type="button"
+                    key={role.id}
+                    onClick={() => setSelectedRoleId(role.id)}
+                    className={`w-full rounded-3xl border p-4 text-left transition ${active ? "border-neutral-900 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-base font-semibold">
                           {role.name}
                         </div>
-                        <div className="mt-1 text-xs text-neutral-400">
-                          {role.updatedAt}
-                        </div>
-                      </td>
-                      <td className="py-4 text-sm text-neutral-700">
-                        {
-                          employees.filter(
-                            (employee) =>
-                              (employee.roles.includes(role.id) ||
-                                employee.roleId === role.id) &&
-                              employee.status === "ACTIVE",
-                          ).length
-                        }
-                      </td>
-                      <td className="py-4">
-                        <Badge
-                          tone={role.scope === "ALL_BRANCHES" ? "red" : "blue"}
+                        <p
+                          className={`mt-1 text-sm ${active ? "text-neutral-300" : "text-neutral-500"}`}
+                        >
+                          {role.description}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-white/20 bg-white/10 text-white" : "border-blue-200 bg-blue-50 text-blue-700"}`}
                         >
                           {scopeBadge(role.scope)}
-                        </Badge>
-                      </td>
-                      <td className="py-4 text-sm text-neutral-500">
-                        {role.note}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel className="p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-2xl font-semibold text-neutral-900">
-              {selectedRole.name}
-            </h3>
-            <Badge tone="blue">{scopeBadge(selectedRole.scope)}</Badge>
-            <Badge tone="amber">{selectedRole.note}</Badge>
-          </div>
-          <p className="mt-2 text-sm text-neutral-500">
-            {selectedRole.description}
-          </p>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-3">
-            <div className="rounded-3xl border border-neutral-200 p-4">
-              <p className="text-sm text-neutral-500">Đang được gán</p>
-              <p className="mt-3 text-4xl font-semibold tracking-tight text-neutral-900">
-                {roleEmployees.length}
-              </p>
-            </div>
-            <div className="rounded-3xl border border-neutral-200 p-4">
-              <p className="text-sm text-neutral-500">Ngày tạo</p>
-              <p className="mt-3 text-3xl font-semibold tracking-tight text-neutral-900">
-                {selectedRole.createdAt}
-              </p>
-            </div>
-            <div className="rounded-3xl border border-neutral-200 p-4">
-              <p className="text-sm text-neutral-500">Cập nhật cuối</p>
-              <p className="mt-3 text-3xl font-semibold tracking-tight text-neutral-900">
-                {selectedRole.updatedAt}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 rounded-3xl border border-neutral-200 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <h4 className="text-lg font-semibold text-neutral-900">
-                Role đang có quyền gì
-              </h4>
-              <Badge tone="blue">Role summary</Badge>
-            </div>
-
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {summary.map((item) => (
-                <div
-                  key={item.key}
-                  className="rounded-2xl border border-neutral-200 px-4 py-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-neutral-900">
-                      {item.title}
-                    </span>
-                    <Badge tone={item.enabled ? "green" : "gray"}>
-                      {item.enabled ? `${item.count} quyền` : "Không có"}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <Panel className="p-5">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xl font-semibold text-neutral-900">
-              User đang được gán role này
-            </h3>
-            <Badge tone="blue">{roleEmployees.length} user</Badge>
-          </div>
-
-          <div className="mt-4 space-y-4">
-            {loadingEmployees ? (
-              <p className="text-sm text-neutral-500">Đang tải nhân sự...</p>
-            ) : roleEmployees.length === 0 ? (
-              <p className="text-sm text-neutral-500">
-                Chưa có user cho role này.
-              </p>
-            ) : (
-              roleEmployees.map((employee) => (
-                <div
-                  key={employee.id}
-                  className="rounded-3xl border border-neutral-200 px-5 py-4"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-lg font-medium text-neutral-900">
-                          {employee.name}
                         </span>
-                        <Badge
-                          tone={employee.status === "ACTIVE" ? "green" : "gray"}
+                        <span
+                          className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-white/20 bg-white/10 text-white" : "border-green-200 bg-green-50 text-green-700"}`}
                         >
-                          {employee.status === "ACTIVE"
-                            ? "Đang làm"
-                            : "Đã nghỉ"}
-                        </Badge>
-                        <Badge tone="gray">{employee.code}</Badge>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {(employee.roles.length
-                          ? employee.roles
-                          : [employee.roleId]
-                        ).map((roleId) => (
-                          <Badge key={roleId} tone="blue">
-                            {roleLabel(roles, roleId)}
-                          </Badge>
-                        ))}
-                      </div>
-                      <p className="mt-2 text-sm text-neutral-500">
-                        Chi nhánh chính: {employee.branch}
-                      </p>
-                      <div className="mt-1 grid gap-1 text-sm text-neutral-400 md:grid-cols-2">
-                        <p>
-                          Lần đăng nhập cuối:{" "}
-                          {formatLastLogin(employee.lastLoginAt)}
-                        </p>
-                        <p>Email: {employee.email || "Chưa có"}</p>
-                        <p>SĐT: {employee.phone || "Chưa có"}</p>
-                        <p>Địa chỉ: {employee.address || "Chưa có"}</p>
-                      </div>
-
-                      {editingEmployeeId === employee.id ? (
-                        <div className="mt-4 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <h4 className="font-semibold text-neutral-900">
-                                Sửa nhân viên & phân quyền
-                              </h4>
-                              <p className="mt-1 text-sm text-neutral-500">
-                                Cập nhật thông tin nhân viên, vai trò mẫu và quyền thao tác theo từng chi nhánh.
-                              </p>
-                            </div>
-                            <Badge
-                              tone={
-                                hasUnsavedPermissionChanges ? "amber" : "green"
-                              }
-                            >
-                              {hasUnsavedPermissionChanges
-                                ? "Có thay đổi chưa lưu"
-                                : "Đã đồng bộ"}
-                            </Badge>
-                          </div>
-
-                          <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-4">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <h5 className="font-semibold text-neutral-900">
-                                  Thông tin nhân viên
-                                </h5>
-                                <p className="mt-1 text-xs text-neutral-500">
-                                  Sửa tên, mã, email, SĐT, địa chỉ và chi nhánh chính.
-                                </p>
-                              </div>
-                              <Badge tone="blue">Staff profile</Badge>
-                            </div>
-
-                            <div className="mt-4 grid gap-3 md:grid-cols-2">
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                placeholder="Tên nhân viên"
-                              />
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                                value={editCode}
-                                onChange={(e) => setEditCode(e.target.value)}
-                                placeholder="Mã nhân viên"
-                              />
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                                value={editUsername}
-                                onChange={(e) => setEditUsername(e.target.value)}
-                                placeholder="Tên đăng nhập"
-                              />
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                                value={editEmail}
-                                onChange={(e) => setEditEmail(e.target.value)}
-                                placeholder="Email"
-                              />
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                                value={editPhone}
-                                onChange={(e) => setEditPhone(e.target.value)}
-                                placeholder="Số điện thoại"
-                              />
-                              <select
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                                value={editMainBranchId}
-                                onChange={(e) => setEditMainBranchId(e.target.value)}
-                              >
-                                <option value="">Chưa gán chi nhánh chính</option>
-                                {branches.map((branch) => (
-                                  <option key={branch.id} value={branch.id}>
-                                    {branch.name}
-                                  </option>
-                                ))}
-                              </select>
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none md:col-span-2"
-                                value={editAddress}
-                                onChange={(e) => setEditAddress(e.target.value)}
-                                placeholder="Địa chỉ"
-                              />
-                              <input
-                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none md:col-span-2"
-                                value={editNote}
-                                onChange={(e) => setEditNote(e.target.value)}
-                                placeholder="Ghi chú"
-                              />
-                            </div>
-
-                            <div className="mt-4 flex flex-wrap gap-2 border-t border-neutral-100 pt-4">
-                              <Button
-                                variant="primary"
-                                onClick={saveEmployeeProfile}
-                              >
-                                Lưu thông tin nhân viên
-                              </Button>
-                              <Button
-                                variant="secondary"
-                                onClick={() => {
-                                  const current = employees.find((item) => item.id === employee.id);
-                                  if (!current) return;
-                                  setEditName(current.name || "");
-                                  setEditCode(current.code || "");
-                                  setEditUsername(current.username || "");
-                                  setEditEmail(current.email || "");
-                                  setEditPhone(current.phone || "");
-                                  setEditAddress(current.address || "");
-                                  setEditNote(current.note || "");
-                                  setEditMainBranchId(current.branchId || branches[0]?.id || "");
-                                }}
-                              >
-                                Hoàn tác thông tin
-                              </Button>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <h5 className="font-semibold text-neutral-900">
-                                Chọn vai trò để tự sinh quyền
-                              </h5>
-                              <p className="mt-1 text-sm text-neutral-500">
-                                Vai trò là bộ quyền mẫu. Tick thêm vai trò sẽ tự cộng quyền; bỏ vai trò sẽ tự gỡ phần quyền do vai trò đó sinh ra. Có thể chỉnh tay từng chi nhánh sau đó.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            {roles.map((role) => (
-                              <label
-                                key={role.id}
-                                className={`flex cursor-pointer items-center gap-2 rounded-2xl border px-3 py-2 text-sm transition ${
-                                  editRoleIds.includes(role.id)
-                                    ? "border-blue-200 bg-blue-50 text-neutral-900"
-                                    : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={editRoleIds.includes(role.id)}
-                                  onChange={() => toggleEditRoleId(role.id)}
-                                />
-                                <span>{role.name}</span>
-                                {editRoleIds.includes(role.id) ? (
-                                  <Badge tone="blue">
-                                    +{countRoleTemplatePermissions([role.id])} quyền
-                                  </Badge>
-                                ) : null}
-                              </label>
-                            ))}
-                          </div>
-
-                          <div className="mt-5 space-y-4">
-                            {branches.map((branch) => {
-                              const row =
-                                editBranchPermissions[branch.id] ||
-                                defaultBranchPermission(branch.id);
-                              const activeCount =
-                                branchPermissionColumns.filter((column) =>
-                                  Boolean(row[column.key]),
-                                ).length;
-
-                              return (
-                                <div
-                                  key={branch.id}
-                                  className={`rounded-3xl border p-4 ${
-                                    activeCount
-                                      ? "border-blue-200 bg-blue-50/30"
-                                      : "border-neutral-200 bg-white"
-                                  }`}
-                                >
-                                  <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div>
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <h5 className="font-semibold text-neutral-900">
-                                          {branch.name}
-                                        </h5>
-                                        <Badge
-                                          tone={activeCount ? "blue" : "gray"}
-                                        >
-                                          {activeCount
-                                            ? `${activeCount} quyền`
-                                            : "Chưa cấp quyền"}
-                                        </Badge>
-                                        {getBranchModes(row).map((mode) => (
-                                          <Badge
-                                            key={mode.label}
-                                            tone={mode.tone}
-                                          >
-                                            {mode.label}
-                                          </Badge>
-                                        ))}
-                                      </div>
-                                      <p className="mt-1 text-xs text-neutral-500">
-                                        Cấp quyền riêng cho nhân viên tại chi
-                                        nhánh này. Không tick thì nhân viên
-                                        không thao tác ở chi nhánh này.
-                                      </p>
-                                      {getPermissionWarnings(row).length ? (
-                                        <div className="mt-2 space-y-1 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                          {getPermissionWarnings(row).map(
-                                            (warning) => (
-                                              <p key={warning}>⚠ {warning}</p>
-                                            ),
-                                          )}
-                                        </div>
-                                      ) : null}
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-1">
-                                      <button
-                                        type="button"
-                                        className="rounded-xl border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                                        onClick={() =>
-                                          applyBranchPreset(branch.id, "sell")
-                                        }
-                                      >
-                                        Preset bán
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-xl border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                                        onClick={() =>
-                                          applyBranchPreset(branch.id, "stock")
-                                        }
-                                      >
-                                        Preset kho
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-xl border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                                        onClick={() =>
-                                          applyBranchPreset(branch.id, "full")
-                                        }
-                                      >
-                                        Full vận hành
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
-                                        onClick={() =>
-                                          applyBranchPreset(branch.id, "clear")
-                                        }
-                                      >
-                                        Xóa quyền
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                                    {branchPermissionGroups.map((group) => {
-                                      const groupChecked =
-                                        group.permissions.filter((permission) =>
-                                          Boolean(row[permission.key]),
-                                        ).length;
-                                      const groupAllChecked =
-                                        group.permissions.length > 0 &&
-                                        group.permissions.every((permission) =>
-                                          Boolean(row[permission.key]),
-                                        );
-
-                                      return (
-                                        <div
-                                          key={group.id}
-                                          className={`rounded-3xl border p-4 transition ${
-                                            groupChecked
-                                              ? "border-blue-200 bg-white shadow-sm"
-                                              : "border-neutral-200 bg-white opacity-80"
-                                          }`}
-                                        >
-                                          <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                              <div className="flex flex-wrap items-center gap-2">
-                                                <h6 className="font-semibold text-neutral-900">
-                                                  {group.title}
-                                                </h6>
-                                                <Badge
-                                                  tone={
-                                                    groupChecked
-                                                      ? group.tone
-                                                      : "gray"
-                                                  }
-                                                >
-                                                  {groupChecked}/
-                                                  {group.permissions.length}
-                                                </Badge>
-                                              </div>
-                                              <p className="mt-1 text-xs text-neutral-500">
-                                                {group.desc}
-                                              </p>
-                                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-neutral-100">
-                                                <div
-                                                  className="h-full rounded-full bg-neutral-900 transition-all"
-                                                  style={{
-                                                    width: `${Math.round((groupChecked / group.permissions.length) * 100)}%`,
-                                                  }}
-                                                />
-                                              </div>
-                                            </div>
-
-                                            <label className="flex cursor-pointer items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium text-neutral-700">
-                                              <input
-                                                type="checkbox"
-                                                checked={groupAllChecked}
-                                                onChange={(e) => {
-                                                  setEditBranchPermissions(
-                                                    (prev) => {
-                                                      const current =
-                                                        prev[branch.id] ||
-                                                        defaultBranchPermission(
-                                                          branch.id,
-                                                        );
-                                                      const next: BranchPermission =
-                                                        {
-                                                          ...current,
-                                                          branchId: branch.id,
-                                                        };
-
-                                                      group.permissions.forEach(
-                                                        (permission) => {
-                                                          if (
-                                                            getLockedReason(
-                                                              editRoleIds,
-                                                              permission.key,
-                                                            )
-                                                          )
-                                                            return;
-                                                          Object.assign(
-                                                            next,
-                                                            applySmartDependencies(
-                                                              next,
-                                                              permission.key,
-                                                              e.target.checked,
-                                                            ),
-                                                          );
-                                                        },
-                                                      );
-
-                                                      return {
-                                                        ...prev,
-                                                        [branch.id]: next,
-                                                      };
-                                                    },
-                                                  );
-                                                }}
-                                              />
-                                              Cả nhóm
-                                            </label>
-                                          </div>
-
-                                          <div className="mt-3 grid gap-2 md:grid-cols-2">
-                                            {group.permissions.map(
-                                              (permission) => {
-                                                const lockedReason =
-                                                  getLockedReason(
-                                                    editRoleIds,
-                                                    permission.key,
-                                                  );
-                                                const checked = Boolean(
-                                                  row[permission.key],
-                                                );
-
-                                                return (
-                                                  <label
-                                                    key={permission.key}
-                                                    title={
-                                                      lockedReason ||
-                                                      permission.hint ||
-                                                      ""
-                                                    }
-                                                    className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm ${
-                                                      lockedReason
-                                                        ? "border-neutral-200 bg-neutral-50 text-neutral-400"
-                                                        : checked
-                                                          ? "border-blue-200 bg-blue-50 text-neutral-900"
-                                                          : "border-neutral-200 bg-white text-neutral-700"
-                                                    }`}
-                                                  >
-                                                    <span>
-                                                      {permission.label}
-                                                    </span>
-                                                    <input
-                                                      type="checkbox"
-                                                      checked={checked}
-                                                      disabled={Boolean(
-                                                        lockedReason,
-                                                      )}
-                                                      onChange={() =>
-                                                        toggleEditBranchPermission(
-                                                          branch.id,
-                                                          permission.key,
-                                                        )
-                                                      }
-                                                    />
-                                                  </label>
-                                                );
-                                              },
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            <Button
-                              variant="primary"
-                              onClick={saveEmployeeRoleAssignment}
-                              disabled={!hasUnsavedPermissionChanges}
-                            >
-                              Lưu thay đổi
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              onClick={() => setEditingEmployeeId(null)}
-                            >
-                              Hủy
-                            </Button>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {resetPasswordForId === employee.id ? (
-                        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                          <input
-                            type="password"
-                            value={newPassword}
-                            onChange={(e) => setNewPassword(e.target.value)}
-                            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                            placeholder="Mật khẩu mới"
-                          />
-                          <Button
-                            variant="primary"
-                            onClick={() => changePassword(employee.id)}
-                          >
-                            Lưu mật khẩu
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              setResetPasswordForId(null);
-                              setNewPassword("");
-                            }}
-                          >
-                            Hủy
-                          </Button>
-                        </div>
-                      ) : null}
-                      {secondPasswordForId === employee.id ? (
-                        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                          <input
-                            type="text"
-                            name="staff-security-pin"
-                            autoComplete="off"
-                            data-lpignore="true"
-                            data-1p-ignore="true"
-                            inputMode="numeric"
-                            maxLength={6}
-                            value={secondPassword}
-                            onChange={(e) => {
-                              const value = e.target.value
-                                .replace(/\D/g, "")
-                                .slice(0, 6);
-                              setSecondPassword(value);
-                            }}
-                            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                            placeholder="PIN bảo mật 6 số"
-                          />
-
-                          <Button
-                            variant="primary"
-                            onClick={async () => {
-                              if (!/^\d{6}$/.test(secondPassword)) {
-                                setMessage("PIN phải gồm đúng 6 số.");
-                                return;
-                              }
-
-                              if (
-                                [
-                                  "000000",
-                                  "111111",
-                                  "123456",
-                                  "654321",
-                                ].includes(secondPassword)
-                              ) {
-                                setMessage("PIN quá dễ đoán, hãy đặt mã khác.");
-                                return;
-                              }
-
-                              await apiJson(
-                                `/staff/${employee.id}/second-password`,
-                                {
-                                  method: "PATCH",
-                                  body: JSON.stringify({ secondPassword }),
-                                },
-                              );
-
-                              setSecondPassword("");
-                              setSecondPasswordForId(null);
-                              setMessage("Đã set PIN bảo mật cho nhân viên.");
-                            }}
-                          >
-                            Lưu PIN
-                          </Button>
-
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              setSecondPasswordForId(null);
-                              setSecondPassword("");
-                            }}
-                          >
-                            Hủy
-                          </Button>
-                        </div>
-                      ) : null}
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => startEditEmployee(employee)}
-                        >
-                          Sửa nhân viên
-                        </Button>
-
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setResetPasswordForId(employee.id);
-                            setNewPassword("");
-                          }}
-                        >
-                          Đổi mật khẩu
-                        </Button>
-
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setSecondPasswordForId(employee.id);
-                            setSecondPassword("");
-                          }}
-                        >
-                          Đặt/Reset PIN
-                        </Button>
-
-                        <Button
-                          variant="secondary"
-                          onClick={() => toggleEmployee(employee.id)}
-                        >
-                          {employee.status === "ACTIVE"
-                            ? "Cho nghỉ"
-                            : "Kích hoạt lại"}
-                        </Button>
+                          {count} quyền
+                        </span>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ))
-            )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </Panel>
 
-        <Panel className="p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-xl font-semibold text-neutral-900">
-                Danh sách quyền hệ thống
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Đây là từ điển quyền cố định. Tên quyền bên phải trùng 100% với
-                quyền đang cấp theo từng chi nhánh bên trái.
-              </p>
+        <div className="space-y-6">
+          <Panel className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-2xl font-semibold text-neutral-900">
+                    Role Control Center: {selectedRole.name}
+                  </h3>
+                  <Badge tone="blue">{scopeBadge(selectedRole.scope)}</Badge>
+                  <Badge tone="amber">{selectedRole.note}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-neutral-500">
+                  Tick quyền tại đây. Danh sách nhân viên dùng role này nằm ngay
+                  bên dưới để kiểm tra nhanh.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={resetRoleTemplates}>
+                  Reset mẫu
+                </Button>
+                <Button
+                  onClick={saveRoleTemplates}
+                  disabled={!roleTemplateDirty}
+                  isLoading={savingRoleTemplates}
+                  loadingText="Đang lưu..."
+                >
+                  {roleTemplateDirty ? "Lưu mẫu quyền" : "Đã lưu mẫu"}
+                </Button>
+              </div>
             </div>
-            <Badge tone="blue">Permission dictionary</Badge>
-          </div>
 
-          <div className="mt-4 space-y-4">
-            {(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map(
-              (key) => {
-                const meta = permissionGroupMeta[key];
-                const currentPermissions = selectedRole.permissions[key] || [];
-                const allChecked = groupHasAllPermissions(selectedRole, key);
-                return (
-                  <details
-                    key={key}
-                    open
-                    className="group rounded-3xl border border-neutral-200 bg-white px-4 py-4"
-                  >
-                    <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-lg font-medium text-neutral-900">
-                            {meta.title}
-                          </span>
-                          <Badge
-                            tone={currentPermissions.length ? "blue" : "gray"}
-                          >
-                            {currentPermissions.length
-                              ? `${currentPermissions.length} quyền`
-                              : "Không có"}
-                          </Badge>
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <div className="rounded-3xl border border-neutral-200 p-4">
+                <p className="text-sm text-neutral-500">Đang được gán</p>
+                <p className="mt-3 text-4xl font-semibold tracking-tight text-neutral-900">
+                  {roleEmployees.length}
+                </p>
+              </div>
+              <div className="rounded-3xl border border-neutral-200 p-4">
+                <p className="text-sm text-neutral-500">Tổng quyền</p>
+                <p className="mt-3 text-4xl font-semibold tracking-tight text-neutral-900">
+                  {getRolePermissionCount(selectedRole)}
+                </p>
+              </div>
+              <div className="rounded-3xl border border-neutral-200 p-4">
+                <p className="text-sm text-neutral-500">Cập nhật cuối</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-neutral-900">
+                  {selectedRole.updatedAt}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map(
+                (key) => {
+                  const meta = permissionGroupMeta[key];
+                  const currentPermissions =
+                    selectedRole.permissions[key] || [];
+                  const allChecked = groupHasAllPermissions(selectedRole, key);
+                  return (
+                    <div
+                      key={key}
+                      className="rounded-3xl border border-neutral-200 bg-white p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-lg font-semibold text-neutral-900">
+                              {meta.title}
+                            </h4>
+                            <Badge
+                              tone={
+                                currentPermissions.length ? "green" : "gray"
+                              }
+                            >
+                              {currentPermissions.length}/
+                              {meta.allPermissions.length}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-sm text-neutral-500">
+                            {meta.desc}
+                          </p>
+                          <p className="mt-2 text-xs italic text-neutral-500">
+                            {groupPermissionSummary(selectedRole, key)}
+                          </p>
                         </div>
-                        <p className="mt-2 text-sm text-neutral-500">
-                          {meta.desc}
-                        </p>
-                        <p className="mt-3 text-sm italic text-neutral-600">
-                          {groupPermissionSummary(selectedRole, key)}
-                        </p>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-medium text-neutral-700">
+                          <input
+                            type="checkbox"
+                            checked={allChecked}
+                            onChange={(e) =>
+                              togglePermissionGroup(
+                                selectedRole.id,
+                                key,
+                                e.target.checked,
+                              )
+                            }
+                          />
+                          Cả nhóm
+                        </label>
                       </div>
-                      <span className="mt-1 text-neutral-400 transition group-open:rotate-90">
-                        ›
-                      </span>
-                    </summary>
-
-                    <div className="mt-4 border-t border-neutral-200 pt-4">
-                      <label className="mb-4 flex items-center gap-3 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-medium text-neutral-800">
-                        <input
-                          type="checkbox"
-                          checked={allChecked}
-                          disabled={false}
-                          onChange={(e) =>
-                            togglePermissionGroup(
-                              selectedRole.id,
-                              key,
-                              e.target.checked,
-                            )
-                          }
-                        />
-                        Tick toàn bộ nhóm {meta.title}
-                      </label>
-
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
                         {meta.allPermissions.map((permissionName) => {
                           const checked =
                             currentPermissions.includes(permissionName);
-
                           return (
                             <label
                               key={permissionName}
-                              className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm border-neutral-200 text-neutral-700`}
+                              className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm transition ${checked ? "border-blue-200 bg-blue-50 text-neutral-900" : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"}`}
                             >
+                              <span>{permissionName}</span>
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                disabled={false}
                                 onChange={(e) =>
                                   updateRolePermission(
                                     selectedRole.id,
@@ -2339,22 +1921,245 @@ export default function PermissionsPageClient() {
                                   )
                                 }
                               />
-                              <span
-                                className={checked ? "text-neutral-900" : ""}
-                              >
-                                {permissionName}
-                              </span>
                             </label>
                           );
                         })}
                       </div>
                     </div>
-                  </details>
-                );
-              },
-            )}
-          </div>
-        </Panel>
+                  );
+                },
+              )}
+            </div>
+          </Panel>
+
+          <Panel className="p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-semibold text-neutral-900">
+                  Nhân viên đang dùng role này
+                </h3>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Nằm ngay dưới mẫu quyền để dễ kiểm tra role này đang áp cho
+                  ai.
+                </p>
+              </div>
+              <Badge tone="blue">{roleEmployees.length} user</Badge>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {loadingEmployees ? (
+                <p className="text-sm text-neutral-500">Đang tải nhân sự...</p>
+              ) : roleEmployees.length === 0 ? (
+                <p className="text-sm text-neutral-500">
+                  Chưa có user cho role này.
+                </p>
+              ) : (
+                roleEmployees.map((employee) => (
+                  <div
+                    key={employee.id}
+                    className="rounded-3xl border border-neutral-200 px-5 py-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-lg font-medium text-neutral-900">
+                            {employee.name}
+                          </span>
+                          <Badge
+                            tone={
+                              employee.status === "ACTIVE" ? "green" : "gray"
+                            }
+                          >
+                            {employee.status === "ACTIVE"
+                              ? "Đang làm"
+                              : "Đã nghỉ"}
+                          </Badge>
+                          <Badge tone="gray">{employee.code}</Badge>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(employee.roles.length
+                            ? employee.roles
+                            : [employee.roleId]
+                          ).map((roleId) => (
+                            <Badge key={roleId} tone="blue">
+                              {roleLabel(roles, roleId)}
+                            </Badge>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-sm text-neutral-500">
+                          Chi nhánh chính: {employee.branch}
+                        </p>
+                        <div className="mt-1 grid gap-1 text-sm text-neutral-400 md:grid-cols-2">
+                          <p>
+                            Lần đăng nhập cuối:{" "}
+                            {formatLastLogin(employee.lastLoginAt)}
+                          </p>
+                          <p>Email: {employee.email || "Chưa có"}</p>
+                          <p>SĐT: {employee.phone || "Chưa có"}</p>
+                          <p>Địa chỉ: {employee.address || "Chưa có"}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => openProfileEditor(employee)}
+                        >
+                          Sửa thông tin
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => openPermissionEditor(employee)}
+                        >
+                          Gán role/chi nhánh
+                        </Button>
+                      </div>
+                    </div>
+
+                    {renderProfileEditor(employee)}
+                    {renderPermissionEditor(employee)}
+
+                    {resetPasswordForId === employee.id ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                        <input
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                          placeholder="Mật khẩu mới"
+                        />
+                        <Button
+                          onClick={() => changePassword(employee.id)}
+                          isLoading={savingPasswordForId === employee.id}
+                          loadingText="Đang lưu..."
+                        >
+                          Lưu mật khẩu
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setResetPasswordForId(null);
+                            setNewPassword("");
+                          }}
+                        >
+                          Hủy
+                        </Button>
+                      </div>
+                    ) : null}
+
+                    {secondPasswordForId === employee.id ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                        <input
+                          type="text"
+                          name="staff-security-pin"
+                          autoComplete="off"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
+                          inputMode="numeric"
+                          maxLength={6}
+                          value={secondPassword}
+                          onChange={(e) =>
+                            setSecondPassword(
+                              e.target.value.replace(/\D/g, "").slice(0, 6),
+                            )
+                          }
+                          className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                          placeholder="PIN bảo mật 6 số"
+                        />
+                        <Button
+                          isLoading={savingPinForId === employee.id}
+                          loadingText="Đang lưu..."
+                          onClick={async () => {
+                            if (savingPinForId) return;
+                            if (!/^\d{6}$/.test(secondPassword)) {
+                              setMessage("PIN phải gồm đúng 6 số.");
+                              return;
+                            }
+                            if (
+                              ["000000", "111111", "123456", "654321"].includes(
+                                secondPassword,
+                              )
+                            ) {
+                              setMessage("PIN quá dễ đoán, hãy đặt mã khác.");
+                              return;
+                            }
+                            try {
+                              setSavingPinForId(employee.id);
+                              setMessage("Đang lưu PIN bảo mật...");
+                              await apiJson(
+                                `/staff/${employee.id}/second-password`,
+                                {
+                                  method: "PATCH",
+                                  body: JSON.stringify({ secondPassword }),
+                                },
+                              );
+                              setSecondPassword("");
+                              setSecondPasswordForId(null);
+                              setMessage("Đã set PIN bảo mật cho nhân viên.");
+                            } catch (err) {
+                              setMessage(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Lưu PIN bảo mật thất bại.",
+                              );
+                            } finally {
+                              setSavingPinForId(null);
+                            }
+                          }}
+                        >
+                          Lưu PIN
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setSecondPasswordForId(null);
+                            setSecondPassword("");
+                          }}
+                        >
+                          Hủy
+                        </Button>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setResetPasswordForId(employee.id);
+                          setNewPassword("");
+                        }}
+                      >
+                        Đổi mật khẩu
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setSecondPasswordForId(employee.id);
+                          setSecondPassword("");
+                        }}
+                      >
+                        Đặt/Reset PIN
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => toggleEmployee(employee.id)}
+                        isLoading={togglingEmployeeForId === employee.id}
+                        loadingText={
+                          employee.status === "ACTIVE"
+                            ? "Đang cho nghỉ..."
+                            : "Đang kích hoạt..."
+                        }
+                      >
+                        {employee.status === "ACTIVE"
+                          ? "Cho nghỉ"
+                          : "Kích hoạt lại"}
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Panel>
+        </div>
       </div>
     </div>
   );

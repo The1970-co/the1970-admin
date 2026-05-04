@@ -5,11 +5,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import WorkspaceTabs from "@/components/admin/layout/WorkspaceTabs";
-import {
-  getRoleLabel,
-  hasPermission,
-  type PermissionKey,
-} from "@/lib/authz";
+import BranchTransferNotifications from "@/components/admin/BranchTransferNotifications";
+import { getRoleLabel, hasPermission, type PermissionKey } from "@/lib/authz";
 import {
   clearCurrentUserFromStorage,
   getCurrentUserFromStorage,
@@ -49,8 +46,16 @@ const MENU: MenuItem[] = [
       { href: "/products", label: "Danh sách", permission: "products.view" },
       { href: "/promotions", label: "Khuyến mại", permission: "products.view" },
       // Danh mục / nhà cung cấp là cấu hình dữ liệu gốc, chỉ admin/owner thấy.
-      { href: "/control/product-categories", label: "Danh mục", permission: "system.manage" },
-      { href: "/control/suppliers", label: "Nhà cung cấp", permission: "system.manage" },
+      {
+        href: "/control/product-categories",
+        label: "Danh mục",
+        permission: "system.manage",
+      },
+      {
+        href: "/control/suppliers",
+        label: "Nhà cung cấp",
+        permission: "system.manage",
+      },
     ],
   },
   {
@@ -59,12 +64,28 @@ const MENU: MenuItem[] = [
     children: [
       // Kho hàng tổng / lịch sử kho là màn nhạy cảm, chỉ admin/owner thấy.
       { href: "/inventory", label: "Kho hàng", permission: "system.manage" },
-      { href: "/inventory-logs", label: "Lịch sử kho", permission: "system.manage" },
+      {
+        href: "/inventory-logs",
+        label: "Lịch sử kho",
+        permission: "system.manage",
+      },
       // Phiếu nhập và phiếu chuyển kho chuyển về đúng nhóm Kho.
-      { href: "/control/purchase-receipts", label: "Phiếu nhập", permission: "inventory.view" },
-      { href: "/control/stock-transfers", label: "Phiếu chuyển kho", permission: "inventory.view" },
+      {
+        href: "/control/purchase-receipts",
+        label: "Phiếu nhập",
+        permission: "inventory.view",
+      },
+      {
+        href: "/control/stock-transfers",
+        label: "Phiếu chuyển kho",
+        permission: "inventory.view",
+      },
       { href: "/stocktake", label: "Kiểm kho", permission: "stocktake.view" },
-      { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: "system.manage" },
+      {
+        href: "/control/warehouse-map",
+        label: "Sơ đồ kho 3D",
+        permission: "system.manage",
+      },
     ],
   },
   {
@@ -98,13 +119,25 @@ const MENU: MenuItem[] = [
     label: "Vận hành nâng cao",
     permission: "autopilot.view",
     children: [
-      { href: "/control/autopilot", label: "Autopilot", permission: "autopilot.view" },
-      { href: "/control/ai-content", label: "AI Content", permission: "ai_content.view" },
+      {
+        href: "/control/autopilot",
+        label: "Autopilot",
+        permission: "autopilot.view",
+      },
+      {
+        href: "/control/ai-content",
+        label: "AI Content",
+        permission: "ai_content.view",
+      },
     ],
   },
   { href: "/permissions", label: "Phân quyền", permission: "permissions.view" },
   { href: "/settings", label: "Cấu hình", permission: "system.manage" },
-  { href: "/control/customers", label: "Khách hàng", permission: "customers.view" },
+  {
+    href: "/control/customers",
+    label: "Khách hàng",
+    permission: "customers.view",
+  },
 ];
 
 type BranchPermission = {
@@ -114,17 +147,110 @@ type BranchPermission = {
   canViewOwnOrders?: boolean;
   canViewBranchOrders?: boolean;
   canCreateOrder?: boolean;
+  canApproveOrder?: boolean;
+  canCancelOrder?: boolean;
+  canHandleReturn?: boolean;
   canStocktake?: boolean;
   canTransferStock?: boolean;
   canReceiveStock?: boolean;
   canViewStock?: boolean;
+  canManageStock?: boolean;
+  canViewCustomer?: boolean;
+  canEditCustomer?: boolean;
+};
+
+type BranchRole = {
+  branchId?: string | null;
+  roleCode?: string | null;
+};
+
+const ROLE_PERMISSION_KEYS: Record<string, Array<keyof BranchPermission>> = {
+  owner: [
+    "canView",
+    "canSell",
+    "canViewOwnOrders",
+    "canViewBranchOrders",
+    "canCreateOrder",
+    "canApproveOrder",
+    "canCancelOrder",
+    "canHandleReturn",
+    "canStocktake",
+    "canTransferStock",
+    "canReceiveStock",
+    "canViewStock",
+    "canManageStock",
+    "canViewCustomer",
+    "canEditCustomer",
+  ],
+  admin: [
+    "canView",
+    "canSell",
+    "canViewOwnOrders",
+    "canViewBranchOrders",
+    "canCreateOrder",
+    "canApproveOrder",
+    "canCancelOrder",
+    "canHandleReturn",
+    "canStocktake",
+    "canTransferStock",
+    "canReceiveStock",
+    "canViewStock",
+    "canManageStock",
+    "canViewCustomer",
+    "canEditCustomer",
+  ],
+  "branch-manager": [
+    "canView",
+    "canSell",
+    "canViewOwnOrders",
+    "canViewBranchOrders",
+    "canCreateOrder",
+    "canApproveOrder",
+    "canCancelOrder",
+    "canHandleReturn",
+    "canStocktake",
+    "canTransferStock",
+    "canReceiveStock",
+    "canViewStock",
+    "canManageStock",
+    "canViewCustomer",
+    "canEditCustomer",
+  ],
+  fulltime: [
+    "canView",
+    "canSell",
+    "canViewOwnOrders",
+    "canViewBranchOrders",
+    "canCreateOrder",
+    "canHandleReturn",
+    "canStocktake",
+    "canTransferStock",
+    "canReceiveStock",
+    "canViewStock",
+    "canViewCustomer",
+  ],
+  "retail-staff": [
+    "canView",
+    "canSell",
+    "canViewOwnOrders",
+    "canCreateOrder",
+    "canHandleReturn",
+    "canViewStock",
+    "canViewCustomer",
+  ],
+  "stock-auditor": ["canView", "canViewStock", "canStocktake"],
+  "stock-staff": [
+    "canView",
+    "canViewStock",
+    "canManageStock",
+    "canStocktake",
+    "canTransferStock",
+    "canReceiveStock",
+  ],
 };
 
 function userRoles(user: any) {
-  return [
-    ...(Array.isArray(user?.roles) ? user.roles : []),
-    user?.role,
-  ]
+  return [...(Array.isArray(user?.roles) ? user.roles : []), user?.role]
     .map((role) => String(role || "").toLowerCase())
     .filter(Boolean);
 }
@@ -134,32 +260,114 @@ function isOwnerOrAdmin(user: any) {
   return roles.includes("owner") || roles.includes("admin");
 }
 
-function hasAnyBranchPermission(user: any, key: keyof BranchPermission) {
+function hasAnyBranchPermission(
+  user: any,
+  keys: Array<keyof BranchPermission>,
+) {
   if (isOwnerOrAdmin(user)) return true;
-  const rows = Array.isArray(user?.branchPermissions)
+
+  const permissionRows = Array.isArray(user?.branchPermissions)
     ? user.branchPermissions
     : [];
-  return rows.some((row: BranchPermission) => Boolean(row?.[key]));
+
+  const hasLegacyPermission = permissionRows.some((row: BranchPermission) =>
+    keys.some((key) => Boolean(row?.[key])),
+  );
+
+  if (hasLegacyPermission) return true;
+
+  const roleRows = Array.isArray(user?.branchRoles) ? user.branchRoles : [];
+
+  return roleRows.some((row: BranchRole) => {
+    const roleCode = String(row?.roleCode || "").toLowerCase();
+    const rolePermissions = ROLE_PERMISSION_KEYS[roleCode] || [];
+    return keys.some((key) => rolePermissions.includes(key));
+  });
+}
+
+function canSeePermission(user: any, permission: PermissionKey) {
+  if (!user?.role) return false;
+  if (isOwnerOrAdmin(user)) return true;
+
+  // Các nhóm quản trị / tài chính / cấu hình chỉ owner-admin thấy.
+  if (permission === "system.manage" || permission === "reports.view") {
+    return false;
+  }
+
+  if (permission === "dashboard.view") {
+    return hasPermission(user.role, permission);
+  }
+
+  if (permission === "products.view") {
+    return hasAnyBranchPermission(user, ["canView"]);
+  }
+
+  if (permission === "orders.view") {
+    return hasAnyBranchPermission(user, [
+      "canSell",
+      "canCreateOrder",
+      "canViewOwnOrders",
+      "canViewBranchOrders",
+      "canHandleReturn",
+    ]);
+  }
+
+  if (permission === "orders.create") {
+    return hasAnyBranchPermission(user, ["canSell", "canCreateOrder"]);
+  }
+
+  if (permission === "inventory.view") {
+    return hasAnyBranchPermission(user, [
+      "canViewStock",
+      "canManageStock",
+      "canStocktake",
+      "canTransferStock",
+      "canReceiveStock",
+    ]);
+  }
+
+  if (permission === "stocktake.view") {
+    return hasAnyBranchPermission(user, ["canStocktake"]);
+  }
+
+  if (permission === "customers.view") {
+    return false;
+  }
+
+  // Các quyền cũ vẫn fallback theo role để không phá trang admin khác.
+  return hasPermission(user.role, permission);
 }
 
 function canSeeMenuItem(user: any, item: MenuItem) {
-  if (!hasPermission(user.role, item.permission)) return false;
-
-  // Nhân viên bán lẻ không cần thấy nghiệp vụ nhập/chuyển kho.
-  // Chỉ hiện khi được cấp quyền tương ứng theo chi nhánh.
+  // Route cụ thể đọc trực tiếp branch permission để menu phản ánh đúng phân quyền mới.
   if (item.href === "/control/purchase-receipts") {
-    return hasAnyBranchPermission(user, "canReceiveStock");
+    return hasAnyBranchPermission(user, ["canReceiveStock"]);
   }
 
   if (item.href === "/control/stock-transfers") {
-    return hasAnyBranchPermission(user, "canTransferStock");
+    return hasAnyBranchPermission(user, ["canTransferStock"]);
   }
 
   if (item.href === "/stocktake") {
-    return hasAnyBranchPermission(user, "canStocktake");
+    return hasAnyBranchPermission(user, ["canStocktake"]);
   }
 
-  return true;
+  // Kho hàng tổng / lịch sử kho / sơ đồ kho / tài chính / cấu hình chỉ admin-owner.
+  if (
+    item.href === "/inventory" ||
+    item.href === "/inventory-logs" ||
+    item.href === "/control/warehouse-map" ||
+    item.href?.startsWith("/finance") ||
+    item.href === "/control/product-categories" ||
+    item.href === "/control/suppliers" ||
+    item.href === "/settings" ||
+    item.href === "/permissions" ||
+    item.href === "/control/customers"
+  ) {
+    return isOwnerOrAdmin(user);
+  }
+
+  return canSeePermission(user, item.permission);
 }
 
 function getPasswordScore(password: string) {
@@ -200,11 +408,45 @@ export default function AdminShell({
   const pathname = usePathname();
 
   useEffect(() => {
-    const user = getCurrentUserFromStorage();
-    setCurrentUser(user);
+    const storedUser = getCurrentUserFromStorage();
+    setCurrentUser(storedUser);
+
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+    fetch(`${API_BASE}/auth/me`, {
+      credentials: "include",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json().catch(() => null);
+      })
+      .then((data) => {
+        const nextUser = data?.user || data;
+        if (!nextUser) return;
+
+        setCurrentUser(nextUser);
+
+        try {
+          localStorage.setItem("currentUser", JSON.stringify(nextUser));
+          localStorage.setItem(
+            "the1970_current_user",
+            JSON.stringify(nextUser),
+          );
+        } catch {
+          // ignore storage sync error
+        }
+      })
+      .catch(() => {
+        // dùng user trong localStorage nếu auth/me lỗi
+      });
   }, []);
 
-  const passwordScore = useMemo(() => getPasswordScore(newPassword), [newPassword]);
+  const passwordScore = useMemo(
+    () => getPasswordScore(newPassword),
+    [newPassword],
+  );
   const passwordValid = passwordScore === 5;
   const passwordMatch = newPassword && newPassword === confirmPassword;
 
@@ -216,7 +458,7 @@ export default function AdminShell({
 
       if (item.children?.length) {
         const visibleChildren = item.children.filter((child) =>
-          canSeeMenuItem(currentUser, child)
+          canSeeMenuItem(currentUser, child),
         );
 
         if (!visibleChildren.length) return null;
@@ -275,7 +517,7 @@ export default function AdminShell({
 
     if (!passwordValid) {
       setPasswordError(
-        "Mật khẩu mới phải có ít nhất 8 ký tự, gồm chữ hoa, chữ thường, số và ký tự đặc biệt."
+        "Mật khẩu mới phải có ít nhất 8 ký tự, gồm chữ hoa, chữ thường, số và ký tự đặc biệt.",
       );
       return;
     }
@@ -319,7 +561,7 @@ export default function AdminShell({
       }, 700);
     } catch (err) {
       setPasswordError(
-        err instanceof Error ? err.message : "Đổi mật khẩu thất bại."
+        err instanceof Error ? err.message : "Đổi mật khẩu thất bại.",
       );
     } finally {
       setPasswordSaving(false);
@@ -349,16 +591,17 @@ export default function AdminShell({
             {visibleMenu.map((item) => {
               if (item.children?.length) {
                 const parentActive = item.children.some(
-                  (child) => pathname === child.href
+                  (child) => pathname === child.href,
                 );
 
                 return (
                   <div
                     key={item.label}
-                    className={`rounded-[26px] border px-3 py-3 transition ${parentActive
-                      ? "border-neutral-300 bg-neutral-50"
-                      : "border-neutral-200 bg-white"
-                      }`}
+                    className={`rounded-[26px] border px-3 py-3 transition ${
+                      parentActive
+                        ? "border-neutral-300 bg-neutral-50"
+                        : "border-neutral-200 bg-white"
+                    }`}
                   >
                     <div className="px-2 pb-2 text-sm font-semibold text-neutral-950">
                       {item.label}
@@ -372,10 +615,11 @@ export default function AdminShell({
                           <Link
                             key={child.href}
                             href={child.href!}
-                            className={`block rounded-2xl px-3 py-2.5 text-sm transition ${isActive
-                              ? "bg-neutral-900 font-medium text-white shadow-sm"
-                              : "text-neutral-700 hover:bg-neutral-100"
-                              }`}
+                            className={`block rounded-2xl px-3 py-2.5 text-sm transition ${
+                              isActive
+                                ? "bg-neutral-900 font-medium text-white shadow-sm"
+                                : "text-neutral-700 hover:bg-neutral-100"
+                            }`}
                           >
                             {child.label}
                           </Link>
@@ -392,10 +636,11 @@ export default function AdminShell({
                 <Link
                   key={item.href}
                   href={item.href!}
-                  className={`block rounded-2xl px-4 py-3 text-sm transition ${isActive
-                    ? "bg-neutral-900 font-medium text-white shadow-sm"
-                    : "text-neutral-800 hover:bg-neutral-100"
-                    }`}
+                  className={`block rounded-2xl px-4 py-3 text-sm transition ${
+                    isActive
+                      ? "bg-neutral-900 font-medium text-white shadow-sm"
+                      : "text-neutral-800 hover:bg-neutral-100"
+                  }`}
                 >
                   {item.label}
                 </Link>
@@ -476,6 +721,8 @@ export default function AdminShell({
         </div>
       </div>
 
+      <BranchTransferNotifications />
+
       {openChangePassword ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-[460px] rounded-[28px] bg-white p-6 shadow-2xl">
@@ -546,14 +793,15 @@ export default function AdminShell({
                     {[1, 2, 3, 4, 5].map((item) => (
                       <div
                         key={item}
-                        className={`h-2 flex-1 rounded-full ${passwordScore >= item
-                          ? passwordScore <= 2
-                            ? "bg-red-500"
-                            : passwordScore <= 4
-                              ? "bg-amber-500"
-                              : "bg-emerald-500"
-                          : "bg-neutral-200"
-                          }`}
+                        className={`h-2 flex-1 rounded-full ${
+                          passwordScore >= item
+                            ? passwordScore <= 2
+                              ? "bg-red-500"
+                              : passwordScore <= 4
+                                ? "bg-amber-500"
+                                : "bg-emerald-500"
+                            : "bg-neutral-200"
+                        }`}
                       />
                     ))}
                   </div>
@@ -562,7 +810,8 @@ export default function AdminShell({
                     <span className="font-medium text-neutral-800">
                       {getPasswordLabel(passwordScore)}
                     </span>
-                    . Yêu cầu: 8 ký tự, chữ hoa, chữ thường, số và ký tự đặc biệt.
+                    . Yêu cầu: 8 ký tự, chữ hoa, chữ thường, số và ký tự đặc
+                    biệt.
                   </p>
                 </div>
               </div>
@@ -590,8 +839,9 @@ export default function AdminShell({
 
                 {confirmPassword ? (
                   <p
-                    className={`mt-2 text-xs ${passwordMatch ? "text-emerald-600" : "text-red-600"
-                      }`}
+                    className={`mt-2 text-xs ${
+                      passwordMatch ? "text-emerald-600" : "text-red-600"
+                    }`}
                   >
                     {passwordMatch
                       ? "Mật khẩu nhập lại khớp."
@@ -622,7 +872,12 @@ export default function AdminShell({
               </button>
               <button
                 onClick={handleChangePassword}
-                disabled={passwordSaving || !oldPassword || !passwordValid || !passwordMatch}
+                disabled={
+                  passwordSaving ||
+                  !oldPassword ||
+                  !passwordValid ||
+                  !passwordMatch
+                }
                 className="rounded-2xl bg-neutral-900 px-5 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {passwordSaving ? "Đang lưu..." : "Lưu mật khẩu"}

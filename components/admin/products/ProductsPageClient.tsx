@@ -532,6 +532,91 @@ function downloadProductTemplate() {
   XLSX.writeFile(wb, "products_import_template.xlsx");
 }
 
+function getBranchStockValue(variant: ProductItem["variants"][number], branchId: string) {
+  return Number((variant as any).branchStocks?.[branchId] || 0);
+}
+
+function exportProductsExcel(
+  exportProducts: ProductItem[],
+  exportBranches: BranchItem[]
+) {
+  const rows: Record<string, any>[] = [];
+
+  for (const product of exportProducts) {
+    const variants = product.variants || [];
+
+    if (!variants.length) {
+      rows.push({
+        "Tên sản phẩm": product.name || "",
+        "Mã sản phẩm": product.slug || "",
+        "Danh mục": product.category || "",
+        "Brand": product.brand || "",
+        "Khối lượng": Number(product.weight || 0),
+        "Ảnh": product.imageUrl || "",
+        "SKU": "",
+        "Màu": "",
+        "Size": "",
+        "Giá bán": 0,
+        "Giá nhập": 0,
+        "Tồn tổng": 0,
+        "Giá trị tồn": 0,
+        "Trạng thái sản phẩm": product.status || "DRAFT",
+        "Trạng thái SKU": "",
+      });
+      continue;
+    }
+
+    for (const variant of variants) {
+      const branchStockColumns = Object.fromEntries(
+        exportBranches.map((branch) => [
+          `Tồn ${branch.name}`,
+          getBranchStockValue(variant, branch.id),
+        ])
+      );
+
+      const totalStock = exportBranches.reduce(
+        (sum, branch) => sum + getBranchStockValue(variant, branch.id),
+        0
+      );
+
+      const price = Number(variant.price || 0);
+      const costPrice = Number((variant as any).costPrice || 0);
+
+      rows.push({
+        "Tên sản phẩm": product.name || "",
+        "Mã sản phẩm": product.slug || "",
+        "Danh mục": product.category || "",
+        "Brand": product.brand || "",
+        "Khối lượng": Number(product.weight || 0),
+        "Ảnh": product.imageUrl || "",
+        "SKU": variant.sku || "",
+        "Màu": variant.color || "",
+        "Size": variant.size || "",
+        "Giá bán": price,
+        "Giá nhập": costPrice,
+        ...branchStockColumns,
+        "Tồn tổng": totalStock,
+        "Giá trị tồn": totalStock * costPrice,
+        "Trạng thái sản phẩm": product.status || "DRAFT",
+        "Trạng thái SKU": (variant as any).status || "ACTIVE",
+      });
+    }
+  }
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "products");
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+
+  XLSX.writeFile(wb, `products_export_${yyyy}${mm}${dd}.xlsx`);
+
+  return rows.length;
+}
+
 export default function ProductsPageClient() {
   useScrollRestore("products-list");
 
@@ -1434,6 +1519,32 @@ export default function ProductsPageClient() {
     }
   };
 
+  const handleExportProductsExcel = async () => {
+    try {
+      setActionMessage("Đang tạo file Excel sản phẩm...");
+
+      const exportLimit = Math.max(totalProducts, products.length, 1000);
+      const result = await (getProducts as any)({
+        page: 1,
+        limit: exportLimit,
+        q: query.trim(),
+        category: groupFilter,
+        status: statusFilter,
+        branchId: !isOwner && currentBranchId ? currentBranchId : undefined,
+      });
+
+      const exportSource = Array.isArray(result) ? result : result?.data || [];
+      const branchesForExport = visibleBranches.length ? visibleBranches : branches;
+      const rowCount = exportProductsExcel(exportSource, branchesForExport);
+
+      setActionMessage(`Đã xuất Excel ${rowCount} dòng SKU theo bộ lọc hiện tại.`);
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Xuất Excel sản phẩm thất bại."
+      );
+    }
+  };
+
   return (
     <div className="space-y-6 p-6">
       <SectionTitle
@@ -1441,6 +1552,17 @@ export default function ProductsPageClient() {
         description="Xem nhanh catalog theo dạng bảng, ảnh lớn hơn để lướt nhanh và nhìn rõ tồn kho theo từng chi nhánh."
         action={
           <div className="flex flex-wrap gap-3">
+            {canImportProducts ? (
+              <Button
+                variant="secondary"
+                onClick={() => void handleExportProductsExcel()}
+                className="rounded-full"
+                disabled={loading || !products.length}
+              >
+                Xuất Excel
+              </Button>
+            ) : null}
+
             {canImportProducts ? (
               <Button
                 variant="secondary"

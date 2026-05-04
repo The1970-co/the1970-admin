@@ -99,17 +99,6 @@ type DraftItem = {
   qty: string;
 };
 
-type BranchNotification = {
-  id: string;
-  branchId: string;
-  branchName?: string | null;
-  title: string;
-  message: string;
-  transferId?: string | null;
-  transferCode?: string | null;
-  isRead: boolean;
-  createdAt: string;
-};
 
 function makeRowId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -233,7 +222,6 @@ export default function StockTransfersPageClient() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedTransfer, setSelectedTransfer] = useState<StockTransfer | null>(null);
 
-  const [notifications, setNotifications] = useState<BranchNotification[]>([]);
 
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
@@ -460,6 +448,49 @@ const lockedSourceBranchName = useMemo(() => {
     });
   }, [visibleRows, query]);
 
+  function renderTransferStatusBadge(transfer: StockTransfer) {
+    const fromName =
+      transfer.fromBranch?.name ||
+      transfer.fromBranchName ||
+      transfer.fromBranchId ||
+      "kho gửi";
+
+    const toName =
+      transfer.toBranch?.name ||
+      transfer.toBranchName ||
+      transfer.toBranchId ||
+      "kho nhận";
+
+    const isReceiverView =
+      !canManageAutoTransfer && transfer.toBranchId === currentBranchId;
+
+    if (transfer.status === "COMPLETED") {
+      return <Badge tone="green">Hoàn tất</Badge>;
+    }
+
+    if (transfer.status === "CANCELLED") {
+      return <Badge tone="red">Đã hủy</Badge>;
+    }
+
+    if (transfer.status === "DRAFT" || transfer.status === "PENDING") {
+      return isReceiverView ? (
+        <Badge tone="amber">Chờ {fromName} xác nhận</Badge>
+      ) : (
+        <Badge tone="amber">Nháp</Badge>
+      );
+    }
+
+    if (transfer.status === "CONFIRMED" || transfer.status === "IN_TRANSIT") {
+      return isReceiverView ? (
+        <Badge tone="blue">Chờ nhận hàng</Badge>
+      ) : (
+        <Badge tone="blue">Đã gửi / Chờ {toName} nhận</Badge>
+      );
+    }
+
+    return statusBadge(transfer.status);
+  }
+
 async function loadCurrentUser() {
   try {
     const token = localStorage.getItem("token");
@@ -543,25 +574,6 @@ async function loadCurrentUser() {
     } catch {}
   }
 
-async function loadNotifications() {
-  try {
-    if (!userBranchId) return; // 👈 thêm dòng này
-
-    const token = localStorage.getItem("token");
-    const res = await fetch(
-      `${API_BASE}/branch-notifications?branchId=${userBranchId}`,
-      {
-        cache: "no-store",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      }
-    );
-
-    if (!res.ok) return;
-
-    const data = await res.json();
-    setNotifications(Array.isArray(data) ? data : []);
-  } catch {}
-}
 
 useEffect(() => {
   void loadCurrentUser();
@@ -576,18 +588,6 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [canManageAutoTransfer]);
 
-useEffect(() => {
-  if (!userBranchId) return;
-
-  void loadNotifications();
-
-  const timer = window.setInterval(() => {
-    void loadNotifications();
-  }, 10000);
-
-  return () => window.clearInterval(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [userBranchId]);
 
 useEffect(() => {
   if (!lockedSourceBranchId) return;
@@ -706,7 +706,6 @@ useEffect(() => {
       await confirmStockTransfer(id);
       setNotice("Đã xác nhận chuyển. Phiếu đang chờ bên nhận xác nhận đủ để nhập/trừ kho.");
       await loadAll();
-      await loadNotifications();
 
       if (selectedTransfer?.id === id) {
         const detail = await getStockTransferDetail(id);
@@ -732,7 +731,6 @@ useEffect(() => {
       await completeStockTransfer(id);
       setNotice("Đã xác nhận nhận đủ. Hệ thống đã trừ kho chuyển và cộng kho nhận.");
       await loadAll();
-      await loadNotifications();
 
       if (selectedTransfer?.id === id) {
         const detail = await getStockTransferDetail(id);
@@ -837,21 +835,6 @@ useEffect(() => {
     }
   }
 
-  async function dismissNotification(id: string) {
-    setNotifications((prev) => prev.filter((item) => item.id !== id));
-
-    try {
-      const token = localStorage.getItem("token");
-      await fetch(`${API_BASE}/branch-notifications/mark-read`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ notificationId: id }),
-      });
-    } catch {}
-  }
 
   async function handlePreviewSuggestions() {
     if (!canManageAutoTransfer) return;
@@ -1040,52 +1023,6 @@ useEffect(() => {
 
   return (
     <div className="space-y-4 p-5">
-      <div className="fixed right-5 top-5 z-[60] w-[380px] max-w-[calc(100vw-24px)] space-y-3">
-        {notifications.map((item) => (
-          <div
-            key={item.id}
-            className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-neutral-900">{item.title}</p>
-                <p className="mt-1 text-xs text-neutral-500">
-                  {item.transferCode || ""} · {item.branchName || item.branchId}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void dismissNotification(item.id)}
-                className="text-neutral-400 hover:text-neutral-700"
-              >
-                ×
-              </button>
-            </div>
-
-            <p className="mt-3 text-sm leading-6 text-neutral-600">{item.message}</p>
-
-            <div className="mt-3 flex gap-2">
-              {item.transferId ? (
-                <button
-                  type="button"
-                  onClick={() => void openDetail(item.transferId!)}
-                  className="rounded-xl bg-neutral-900 px-3 py-2 text-xs font-medium text-white"
-                >
-                  Xem phiếu
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => void dismissNotification(item.id)}
-                className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700"
-              >
-                Đã hiểu
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[28px] font-semibold tracking-tight">Phiếu chuyển kho</h2>
@@ -1548,6 +1485,14 @@ useEffect(() => {
             const total =
               transfer.totalQty ??
               (transfer.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+            const canConfirmSending =
+              (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
+              (canManageAutoTransfer || transfer.fromBranchId === currentBranchId);
+
+            const canCancelTransfer =
+              (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
+              (canManageAutoTransfer || transfer.fromBranchId === currentBranchId);
+
             const canCompleteReceiving =
               transfer.status === "CONFIRMED" &&
               (canManageAutoTransfer || transfer.toBranchId === currentBranchId);
@@ -1568,7 +1513,7 @@ useEffect(() => {
                         />
                       ) : null}
                       <p className="text-sm font-semibold text-neutral-900">{transfer.transferCode}</p>
-                      {statusBadge(transfer.status)}
+                      {renderTransferStatusBadge(transfer)}
                       {transfer.sourceType === "AUTO" ? <Badge tone="blue">Tự động</Badge> : null}
                       {transfer.sourceType === "MANUAL" ? <Badge tone="gray">Thủ công</Badge> : null}
                       {transfer.sourceType === "REQUEST" ? <Badge tone="green">Yêu cầu</Badge> : null}
@@ -1611,23 +1556,24 @@ useEffect(() => {
                       </button>
                     ) : null}
 
-                    {transfer.status === "DRAFT" || transfer.status === "PENDING" ? (
-                      <>
-                        <button
-                          onClick={() => void handleConfirm(transfer.id)}
-                          disabled={confirmingId === transfer.id}
-                          className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700"
-                        >
-                          {confirmingId === transfer.id ? "Đang xác nhận..." : "Xác nhận chuyển"}
-                        </button>
-                        <button
-                          onClick={() => void handleCancel(transfer.id)}
-                          disabled={cancellingId === transfer.id}
-                          className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700"
-                        >
-                          {cancellingId === transfer.id ? "Đang hủy..." : "Hủy"}
-                        </button>
-                      </>
+                    {canConfirmSending ? (
+                      <button
+                        onClick={() => void handleConfirm(transfer.id)}
+                        disabled={confirmingId === transfer.id}
+                        className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700"
+                      >
+                        {confirmingId === transfer.id ? "Đang xác nhận..." : "Xác nhận chuyển"}
+                      </button>
+                    ) : null}
+
+                    {canCancelTransfer ? (
+                      <button
+                        onClick={() => void handleCancel(transfer.id)}
+                        disabled={cancellingId === transfer.id}
+                        className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700"
+                      >
+                        {cancellingId === transfer.id ? "Đang hủy..." : "Hủy"}
+                      </button>
                     ) : null}
 
                     {canCompleteReceiving ? (

@@ -461,12 +461,6 @@ const isAdmin = role === "admin" || role === "owner";
       return;
     }
 
-    const missingCost = items.find((item) => Number(item.unitCost || 0) <= 0);
-    if (missingCost) {
-      setError(`SKU ${missingCost.sku} chưa có giá nhập. Phải nhập giá trước khi lưu/thanh toán.`);
-      return;
-    }
-
     try {
       setSaving(true);
       setError(null);

@@ -100,7 +100,6 @@ type DashboardData = {
   floatingApproval: { count: string; title: string; subtitle: string };
 };
 
-
 type DashboardOverviewApi = {
   success?: boolean;
   branchId?: string;
@@ -186,7 +185,10 @@ function goToDashboardUrl(url?: string) {
   return true;
 }
 
-function buildDashboardFromOverview(base: DashboardData, overview: DashboardOverviewApi): DashboardData {
+function buildDashboardFromOverview(
+  base: DashboardData,
+  overview: DashboardOverviewApi,
+): DashboardData {
   const cards = overview.cards || {};
   const revenue = toNumber(cards.revenue);
   const totalOrders = toNumber(cards.totalOrders);
@@ -203,9 +205,18 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
   const productCount = toNumber(cards.productCount);
   const variantCount = toNumber(cards.variantCount);
 
-  const inventoryTone: Tone = outOfStockItems > 0 ? "critical" : lowStockItems > 0 ? "warning" : "safe";
-  const systemTone: Tone = inventoryTone === "critical" || cancelledOrders > 0 ? "critical" : inventoryTone;
-  const statusTitle = systemTone === "safe" ? "SYSTEM STATUS: SAFE" : systemTone === "critical" ? "SYSTEM STATUS: CRITICAL" : "SYSTEM STATUS: WARNING";
+  const inventoryTone: Tone =
+    outOfStockItems > 0 ? "critical" : lowStockItems > 0 ? "warning" : "safe";
+  const systemTone: Tone =
+    inventoryTone === "critical" || cancelledOrders > 0
+      ? "critical"
+      : inventoryTone;
+  const statusTitle =
+    systemTone === "safe"
+      ? "SYSTEM STATUS: SAFE"
+      : systemTone === "critical"
+        ? "SYSTEM STATUS: CRITICAL"
+        : "SYSTEM STATUS: WARNING";
 
   const recentOrders = overview.recentOrders || [];
   const decisionCards = [
@@ -281,8 +292,12 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
 
   const lowStockRows = [
     lowStockItems > 0 ? `${lowStockItems} SKU sắp hết` : "Không có SKU sắp hết",
-    outOfStockItems > 0 ? `${outOfStockItems} SKU hết hàng` : "Không có SKU hết hàng",
-    pendingTransfers > 0 ? `${pendingTransfers} phiếu chuyển kho chờ xử lý` : "Không có phiếu chuyển kho chờ xử lý",
+    outOfStockItems > 0
+      ? `${outOfStockItems} SKU hết hàng`
+      : "Không có SKU hết hàng",
+    pendingTransfers > 0
+      ? `${pendingTransfers} phiếu chuyển kho chờ xử lý`
+      : "Không có phiếu chuyển kho chờ xử lý",
   ];
 
   return {
@@ -305,80 +320,169 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
       ...base.warningSummary,
       ...(overview.warningSummary || {}),
       level: systemTone,
-      title: systemTone === "safe" ? "Hệ thống đang ổn định" : "Có tín hiệu rủi ro cần theo dõi sát",
+      title:
+        systemTone === "safe"
+          ? "Hệ thống đang ổn định"
+          : "Có tín hiệu rủi ro cần theo dõi sát",
       subtitle: `Live từ backend: ${totalOrders} đơn, ${availableQty} tồn khả dụng, ${lowStockItems} SKU critical${cards.rawLowStockPool ? ` / ${cards.rawLowStockPool} SKU tồn thấp có bán gần đây` : ""}.`,
       revenue: revenue > 0 ? formatMoneyShort(revenue) : "Chưa ghi nhận",
       roas: "Chưa nối Meta",
       inventory: `${lowStockItems} SKU sắp hết`,
     },
-    decisionCards: overview.decisionCards && overview.decisionCards.length ? overview.decisionCards : decisionCards,
-    insightRow: overview.insightRow && overview.insightRow.length ? overview.insightRow : [
-      {
-        id: "i1",
-        title: "Tổng quan đơn hàng live",
-        desc: `${totalOrders} đơn · ${newOrders} đơn mới · ${completedOrders} hoàn thành · ${cancelledOrders} huỷ.`,
-        tone: cancelledOrders > 0 ? "warning" : "safe",
-        badge: "Orders",
-      },
-      {
-        id: "i2",
-        title: "Tồn kho hệ thống",
-        desc: `${formatQty(availableQty)} khả dụng · ${formatQty(reservedQty)} đang giữ · ${formatQty(incomingQty)} sắp về.`,
-        tone: inventoryTone,
-        badge: "Inventory",
-      },
-      {
-        id: "i3",
-        title: "Sản phẩm & biến thể",
-        desc: `${formatQty(productCount)} sản phẩm · ${formatQty(variantCount)} biến thể đang có trong hệ thống.`,
-        tone: "safe",
-        badge: "Catalog",
-      },
-    ],
+    decisionCards:
+      overview.decisionCards && overview.decisionCards.length
+        ? overview.decisionCards
+        : decisionCards,
+    insightRow:
+      overview.insightRow && overview.insightRow.length
+        ? overview.insightRow
+        : [
+            {
+              id: "i1",
+              title: "Tổng quan đơn hàng live",
+              desc: `${totalOrders} đơn · ${newOrders} đơn mới · ${completedOrders} hoàn thành · ${cancelledOrders} huỷ.`,
+              tone: cancelledOrders > 0 ? "warning" : "safe",
+              badge: "Orders",
+            },
+            {
+              id: "i2",
+              title: "Tồn kho hệ thống",
+              desc: `${formatQty(availableQty)} khả dụng · ${formatQty(reservedQty)} đang giữ · ${formatQty(incomingQty)} sắp về.`,
+              tone: inventoryTone,
+              badge: "Inventory",
+            },
+            {
+              id: "i3",
+              title: "Sản phẩm & biến thể",
+              desc: `${formatQty(productCount)} sản phẩm · ${formatQty(variantCount)} biến thể đang có trong hệ thống.`,
+              tone: "safe",
+              badge: "Catalog",
+            },
+          ],
     realtime: {
       ...base.realtime,
       ...(overview.realtime || {}),
       delta: formatMoneyShort(revenue),
       deltaPct: "Live",
-      checkoutPurchase: totalOrders ? `${completedOrders}/${totalOrders}` : "0/0",
+      checkoutPurchase: totalOrders
+        ? `${completedOrders}/${totalOrders}`
+        : "0/0",
       chokeLabel: "Đơn hoàn thành / tổng đơn",
       lowStock: lowStockRows,
     },
-    kpis: overview.kpis && overview.kpis.length ? overview.kpis : [
-      { id: "k1", label: "Doanh thu", value: formatMoneyShort(revenue), delta: "Live" },
-      { id: "k2", label: "Đơn hàng", value: formatQty(totalOrders), delta: `${newOrders} mới` },
-      { id: "k3", label: "Tồn khả dụng", value: formatQty(availableQty), delta: `${reservedQty} giữ` },
-      { id: "k4", label: "SKU sắp hết", value: formatQty(lowStockItems), delta: `${outOfStockItems} hết` },
-      { id: "k5", label: "Lợi nhuận", value: profitLabel || "—", delta: profitLabel ? "Profit" : "Thiếu giá vốn" },
-    ],
-    dailyRows: overview.dailyRows && overview.dailyRows.length ? overview.dailyRows : dailyRows,
-    drilldown: overview.drilldown && overview.drilldown.length ? overview.drilldown : [
-      { label: "Doanh thu", value: formatMoneyShort(revenue) },
-      { label: "Đơn hàng", value: formatQty(totalOrders) },
-      { label: "Đơn mới", value: formatQty(newOrders) },
-      { label: "Hoàn thành", value: formatQty(completedOrders), tone: "dark" },
-      { label: "Tồn khả dụng", value: formatQty(availableQty), tone: "mint" },
-    ],
-    topProducts: overview.topProducts && overview.topProducts.length ? overview.topProducts : recentOrders.slice(0, 4).map((order, index) => ({
-      rank: index + 1,
-      name: order.code || order.id,
-      meta: `${order.customerName || "Khách lẻ"} · ${order.salesChannel || "OTHER"}`,
-      qty: order.status || "NEW",
-      revenue: formatMoneyShort(order.finalAmount),
-    })).concat(base.topProducts).slice(0, 4),
-    channelRevenue: overview.channelRevenue && overview.channelRevenue.length ? overview.channelRevenue : base.channelRevenue,
-    warehouseMix: overview.warehouseMix && overview.warehouseMix.length ? overview.warehouseMix : [
-      { name: "Tồn khả dụng", value: formatQty(availableQty), note: "Số lượng có thể bán" },
-      { name: "Tồn đang giữ", value: formatQty(reservedQty), note: "Đang giữ cho đơn hàng" },
-      { name: "Hàng sắp về", value: formatQty(incomingQty), note: "Incoming inventory" },
-    ],
-    quickInsights: overview.quickInsights && overview.quickInsights.length ? overview.quickInsights : [
-      `Backend đã nối live: ${totalOrders} đơn, doanh thu ${formatMoneyShort(revenue)}.`,
-      lowStockItems > 0 ? `${lowStockItems} SKU đang sắp hết, nên xử lý nhập/điều chuyển.` : "Tồn kho chưa có SKU chạm ngưỡng sắp hết.",
-      pendingTransfers > 0 ? `${pendingTransfers} phiếu chuyển kho đang chờ xác nhận.` : "Không có phiếu chuyển kho đang chờ.",
-    ],
-    moneyFlow: overview.moneyFlow && overview.moneyFlow.length ? overview.moneyFlow : base.moneyFlow,
-    funnel: overview.funnel && overview.funnel.length ? overview.funnel : base.funnel,
+    kpis:
+      overview.kpis && overview.kpis.length
+        ? overview.kpis
+        : [
+            {
+              id: "k1",
+              label: "Doanh thu",
+              value: formatMoneyShort(revenue),
+              delta: "Live",
+            },
+            {
+              id: "k2",
+              label: "Đơn hàng",
+              value: formatQty(totalOrders),
+              delta: `${newOrders} mới`,
+            },
+            {
+              id: "k3",
+              label: "Tồn khả dụng",
+              value: formatQty(availableQty),
+              delta: `${reservedQty} giữ`,
+            },
+            {
+              id: "k4",
+              label: "SKU sắp hết",
+              value: formatQty(lowStockItems),
+              delta: `${outOfStockItems} hết`,
+            },
+            {
+              id: "k5",
+              label: "Lợi nhuận",
+              value: profitLabel || "—",
+              delta: profitLabel ? "Profit" : "Thiếu giá vốn",
+            },
+          ],
+    dailyRows:
+      overview.dailyRows && overview.dailyRows.length
+        ? overview.dailyRows
+        : dailyRows,
+    drilldown:
+      overview.drilldown && overview.drilldown.length
+        ? overview.drilldown
+        : [
+            { label: "Doanh thu", value: formatMoneyShort(revenue) },
+            { label: "Đơn hàng", value: formatQty(totalOrders) },
+            { label: "Đơn mới", value: formatQty(newOrders) },
+            {
+              label: "Hoàn thành",
+              value: formatQty(completedOrders),
+              tone: "dark",
+            },
+            {
+              label: "Tồn khả dụng",
+              value: formatQty(availableQty),
+              tone: "mint",
+            },
+          ],
+    topProducts:
+      overview.topProducts && overview.topProducts.length
+        ? overview.topProducts
+        : recentOrders
+            .slice(0, 4)
+            .map((order, index) => ({
+              rank: index + 1,
+              name: order.code || order.id,
+              meta: `${order.customerName || "Khách lẻ"} · ${order.salesChannel || "OTHER"}`,
+              qty: order.status || "NEW",
+              revenue: formatMoneyShort(order.finalAmount),
+            }))
+            .concat(base.topProducts)
+            .slice(0, 4),
+    channelRevenue:
+      overview.channelRevenue && overview.channelRevenue.length
+        ? overview.channelRevenue
+        : base.channelRevenue,
+    warehouseMix:
+      overview.warehouseMix && overview.warehouseMix.length
+        ? overview.warehouseMix
+        : [
+            {
+              name: "Tồn khả dụng",
+              value: formatQty(availableQty),
+              note: "Số lượng có thể bán",
+            },
+            {
+              name: "Tồn đang giữ",
+              value: formatQty(reservedQty),
+              note: "Đang giữ cho đơn hàng",
+            },
+            {
+              name: "Hàng sắp về",
+              value: formatQty(incomingQty),
+              note: "Incoming inventory",
+            },
+          ],
+    quickInsights:
+      overview.quickInsights && overview.quickInsights.length
+        ? overview.quickInsights
+        : [
+            `Backend đã nối live: ${totalOrders} đơn, doanh thu ${formatMoneyShort(revenue)}.`,
+            lowStockItems > 0
+              ? `${lowStockItems} SKU đang sắp hết, nên xử lý nhập/điều chuyển.`
+              : "Tồn kho chưa có SKU chạm ngưỡng sắp hết.",
+            pendingTransfers > 0
+              ? `${pendingTransfers} phiếu chuyển kho đang chờ xác nhận.`
+              : "Không có phiếu chuyển kho đang chờ.",
+          ],
+    moneyFlow:
+      overview.moneyFlow && overview.moneyFlow.length
+        ? overview.moneyFlow
+        : base.moneyFlow,
+    funnel:
+      overview.funnel && overview.funnel.length ? overview.funnel : base.funnel,
     floatingApproval: overview.floatingApproval || {
       count: `${pendingTransfers + lowStockItems} pending`,
       title: lowStockItems > 0 ? "Xử lý cảnh báo tồn" : "Không có cảnh báo lớn",
@@ -407,7 +511,8 @@ function Panel({
 }
 
 function toneClass(tone: Tone) {
-  if (tone === "safe") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (tone === "safe")
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (tone === "critical") return "border-rose-200 bg-rose-50 text-rose-700";
   return "border-[#e0bb4c] bg-[#fbf3d9] text-[#b7791f]";
 }
@@ -429,18 +534,24 @@ function Badge({
     tone === "dark"
       ? "border-neutral-900 bg-neutral-900 text-white"
       : tone === "muted"
-      ? "border-neutral-200 bg-neutral-100 text-neutral-600"
-      : toneClass(tone);
+        ? "border-neutral-200 bg-neutral-100 text-neutral-600"
+        : toneClass(tone);
 
   return (
-    <span className={`inline-flex rounded-full border px-3 py-1 text-[11px] font-medium ${cls}`}>
+    <span
+      className={`inline-flex rounded-full border px-3 py-1 text-[11px] font-medium ${cls}`}
+    >
       {children}
     </span>
   );
 }
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
-  return <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-900">{children}</p>;
+  return (
+    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-900">
+      {children}
+    </p>
+  );
 }
 
 function metricTone(delta: string) {
@@ -477,7 +588,8 @@ function fallbackData(): DashboardData {
     decisionCards: [],
     commandCenter: {
       title: "Hành động ngay trên Tổng quan",
-      subtitle: "Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý tại đây.",
+      subtitle:
+        "Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý tại đây.",
     },
     insightRow: [
       {
@@ -558,7 +670,11 @@ function fallbackData(): DashboardData {
       { name: "Hàng sắp về", value: "—", note: "Chờ backend" },
     ],
     quickInsights: ["Đang tải dữ liệu tổng quan từ backend."],
-    floatingApproval: { count: "0 pending", title: "Không có approval", subtitle: "Chờ dữ liệu live" },
+    floatingApproval: {
+      count: "0 pending",
+      title: "Không có approval",
+      subtitle: "Chờ dữ liệu live",
+    },
   };
 }
 
@@ -571,24 +687,34 @@ export default function DashboardPage() {
   const [autoMode, setAutoMode] = useState<"SAFE" | "SEMI" | "LIVE">("SEMI");
   const [selectedDecisionId, setSelectedDecisionId] = useState<string>("");
   const [approvalOpen, setApprovalOpen] = useState(false);
-  const [approvalStatus, setApprovalStatus] = useState<"pending" | "approved" | "rejected">("pending");
+  const [approvalStatus, setApprovalStatus] = useState<
+    "pending" | "approved" | "rejected"
+  >("pending");
   const [commandNote, setCommandNote] = useState<string>(
-    "Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý tại đây."
+    "Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý tại đây.",
   );
 
   const [selectedRange, setSelectedRange] = useState("30d");
   const [selectedChannel, setSelectedChannel] = useState("Tất cả kênh");
-  const [selectedWarehouse, setSelectedWarehouse] = useState("Tất cả chi nhánh / kho");
+  const [selectedWarehouse, setSelectedWarehouse] = useState(
+    "Tất cả chi nhánh / kho",
+  );
   const [selectedInsightId, setSelectedInsightId] = useState("i1");
-  const [selectedDay, setSelectedDay] = useState(new Date().getDate().toString().padStart(2, "0"));
+  const [selectedDay, setSelectedDay] = useState(
+    new Date().getDate().toString().padStart(2, "0"),
+  );
   const [selectedProductRank, setSelectedProductRank] = useState(1);
-  const [selectedMoneyFlowChannel, setSelectedMoneyFlowChannel] = useState("Website");
+  const [selectedMoneyFlowChannel, setSelectedMoneyFlowChannel] =
+    useState("Website");
+  const [showAllDailyRows, setShowAllDailyRows] = useState(false);
 
   const [actionLog, setActionLog] = useState<
     Array<{ id: string; title: string; desc: string; time: string }>
   >([]);
   const [scaleLocked, setScaleLocked] = useState(false);
-  const [decisionFlag, setDecisionFlag] = useState<"normal" | "low_stock" | "review">("normal");
+  const [decisionFlag, setDecisionFlag] = useState<
+    "normal" | "low_stock" | "review"
+  >("normal");
   const [schedulerEnabled, setSchedulerEnabled] = useState(true);
   const [pendingApprovals, setPendingApprovals] = useState<
     Array<{ id: string; title: string; actionType: string; createdAt: string }>
@@ -626,22 +752,28 @@ export default function DashboardPage() {
       { id: "growth", label: "Ưu tiên tăng trưởng" },
       { id: "inventory", label: "Ưu tiên tồn kho" },
     ],
-    []
+    [],
   );
 
- const selectedDecision =
-  selectedDecisionId
+  const selectedDecision = selectedDecisionId
     ? data.decisionCards.find((card) => card.id === selectedDecisionId) || null
     : null;
 
   const selectedDailyRow =
     data.dailyRows.find((row) => row.day === selectedDay) || data.dailyRows[0];
 
+  const dailyRowsToShow = showAllDailyRows
+    ? data.dailyRows
+    : data.dailyRows.slice(0, 10);
+
   const selectedProduct =
-    data.topProducts.find((item) => item.rank === selectedProductRank) || data.topProducts[0] || null;
+    data.topProducts.find((item) => item.rank === selectedProductRank) ||
+    data.topProducts[0] ||
+    null;
 
   const selectedMoneyFlow =
-    data.moneyFlow.find((item) => item.channel === selectedMoneyFlowChannel) || data.moneyFlow[0];
+    data.moneyFlow.find((item) => item.channel === selectedMoneyFlowChannel) ||
+    data.moneyFlow[0];
 
   const filteredDecisionCards = useMemo(() => {
     if (decisionMode === "growth") {
@@ -667,7 +799,9 @@ export default function DashboardPage() {
     const found = data.decisionCards.find((card) => card.id === cardId);
     setSelectedDecisionId(cardId);
     if (found) {
-      setCommandNote(`Đang xem: ${found.title} · Nguồn ${found.source} · Score ${found.score}.`);
+      setCommandNote(
+        `Đang xem: ${found.title} · Nguồn ${found.source} · Score ${found.score}.`,
+      );
       setApprovalOpen(true);
       setApprovalStatus("pending");
     }
@@ -677,7 +811,9 @@ export default function DashboardPage() {
     const found = data.decisionCards.find((card) => card.id === cardId);
     setSelectedDecisionId(cardId);
     if (found) {
-      setCommandNote(`Đã đưa ${found.title} vào Command Center. Chờ xác nhận bước tiếp theo.`);
+      setCommandNote(
+        `Đã đưa ${found.title} vào Command Center. Chờ xác nhận bước tiếp theo.`,
+      );
       setApprovalStatus("pending");
       setApprovalOpen(true);
     }
@@ -685,7 +821,9 @@ export default function DashboardPage() {
 
   function approveCurrentDecision() {
     setApprovalStatus("approved");
-    setCommandNote(`Đã duyệt hành động cho ${selectedDecision?.title || "decision hiện tại"}.`);
+    setCommandNote(
+      `Đã duyệt hành động cho ${selectedDecision?.title || "decision hiện tại"}.`,
+    );
     window.setTimeout(() => {
       setApprovalOpen(false);
     }, 250);
@@ -693,7 +831,9 @@ export default function DashboardPage() {
 
   function rejectCurrentDecision() {
     setApprovalStatus("rejected");
-    setCommandNote(`Đã từ chối hành động cho ${selectedDecision?.title || "decision hiện tại"}.`);
+    setCommandNote(
+      `Đã từ chối hành động cho ${selectedDecision?.title || "decision hiện tại"}.`,
+    );
   }
 
   function selectInsight(id: string) {
@@ -715,14 +855,21 @@ export default function DashboardPage() {
     const next = !scaleLocked;
     setScaleLocked(next);
     pushLog(
-      next ? "SIM • Khóa scale • BẢO VỆ TỒN" : "SIM • Mở khóa scale • BẢO VỆ TỒN",
-      next ? "Đã khóa scale cho decision đang chọn." : "Đã mở khóa scale cho decision đang chọn."
+      next
+        ? "SIM • Khóa scale • BẢO VỆ TỒN"
+        : "SIM • Mở khóa scale • BẢO VỆ TỒN",
+      next
+        ? "Đã khóa scale cho decision đang chọn."
+        : "Đã mở khóa scale cho decision đang chọn.",
     );
   }
 
   function markLowStock() {
     setDecisionFlag("low_stock");
-    pushLog("SIM • Sắp hết hàng • BẢO VỆ TỒN", "Giảm ưu tiên ads và theo dõi tồn kho sát hơn.");
+    pushLog(
+      "SIM • Sắp hết hàng • BẢO VỆ TỒN",
+      "Giảm ưu tiên ads và theo dõi tồn kho sát hơn.",
+    );
     if (selectedDecision) {
       setCommandNote(`Đã đánh dấu sắp hết hàng cho ${selectedDecision.title}.`);
     }
@@ -730,9 +877,14 @@ export default function DashboardPage() {
 
   function markNeedsReview() {
     setDecisionFlag("review");
-    pushLog("SIM • Rà soát ngay • BẢO VỆ TỒN", "Đưa vào danh sách kiểm tra trong ngày.");
+    pushLog(
+      "SIM • Rà soát ngay • BẢO VỆ TỒN",
+      "Đưa vào danh sách kiểm tra trong ngày.",
+    );
     if (selectedDecision) {
-      setCommandNote(`Đã chuyển ${selectedDecision.title} sang trạng thái cần kiểm tra.`);
+      setCommandNote(
+        `Đã chuyển ${selectedDecision.title} sang trạng thái cần kiểm tra.`,
+      );
     }
   }
 
@@ -741,12 +893,17 @@ export default function DashboardPage() {
     setPendingApprovals([]);
     pushLog(
       type === "approve" ? "Duyệt tất approvals" : "Từ chối tất approvals",
-      type === "approve" ? "Đã duyệt toàn bộ approval đang chờ." : "Đã từ chối toàn bộ approval đang chờ."
+      type === "approve"
+        ? "Đã duyệt toàn bộ approval đang chờ."
+        : "Đã từ chối toàn bộ approval đang chờ.",
     );
   }
 
   function addNote() {
-    pushLog("Ghi chú nhanh", `Đã thêm ghi chú cho ${selectedDecision?.title || "decision hiện tại"}.`);
+    pushLog(
+      "Ghi chú nhanh",
+      `Đã thêm ghi chú cho ${selectedDecision?.title || "decision hiện tại"}.`,
+    );
   }
 
   function undoLog(id: string) {
@@ -758,7 +915,7 @@ export default function DashboardPage() {
     setSchedulerEnabled(next);
     pushLog(
       next ? "Bật Auto Scheduler" : "Tắt Auto Scheduler",
-      next ? "Lịch tự động đã được bật lại." : "Lịch tự động đã được tắt."
+      next ? "Lịch tự động đã được bật lại." : "Lịch tự động đã được tắt.",
     );
   }
 
@@ -773,10 +930,12 @@ export default function DashboardPage() {
     if (target) {
       pushLog(
         approved ? `Duyệt ${target.title}` : `Từ chối ${target.title}`,
-        approved ? `Đã duyệt action ${target.actionType}.` : `Đã từ chối action ${target.actionType}.`
+        approved
+          ? `Đã duyệt action ${target.actionType}.`
+          : `Đã từ chối action ${target.actionType}.`,
       );
       setCommandNote(
-        approved ? `Đã duyệt ${target.title}.` : `Đã từ chối ${target.title}.`
+        approved ? `Đã duyệt ${target.title}.` : `Đã từ chối ${target.title}.`,
       );
     }
   }
@@ -815,34 +974,44 @@ export default function DashboardPage() {
 
             <Panel className="p-4">
               <SectionEyebrow>Meta</SectionEyebrow>
-              <p className="mt-4 text-[16px] font-semibold">{data.hero.metaMode}</p>
-              <p className="mt-2 text-sm text-neutral-600">{data.hero.metaAccount}</p>
+              <p className="mt-4 text-[16px] font-semibold">
+                {data.hero.metaMode}
+              </p>
+              <p className="mt-2 text-sm text-neutral-600">
+                {data.hero.metaAccount}
+              </p>
             </Panel>
 
             <Panel className="p-4">
               <SectionEyebrow>Auto Scheduler</SectionEyebrow>
-              <p className="mt-4 text-[16px] font-semibold">{data.hero.scheduler.label}</p>
-              <p className="mt-2 text-sm text-neutral-600">{data.hero.scheduler.times.join(" / ")}</p>
+              <p className="mt-4 text-[16px] font-semibold">
+                {data.hero.scheduler.label}
+              </p>
+              <p className="mt-2 text-sm text-neutral-600">
+                {data.hero.scheduler.times.join(" / ")}
+              </p>
             </Panel>
           </div>
         </div>
       </Panel>
 
-    <Panel
-  className="p-5"
-  style={{
-    backgroundColor: "#fbf6df",
-    borderColor: "#d8b34a",
-    borderWidth: "2px",
-  }}
->
+      <Panel
+        className="p-5"
+        style={{
+          backgroundColor: "#fbf6df",
+          borderColor: "#d8b34a",
+          borderWidth: "2px",
+        }}
+      >
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <SectionEyebrow>WARNING</SectionEyebrow>
             <h2 className="mt-3 font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
               {data.warningSummary.title}
             </h2>
-            <p className="mt-2 text-sm text-neutral-600">{data.warningSummary.subtitle}</p>
+            <p className="mt-2 text-sm text-neutral-600">
+              {data.warningSummary.subtitle}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -854,27 +1023,43 @@ export default function DashboardPage() {
         <div className="mt-5 grid gap-3 xl:grid-cols-3">
           <div className="rounded-2xl bg-white/75 p-4">
             <p className="text-sm text-neutral-600">Doanh thu</p>
-            <p className="mt-2 text-[16px] font-semibold text-rose-500">{data.warningSummary.revenue}</p>
+            <p className="mt-2 text-[16px] font-semibold text-rose-500">
+              {data.warningSummary.revenue}
+            </p>
           </div>
           <div className="rounded-2xl bg-white/75 p-4">
             <p className="text-sm text-neutral-600">ROAS</p>
-            <p className="mt-2 text-[16px] font-semibold text-emerald-600">{data.warningSummary.roas}</p>
+            <p className="mt-2 text-[16px] font-semibold text-emerald-600">
+              {data.warningSummary.roas}
+            </p>
           </div>
           <div className="rounded-2xl bg-white/75 p-4">
             <p className="text-sm text-neutral-600">Tồn kho</p>
-            <p className="mt-2 text-[16px] font-semibold text-rose-500">{data.warningSummary.inventory}</p>
+            <p className="mt-2 text-[16px] font-semibold text-rose-500">
+              {data.warningSummary.inventory}
+            </p>
           </div>
         </div>
 
         <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <p className="text-sm text-neutral-600">Ưu tiên xử lý: kiểm tra ads → checkout → tồn kho.</p>
+          <p className="text-sm text-neutral-600">
+            Ưu tiên xử lý: kiểm tra ads → checkout → tồn kho.
+          </p>
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <label className="flex items-center gap-2">
-              <input type="checkbox" checked={autoAction} onChange={(e) => setAutoAction(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={autoAction}
+                onChange={(e) => setAutoAction(e.target.checked)}
+              />
               Auto Action
             </label>
             <label className="flex items-center gap-2">
-              <input type="checkbox" checked={soundAlert} onChange={(e) => setSoundAlert(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={soundAlert}
+                onChange={(e) => setSoundAlert(e.target.checked)}
+              />
               Sound Alert
             </label>
             <Badge tone="dark">{data.hero.metaMode}</Badge>
@@ -914,7 +1099,13 @@ export default function DashboardPage() {
               value={selectedChannel}
               onChange={(e) => setSelectedChannel(e.target.value)}
             >
-              {["Tất cả kênh", "Website", "Facebook", "TikTok", "Shopify checkout"].map((item) => (
+              {[
+                "Tất cả kênh",
+                "Website",
+                "Facebook",
+                "TikTok",
+                "Shopify checkout",
+              ].map((item) => (
                 <option key={item} value={item}>
                   {item}
                 </option>
@@ -926,7 +1117,12 @@ export default function DashboardPage() {
               value={selectedWarehouse}
               onChange={(e) => setSelectedWarehouse(e.target.value)}
             >
-              {["Tất cả chi nhánh / kho", "Hoàn Kiếm", "Hai Bà Trưng", "Online Warehouse"].map((item) => (
+              {[
+                "Tất cả chi nhánh / kho",
+                "Hoàn Kiếm",
+                "Hai Bà Trưng",
+                "Online Warehouse",
+              ].map((item) => (
                 <option key={item} value={item}>
                   {item}
                 </option>
@@ -966,277 +1162,335 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-4 grid items-start gap-4 xl:grid-cols-[1.02fr_0.98fr]">
-  <div className="grid content-start items-start gap-3 md:grid-cols-2">
-    {filteredDecisionCards.map((card) => (
-      <div
-        key={card.id}
-        onClick={() => openDecision(card.id)}
-        className={`h-fit cursor-pointer self-start rounded-[24px] border p-4 text-left transition ${
-          selectedDecisionId === card.id
-            ? "border-neutral-900 bg-neutral-50"
-            : "border-neutral-200 bg-white hover:shadow-sm"
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <SectionEyebrow>{card.eyebrow}</SectionEyebrow>
-          <Badge tone={card.tone}>{card.tag}</Badge>
-        </div>
+          <div className="grid content-start items-start gap-3 md:grid-cols-2">
+            {filteredDecisionCards.map((card) => (
+              <div
+                key={card.id}
+                onClick={() => openDecision(card.id)}
+                className={`h-fit cursor-pointer self-start rounded-[24px] border p-4 text-left transition ${
+                  selectedDecisionId === card.id
+                    ? "border-neutral-900 bg-neutral-50"
+                    : "border-neutral-200 bg-white hover:shadow-sm"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <SectionEyebrow>{card.eyebrow}</SectionEyebrow>
+                  <Badge tone={card.tone}>{card.tag}</Badge>
+                </div>
 
-        <h3 className="mt-3 font-serif text-[16px] font-medium tracking-tight">{card.title}</h3>
-        <p className="mt-2 line-clamp-2 min-h-[40px] text-sm font-medium leading-6 text-neutral-700">{card.desc}</p>
+                <h3 className="mt-3 font-serif text-[16px] font-medium tracking-tight">
+                  {card.title}
+                </h3>
+                <p className="mt-2 line-clamp-2 min-h-[40px] text-sm font-medium leading-6 text-neutral-700">
+                  {card.desc}
+                </p>
 
-        <div className="mt-5 flex items-center justify-between text-sm font-medium text-neutral-700">
-          <span>{card.source}</span>
-          <span>{card.score}</span>
-        </div>
+                <div className="mt-5 flex items-center justify-between text-sm font-medium text-neutral-700">
+                  <span>{card.source}</span>
+                  <span>{card.score}</span>
+                </div>
 
-        <div className="mt-4 flex items-center justify-between gap-2">
-          <div className="min-w-0 truncate text-xs font-medium text-neutral-800">
-            {card.title}
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                executeDecision(card.id);
-              }}
-              className="rounded-full bg-neutral-900 px-3 py-1.5 text-[11px] font-medium text-white"
-            >
-              Execute
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!goToDashboardUrl(card.actionUrl)) openDecision(card.id);
-              }}
-              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-800"
-            >
-              Open
-            </button>
-          </div>
-        </div>
-      </div>
-    ))}
-  </div>
-
-  <div className="h-fit self-start rounded-3xl border border-stone-200 bg-stone-900 p-5 text-white shadow-sm">
-    <div className="flex items-center justify-between gap-3">
-      <div>
-        <div className="text-xs uppercase tracking-[0.24em] text-stone-200">Command Center</div>
-        <h3 className="mt-2 text-2xl font-serif">Hành động ngay trên Tổng quan</h3>
-      </div>
-
-      <div className="flex items-center gap-2">
-        {selectedDecision ? (
-          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
-            {selectedDecision.tag}
-          </span>
-        ) : null}
-        {selectedDecision ? (
-          <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-stone-900">
-            Score {selectedDecision.score}
-          </span>
-        ) : null}
-        <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white">
-          Dry run only
-        </span>
-        {!selectedDecision ? (
-          <span className="rounded-full bg-white/10 px-3 py-1 text-xs">Chọn 1 decision</span>
-        ) : null}
-      </div>
-    </div>
-
-    {!selectedDecision ? (
-      <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4 text-sm text-stone-200">
-        Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý ngay tại màn Tổng quan.
-      </div>
-    ) : (
-      <>
-        <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4">
-          <div className="text-lg font-medium">{selectedDecision.title}</div>
-          <div className="mt-2 text-sm text-stone-200">{selectedDecision.desc}</div>
-
-          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-2xl bg-white/5 p-3">
-              <div className="text-stone-400">SKU / nhóm</div>
-              <div className="mt-1 text-white">{selectedDecision.title}</div>
-            </div>
-            <div className="rounded-2xl bg-white/5 p-3">
-              <div className="text-stone-400">Kênh</div>
-              <div className="mt-1 text-white">{selectedDecision.source}</div>
-            </div>
-            <div className="rounded-2xl bg-white/5 p-3">
-              <div className="text-stone-400">Decision score</div>
-              <div className="mt-1 text-white">{selectedDecision.score}</div>
-            </div>
-            <div className="rounded-2xl bg-white/5 p-3">
-              <div className="text-stone-400">Action cuối</div>
-              <div className="mt-1 text-white">{approvalStatus === "approved" ? "Đã duyệt" : decisionFlag === "low_stock" ? "Auto giảm ngân sách" : decisionFlag === "review" ? "Rà soát ngay" : "Chờ xử lý"}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          {selectedDecision?.actionUrl ? (
-            <button
-              onClick={() => goToDashboardUrl(selectedDecision.actionUrl)}
-              className="col-span-2 rounded-2xl bg-emerald-100 px-4 py-3 font-medium text-emerald-900"
-            >
-              Mở đúng màn xử lý
-            </button>
-          ) : null}
-          <button
-            onClick={toggleScaleLock}
-            className="rounded-2xl bg-white px-4 py-3 font-medium text-stone-900"
-          >
-            {scaleLocked ? "🔓 Mở khóa scale" : "🔒 Khóa scale"}
-          </button>
-          <button
-            onClick={toggleScaleLock}
-            className="rounded-2xl bg-white/10 px-4 py-3 font-medium text-white"
-          >
-            {scaleLocked ? "🔓 Mở khóa scale" : "🔒 Khóa scale"}
-          </button>
-          <button
-            onClick={markLowStock}
-            className="rounded-2xl border border-stone-700 px-4 py-3 text-white hover:bg-white/10"
-          >
-            Sắp hết hàng
-          </button>
-          <button
-            onClick={markNeedsReview}
-            className="rounded-2xl border border-stone-700 px-4 py-3 text-white hover:bg-white/10"
-          >
-            Cần kiểm tra
-          </button>
-        </div>
-
-        <div className="mt-5 rounded-3xl border border-amber-700 bg-white/5 p-4">
-          <div className="text-xs uppercase tracking-[0.24em] text-amber-400">Approval Queue</div>
-          {pendingApprovals.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              {pendingApprovals.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl bg-white/10 p-3">
-                  <div>
-                    <div className="text-sm font-medium">{item.title}</div>
-                    <div className="mt-1 text-xs text-stone-300">{item.actionType} · {item.createdAt}</div>
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  <div className="min-w-0 truncate text-xs font-medium text-neutral-800">
+                    {card.title}
                   </div>
+
                   <div className="flex gap-2">
                     <button
-                      onClick={() => resolveApproval(item.id, true)}
-                      className="rounded-full bg-white px-4 py-2 text-xs font-medium text-stone-900"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        executeDecision(card.id);
+                      }}
+                      className="rounded-full bg-neutral-900 px-3 py-1.5 text-[11px] font-medium text-white"
                     >
-                      Duyệt
+                      Execute
                     </button>
                     <button
-                      onClick={() => resolveApproval(item.id, false)}
-                      className="rounded-full bg-white/10 px-4 py-2 text-xs font-medium text-white"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!goToDashboardUrl(card.actionUrl))
+                          openDecision(card.id);
+                      }}
+                      className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-800"
                     >
-                      Từ chối
+                      Open
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-3 rounded-2xl bg-white/5 p-3 text-sm text-stone-200">
-              Không còn approval nào đang chờ.
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-          <div className="flex items-center justify-between">
-            <div className="text-xs uppercase tracking-[0.24em] text-stone-200">Auto Scheduler</div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={toggleScheduler}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-              >
-                {schedulerEnabled ? "Đang bật" : "Đang tắt"}
-              </button>
-              <button
-                onClick={() => runScheduledTask("09:00")}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-              >
-                09:00
-              </button>
-              <button
-                onClick={() => runScheduledTask("20:00")}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-              >
-                20:00
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
-          Meta Ads đang ở chế độ DRY RUN. Hệ thống hiện chỉ mô phỏng lệnh và ghi log.
-        </div>
-
-        <div className="mt-5">
-          <div className="flex items-center justify-between">
-            <div className="text-xs uppercase tracking-[0.24em] text-stone-200">Action Log</div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => resolveAllApprovals("approve")}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-              >
-                Duyệt tất
-              </button>
-              <button
-                onClick={() => resolveAllApprovals("reject")}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-              >
-                Từ chối tất
-              </button>
-              <button
-                onClick={addNote}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-              >
-                Ghi chú
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-3 space-y-3">
-            {actionLog.map((item) => (
-              <div key={item.id} className="rounded-2xl bg-white/5 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="font-medium">{item.title}</div>
-                  <div className="text-xs text-stone-300">{item.time}</div>
-                </div>
-                <div className="mt-2 text-sm text-stone-200">{item.desc}</div>
-                <button
-                  onClick={() => undoLog(item.id)}
-                  className="mt-3 rounded-full border border-white/10 px-3 py-1 text-[11px]"
-                >
-                  Undo
-                </button>
               </div>
             ))}
           </div>
+
+          <div className="h-fit self-start rounded-3xl border border-stone-200 bg-stone-900 p-5 text-white shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.24em] text-stone-200">
+                  Command Center
+                </div>
+                <h3 className="mt-2 text-2xl font-serif">
+                  Hành động ngay trên Tổng quan
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selectedDecision ? (
+                  <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+                    {selectedDecision.tag}
+                  </span>
+                ) : null}
+                {selectedDecision ? (
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-stone-900">
+                    Score {selectedDecision.score}
+                  </span>
+                ) : null}
+                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white">
+                  Dry run only
+                </span>
+                {!selectedDecision ? (
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs">
+                    Chọn 1 decision
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            {!selectedDecision ? (
+              <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4 text-sm text-stone-200">
+                Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý ngay tại
+                màn Tổng quan.
+              </div>
+            ) : (
+              <>
+                <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4">
+                  <div className="text-lg font-medium">
+                    {selectedDecision.title}
+                  </div>
+                  <div className="mt-2 text-sm text-stone-200">
+                    {selectedDecision.desc}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl bg-white/5 p-3">
+                      <div className="text-stone-400">SKU / nhóm</div>
+                      <div className="mt-1 text-white">
+                        {selectedDecision.title}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-white/5 p-3">
+                      <div className="text-stone-400">Kênh</div>
+                      <div className="mt-1 text-white">
+                        {selectedDecision.source}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-white/5 p-3">
+                      <div className="text-stone-400">Decision score</div>
+                      <div className="mt-1 text-white">
+                        {selectedDecision.score}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-white/5 p-3">
+                      <div className="text-stone-400">Action cuối</div>
+                      <div className="mt-1 text-white">
+                        {approvalStatus === "approved"
+                          ? "Đã duyệt"
+                          : decisionFlag === "low_stock"
+                            ? "Auto giảm ngân sách"
+                            : decisionFlag === "review"
+                              ? "Rà soát ngay"
+                              : "Chờ xử lý"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  {selectedDecision?.actionUrl ? (
+                    <button
+                      onClick={() =>
+                        goToDashboardUrl(selectedDecision.actionUrl)
+                      }
+                      className="col-span-2 rounded-2xl bg-emerald-100 px-4 py-3 font-medium text-emerald-900"
+                    >
+                      Mở đúng màn xử lý
+                    </button>
+                  ) : null}
+                  <button
+                    onClick={toggleScaleLock}
+                    className="rounded-2xl bg-white px-4 py-3 font-medium text-stone-900"
+                  >
+                    {scaleLocked ? "🔓 Mở khóa scale" : "🔒 Khóa scale"}
+                  </button>
+                  <button
+                    onClick={toggleScaleLock}
+                    className="rounded-2xl bg-white/10 px-4 py-3 font-medium text-white"
+                  >
+                    {scaleLocked ? "🔓 Mở khóa scale" : "🔒 Khóa scale"}
+                  </button>
+                  <button
+                    onClick={markLowStock}
+                    className="rounded-2xl border border-stone-700 px-4 py-3 text-white hover:bg-white/10"
+                  >
+                    Sắp hết hàng
+                  </button>
+                  <button
+                    onClick={markNeedsReview}
+                    className="rounded-2xl border border-stone-700 px-4 py-3 text-white hover:bg-white/10"
+                  >
+                    Cần kiểm tra
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-3xl border border-amber-700 bg-white/5 p-4">
+                  <div className="text-xs uppercase tracking-[0.24em] text-amber-400">
+                    Approval Queue
+                  </div>
+                  {pendingApprovals.length > 0 ? (
+                    <div className="mt-3 space-y-2">
+                      {pendingApprovals.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-3 rounded-2xl bg-white/10 p-3"
+                        >
+                          <div>
+                            <div className="text-sm font-medium">
+                              {item.title}
+                            </div>
+                            <div className="mt-1 text-xs text-stone-300">
+                              {item.actionType} · {item.createdAt}
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => resolveApproval(item.id, true)}
+                              className="rounded-full bg-white px-4 py-2 text-xs font-medium text-stone-900"
+                            >
+                              Duyệt
+                            </button>
+                            <button
+                              onClick={() => resolveApproval(item.id, false)}
+                              className="rounded-full bg-white/10 px-4 py-2 text-xs font-medium text-white"
+                            >
+                              Từ chối
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-2xl bg-white/5 p-3 text-sm text-stone-200">
+                      Không còn approval nào đang chờ.
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs uppercase tracking-[0.24em] text-stone-200">
+                      Auto Scheduler
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={toggleScheduler}
+                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                      >
+                        {schedulerEnabled ? "Đang bật" : "Đang tắt"}
+                      </button>
+                      <button
+                        onClick={() => runScheduledTask("09:00")}
+                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                      >
+                        09:00
+                      </button>
+                      <button
+                        onClick={() => runScheduledTask("20:00")}
+                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                      >
+                        20:00
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
+                  Meta Ads đang ở chế độ DRY RUN. Hệ thống hiện chỉ mô phỏng
+                  lệnh và ghi log.
+                </div>
+
+                <div className="mt-5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs uppercase tracking-[0.24em] text-stone-200">
+                      Action Log
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => resolveAllApprovals("approve")}
+                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                      >
+                        Duyệt tất
+                      </button>
+                      <button
+                        onClick={() => resolveAllApprovals("reject")}
+                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                      >
+                        Từ chối tất
+                      </button>
+                      <button
+                        onClick={addNote}
+                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                      >
+                        Ghi chú
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 space-y-3">
+                    {actionLog.map((item) => (
+                      <div key={item.id} className="rounded-2xl bg-white/5 p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="font-medium">{item.title}</div>
+                          <div className="text-xs text-stone-300">
+                            {item.time}
+                          </div>
+                        </div>
+                        <div className="mt-2 text-sm text-stone-200">
+                          {item.desc}
+                        </div>
+                        <button
+                          onClick={() => undoLog(item.id)}
+                          className="mt-3 rounded-full border border-white/10 px-3 py-1 text-[11px]"
+                        >
+                          Undo
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </>
-    )}
-  </div>
-</div>
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-3">
         {data.insightRow.map((item) => (
-          <button key={item.id} onClick={() => selectInsight(item.id)} className="w-full text-left">
+          <button
+            key={item.id}
+            onClick={() => selectInsight(item.id)}
+            className="w-full text-left"
+          >
             <Panel
               className={`p-4 transition ${softToneClass(item.tone)} ${
-                selectedInsightId === item.id ? "ring-2 ring-neutral-900/10" : ""
+                selectedInsightId === item.id
+                  ? "ring-2 ring-neutral-900/10"
+                  : ""
               }`}
             >
               <div className="flex items-start justify-between gap-3">
-                <h3 className="font-serif text-[16px] font-medium tracking-tight">{item.title}</h3>
+                <h3 className="font-serif text-[16px] font-medium tracking-tight">
+                  {item.title}
+                </h3>
                 <Badge tone={item.tone}>{item.badge}</Badge>
               </div>
               <p className="mt-3 text-sm text-neutral-600">{item.desc}</p>
@@ -1246,70 +1500,126 @@ export default function DashboardPage() {
       </div>
 
       <Panel className="p-4 md:p-5">
-        <SectionEyebrow>War Room</SectionEyebrow>
-        <h2 className="mt-3 font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
-          War Room · Theo dõi vận hành hôm nay
-        </h2>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <SectionEyebrow>War Room</SectionEyebrow>
+            <h2 className="mt-3 font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
+              War Room · Theo dõi vận hành hôm nay
+            </h2>
+            <p className="mt-2 text-sm text-neutral-600">
+              Theo dõi realtime trong ngày: doanh thu, đơn tạo mới, chi phí ads,
+              lợi nhuận và rủi ro tồn kho.
+            </p>
+          </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          {[
-            { id: "realtime", label: "Realtime" },
-            { id: "7days", label: "So với 7 ngày" },
-            { id: "forecast", label: "Forecast tồn kho" },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setWarRoomTab(item.id as WarRoomTab)}
-              className={`rounded-full border px-4 py-2 text-sm ${
-                warRoomTab === item.id
-                  ? "border-neutral-900 bg-neutral-900 text-white"
-                  : "border-neutral-200 bg-white text-neutral-700"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: "realtime", label: "Realtime" },
+              { id: "7days", label: "So với 7 ngày" },
+              { id: "forecast", label: "Forecast tồn kho" },
+            ].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setWarRoomTab(item.id as WarRoomTab)}
+                className={`rounded-full border px-4 py-2 text-sm ${
+                  warRoomTab === item.id
+                    ? "border-neutral-900 bg-neutral-900 text-white"
+                    : "border-neutral-200 bg-white text-neutral-700"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="mt-5 grid gap-4 xl:grid-cols-3">
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-[24px] bg-neutral-50 p-5">
             <p className="text-sm text-neutral-600">Doanh thu hôm nay</p>
-            <p className="mt-4 text-[32px] font-semibold tracking-tight xl:text-[40px]">
-              {warRoomTab === "7days" ? "-3.1M" : warRoomTab === "forecast" ? "4 SKU" : data.realtime.delta}
+            <p className="mt-4 text-[30px] font-semibold tracking-tight xl:text-[36px]">
+              {selectedDailyRow?.revenue || data.realtime.delta}
             </p>
             <p
-              className={`mt-3 text-sm font-medium ${metricTone(
-                warRoomTab === "7days" ? "-6.1%" : warRoomTab === "forecast" ? "+2.0%" : data.realtime.deltaPct
-              )}`}
+              className={`mt-3 text-sm font-medium ${metricTone(selectedDailyRow?.compare || data.realtime.deltaPct)}`}
             >
-              {warRoomTab === "7days" ? "-6.1%" : warRoomTab === "forecast" ? "+2.0%" : data.realtime.deltaPct}
+              {selectedDailyRow?.compare || data.realtime.deltaPct} so với hôm
+              qua
+            </p>
+          </div>
+
+          <div className="rounded-[24px] border border-neutral-200 bg-white p-5">
+            <p className="text-sm text-neutral-600">Đơn tạo trong ngày</p>
+            <p className="mt-4 text-[30px] font-semibold tracking-tight xl:text-[36px]">
+              {selectedDailyRow?.orders || "0"}
+            </p>
+            <p className="mt-3 text-sm text-neutral-600">
+              Tổng đơn phát sinh hôm nay
             </p>
           </div>
 
           <div className="rounded-[24px] border border-rose-200 bg-rose-50/40 p-5">
             <p className="text-sm text-neutral-600">
-              {warRoomTab === "forecast" ? "Forecast tồn kho" : "Đơn hoàn thành / tổng đơn"}
+              Đơn hoàn thành / tổng đơn
             </p>
-            <p className="mt-4 text-[32px] font-semibold tracking-tight xl:text-[40px]">
-              {warRoomTab === "forecast" ? "3 ngày" : warRoomTab === "7days" ? "31.4%" : data.realtime.checkoutPurchase}
+            <p className="mt-4 text-[30px] font-semibold tracking-tight xl:text-[36px]">
+              {data.realtime.checkoutPurchase}
             </p>
             <p className="mt-3 text-sm text-neutral-600">
-              {warRoomTab === "forecast"
-                ? "SKU gần chạm ngưỡng"
-                : warRoomTab === "7days"
-                ? "Trung bình 7 ngày"
-                : data.realtime.chokeLabel}
+              Theo trạng thái đơn trong hệ thống
             </p>
           </div>
 
+          <div className="rounded-[24px] border border-neutral-200 bg-white p-5">
+            <p className="text-sm text-neutral-600">Chi phí ads hôm nay</p>
+            <p className="mt-4 text-[30px] font-semibold tracking-tight xl:text-[36px]">
+              {selectedDailyRow?.adsCost || "0"}
+            </p>
+            <p className="mt-3 text-sm text-neutral-600">
+              Chưa nối ads sẽ hiển thị 0
+            </p>
+          </div>
+
+          <div className="rounded-[24px] bg-emerald-50 p-5">
+            <p className="text-sm text-emerald-800">
+              Lợi nhuận ước tính hôm nay
+            </p>
+            <p className="mt-4 text-[30px] font-semibold tracking-tight text-emerald-900 xl:text-[36px]">
+              {selectedDailyRow?.profit || "—"}
+            </p>
+            <p className="mt-3 text-sm text-emerald-700">
+              Doanh thu - giá vốn - ads
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
           <div className="rounded-[24px] bg-neutral-50 p-5">
-            <p className="text-sm text-neutral-600">Sắp hết hàng</p>
-            <div className="mt-4 space-y-3 text-[15px] font-medium text-neutral-700">
-              {(data.realtime.lowStock
-              ).map((row) => (
+            <p className="text-sm font-medium text-neutral-900">
+              Rủi ro tồn kho
+            </p>
+            <div className="mt-4 space-y-2 text-sm text-neutral-700">
+              {data.realtime.lowStock.map((row) => (
                 <div key={row}>{row}</div>
               ))}
             </div>
+          </div>
+
+          <div className="rounded-[24px] bg-neutral-50 p-5">
+            <p className="text-sm font-medium text-neutral-900">
+              Điểm cần xử lý ngay
+            </p>
+            <div className="mt-4 space-y-2 text-sm text-neutral-700">
+              <div>{data.warningSummary.subtitle}</div>
+              <div>{data.commandCenter.subtitle}</div>
+            </div>
+          </div>
+
+          <div className="rounded-[24px] bg-neutral-950 p-5 text-white">
+            <p className="text-sm font-medium">Nguồn dữ liệu</p>
+            <p className="mt-4 text-sm text-neutral-300">
+              Realtime từ backend · phạm vi War Room: hôm nay · bảng bên dưới:
+              tháng hiện tại.
+            </p>
           </div>
         </div>
       </Panel>
@@ -1321,7 +1631,9 @@ export default function DashboardPage() {
               <p className="text-sm text-neutral-600">{item.label}</p>
               <Badge tone="muted">{item.delta}</Badge>
             </div>
-            <p className="mt-4 text-[28px] font-semibold tracking-tight xl:text-[34px]">{item.value}</p>
+            <p className="mt-4 text-[28px] font-semibold tracking-tight xl:text-[34px]">
+              {item.value}
+            </p>
           </Panel>
         ))}
       </div>
@@ -1332,13 +1644,23 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
-                  Doanh thu từng ngày trong tháng hiện tại
+                  Doanh thu 10 ngày gần nhất
                 </h2>
                 <p className="mt-2 text-sm text-neutral-600">
-                  Mở ra là thấy ngay hôm nay, hôm qua và các ngày gần nhất bán được bao nhiêu
+                  Hiển thị nhanh 10 ngày gần nhất trong tháng hiện tại. Bấm xem
+                  toàn bộ để mở rộng đủ dữ liệu.
                 </p>
               </div>
-              <Badge tone="muted">Tháng 03</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="muted">Tháng hiện tại</Badge>
+                <button
+                  type="button"
+                  onClick={() => setShowAllDailyRows((prev) => !prev)}
+                  className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700"
+                >
+                  {showAllDailyRows ? "Thu gọn 10 ngày" : "Xem toàn bộ"}
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 overflow-x-auto rounded-[24px] border border-neutral-200">
@@ -1353,11 +1675,13 @@ export default function DashboardPage() {
                     <th className="px-4 py-4 font-medium">Lợi nhuận</th>
                     <th className="px-4 py-4 font-medium">Đơn</th>
                     <th className="px-4 py-4 font-medium">ROAS</th>
-                    <th className="px-4 py-4 text-right font-medium">So với hôm qua</th>
+                    <th className="px-4 py-4 text-right font-medium">
+                      So với hôm qua
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.dailyRows.map((row) => (
+                  {dailyRowsToShow.map((row) => (
                     <tr
                       key={row.day}
                       onClick={() => setSelectedDay(row.day)}
@@ -1367,7 +1691,9 @@ export default function DashboardPage() {
                     >
                       <td className="px-4 py-4 font-medium">{row.day}</td>
                       <td className="px-4 py-4">
-                        <Badge tone={row.isToday ? "dark" : "muted"}>{row.note}</Badge>
+                        <Badge tone={row.isToday ? "dark" : "muted"}>
+                          {row.note}
+                        </Badge>
                       </td>
                       <td className="px-4 py-4">{row.revenue}</td>
                       <td className="px-4 py-4">{row.cost || "—"}</td>
@@ -1387,52 +1713,19 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
-
-            <div className="mt-5 rounded-[24px] border border-neutral-200 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <SectionEyebrow>Drill-down ngày {selectedDay}</SectionEyebrow>
-                  <h3 className="mt-4 font-serif text-[24px] font-medium tracking-tight xl:text-[30px]">
-                    Chi tiết vận hành trong ngày
-                  </h3>
-                </div>
-                <button className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600">
-                  Đóng chi tiết
-                </button>
-              </div>
-
-              <div className="mt-2 text-sm text-neutral-600">
-                Đang xem: {selectedDailyRow.note} · Doanh thu {selectedDailyRow.revenue} · Lợi nhuận{" "}
-                {selectedDailyRow.profit}
-              </div>
-
-              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-                {data.drilldown.map((item) => (
-                  <div
-                    key={item.label}
-                    className={`rounded-[24px] p-5 ${
-                      item.tone === "dark"
-                        ? "bg-neutral-950 text-white"
-                        : item.tone === "mint"
-                        ? "bg-emerald-100 text-emerald-900"
-                        : "border border-neutral-200 bg-white"
-                    }`}
-                  >
-                    <p className={`text-sm ${item.tone ? "opacity-80" : "text-neutral-500"}`}>{item.label}</p>
-                    <p className="mt-4 text-[34px] font-semibold tracking-tight">{item.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
           </Panel>
 
           <div className="grid gap-5 xl:grid-cols-2">
             <Panel className="p-5">
-              <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">Top sản phẩm</h2>
+              <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">
+                Top sản phẩm
+              </h2>
               <p className="mt-1 text-xs text-neutral-600">
                 Đang chọn: {selectedProduct?.name || "Chưa có sản phẩm"}
               </p>
-              <p className="mt-2 text-sm font-medium text-neutral-700">Những SKU đang kéo doanh thu mạnh nhất</p>
+              <p className="mt-2 text-sm font-medium text-neutral-700">
+                Những SKU đang kéo doanh thu mạnh nhất
+              </p>
 
               <div className="mt-5 space-y-3">
                 {(data.topProducts || []).map((item) => (
@@ -1443,7 +1736,9 @@ export default function DashboardPage() {
                       if (item.actionUrl) goToDashboardUrl(item.actionUrl);
                     }}
                     className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left ${
-                      selectedProductRank === item.rank ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
+                      selectedProductRank === item.rank
+                        ? "border-neutral-900 bg-neutral-50"
+                        : "border-neutral-200"
                     }`}
                   >
                     <div className="flex items-center gap-4">
@@ -1451,13 +1746,19 @@ export default function DashboardPage() {
                         {item.rank}
                       </div>
                       <div>
-                        <p className="text-[16px] font-medium tracking-tight">{item.name}</p>
-                        <p className="mt-1 text-sm text-neutral-600">{item.meta}</p>
+                        <p className="text-[16px] font-medium tracking-tight">
+                          {item.name}
+                        </p>
+                        <p className="mt-1 text-sm text-neutral-600">
+                          {item.meta}
+                        </p>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-neutral-600">{item.qty}</p>
-                      <p className="mt-1 text-[16px] font-semibold">{item.revenue}</p>
+                      <p className="mt-1 text-[16px] font-semibold">
+                        {item.revenue}
+                      </p>
                     </div>
                   </button>
                 ))}
@@ -1474,7 +1775,11 @@ export default function DashboardPage() {
 
               <div className="mt-6 space-y-5">
                 {data.channelRevenue
-                  .filter((item) => selectedChannel === "Tất cả kênh" || item.name === selectedChannel)
+                  .filter(
+                    (item) =>
+                      selectedChannel === "Tất cả kênh" ||
+                      item.name === selectedChannel,
+                  )
                   .map((item) => (
                     <div key={item.name}>
                       <div className="mb-2 flex items-center justify-between gap-3 text-sm">
@@ -1482,7 +1787,10 @@ export default function DashboardPage() {
                         <span>{item.value}</span>
                       </div>
                       <div className="h-4 rounded-full bg-neutral-100">
-                        <div className="h-4 rounded-full bg-neutral-950" style={{ width: item.width }} />
+                        <div
+                          className="h-4 rounded-full bg-neutral-950"
+                          style={{ width: item.width }}
+                        />
                       </div>
                     </div>
                   ))}
@@ -1501,9 +1809,14 @@ export default function DashboardPage() {
 
               <div className="mt-6 grid gap-4 md:grid-cols-3">
                 {data.warehouseMix.map((item) => (
-                  <div key={item.name} className="rounded-[24px] bg-neutral-50 p-5 text-center">
+                  <div
+                    key={item.name}
+                    className="rounded-[24px] bg-neutral-50 p-5 text-center"
+                  >
                     <p className="text-sm text-neutral-600">{item.name}</p>
-                    <p className="mt-4 text-[34px] font-semibold tracking-tight">{item.value}</p>
+                    <p className="mt-4 text-[34px] font-semibold tracking-tight">
+                      {item.value}
+                    </p>
                     <p className="mt-2 text-sm text-neutral-600">{item.note}</p>
                   </div>
                 ))}
@@ -1532,8 +1845,12 @@ export default function DashboardPage() {
 
         <div className="space-y-5">
           <Panel className="p-5">
-            <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">Funnel</h2>
-            <p className="mt-2 text-sm text-neutral-600">Theo trạng thái đơn trong hệ thống</p>
+            <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">
+              Funnel
+            </h2>
+            <p className="mt-2 text-sm text-neutral-600">
+              Theo trạng thái đơn trong hệ thống
+            </p>
 
             <div className="mt-6 space-y-5">
               {data.funnel.map((step) => (
@@ -1543,7 +1860,10 @@ export default function DashboardPage() {
                     <span>{step.value}</span>
                   </div>
                   <div className="h-4 rounded-full bg-neutral-100">
-                    <div className="h-4 rounded-full bg-neutral-950" style={{ width: step.width }} />
+                    <div
+                      className="h-4 rounded-full bg-neutral-950"
+                      style={{ width: step.width }}
+                    />
                   </div>
                 </div>
               ))}
@@ -1555,7 +1875,8 @@ export default function DashboardPage() {
               Money Flow Insight
             </h2>
             <p className="mt-2 text-sm text-neutral-600">
-              Tiền đang chảy ở đâu, kênh nào đang đốt mạnh hơn phần doanh thu mang về.
+              Tiền đang chảy ở đâu, kênh nào đang đốt mạnh hơn phần doanh thu
+              mang về.
             </p>
 
             <div className="mt-5 space-y-3">
@@ -1564,18 +1885,30 @@ export default function DashboardPage() {
                   key={item.channel}
                   onClick={() => setSelectedMoneyFlowChannel(item.channel)}
                   className={`w-full rounded-2xl border p-4 text-left ${
-                    selectedMoneyFlowChannel === item.channel ? "ring-2 ring-neutral-900/10" : ""
+                    selectedMoneyFlowChannel === item.channel
+                      ? "ring-2 ring-neutral-900/10"
+                      : ""
                   } ${
                     item.tone === "green"
                       ? "border-emerald-200 bg-emerald-50/45"
                       : item.tone === "red"
-                      ? "border-rose-200 bg-rose-50/40"
-                      : "border-amber-200 bg-amber-50/40"
+                        ? "border-rose-200 bg-rose-50/40"
+                        : "border-amber-200 bg-amber-50/40"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <h3 className="font-serif text-[16px] font-medium tracking-tight">{item.channel}</h3>
-                    <Badge tone={item.tone === "green" ? "safe" : item.tone === "red" ? "critical" : "warning"}>
+                    <h3 className="font-serif text-[16px] font-medium tracking-tight">
+                      {item.channel}
+                    </h3>
+                    <Badge
+                      tone={
+                        item.tone === "green"
+                          ? "safe"
+                          : item.tone === "red"
+                            ? "critical"
+                            : "warning"
+                      }
+                    >
                       {item.badge}
                     </Badge>
                   </div>
@@ -1596,12 +1929,17 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <SectionEyebrow>Approval</SectionEyebrow>
-              <p className="mt-1 text-sm text-neutral-300">{data.floatingApproval.count}</p>
+              <p className="mt-1 text-sm text-neutral-300">
+                {data.floatingApproval.count}
+              </p>
             </div>
 
             <div className="flex gap-2">
               <Badge tone="muted">Duyệt tất</Badge>
-              <button onClick={() => setApprovalOpen(false)} className="text-sm text-neutral-400">
+              <button
+                onClick={() => setApprovalOpen(false)}
+                className="text-sm text-neutral-400"
+              >
                 Ẩn
               </button>
             </div>
@@ -1612,22 +1950,24 @@ export default function DashboardPage() {
               {selectedDecision?.title || data.floatingApproval.title}
             </p>
             <p className="mt-2 text-sm text-neutral-400">
-              {selectedDecision?.id ? selectedDecision.id : data.floatingApproval.subtitle}
+              {selectedDecision?.id
+                ? selectedDecision.id
+                : data.floatingApproval.subtitle}
             </p>
             <p
               className={`mt-2 text-xs ${
                 approvalStatus === "approved"
                   ? "text-emerald-400"
                   : approvalStatus === "rejected"
-                  ? "text-rose-400"
-                  : "text-neutral-400"
+                    ? "text-rose-400"
+                    : "text-neutral-400"
               }`}
             >
               {approvalStatus === "approved"
                 ? "Đã duyệt"
                 : approvalStatus === "rejected"
-                ? "Đã từ chối"
-                : "Đang chờ duyệt"}
+                  ? "Đã từ chối"
+                  : "Đang chờ duyệt"}
             </p>
 
             <div className="mt-5 grid grid-cols-2 gap-3">
