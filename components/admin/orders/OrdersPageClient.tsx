@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import Link from "next/link";
@@ -17,10 +18,7 @@ import type {
   OrderPaymentStatus,
   OrderStatus,
 } from "@/lib/orders-api";
-import {
-  updateOrderPaymentStatus,
-  updateOrderStatus,
-} from "@/lib/orders-api";
+import { updateOrderPaymentStatus, updateOrderStatus } from "@/lib/orders-api";
 
 import {
   findPrintTemplate,
@@ -75,6 +73,11 @@ type ColumnDef = {
 };
 
 type CurrentUserLite = {
+  id?: string;
+  code?: string;
+  name?: string;
+  fullName?: string;
+  email?: string;
   role?: string;
   branchId?: string | null;
 };
@@ -97,6 +100,8 @@ type NormalizedOrder = AdminOrder & {
   _createdAtDate: Date | null;
 };
 
+const TABLE_MIN_WIDTH = 2600;
+const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 
 const COLUMN_DEFS: ColumnDef[] = [
   { key: "orderCode", label: "Mã đơn", defaultVisible: true },
@@ -117,7 +122,12 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "note", label: "Ghi chú", defaultVisible: true },
   { key: "shippingFee", label: "Phí ship", money: true, defaultVisible: true },
   { key: "codAmount", label: "Thu hộ COD", money: true, defaultVisible: true },
-  { key: "amountDue", label: "Khách còn phải trả", money: true, defaultVisible: true },
+  {
+    key: "amountDue",
+    label: "Khách còn phải trả",
+    money: true,
+    defaultVisible: true,
+  },
   { key: "finalAmount", label: "Tổng tiền", money: true, defaultVisible: true },
 ];
 
@@ -178,8 +188,9 @@ function Button({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 border font-semibold transition ${tones} ${sizes} ${disabled ? "cursor-not-allowed opacity-50" : ""
-        }`}
+      className={`inline-flex items-center justify-center gap-2 border font-semibold transition ${tones} ${sizes} ${
+        disabled ? "cursor-not-allowed opacity-50" : ""
+      }`}
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
       <span>{children}</span>
@@ -199,10 +210,11 @@ function SmallChip({
   return (
     <button
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${active
-        ? "border-neutral-900 bg-neutral-900 text-white"
-        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
-        }`}
+      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+        active
+          ? "border-neutral-900 bg-neutral-900 text-white"
+          : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+      }`}
     >
       {children}
     </button>
@@ -218,10 +230,11 @@ function SummaryIcon({
 }) {
   return (
     <div
-      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${active
-        ? "border-neutral-900 bg-neutral-900 text-white"
-        : "border-neutral-200 bg-neutral-50 text-neutral-700"
-        }`}
+      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${
+        active
+          ? "border-neutral-900 bg-neutral-900 text-white"
+          : "border-neutral-200 bg-neutral-50 text-neutral-700"
+      }`}
     >
       {children}
     </div>
@@ -244,10 +257,11 @@ function SummaryCard({
   return (
     <button
       onClick={onClick}
-      className={`rounded-[24px] border px-4 py-4 text-left transition ${active
-        ? "border-neutral-900 bg-neutral-50 shadow-sm"
-        : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm"
-        }`}
+      className={`rounded-[24px] border px-4 py-4 text-left transition ${
+        active
+          ? "border-neutral-900 bg-neutral-50 shadow-sm"
+          : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm"
+      }`}
     >
       <div className="flex items-center gap-4">
         <SummaryIcon active={active}>{icon}</SummaryIcon>
@@ -439,7 +453,7 @@ function parseOrderDate(value?: string) {
   const normalized = value.replace(",", "").trim();
 
   const match1 = normalized.match(
-    /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+    /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
   );
   if (match1) {
     const [, hh, mm, ss = "0", d, m, y] = match1;
@@ -449,12 +463,12 @@ function parseOrderDate(value?: string) {
       Number(d),
       Number(hh),
       Number(mm),
-      Number(ss)
+      Number(ss),
     );
   }
 
   const match2 = normalized.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/,
   );
   if (match2) {
     const [, d, m, y, hh, mm, ss = "0"] = match2;
@@ -464,7 +478,7 @@ function parseOrderDate(value?: string) {
       Number(d),
       Number(hh),
       Number(mm),
-      Number(ss)
+      Number(ss),
     );
   }
 
@@ -474,10 +488,7 @@ function parseOrderDate(value?: string) {
 
 function amountCustomerStillOwes(order: AdminOrder) {
   if (order.status === "CANCELLED") return 0;
-  if (
-    order.paymentStatus === "PAID" ||
-    order.paymentStatus === "REFUNDED"
-  ) {
+  if (order.paymentStatus === "PAID" || order.paymentStatus === "REFUNDED") {
     return 0;
   }
 
@@ -510,7 +521,7 @@ function getQuickDateRange(key: QuickDateKey) {
     0,
     0,
     0,
-    0
+    0,
   );
   const todayEnd = new Date(
     now.getFullYear(),
@@ -519,7 +530,7 @@ function getQuickDateRange(key: QuickDateKey) {
     23,
     59,
     59,
-    999
+    999,
   );
 
   if (key === "today") return { from: todayStart, to: todayEnd };
@@ -606,7 +617,9 @@ export default function OrdersPageClient() {
   const [confirmDescription, setConfirmDescription] = useState("");
   const [confirmText, setConfirmText] = useState("Xác nhận");
   const [confirmDanger, setConfirmDanger] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
+  const [confirmAction, setConfirmAction] = useState<
+    null | (() => Promise<void>)
+  >(null);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -626,13 +639,22 @@ export default function OrdersPageClient() {
   const [totalItems, setTotalItems] = useState(0);
 
   const [orderFilter, setOrderFilter] = useState<"ALL" | OrderStatus>("ALL");
-  const [paymentFilter, setPaymentFilter] =
-    useState<"ALL" | OrderPaymentStatus>("ALL");
+  const [paymentFilter, setPaymentFilter] = useState<
+    "ALL" | OrderPaymentStatus
+  >("ALL");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [quickDate, setQuickDate] = useState<QuickDateKey>("all");
   const [quickStatus, setQuickStatus] = useState<QuickStatusKey>("ALL");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [createdByFilter, setCreatedByFilter] = useState("ALL");
+  const [fulfillmentFilter, setFulfillmentFilter] = useState("ALL");
+  const [salesChannelFilter, setSalesChannelFilter] = useState("ALL");
+  const [shippingModeFilter, setShippingModeFilter] = useState("ALL");
+  const [shippingPartnerFilter, setShippingPartnerFilter] = useState("ALL");
+  const [trackingFilter, setTrackingFilter] = useState("ALL");
+  const [freeTextFilter, setFreeTextFilter] = useState("");
 
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
@@ -646,12 +668,41 @@ export default function OrdersPageClient() {
 
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const dragStartXRef = useRef(0);
+  const dragStartScrollRef = useRef(0);
+  const isDraggingRef = useRef(false);
+
+  const [tableScrollLeft, setTableScrollLeft] = useState(0);
+  const [tableMaxScrollLeft, setTableMaxScrollLeft] = useState(0);
+  const [isDraggingTable, setIsDraggingTable] = useState(false);
 
   const canSeeMoney =
     currentUser?.role === "admin" || currentUser?.role === "owner";
 
   const canDeleteOrder =
     currentUser?.role === "admin" || currentUser?.role === "owner";
+
+  const userStorageSuffix = useMemo(() => {
+    const userKey =
+      currentUser?.id ||
+      currentUser?.code ||
+      currentUser?.email ||
+      currentUser?.name ||
+      currentUser?.fullName ||
+      currentUser?.role ||
+      "guest";
+
+    return `${String(userKey).replace(/[^a-zA-Z0-9_-]/g, "_")}.${
+      currentUser?.branchId || "all"
+    }`;
+  }, [currentUser]);
+
+  const columnStorageKey = `orders.visibleColumns.${
+    canSeeMoney ? "admin" : "staff"
+  }.${userStorageSuffix}`;
+
+  const scrollStorageKey = `${TABLE_SCROLL_STORAGE_KEY}.${userStorageSuffix}`;
 
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>([]);
 
@@ -662,16 +713,118 @@ export default function OrdersPageClient() {
 
   const openOrderInNewTab = (order: AdminOrder, action?: string) => {
     const baseHref = `/orders/${encodeURIComponent(order.id)}`;
-    const href = action ? `${baseHref}?action=${encodeURIComponent(action)}` : baseHref;
+    const href = action
+      ? `${baseHref}?action=${encodeURIComponent(action)}`
+      : baseHref;
 
     addWorkspaceTab({
       id: action ? `${order.id}-${action}` : order.id,
-      title: action === "redelivery" ? `${order.orderCode} · Giao lại` : order.orderCode,
+      title:
+        action === "redelivery"
+          ? `${order.orderCode} · Giao lại`
+          : order.orderCode,
       href,
       type: "order",
     });
 
     window.open(href, "_blank", "noopener,noreferrer");
+  };
+
+  const updateTableScrollState = () => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    const left = Math.max(0, Math.min(el.scrollLeft, max));
+
+    setTableMaxScrollLeft(max);
+    setTableScrollLeft(left);
+
+    try {
+      localStorage.setItem(scrollStorageKey, String(left));
+    } catch {
+      // ignore localStorage write errors
+    }
+  };
+
+  const scrollTableTo = (left: number) => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    const safeLeft = Math.max(0, Math.min(left, max));
+
+    el.scrollLeft = safeLeft;
+    setTableMaxScrollLeft(max);
+    setTableScrollLeft(safeLeft);
+
+    try {
+      localStorage.setItem(scrollStorageKey, String(safeLeft));
+    } catch {
+      // ignore localStorage write errors
+    }
+  };
+
+  const scrollTableBy = (delta: number) => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    scrollTableTo(el.scrollLeft + delta);
+  };
+
+  const handleTableMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null;
+
+    if (
+      target?.closest(
+        'button, a, input, select, textarea, label, [data-no-drag-scroll="true"]',
+      )
+    ) {
+      return;
+    }
+
+    const el = tableScrollRef.current;
+    if (!el) return;
+
+    e.preventDefault();
+    isDraggingRef.current = true;
+    dragStartXRef.current = e.pageX;
+    dragStartScrollRef.current = el.scrollLeft;
+    setIsDraggingTable(true);
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+
+      const currentEl = tableScrollRef.current;
+      if (!currentEl) return;
+
+      const deltaX = ev.pageX - dragStartXRef.current;
+      currentEl.scrollLeft = dragStartScrollRef.current - deltaX;
+
+      const rect = currentEl.getBoundingClientRect();
+      if (ev.clientX > rect.right - 90) {
+        currentEl.scrollLeft += 24;
+        dragStartScrollRef.current = currentEl.scrollLeft;
+        dragStartXRef.current = ev.pageX;
+      } else if (ev.clientX < rect.left + 90) {
+        currentEl.scrollLeft -= 24;
+        dragStartScrollRef.current = currentEl.scrollLeft;
+        dragStartXRef.current = ev.pageX;
+      }
+
+      updateTableScrollState();
+    };
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      setIsDraggingTable(false);
+      updateTableScrollState();
+
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
   };
 
   useEffect(() => {
@@ -686,12 +839,8 @@ export default function OrdersPageClient() {
   }, []);
 
   useEffect(() => {
-    const storageKey = canSeeMoney
-      ? "orders.visibleColumns.admin"
-      : "orders.visibleColumns.staff";
-
     try {
-      const raw = localStorage.getItem(storageKey);
+      const raw = localStorage.getItem(columnStorageKey);
       if (!raw) {
         setVisibleColumns(defaultVisibleColumns(canSeeMoney));
         return;
@@ -699,24 +848,49 @@ export default function OrdersPageClient() {
 
       const parsed = JSON.parse(raw) as ColumnKey[];
       const allowed = COLUMN_DEFS.filter((col) =>
-        canSeeMoney ? true : !col.money
+        canSeeMoney ? true : !col.money,
       ).map((c) => c.key);
       const cleaned = parsed.filter((key) => allowed.includes(key));
       setVisibleColumns(
-        cleaned.length ? cleaned : defaultVisibleColumns(canSeeMoney)
+        cleaned.length ? cleaned : defaultVisibleColumns(canSeeMoney),
       );
     } catch {
       setVisibleColumns(defaultVisibleColumns(canSeeMoney));
     }
-  }, [canSeeMoney]);
+  }, [canSeeMoney, columnStorageKey]);
 
   useEffect(() => {
-    const storageKey = canSeeMoney
-      ? "orders.visibleColumns.admin"
-      : "orders.visibleColumns.staff";
     if (!visibleColumns.length) return;
-    localStorage.setItem(storageKey, JSON.stringify(visibleColumns));
-  }, [visibleColumns, canSeeMoney]);
+    localStorage.setItem(columnStorageKey, JSON.stringify(visibleColumns));
+  }, [visibleColumns, columnStorageKey]);
+
+  useEffect(() => {
+    const restoreScroll = () => {
+      const el = tableScrollRef.current;
+      if (!el) return;
+
+      let saved = 0;
+      try {
+        saved = Number(localStorage.getItem(scrollStorageKey) || 0);
+      } catch {
+        saved = 0;
+      }
+
+      const max = Math.max(0, el.scrollWidth - el.clientWidth);
+      const safeLeft = Math.max(0, Math.min(saved, max));
+      el.scrollLeft = safeLeft;
+      setTableMaxScrollLeft(max);
+      setTableScrollLeft(safeLeft);
+    };
+
+    const raf = window.requestAnimationFrame(restoreScroll);
+    window.addEventListener("resize", updateTableScrollState);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updateTableScrollState);
+    };
+  }, [visibleColumns.length, orders.length, page, scrollStorageKey]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -772,23 +946,20 @@ export default function OrdersPageClient() {
       if (dateFrom) params.set("dateFrom", dateFrom);
       if (dateTo) params.set("dateTo", dateTo);
 
-      const res = await fetch(
-        `${API_BASE}/orders?${params.toString()}`,
-        {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          cache: "no-store",
-        }
-      );
+      const res = await fetch(`${API_BASE}/orders?${params.toString()}`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
 
       const raw = await res.json();
 
       if (!res.ok) {
         throw new Error(
-          raw?.message || `Tải /orders thất bại. Status ${res.status}`
+          raw?.message || `Tải /orders thất bại. Status ${res.status}`,
         );
       }
 
@@ -831,7 +1002,21 @@ export default function OrdersPageClient() {
 
   useEffect(() => {
     setPage(1);
-  }, [deferredQuery, branchFilter, orderFilter, paymentFilter, dateFrom, dateTo]);
+  }, [
+    deferredQuery,
+    branchFilter,
+    orderFilter,
+    paymentFilter,
+    dateFrom,
+    dateTo,
+    createdByFilter,
+    fulfillmentFilter,
+    salesChannelFilter,
+    shippingModeFilter,
+    shippingPartnerFilter,
+    trackingFilter,
+    freeTextFilter,
+  ]);
 
   const normalizedOrders = useMemo<NormalizedOrder[]>(() => {
     return orders.map((order) => {
@@ -840,7 +1025,9 @@ export default function OrdersPageClient() {
         ...order,
         _meta: meta,
         _createdByName: getCreatedByName(order),
-        _shippingFee: Number(order.shippingFee || order.shipment?.shippingFee || 0),
+        _shippingFee: Number(
+          order.shippingFee || order.shipment?.shippingFee || 0,
+        ),
         _codAmount: Number(order.shipment?.codAmount || 0),
         _amountDue: amountCustomerStillOwes(order),
         _createdAtDate: parseOrderDate(order.createdAt),
@@ -858,34 +1045,174 @@ export default function OrdersPageClient() {
     ];
   }, [branches]);
 
-  const filteredOrders = useMemo(() => {
-    if (quickStatus === "ALL") return normalizedOrders;
+  const uniqueOptions = (values: Array<string | null | undefined>) => {
+    return Array.from(
+      new Set(
+        values
+          .map((value) => String(value || "").trim())
+          .filter((value) => value && value !== "—"),
+      ),
+    ).sort((a, b) => a.localeCompare(b, "vi"));
+  };
 
-    return normalizedOrders.filter((o) => {
-      switch (quickStatus) {
-        case "WAITING_APPROVE":
-          return o.status === "NEW";
-        case "WAITING_PAYMENT":
-          return ["UNPAID", "PARTIAL", "PENDING_COD"].includes(
-            o.paymentStatus
-          );
-        case "WAITING_PACKING":
-          return o.status === "PACKING";
-        case "WAITING_SHIP":
-          return ["APPROVED", "PACKING"].includes(o.status);
-        case "DELIVERING":
-          return o.status === "SHIPPED";
-        case "SOON_DELIVERY":
-          return isSoonDeliveryOrder(o);
-        case "FAIL":
-          return isFailedOrder(o);
-        case "REDELIVERY":
-          return isRedeliveryOrder(o);
-        default:
-          return true;
-      }
-    });
-  }, [normalizedOrders, quickStatus]);
+  const createdByOptions = useMemo(
+    () => uniqueOptions(normalizedOrders.map((o) => o._createdByName)),
+    [normalizedOrders],
+  );
+
+  const salesChannelOptions = useMemo(
+    () => uniqueOptions(normalizedOrders.map((o) => o.salesChannel)),
+    [normalizedOrders],
+  );
+
+  const shippingModeOptions = useMemo(
+    () => uniqueOptions(normalizedOrders.map((o) => o._meta.shippingMode)),
+    [normalizedOrders],
+  );
+
+  const shippingPartnerOptions = useMemo(
+    () =>
+      uniqueOptions(
+        normalizedOrders.map(
+          (o) => o.shipment?.carrier || o._meta.shippingPartner,
+        ),
+      ),
+    [normalizedOrders],
+  );
+
+  const activeAdvancedFilterCount =
+    [
+      createdByFilter,
+      fulfillmentFilter,
+      salesChannelFilter,
+      shippingModeFilter,
+      shippingPartnerFilter,
+      trackingFilter,
+    ].filter((value) => value !== "ALL").length +
+    (freeTextFilter.trim() ? 1 : 0);
+
+  const clearAdvancedFilters = () => {
+    setCreatedByFilter("ALL");
+    setFulfillmentFilter("ALL");
+    setSalesChannelFilter("ALL");
+    setShippingModeFilter("ALL");
+    setShippingPartnerFilter("ALL");
+    setTrackingFilter("ALL");
+    setFreeTextFilter("");
+  };
+
+  const filteredOrders = useMemo(() => {
+    let result = normalizedOrders;
+
+    if (quickStatus !== "ALL") {
+      result = result.filter((o) => {
+        switch (quickStatus) {
+          case "WAITING_APPROVE":
+            return o.status === "NEW";
+          case "WAITING_PAYMENT":
+            return ["UNPAID", "PARTIAL", "PENDING_COD"].includes(
+              o.paymentStatus,
+            );
+          case "WAITING_PACKING":
+            return o.status === "PACKING";
+          case "WAITING_SHIP":
+            return ["APPROVED", "PACKING"].includes(o.status);
+          case "DELIVERING":
+            return o.status === "SHIPPED";
+          case "SOON_DELIVERY":
+            return isSoonDeliveryOrder(o);
+          case "FAIL":
+            return isFailedOrder(o);
+          case "REDELIVERY":
+            return isRedeliveryOrder(o);
+          default:
+            return true;
+        }
+      });
+    }
+
+    if (createdByFilter !== "ALL") {
+      result = result.filter((o) => o._createdByName === createdByFilter);
+    }
+
+    if (fulfillmentFilter !== "ALL") {
+      result = result.filter(
+        (o) => String(o.fulfillmentStatus || "") === fulfillmentFilter,
+      );
+    }
+
+    if (salesChannelFilter !== "ALL") {
+      result = result.filter(
+        (o) => String(o.salesChannel || "") === salesChannelFilter,
+      );
+    }
+
+    if (shippingModeFilter !== "ALL") {
+      result = result.filter(
+        (o) => o._meta.shippingMode === shippingModeFilter,
+      );
+    }
+
+    if (shippingPartnerFilter !== "ALL") {
+      result = result.filter(
+        (o) =>
+          (o.shipment?.carrier || o._meta.shippingPartner || "") ===
+          shippingPartnerFilter,
+      );
+    }
+
+    if (trackingFilter !== "ALL") {
+      result = result.filter((o) => {
+        const hasTracking = Boolean(
+          String(o.shipment?.trackingCode || "").trim(),
+        );
+        return trackingFilter === "HAS" ? hasTracking : !hasTracking;
+      });
+    }
+
+    const keyword = freeTextFilter.trim().toLowerCase();
+    if (keyword) {
+      result = result.filter((o) => {
+        const haystack = [
+          o.orderCode,
+          o.customerName,
+          o.customerPhone,
+          o.status,
+          o.paymentStatus,
+          o.fulfillmentStatus,
+          o.branchId,
+          branchLabel(o.branchId),
+          o._createdByName,
+          o.salesChannel,
+          o._meta.address,
+          o._meta.noteText,
+          o._meta.shippingNote,
+          o._meta.shippingMode,
+          o._meta.shippingPartner,
+          o.shipment?.carrier,
+          o.shipment?.trackingCode,
+          o.note,
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(keyword);
+      });
+    }
+
+    return result;
+  }, [
+    normalizedOrders,
+    quickStatus,
+    createdByFilter,
+    fulfillmentFilter,
+    salesChannelFilter,
+    shippingModeFilter,
+    shippingPartnerFilter,
+    trackingFilter,
+    freeTextFilter,
+    branches,
+  ]);
 
   const visibleOrders = filteredOrders;
 
@@ -896,7 +1223,7 @@ export default function OrdersPageClient() {
     }
 
     setCheckedIds((prev) =>
-      prev.filter((id) => filteredOrders.some((o) => o.id === id))
+      prev.filter((id) => filteredOrders.some((o) => o.id === id)),
     );
   }, [filteredOrders]);
 
@@ -941,20 +1268,18 @@ export default function OrdersPageClient() {
     allVisibleIds.every((id) => checkedIds.includes(id));
 
   const checkedOrders = normalizedOrders.filter((o) =>
-    checkedIds.includes(o.id)
+    checkedIds.includes(o.id),
   );
 
   const toggleCheckOne = (id: string) => {
     setCheckedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   };
 
   const toggleCheckAllVisible = () => {
     if (allChecked) {
-      setCheckedIds((prev) =>
-        prev.filter((id) => !allVisibleIds.includes(id))
-      );
+      setCheckedIds((prev) => prev.filter((id) => !allVisibleIds.includes(id)));
       return;
     }
 
@@ -968,7 +1293,7 @@ export default function OrdersPageClient() {
 
   const updateOnePaymentStatus = async (
     id: string,
-    paymentStatus: OrderPaymentStatus
+    paymentStatus: OrderPaymentStatus,
   ) => {
     const updated = await updateOrderPaymentStatus(id, paymentStatus);
     setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
@@ -993,7 +1318,7 @@ export default function OrdersPageClient() {
       setActionMessage(`Đã duyệt ${count} đơn.`);
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Lỗi duyệt đơn hàng loạt."
+        err instanceof Error ? err.message : "Lỗi duyệt đơn hàng loạt.",
       );
     } finally {
       setSavingOrderStatus(false);
@@ -1026,7 +1351,7 @@ export default function OrdersPageClient() {
       setActionMessage(
         err instanceof Error
           ? err.message
-          : "Lỗi cập nhật thanh toán hàng loạt."
+          : "Lỗi cập nhật thanh toán hàng loạt.",
       );
     } finally {
       setSavingPaymentStatus(false);
@@ -1116,7 +1441,7 @@ export default function OrdersPageClient() {
 
     setConfirmTitle("Xóa đơn hàng");
     setConfirmDescription(
-      `Bạn có chắc muốn xóa đơn ${order?.orderCode || ""}? Chỉ đơn đã hủy mới có thể xóa.`
+      `Bạn có chắc muốn xóa đơn ${order?.orderCode || ""}? Chỉ đơn đã hủy mới có thể xóa.`,
     );
     setConfirmText("Xóa đơn");
     setConfirmDanger(true);
@@ -1141,7 +1466,7 @@ export default function OrdersPageClient() {
 
     setConfirmTitle("Xóa đơn hàng");
     setConfirmDescription(
-      `Bạn đang xóa ${checkedIds.length} đơn đã chọn. Chỉ đơn đã hủy mới có thể xóa. Hành động này không thể hoàn tác.`
+      `Bạn đang xóa ${checkedIds.length} đơn đã chọn. Chỉ đơn đã hủy mới có thể xóa. Hành động này không thể hoàn tác.`,
     );
     setConfirmText("Xóa đơn");
     setConfirmDanger(true);
@@ -1162,8 +1487,9 @@ export default function OrdersPageClient() {
             successCount += 1;
           } catch (err) {
             failed.push(
-              `${order.orderCode}: ${err instanceof Error ? err.message : "Lỗi không rõ"
-              }`
+              `${order.orderCode}: ${
+                err instanceof Error ? err.message : "Lỗi không rõ"
+              }`,
             );
           }
         }
@@ -1175,12 +1501,12 @@ export default function OrdersPageClient() {
           setActionMessage(`Đã xóa ${successCount} đơn.`);
         } else {
           setActionMessage(
-            `Đã xóa ${successCount} đơn. Lỗi: ${failed.join(" | ")}`
+            `Đã xóa ${successCount} đơn. Lỗi: ${failed.join(" | ")}`,
           );
         }
       } catch (err) {
         setActionMessage(
-          err instanceof Error ? err.message : "Lỗi xóa đơn hàng loạt."
+          err instanceof Error ? err.message : "Lỗi xóa đơn hàng loạt.",
         );
       } finally {
         setDeletingOrders(false);
@@ -1217,76 +1543,76 @@ export default function OrdersPageClient() {
         setActionMessage(`Đã gửi GHN thành công ${successCount} đơn.`);
       } else {
         setActionMessage(
-          `Đã gửi GHN ${successCount} đơn. Thất bại: ${failed.join(", ")}`
+          `Đã gửi GHN ${successCount} đơn. Thất bại: ${failed.join(", ")}`,
         );
       }
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Lỗi gửi sang HVC."
+        err instanceof Error ? err.message : "Lỗi gửi sang HVC.",
       );
     } finally {
       setSavingOrderStatus(false);
     }
   };
 
-const handleBulkCancel = async () => {
-  if (!checkedIds.length) return;
+  const handleBulkCancel = async () => {
+    if (!checkedIds.length) return;
 
-setConfirmTitle("Xác nhận huỷ");
-setConfirmDescription(
-  `Huỷ ${checkedIds.length} đơn đã chọn? Nếu đơn đã có mã vận đơn, hệ thống sẽ gửi yêu cầu huỷ sang GHN.`
-);
-setConfirmText("Huỷ");
-setConfirmDanger(false);
-  setConfirmAction(() => async () => {
-    try {
-      setSavingOrderStatus(true);
-      setActionMessage("");
+    setConfirmTitle("Xác nhận huỷ");
+    setConfirmDescription(
+      `Huỷ ${checkedIds.length} đơn đã chọn? Nếu đơn đã có mã vận đơn, hệ thống sẽ gửi yêu cầu huỷ sang GHN.`,
+    );
+    setConfirmText("Huỷ");
+    setConfirmDanger(false);
+    setConfirmAction(() => async () => {
+      try {
+        setSavingOrderStatus(true);
+        setActionMessage("");
 
-      let successCount = 0;
-      const failed: string[] = [];
+        let successCount = 0;
+        const failed: string[] = [];
 
-      for (const id of checkedIds) {
-        const order = normalizedOrders.find((o) => o.id === id);
-        if (!order) continue;
+        for (const id of checkedIds) {
+          const order = normalizedOrders.find((o) => o.id === id);
+          if (!order) continue;
 
-        if (order.status === "COMPLETED") {
-          failed.push(`${order.orderCode}: không thể hủy`);
-          continue;
+          if (order.status === "COMPLETED") {
+            failed.push(`${order.orderCode}: không thể hủy`);
+            continue;
+          }
+
+          try {
+            await cancelOneOrderOnCarrier(id);
+            successCount += 1;
+          } catch (err) {
+            failed.push(
+              `${order.orderCode}: ${
+                err instanceof Error ? err.message : "Lỗi không rõ"
+              }`,
+            );
+          }
         }
 
-        try {
-          await cancelOneOrderOnCarrier(id);
-          successCount += 1;
-        } catch (err) {
-          failed.push(
-            `${order.orderCode}: ${
-              err instanceof Error ? err.message : "Lỗi không rõ"
-            }`
+        await loadOrders();
+
+        if (failed.length === 0) {
+          setActionMessage(`Đã hủy ${successCount} đơn.`);
+        } else {
+          setActionMessage(
+            `Đã hủy ${successCount} đơn. Lỗi: ${failed.join(" | ")}`,
           );
         }
-      }
-
-      await loadOrders();
-
-      if (failed.length === 0) {
-        setActionMessage(`Đã hủy ${successCount} đơn.`);
-      } else {
+      } catch (err) {
         setActionMessage(
-          `Đã hủy ${successCount} đơn. Lỗi: ${failed.join(" | ")}`
+          err instanceof Error ? err.message : "Lỗi hủy đơn hàng loạt.",
         );
+      } finally {
+        setSavingOrderStatus(false);
       }
-    } catch (err) {
-      setActionMessage(
-        err instanceof Error ? err.message : "Lỗi hủy đơn hàng loạt."
-      );
-    } finally {
-      setSavingOrderStatus(false);
-    }
-  });
+    });
 
-  setConfirmOpen(true);
-};
+    setConfirmOpen(true);
+  };
   const handlePrint = (type: "shipping" | "sales", paper: PrintPaperSize) => {
     if (!checkedOrders.length) return;
 
@@ -1331,6 +1657,20 @@ setConfirmDanger(false);
     setVisibleColumns(defaultVisibleColumns(canSeeMoney));
   };
 
+  const moveColumn = (key: ColumnKey, direction: "up" | "down") => {
+    setVisibleColumns((prev) => {
+      const index = prev.indexOf(key);
+      if (index < 0) return prev;
+      const nextIndex = direction === "up" ? index - 1 : index + 1;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+
+      const next = [...prev];
+      const [item] = next.splice(index, 1);
+      next.splice(nextIndex, 0, item);
+      return next;
+    });
+  };
+
   const isColumnVisible = (key: ColumnKey) => visibleColumns.includes(key);
 
   const applyQuickDate = (key: QuickDateKey) => {
@@ -1345,8 +1685,376 @@ setConfirmDanger(false);
       filteredOrders
         .filter((o) => o.paymentStatus === "PAID")
         .reduce((sum, o) => sum + Number(o.finalAmount || 0), 0),
-    [filteredOrders]
+    [filteredOrders],
   );
+
+  const columnWidthClass: Record<ColumnKey, string> = {
+    orderCode: "w-[160px]",
+    createdAt: "w-[170px]",
+    customerName: "w-[150px]",
+    customerPhone: "w-[120px]",
+    orderStatus: "w-[140px]",
+    paymentStatus: "w-[150px]",
+    fulfillmentStatus: "w-[135px]",
+    branch: "w-[120px]",
+    createdBy: "w-[155px]",
+    salesChannel: "w-[120px]",
+    shippingMode: "w-[115px]",
+    shippingPartner: "w-[110px]",
+    trackingCode: "w-[170px]",
+    itemCount: "w-[80px]",
+    shippingAddress: "w-[260px]",
+    note: "w-[230px]",
+    shippingFee: "w-[120px]",
+    codAmount: "w-[125px]",
+    amountDue: "w-[150px]",
+    finalAmount: "w-[130px]",
+  };
+
+  const applyCellFilter = (key: ColumnKey, value?: string | null) => {
+    const safeValue = String(value || "").trim();
+    if (!safeValue || safeValue === "—") return;
+
+    setShowAdvancedFilters(true);
+
+    switch (key) {
+      case "branch":
+        setBranchFilter(String(value));
+        break;
+      case "createdBy":
+        setCreatedByFilter(safeValue);
+        break;
+      case "salesChannel":
+        setSalesChannelFilter(safeValue);
+        break;
+      case "shippingMode":
+        setShippingModeFilter(safeValue);
+        break;
+      case "shippingPartner":
+        setShippingPartnerFilter(safeValue);
+        break;
+      case "fulfillmentStatus":
+        setFulfillmentFilter(safeValue);
+        break;
+      default:
+        setFreeTextFilter(safeValue);
+        break;
+    }
+  };
+
+  const filterButtonClass =
+    "rounded-lg px-1 font-medium text-neutral-800 underline-offset-2 hover:bg-neutral-100 hover:underline";
+
+  const stickyColumnClass = (key: ColumnKey, header = false) => {
+    if (key !== "orderCode") return "";
+    return `${header ? "sticky left-[44px] z-30 bg-neutral-50" : "sticky left-[44px] z-20 bg-white group-hover:bg-neutral-50"} shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)]`;
+  };
+
+  const orderedVisibleColumns = visibleColumns.filter((key) => {
+    const column = COLUMN_DEFS.find((col) => col.key === key);
+    if (!column) return false;
+    if (column.money && !canSeeMoney) return false;
+    return true;
+  });
+
+  const renderColumnHeader = (key: ColumnKey) => {
+    const column = COLUMN_DEFS.find((col) => col.key === key);
+    if (!column) return null;
+    const align = column.money
+      ? "text-right"
+      : key === "itemCount"
+        ? "text-center"
+        : "text-left";
+    return (
+      <th
+        key={key}
+        className={`${columnWidthClass[key]} border-b border-neutral-200 px-3 py-3 ${align} ${stickyColumnClass(key, true)}`}
+      >
+        {column.label}
+      </th>
+    );
+  };
+
+  const renderColumnCell = (order: NormalizedOrder, key: ColumnKey) => {
+    const meta = order._meta;
+
+    switch (key) {
+      case "orderCode":
+        return (
+          <td
+            key={key}
+            className={`border-b border-neutral-100 px-3 py-3 font-semibold whitespace-nowrap ${stickyColumnClass(key)}`}
+          >
+            <button
+              type="button"
+              onClick={() => openOrderInNewTab(order)}
+              className="text-left font-semibold text-neutral-900 underline-offset-2 hover:underline"
+            >
+              {order.orderCode}
+            </button>
+          </td>
+        );
+      case "createdAt":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs text-neutral-500"
+          >
+            {order.createdAt}
+          </td>
+        );
+      case "customerName":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            {order.customerName || "—"}
+          </td>
+        );
+      case "customerPhone":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            {order.customerPhone || "—"}
+          </td>
+        );
+      case "orderStatus":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <StatusBadge
+              label={orderStatusLabel(order.status)}
+              tone={orderStatusTone(order.status)}
+            />
+          </td>
+        );
+      case "paymentStatus":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <StatusBadge
+              label={paymentStatusLabel(order.paymentStatus)}
+              tone={paymentStatusTone(order.paymentStatus)}
+            />
+          </td>
+        );
+      case "fulfillmentStatus":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <button
+              type="button"
+              onClick={() => applyCellFilter(key, order.fulfillmentStatus)}
+              title="Lọc theo trạng thái giao vận này"
+            >
+              <StatusBadge
+                label={fulfillmentStatusLabel(order.fulfillmentStatus)}
+                tone={fulfillmentStatusTone(order.fulfillmentStatus)}
+              />
+            </button>
+          </td>
+        );
+      case "branch":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setBranchFilter(order.branchId || "ALL");
+                setShowAdvancedFilters(true);
+              }}
+              className={filterButtonClass}
+              title="Lọc theo chi nhánh này"
+            >
+              {branchLabel(order.branchId)}
+            </button>
+          </td>
+        );
+      case "createdBy":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setCreatedByFilter(order._createdByName);
+                setShowAdvancedFilters(true);
+              }}
+              className={filterButtonClass}
+              title="Lọc theo nhân viên này"
+            >
+              {order._createdByName}
+            </button>
+          </td>
+        );
+      case "salesChannel":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <button
+              type="button"
+              onClick={() => applyCellFilter(key, order.salesChannel)}
+              className={filterButtonClass}
+              title="Lọc theo kênh bán này"
+            >
+              {order.salesChannel || "—"}
+            </button>
+          </td>
+        );
+      case "shippingMode":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <button
+              type="button"
+              onClick={() => applyCellFilter(key, meta.shippingMode)}
+              className={filterButtonClass}
+              title="Lọc theo cách giao này"
+            >
+              {meta.shippingMode || "—"}
+            </button>
+          </td>
+        );
+      case "shippingPartner":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
+          >
+            <button
+              type="button"
+              onClick={() =>
+                applyCellFilter(
+                  key,
+                  order.shipment?.carrier || meta.shippingPartner,
+                )
+              }
+              className={filterButtonClass}
+              title="Lọc theo đơn vị vận chuyển này"
+            >
+              {order.shipment?.carrier || meta.shippingPartner || "—"}
+            </button>
+          </td>
+        );
+      case "trackingCode":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs"
+          >
+            {order.shipment?.trackingCode ? (
+              order.shipment?.id ? (
+                <Link
+                  href={`/control/shipments/${order.shipment.id}`}
+                  className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                  title="Mở phiếu giao hàng"
+                >
+                  {order.shipment.trackingCode}
+                </Link>
+              ) : (
+                <span
+                  className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700"
+                  title="Mã vận đơn"
+                >
+                  {order.shipment.trackingCode}
+                </span>
+              )
+            ) : (
+              <span className="text-neutral-400">—</span>
+            )}
+          </td>
+        );
+      case "itemCount":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center whitespace-nowrap"
+          >
+            {(order.items || []).length}
+          </td>
+        );
+      case "shippingAddress":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 min-w-[240px]"
+          >
+            <span title={meta.address || ""}>
+              {shortText(meta.address, 40)}
+            </span>
+          </td>
+        );
+      case "note":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 min-w-[200px]"
+          >
+            <span
+              title={meta.noteText || meta.shippingNote || order.note || ""}
+            >
+              {shortText(meta.noteText || meta.shippingNote || order.note, 34)}
+            </span>
+          </td>
+        );
+      case "shippingFee":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {currency(order._shippingFee)}
+          </td>
+        );
+      case "codAmount":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {currency(order._codAmount)}
+          </td>
+        );
+      case "amountDue":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {currency(order._amountDue)}
+          </td>
+        );
+      case "finalAmount":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {currency(Number(order.finalAmount || 0))}
+          </td>
+        );
+      default:
+        return null;
+    }
+  };
 
   if (loading) {
     return (
@@ -1375,7 +2083,7 @@ setConfirmDanger(false);
             icon="✓"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "WAITING_APPROVE" ? "ALL" : "WAITING_APPROVE"
+                prev === "WAITING_APPROVE" ? "ALL" : "WAITING_APPROVE",
               )
             }
           />
@@ -1386,7 +2094,7 @@ setConfirmDanger(false);
             icon="₫"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "WAITING_PAYMENT" ? "ALL" : "WAITING_PAYMENT"
+                prev === "WAITING_PAYMENT" ? "ALL" : "WAITING_PAYMENT",
               )
             }
           />
@@ -1397,7 +2105,7 @@ setConfirmDanger(false);
             icon="□"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "WAITING_PACKING" ? "ALL" : "WAITING_PACKING"
+                prev === "WAITING_PACKING" ? "ALL" : "WAITING_PACKING",
               )
             }
           />
@@ -1408,7 +2116,7 @@ setConfirmDanger(false);
             icon="→"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "WAITING_SHIP" ? "ALL" : "WAITING_SHIP"
+                prev === "WAITING_SHIP" ? "ALL" : "WAITING_SHIP",
               )
             }
           />
@@ -1419,7 +2127,7 @@ setConfirmDanger(false);
             icon="↗"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "DELIVERING" ? "ALL" : "DELIVERING"
+                prev === "DELIVERING" ? "ALL" : "DELIVERING",
               )
             }
           />
@@ -1430,7 +2138,7 @@ setConfirmDanger(false);
             icon="◔"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "SOON_DELIVERY" ? "ALL" : "SOON_DELIVERY"
+                prev === "SOON_DELIVERY" ? "ALL" : "SOON_DELIVERY",
               )
             }
           />
@@ -1450,7 +2158,7 @@ setConfirmDanger(false);
             icon="↺"
             onClick={() =>
               setQuickStatus((prev) =>
-                prev === "REDELIVERY" ? "ALL" : "REDELIVERY"
+                prev === "REDELIVERY" ? "ALL" : "REDELIVERY",
               )
             }
           />
@@ -1583,27 +2291,166 @@ setConfirmDanger(false);
                   </button>
                 </div>
 
-                <div className="grid max-h-80 gap-2 overflow-auto">
+                <div className="grid max-h-96 gap-2 overflow-auto pr-1">
                   {COLUMN_DEFS.filter((col) =>
-                    canSeeMoney ? true : !col.money
-                  ).map((col) => (
-                    <label
-                      key={col.key}
-                      className="flex items-center gap-2 text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isColumnVisible(col.key)}
-                        onChange={() => toggleColumn(col.key)}
-                      />
-                      <span>{col.label}</span>
-                    </label>
-                  ))}
+                    canSeeMoney ? true : !col.money,
+                  ).map((col) => {
+                    const index = visibleColumns.indexOf(col.key);
+                    return (
+                      <div
+                        key={col.key}
+                        className="flex items-center gap-2 rounded-2xl border border-neutral-100 px-2.5 py-2 text-sm hover:bg-neutral-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isColumnVisible(col.key)}
+                          onChange={() => toggleColumn(col.key)}
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {col.label}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={index <= 0}
+                          onClick={() => moveColumn(col.key, "up")}
+                          className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-600 disabled:opacity-30"
+                          title="Đưa cột lên trước"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            index < 0 || index >= visibleColumns.length - 1
+                          }
+                          onClick={() => moveColumn(col.key, "down")}
+                          className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-600 disabled:opacity-30"
+                          title="Đưa cột xuống sau"
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
           </div>
         </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowAdvancedFilters((v) => !v)}
+          >
+            {showAdvancedFilters ? "Ẩn bộ lọc nâng cao" : "Bộ lọc nâng cao"}
+            {activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
+          </Button>
+
+          {activeAdvancedFilterCount ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={clearAdvancedFilters}
+            >
+              Xóa lọc nâng cao
+            </Button>
+          ) : null}
+
+          <p className="text-xs text-neutral-500">
+            Đang hiển thị {visibleOrders.length} / {totalItems} đơn theo bộ lọc
+            hiện tại
+          </p>
+        </div>
+
+        {showAdvancedFilters ? (
+          <div className="mt-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <input
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                placeholder="Lọc mọi thông tin trong bảng..."
+                value={freeTextFilter}
+                onChange={(e) => setFreeTextFilter(e.target.value)}
+              />
+
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                value={createdByFilter}
+                onChange={(e) => setCreatedByFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả nhân viên tạo đơn</option>
+                {createdByOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                value={fulfillmentFilter}
+                onChange={(e) => setFulfillmentFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả giao vận</option>
+                <option value="UNFULFILLED">Chưa giao</option>
+                <option value="PROCESSING">Đang chuẩn bị</option>
+                <option value="PARTIAL">Một phần</option>
+                <option value="FULFILLED">Đã giao vận</option>
+                <option value="RETURNED">Trả hàng</option>
+              </select>
+
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                value={salesChannelFilter}
+                onChange={(e) => setSalesChannelFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả kênh bán</option>
+                {salesChannelOptions.map((channel) => (
+                  <option key={channel} value={channel}>
+                    {channel}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                value={shippingModeFilter}
+                onChange={(e) => setShippingModeFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả cách giao</option>
+                {shippingModeOptions.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                value={shippingPartnerFilter}
+                onChange={(e) => setShippingPartnerFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả đơn vị vận chuyển</option>
+                {shippingPartnerOptions.map((partner) => (
+                  <option key={partner} value={partner}>
+                    {partner}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                value={trackingFilter}
+                onChange={(e) => setTrackingFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả mã vận đơn</option>
+                <option value="HAS">Có mã vận đơn</option>
+                <option value="NONE">Chưa có mã vận đơn</option>
+              </select>
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
           <div>
@@ -1763,11 +2610,64 @@ setConfirmDanger(false);
       ) : null}
 
       <Panel className="overflow-hidden">
-        <div className="overflow-auto">
-          <table className="min-w-[2520px] w-full border-collapse table-fixed">
-            <thead className="bg-neutral-50">
+        <div className="sticky top-0 z-20 border-b border-neutral-200 bg-white px-3 py-3 shadow-[0_6px_18px_rgba(0,0,0,0.04)]">
+          <div className="flex items-center gap-3">
+            <Button
+              size="sm"
+              disabled={tableScrollLeft <= 0}
+              onClick={() => scrollTableBy(-420)}
+            >
+              ← Trái
+            </Button>
+
+            <div className="min-w-0 flex-1">
+              <input
+                type="range"
+                min={0}
+                max={Math.max(tableMaxScrollLeft, 1)}
+                step={1}
+                value={Math.min(
+                  tableScrollLeft,
+                  Math.max(tableMaxScrollLeft, 0),
+                )}
+                onChange={(e) => scrollTableTo(Number(e.target.value))}
+                className="orders-table-range w-full"
+                aria-label="Kéo ngang bảng đơn hàng"
+              />
+              <div className="mt-1 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                <span>Đầu bảng</span>
+                <span>Giữ chuột kéo ngang trực tiếp trên bảng hoặc dùng thanh này</span>
+                <span>Cuối bảng</span>
+              </div>
+            </div>
+
+            <Button
+              size="sm"
+              disabled={tableScrollLeft >= tableMaxScrollLeft}
+              onClick={() => scrollTableBy(420)}
+            >
+              Phải →
+            </Button>
+          </div>
+        </div>
+
+        <div
+          ref={tableScrollRef}
+          onScroll={updateTableScrollState}
+          onMouseDown={handleTableMouseDown}
+          onDoubleClick={() => scrollTableTo(0)}
+          className={`orders-table-scroll-hidden w-full overflow-auto scroll-smooth ${
+            isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"
+          }`}
+          style={{ maxHeight: "calc(100vh - 430px)", minHeight: 360 }}
+        >
+          <table
+            className="w-full border-collapse table-fixed"
+            style={{ minWidth: TABLE_MIN_WIDTH }}
+          >
+            <thead className="sticky top-0 z-40 bg-neutral-50 shadow-[0_2px_0_rgba(0,0,0,0.08)]">
               <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
-                <th className="w-[44px] border-b border-neutral-200 px-3 py-3">
+                <th className="sticky left-0 z-20 w-[44px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)]">
                   <input
                     type="checkbox"
                     checked={allChecked}
@@ -1775,107 +2675,9 @@ setConfirmDanger(false);
                   />
                 </th>
 
-                {isColumnVisible("orderCode") ? (
-                  <th className="w-[160px] border-b border-neutral-200 px-3 py-3">
-                    Mã đơn
-                  </th>
-                ) : null}
-                {isColumnVisible("createdAt") ? (
-                  <th className="w-[170px] border-b border-neutral-200 px-3 py-3">
-                    Ngày tạo
-                  </th>
-                ) : null}
-                {isColumnVisible("customerName") ? (
-                  <th className="border-b border-neutral-200 px-3 py-3">
-                    Khách hàng
-                  </th>
-                ) : null}
-                {isColumnVisible("customerPhone") ? (
-                  <th className="w-[120px] border-b border-neutral-200 px-3 py-3">
-                    SĐT
-                  </th>
-                ) : null}
-                {isColumnVisible("orderStatus") ? (
-                  <th className="w-[140px] border-b border-neutral-200 px-3 py-3">
-                    Trạng thái đơn
-                  </th>
-                ) : null}
-                {isColumnVisible("paymentStatus") ? (
-                  <th className="w-[145px] border-b border-neutral-200 px-3 py-3">
-                    Thanh toán
-                  </th>
-                ) : null}
-                {isColumnVisible("fulfillmentStatus") ? (
-                  <th className="w-[135px] border-b border-neutral-200 px-3 py-3">
-                    Giao vận
-                  </th>
-                ) : null}
-                {isColumnVisible("branch") ? (
-                  <th className="w-[110px] border-b border-neutral-200 px-3 py-3">
-                    Chi nhánh
-                  </th>
-                ) : null}
-                {isColumnVisible("createdBy") ? (
-                  <th className="w-[150px] border-b border-neutral-200 px-3 py-3">
-                    Nhân viên tạo đơn
-                  </th>
-                ) : null}
-                {isColumnVisible("salesChannel") ? (
-                  <th className="w-[120px] border-b border-neutral-200 px-3 py-3">
-                    Kênh bán
-                  </th>
-                ) : null}
-                {isColumnVisible("shippingMode") ? (
-                  <th className="w-[110px] border-b border-neutral-200 px-3 py-3">
-                    Cách giao
-                  </th>
-                ) : null}
-                {isColumnVisible("shippingPartner") ? (
-                  <th className="w-[95px] border-b border-neutral-200 px-3 py-3">
-                    Đơn vị VC
-                  </th>
-                ) : null}
-                {isColumnVisible("trackingCode") ? (
-                  <th className="w-[170px] border-b border-neutral-200 px-3 py-3">
-                    Mã vận đơn
-                  </th>
-                ) : null}
-                {isColumnVisible("itemCount") ? (
-                  <th className="w-[80px] border-b border-neutral-200 px-3 py-3 text-center">
-                    Số món
-                  </th>
-                ) : null}
-                {isColumnVisible("shippingAddress") ? (
-                  <th className="border-b border-neutral-200 px-3 py-3">
-                    Địa chỉ giao
-                  </th>
-                ) : null}
-                {isColumnVisible("note") ? (
-                  <th className="border-b border-neutral-200 px-3 py-3">
-                    Ghi chú
-                  </th>
-                ) : null}
-                {canSeeMoney && isColumnVisible("shippingFee") ? (
-                  <th className="w-[120px] border-b border-neutral-200 px-3 py-3 text-right">
-                    Phí ship
-                  </th>
-                ) : null}
-                {canSeeMoney && isColumnVisible("codAmount") ? (
-                  <th className="w-[125px] border-b border-neutral-200 px-3 py-3 text-right">
-                    Thu hộ COD
-                  </th>
-                ) : null}
-                {canSeeMoney && isColumnVisible("amountDue") ? (
-                  <th className="w-[150px] border-b border-neutral-200 px-3 py-3 text-right">
-                    Khách còn phải trả
-                  </th>
-                ) : null}
-                {canSeeMoney && isColumnVisible("finalAmount") ? (
-                  <th className="w-[130px] border-b border-neutral-200 px-3 py-3 text-right">
-                    Tổng tiền
-                  </th>
-                ) : null}
-                <th className="w-[210px] border-b border-neutral-200 px-3 py-3 text-right">
+                {orderedVisibleColumns.map(renderColumnHeader)}
+
+                <th className="sticky right-0 z-30 w-[210px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
                   Thao tác
                 </th>
               </tr>
@@ -1884,23 +2686,25 @@ setConfirmDanger(false);
             <tbody>
               {visibleOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={31} className="px-4 py-6 text-sm text-neutral-500">
+                  <td
+                    colSpan={orderedVisibleColumns.length + 2}
+                    className="px-4 py-6 text-sm text-neutral-500"
+                  >
                     Không có đơn phù hợp.
                   </td>
                 </tr>
               ) : (
                 visibleOrders.map((order) => {
                   const checked = checkedIds.includes(order.id);
-                  const meta = order._meta;
                   const canShowRedelivery =
                     isFailedOrder(order) || isRedeliveryOrder(order);
 
                   return (
                     <tr
                       key={order.id}
-                      className="bg-white text-sm hover:bg-neutral-50"
+                      className="group bg-white text-sm transition hover:bg-neutral-50"
                     >
-                      <td className="border-b border-neutral-100 px-3 py-3">
+                      <td className="sticky left-0 z-30 border-b border-neutral-100 bg-white px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
                         <input
                           type="checkbox"
                           checked={checked}
@@ -1908,183 +2712,11 @@ setConfirmDanger(false);
                         />
                       </td>
 
-                      {isColumnVisible("orderCode") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 font-semibold whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => openOrderInNewTab(order)}
-                            className="text-left font-semibold text-neutral-900 underline-offset-2 hover:underline"
-                          >
-                            {order.orderCode}
-                          </button>
-                        </td>
-                      ) : null}
+                      {orderedVisibleColumns.map((key) =>
+                        renderColumnCell(order, key),
+                      )}
 
-                      {isColumnVisible("createdAt") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs text-neutral-500">
-                          {order.createdAt}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("customerName") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {order.customerName || "—"}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("customerPhone") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {order.customerPhone || "—"}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("orderStatus") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          <StatusBadge
-                            label={orderStatusLabel(order.status)}
-                            tone={orderStatusTone(order.status)}
-                          />
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("paymentStatus") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          <StatusBadge
-                            label={paymentStatusLabel(order.paymentStatus)}
-                            tone={paymentStatusTone(order.paymentStatus)}
-                          />
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("fulfillmentStatus") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          <StatusBadge
-                            label={fulfillmentStatusLabel(
-                              order.fulfillmentStatus
-                            )}
-                            tone={fulfillmentStatusTone(
-                              order.fulfillmentStatus
-                            )}
-                          />
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("branch") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {branchLabel(order.branchId)}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("createdBy") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {order._createdByName}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("salesChannel") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {order.salesChannel || "—"}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("shippingMode") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {meta.shippingMode || "—"}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("shippingPartner") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
-                          {order.shipment?.carrier ||
-                            meta.shippingPartner ||
-                            "—"}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("trackingCode") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs">
-                          {order.shipment?.trackingCode ? (
-                            order.shipment?.id ? (
-                              <Link
-                                href={`/control/shipments/${order.shipment.id}`}
-                                className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
-                                title="Mở phiếu giao hàng"
-                              >
-                                {order.shipment.trackingCode}
-                              </Link>
-                            ) : (
-                              <span
-                                className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700"
-                                title="Mã vận đơn"
-                              >
-                                {order.shipment.trackingCode}
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-neutral-400">—</span>
-                          )}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("itemCount") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 text-center whitespace-nowrap">
-                          {(order.items || []).length}
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("shippingAddress") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 min-w-[240px]">
-                          <span title={meta.address || ""}>
-                            {shortText(meta.address, 40)}
-                          </span>
-                        </td>
-                      ) : null}
-
-                      {isColumnVisible("note") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 min-w-[200px]">
-                          <span
-                            title={
-                              meta.noteText ||
-                              meta.shippingNote ||
-                              order.note ||
-                              ""
-                            }
-                          >
-                            {shortText(
-                              meta.noteText ||
-                              meta.shippingNote ||
-                              order.note,
-                              34
-                            )}
-                          </span>
-                        </td>
-                      ) : null}
-
-                      {canSeeMoney && isColumnVisible("shippingFee") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap">
-                          {currency(order._shippingFee)}
-                        </td>
-                      ) : null}
-
-                      {canSeeMoney && isColumnVisible("codAmount") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap">
-                          {currency(order._codAmount)}
-                        </td>
-                      ) : null}
-
-                      {canSeeMoney && isColumnVisible("amountDue") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap">
-                          {currency(order._amountDue)}
-                        </td>
-                      ) : null}
-
-                      {canSeeMoney && isColumnVisible("finalAmount") ? (
-                        <td className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap">
-                          {currency(Number(order.finalAmount || 0))}
-                        </td>
-                      ) : null}
-
-                      <td className="border-b border-neutral-100 px-3 py-3">
+                      <td className="sticky right-0 z-20 border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
                         <div className="flex justify-end gap-2">
                           <button
                             type="button"
@@ -2097,7 +2729,9 @@ setConfirmDanger(false);
                           {canShowRedelivery ? (
                             <button
                               type="button"
-                              onClick={() => openOrderInNewTab(order, "redelivery")}
+                              onClick={() =>
+                                openOrderInNewTab(order, "redelivery")
+                              }
                               className="inline-flex items-center rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
                             >
                               Giao lại
@@ -2124,6 +2758,76 @@ setConfirmDanger(false);
           </table>
         </div>
       </Panel>
+
+      <style jsx global>{`
+        .orders-table-scroll-hidden {
+          scrollbar-width: thin;
+          scrollbar-color: #c7c7c7 transparent;
+        }
+
+        .orders-table-scroll-hidden::-webkit-scrollbar:horizontal {
+          height: 0;
+        }
+
+        .orders-table-scroll-hidden::-webkit-scrollbar:vertical {
+          width: 10px;
+        }
+
+        .orders-table-scroll-hidden::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .orders-table-scroll-hidden::-webkit-scrollbar-thumb {
+          background: #c7c7c7;
+          border-radius: 999px;
+          border: 2px solid white;
+        }
+
+        .orders-table-scroll-hidden::-webkit-scrollbar-thumb:hover {
+          background: #8f8f8f;
+        }
+
+        .orders-table-range {
+          height: 18px;
+          accent-color: #171717;
+          cursor: pointer;
+        }
+
+        .orders-table-range::-webkit-slider-runnable-track {
+          height: 12px;
+          border-radius: 999px;
+          background: #e5e7eb;
+          border: 1px solid #d4d4d4;
+        }
+
+        .orders-table-range::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 24px;
+          height: 24px;
+          margin-top: -7px;
+          border-radius: 999px;
+          background: #171717;
+          border: 4px solid white;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+        }
+
+        .orders-table-range::-moz-range-track {
+          height: 12px;
+          border-radius: 999px;
+          background: #e5e7eb;
+          border: 1px solid #d4d4d4;
+        }
+
+        .orders-table-range::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          background: #171717;
+          border: 4px solid white;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+        }
+      `}</style>
 
       <Panel className="p-4">
         <div className="flex items-center justify-between">

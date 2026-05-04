@@ -47,45 +47,50 @@ const MENU: MenuItem[] = [
     permission: "products.view",
     children: [
       { href: "/products", label: "Danh sách", permission: "products.view" },
-      { href: "/control/product-categories", label: "Danh mục", permission: "products.view" },
+      { href: "/promotions", label: "Khuyến mại", permission: "products.view" },
+      // Danh mục / nhà cung cấp là cấu hình dữ liệu gốc, chỉ admin/owner thấy.
+      { href: "/control/product-categories", label: "Danh mục", permission: "system.manage" },
       { href: "/control/suppliers", label: "Nhà cung cấp", permission: "system.manage" },
-      { href: "/control/purchase-receipts", label: "Phiếu nhập", permission: "inventory.view" },
-      { href: "/control/stock-transfers", label: "Phiếu chuyển kho", permission: "inventory.view" },
     ],
   },
   {
     label: "Kho",
     permission: "inventory.view",
     children: [
-      { href: "/inventory", label: "Kho hàng", permission: "inventory.view" },
-      { href: "/inventory-logs", label: "Lịch sử kho", permission: "inventory.logs.view" },
+      // Kho hàng tổng / lịch sử kho là màn nhạy cảm, chỉ admin/owner thấy.
+      { href: "/inventory", label: "Kho hàng", permission: "system.manage" },
+      { href: "/inventory-logs", label: "Lịch sử kho", permission: "system.manage" },
+      // Phiếu nhập và phiếu chuyển kho chuyển về đúng nhóm Kho.
+      { href: "/control/purchase-receipts", label: "Phiếu nhập", permission: "inventory.view" },
+      { href: "/control/stock-transfers", label: "Phiếu chuyển kho", permission: "inventory.view" },
       { href: "/stocktake", label: "Kiểm kho", permission: "stocktake.view" },
-      { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: "inventory.3d.view" },
+      { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: "system.manage" },
     ],
   },
   {
     label: "Tài chính",
-    permission: "reports.view",
+    // Mặc định nhân viên không thấy tab Tài chính. Chỉ admin/owner có system.manage.
+    permission: "system.manage",
     children: [
       {
         href: "/finance/daily",
         label: "Tổng quan dòng tiền",
-        permission: "reports.view",
+        permission: "system.manage",
       },
       {
         href: "/finance/ghn-reconciliation",
         label: "Đối soát COD GHN",
-        permission: "reports.view",
-      },
-      {
-        href: "/finance/payment-sources",
-        label: "Nguồn tiền",
-        permission: "reports.view",
+        permission: "system.manage",
       },
       {
         href: "/finance/revenue",
         label: "Báo cáo doanh thu",
-        permission: "reports.view",
+        permission: "system.manage",
+      },
+      {
+        href: "/finance/supplier-payments",
+        label: "Thanh toán nhà cung cấp",
+        permission: "system.manage",
       },
     ],
   },
@@ -101,6 +106,61 @@ const MENU: MenuItem[] = [
   { href: "/settings", label: "Cấu hình", permission: "system.manage" },
   { href: "/control/customers", label: "Khách hàng", permission: "customers.view" },
 ];
+
+type BranchPermission = {
+  branchId?: string | null;
+  canView?: boolean;
+  canSell?: boolean;
+  canViewOwnOrders?: boolean;
+  canViewBranchOrders?: boolean;
+  canCreateOrder?: boolean;
+  canStocktake?: boolean;
+  canTransferStock?: boolean;
+  canReceiveStock?: boolean;
+  canViewStock?: boolean;
+};
+
+function userRoles(user: any) {
+  return [
+    ...(Array.isArray(user?.roles) ? user.roles : []),
+    user?.role,
+  ]
+    .map((role) => String(role || "").toLowerCase())
+    .filter(Boolean);
+}
+
+function isOwnerOrAdmin(user: any) {
+  const roles = userRoles(user);
+  return roles.includes("owner") || roles.includes("admin");
+}
+
+function hasAnyBranchPermission(user: any, key: keyof BranchPermission) {
+  if (isOwnerOrAdmin(user)) return true;
+  const rows = Array.isArray(user?.branchPermissions)
+    ? user.branchPermissions
+    : [];
+  return rows.some((row: BranchPermission) => Boolean(row?.[key]));
+}
+
+function canSeeMenuItem(user: any, item: MenuItem) {
+  if (!hasPermission(user.role, item.permission)) return false;
+
+  // Nhân viên bán lẻ không cần thấy nghiệp vụ nhập/chuyển kho.
+  // Chỉ hiện khi được cấp quyền tương ứng theo chi nhánh.
+  if (item.href === "/control/purchase-receipts") {
+    return hasAnyBranchPermission(user, "canReceiveStock");
+  }
+
+  if (item.href === "/control/stock-transfers") {
+    return hasAnyBranchPermission(user, "canTransferStock");
+  }
+
+  if (item.href === "/stocktake") {
+    return hasAnyBranchPermission(user, "canStocktake");
+  }
+
+  return true;
+}
 
 function getPasswordScore(password: string) {
   let score = 0;
@@ -152,11 +212,11 @@ export default function AdminShell({
     if (!currentUser?.role) return [];
 
     return MENU.map((item) => {
-      if (!hasPermission(currentUser.role, item.permission)) return null;
+      if (!canSeeMenuItem(currentUser, item)) return null;
 
       if (item.children?.length) {
         const visibleChildren = item.children.filter((child) =>
-          hasPermission(currentUser.role, child.permission)
+          canSeeMenuItem(currentUser, child)
         );
 
         if (!visibleChildren.length) return null;
@@ -168,9 +228,18 @@ export default function AdminShell({
     }).filter(Boolean) as MenuItem[];
   }, [currentUser]);
 
-  const handleLogout = () => {
-    clearCurrentUserFromStorage();
-    window.location.href = "/login";
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // vẫn logout local nếu backend lỗi
+    } finally {
+      clearCurrentUserFromStorage();
+      window.location.href = "/login";
+    }
   };
 
   const initials = useMemo(() => {

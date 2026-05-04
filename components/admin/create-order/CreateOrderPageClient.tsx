@@ -47,6 +47,7 @@ type DeliveryRequirement =
   | "KHONGCHOXEMHANG";
 
 type OrderLine = {
+  productId?: string | null;
   variantId: string;
   sku: string;
   productName: string;
@@ -86,6 +87,152 @@ type BranchOption = {
   type?: string;
   isActive?: boolean;
 };
+
+
+type PromotionRow = {
+  id: string;
+  name: string;
+  type: "PRODUCT_DISCOUNT" | "ORDER_DISCOUNT";
+  status: "ACTIVE" | "INACTIVE";
+  discountType: "PERCENT" | "FIXED_AMOUNT";
+  discountValue: string | number;
+  minOrderAmount?: string | number | null;
+  branchId?: string | null;
+  salesChannel?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  products?: Array<{ productId?: string | null; product?: { id?: string | null } | null }>;
+  priority?: number | string | null;
+};
+
+function isPromotionActiveForContext(
+  promotion: PromotionRow,
+  input: { branchId?: string | null; salesChannel?: string | null }
+) {
+  if (promotion.status !== "ACTIVE") return false;
+
+  const now = Date.now();
+  if (promotion.startAt && new Date(promotion.startAt).getTime() > now) return false;
+  if (promotion.endAt && new Date(promotion.endAt).getTime() < now) return false;
+
+  if (promotion.branchId && input.branchId && String(promotion.branchId) !== String(input.branchId)) return false;
+  if (promotion.branchId && !input.branchId) return false;
+
+  if (
+    promotion.salesChannel &&
+    input.salesChannel &&
+    String(promotion.salesChannel).toUpperCase() !== String(input.salesChannel).toUpperCase()
+  ) {
+    return false;
+  }
+  if (promotion.salesChannel && !input.salesChannel) return false;
+
+  return true;
+}
+
+function calculatePromotionDiscount(input: {
+  promotions: PromotionRow[];
+  lines: Array<{ productId?: string | null; price: number; qty: number }>;
+  branchId?: string | null;
+  salesChannel?: string | null;
+}) {
+  const subtotal = input.lines.reduce(
+    (sum, line) => sum + Number(line.price || 0) * Number(line.qty || 0),
+    0
+  );
+
+  const workingLines = input.lines.map((line) => ({
+    ...line,
+    discountAmount: 0,
+  }));
+
+  let productDiscount = 0;
+  let orderDiscount = 0;
+  const appliedNames: string[] = [];
+  const discountedProductIds = new Set<string>();
+  const breakdown: Array<{
+    id: string;
+    name: string;
+    type: "PRODUCT_DISCOUNT" | "ORDER_DISCOUNT";
+    discountAmount: number;
+  }> = [];
+
+  const activePromotions = input.promotions
+    .filter((promotion) => isPromotionActiveForContext(promotion, input))
+    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
+
+  for (const promotion of activePromotions) {
+    if (promotion.type === "PRODUCT_DISCOUNT") {
+      const productIds = new Set(
+        (promotion.products || [])
+          .map((row) => String(row.productId || row.product?.id || ""))
+          .filter(Boolean)
+      );
+
+      let discountForPromotion = 0;
+
+      for (const line of workingLines) {
+        if (!line.productId || !productIds.has(String(line.productId))) continue;
+
+        const qty = Math.max(1, Number(line.qty || 0));
+        const alreadyDiscountedPerUnit = Number(line.discountAmount || 0) / qty;
+        const base = Math.max(0, Number(line.price || 0) - alreadyDiscountedPerUnit);
+        const discountPerUnit =
+          promotion.discountType === "PERCENT"
+            ? (base * Number(promotion.discountValue || 0)) / 100
+            : Number(promotion.discountValue || 0);
+
+        const safeDiscount = Math.min(base, Math.max(0, discountPerUnit)) * qty;
+        line.discountAmount += safeDiscount;
+        discountForPromotion += safeDiscount;
+        discountedProductIds.add(String(line.productId));
+      }
+
+      if (discountForPromotion > 0) {
+        productDiscount += discountForPromotion;
+        appliedNames.push(promotion.name);
+        breakdown.push({
+          id: promotion.id,
+          name: promotion.name,
+          type: promotion.type,
+          discountAmount: discountForPromotion,
+        });
+      }
+    }
+
+    if (promotion.type === "ORDER_DISCOUNT") {
+      const minOrderAmount = Number(promotion.minOrderAmount || 0);
+      if (subtotal < minOrderAmount) continue;
+
+      const orderBase = Math.max(0, subtotal - productDiscount - orderDiscount);
+      const discount =
+        promotion.discountType === "PERCENT"
+          ? (orderBase * Number(promotion.discountValue || 0)) / 100
+          : Number(promotion.discountValue || 0);
+
+      const safeDiscount = Math.min(orderBase, Math.max(0, discount));
+      if (safeDiscount > 0) {
+        orderDiscount += safeDiscount;
+        appliedNames.push(promotion.name);
+        breakdown.push({
+          id: promotion.id,
+          name: promotion.name,
+          type: promotion.type,
+          discountAmount: safeDiscount,
+        });
+      }
+    }
+  }
+
+  return {
+    productDiscount,
+    orderDiscount,
+    totalDiscount: productDiscount + orderDiscount,
+    appliedNames: Array.from(new Set(appliedNames)),
+    discountedProductIds: Array.from(discountedProductIds),
+    breakdown,
+  };
+}
 
 type ShippingQuoteApplyPayload = {
   shippingFee: number;
@@ -228,7 +375,7 @@ function getApiBaseUrl() {
   return (
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "${API_BASE}"
+    API_BASE
   ).replace(/\/$/, "");
 }
 
@@ -594,6 +741,7 @@ export default function CreateOrderPageClient() {
   const phoneSuggestionRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const [products, setProducts] = useState<OrderProduct[]>([]);
+  const [promotions, setPromotions] = useState<PromotionRow[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -730,6 +878,42 @@ export default function CreateOrderPageClient() {
 
   useEffect(() => {
     void loadProducts();
+  }, []);
+
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const apiBase = getApiBaseUrl();
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+        const res = await fetch(`${apiBase}/promotions`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          cache: "no-store",
+        });
+
+        if (!res.ok) return;
+
+        const json = await res.json();
+        const rows = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json?.items)
+              ? json.items
+              : [];
+
+        setPromotions(rows);
+      } catch {
+        setPromotions([]);
+      }
+    };
+
+    void run();
   }, []);
   useEffect(() => {
     const run = async () => {
@@ -1051,6 +1235,7 @@ export default function CreateOrderPageClient() {
 
           return {
             ...variant,
+            productId: (product as any).id,
             productName: product.name,
             imageUrl: (product as any).imageUrl,
             stock,
@@ -1086,7 +1271,22 @@ export default function CreateOrderPageClient() {
   const manualDiscount = parseNumber(discountTotal);
   const fee = parseNumber(shippingFee);
   const paid = parseNumber(customerPaid);
-  const totalDiscount = lineDiscountTotal + manualDiscount;
+  const promotionPreview = useMemo(
+    () =>
+      calculatePromotionDiscount({
+        promotions,
+        lines,
+        branchId,
+        salesChannel: shippingUiMode === "pickup" || shippingMode === "pickup" ? "POS" : salesChannel,
+      }),
+    [promotions, lines, branchId, salesChannel, shippingUiMode, shippingMode]
+  );
+  const autoPromotionDiscount = promotionPreview.totalDiscount;
+  const discountedProductIdSet = useMemo(
+    () => new Set(promotionPreview.discountedProductIds || []),
+    [promotionPreview.discountedProductIds]
+  );
+  const totalDiscount = lineDiscountTotal + manualDiscount + autoPromotionDiscount;
   const customerMustPay = Math.max(0, subtotal - totalDiscount + fee);
   const remaining = Math.max(0, customerMustPay - paid);
   const orderValueForInsurance = Math.max(0, subtotal - totalDiscount);
@@ -1583,6 +1783,7 @@ export default function CreateOrderPageClient() {
       return [
         ...prev,
         {
+          productId: (found as any).productId || (found as any).product?.id || null,
           variantId: found.id,
           sku: found.sku,
           productName: (found as any).productName,
@@ -2199,6 +2400,7 @@ export default function CreateOrderPageClient() {
           : "",
         `Giảm giá tay: ${manualDiscount}`,
         `Giảm giá dòng: ${lineDiscountTotal}`,
+        autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
         `Phí ship: ${fee}`,
         `Khách đã trả: ${paid}`,
         `Còn phải trả: ${remaining}`,
@@ -2242,6 +2444,7 @@ export default function CreateOrderPageClient() {
           : {}),
         paidAmount: effectivePaidAmount,
         paymentNote: note,
+        discountAmount: manualDiscount + lineDiscountTotal,
 
         shippingSnapshot: {
           shippingAddressId: isPickupOrder ? undefined : selectedAddress?.id || undefined,
@@ -2729,7 +2932,14 @@ export default function CreateOrderPageClient() {
                           </div>
 
                           <div className="pr-4">
-                            <p className="font-medium">{line.productName}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{line.productName}</p>
+                              {line.productId && discountedProductIdSet.has(String(line.productId)) ? (
+                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                  Đang KM
+                                </span>
+                              ) : null}
+                            </div>
                             <p className="mt-1 text-sm text-neutral-500">{line.sku}</p>
                             <p className="mt-1 text-xs text-neutral-400">
                               {line.color || "—"} / {line.size || "—"} · Tồn {line.stock}
@@ -3069,13 +3279,32 @@ export default function CreateOrderPageClient() {
                   </div>
 
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-neutral-500">Giảm giá</span>
+                    <span className="text-neutral-500">Giảm giá nhập tay</span>
                     <input
                       className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
                       value={discountTotal}
                       onChange={(e) => setDiscountTotal(e.target.value)}
                     />
                   </div>
+
+                  {autoPromotionDiscount > 0 ? (
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      <div className="flex items-center justify-between font-semibold">
+                        <span>Khuyến mại tự động</span>
+                        <span>-{currency(autoPromotionDiscount)}</span>
+                      </div>
+                      {promotionPreview.breakdown.length ? (
+                        <div className="mt-1 space-y-0.5 text-xs">
+                          {promotionPreview.breakdown.map((item) => (
+                            <div key={item.id} className="flex justify-between gap-3">
+                              <span>{item.name}</span>
+                              <span>-{currency(item.discountAmount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="flex items-center justify-between gap-3 text-sm">
                     <span className="text-neutral-500">Phí ship</span>

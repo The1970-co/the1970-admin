@@ -1,43 +1,98 @@
 import { API_BASE } from "@/lib/api-base";
-import { getTokenFromStorage, clearCurrentUserFromStorage } from "@/lib/current-user";
-
+import {
+  getTokenFromStorage,
+  setTokenToStorage,
+  clearCurrentUserFromStorage,
+} from "@/lib/current-user";
 
 type RequestOptions = RequestInit & {
   auth?: boolean;
+  skipRefresh?: boolean;
 };
 
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+
+        const data = await res.json().catch(() => null);
+        const token = data?.accessToken || data?.token;
+
+        if (!token) return null;
+
+        setTokenToStorage(token);
+        return token as string;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+}
+
+function redirectToLogin() {
+  clearCurrentUserFromStorage();
+
+  if (typeof window !== "undefined") {
+    window.location.href = "/login";
+  }
+}
+
 export async function apiFetch(path: string, options: RequestOptions = {}) {
-  const { auth = true, headers, ...rest } = options;
+  const { auth = true, skipRefresh = false, headers, ...rest } = options;
 
-  const token = getTokenFromStorage();
+  const makeRequest = async (token?: string | null) => {
+    const finalHeaders: Record<string, string> = {
+      ...(headers as Record<string, string>),
+    };
 
-  const finalHeaders: Record<string, string> = {
-    ...(headers as Record<string, string>),
+    if (auth && token) {
+      finalHeaders.Authorization = `Bearer ${token}`;
+    }
+
+    const isFormData =
+      typeof FormData !== "undefined" && rest.body instanceof FormData;
+
+    if (!isFormData && !finalHeaders["Content-Type"] && rest.body) {
+      finalHeaders["Content-Type"] = "application/json";
+    }
+
+    return fetch(`${API_BASE}${path}`, {
+      ...rest,
+      headers: finalHeaders,
+      credentials: "include",
+      cache: "no-store",
+    });
   };
 
-  if (auth) {
-    finalHeaders.Authorization = `Bearer ${token || ""}`;
+  const token = getTokenFromStorage();
+  let res = await makeRequest(token);
+
+  if (res.status !== 401 || !auth || skipRefresh) {
+    return res;
   }
 
-  const isFormData =
-    typeof FormData !== "undefined" && rest.body instanceof FormData;
+  const newToken = await refreshAccessToken();
 
-  if (!isFormData && !finalHeaders["Content-Type"] && rest.body) {
-    finalHeaders["Content-Type"] = "application/json";
+  if (!newToken) {
+    redirectToLogin();
+    throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...rest,
-    headers: finalHeaders,
-    cache: "no-store",
-  });
+  res = await makeRequest(newToken);
 
   if (res.status === 401) {
-    clearCurrentUserFromStorage();
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
-    }
-    throw new Error("Unauthorized");
+    redirectToLogin();
+    throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
   }
 
   return res;
@@ -53,7 +108,11 @@ export async function apiJson<T = any>(
   const data = text ? JSON.parse(text) : null;
 
   if (!res.ok) {
-    throw new Error(data?.message || `Request failed: ${res.status}`);
+    throw new Error(
+      data?.message ||
+        data?.error ||
+        `Request failed: ${res.status}`
+    );
   }
 
   return data as T;

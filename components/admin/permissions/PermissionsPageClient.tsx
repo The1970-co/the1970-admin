@@ -23,6 +23,8 @@ type BranchPermission = {
   branchId: string;
   canView?: boolean;
   canSell?: boolean;
+  canViewOwnOrders?: boolean;
+  canViewBranchOrders?: boolean;
   canCreateOrder?: boolean;
   canApproveOrder?: boolean;
   canCancelOrder?: boolean;
@@ -34,8 +36,6 @@ type BranchPermission = {
   canReceiveStock?: boolean;
   canViewCustomer?: boolean;
   canEditCustomer?: boolean;
-  canViewReport?: boolean;
-  canViewMoney?: boolean;
   note?: string | null;
 };
 
@@ -173,6 +173,8 @@ const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
     desc: "Bán tại quầy, tạo đơn, duyệt/hủy và xử lý đổi trả.",
     allPermissions: [
       "Bán hàng / POS",
+      "Xem đơn của mình",
+      "Xem đơn chi nhánh",
       "Tạo đơn hàng",
       "Duyệt đơn hàng",
       "Hủy đơn hàng",
@@ -226,6 +228,8 @@ const rolesSeed: RoleItem[] = [
       products: ["Xem sản phẩm"],
       orders: [
         "Bán hàng / POS",
+        "Xem đơn của mình",
+        "Xem đơn chi nhánh",
         "Tạo đơn hàng",
         "Duyệt đơn hàng",
         "Hủy đơn hàng",
@@ -254,6 +258,8 @@ const rolesSeed: RoleItem[] = [
       products: ["Xem sản phẩm"],
       orders: [
         "Bán hàng / POS",
+        "Xem đơn của mình",
+        "Xem đơn chi nhánh",
         "Tạo đơn hàng",
         "Duyệt đơn hàng",
         "Hủy đơn hàng",
@@ -280,7 +286,7 @@ const rolesSeed: RoleItem[] = [
     note: "Không xem báo cáo, không đụng kho",
     permissions: {
       products: ["Xem sản phẩm"],
-      orders: ["Bán hàng / POS", "Tạo đơn hàng", "Đổi trả hàng"],
+      orders: ["Bán hàng / POS", "Xem đơn của mình", "Tạo đơn hàng", "Đổi trả hàng"],
       inventory: ["Xem tồn kho"],
       customers: ["Xem khách hàng"],
     },
@@ -381,10 +387,12 @@ const branchPermissionGroups: {
   {
     id: "orders",
     title: "Đơn hàng / POS",
-    desc: "Bán tại quầy, tạo đơn, duyệt/hủy và xử lý đổi trả.",
+    desc: "Bán tại quầy, giới hạn xem đơn theo mình/chi nhánh, duyệt/hủy và xử lý đổi trả. Đổi trả tra SĐT vẫn có thể tìm đơn toàn hệ thống để chăm khách.",
     tone: "green",
     permissions: [
       { key: "canSell", label: "Bán hàng / POS" },
+      { key: "canViewOwnOrders", label: "Xem đơn của mình", hint: "Chỉ thấy đơn do chính nhân viên này tạo trong danh sách đơn hàng." },
+      { key: "canViewBranchOrders", label: "Xem đơn chi nhánh", hint: "Thấy đơn của chi nhánh được cấp quyền trong danh sách đơn hàng." },
       { key: "canCreateOrder", label: "Tạo đơn hàng" },
       { key: "canApproveOrder", label: "Duyệt đơn hàng" },
       { key: "canCancelOrder", label: "Hủy đơn hàng" },
@@ -425,6 +433,8 @@ function defaultBranchPermission(branchId: string): BranchPermission {
     branchId,
     canView: false,
     canSell: false,
+    canViewOwnOrders: false,
+    canViewBranchOrders: false,
     canCreateOrder: false,
     canApproveOrder: false,
     canCancelOrder: false,
@@ -436,8 +446,6 @@ function defaultBranchPermission(branchId: string): BranchPermission {
     canReceiveStock: false,
     canViewCustomer: false,
     canEditCustomer: false,
-    canViewReport: false,
-    canViewMoney: false,
   };
 }
 
@@ -517,6 +525,14 @@ function getPermissionWarnings(row: BranchPermission) {
     warnings.push("Bán/tạo đơn nên có quyền xem dữ liệu.");
   }
 
+  if ((row.canSell || row.canCreateOrder) && !row.canViewOwnOrders) {
+    warnings.push("Bán/tạo đơn nên có quyền xem đơn của mình.");
+  }
+
+  if ((row.canApproveOrder || row.canCancelOrder) && !row.canViewBranchOrders) {
+    warnings.push("Duyệt/hủy đơn nên có quyền xem đơn chi nhánh.");
+  }
+
   if (row.canSell && !row.canViewStock) {
     warnings.push("Bán hàng nên được xem tồn để tránh bán thiếu hàng.");
   }
@@ -563,6 +579,8 @@ const rolePermissionTemplates: Record<string, RoleTemplate> = {
   owner: {
     canView: true,
     canSell: true,
+    canViewOwnOrders: true,
+    canViewBranchOrders: true,
     canCreateOrder: true,
     canApproveOrder: true,
     canCancelOrder: true,
@@ -578,6 +596,8 @@ const rolePermissionTemplates: Record<string, RoleTemplate> = {
   admin: {
     canView: true,
     canSell: true,
+    canViewOwnOrders: true,
+    canViewBranchOrders: true,
     canCreateOrder: true,
     canApproveOrder: true,
     canCancelOrder: true,
@@ -593,6 +613,8 @@ const rolePermissionTemplates: Record<string, RoleTemplate> = {
   "branch-manager": {
     canView: true,
     canSell: true,
+    canViewOwnOrders: true,
+    canViewBranchOrders: true,
     canCreateOrder: true,
     canApproveOrder: true,
     canCancelOrder: true,
@@ -608,6 +630,8 @@ const rolePermissionTemplates: Record<string, RoleTemplate> = {
   fulltime: {
     canView: true,
     canSell: true,
+    canViewOwnOrders: true,
+    canViewBranchOrders: true,
     canCreateOrder: true,
     canHandleReturn: true,
     canViewStock: true,
@@ -619,6 +643,8 @@ const rolePermissionTemplates: Record<string, RoleTemplate> = {
   "retail-staff": {
     canView: true,
     canSell: true,
+    canViewOwnOrders: true,
+    canViewBranchOrders: false,
     canCreateOrder: true,
     canHandleReturn: true,
     canViewStock: true,
@@ -729,11 +755,26 @@ function applySmartDependencies(
 
   if (checked) {
     if (
-      ["canSell", "canCreateOrder", "canHandleReturn"].includes(String(key))
+      ["canSell", "canCreateOrder"].includes(String(key))
     ) {
       next.canView = true;
+      next.canViewOwnOrders = true;
       next.canViewStock = true;
       next.canViewCustomer = true;
+    }
+
+    if (key === "canHandleReturn") {
+      next.canView = true;
+      next.canViewCustomer = true;
+    }
+
+    if (key === "canViewBranchOrders") {
+      next.canViewOwnOrders = true;
+    }
+
+    if (["canApproveOrder", "canCancelOrder"].includes(String(key))) {
+      next.canViewOwnOrders = true;
+      next.canViewBranchOrders = true;
     }
 
     if (
@@ -787,6 +828,14 @@ export default function PermissionsPageClient() {
     Record<string, BranchPermission>
   >({});
   const [editPermissionSnapshot, setEditPermissionSnapshot] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editCode, setEditCode] = useState("");
+  const [editUsername, setEditUsername] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editMainBranchId, setEditMainBranchId] = useState("");
 
   const [resetPasswordForId, setResetPasswordForId] = useState<string | null>(
     null,
@@ -1019,6 +1068,14 @@ export default function PermissionsPageClient() {
 
   const startEditEmployee = (employee: EmployeeItem) => {
     setEditingEmployeeId(employee.id);
+    setEditName(employee.name || "");
+    setEditCode(employee.code || "");
+    setEditUsername(employee.username || "");
+    setEditEmail(employee.email || "");
+    setEditPhone(employee.phone || "");
+    setEditAddress(employee.address || "");
+    setEditNote(employee.note || "");
+    setEditMainBranchId(employee.branchId || branches[0]?.id || "");
     setEditRoleIds(
       employee.roles.length
         ? employee.roles
@@ -1096,6 +1153,7 @@ export default function PermissionsPageClient() {
               ...base,
               canView: true,
               canSell: true,
+              canViewOwnOrders: true,
               canCreateOrder: true,
               canHandleReturn: true,
               canViewStock: true,
@@ -1116,6 +1174,8 @@ export default function PermissionsPageClient() {
                   ...base,
                   canView: true,
                   canSell: true,
+                  canViewOwnOrders: true,
+                  canViewBranchOrders: true,
                   canCreateOrder: true,
                   canApproveOrder: true,
                   canCancelOrder: true,
@@ -1137,6 +1197,39 @@ export default function PermissionsPageClient() {
     });
   };
 
+  const saveEmployeeProfile = async () => {
+    if (!editingEmployeeId) return;
+
+    if (!editName.trim() || !editCode.trim()) {
+      setMessage("Thiếu tên hoặc mã nhân viên.");
+      return;
+    }
+
+    try {
+      await apiJson(`/staff/${editingEmployeeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName.trim(),
+          code: editCode.trim(),
+          username: editUsername.trim() || null,
+          email: editEmail.trim() || null,
+          phone: editPhone.trim() || null,
+          address: editAddress.trim() || null,
+          note: editNote.trim() || null,
+          branchId: editMainBranchId || null,
+          role: editRoleIds[0],
+        }),
+      });
+
+      await loadEmployees();
+      setMessage("Đã lưu thông tin nhân viên.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Lưu thông tin nhân viên thất bại.",
+      );
+    }
+  };
+
   const saveEmployeeRoleAssignment = async () => {
     if (!editingEmployeeId) return;
 
@@ -1149,7 +1242,27 @@ export default function PermissionsPageClient() {
       hasAnyBranchPermission,
     );
 
+    if (!editName.trim() || !editCode.trim()) {
+      setMessage("Thiếu tên hoặc mã nhân viên.");
+      return;
+    }
+
     try {
+      await apiJson(`/staff/${editingEmployeeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName.trim(),
+          code: editCode.trim(),
+          username: editUsername.trim() || null,
+          email: editEmail.trim() || null,
+          phone: editPhone.trim() || null,
+          address: editAddress.trim() || null,
+          note: editNote.trim() || null,
+          branchId: editMainBranchId || null,
+          role: editRoleIds[0],
+        }),
+      });
+
       await apiJson(`/staff/${editingEmployeeId}/permissions`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -1570,10 +1683,10 @@ export default function PermissionsPageClient() {
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
                               <h4 className="font-semibold text-neutral-900">
-                                Chọn vai trò để tự sinh quyền
+                                Sửa nhân viên & phân quyền
                               </h4>
                               <p className="mt-1 text-sm text-neutral-500">
-                                Vai trò là bộ quyền mẫu. Tick thêm vai trò sẽ tự cộng quyền; bỏ vai trò sẽ tự gỡ phần quyền do vai trò đó sinh ra. Có thể chỉnh tay từng chi nhánh sau đó.
+                                Cập nhật thông tin nhân viên, vai trò mẫu và quyền thao tác theo từng chi nhánh.
                               </p>
                             </div>
                             <Badge
@@ -1585,6 +1698,114 @@ export default function PermissionsPageClient() {
                                 ? "Có thay đổi chưa lưu"
                                 : "Đã đồng bộ"}
                             </Badge>
+                          </div>
+
+                          <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <h5 className="font-semibold text-neutral-900">
+                                  Thông tin nhân viên
+                                </h5>
+                                <p className="mt-1 text-xs text-neutral-500">
+                                  Sửa tên, mã, email, SĐT, địa chỉ và chi nhánh chính.
+                                </p>
+                              </div>
+                              <Badge tone="blue">Staff profile</Badge>
+                            </div>
+
+                            <div className="mt-4 grid gap-3 md:grid-cols-2">
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                placeholder="Tên nhân viên"
+                              />
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                                value={editCode}
+                                onChange={(e) => setEditCode(e.target.value)}
+                                placeholder="Mã nhân viên"
+                              />
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                                value={editUsername}
+                                onChange={(e) => setEditUsername(e.target.value)}
+                                placeholder="Tên đăng nhập"
+                              />
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                                value={editEmail}
+                                onChange={(e) => setEditEmail(e.target.value)}
+                                placeholder="Email"
+                              />
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                                value={editPhone}
+                                onChange={(e) => setEditPhone(e.target.value)}
+                                placeholder="Số điện thoại"
+                              />
+                              <select
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                                value={editMainBranchId}
+                                onChange={(e) => setEditMainBranchId(e.target.value)}
+                              >
+                                <option value="">Chưa gán chi nhánh chính</option>
+                                {branches.map((branch) => (
+                                  <option key={branch.id} value={branch.id}>
+                                    {branch.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none md:col-span-2"
+                                value={editAddress}
+                                onChange={(e) => setEditAddress(e.target.value)}
+                                placeholder="Địa chỉ"
+                              />
+                              <input
+                                className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none md:col-span-2"
+                                value={editNote}
+                                onChange={(e) => setEditNote(e.target.value)}
+                                placeholder="Ghi chú"
+                              />
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap gap-2 border-t border-neutral-100 pt-4">
+                              <Button
+                                variant="primary"
+                                onClick={saveEmployeeProfile}
+                              >
+                                Lưu thông tin nhân viên
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                onClick={() => {
+                                  const current = employees.find((item) => item.id === employee.id);
+                                  if (!current) return;
+                                  setEditName(current.name || "");
+                                  setEditCode(current.code || "");
+                                  setEditUsername(current.username || "");
+                                  setEditEmail(current.email || "");
+                                  setEditPhone(current.phone || "");
+                                  setEditAddress(current.address || "");
+                                  setEditNote(current.note || "");
+                                  setEditMainBranchId(current.branchId || branches[0]?.id || "");
+                                }}
+                              >
+                                Hoàn tác thông tin
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <h5 className="font-semibold text-neutral-900">
+                                Chọn vai trò để tự sinh quyền
+                              </h5>
+                              <p className="mt-1 text-sm text-neutral-500">
+                                Vai trò là bộ quyền mẫu. Tick thêm vai trò sẽ tự cộng quyền; bỏ vai trò sẽ tự gỡ phần quyền do vai trò đó sinh ra. Có thể chỉnh tay từng chi nhánh sau đó.
+                              </p>
+                            </div>
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-2">
@@ -1986,7 +2207,7 @@ export default function PermissionsPageClient() {
                           variant="secondary"
                           onClick={() => startEditEmployee(employee)}
                         >
-                          Sửa quyền chi nhánh
+                          Sửa nhân viên
                         </Button>
 
                         <Button

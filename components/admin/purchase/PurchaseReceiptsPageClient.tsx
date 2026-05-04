@@ -9,12 +9,17 @@ import {
 } from "@/lib/products-api";
 import { getSuppliers, type SupplierItem } from "@/lib/suppliers-api";
 import {
+  cancelPurchaseReceipt,
   completePurchaseReceipt,
   createPurchaseReceipt,
   getPurchaseReceipts,
   importStockPurchaseReceipt,
+  payPurchaseReceipt,
+  requestPaymentPurchaseReceipt,
+  updatePurchaseReceipt,
   type PurchaseReceipt,
 } from "@/lib/purchase-receipts-api";
+import { getPaymentSources, type PaymentSourceItem } from "@/lib/payment-sources-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 
 function currency(n: number) {
@@ -105,19 +110,29 @@ export default function PurchaseReceiptsPageClient() {
   const [suppliers, setSuppliers] = useState<SupplierItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [paymentSources, setPaymentSources] = useState<PaymentSourceItem[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [payingReceipt, setPayingReceipt] = useState<PurchaseReceipt | null>(null);
+  const [paymentSourceId, setPaymentSourceId] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentNote, setPaymentNote] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [branchId, setBranchId] = useState("");
   const [note, setNote] = useState("");
   const [items, setItems] = useState<DraftItem[]>([]);
 
   const [searchVariant, setSearchVariant] = useState("");
+  const [variantSearching, setVariantSearching] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
@@ -129,9 +144,38 @@ export default function PurchaseReceiptsPageClient() {
 const role = String(currentUser?.role || "").toLowerCase();
 const isAdmin = role === "admin" || role === "owner";
 
+  function getReceiptItems(receipt: PurchaseReceipt) {
+    return Array.isArray(receipt.items) ? receipt.items : [];
+  }
+
+  function getReceiptPayments(receipt: PurchaseReceipt) {
+    return Array.isArray((receipt as any).purchaseReceiptPayments)
+      ? (receipt as any).purchaseReceiptPayments
+      : [];
+  }
+
+  function getReceiptAmount(receipt: PurchaseReceipt) {
+    return getReceiptItems(receipt).reduce(
+      (sum, item) => sum + Number(item.lineTotal || 0),
+      0
+    );
+  }
+
+  function getPaidAmount(receipt: PurchaseReceipt) {
+    return getReceiptPayments(receipt).reduce(
+      (sum: number, payment: any) => sum + Number(payment.amount || 0),
+      0
+    );
+  }
+
+  function isReceiptPaidEnough(receipt: PurchaseReceipt) {
+    const total = getReceiptAmount(receipt);
+    return total > 0 && getPaidAmount(receipt) >= total;
+  }
+
   const allVariants = useMemo(() => {
     return products.flatMap((product) =>
-      product.variants.map((variant) => ({
+      (product.variants || []).map((variant) => ({
         rowId: variant.id,
         variantId: variant.id,
         sku: variant.sku,
@@ -163,7 +207,7 @@ const isAdmin = role === "admin" || role === "owner";
         item.receiptCode.toLowerCase().includes(q) ||
         String(item.branch?.name || "").toLowerCase().includes(q) ||
         String(item.supplier?.name || "").toLowerCase().includes(q) ||
-        item.items.some((line) => {
+        (item.items || []).some((line) => {
           const label =
             `${line.productName} ${line.sku} ${line.color || ""} ${line.size || ""}`.toLowerCase();
           return label.includes(q);
@@ -190,8 +234,14 @@ const isAdmin = role === "admin" || role === "owner";
       }
 
       try {
-        const productsData = await getProducts();
-        setProducts(Array.isArray(productsData) ? productsData : []);
+        const productsData = await getProducts({ page: 1, limit: 50 });
+        setProducts(
+          Array.isArray((productsData as any)?.data)
+            ? (productsData as any).data
+            : Array.isArray(productsData)
+              ? productsData
+              : []
+        );
       } catch (err) {
         console.error("load products failed", err);
       }
@@ -201,6 +251,13 @@ const isAdmin = role === "admin" || role === "owner";
         setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
       } catch (err) {
         console.error("load suppliers failed", err);
+      }
+
+      try {
+        const paymentSourcesData = await getPaymentSources();
+        setPaymentSources(Array.isArray(paymentSourcesData) ? paymentSourcesData : []);
+      } catch (err) {
+        console.error("load payment sources failed", err);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được dữ liệu phiếu nhập.");
@@ -213,10 +270,52 @@ const isAdmin = role === "admin" || role === "owner";
     void loadAll();
   }, []);
 
+  useEffect(() => {
+    if (!createOpen) return;
+
+    const keyword = searchVariant.trim();
+    let active = true;
+
+    const timer = window.setTimeout(async () => {
+      try {
+        setVariantSearching(true);
+
+        const productsData = await getProducts({
+          page: 1,
+          limit: keyword ? 200 : 100,
+          q: keyword || undefined,
+        });
+
+        if (!active) return;
+
+        setProducts(
+          Array.isArray((productsData as any)?.data)
+            ? (productsData as any).data
+            : Array.isArray(productsData)
+              ? productsData
+              : []
+        );
+      } catch (err) {
+        if (active) {
+          console.error("search purchase receipt variants failed", err);
+        }
+      } finally {
+        if (active) setVariantSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [createOpen, searchVariant]);
+
+
   function resetCreateForm() {
     const firstSupplier = suppliers.find((s) => s.isActive) || suppliers[0];
     const firstBranch = branches[0];
 
+    setEditingReceiptId(null);
     setSupplierId(firstSupplier?.id || "");
     setBranchId(firstBranch?.id || "");
     setNote("");
@@ -229,6 +328,67 @@ const isAdmin = role === "admin" || role === "owner";
     setCreateOpen(true);
     setError(null);
     setNotice(null);
+  }
+
+  function openEdit(receipt: PurchaseReceipt) {
+    if (receipt.status !== "DRAFT") {
+      setError("Chỉ sửa được phiếu đang nháp.");
+      return;
+    }
+
+    if (getPaidAmount(receipt) > 0) {
+      setError("Phiếu đã thanh toán, không được sửa trực tiếp.");
+      return;
+    }
+
+    setEditingReceiptId(receipt.id);
+    setSupplierId(receipt.supplierId || receipt.supplier?.id || "");
+    setBranchId(receipt.branchId || receipt.branch?.id || "");
+    setNote(receipt.note || "");
+    setItems(
+      getReceiptItems(receipt).map((item) => ({
+        rowId: item.id || makeRowId(),
+        variantId: item.variantId,
+        sku: item.sku,
+        productName: item.productName,
+        color: item.color || "",
+        size: item.size || "",
+        qty: String(item.qty || 1),
+        unitCost: String(Number(item.unitCost || 0)),
+      }))
+    );
+    setSearchVariant("");
+    setCreateOpen(true);
+    setError(null);
+    setNotice(null);
+  }
+
+  function closeForm() {
+    setCreateOpen(false);
+    setEditingReceiptId(null);
+  }
+
+  function openPayment(receipt: PurchaseReceipt) {
+    const total = getReceiptAmount(receipt);
+    const paid = getPaidAmount(receipt);
+    const remaining = Math.max(total - paid, 0);
+    const firstSource = paymentSources.find((item) => item.isActive);
+
+    setPayingReceipt(receipt);
+    setPaymentSourceId(firstSource?.id || "");
+    setPaymentAmount(String(remaining));
+    setPaymentNote(`Thanh toán NCC ${receipt.supplier?.name || ""} - ${receipt.receiptCode}`.trim());
+    setPaymentOpen(true);
+    setError(null);
+    setNotice(null);
+  }
+
+  function closePayment() {
+    setPaymentOpen(false);
+    setPayingReceipt(null);
+    setPaymentSourceId("");
+    setPaymentAmount("");
+    setPaymentNote("");
   }
 
   function addVariantToDraft(option: {
@@ -254,6 +414,7 @@ const isAdmin = role === "admin" || role === "owner";
         unitCost: "0",
       },
     ]);
+    setSearchVariant("");
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -278,19 +439,31 @@ const isAdmin = role === "admin" || role === "owner";
     [items]
   );
 
-  async function handleCreateReceipt() {
+  async function handleSaveReceipt() {
     if (!branchId) {
       setError("Chưa chọn kho nhập.");
       return;
     }
 
-if (!supplierId) {
-  setError("Chưa chọn nhà cung cấp.");
-  return;
-}
+    if (!supplierId) {
+      setError("Chưa chọn nhà cung cấp.");
+      return;
+    }
 
     if (!items.length) {
       setError("Chưa có dòng hàng nào.");
+      return;
+    }
+
+    const invalidQty = items.find((item) => Number(item.qty || 0) <= 0);
+    if (invalidQty) {
+      setError("Số lượng nhập phải lớn hơn 0.");
+      return;
+    }
+
+    const missingCost = items.find((item) => Number(item.unitCost || 0) <= 0);
+    if (missingCost) {
+      setError(`SKU ${missingCost.sku} chưa có giá nhập. Phải nhập giá trước khi lưu/thanh toán.`);
       return;
     }
 
@@ -299,24 +472,83 @@ if (!supplierId) {
       setError(null);
       setNotice(null);
 
-await createPurchaseReceipt({
-  supplierId,
-  branchId,
-  note: note.trim() || undefined,
-  createdById,
-  items: items.map((item) => ({
-    variantId: item.variantId,
-    qty: Number(item.qty || 0),
-    unitCost: isAdmin ? Number(item.unitCost || 0) : 0,
-  })),
-});
-      setCreateOpen(false);
-      setNotice("Đã lưu phiếu nháp.");
+      const payload = {
+        supplierId,
+        branchId,
+        note: note.trim() || undefined,
+        createdById,
+        items: items.map((item) => ({
+          variantId: item.variantId,
+          qty: Number(item.qty || 0),
+          unitCost: isAdmin ? Number(item.unitCost || 0) : 0,
+        })),
+      };
+
+      if (editingReceiptId) {
+        await updatePurchaseReceipt(editingReceiptId, payload);
+        setNotice("Đã lưu thay đổi phiếu nhập.");
+      } else {
+        await createPurchaseReceipt(payload);
+        setNotice("Đã lưu phiếu nháp.");
+      }
+
+      closeForm();
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tạo được phiếu nhập.");
+      setError(err instanceof Error ? err.message : "Không lưu được phiếu nhập.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handlePayReceipt() {
+    if (!payingReceipt) return;
+
+    if (!paymentSourceId) {
+      setError("Chưa chọn nguồn tiền thanh toán.");
+      return;
+    }
+
+    if (Number(paymentAmount || 0) <= 0) {
+      setError("Số tiền thanh toán phải lớn hơn 0.");
+      return;
+    }
+
+    try {
+      setPaying(true);
+      setError(null);
+      setNotice(null);
+
+      await payPurchaseReceipt(payingReceipt.id, {
+        paymentSourceId,
+        amount: Number(paymentAmount || 0),
+        note: paymentNote.trim() || undefined,
+        paidById: createdById,
+        paidByName: currentUser?.fullName || currentUser?.name || currentUser?.username,
+      });
+
+      setNotice("Đã thanh toán nhà cung cấp. Có thể xác nhận nhập kho.");
+      closePayment();
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thanh toán được phiếu nhập.");
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  async function handleRequestPayment(id: string) {
+    try {
+      setImportingId(id);
+      setError(null);
+      setNotice(null);
+      await requestPaymentPurchaseReceipt(id);
+      setNotice("Đã xác nhận đủ hàng.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xác nhận được phiếu nhập.");
+    } finally {
+      setImportingId(null);
     }
   }
 
@@ -350,15 +582,31 @@ await createPurchaseReceipt({
     }
   }
 
+  async function handleCancel(id: string) {
+    const ok = window.confirm("Hủy phiếu nhập này?");
+    if (!ok) return;
+
+    try {
+      setCancellingId(id);
+      setError(null);
+      setNotice(null);
+      await cancelPurchaseReceipt(id);
+      setNotice("Đã hủy phiếu nhập.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không hủy được phiếu nhập.");
+    } finally {
+      setCancellingId(null);
+    }
+  }
+
   return (
     <div className="space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[28px] font-semibold tracking-tight">Phiếu nhập hàng</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            {isAdmin
-              ? "Admin thấy đầy đủ nhà cung cấp, giá nhập và các bước nhập kho / thanh toán."
-              : "Nhân viên chỉ thao tác SKU, tên sản phẩm, màu, size và số lượng."}
+            Kho tạo phiếu nhập, xác nhận đủ hàng và theo dõi quy trình nhập kho.
           </p>
         </div>
 
@@ -385,10 +633,13 @@ await createPurchaseReceipt({
             onChange={(e) => setStatusFilter(e.target.value)}
           >
             <option value="ALL">Tất cả trạng thái</option>
-            <option value="DRAFT">DRAFT</option>
-            <option value="STOCK_IMPORTED">STOCK_IMPORTED</option>
-            <option value="COMPLETED">COMPLETED</option>
-            <option value="CANCELLED">CANCELLED</option>
+            <option value="DRAFT">Nháp</option>
+            <option value="PAYMENT_REQUESTED">{isAdmin ? "Chờ thanh toán" : "Đã xác nhận đủ hàng"}</option>
+            <option value="PARTIALLY_PAID">{isAdmin ? "Thanh toán một phần" : "Đã xác nhận đủ hàng"}</option>
+            <option value="PAID">{isAdmin ? "Đã thanh toán đủ" : "Đã xác nhận đủ hàng"}</option>
+            <option value="STOCK_IMPORTED">Đã nhập kho</option>
+            <option value="COMPLETED">Hoàn tất</option>
+            <option value="CANCELLED">Đã hủy</option>
           </select>
 
           <div className="flex items-center justify-end text-sm text-neutral-500">
@@ -420,11 +671,11 @@ await createPurchaseReceipt({
           </Panel>
         ) : (
           filteredRows.map((receipt) => {
-            const receiptQty = receipt.items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
-            const receiptAmount = receipt.items.reduce(
-              (sum, item) => sum + Number(item.lineTotal || 0),
-              0
-            );
+            const receiptItems = getReceiptItems(receipt);
+            const receiptQty = receiptItems.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+            const receiptAmount = getReceiptAmount(receipt);
+            const paidAmount = getPaidAmount(receipt);
+            const paidEnough = isReceiptPaidEnough(receipt);
 
             return (
               <Panel key={receipt.id}>
@@ -439,6 +690,12 @@ await createPurchaseReceipt({
                         <Badge tone="green">Đã hoàn tất</Badge>
                       ) : receipt.status === "STOCK_IMPORTED" ? (
                         <Badge tone="blue">Đã nhập kho</Badge>
+                      ) : receipt.status === "PAID" ? (
+                        <Badge tone="green">{isAdmin ? "Đã thanh toán đủ" : "Đã xác nhận đủ hàng"}</Badge>
+                      ) : receipt.status === "PARTIALLY_PAID" ? (
+                        <Badge tone="amber">{isAdmin ? "Thanh toán một phần" : "Đã xác nhận đủ hàng"}</Badge>
+                      ) : receipt.status === "PAYMENT_REQUESTED" ? (
+                        <Badge tone="blue">{isAdmin ? "Chờ thanh toán" : "Đã xác nhận đủ hàng"}</Badge>
                       ) : receipt.status === "CANCELLED" ? (
                         <Badge tone="red">Đã hủy</Badge>
                       ) : (
@@ -451,6 +708,10 @@ await createPurchaseReceipt({
                       {isAdmin ? <p>Nhà cung cấp: {receipt.supplier?.name || "—"}</p> : null}
                       <p>Tổng số lượng: {receiptQty}</p>
                       {isAdmin ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
+                      {isAdmin ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
+                      {isAdmin && receipt.status === "PAID" ? (
+                        <p className="font-medium text-green-700">Đã thanh toán đủ · chờ nhập kho</p>
+                      ) : null}
                       {receipt.note ? <p>Ghi chú: {receipt.note}</p> : null}
                     </div>
                   </div>
@@ -458,6 +719,49 @@ await createPurchaseReceipt({
                   {isAdmin ? (
                     <div className="flex flex-wrap gap-2">
                       {receipt.status === "DRAFT" ? (
+                        <>
+                          <button
+                            onClick={() => openEdit(receipt)}
+                            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                          >
+                            Sửa phiếu
+                          </button>
+
+                          <button
+                            onClick={() => void handleRequestPayment(receipt.id)}
+                            disabled={importingId === receipt.id}
+                            className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${
+                              importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                            }`}
+                          >
+                            {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
+                          </button>
+
+                          <button
+                            onClick={() => void handleCancel(receipt.id)}
+                            disabled={cancellingId === receipt.id}
+                            className={`rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ${
+                              cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                            }`}
+                          >
+                            {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
+                          </button>
+                        </>
+                      ) : null}
+
+                      {isAdmin &&
+                      (receipt.status === "PAYMENT_REQUESTED" ||
+                        receipt.status === "PARTIALLY_PAID") ? (
+                        <a
+                          href={`/finance/supplier-payments?receiptId=${receipt.id}`}
+                          target="_blank"
+                          className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700"
+                        >
+                          Mở phiếu thanh toán
+                        </a>
+                      ) : null}
+
+                      {isAdmin && receipt.status === "PAID" ? (
                         <button
                           onClick={() => void handleImportStock(receipt.id)}
                           disabled={importingId === receipt.id}
@@ -465,7 +769,7 @@ await createPurchaseReceipt({
                             importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
                         >
-                          {importingId === receipt.id ? "Đang nhập kho..." : "Nhập kho"}
+                          {importingId === receipt.id ? "Đang nhập kho..." : "Xác nhận nhập kho"}
                         </button>
                       ) : null}
 
@@ -498,7 +802,7 @@ await createPurchaseReceipt({
                       </tr>
                     </thead>
                     <tbody>
-                      {receipt.items.map((item) => (
+                      {getReceiptItems(receipt).map((item) => (
                         <tr key={item.id} className="border-t border-neutral-200">
                           <td className="px-3 py-2.5 font-medium">{item.sku}</td>
                           <td className="px-3 py-2.5">{item.productName}</td>
@@ -522,7 +826,7 @@ await createPurchaseReceipt({
         )}
       </div>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Tạo phiếu nhập">
+      <Modal open={createOpen} onClose={closeForm} title={editingReceiptId ? "Sửa phiếu nhập" : "Tạo phiếu nhập"}>
         <div className="space-y-3">
 <div className="grid gap-3 md:grid-cols-2">
   {suppliers.filter((item) => item.isActive).length > 0 ? (
@@ -583,7 +887,9 @@ await createPurchaseReceipt({
             />
 
             <div className="max-h-40 overflow-auto rounded-xl border border-neutral-200">
-              {variantOptions.length === 0 ? (
+              {variantSearching ? (
+                <div className="p-4 text-sm text-neutral-500">Đang tìm sản phẩm...</div>
+              ) : variantOptions.length === 0 ? (
                 <div className="p-4 text-sm text-neutral-500">Không có variant phù hợp.</div>
               ) : (
                 <div className="divide-y divide-neutral-200">
@@ -691,25 +997,107 @@ await createPurchaseReceipt({
 
             <div className="flex gap-2">
               <button
-                onClick={() => setCreateOpen(false)}
+                onClick={closeForm}
                 className="rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
               >
                 Đóng
               </button>
               <button
-                onClick={() => void handleCreateReceipt()}
+                onClick={() => void handleSaveReceipt()}
                 disabled={saving}
                 type="button"
                 className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
                   saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
                 }`}
               >
-                {saving ? "Đang lưu..." : "Lưu nháp"}
+                {saving ? "Đang lưu..." : editingReceiptId ? "Lưu thay đổi" : "Lưu nháp"}
               </button>
             </div>
           </div>
         </div>
       </Modal>
+      <Modal open={paymentOpen} onClose={closePayment} title="Thanh toán nhà cung cấp">
+        <div className="space-y-3">
+          <Panel className="p-3">
+            <div className="space-y-1 text-sm text-neutral-600">
+              <p>
+                Phiếu:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {payingReceipt?.receiptCode || "—"}
+                </span>
+              </p>
+              <p>
+                Nhà cung cấp:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {payingReceipt?.supplier?.name || "—"}
+                </span>
+              </p>
+              <p>
+                Tổng tiền:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {currency(payingReceipt ? getReceiptAmount(payingReceipt) : 0)}
+                </span>
+              </p>
+              <p>
+                Đã thanh toán:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {currency(payingReceipt ? getPaidAmount(payingReceipt) : 0)}
+                </span>
+              </p>
+            </div>
+          </Panel>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={paymentSourceId}
+              onChange={(e) => setPaymentSourceId(e.target.value)}
+            >
+              <option value="">Chọn nguồn tiền</option>
+              {paymentSources
+                .filter((item) => item.isActive)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} ({item.code})
+                  </option>
+                ))}
+            </select>
+
+            <input
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(e.target.value)}
+              placeholder="Số tiền thanh toán"
+            />
+          </div>
+
+          <textarea
+            className="min-h-[72px] w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={paymentNote}
+            onChange={(e) => setPaymentNote(e.target.value)}
+            placeholder="Ghi chú thanh toán"
+          />
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={closePayment}
+              className="rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+            >
+              Đóng
+            </button>
+            <button
+              onClick={() => void handlePayReceipt()}
+              disabled={paying}
+              className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
+                paying ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+              }`}
+            >
+              {paying ? "Đang thanh toán..." : "Xác nhận thanh toán"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
     </div>
   );
 }

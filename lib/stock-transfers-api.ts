@@ -139,13 +139,9 @@ export async function createStockTransfer(payload: {
   note?: string;
   items: { variantId: string; qty: number }[];
 }) {
-  const direction =
-    payload.toBranchId === "QO" ? "INBOUND_FROM_BRANCH" : "OUTBOUND_TO_BRANCH";
-
   return request<StockTransfer>("/stock-transfers", {
     method: "POST",
     body: JSON.stringify({
-      direction,
       sourceType: "MANUAL",
       fromBranchId: payload.fromBranchId,
       toBranchId: payload.toBranchId,
@@ -157,11 +153,32 @@ export async function createStockTransfer(payload: {
   });
 }
 
+export async function bulkDeleteStockTransfers(ids: string[]) {
+  return request<{
+    success: boolean;
+    deletedCount: number;
+  }>("/stock-transfers/bulk-delete", {
+    method: "DELETE",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function confirmStockTransfer(id: string) {
   return request(`/stock-transfers/${id}/status`, {
     method: "PATCH",
     body: JSON.stringify({
       status: "CONFIRMED",
+      confirmedById: "web-admin",
+      confirmedByName: "Admin Web",
+    }),
+  });
+}
+
+export async function completeStockTransfer(id: string) {
+  return request(`/stock-transfers/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      status: "COMPLETED",
       confirmedById: "web-admin",
       confirmedByName: "Admin Web",
     }),

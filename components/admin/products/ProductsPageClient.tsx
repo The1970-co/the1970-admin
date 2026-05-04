@@ -26,7 +26,6 @@ import {
   getCategories,
   type ProductCategoryItem,
 } from "@/lib/product-categories-api";
-import RoleGuard from "@/components/admin/RoleGuard";
 import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import { useScrollRestore } from "@/hooks/useScrollRestore";
@@ -638,6 +637,7 @@ export default function ProductsPageClient() {
   }, [searchParams]);
 
   const isOwner = role === "admin" || role === "owner";
+  const isStaffView = !isOwner;
 
   const visibleBranches = useMemo(() => {
     if (isOwner) return branches;
@@ -655,10 +655,21 @@ export default function ProductsPageClient() {
     return activeCategories.length ? activeCategories : fallbackProductGroups;
   }, [categoryOptions, categories]);
 
-  const canCreateProduct = hasPermission(role, "products.create");
-  const canEditProduct = hasPermission(role, "products.edit");
-  const canViewCost = isOwner || hasPermission(role, "products.cost.view");
-  const canViewInventoryValue = isOwner || hasPermission(role, "inventory.value.view");
+  // Owner/admin quản trị dữ liệu gốc.
+  // Fulltime được tạo/sửa sản phẩm, thêm variant và đổi trạng thái bán, nhưng KHÔNG thấy giá nhập/giá vốn.
+  // Retail/kiểm kho/kho chỉ xem catalog và tồn theo chi nhánh của mình.
+  const isFulltime = role === "fulltime";
+  const isBranchManager = role === "branch-manager";
+  const canOperateProduct = isOwner || isFulltime || isBranchManager;
+
+  const canCreateProduct = canOperateProduct;
+  const canEditProduct = canOperateProduct;
+  const canToggleProductStatus = canOperateProduct;
+  const canDeleteProduct = isOwner;
+  const canManageProductMasterData = isOwner;
+  const canImportProducts = isOwner;
+  const canViewCost = isOwner;
+  const canViewInventoryValue = isOwner;
   const loadBranches = async () => {
     try {
       setLoadingBranches(true);
@@ -708,6 +719,7 @@ export default function ProductsPageClient() {
       if (query.trim()) params.set("q", query.trim());
       if (groupFilter !== "ALL") params.set("category", groupFilter);
       if (statusFilter !== "ALL") params.set("status", statusFilter);
+      if (!isOwner && currentBranchId) params.set("branchId", currentBranchId);
 
       const res = await fetch(`${API_BASE}/products/summary?${params.toString()}`);
 
@@ -730,6 +742,7 @@ export default function ProductsPageClient() {
         q: query.trim(),
         category: groupFilter,
         status: statusFilter,
+        branchId: !isOwner && currentBranchId ? currentBranchId : undefined,
       });
 
       const nextProducts = Array.isArray(result) ? result : result?.data || [];
@@ -763,7 +776,7 @@ export default function ProductsPageClient() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [page, limit, query, groupFilter, statusFilter]);
+  }, [page, limit, query, groupFilter, statusFilter, currentBranchId, isOwner]);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -1136,7 +1149,7 @@ export default function ProductsPageClient() {
   };
 
   const handleToggleStatus = async (productId: string) => {
-    if (!canEditProduct) {
+    if (!canToggleProductStatus) {
       setActionMessage("Role hiện tại không có quyền đổi trạng thái sản phẩm.");
       return;
     }
@@ -1428,22 +1441,26 @@ export default function ProductsPageClient() {
         description="Xem nhanh catalog theo dạng bảng, ảnh lớn hơn để lướt nhanh và nhìn rõ tồn kho theo từng chi nhánh."
         action={
           <div className="flex flex-wrap gap-3">
-            <Button
-              variant="secondary"
-              onClick={() => setImportOpen(true)}
-              className="rounded-full"
-            >
-              Nhập Excel
-            </Button>
+            {canImportProducts ? (
+              <Button
+                variant="secondary"
+                onClick={() => setImportOpen(true)}
+                className="rounded-full"
+              >
+                Nhập Excel
+              </Button>
+            ) : null}
 
-            <Link
-              href="/control/product-categories"
-              className="inline-flex items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-900 transition hover:bg-neutral-50"
-            >
-              Danh mục
-            </Link>
+            {canManageProductMasterData ? (
+              <Link
+                href="/control/product-categories"
+                className="inline-flex items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-900 transition hover:bg-neutral-50"
+              >
+                Danh mục
+              </Link>
+            ) : null}
 
-            <RoleGuard permission="products.create">
+            {canCreateProduct ? (
               <Button
                 onClick={() => {
                   resetCreateForm();
@@ -1453,7 +1470,7 @@ export default function ProductsPageClient() {
               >
                 + Thêm sản phẩm
               </Button>
-            </RoleGuard>
+            ) : null}
           </div>
         }
       />
@@ -1536,15 +1553,17 @@ export default function ProductsPageClient() {
         </Panel>
       ) : null}
 
-      <CategoryNormalizer
-        categories={productGroups}
-        onDone={async () => {
-          await loadProductCategoryOptions();
-          await loadCategories();
-          await loadProducts(1, limit);
-          setPage(1);
-        }}
-      />
+      {canManageProductMasterData ? (
+        <CategoryNormalizer
+          categories={productGroups}
+          onDone={async () => {
+            await loadProductCategoryOptions();
+            await loadCategories();
+            await loadProducts(1, limit);
+            setPage(1);
+          }}
+        />
+      ) : null}
 
       <Panel className="overflow-hidden">
         {loading ? (
@@ -1642,7 +1661,13 @@ export default function ProductsPageClient() {
                       </td>
 
                       <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        <Link href="/control/product-categories" className="inline-flex" title="Sửa danh mục sản phẩm"><Badge tone="blue">{product.category || "Chưa có danh mục"}</Badge></Link>
+                        {canManageProductMasterData ? (
+                          <Link href="/control/product-categories" className="inline-flex" title="Sửa danh mục sản phẩm">
+                            <Badge tone="blue">{product.category || "Chưa có danh mục"}</Badge>
+                          </Link>
+                        ) : (
+                          <Badge tone="blue">{product.category || "Chưa có danh mục"}</Badge>
+                        )}
                       </td>
 
                       <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
@@ -1695,7 +1720,7 @@ export default function ProductsPageClient() {
                       <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
                         <div className="font-medium text-neutral-900">{productStock}</div>
                         <div className="mt-1 text-xs text-neutral-500">
-                          Tổng tất cả chi nhánh
+                          {isOwner ? "Tổng tất cả chi nhánh" : "Tồn chi nhánh của bạn"}
                         </div>
                       </td>
 
@@ -1719,7 +1744,7 @@ export default function ProductsPageClient() {
                             Chi tiết
                           </Button>
 
-                          <RoleGuard permission="products.edit">
+                          {canEditProduct ? (
                             <Button
                               variant="secondary"
                               onClick={() => handleOpenEdit(product)}
@@ -1727,9 +1752,9 @@ export default function ProductsPageClient() {
                             >
                               Sửa nhanh
                             </Button>
-                          </RoleGuard>
+                          ) : null}
 
-                          <RoleGuard permission="products.edit">
+                          {canEditProduct ? (
                             <Button
                               variant="secondary"
                               onClick={() => {
@@ -1741,9 +1766,9 @@ export default function ProductsPageClient() {
                             >
                               + Variant
                             </Button>
-                          </RoleGuard>
+                          ) : null}
 
-                          <RoleGuard permission="products.delete">
+                          {canDeleteProduct ? (
                             <Button
                               variant="danger"
                               onClick={() => void handleDeleteProduct(product)}
@@ -1752,8 +1777,9 @@ export default function ProductsPageClient() {
                             >
                               {deletingProductId === product.id ? "Đang xóa..." : "Xóa"}
                             </Button>
-                          </RoleGuard>
-                          <RoleGuard permission="products.edit">
+                          ) : null}
+
+                          {canToggleProductStatus ? (
                             <Button
                               variant={product.status === "ACTIVE" ? "danger" : "success"}
                               onClick={() => void handleToggleStatus(product.id)}
@@ -1766,7 +1792,7 @@ export default function ProductsPageClient() {
                                   ? "Ngừng bán"
                                   : "Kích hoạt"}
                             </Button>
-                          </RoleGuard>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

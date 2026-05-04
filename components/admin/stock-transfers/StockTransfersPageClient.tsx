@@ -9,7 +9,9 @@ import {
   type ProductItem,
 } from "@/lib/products-api";
 import {
+  bulkDeleteStockTransfers,
   cancelStockTransfer,
+  completeStockTransfer,
   confirmStockTransfer,
   createStockTransfer,
   getStockTransferDetail,
@@ -118,7 +120,7 @@ function suggestionKey(item: OutboundSuggestion) {
 }
 
 function statusBadge(status: StockTransfer["status"]) {
-  if (status === "CONFIRMED") return <Badge tone="green">Đã xác nhận</Badge>;
+  if (status === "CONFIRMED") return <Badge tone="blue">Chờ bên nhận</Badge>;
   if (status === "COMPLETED") return <Badge tone="green">Hoàn tất</Badge>;
   if (status === "CANCELLED") return <Badge tone="red">Đã hủy</Badge>;
   if (status === "IN_TRANSIT") return <Badge tone="blue">Đang chuyển</Badge>;
@@ -213,8 +215,11 @@ export default function StockTransfersPageClient() {
   const [createOpen, setCreateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [selectedTransferIds, setSelectedTransferIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [fromBranchId, setFromBranchId] = useState("QO");
@@ -283,6 +288,19 @@ const canManageAutoTransfer =
 
 const isQOWarehouseUser = userBranchId === "QO";
 const currentBranchId = userBranchId || "";
+
+const lockedSourceBranchId = useMemo(() => {
+  if (canManageAutoTransfer) {
+    return branches.find((branch) => branch.id === "QO")?.id || "QO";
+  }
+
+  return currentBranchId || branches[0]?.id || "QO";
+}, [branches, canManageAutoTransfer, currentBranchId]);
+
+const lockedSourceBranchName = useMemo(() => {
+  const branch = branches.find((item) => item.id === lockedSourceBranchId);
+  return branch?.name || lockedSourceBranchId || "—";
+}, [branches, lockedSourceBranchId]);
 
 
   const allVariants = useMemo(() => {
@@ -571,9 +589,20 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [userBranchId]);
 
+useEffect(() => {
+  if (!lockedSourceBranchId) return;
+
+  setFromBranchId(lockedSourceBranchId);
+  setToBranchId((prev) => {
+    if (prev && prev !== lockedSourceBranchId) return prev;
+    return branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || "";
+  });
+}, [branches, lockedSourceBranchId]);
+
   function resetForm() {
-    setFromBranchId("QO");
-    setToBranchId(branches.find((b) => b.id !== "QO")?.id || "");
+    const sourceId = lockedSourceBranchId || "QO";
+    setFromBranchId(sourceId);
+    setToBranchId(branches.find((b) => b.id !== sourceId)?.id || "");
     setNote("");
     setItems([]);
     setSearchVariant("");
@@ -675,7 +704,7 @@ useEffect(() => {
       setError(null);
       setNotice(null);
       await confirmStockTransfer(id);
-      setNotice("Đã xác nhận chuyển kho.");
+      setNotice("Đã xác nhận chuyển. Phiếu đang chờ bên nhận xác nhận đủ để nhập/trừ kho.");
       await loadAll();
       await loadNotifications();
 
@@ -687,6 +716,32 @@ useEffect(() => {
       setError(err instanceof Error ? err.message : "Không xác nhận được phiếu chuyển.");
     } finally {
       setConfirmingId(null);
+    }
+  }
+
+  async function handleComplete(id: string) {
+    const ok = window.confirm(
+      "Xác nhận bên nhận đã nhận đủ hàng? Sau bước này hệ thống mới trừ kho chuyển và cộng kho nhận."
+    );
+    if (!ok) return;
+
+    try {
+      setCompletingId(id);
+      setError(null);
+      setNotice(null);
+      await completeStockTransfer(id);
+      setNotice("Đã xác nhận nhận đủ. Hệ thống đã trừ kho chuyển và cộng kho nhận.");
+      await loadAll();
+      await loadNotifications();
+
+      if (selectedTransfer?.id === id) {
+        const detail = await getStockTransferDetail(id);
+        setSelectedTransfer(detail);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xác nhận nhận đủ được phiếu chuyển.");
+    } finally {
+      setCompletingId(null);
     }
   }
 
@@ -718,25 +773,54 @@ useEffect(() => {
       setError(null);
       setNotice(null);
 
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE}/stock-transfers/${id}`, {
-        method: "DELETE",
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
+      await bulkDeleteStockTransfers([id]);
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.message || "Không xóa được phiếu chuyển kho.");
-      }
-
+      setSelectedTransferIds((prev) => prev.filter((item) => item !== id));
       setNotice(`Đã xóa phiếu ${transferCode || id}.`);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không xóa được phiếu chuyển kho.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  function toggleSelectTransfer(id: string, checked: boolean) {
+    setSelectedTransferIds((prev) => {
+      if (checked) return Array.from(new Set([...prev, id]));
+      return prev.filter((item) => item !== id);
+    });
+  }
+
+  async function handleBulkDeleteTransfers() {
+    if (!canManageAutoTransfer) return;
+
+    const ids = selectedTransferIds.filter((id) => filteredRows.some((row) => row.id === id));
+
+    if (!ids.length) {
+      setError("Chưa tích phiếu nào để xoá.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Xóa hẳn ${ids.length} phiếu đã chọn? Chỉ xoá được phiếu Nháp/Chờ xác nhận. Hành động này không hoàn tác.`
+    );
+    if (!ok) return;
+
+    try {
+      setBulkDeleting(true);
+      setError(null);
+      setNotice(null);
+
+      const res = await bulkDeleteStockTransfers(ids);
+
+      setSelectedTransferIds([]);
+      setNotice(`Đã xoá ${res.deletedCount ?? ids.length} phiếu chuyển kho.`);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xoá được các phiếu đã chọn.");
+    } finally {
+      setBulkDeleting(false);
     }
   }
 
@@ -1413,6 +1497,43 @@ useEffect(() => {
         </Panel>
       ) : null}
 
+      {canManageAutoTransfer && filteredRows.length > 0 ? (
+        <Panel className="flex flex-wrap items-center justify-between gap-3 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-neutral-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-neutral-900"
+                checked={
+                  filteredRows.length > 0 &&
+                  filteredRows.every((row) => selectedTransferIds.includes(row.id))
+                }
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setSelectedTransferIds(filteredRows.map((row) => row.id));
+                  } else {
+                    setSelectedTransferIds([]);
+                  }
+                }}
+              />
+              Tích tất cả phiếu đang lọc
+            </label>
+            <span className="text-xs font-medium text-neutral-500">
+              Đã chọn {selectedTransferIds.length} phiếu
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleBulkDeleteTransfers()}
+            disabled={bulkDeleting || selectedTransferIds.length === 0}
+            className="rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {bulkDeleting ? "Đang xoá..." : "Xoá các phiếu đã tích"}
+          </button>
+        </Panel>
+      ) : null}
+
       <div className="space-y-3">
         {loading ? (
           <Panel className="p-4">
@@ -1427,12 +1548,25 @@ useEffect(() => {
             const total =
               transfer.totalQty ??
               (transfer.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+            const canCompleteReceiving =
+              transfer.status === "CONFIRMED" &&
+              (canManageAutoTransfer || transfer.toBranchId === currentBranchId);
 
             return (
               <Panel key={transfer.id}>
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 p-3">
                   <div>
                     <div className="flex items-center gap-2">
+                      {canManageAutoTransfer ? (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-neutral-900"
+                          checked={selectedTransferIds.includes(transfer.id)}
+                          onChange={(event) => toggleSelectTransfer(transfer.id, event.target.checked)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Chọn phiếu ${transfer.transferCode}`}
+                        />
+                      ) : null}
                       <p className="text-sm font-semibold text-neutral-900">{transfer.transferCode}</p>
                       {statusBadge(transfer.status)}
                       {transfer.sourceType === "AUTO" ? <Badge tone="blue">Tự động</Badge> : null}
@@ -1494,6 +1628,16 @@ useEffect(() => {
                           {cancellingId === transfer.id ? "Đang hủy..." : "Hủy"}
                         </button>
                       </>
+                    ) : null}
+
+                    {canCompleteReceiving ? (
+                      <button
+                        onClick={() => void handleComplete(transfer.id)}
+                        disabled={completingId === transfer.id}
+                        className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {completingId === transfer.id ? "Đang nhập kho..." : "Xác nhận nhận đủ"}
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -1703,6 +1847,27 @@ useEffect(() => {
               </Panel>
             </div>
 
+            {selectedTransfer.status === "CONFIRMED" ? (
+              <Panel className="flex flex-wrap items-center justify-between gap-3 border-blue-200 bg-blue-50 p-3">
+                <div>
+                  <p className="text-sm font-semibold text-blue-800">Phiếu đang chờ bên nhận xác nhận đủ</p>
+                  <p className="mt-1 text-xs text-blue-700">
+                    Chỉ khi xác nhận đủ, hệ thống mới trừ kho chuyển và cộng kho nhận.
+                  </p>
+                </div>
+                {(canManageAutoTransfer || selectedTransfer.toBranchId === currentBranchId) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleComplete(selectedTransfer.id)}
+                    disabled={completingId === selectedTransfer.id}
+                    className="rounded-xl bg-green-700 px-4 py-2 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {completingId === selectedTransfer.id ? "Đang nhập kho..." : "Xác nhận đã nhận đủ"}
+                  </button>
+                ) : null}
+              </Panel>
+            ) : null}
+
             <Panel className="overflow-hidden">
               <table className="min-w-full text-[13px]">
                 <thead className="bg-neutral-50 text-left text-neutral-500">
@@ -1734,18 +1899,12 @@ useEffect(() => {
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Tạo phiếu chuyển kho">
         <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
-            <select
-              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-              value={fromBranchId}
-              onChange={(e) => setFromBranchId(e.target.value)}
-            >
-              <option value="">Chọn chi nhánh xuất</option>
-              {branches.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                Chi nhánh chuyển
+              </p>
+              <p className="mt-0.5 font-semibold text-neutral-900">{lockedSourceBranchName}</p>
+            </div>
 
             <select
               className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"

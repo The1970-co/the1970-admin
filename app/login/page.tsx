@@ -89,6 +89,7 @@ export default function LoginPage() {
 
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: employeeCode.trim(),
@@ -131,6 +132,7 @@ export default function LoginPage() {
 
       const res = await fetch(`${API_BASE}/auth/second-password/verify`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tempToken, secondPassword }),
       });

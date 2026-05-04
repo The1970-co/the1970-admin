@@ -15,6 +15,7 @@ import {
 } from "@/lib/current-user";
 
 type PosLine = {
+  productId?: string | null;
   variantId: string;
   sku: string;
   productName: string;
@@ -50,6 +51,152 @@ type BranchOption = {
   code?: string;
   isActive?: boolean;
 };
+
+
+type PromotionRow = {
+  id: string;
+  name: string;
+  type: "PRODUCT_DISCOUNT" | "ORDER_DISCOUNT";
+  status: "ACTIVE" | "INACTIVE";
+  discountType: "PERCENT" | "FIXED_AMOUNT";
+  discountValue: string | number;
+  minOrderAmount?: string | number | null;
+  branchId?: string | null;
+  salesChannel?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  products?: Array<{ productId?: string | null; product?: { id?: string | null } | null }>;
+  priority?: number | string | null;
+};
+
+function isPromotionActiveForContext(
+  promotion: PromotionRow,
+  input: { branchId?: string | null; salesChannel?: string | null }
+) {
+  if (promotion.status !== "ACTIVE") return false;
+
+  const now = Date.now();
+  if (promotion.startAt && new Date(promotion.startAt).getTime() > now) return false;
+  if (promotion.endAt && new Date(promotion.endAt).getTime() < now) return false;
+
+  if (promotion.branchId && input.branchId && String(promotion.branchId) !== String(input.branchId)) return false;
+  if (promotion.branchId && !input.branchId) return false;
+
+  if (
+    promotion.salesChannel &&
+    input.salesChannel &&
+    String(promotion.salesChannel).toUpperCase() !== String(input.salesChannel).toUpperCase()
+  ) {
+    return false;
+  }
+  if (promotion.salesChannel && !input.salesChannel) return false;
+
+  return true;
+}
+
+function calculatePromotionDiscount(input: {
+  promotions: PromotionRow[];
+  lines: Array<{ productId?: string | null; price: number; qty: number }>;
+  branchId?: string | null;
+  salesChannel?: string | null;
+}) {
+  const subtotal = input.lines.reduce(
+    (sum, line) => sum + Number(line.price || 0) * Number(line.qty || 0),
+    0
+  );
+
+  const workingLines = input.lines.map((line) => ({
+    ...line,
+    discountAmount: 0,
+  }));
+
+  let productDiscount = 0;
+  let orderDiscount = 0;
+  const appliedNames: string[] = [];
+  const discountedProductIds = new Set<string>();
+  const breakdown: Array<{
+    id: string;
+    name: string;
+    type: "PRODUCT_DISCOUNT" | "ORDER_DISCOUNT";
+    discountAmount: number;
+  }> = [];
+
+  const activePromotions = input.promotions
+    .filter((promotion) => isPromotionActiveForContext(promotion, input))
+    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
+
+  for (const promotion of activePromotions) {
+    if (promotion.type === "PRODUCT_DISCOUNT") {
+      const productIds = new Set(
+        (promotion.products || [])
+          .map((row) => String(row.productId || row.product?.id || ""))
+          .filter(Boolean)
+      );
+
+      let discountForPromotion = 0;
+
+      for (const line of workingLines) {
+        if (!line.productId || !productIds.has(String(line.productId))) continue;
+
+        const qty = Math.max(1, Number(line.qty || 0));
+        const alreadyDiscountedPerUnit = Number(line.discountAmount || 0) / qty;
+        const base = Math.max(0, Number(line.price || 0) - alreadyDiscountedPerUnit);
+        const discountPerUnit =
+          promotion.discountType === "PERCENT"
+            ? (base * Number(promotion.discountValue || 0)) / 100
+            : Number(promotion.discountValue || 0);
+
+        const safeDiscount = Math.min(base, Math.max(0, discountPerUnit)) * qty;
+        line.discountAmount += safeDiscount;
+        discountForPromotion += safeDiscount;
+        discountedProductIds.add(String(line.productId));
+      }
+
+      if (discountForPromotion > 0) {
+        productDiscount += discountForPromotion;
+        appliedNames.push(promotion.name);
+        breakdown.push({
+          id: promotion.id,
+          name: promotion.name,
+          type: promotion.type,
+          discountAmount: discountForPromotion,
+        });
+      }
+    }
+
+    if (promotion.type === "ORDER_DISCOUNT") {
+      const minOrderAmount = Number(promotion.minOrderAmount || 0);
+      if (subtotal < minOrderAmount) continue;
+
+      const orderBase = Math.max(0, subtotal - productDiscount - orderDiscount);
+      const discount =
+        promotion.discountType === "PERCENT"
+          ? (orderBase * Number(promotion.discountValue || 0)) / 100
+          : Number(promotion.discountValue || 0);
+
+      const safeDiscount = Math.min(orderBase, Math.max(0, discount));
+      if (safeDiscount > 0) {
+        orderDiscount += safeDiscount;
+        appliedNames.push(promotion.name);
+        breakdown.push({
+          id: promotion.id,
+          name: promotion.name,
+          type: promotion.type,
+          discountAmount: safeDiscount,
+        });
+      }
+    }
+  }
+
+  return {
+    productDiscount,
+    orderDiscount,
+    totalDiscount: productDiscount + orderDiscount,
+    appliedNames: Array.from(new Set(appliedNames)),
+    discountedProductIds: Array.from(discountedProductIds),
+    breakdown,
+  };
+}
 
 type OrderTab = {
   id: string;
@@ -114,6 +261,7 @@ export default function PosPageClient() {
   const [cameraScanning, setCameraScanning] = useState(false);
   const [offlineReady, setOfflineReady] = useState(false);
   const [products, setProducts] = useState<OrderProduct[]>([]);
+  const [promotions, setPromotions] = useState<PromotionRow[]>([]);
   const [productSearch, setProductSearch] = useState("");
   const [lines, setLines] = useState<PosLine[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -171,7 +319,23 @@ export default function PosPageClient() {
   );
 
   const discountNumber = moneyNumber(discount);
-  const mustPay = Math.max(0, subtotal - discountNumber);
+  const promotionPreview = useMemo(
+    () =>
+      calculatePromotionDiscount({
+        promotions,
+        lines,
+        branchId,
+        salesChannel: "POS",
+      }),
+    [promotions, lines, branchId]
+  );
+  const autoPromotionDiscount = promotionPreview.totalDiscount;
+  const discountedProductIdSet = useMemo(
+    () => new Set(promotionPreview.discountedProductIds || []),
+    [promotionPreview.discountedProductIds]
+  );
+  const totalDiscountNumber = discountNumber + autoPromotionDiscount;
+  const mustPay = Math.max(0, subtotal - totalDiscountNumber);
   const totalPaid = useMemo(
     () => paymentRows.reduce((sum, row) => sum + moneyNumber(row.amount), 0),
     [paymentRows]
@@ -262,6 +426,40 @@ export default function PosPageClient() {
         setProducts(data);
       } catch {
         setError("Không tải được sản phẩm.");
+      }
+    };
+
+    void run();
+  }, []);
+
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const apiBase = getApiBaseUrl();
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${apiBase}/promotions`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          cache: "no-store",
+        });
+
+        if (!res.ok) return;
+
+        const json = await res.json();
+        const rows = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json?.items)
+              ? json.items
+              : [];
+
+        setPromotions(rows);
+      } catch {
+        setPromotions([]);
       }
     };
 
@@ -370,6 +568,7 @@ export default function PosPageClient() {
 
           return {
             ...variant,
+            productId: (product as any).id,
             productName: product.name,
             productCode:
               variant.productCode ||
@@ -453,6 +652,7 @@ export default function PosPageClient() {
       return [
         ...prev,
         {
+          productId: variant.productId || variant.product?.id || null,
           variantId: variant.id,
           sku: variant.sku,
           productName: variant.productName,
@@ -503,6 +703,7 @@ export default function PosPageClient() {
       return [
         ...prev,
         {
+          productId: variant.productId || variant.product?.id || null,
           variantId: variant.id,
           sku: variant.sku,
           productName: variant.productName,
@@ -1001,11 +1202,13 @@ const handlePay = async () => {
       note: [
         "Đơn POS bán tại quầy",
         note.trim() ? `Ghi chú: ${note.trim()}` : "",
-        discountNumber ? `Giảm giá POS: ${discountNumber}` : "",
+        discountNumber ? `Giảm giá POS nhập tay: ${discountNumber}` : "",
+        autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
       ]
         .filter(Boolean)
         .join(" | "),
       mode: "approve" as any,
+      discountAmount: discountNumber,
       payments: validPayments,
       paymentSourceId: validPayments[0]?.paymentSourceId || "",
       paidAmount: validPayments.reduce((sum, row) => sum + row.amount, 0),
@@ -1184,7 +1387,14 @@ const handlePay = async () => {
                   <div className="font-semibold">{line.sku}</div>
 
                   <div>
-                    <div className="font-medium">{line.productName}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium">{line.productName}</div>
+                      {line.productId && discountedProductIdSet.has(String(line.productId)) ? (
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                          Đang KM
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="mt-1 text-xs text-neutral-500">
                       {line.color || "—"} / {line.size || "—"} · Tồn {line.stock}
                     </div>
@@ -1326,13 +1536,32 @@ const handlePay = async () => {
             </div>
 
             <div className="flex items-center justify-between gap-3">
-              <span>Chiết khấu</span>
+              <span>Chiết khấu nhập tay</span>
               <input
                 value={formatMoneyInput(discount)}
                 onChange={(e) => setDiscount(String(moneyNumber(e.target.value)))}
                 className="h-9 w-32 rounded-xl border border-neutral-200 px-3 text-right outline-none"
               />
             </div>
+
+            {autoPromotionDiscount > 0 ? (
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-emerald-700">
+                <div className="flex justify-between font-semibold">
+                  <span>Khuyến mại tự động</span>
+                  <span>-{currency(autoPromotionDiscount)}</span>
+                </div>
+                {promotionPreview.breakdown.length ? (
+                  <div className="mt-1 space-y-0.5 text-xs">
+                    {promotionPreview.breakdown.map((item) => (
+                      <div key={item.id} className="flex justify-between gap-3">
+                        <span>{item.name}</span>
+                        <span>-{currency(item.discountAmount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="border-t border-neutral-100 pt-2" />
 

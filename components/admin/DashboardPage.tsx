@@ -39,6 +39,10 @@ type DashboardData = {
     score: string;
     tag: string;
     tone: Tone;
+    actionUrl?: string;
+    actionType?: string;
+    variantId?: string;
+    productId?: string;
   }>;
   commandCenter: {
     title: string;
@@ -63,6 +67,8 @@ type DashboardData = {
     day: string;
     note: string;
     revenue: string;
+    cost?: string;
+    adsCost?: string;
     profit: string;
     orders: string;
     roas: string;
@@ -84,6 +90,9 @@ type DashboardData = {
     meta: string;
     qty: string;
     revenue: string;
+    actionUrl?: string;
+    variantId?: string | null;
+    productId?: string | null;
   }>;
   channelRevenue: Array<{ name: string; width: string; value: string }>;
   warehouseMix: Array<{ name: string; value: string; note: string }>;
@@ -109,7 +118,29 @@ type DashboardOverviewApi = {
     lowStockItems?: number;
     outOfStockItems?: number;
     pendingTransfers?: number;
+    profit?: number;
+    profitLabel?: string;
+    totalCost?: number;
+    totalAdsCost?: number;
+    rawLowStockPool?: number;
+    rawOutOfStockPool?: number;
   };
+  dailyRows?: DashboardData["dailyRows"];
+  decisionCards?: DashboardData["decisionCards"];
+  insightRow?: DashboardData["insightRow"];
+  realtime?: DashboardData["realtime"];
+  kpis?: DashboardData["kpis"];
+  drilldown?: DashboardData["drilldown"];
+  topProducts?: DashboardData["topProducts"];
+  channelRevenue?: DashboardData["channelRevenue"];
+  warehouseMix?: DashboardData["warehouseMix"];
+  quickInsights?: string[];
+  moneyFlow?: DashboardData["moneyFlow"];
+  funnel?: DashboardData["funnel"];
+  floatingApproval?: DashboardData["floatingApproval"];
+  hero?: Partial<DashboardData["hero"]>;
+  warningSummary?: Partial<DashboardData["warningSummary"]>;
+  smartAlerts?: Array<any>;
   recentOrders?: Array<{
     id: string;
     code?: string | null;
@@ -149,6 +180,12 @@ function formatQty(value: unknown) {
   return new Intl.NumberFormat("vi-VN").format(toNumber(value));
 }
 
+function goToDashboardUrl(url?: string) {
+  if (!url) return false;
+  window.open(url, "_blank", "noopener,noreferrer");
+  return true;
+}
+
 function buildDashboardFromOverview(base: DashboardData, overview: DashboardOverviewApi): DashboardData {
   const cards = overview.cards || {};
   const revenue = toNumber(cards.revenue);
@@ -162,6 +199,7 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
   const lowStockItems = toNumber(cards.lowStockItems);
   const outOfStockItems = toNumber(cards.outOfStockItems);
   const pendingTransfers = toNumber(cards.pendingTransfers);
+  const profitLabel = String(cards.profitLabel || "");
   const productCount = toNumber(cards.productCount);
   const variantCount = toNumber(cards.variantCount);
 
@@ -230,6 +268,7 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
       day: new Date().getDate().toString().padStart(2, "0"),
       note: "Hôm nay",
       revenue: formatMoneyShort(revenue),
+      adsCost: "0",
       profit: "—",
       orders: formatQty(totalOrders),
       roas: "—",
@@ -250,6 +289,7 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
     ...base,
     hero: {
       ...base.hero,
+      ...(overview.hero || {}),
       status: systemTone,
       title: statusTitle,
       subtitle: `Doanh thu ${formatMoneyShort(revenue)} · ${totalOrders} đơn · ${lowStockItems} SKU cảnh báo tồn`,
@@ -263,15 +303,16 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
     },
     warningSummary: {
       ...base.warningSummary,
+      ...(overview.warningSummary || {}),
       level: systemTone,
       title: systemTone === "safe" ? "Hệ thống đang ổn định" : "Có tín hiệu rủi ro cần theo dõi sát",
-      subtitle: `Live từ backend: ${totalOrders} đơn, ${availableQty} tồn khả dụng, ${lowStockItems} SKU sắp hết.`,
+      subtitle: `Live từ backend: ${totalOrders} đơn, ${availableQty} tồn khả dụng, ${lowStockItems} SKU critical${cards.rawLowStockPool ? ` / ${cards.rawLowStockPool} SKU tồn thấp có bán gần đây` : ""}.`,
       revenue: revenue > 0 ? formatMoneyShort(revenue) : "Chưa ghi nhận",
       roas: "Chưa nối Meta",
       inventory: `${lowStockItems} SKU sắp hết`,
     },
-    decisionCards,
-    insightRow: [
+    decisionCards: overview.decisionCards && overview.decisionCards.length ? overview.decisionCards : decisionCards,
+    insightRow: overview.insightRow && overview.insightRow.length ? overview.insightRow : [
       {
         id: "i1",
         title: "Tổng quan đơn hàng live",
@@ -296,45 +337,49 @@ function buildDashboardFromOverview(base: DashboardData, overview: DashboardOver
     ],
     realtime: {
       ...base.realtime,
+      ...(overview.realtime || {}),
       delta: formatMoneyShort(revenue),
       deltaPct: "Live",
       checkoutPurchase: totalOrders ? `${completedOrders}/${totalOrders}` : "0/0",
       chokeLabel: "Đơn hoàn thành / tổng đơn",
       lowStock: lowStockRows,
     },
-    kpis: [
+    kpis: overview.kpis && overview.kpis.length ? overview.kpis : [
       { id: "k1", label: "Doanh thu", value: formatMoneyShort(revenue), delta: "Live" },
       { id: "k2", label: "Đơn hàng", value: formatQty(totalOrders), delta: `${newOrders} mới` },
       { id: "k3", label: "Tồn khả dụng", value: formatQty(availableQty), delta: `${reservedQty} giữ` },
       { id: "k4", label: "SKU sắp hết", value: formatQty(lowStockItems), delta: `${outOfStockItems} hết` },
-      { id: "k5", label: "Phiếu chuyển chờ", value: formatQty(pendingTransfers), delta: "Transfer" },
+      { id: "k5", label: "Lợi nhuận", value: profitLabel || "—", delta: profitLabel ? "Profit" : "Thiếu giá vốn" },
     ],
-    dailyRows,
-    drilldown: [
+    dailyRows: overview.dailyRows && overview.dailyRows.length ? overview.dailyRows : dailyRows,
+    drilldown: overview.drilldown && overview.drilldown.length ? overview.drilldown : [
       { label: "Doanh thu", value: formatMoneyShort(revenue) },
       { label: "Đơn hàng", value: formatQty(totalOrders) },
       { label: "Đơn mới", value: formatQty(newOrders) },
       { label: "Hoàn thành", value: formatQty(completedOrders), tone: "dark" },
       { label: "Tồn khả dụng", value: formatQty(availableQty), tone: "mint" },
     ],
-    topProducts: recentOrders.slice(0, 4).map((order, index) => ({
+    topProducts: overview.topProducts && overview.topProducts.length ? overview.topProducts : recentOrders.slice(0, 4).map((order, index) => ({
       rank: index + 1,
       name: order.code || order.id,
       meta: `${order.customerName || "Khách lẻ"} · ${order.salesChannel || "OTHER"}`,
       qty: order.status || "NEW",
       revenue: formatMoneyShort(order.finalAmount),
     })).concat(base.topProducts).slice(0, 4),
-    warehouseMix: [
+    channelRevenue: overview.channelRevenue && overview.channelRevenue.length ? overview.channelRevenue : base.channelRevenue,
+    warehouseMix: overview.warehouseMix && overview.warehouseMix.length ? overview.warehouseMix : [
       { name: "Tồn khả dụng", value: formatQty(availableQty), note: "Số lượng có thể bán" },
       { name: "Tồn đang giữ", value: formatQty(reservedQty), note: "Đang giữ cho đơn hàng" },
       { name: "Hàng sắp về", value: formatQty(incomingQty), note: "Incoming inventory" },
     ],
-    quickInsights: [
+    quickInsights: overview.quickInsights && overview.quickInsights.length ? overview.quickInsights : [
       `Backend đã nối live: ${totalOrders} đơn, doanh thu ${formatMoneyShort(revenue)}.`,
       lowStockItems > 0 ? `${lowStockItems} SKU đang sắp hết, nên xử lý nhập/điều chuyển.` : "Tồn kho chưa có SKU chạm ngưỡng sắp hết.",
       pendingTransfers > 0 ? `${pendingTransfers} phiếu chuyển kho đang chờ xác nhận.` : "Không có phiếu chuyển kho đang chờ.",
     ],
-    floatingApproval: {
+    moneyFlow: overview.moneyFlow && overview.moneyFlow.length ? overview.moneyFlow : base.moneyFlow,
+    funnel: overview.funnel && overview.funnel.length ? overview.funnel : base.funnel,
+    floatingApproval: overview.floatingApproval || {
       count: `${pendingTransfers + lowStockItems} pending`,
       title: lowStockItems > 0 ? "Xử lý cảnh báo tồn" : "Không có cảnh báo lớn",
       subtitle: `Orders ${totalOrders} · Inventory ${availableQty}`,
@@ -395,7 +440,7 @@ function Badge({
 }
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
-  return <p className="text-[10px] uppercase tracking-[0.28em] text-neutral-400">{children}</p>;
+  return <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-900">{children}</p>;
 }
 
 function metricTone(delta: string) {
@@ -771,13 +816,13 @@ export default function DashboardPage() {
             <Panel className="p-4">
               <SectionEyebrow>Meta</SectionEyebrow>
               <p className="mt-4 text-[16px] font-semibold">{data.hero.metaMode}</p>
-              <p className="mt-2 text-sm text-neutral-500">{data.hero.metaAccount}</p>
+              <p className="mt-2 text-sm text-neutral-600">{data.hero.metaAccount}</p>
             </Panel>
 
             <Panel className="p-4">
               <SectionEyebrow>Auto Scheduler</SectionEyebrow>
               <p className="mt-4 text-[16px] font-semibold">{data.hero.scheduler.label}</p>
-              <p className="mt-2 text-sm text-neutral-500">{data.hero.scheduler.times.join(" / ")}</p>
+              <p className="mt-2 text-sm text-neutral-600">{data.hero.scheduler.times.join(" / ")}</p>
             </Panel>
           </div>
         </div>
@@ -808,21 +853,21 @@ export default function DashboardPage() {
 
         <div className="mt-5 grid gap-3 xl:grid-cols-3">
           <div className="rounded-2xl bg-white/75 p-4">
-            <p className="text-sm text-neutral-500">Doanh thu</p>
+            <p className="text-sm text-neutral-600">Doanh thu</p>
             <p className="mt-2 text-[16px] font-semibold text-rose-500">{data.warningSummary.revenue}</p>
           </div>
           <div className="rounded-2xl bg-white/75 p-4">
-            <p className="text-sm text-neutral-500">ROAS</p>
+            <p className="text-sm text-neutral-600">ROAS</p>
             <p className="mt-2 text-[16px] font-semibold text-emerald-600">{data.warningSummary.roas}</p>
           </div>
           <div className="rounded-2xl bg-white/75 p-4">
-            <p className="text-sm text-neutral-500">Tồn kho</p>
+            <p className="text-sm text-neutral-600">Tồn kho</p>
             <p className="mt-2 text-[16px] font-semibold text-rose-500">{data.warningSummary.inventory}</p>
           </div>
         </div>
 
         <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <p className="text-sm text-neutral-500">Ưu tiên xử lý: kiểm tra ads → checkout → tồn kho.</p>
+          <p className="text-sm text-neutral-600">Ưu tiên xử lý: kiểm tra ads → checkout → tồn kho.</p>
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={autoAction} onChange={(e) => setAutoAction(e.target.checked)} />
@@ -898,7 +943,7 @@ export default function DashboardPage() {
             <h2 className="mt-3 font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
               Động cơ ra quyết định
             </h2>
-            <p className="mt-2 text-sm text-neutral-500">
+            <p className="mt-2 text-sm font-medium text-neutral-700">
               Ưu tiên theo lợi nhuận, tồn kho, ROAS và điểm nghẽn funnel.
             </p>
           </div>
@@ -938,15 +983,15 @@ export default function DashboardPage() {
         </div>
 
         <h3 className="mt-3 font-serif text-[16px] font-medium tracking-tight">{card.title}</h3>
-        <p className="mt-2 line-clamp-2 min-h-[40px] text-sm text-neutral-500">{card.desc}</p>
+        <p className="mt-2 line-clamp-2 min-h-[40px] text-sm font-medium leading-6 text-neutral-700">{card.desc}</p>
 
-        <div className="mt-5 flex items-center justify-between text-sm text-neutral-500">
+        <div className="mt-5 flex items-center justify-between text-sm font-medium text-neutral-700">
           <span>{card.source}</span>
           <span>{card.score}</span>
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-2">
-          <div className="min-w-0 truncate text-xs text-neutral-600">
+          <div className="min-w-0 truncate text-xs font-medium text-neutral-800">
             {card.title}
           </div>
 
@@ -965,7 +1010,7 @@ export default function DashboardPage() {
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                openDecision(card.id);
+                if (!goToDashboardUrl(card.actionUrl)) openDecision(card.id);
               }}
               className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-800"
             >
@@ -980,7 +1025,7 @@ export default function DashboardPage() {
   <div className="h-fit self-start rounded-3xl border border-stone-200 bg-stone-900 p-5 text-white shadow-sm">
     <div className="flex items-center justify-between gap-3">
       <div>
-        <div className="text-xs uppercase tracking-[0.24em] text-stone-400">Command Center</div>
+        <div className="text-xs uppercase tracking-[0.24em] text-stone-200">Command Center</div>
         <h3 className="mt-2 text-2xl font-serif">Hành động ngay trên Tổng quan</h3>
       </div>
 
@@ -1005,14 +1050,14 @@ export default function DashboardPage() {
     </div>
 
     {!selectedDecision ? (
-      <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4 text-sm text-stone-300">
+      <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4 text-sm text-stone-200">
         Chọn một quyết định ở bên trái để xem ngữ cảnh và xử lý ngay tại màn Tổng quan.
       </div>
     ) : (
       <>
         <div className="mt-5 rounded-3xl border border-stone-700 bg-white/5 p-4">
           <div className="text-lg font-medium">{selectedDecision.title}</div>
-          <div className="mt-2 text-sm text-stone-300">{selectedDecision.desc}</div>
+          <div className="mt-2 text-sm text-stone-200">{selectedDecision.desc}</div>
 
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-2xl bg-white/5 p-3">
@@ -1035,6 +1080,14 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          {selectedDecision?.actionUrl ? (
+            <button
+              onClick={() => goToDashboardUrl(selectedDecision.actionUrl)}
+              className="col-span-2 rounded-2xl bg-emerald-100 px-4 py-3 font-medium text-emerald-900"
+            >
+              Mở đúng màn xử lý
+            </button>
+          ) : null}
           <button
             onClick={toggleScaleLock}
             className="rounded-2xl bg-white px-4 py-3 font-medium text-stone-900"
@@ -1069,7 +1122,7 @@ export default function DashboardPage() {
                 <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl bg-white/10 p-3">
                   <div>
                     <div className="text-sm font-medium">{item.title}</div>
-                    <div className="mt-1 text-xs text-stone-400">{item.actionType} · {item.createdAt}</div>
+                    <div className="mt-1 text-xs text-stone-300">{item.actionType} · {item.createdAt}</div>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -1089,7 +1142,7 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : (
-            <div className="mt-3 rounded-2xl bg-white/5 p-3 text-sm text-stone-300">
+            <div className="mt-3 rounded-2xl bg-white/5 p-3 text-sm text-stone-200">
               Không còn approval nào đang chờ.
             </div>
           )}
@@ -1097,7 +1150,7 @@ export default function DashboardPage() {
 
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
           <div className="flex items-center justify-between">
-            <div className="text-xs uppercase tracking-[0.24em] text-stone-400">Auto Scheduler</div>
+            <div className="text-xs uppercase tracking-[0.24em] text-stone-200">Auto Scheduler</div>
             <div className="flex items-center gap-2">
               <button
                 onClick={toggleScheduler}
@@ -1121,13 +1174,13 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-300">
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
           Meta Ads đang ở chế độ DRY RUN. Hệ thống hiện chỉ mô phỏng lệnh và ghi log.
         </div>
 
         <div className="mt-5">
           <div className="flex items-center justify-between">
-            <div className="text-xs uppercase tracking-[0.24em] text-stone-400">Action Log</div>
+            <div className="text-xs uppercase tracking-[0.24em] text-stone-200">Action Log</div>
             <div className="flex gap-2">
               <button
                 onClick={() => resolveAllApprovals("approve")}
@@ -1155,9 +1208,9 @@ export default function DashboardPage() {
               <div key={item.id} className="rounded-2xl bg-white/5 p-4">
                 <div className="flex items-center justify-between">
                   <div className="font-medium">{item.title}</div>
-                  <div className="text-xs text-stone-400">{item.time}</div>
+                  <div className="text-xs text-stone-300">{item.time}</div>
                 </div>
-                <div className="mt-2 text-sm text-stone-300">{item.desc}</div>
+                <div className="mt-2 text-sm text-stone-200">{item.desc}</div>
                 <button
                   onClick={() => undoLog(item.id)}
                   className="mt-3 rounded-full border border-white/10 px-3 py-1 text-[11px]"
@@ -1195,7 +1248,7 @@ export default function DashboardPage() {
       <Panel className="p-4 md:p-5">
         <SectionEyebrow>War Room</SectionEyebrow>
         <h2 className="mt-3 font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
-          Tình trạng realtime hôm nay
+          War Room · Theo dõi vận hành hôm nay
         </h2>
 
         <div className="mt-5 flex flex-wrap gap-2">
@@ -1220,7 +1273,7 @@ export default function DashboardPage() {
 
         <div className="mt-5 grid gap-4 xl:grid-cols-3">
           <div className="rounded-[24px] bg-neutral-50 p-5">
-            <p className="text-sm text-neutral-500">So với hôm qua</p>
+            <p className="text-sm text-neutral-600">Doanh thu hôm nay</p>
             <p className="mt-4 text-[32px] font-semibold tracking-tight xl:text-[40px]">
               {warRoomTab === "7days" ? "-3.1M" : warRoomTab === "forecast" ? "4 SKU" : data.realtime.delta}
             </p>
@@ -1234,13 +1287,13 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-[24px] border border-rose-200 bg-rose-50/40 p-5">
-            <p className="text-sm text-neutral-500">
-              {warRoomTab === "forecast" ? "Forecast tồn kho" : "Checkout → Purchase"}
+            <p className="text-sm text-neutral-600">
+              {warRoomTab === "forecast" ? "Forecast tồn kho" : "Đơn hoàn thành / tổng đơn"}
             </p>
             <p className="mt-4 text-[32px] font-semibold tracking-tight xl:text-[40px]">
               {warRoomTab === "forecast" ? "3 ngày" : warRoomTab === "7days" ? "31.4%" : data.realtime.checkoutPurchase}
             </p>
-            <p className="mt-3 text-sm text-neutral-500">
+            <p className="mt-3 text-sm text-neutral-600">
               {warRoomTab === "forecast"
                 ? "SKU gần chạm ngưỡng"
                 : warRoomTab === "7days"
@@ -1250,7 +1303,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-[24px] bg-neutral-50 p-5">
-            <p className="text-sm text-neutral-500">Sắp hết hàng</p>
+            <p className="text-sm text-neutral-600">Sắp hết hàng</p>
             <div className="mt-4 space-y-3 text-[15px] font-medium text-neutral-700">
               {(data.realtime.lowStock
               ).map((row) => (
@@ -1265,7 +1318,7 @@ export default function DashboardPage() {
         {data.kpis.map((item) => (
           <Panel key={item.id} className="p-4">
             <div className="flex items-start justify-between gap-3">
-              <p className="text-sm text-neutral-500">{item.label}</p>
+              <p className="text-sm text-neutral-600">{item.label}</p>
               <Badge tone="muted">{item.delta}</Badge>
             </div>
             <p className="mt-4 text-[28px] font-semibold tracking-tight xl:text-[34px]">{item.value}</p>
@@ -1279,9 +1332,9 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
-                  Doanh thu từng ngày trong tháng
+                  Doanh thu từng ngày trong tháng hiện tại
                 </h2>
-                <p className="mt-2 text-sm text-neutral-500">
+                <p className="mt-2 text-sm text-neutral-600">
                   Mở ra là thấy ngay hôm nay, hôm qua và các ngày gần nhất bán được bao nhiêu
                 </p>
               </div>
@@ -1289,12 +1342,14 @@ export default function DashboardPage() {
             </div>
 
             <div className="mt-4 overflow-x-auto rounded-[24px] border border-neutral-200">
-              <table className="min-w-[920px] w-full text-left">
+              <table className="min-w-[1080px] w-full text-left">
                 <thead className="bg-neutral-950 text-sm text-white">
                   <tr>
                     <th className="px-4 py-4 font-medium">Ngày</th>
                     <th className="px-4 py-4 font-medium">Ghi chú</th>
                     <th className="px-4 py-4 font-medium">Doanh thu</th>
+                    <th className="px-4 py-4 font-medium">Giá vốn</th>
+                    <th className="px-4 py-4 font-medium">Chi phí ads</th>
                     <th className="px-4 py-4 font-medium">Lợi nhuận</th>
                     <th className="px-4 py-4 font-medium">Đơn</th>
                     <th className="px-4 py-4 font-medium">ROAS</th>
@@ -1315,6 +1370,8 @@ export default function DashboardPage() {
                         <Badge tone={row.isToday ? "dark" : "muted"}>{row.note}</Badge>
                       </td>
                       <td className="px-4 py-4">{row.revenue}</td>
+                      <td className="px-4 py-4">{row.cost || "—"}</td>
+                      <td className="px-4 py-4">{row.adsCost || "0"}</td>
                       <td className="px-4 py-4">{row.profit}</td>
                       <td className="px-4 py-4">{row.orders}</td>
                       <td className="px-4 py-4">{row.roas}</td>
@@ -1344,7 +1401,7 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              <div className="mt-2 text-sm text-neutral-500">
+              <div className="mt-2 text-sm text-neutral-600">
                 Đang xem: {selectedDailyRow.note} · Doanh thu {selectedDailyRow.revenue} · Lợi nhuận{" "}
                 {selectedDailyRow.profit}
               </div>
@@ -1372,16 +1429,19 @@ export default function DashboardPage() {
           <div className="grid gap-5 xl:grid-cols-2">
             <Panel className="p-5">
               <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">Top sản phẩm</h2>
-              <p className="mt-1 text-xs text-neutral-500">
+              <p className="mt-1 text-xs text-neutral-600">
                 Đang chọn: {selectedProduct?.name || "Chưa có sản phẩm"}
               </p>
-              <p className="mt-2 text-sm text-neutral-500">Những SKU đang kéo doanh thu mạnh nhất</p>
+              <p className="mt-2 text-sm font-medium text-neutral-700">Những SKU đang kéo doanh thu mạnh nhất</p>
 
               <div className="mt-5 space-y-3">
                 {(data.topProducts || []).map((item) => (
                   <button
                     key={item.rank}
-                    onClick={() => setSelectedProductRank(item.rank)}
+                    onClick={() => {
+                      setSelectedProductRank(item.rank);
+                      if (item.actionUrl) goToDashboardUrl(item.actionUrl);
+                    }}
                     className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left ${
                       selectedProductRank === item.rank ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
                     }`}
@@ -1392,11 +1452,11 @@ export default function DashboardPage() {
                       </div>
                       <div>
                         <p className="text-[16px] font-medium tracking-tight">{item.name}</p>
-                        <p className="mt-1 text-sm text-neutral-500">{item.meta}</p>
+                        <p className="mt-1 text-sm text-neutral-600">{item.meta}</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm text-neutral-500">{item.qty}</p>
+                      <p className="text-sm text-neutral-600">{item.qty}</p>
                       <p className="mt-1 text-[16px] font-semibold">{item.revenue}</p>
                     </div>
                   </button>
@@ -1408,7 +1468,7 @@ export default function DashboardPage() {
               <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">
                 Doanh thu theo kênh
               </h2>
-              <p className="mt-2 text-sm text-neutral-500">
+              <p className="mt-2 text-sm text-neutral-600">
                 Nhìn nhanh website, Facebook, TikTok, Shopify checkout
               </p>
 
@@ -1435,16 +1495,16 @@ export default function DashboardPage() {
               <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">
                 Kho & phân bổ tồn
               </h2>
-              <p className="mt-2 text-sm text-neutral-500">
+              <p className="mt-2 text-sm text-neutral-600">
                 Theo từng kho để nhập hàng và điều chuyển cho chuẩn
               </p>
 
               <div className="mt-6 grid gap-4 md:grid-cols-3">
                 {data.warehouseMix.map((item) => (
                   <div key={item.name} className="rounded-[24px] bg-neutral-50 p-5 text-center">
-                    <p className="text-sm text-neutral-500">{item.name}</p>
+                    <p className="text-sm text-neutral-600">{item.name}</p>
                     <p className="mt-4 text-[34px] font-semibold tracking-tight">{item.value}</p>
-                    <p className="mt-2 text-sm text-neutral-500">{item.note}</p>
+                    <p className="mt-2 text-sm text-neutral-600">{item.note}</p>
                   </div>
                 ))}
               </div>
@@ -1473,7 +1533,7 @@ export default function DashboardPage() {
         <div className="space-y-5">
           <Panel className="p-5">
             <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">Funnel</h2>
-            <p className="mt-2 text-sm text-neutral-500">Từ traffic tới purchase</p>
+            <p className="mt-2 text-sm text-neutral-600">Theo trạng thái đơn trong hệ thống</p>
 
             <div className="mt-6 space-y-5">
               {data.funnel.map((step) => (
@@ -1494,7 +1554,7 @@ export default function DashboardPage() {
             <h2 className="font-serif text-[22px] font-medium tracking-tight xl:text-[28px]">
               Money Flow Insight
             </h2>
-            <p className="mt-2 text-sm text-neutral-500">
+            <p className="mt-2 text-sm text-neutral-600">
               Tiền đang chảy ở đâu, kênh nào đang đốt mạnh hơn phần doanh thu mang về.
             </p>
 
@@ -1523,7 +1583,7 @@ export default function DashboardPage() {
                 </button>
               ))}
 
-              <div className="rounded-2xl border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">
+              <div className="rounded-2xl border border-dashed border-neutral-200 p-4 text-sm text-neutral-600">
                 Đang focus: {selectedMoneyFlow.channel}.
               </div>
             </div>
