@@ -16,6 +16,7 @@ import {
   toggleProductStatus,
   updateProduct,
   uploadProductImage,
+  clearAllProductDescriptions,
   type AddVariantPayload,
   type BranchItem,
   type CreateProductPayload,
@@ -338,6 +339,39 @@ function ProductImage({
   );
 }
 
+
+function SortButton({
+  label,
+  active,
+  direction,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 text-left text-[11px] font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-900"
+      title={`Sắp xếp theo ${label}`}
+    >
+      <span>{label}</span>
+      <span
+        className={
+          active
+            ? "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-neutral-900 px-1 text-[13px] font-bold text-white"
+            : "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-neutral-100 px-1 text-[13px] font-bold text-neutral-700"
+        }
+      >
+        {active ? (direction === "asc" ? "↑" : "↓") : "↕"}
+      </span>
+    </button>
+  );
+}
+
 type ParsedRow = Record<string, any>;
 
 type ImportPreviewRow = {
@@ -362,6 +396,22 @@ type ProductSummary = {
   lowStockSkus: number;
   totalInventoryValue: number;
 };
+
+type ProductSortKey =
+  | "name"
+  | "category"
+  | "color"
+  | "size"
+  | "sku"
+  | "price"
+  | "costPrice"
+  | "branchStock"
+  | "stock"
+  | "status"
+  | "description";
+
+type SortDirection = "asc" | "desc";
+
 function normalizeNumber(value: any) {
   if (value === null || value === undefined || value === "") return 0;
   const raw = String(value).replace(/[^\d.-]/g, "");
@@ -532,87 +582,310 @@ function downloadProductTemplate() {
   XLSX.writeFile(wb, "products_import_template.xlsx");
 }
 
-function getBranchStockValue(variant: ProductItem["variants"][number], branchId: string) {
-  return Number((variant as any).branchStocks?.[branchId] || 0);
-}
+function getVariantBranchStockValue(variant: ProductItem["variants"][number], branchId: string) {
+  const v = variant as any;
 
-function exportProductsExcel(
-  exportProducts: ProductItem[],
-  exportBranches: BranchItem[]
-) {
-  const rows: Record<string, any>[] = [];
+  const directBranchStocks = v.branchStocks || v.inventoryByBranch || {};
+  if (directBranchStocks && directBranchStocks[branchId] !== undefined) {
+    return Number(directBranchStocks[branchId] || 0);
+  }
 
-  for (const product of exportProducts) {
-    const variants = product.variants || [];
-
-    if (!variants.length) {
-      rows.push({
-        "Tên sản phẩm": product.name || "",
-        "Mã sản phẩm": product.slug || "",
-        "Danh mục": product.category || "",
-        "Brand": product.brand || "",
-        "Khối lượng": Number(product.weight || 0),
-        "Ảnh": product.imageUrl || "",
-        "SKU": "",
-        "Màu": "",
-        "Size": "",
-        "Giá bán": 0,
-        "Giá nhập": 0,
-        "Tồn tổng": 0,
-        "Giá trị tồn": 0,
-        "Trạng thái sản phẩm": product.status || "DRAFT",
-        "Trạng thái SKU": "",
-      });
-      continue;
-    }
-
-    for (const variant of variants) {
-      const branchStockColumns = Object.fromEntries(
-        exportBranches.map((branch) => [
-          `Tồn ${branch.name}`,
-          getBranchStockValue(variant, branch.id),
-        ])
-      );
-
-      const totalStock = exportBranches.reduce(
-        (sum, branch) => sum + getBranchStockValue(variant, branch.id),
-        0
-      );
-
-      const price = Number(variant.price || 0);
-      const costPrice = Number((variant as any).costPrice || 0);
-
-      rows.push({
-        "Tên sản phẩm": product.name || "",
-        "Mã sản phẩm": product.slug || "",
-        "Danh mục": product.category || "",
-        "Brand": product.brand || "",
-        "Khối lượng": Number(product.weight || 0),
-        "Ảnh": product.imageUrl || "",
-        "SKU": variant.sku || "",
-        "Màu": variant.color || "",
-        "Size": variant.size || "",
-        "Giá bán": price,
-        "Giá nhập": costPrice,
-        ...branchStockColumns,
-        "Tồn tổng": totalStock,
-        "Giá trị tồn": totalStock * costPrice,
-        "Trạng thái sản phẩm": product.status || "DRAFT",
-        "Trạng thái SKU": (variant as any).status || "ACTIVE",
-      });
+  const inventoryItems = v.inventoryItems || v.inventory || [];
+  if (Array.isArray(inventoryItems)) {
+    const found = inventoryItems.find((item: any) => item.branchId === branchId);
+    if (found) {
+      return Number(found.availableQty ?? found.qty ?? found.quantity ?? 0);
     }
   }
 
-  const ws = XLSX.utils.json_to_sheet(rows);
+  return 0;
+}
+
+type ExportProductScope = "filtered" | "all" | "current_page";
+type ExportSortMode = "product_asc" | "stock_desc" | "value_desc" | "missing_cost_first";
+
+type ExportColumnKey =
+  | "productName"
+  | "slug"
+  | "category"
+  | "brand"
+  | "weight"
+  | "imageUrl"
+  | "sku"
+  | "color"
+  | "size"
+  | "price"
+  | "costPrice"
+  | "branchStocks"
+  | "totalStock"
+  | "inventoryValue"
+  | "status"
+  | "description";
+
+type ExportColumnState = Record<ExportColumnKey, boolean>;
+
+type EnterpriseExportOptions = {
+  scope: ExportProductScope;
+  branchIds: string[];
+  columns: ExportColumnState;
+  onlyInStock: boolean;
+  onlyMissingCost: boolean;
+  onlyLowStock: boolean;
+  includeSummarySheet: boolean;
+  includeBranchSheets: boolean;
+  sortMode: ExportSortMode;
+};
+
+const defaultExportColumns: ExportColumnState = {
+  productName: true,
+  slug: true,
+  category: true,
+  brand: true,
+  weight: false,
+  imageUrl: false,
+  sku: true,
+  color: true,
+  size: true,
+  price: true,
+  costPrice: true,
+  branchStocks: true,
+  totalStock: true,
+  inventoryValue: true,
+  status: true,
+  description: false,
+};
+
+const exportColumnLabels: Record<ExportColumnKey, string> = {
+  productName: "Tên sản phẩm",
+  slug: "Mã sản phẩm",
+  category: "Danh mục",
+  brand: "Brand",
+  weight: "Khối lượng",
+  imageUrl: "Ảnh",
+  sku: "SKU",
+  color: "Màu",
+  size: "Size",
+  price: "Giá bán",
+  costPrice: "Giá nhập",
+  branchStocks: "Tồn theo chi nhánh",
+  totalStock: "Tổng tồn",
+  inventoryValue: "Giá trị tồn",
+  status: "Trạng thái",
+  description: "Mô tả",
+};
+
+function safeSheetName(name: string) {
+  return String(name || "Sheet")
+    .replace(/[\\/?*\[\]:]/g, " ")
+    .trim()
+    .slice(0, 31) || "Sheet";
+}
+
+function makeWorksheet(rows: Record<string, any>[]) {
+  const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Không có dữ liệu": "" }]);
+  const firstRow = rows[0] || { "Không có dữ liệu": "" };
+  ws["!cols"] = Object.keys(firstRow).map((key) => ({
+    wch: Math.min(Math.max(String(key).length + 4, 14), 42),
+  }));
+  return ws;
+}
+
+function buildEnterpriseProductExport(
+  exportProducts: ProductItem[],
+  exportBranches: BranchItem[],
+  options: EnterpriseExportOptions
+) {
+  const selectedBranches = options.branchIds.length
+    ? exportBranches.filter((branch) => options.branchIds.includes(branch.id))
+    : exportBranches;
+
+  const rows: Record<string, any>[] = [];
+  const summaryByProduct = new Map<
+    string,
+    {
+      productName: string;
+      skuRoot: string;
+      totalStock: number;
+      inventoryValue: number;
+      variantCount: number;
+      missingCostCount: number;
+    }
+  >();
+
+  for (const product of exportProducts) {
+    for (const variant of product.variants || []) {
+      const price = Number(variant.price || 0);
+      const costPrice = Number((variant as any).costPrice || 0);
+      const branchStocks = Object.fromEntries(
+        selectedBranches.map((branch) => [
+          branch.id,
+          getVariantBranchStockValue(variant, branch.id),
+        ])
+      );
+      const totalStock = Object.values(branchStocks).reduce(
+        (sum, qty) => sum + Number(qty || 0),
+        0
+      );
+      const inventoryValue = totalStock * costPrice;
+      const isMissingCost = totalStock > 0 && costPrice <= 0;
+      const isLowStock = totalStock > 0 && totalStock <= 3;
+
+      if (options.onlyInStock && totalStock <= 0) continue;
+      if (options.onlyMissingCost && !isMissingCost) continue;
+      if (options.onlyLowStock && !isLowStock) continue;
+
+      const row: Record<string, any> = {};
+
+      if (options.columns.productName) row["Tên sản phẩm"] = product.name || "";
+      if (options.columns.slug) row["Mã sản phẩm"] = product.slug || "";
+      if (options.columns.category) row["Danh mục"] = product.category || "";
+      if (options.columns.brand) row["Brand"] = product.brand || "";
+      if (options.columns.weight) row["Khối lượng"] = Number(product.weight || 0);
+      if (options.columns.imageUrl) row["Ảnh"] = product.imageUrl || "";
+      if (options.columns.sku) row["SKU"] = variant.sku || "";
+      if (options.columns.color) row["Màu"] = variant.color || "";
+      if (options.columns.size) row["Size"] = variant.size || "";
+      if (options.columns.price) row["Giá bán"] = price;
+      if (options.columns.costPrice) row["Giá nhập"] = costPrice;
+      if (options.columns.branchStocks) {
+        for (const branch of selectedBranches) {
+          row[`Tồn ${branch.name}`] = branchStocks[branch.id] || 0;
+        }
+      }
+      if (options.columns.totalStock) row["Tổng tồn"] = totalStock;
+      if (options.columns.inventoryValue) row["Giá trị tồn"] = inventoryValue;
+      if (options.columns.status) {
+        row["Trạng thái sản phẩm"] = product.status || "DRAFT";
+        row["Trạng thái SKU"] = (variant as any).status || "ACTIVE";
+        row["Cảnh báo"] = isMissingCost
+          ? "Thiếu giá nhập"
+          : isLowStock
+            ? "Tồn thấp"
+            : "";
+      }
+      if (options.columns.description) row["Mô tả"] = product.description || "";
+
+      rows.push(row);
+
+      const key = product.id || product.slug || product.name || "unknown";
+      const current = summaryByProduct.get(key) || {
+        productName: product.name || "",
+        skuRoot: getMainSku(product),
+        totalStock: 0,
+        inventoryValue: 0,
+        variantCount: 0,
+        missingCostCount: 0,
+      };
+      current.totalStock += totalStock;
+      current.inventoryValue += inventoryValue;
+      current.variantCount += 1;
+      current.missingCostCount += isMissingCost ? 1 : 0;
+      summaryByProduct.set(key, current);
+    }
+  }
+
+  rows.sort((a, b) => {
+    if (options.sortMode === "stock_desc") {
+      return Number(b["Tổng tồn"] || 0) - Number(a["Tổng tồn"] || 0);
+    }
+    if (options.sortMode === "value_desc") {
+      return Number(b["Giá trị tồn"] || 0) - Number(a["Giá trị tồn"] || 0);
+    }
+    if (options.sortMode === "missing_cost_first") {
+      return String(b["Cảnh báo"] || "").localeCompare(String(a["Cảnh báo"] || ""));
+    }
+    return String(a["Tên sản phẩm"] || "").localeCompare(String(b["Tên sản phẩm"] || ""));
+  });
+
+  const totalStock = rows.reduce((sum, row) => sum + Number(row["Tổng tồn"] || 0), 0);
+  const totalValue = rows.reduce((sum, row) => sum + Number(row["Giá trị tồn"] || 0), 0);
+  const missingCostRows = rows.filter((row) => row["Cảnh báo"] === "Thiếu giá nhập");
+  const lowStockRows = rows.filter((row) => row["Cảnh báo"] === "Tồn thấp");
+
+  const summaryRows = [
+    { "Chỉ số": "Tổng sản phẩm", "Giá trị": exportProducts.length },
+    { "Chỉ số": "Tổng SKU xuất file", "Giá trị": rows.length },
+    { "Chỉ số": "Tổng tồn", "Giá trị": totalStock },
+    { "Chỉ số": "Tổng giá trị tồn", "Giá trị": totalValue },
+    { "Chỉ số": "SKU thiếu giá nhập", "Giá trị": missingCostRows.length },
+    { "Chỉ số": "SKU tồn thấp", "Giá trị": lowStockRows.length },
+    { "Chỉ số": "Chi nhánh xuất", "Giá trị": selectedBranches.map((b) => b.name).join(", ") || "Tất cả" },
+    { "Chỉ số": "Thời gian xuất", "Giá trị": new Date().toLocaleString("vi-VN") },
+  ];
+
+  const productSummaryRows = Array.from(summaryByProduct.values())
+    .sort((a, b) => b.inventoryValue - a.inventoryValue)
+    .map((item) => ({
+      "Tên sản phẩm": item.productName,
+      "SKU chính": item.skuRoot,
+      "Số variant": item.variantCount,
+      "Tổng tồn": item.totalStock,
+      "Giá trị tồn": item.inventoryValue,
+      "Variant thiếu giá nhập": item.missingCostCount,
+    }));
+
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "products");
+
+  if (options.includeSummarySheet) {
+    XLSX.utils.book_append_sheet(wb, makeWorksheet(summaryRows), "Tổng quan");
+    XLSX.utils.book_append_sheet(wb, makeWorksheet(productSummaryRows), "Theo sản phẩm");
+  }
+
+  XLSX.utils.book_append_sheet(wb, makeWorksheet(rows), "Danh sách SKU");
+
+  const missingCostExportRows = missingCostRows.map((row) => ({
+    "Tên sản phẩm": row["Tên sản phẩm"],
+    "SKU": row["SKU"],
+    "Màu": row["Màu"],
+    "Size": row["Size"],
+    "Giá bán": row["Giá bán"],
+    "Giá nhập": row["Giá nhập"],
+    "Tổng tồn": row["Tổng tồn"],
+    "Giá trị tồn": row["Giá trị tồn"],
+  }));
+  if (missingCostExportRows.length) {
+    XLSX.utils.book_append_sheet(wb, makeWorksheet(missingCostExportRows), "Thiếu giá nhập");
+  }
+
+  if (options.includeBranchSheets) {
+    for (const branch of selectedBranches) {
+      const branchRows: Record<string, any>[] = [];
+      for (const product of exportProducts) {
+        for (const variant of product.variants || []) {
+          const qty = getVariantBranchStockValue(variant, branch.id);
+          const costPrice = Number((variant as any).costPrice || 0);
+          const price = Number(variant.price || 0);
+
+          if (options.onlyInStock && qty <= 0) continue;
+          if (options.onlyMissingCost && !(qty > 0 && costPrice <= 0)) continue;
+          if (options.onlyLowStock && !(qty > 0 && qty <= 3)) continue;
+
+          branchRows.push({
+            "Tên sản phẩm": product.name || "",
+            "Mã sản phẩm": product.slug || "",
+            "SKU": variant.sku || "",
+            "Màu": variant.color || "",
+            "Size": variant.size || "",
+            "Giá bán": price,
+            "Giá nhập": costPrice,
+            "Tồn": qty,
+            "Giá trị tồn": qty * costPrice,
+            "Cảnh báo": qty > 0 && costPrice <= 0 ? "Thiếu giá nhập" : qty > 0 && qty <= 3 ? "Tồn thấp" : "",
+          });
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, makeWorksheet(branchRows), safeSheetName(branch.name));
+    }
+  }
 
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mi = String(now.getMinutes()).padStart(2, "0");
 
-  XLSX.writeFile(wb, `products_export_${yyyy}${mm}${dd}.xlsx`);
+  XLSX.writeFile(wb, `products_enterprise_export_${yyyy}${mm}${dd}_${hh}${mi}.xlsx`);
 
   return rows.length;
 }
@@ -647,6 +920,21 @@ export default function ProductsPageClient() {
   const [variantOpen, setVariantOpen] = useState(false);
   const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<ExportProductScope>("filtered");
+  const [exportBranchIds, setExportBranchIds] = useState<string[]>([]);
+  const [exportColumns, setExportColumns] = useState<ExportColumnState>(defaultExportColumns);
+  const [exportOnlyInStock, setExportOnlyInStock] = useState(false);
+  const [exportOnlyMissingCost, setExportOnlyMissingCost] = useState(false);
+  const [exportOnlyLowStock, setExportOnlyLowStock] = useState(false);
+  const [exportIncludeSummarySheet, setExportIncludeSummarySheet] = useState(true);
+  const [exportIncludeBranchSheets, setExportIncludeBranchSheets] = useState(true);
+  const [exportSortMode, setExportSortMode] = useState<ExportSortMode>("product_asc");
+  const [exportingProducts, setExportingProducts] = useState(false);
+  const [categoryNormalizerOpen, setCategoryNormalizerOpen] = useState(false);
+  const [sortKey, setSortKey] = useState<ProductSortKey>("name");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
 
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -740,12 +1028,12 @@ export default function ProductsPageClient() {
     return activeCategories.length ? activeCategories : fallbackProductGroups;
   }, [categoryOptions, categories]);
 
-  // Owner/admin quản trị dữ liệu gốc.
-  // Fulltime được tạo/sửa sản phẩm, thêm variant và đổi trạng thái bán, nhưng KHÔNG thấy giá nhập/giá vốn.
-  // Retail/kiểm kho/kho chỉ xem catalog và tồn theo chi nhánh của mình.
-  const isFulltime = role === "fulltime";
+  // Owner/admin và quản lý chi nhánh được tạo/sửa sản phẩm, sửa giá bán, thêm variant, đổi trạng thái.
+  // Fulltime / retail / kiểm kho / kho chỉ xem catalog và tồn theo chi nhánh.
+  // Giá nhập / giá vốn / giá trị tồn chỉ owner/admin thấy.
   const isBranchManager = role === "branch-manager";
-  const canOperateProduct = isOwner || isFulltime || isBranchManager;
+
+  const canOperateProduct = isOwner || isBranchManager;
 
   const canCreateProduct = canOperateProduct;
   const canEditProduct = canOperateProduct;
@@ -755,6 +1043,7 @@ export default function ProductsPageClient() {
   const canImportProducts = isOwner;
   const canViewCost = isOwner;
   const canViewInventoryValue = isOwner;
+
   const loadBranches = async () => {
     try {
       setLoadingBranches(true);
@@ -875,7 +1164,108 @@ export default function ProductsPageClient() {
     }
   }, [createOpen, categories, categoryId]);
 
-  const filteredProducts = products;
+  const getProductTotalStockForSort = (product: ProductItem) => {
+    return (product.variants || []).reduce((sum, variant) => {
+      const branchStocks = variant.branchStocks || {};
+      if (isOwner) {
+        return (
+          sum +
+          Object.values(branchStocks).reduce(
+            (branchSum, qty) => branchSum + Number(qty || 0),
+            0
+          )
+        );
+      }
+
+      return sum + Number(branchStocks[currentBranchId || ""] || 0);
+    }, 0);
+  };
+
+  const getProductBranchStockForSort = (product: ProductItem) => {
+    return visibleBranches.reduce((sum, branch) => {
+      return (
+        sum +
+        (product.variants || []).reduce(
+          (branchSum, variant) => branchSum + Number(variant.branchStocks?.[branch.id] || 0),
+          0
+        )
+      );
+    }, 0);
+  };
+
+  const getProductSortValue = (product: ProductItem, key: ProductSortKey) => {
+    const variants = product.variants || [];
+    const colors = uniqueValues(variants.map((variant) => variant.color)).join(", ");
+    const sizes = uniqueValues(variants.map((variant) => variant.size)).join(", ");
+    const firstSku = getMainSku(product);
+
+    const minPrice =
+      variants.length > 0
+        ? Math.min(...variants.map((variant) => Number(variant.price || 0)))
+        : 0;
+
+    const minCostPrice =
+      variants.length > 0
+        ? Math.min(...variants.map((variant) => Number((variant as any).costPrice || 0)))
+        : 0;
+
+    switch (key) {
+      case "name":
+        return product.name || "";
+      case "category":
+        return product.category || "";
+      case "color":
+        return colors;
+      case "size":
+        return sizes;
+      case "sku":
+        return firstSku;
+      case "price":
+        return minPrice;
+      case "costPrice":
+        return minCostPrice;
+      case "branchStock":
+        return getProductBranchStockForSort(product);
+      case "stock":
+        return getProductTotalStockForSort(product);
+      case "status":
+        return product.status || "";
+      case "description":
+        return product.description || "";
+      default:
+        return product.name || "";
+    }
+  };
+
+  const handleSort = (key: ProductSortKey) => {
+    if (sortKey === key) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortKey(key);
+    setSortDirection(key === "stock" || key === "branchStock" ? "desc" : "asc");
+  };
+
+  const filteredProducts = useMemo(() => {
+    return [...products].sort((a, b) => {
+      const av = getProductSortValue(a, sortKey);
+      const bv = getProductSortValue(b, sortKey);
+
+      let result = 0;
+
+      if (typeof av === "number" || typeof bv === "number") {
+        result = Number(av || 0) - Number(bv || 0);
+      } else {
+        result = String(av || "").localeCompare(String(bv || ""), "vi", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return sortDirection === "asc" ? result : -result;
+    });
+  }, [products, sortKey, sortDirection, visibleBranches, currentBranchId, isOwner]);
 
   const getVariantScopedStock = (variant: ProductItem["variants"][number]) => {
     if (isOwner) {
@@ -1519,29 +1909,78 @@ export default function ProductsPageClient() {
     }
   };
 
+
+  const handleClearAllDescriptions = async () => {
+    if (!canManageProductMasterData) {
+      setActionMessage("Role hiện tại không có quyền xoá mô tả sản phẩm.");
+      return;
+    }
+
+    const ok1 = window.confirm(
+      "Xoá toàn bộ mô tả sản phẩm? Thao tác này không hoàn tác được."
+    );
+    if (!ok1) return;
+
+    const ok2 = window.confirm(
+      "Xác nhận lần 2: tất cả mô tả sản phẩm sẽ bị xoá trắng."
+    );
+    if (!ok2) return;
+
+    try {
+      setActionMessage("Đang xoá mô tả sản phẩm...");
+      const result = await clearAllProductDescriptions();
+      await loadProducts(page, limit);
+      await loadProductSummary();
+      setActionMessage(`Đã xoá mô tả của ${result?.count || 0} sản phẩm.`);
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Không xoá được mô tả sản phẩm."
+      );
+    }
+  };
+
   const handleExportProductsExcel = async () => {
     try {
+      setExportingProducts(true);
       setActionMessage("Đang tạo file Excel sản phẩm...");
 
-      const exportLimit = Math.max(totalProducts, products.length, 1000);
+      const exportLimit =
+        exportScope === "current_page"
+          ? limit
+          : Math.max(totalProducts, products.length, 1000);
+
       const result = await (getProducts as any)({
-        page: 1,
+        page: exportScope === "current_page" ? page : 1,
         limit: exportLimit,
-        q: query.trim(),
-        category: groupFilter,
-        status: statusFilter,
+        q: exportScope === "all" ? "" : query.trim(),
+        category: exportScope === "all" ? "ALL" : groupFilter,
+        status: exportScope === "all" ? "ALL" : statusFilter,
         branchId: !isOwner && currentBranchId ? currentBranchId : undefined,
       });
 
       const exportSource = Array.isArray(result) ? result : result?.data || [];
       const branchesForExport = visibleBranches.length ? visibleBranches : branches;
-      const rowCount = exportProductsExcel(exportSource, branchesForExport);
 
-      setActionMessage(`Đã xuất Excel ${rowCount} dòng SKU theo bộ lọc hiện tại.`);
+      const rowCount = buildEnterpriseProductExport(exportSource, branchesForExport, {
+        scope: exportScope,
+        branchIds: exportBranchIds,
+        columns: exportColumns,
+        onlyInStock: exportOnlyInStock,
+        onlyMissingCost: exportOnlyMissingCost,
+        onlyLowStock: exportOnlyLowStock,
+        includeSummarySheet: exportIncludeSummarySheet,
+        includeBranchSheets: exportIncludeBranchSheets,
+        sortMode: exportSortMode,
+      });
+
+      setExportOpen(false);
+      setActionMessage(`Đã xuất Excel enterprise ${rowCount} dòng SKU.`);
     } catch (err) {
       setActionMessage(
         err instanceof Error ? err.message : "Xuất Excel sản phẩm thất bại."
       );
+    } finally {
+      setExportingProducts(false);
     }
   };
 
@@ -1553,14 +1992,25 @@ export default function ProductsPageClient() {
         action={
           <div className="flex flex-wrap gap-3">
             {canImportProducts ? (
-              <Button
-                variant="secondary"
-                onClick={() => void handleExportProductsExcel()}
-                className="rounded-full"
-                disabled={loading || !products.length}
-              >
-                Xuất Excel
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => setExportOpen(true)}
+                  className="rounded-full"
+                  disabled={loading || !products.length}
+                >
+                  Xuất Excel
+                </Button>
+
+                <Button
+                  variant="danger"
+                  onClick={() => void handleClearAllDescriptions()}
+                  className="rounded-full"
+                  disabled={loading}
+                >
+                  Xoá mô tả SP
+                </Button>
+              </>
             ) : null}
 
             {canImportProducts ? (
@@ -1676,15 +2126,40 @@ export default function ProductsPageClient() {
       ) : null}
 
       {canManageProductMasterData ? (
-        <CategoryNormalizer
-          categories={productGroups}
-          onDone={async () => {
-            await loadProductCategoryOptions();
-            await loadCategories();
-            await loadProducts(1, limit);
-            setPage(1);
-          }}
-        />
+        <Panel className="overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setCategoryNormalizerOpen((prev) => !prev)}
+            className="flex w-full items-center justify-between px-5 py-4 text-left"
+            title={categoryNormalizerOpen ? "Thu gọn chuẩn hoá danh mục" : "Mở chuẩn hoá danh mục"}
+          >
+            <div>
+              <h3 className="text-base font-semibold text-neutral-900">
+                Chuẩn hoá danh mục sản phẩm
+              </h3>
+              <p className="mt-1 text-xs text-neutral-500">
+                Gộp danh mục dư thừa khi cần. Mặc định thu gọn để bảng sản phẩm gọn hơn.
+              </p>
+            </div>
+            <span className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-700">
+              {categoryNormalizerOpen ? "Thu gọn ↑" : "Mở ra ↓"}
+            </span>
+          </button>
+
+          {categoryNormalizerOpen ? (
+            <div className="border-t border-neutral-100 p-4">
+              <CategoryNormalizer
+                categories={productGroups}
+                onDone={async () => {
+                  await loadProductCategoryOptions();
+                  await loadCategories();
+                  await loadProducts(1, limit);
+                  setPage(1);
+                }}
+              />
+            </div>
+          ) : null}
+        </Panel>
       ) : null}
 
       <Panel className="overflow-hidden">
@@ -1702,19 +2177,19 @@ export default function ProductsPageClient() {
               <thead className="bg-neutral-50">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
                   <th className="border-b border-neutral-200 px-3 py-3">Ảnh</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Sản phẩm</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Loại</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Màu</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Size</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">SKU chính</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Giá bán</th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Sản phẩm" active={sortKey === "name"} direction={sortDirection} onClick={() => handleSort("name")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Loại" active={sortKey === "category"} direction={sortDirection} onClick={() => handleSort("category")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Màu" active={sortKey === "color"} direction={sortDirection} onClick={() => handleSort("color")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Size" active={sortKey === "size"} direction={sortDirection} onClick={() => handleSort("size")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="SKU chính" active={sortKey === "sku"} direction={sortDirection} onClick={() => handleSort("sku")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Giá bán" active={sortKey === "price"} direction={sortDirection} onClick={() => handleSort("price")} /></th>
                   {canViewCost ? (
-                    <th className="border-b border-neutral-200 px-3 py-3">Giá nhập</th>
+                    <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Giá nhập" active={sortKey === "costPrice"} direction={sortDirection} onClick={() => handleSort("costPrice")} /></th>
                   ) : null}
-                  <th className="border-b border-neutral-200 px-3 py-3">Theo chi nhánh</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Tồn</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Trạng thái</th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Mô tả</th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Theo chi nhánh" active={sortKey === "branchStock"} direction={sortDirection} onClick={() => handleSort("branchStock")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Tồn" active={sortKey === "stock"} direction={sortDirection} onClick={() => handleSort("stock")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Trạng thái" active={sortKey === "status"} direction={sortDirection} onClick={() => handleSort("status")} /></th>
+                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Mô tả" active={sortKey === "description"} direction={sortDirection} onClick={() => handleSort("description")} /></th>
                   <th className="border-b border-neutral-200 px-3 py-3">Thao tác</th>
                 </tr>
               </thead>
@@ -2004,6 +2479,211 @@ export default function ProductsPageClient() {
           </div>
         )}
       </Panel>
+
+      <Modal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="Xuất Excel Enterprise"
+        maxWidthClass="max-w-5xl"
+      >
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Panel className="p-4">
+              <p className="text-sm font-semibold text-neutral-900">Phạm vi sản phẩm</p>
+              <div className="mt-3 space-y-2 text-sm text-neutral-700">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={exportScope === "filtered"}
+                    onChange={() => setExportScope("filtered")}
+                  />
+                  Theo filter hiện tại
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={exportScope === "current_page"}
+                    onChange={() => setExportScope("current_page")}
+                  />
+                  Chỉ trang hiện tại
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={exportScope === "all"}
+                    onChange={() => setExportScope("all")}
+                  />
+                  Tất cả sản phẩm
+                </label>
+              </div>
+            </Panel>
+
+            <Panel className="p-4">
+              <p className="text-sm font-semibold text-neutral-900">Bộ lọc nhanh</p>
+              <div className="mt-3 space-y-2 text-sm text-neutral-700">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportOnlyInStock}
+                    onChange={(e) => setExportOnlyInStock(e.target.checked)}
+                  />
+                  Chỉ SKU còn tồn
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportOnlyMissingCost}
+                    onChange={(e) => setExportOnlyMissingCost(e.target.checked)}
+                  />
+                  Chỉ SKU thiếu giá nhập
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportOnlyLowStock}
+                    onChange={(e) => setExportOnlyLowStock(e.target.checked)}
+                  />
+                  Chỉ SKU tồn thấp
+                </label>
+              </div>
+            </Panel>
+
+            <Panel className="p-4">
+              <p className="text-sm font-semibold text-neutral-900">Sheet & sắp xếp</p>
+              <div className="mt-3 space-y-2 text-sm text-neutral-700">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportIncludeSummarySheet}
+                    onChange={(e) => setExportIncludeSummarySheet(e.target.checked)}
+                  />
+                  Có sheet tổng quan
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportIncludeBranchSheets}
+                    onChange={(e) => setExportIncludeBranchSheets(e.target.checked)}
+                  />
+                  Mỗi chi nhánh 1 sheet
+                </label>
+                <select
+                  className="mt-2 w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                  value={exportSortMode}
+                  onChange={(e) => setExportSortMode(e.target.value as ExportSortMode)}
+                >
+                  <option value="product_asc">Sắp xếp theo tên sản phẩm</option>
+                  <option value="stock_desc">Tồn nhiều nhất</option>
+                  <option value="value_desc">Giá trị tồn cao nhất</option>
+                  <option value="missing_cost_first">Thiếu giá nhập lên đầu</option>
+                </select>
+              </div>
+            </Panel>
+          </div>
+
+          <Panel className="p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-neutral-900">Chọn chi nhánh</p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Không chọn chi nhánh nào = xuất tất cả chi nhánh đang có quyền xem.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setExportBranchIds(visibleBranches.map((branch) => branch.id))}
+                >
+                  Chọn tất cả
+                </Button>
+                <Button variant="secondary" onClick={() => setExportBranchIds([])}>
+                  Bỏ chọn
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-2 md:grid-cols-4">
+              {visibleBranches.map((branch) => (
+                <label
+                  key={branch.id}
+                  className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={exportBranchIds.includes(branch.id)}
+                    onChange={(e) => {
+                      setExportBranchIds((prev) =>
+                        e.target.checked
+                          ? Array.from(new Set([...prev, branch.id]))
+                          : prev.filter((id) => id !== branch.id)
+                      );
+                    }}
+                  />
+                  {branch.name}
+                </label>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel className="p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-neutral-900">Cột dữ liệu</p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Chọn thông tin cần đưa vào sheet Danh sách SKU.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setExportColumns(defaultExportColumns)}>
+                  Mặc định
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    setExportColumns(
+                      Object.fromEntries(
+                        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [key, true])
+                      ) as ExportColumnState
+                    )
+                  }
+                >
+                  Chọn tất cả
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-2 md:grid-cols-4">
+              {(Object.keys(exportColumns) as ExportColumnKey[]).map((key) => (
+                <label
+                  key={key}
+                  className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={exportColumns[key]}
+                    onChange={(e) =>
+                      setExportColumns((prev) => ({
+                        ...prev,
+                        [key]: e.target.checked,
+                      }))
+                    }
+                  />
+                  {exportColumnLabels[key]}
+                </label>
+              ))}
+            </div>
+          </Panel>
+
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setExportOpen(false)}>
+              Huỷ
+            </Button>
+            <Button onClick={() => void handleExportProductsExcel()} disabled={exportingProducts}>
+              {exportingProducts ? "Đang xuất..." : "Xuất Excel"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={createOpen}

@@ -349,3 +349,12 @@ export async function syncProductCategories() {
     method: "POST",
   });
 }
+
+export async function clearAllProductDescriptions() {
+  return request<{ success: boolean; count: number }>(
+    "/products/descriptions/clear-all",
+    {
+      method: "PATCH",
+    }
+  );
+}

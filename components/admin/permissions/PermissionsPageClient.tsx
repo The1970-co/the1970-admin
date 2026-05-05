@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 
-type PermissionGroupKey = "products" | "orders" | "inventory" | "customers";
+type PermissionGroupKey =
+  | "products"
+  | "orders"
+  | "inventory"
+  | "customers"
+  | "promotions";
 
 type RoleScope = "ALL_BRANCHES" | "ONE_BRANCH";
 
@@ -189,8 +194,15 @@ function StatCard({
 const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
   products: {
     title: "Sản phẩm / Dữ liệu",
-    desc: "Quyền xem dữ liệu sản phẩm. Quyền tạo/sửa sản phẩm sẽ xử lý ở module sản phẩm theo role cao hơn.",
-    allPermissions: ["Xem sản phẩm"],
+    desc: "Quyền sản phẩm. Nhân viên thường chỉ được xem; tạo/sửa/giá/variant/trạng thái chỉ dành cho quản lý trở lên.",
+    allPermissions: [
+      "Xem sản phẩm",
+      "Tạo sản phẩm",
+      "Sửa thông tin sản phẩm",
+      "Sửa giá bán",
+      "Thêm variant",
+      "Đổi trạng thái sản phẩm",
+    ],
   },
   orders: {
     title: "Đơn hàng / POS",
@@ -220,6 +232,17 @@ const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
     title: "Khách hàng",
     desc: "Xem và cập nhật thông tin khách hàng tại chi nhánh.",
     allPermissions: ["Xem khách hàng", "Sửa khách hàng"],
+  },
+  promotions: {
+    title: "Khuyến mãi",
+    desc: "Quyền xem, tạo, sửa, kích hoạt và tạm dừng chương trình khuyến mãi.",
+    allPermissions: [
+      "Xem khuyến mãi",
+      "Tạo khuyến mãi",
+      "Sửa khuyến mãi",
+      "Kích hoạt khuyến mãi",
+      "Tạm dừng khuyến mãi",
+    ],
   },
 };
 
@@ -321,6 +344,7 @@ const rolesSeed: RoleItem[] = [
       orders: [...permissionGroupMeta.orders.allPermissions],
       inventory: [...permissionGroupMeta.inventory.allPermissions],
       customers: [...permissionGroupMeta.customers.allPermissions],
+      promotions: [...permissionGroupMeta.promotions.allPermissions],
     },
   },
   {
@@ -333,10 +357,11 @@ const rolesSeed: RoleItem[] = [
     updatedAt: "02/05/2026",
     note: "Theo chi nhánh",
     permissions: {
-      products: ["Xem sản phẩm"],
+      products: [...permissionGroupMeta.products.allPermissions],
       orders: [...permissionGroupMeta.orders.allPermissions],
       inventory: [...permissionGroupMeta.inventory.allPermissions],
       customers: [...permissionGroupMeta.customers.allPermissions],
+      promotions: [...permissionGroupMeta.promotions.allPermissions],
     },
   },
   {
@@ -359,6 +384,7 @@ const rolesSeed: RoleItem[] = [
       ],
       inventory: ["Xem tồn kho", "Kiểm kho", "Chuyển kho", "Nhận kho"],
       customers: ["Xem khách hàng"],
+      promotions: ["Xem khuyến mãi"],
     },
   },
   {
@@ -380,6 +406,7 @@ const rolesSeed: RoleItem[] = [
       ],
       inventory: ["Xem tồn kho"],
       customers: ["Xem khách hàng"],
+      promotions: ["Xem khuyến mãi"],
     },
   },
   {
@@ -395,6 +422,7 @@ const rolesSeed: RoleItem[] = [
       orders: [],
       inventory: ["Xem tồn kho", "Kiểm kho"],
       customers: [],
+      promotions: [],
     },
   },
   {
@@ -417,6 +445,7 @@ const rolesSeed: RoleItem[] = [
         "Nhận kho",
       ],
       customers: [],
+      promotions: [],
     },
   },
 ];
@@ -673,6 +702,9 @@ function loadRoleTemplatesFromStorage() {
           customers: Array.isArray(saved.permissions?.customers)
             ? saved.permissions.customers
             : seed.permissions.customers,
+          promotions: Array.isArray(saved.permissions?.promotions)
+            ? saved.permissions.promotions
+            : seed.permissions.promotions,
         },
         updatedAt: saved.updatedAt || seed.updatedAt,
       };
