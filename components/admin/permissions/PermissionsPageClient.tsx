@@ -9,7 +9,8 @@ type PermissionGroupKey =
   | "orders"
   | "inventory"
   | "customers"
-  | "promotions";
+  | "promotions"
+  | "excel";
 
 type RoleScope = "ALL_BRANCHES" | "ONE_BRANCH";
 
@@ -43,6 +44,11 @@ type BranchPermission = {
   canReceiveStock?: boolean;
   canViewCustomer?: boolean;
   canEditCustomer?: boolean;
+  canExportProductExcel?: boolean;
+  canImportProductExcel?: boolean;
+  canExportOrderExcel?: boolean;
+  canExportInventoryExcel?: boolean;
+  canExportCustomerExcel?: boolean;
   note?: string | null;
 };
 
@@ -244,6 +250,17 @@ const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
       "Tạm dừng khuyến mãi",
     ],
   },
+  excel: {
+    title: "Excel / Tải dữ liệu",
+    desc: "Quyền tải xuống hoặc nhập file Excel. Mặc định nhân viên chỉ xem, không được tải/import nếu chưa cấp quyền.",
+    allPermissions: [
+      "Tải Excel sản phẩm",
+      "Nhập Excel sản phẩm",
+      "Tải Excel đơn hàng",
+      "Tải Excel tồn kho",
+      "Tải Excel khách hàng",
+    ],
+  },
 };
 
 const permissionToBranchKey: Record<string, BranchPermissionKey> = {
@@ -262,13 +279,18 @@ const permissionToBranchKey: Record<string, BranchPermissionKey> = {
   "Nhận kho": "canReceiveStock",
   "Xem khách hàng": "canViewCustomer",
   "Sửa khách hàng": "canEditCustomer",
+  "Tải Excel sản phẩm": "canExportProductExcel",
+  "Nhập Excel sản phẩm": "canImportProductExcel",
+  "Tải Excel đơn hàng": "canExportOrderExcel",
+  "Tải Excel tồn kho": "canExportInventoryExcel",
+  "Tải Excel khách hàng": "canExportCustomerExcel",
 };
 
 const branchPermissionGroups: {
   id: PermissionGroupKey;
   title: string;
   desc: string;
-  tone: "blue" | "green" | "amber" | "gray";
+  tone: "blue" | "green" | "amber" | "gray" | "purple";
   permissions: { key: BranchPermissionKey; label: string; hint?: string }[];
 }[] = [
   {
@@ -324,6 +346,19 @@ const branchPermissionGroups: {
       { key: "canEditCustomer", label: "Sửa khách hàng" },
     ],
   },
+  {
+    id: "excel",
+    title: "Excel / Tải dữ liệu",
+    desc: "Cho phép tải xuống hoặc nhập dữ liệu bằng Excel.",
+    tone: "purple",
+    permissions: [
+      { key: "canExportProductExcel", label: "Tải Excel sản phẩm" },
+      { key: "canImportProductExcel", label: "Nhập Excel sản phẩm" },
+      { key: "canExportOrderExcel", label: "Tải Excel đơn hàng" },
+      { key: "canExportInventoryExcel", label: "Tải Excel tồn kho" },
+      { key: "canExportCustomerExcel", label: "Tải Excel khách hàng" },
+    ],
+  },
 ];
 
 const branchPermissionColumns = branchPermissionGroups.flatMap(
@@ -345,6 +380,7 @@ const rolesSeed: RoleItem[] = [
       inventory: [...permissionGroupMeta.inventory.allPermissions],
       customers: [...permissionGroupMeta.customers.allPermissions],
       promotions: [...permissionGroupMeta.promotions.allPermissions],
+      excel: [...permissionGroupMeta.excel.allPermissions],
     },
   },
   {
@@ -362,6 +398,7 @@ const rolesSeed: RoleItem[] = [
       inventory: [...permissionGroupMeta.inventory.allPermissions],
       customers: [...permissionGroupMeta.customers.allPermissions],
       promotions: [...permissionGroupMeta.promotions.allPermissions],
+      excel: [...permissionGroupMeta.excel.allPermissions],
     },
   },
   {
@@ -385,6 +422,7 @@ const rolesSeed: RoleItem[] = [
       inventory: ["Xem tồn kho", "Kiểm kho", "Chuyển kho", "Nhận kho"],
       customers: ["Xem khách hàng"],
       promotions: ["Xem khuyến mãi"],
+      excel: [],
     },
   },
   {
@@ -407,6 +445,7 @@ const rolesSeed: RoleItem[] = [
       inventory: ["Xem tồn kho"],
       customers: ["Xem khách hàng"],
       promotions: ["Xem khuyến mãi"],
+      excel: [],
     },
   },
   {
@@ -423,6 +462,7 @@ const rolesSeed: RoleItem[] = [
       inventory: ["Xem tồn kho", "Kiểm kho"],
       customers: [],
       promotions: [],
+      excel: [],
     },
   },
   {
@@ -446,11 +486,173 @@ const rolesSeed: RoleItem[] = [
       ],
       customers: [],
       promotions: [],
+      excel: [],
     },
   },
 ];
 
+const MANAGEMENT_ROLE_IDS = new Set(["owner", "admin", "branch-manager"]);
+const PRODUCT_VIEW_PERMISSION = "Xem sản phẩm";
+const PROMOTION_VIEW_PERMISSION = "Xem khuyến mãi";
+const PRODUCT_ACTION_PERMISSIONS = new Set([
+  "Tạo sản phẩm",
+  "Sửa thông tin sản phẩm",
+  "Sửa giá bán",
+  "Thêm variant",
+  "Đổi trạng thái sản phẩm",
+]);
+const PROMOTION_ACTION_PERMISSIONS = new Set([
+  "Tạo khuyến mãi",
+  "Sửa khuyến mãi",
+  "Kích hoạt khuyến mãi",
+  "Tạm dừng khuyến mãi",
+]);
+
 const exclusiveRoles = ["owner", "admin", "branch-manager"];
+
+function canRoleUseActionPermissions(roleId: string) {
+  return MANAGEMENT_ROLE_IDS.has(String(roleId || "").toLowerCase());
+}
+
+function isActionPermission(
+  groupKey: PermissionGroupKey,
+  permissionName: string,
+) {
+  if (groupKey === "products")
+    return PRODUCT_ACTION_PERMISSIONS.has(permissionName);
+  if (groupKey === "promotions")
+    return PROMOTION_ACTION_PERMISSIONS.has(permissionName);
+  return false;
+}
+
+function getAllowedGroupPermissions(
+  roleId: string,
+  groupKey: PermissionGroupKey,
+) {
+  const all = permissionGroupMeta[groupKey].allPermissions;
+  if (canRoleUseActionPermissions(roleId)) return all;
+
+  if (groupKey === "products") {
+    return all.filter((permission) => permission === PRODUCT_VIEW_PERMISSION);
+  }
+
+  if (groupKey === "promotions") {
+    return all.filter((permission) => permission === PROMOTION_VIEW_PERMISSION);
+  }
+
+  return all;
+}
+
+function isPermissionAllowedForRole(
+  roleId: string,
+  groupKey: PermissionGroupKey,
+  permissionName: string,
+) {
+  return getAllowedGroupPermissions(roleId, groupKey).includes(permissionName);
+}
+
+function sanitizeRoleTemplate(role: RoleItem): RoleItem {
+  const permissions = { ...role.permissions };
+
+  (Object.keys(permissionGroupMeta) as PermissionGroupKey[]).forEach(
+    (groupKey) => {
+      const allowed = new Set(getAllowedGroupPermissions(role.id, groupKey));
+      permissions[groupKey] = Array.from(
+        new Set(
+          (permissions[groupKey] || []).filter((permission) =>
+            allowed.has(permission),
+          ),
+        ),
+      );
+    },
+  );
+
+  return { ...role, permissions };
+}
+
+function groupHasAllAllowedPermissions(
+  role: RoleItem,
+  groupKey: PermissionGroupKey,
+) {
+  const current = role.permissions[groupKey] || [];
+  const allowed = getAllowedGroupPermissions(role.id, groupKey);
+  return allowed.length > 0 && allowed.every((item) => current.includes(item));
+}
+
+function formatStaffCode(index: number) {
+  return `NV${String(index).padStart(2, "0")}`;
+}
+
+function normalizeStaffCode(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function isSystemStaffCode(value?: string | null) {
+  return /^NV\d+$/.test(normalizeStaffCode(value));
+}
+
+function normalizeStaffNameBase(value?: string | null) {
+  // Ô tên đang hiển thị dạng "TÊN - QO". Khi người dùng gõ tiếp,
+  // cần luôn bóc phần "- MÃ CHI NHÁNH" ở cuối để tránh bị nhân đôi: "M - QO - QO".
+  let text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+  // Bóc 1 hoặc nhiều hậu tố chi nhánh ở cuối, kể cả thiếu khoảng trắng: "MAI-QO", "MAI - QO - QO".
+  text = text.replace(/(?:\s*-\s*[A-Z0-9]{1,6})+\s*$/g, "").trim();
+
+  return text;
+}
+
+function normalizeUsername(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getBranchShortCode(branches: BranchItem[], branchId?: string | null) {
+  const branch = branches.find((item) => item.id === branchId) as any;
+  const raw = String(
+    branch?.code ||
+      branch?.shortCode ||
+      branch?.name ||
+      branch?.id ||
+      branchId ||
+      "",
+  )
+    .trim()
+    .toUpperCase();
+
+  if (!raw) return "";
+  if (/^[A-Z0-9]{1,4}$/.test(raw)) return raw;
+
+  const words = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/Đ/g, "D")
+    .replace(/đ/g, "d")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return words
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 4)
+    .toUpperCase();
+}
+
+function buildStaffDisplayName(
+  name: string,
+  branches: BranchItem[],
+  branchId?: string | null,
+) {
+  const base = normalizeStaffNameBase(name);
+  const branchCode = getBranchShortCode(branches, branchId);
+  return branchCode ? `${base} - ${branchCode}` : base;
+}
 
 function scopeBadge(scope: RoleScope) {
   return scope === "ALL_BRANCHES" ? "Toàn hệ thống" : "Theo chi nhánh";
@@ -489,6 +691,11 @@ function defaultBranchPermission(branchId: string): BranchPermission {
     canReceiveStock: false,
     canViewCustomer: false,
     canEditCustomer: false,
+    canExportProductExcel: false,
+    canImportProductExcel: false,
+    canExportOrderExcel: false,
+    canExportInventoryExcel: false,
+    canExportCustomerExcel: false,
   };
 }
 
@@ -678,16 +885,16 @@ function getPermissionWarnings(row: BranchPermission) {
 }
 
 function loadRoleTemplatesFromStorage() {
-  if (typeof window === "undefined") return rolesSeed;
+  if (typeof window === "undefined") return rolesSeed.map(sanitizeRoleTemplate);
   try {
     const raw = localStorage.getItem(ROLE_STORAGE_KEY);
-    if (!raw) return rolesSeed;
+    if (!raw) return rolesSeed.map(sanitizeRoleTemplate);
     const parsed = JSON.parse(raw) as RoleItem[];
-    if (!Array.isArray(parsed)) return rolesSeed;
+    if (!Array.isArray(parsed)) return rolesSeed.map(sanitizeRoleTemplate);
     return rolesSeed.map((seed) => {
       const saved = parsed.find((role) => role.id === seed.id);
-      if (!saved) return seed;
-      return {
+      if (!saved) return sanitizeRoleTemplate(seed);
+      return sanitizeRoleTemplate({
         ...seed,
         permissions: {
           products: Array.isArray(saved.permissions?.products)
@@ -705,12 +912,15 @@ function loadRoleTemplatesFromStorage() {
           promotions: Array.isArray(saved.permissions?.promotions)
             ? saved.permissions.promotions
             : seed.permissions.promotions,
+          excel: Array.isArray(saved.permissions?.excel)
+            ? saved.permissions.excel
+            : seed.permissions.excel,
         },
         updatedAt: saved.updatedAt || seed.updatedAt,
-      };
+      });
     });
   } catch {
-    return rolesSeed;
+    return rolesSeed.map(sanitizeRoleTemplate);
   }
 }
 
@@ -791,7 +1001,9 @@ function RolePermissionPreview({ row }: { row: BranchPermission }) {
 }
 
 export default function PermissionsPageClient() {
-  const [roles, setRoles] = useState<RoleItem[]>(rolesSeed);
+  const [roles, setRoles] = useState<RoleItem[]>(
+    rolesSeed.map(sanitizeRoleTemplate),
+  );
   const [employees, setEmployees] = useState<EmployeeItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
@@ -884,6 +1096,31 @@ export default function PermissionsPageClient() {
   const branchRoles = roles.filter(
     (role) => role.scope === "ONE_BRANCH",
   ).length;
+
+  const staffCodeOptions = useMemo(() => {
+    const usedCodes = new Set(
+      employees
+        .map((employee) => normalizeStaffCode(employee.code))
+        .filter(isSystemStaffCode),
+    );
+    const maxExistingIndex = employees.reduce((max, employee) => {
+      const match = normalizeStaffCode(employee.code).match(/^NV(\d+)$/);
+      return match ? Math.max(max, Number(match[1] || 0)) : max;
+    }, 0);
+    const maxIndex = Math.max(80, maxExistingIndex + 40);
+
+    return Array.from({ length: maxIndex }, (_, index) =>
+      formatStaffCode(index + 1),
+    )
+      .filter((code) => !usedCodes.has(code))
+      .slice(0, 60);
+  }, [employees]);
+
+  useEffect(() => {
+    if (!quickCode && staffCodeOptions.length) {
+      setQuickCode(staffCodeOptions[0]);
+    }
+  }, [quickCode, staffCodeOptions]);
 
   const getBranchName = (branchId?: string | null) => {
     if (!branchId) return "Toàn hệ thống";
@@ -991,7 +1228,7 @@ export default function PermissionsPageClient() {
   };
 
   const resetRoleTemplates = () => {
-    setRoles(rolesSeed);
+    setRoles(rolesSeed.map(sanitizeRoleTemplate));
     setRoleTemplateDirty(true);
     setMessage(
       "Đã hoàn tác mẫu quyền về mặc định. Bấm Lưu mẫu quyền để áp dụng.",
@@ -1004,20 +1241,30 @@ export default function PermissionsPageClient() {
     permissionName: string,
     checked: boolean,
   ) => {
+    if (
+      checked &&
+      !isPermissionAllowedForRole(roleId, groupKey, permissionName)
+    ) {
+      setMessage(
+        "Quyền tạo/sửa/kích hoạt sản phẩm hoặc khuyến mãi chỉ dành cho Owner/Admin/Quản lý chi nhánh.",
+      );
+      return;
+    }
+
     setRoles((prev) =>
       prev.map((role) => {
         if (role.id !== roleId) return role;
         const currentSet = new Set(role.permissions[groupKey] || []);
         if (checked) currentSet.add(permissionName);
         else currentSet.delete(permissionName);
-        return {
+        return sanitizeRoleTemplate({
           ...role,
           updatedAt: new Date().toLocaleDateString("vi-VN"),
           permissions: {
             ...role.permissions,
             [groupKey]: Array.from(currentSet),
           },
-        };
+        });
       }),
     );
     setRoleTemplateDirty(true);
@@ -1031,16 +1278,16 @@ export default function PermissionsPageClient() {
     setRoles((prev) =>
       prev.map((role) => {
         if (role.id !== roleId) return role;
-        return {
+        return sanitizeRoleTemplate({
           ...role,
           updatedAt: new Date().toLocaleDateString("vi-VN"),
           permissions: {
             ...role.permissions,
             [groupKey]: checked
-              ? [...permissionGroupMeta[groupKey].allPermissions]
+              ? [...getAllowedGroupPermissions(role.id, groupKey)]
               : [],
           },
-        };
+        });
       }),
     );
     setRoleTemplateDirty(true);
@@ -1050,6 +1297,10 @@ export default function PermissionsPageClient() {
     if (creatingStaff) return;
     if (!quickName.trim() || !quickCode.trim() || !quickPassword.trim()) {
       setMessage("Thiếu tên, mã nhân viên hoặc mật khẩu.");
+      return;
+    }
+    if (!isSystemStaffCode(quickCode)) {
+      setMessage("Mã nhân viên phải theo chuẩn hệ thống NV01, NV02...");
       return;
     }
     if (!quickRoleIds.length) {
@@ -1063,9 +1314,9 @@ export default function PermissionsPageClient() {
       const created: any = await apiJson("/staff", {
         method: "POST",
         body: JSON.stringify({
-          code: quickCode.trim(),
-          name: quickName.trim(),
-          username: quickUsername.trim() || null,
+          code: normalizeStaffCode(quickCode),
+          name: buildStaffDisplayName(quickName, branches, quickBranchId),
+          username: normalizeUsername(quickUsername) || null,
           email: quickEmail.trim() || null,
           phone: quickPhone.trim() || null,
           address: quickAddress.trim() || null,
@@ -1092,7 +1343,7 @@ export default function PermissionsPageClient() {
       await loadEmployees();
       setSelectedRoleId(primaryRole);
       setQuickName("");
-      setQuickCode("");
+      setQuickCode(staffCodeOptions[1] || "");
       setQuickUsername("");
       setQuickEmail("");
       setQuickPhone("");
@@ -1138,9 +1389,13 @@ export default function PermissionsPageClient() {
   const openProfileEditor = (employee: EmployeeItem) => {
     setProfileEmployeeId(employee.id);
     setPermissionEmployeeId(null);
-    setEditName(employee.name || "");
-    setEditCode(employee.code || "");
-    setEditUsername(employee.username || "");
+    setEditName(normalizeStaffNameBase(employee.name || ""));
+    setEditCode(
+      isSystemStaffCode(employee.code)
+        ? normalizeStaffCode(employee.code)
+        : staffCodeOptions[0] || "",
+    );
+    setEditUsername(normalizeUsername(employee.username || ""));
     setEditEmail(employee.email || "");
     setEditPhone(employee.phone || "");
     setEditAddress(employee.address || "");
@@ -1190,6 +1445,10 @@ export default function PermissionsPageClient() {
       setMessage("Thiếu tên hoặc mã nhân viên.");
       return;
     }
+    if (!isSystemStaffCode(editCode)) {
+      setMessage("Mã nhân viên phải theo chuẩn hệ thống NV01, NV02...");
+      return;
+    }
     try {
       const currentEmployeeId = profileEmployeeId;
       setSavingProfileForId(currentEmployeeId);
@@ -1197,9 +1456,9 @@ export default function PermissionsPageClient() {
       await apiJson(`/staff/${profileEmployeeId}`, {
         method: "PATCH",
         body: JSON.stringify({
-          name: editName.trim(),
-          code: editCode.trim(),
-          username: editUsername.trim() || null,
+          name: buildStaffDisplayName(editName, branches, editMainBranchId),
+          code: normalizeStaffCode(editCode),
+          username: normalizeUsername(editUsername) || null,
           email: editEmail.trim() || null,
           phone: editPhone.trim() || null,
           address: editAddress.trim() || null,
@@ -1390,23 +1649,47 @@ export default function PermissionsPageClient() {
           <Badge tone="blue">Staff profile</Badge>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <input
-            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            placeholder="Tên nhân viên"
-          />
-          <input
-            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+          <div className="grid grid-cols-[minmax(0,1fr)_86px] gap-2">
+            <input
+              className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
+              value={editName}
+              onChange={(e) =>
+                setEditName(normalizeStaffNameBase(e.target.value))
+              }
+              placeholder="Tên nhân viên (VD: MAI)"
+            />
+            <input
+              readOnly
+              className="h-11 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 text-center text-sm font-semibold text-neutral-700 outline-none"
+              value={getBranchShortCode(branches, editMainBranchId)}
+              placeholder="CN"
+              title="Mã chi nhánh tự nhảy theo chi nhánh làm việc"
+            />
+          </div>
+          <select
+            className="h-11 rounded-2xl border border-neutral-300 bg-white px-4 text-sm outline-none"
             value={editCode}
             onChange={(e) => setEditCode(e.target.value)}
-            placeholder="Mã nhân viên"
-          />
+          >
+            <option value="">Chọn mã nhân viên theo chuẩn NV</option>
+            {isSystemStaffCode(editCode) ? (
+              <option value={normalizeStaffCode(editCode)}>
+                {normalizeStaffCode(editCode)} · mã hiện tại
+              </option>
+            ) : null}
+            {staffCodeOptions
+              .filter((code) => code !== normalizeStaffCode(editCode))
+              .map((code) => (
+                <option key={code} value={code}>
+                  {code} · còn trống
+                </option>
+              ))}
+          </select>
           <input
             className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
             value={editUsername}
-            onChange={(e) => setEditUsername(e.target.value)}
-            placeholder="Tên đăng nhập"
+            onChange={(e) => setEditUsername(normalizeUsername(e.target.value))}
+            placeholder="Tên đăng nhập (viết thường)"
           />
           <input
             className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
@@ -1699,23 +1982,42 @@ export default function PermissionsPageClient() {
             <Badge tone="purple">Role template → Staff</Badge>
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr]">
-            <input
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickName}
-              onChange={(e) => setQuickName(e.target.value)}
-              placeholder="Tên nhân viên"
-            />
-            <input
+            <div className="grid grid-cols-[minmax(0,1fr)_92px] gap-2">
+              <input
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
+                value={quickName}
+                onChange={(e) =>
+                  setQuickName(normalizeStaffNameBase(e.target.value))
+                }
+                placeholder="Tên nhân viên (VD: MAI)"
+              />
+              <input
+                readOnly
+                className="h-14 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 text-center text-sm font-semibold text-neutral-700 outline-none"
+                value={getBranchShortCode(branches, quickBranchId)}
+                placeholder="CN"
+                title="Mã chi nhánh tự nhảy theo chi nhánh làm việc"
+              />
+            </div>
+            <select
               className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
               value={quickCode}
               onChange={(e) => setQuickCode(e.target.value)}
-              placeholder="Mã nhân viên"
-            />
+            >
+              <option value="">Chọn mã nhân viên theo chuẩn NV</option>
+              {staffCodeOptions.map((code) => (
+                <option key={code} value={code}>
+                  {code} · còn trống
+                </option>
+              ))}
+            </select>
             <input
               className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
               value={quickUsername}
-              onChange={(e) => setQuickUsername(e.target.value)}
-              placeholder="Tên đăng nhập"
+              onChange={(e) =>
+                setQuickUsername(normalizeUsername(e.target.value))
+              }
+              placeholder="Tên đăng nhập (viết thường)"
             />
             <input
               type="password"
@@ -1888,7 +2190,14 @@ export default function PermissionsPageClient() {
                   const meta = permissionGroupMeta[key];
                   const currentPermissions =
                     selectedRole.permissions[key] || [];
-                  const allChecked = groupHasAllPermissions(selectedRole, key);
+                  const allChecked = groupHasAllAllowedPermissions(
+                    selectedRole,
+                    key,
+                  );
+                  const allowedPermissions = getAllowedGroupPermissions(
+                    selectedRole.id,
+                    key,
+                  );
                   return (
                     <div
                       key={key}
@@ -1920,6 +2229,7 @@ export default function PermissionsPageClient() {
                           <input
                             type="checkbox"
                             checked={allChecked}
+                            disabled={!allowedPermissions.length}
                             onChange={(e) =>
                               togglePermissionGroup(
                                 selectedRole.id,
@@ -1928,22 +2238,51 @@ export default function PermissionsPageClient() {
                               )
                             }
                           />
-                          Cả nhóm
+                          {canRoleUseActionPermissions(selectedRole.id) ||
+                          !["products", "promotions"].includes(key)
+                            ? "Cả nhóm"
+                            : "Chỉ quyền xem"}
                         </label>
                       </div>
                       <div className="mt-4 grid gap-3 md:grid-cols-2">
                         {meta.allPermissions.map((permissionName) => {
                           const checked =
                             currentPermissions.includes(permissionName);
+                          const disabled = !isPermissionAllowedForRole(
+                            selectedRole.id,
+                            key,
+                            permissionName,
+                          );
+                          const isLockedAction =
+                            disabled && isActionPermission(key, permissionName);
                           return (
                             <label
                               key={permissionName}
-                              className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm transition ${checked ? "border-blue-200 bg-blue-50 text-neutral-900" : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"}`}
+                              title={
+                                isLockedAction
+                                  ? "Quyền này chỉ dành cho Owner/Admin/Quản lý chi nhánh"
+                                  : undefined
+                              }
+                              className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm transition ${
+                                disabled
+                                  ? "cursor-not-allowed border-neutral-200 bg-neutral-50 text-neutral-400"
+                                  : checked
+                                    ? "cursor-pointer border-blue-200 bg-blue-50 text-neutral-900"
+                                    : "cursor-pointer border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
+                              }`}
                             >
-                              <span>{permissionName}</span>
+                              <span className="flex items-center gap-2">
+                                {permissionName}
+                                {isLockedAction ? (
+                                  <span className="rounded-full border border-neutral-200 bg-white px-2 py-0.5 text-[11px] text-neutral-400">
+                                    Quản lý+
+                                  </span>
+                                ) : null}
+                              </span>
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={disabled}
                                 onChange={(e) =>
                                   updateRolePermission(
                                     selectedRole.id,

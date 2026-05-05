@@ -15,6 +15,7 @@ import {
   searchPromotionProducts,
 } from "@/lib/promotion-support-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
+import { hasPermission, type AppRole } from "@/lib/authz";
 
 type ProductOption = {
   id: string;
@@ -201,7 +202,22 @@ export default function PromotionsPageClient() {
   const [error, setError] = useState("");
 
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const currentRole = String(
+    currentUser?.role || currentUser?.roleCode || "retail-staff"
+  ) as AppRole;
   const adminMode = isAdminOrOwner(currentUser);
+
+  // Permission theo authz.ts:
+  // - promotions.view: chỉ xem danh sách khuyến mại
+  // - promotions.create: được tạo khuyến mại
+  // - promotions.edit: được sửa cấu hình khuyến mại
+  // - promotions.activate / promotions.pause: được bật/tắt khuyến mại
+  const canViewPromotion = hasPermission(currentRole, "promotions.view");
+  const canCreatePromotion = hasPermission(currentRole, "promotions.create");
+  const canEditPromotion = hasPermission(currentRole, "promotions.edit");
+  const canActivatePromotion = hasPermission(currentRole, "promotions.activate");
+  const canPausePromotion = hasPermission(currentRole, "promotions.pause");
+
 
   const [productKeyword, setProductKeyword] = useState("");
   const [productSearching, setProductSearching] = useState(false);
@@ -209,6 +225,7 @@ export default function PromotionsPageClient() {
   const [selectedProducts, setSelectedProducts] = useState<ProductOption[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const canModifyPromotionForm = editingId ? canEditPromotion : canCreatePromotion;
   const [formOpen, setFormOpen] = useState(true);
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
@@ -366,6 +383,11 @@ export default function PromotionsPageClient() {
   }
 
   function editPromotion(row: Promotion) {
+    if (!canEditPromotion) {
+      alert("Bạn chỉ có quyền xem khuyến mại, không được sửa.");
+      return;
+    }
+
     const selected = (row.products ?? [])
       .map((item) => item.product)
       .filter(Boolean) as ProductOption[];
@@ -416,6 +438,16 @@ export default function PromotionsPageClient() {
   }
 
   async function submit() {
+    if (editingId && !canEditPromotion) {
+      alert("Bạn không có quyền sửa khuyến mại.");
+      return;
+    }
+
+    if (!editingId && !canCreatePromotion) {
+      alert("Bạn không có quyền tạo khuyến mại.");
+      return;
+    }
+
     const message = validateForm();
     if (message) {
       alert(message);
@@ -451,8 +483,20 @@ export default function PromotionsPageClient() {
   }
 
   async function toggleStatus(row: Promotion) {
+    const nextStatus = row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+
+    if (nextStatus === "ACTIVE" && !canActivatePromotion) {
+      alert("Bạn không có quyền kích hoạt khuyến mại.");
+      return;
+    }
+
+    if (nextStatus === "INACTIVE" && !canPausePromotion) {
+      alert("Bạn không có quyền tạm dừng khuyến mại.");
+      return;
+    }
+
     await updatePromotion(row.id, {
-      status: row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE",
+      status: nextStatus,
     });
     await load();
   }
@@ -479,6 +523,14 @@ export default function PromotionsPageClient() {
 
   const typeLabel = (type: PromotionType) => type === "PRODUCT_DISCOUNT" ? "Giảm sản phẩm" : "Giảm toàn đơn";
 
+  if (currentUser && !canViewPromotion) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        Bạn không có quyền xem khuyến mại.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -497,8 +549,15 @@ export default function PromotionsPageClient() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => setFormOpen((value) => !value)}
-            className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
+            onClick={() => {
+              if (!canCreatePromotion && !editingId) {
+                alert("Bạn chỉ có quyền xem khuyến mại, không được tạo mới.");
+                return;
+              }
+              setFormOpen((value) => !value);
+            }}
+            disabled={!canCreatePromotion && !editingId}
+            className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {formOpen ? "Thu gọn form" : "Tạo khuyến mại"}
           </button>
@@ -595,7 +654,10 @@ export default function PromotionsPageClient() {
         </div>
       ) : null}
 
-      {formOpen ? (
+
+
+
+      {formOpen && canModifyPromotionForm ? (
         <Card className="overflow-hidden">
           <div className="border-b border-neutral-200 bg-neutral-50 px-5 py-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -780,7 +842,7 @@ export default function PromotionsPageClient() {
                             key={product.id}
                             type="button"
                             onClick={() => selectProduct(product)}
-                            disabled={selected}
+                            disabled={selected || !canModifyPromotionForm}
                             className="flex w-full items-center justify-between border-b border-neutral-100 px-4 py-3 text-left text-sm last:border-b-0 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-emerald-50"
                           >
                             <div>
@@ -806,7 +868,7 @@ export default function PromotionsPageClient() {
                         <div key={product.id} className="flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 text-sm">
                           <span className="font-medium text-neutral-950">{getProductName(product)}</span>
                           <span className="text-xs text-neutral-500">{getProductSku(product)}</span>
-                          <button type="button" onClick={() => removeSelectedProduct(String(product.id))} className="text-xs font-bold text-red-600">×</button>
+                          <button type="button" onClick={() => canModifyPromotionForm && removeSelectedProduct(String(product.id))} className="text-xs font-bold text-red-600">×</button>
                         </div>
                       ))}
                     </div>
@@ -869,8 +931,8 @@ export default function PromotionsPageClient() {
                 ) : null}
                 <button
                   onClick={submit}
-                  disabled={saving}
-                  className="rounded-xl bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                  disabled={saving || !canModifyPromotionForm}
+                  className="rounded-xl bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? "Đang lưu..." : editingId ? "Lưu khuyến mại" : "Tạo khuyến mại"}
                 </button>
@@ -974,8 +1036,12 @@ export default function PromotionsPageClient() {
                   ) : null}
 
                   <div className="mt-5 flex flex-wrap justify-end gap-2">
-                    <button onClick={() => editPromotion(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Sửa</button>
-                    <button onClick={() => toggleStatus(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">{row.status === "ACTIVE" ? "Tắt" : "Bật"}</button>
+                    {canEditPromotion ? (
+                      <button onClick={() => editPromotion(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Sửa</button>
+                    ) : null}
+                    {(row.status === "ACTIVE" ? canPausePromotion : canActivatePromotion) ? (
+                      <button onClick={() => toggleStatus(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">{row.status === "ACTIVE" ? "Tắt" : "Bật"}</button>
+                    ) : null}
                     {adminMode ? <button onClick={() => remove(row.id)} className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600">Xoá</button> : null}
                   </div>
                 </div>
@@ -1011,7 +1077,7 @@ export default function PromotionsPageClient() {
                       <td className="px-5 py-4 text-xs text-neutral-600"><div>{safeDate(row.startAt)}</div><div className="mt-1">→ {safeDate(row.endAt)}</div></td>
                       <td className="px-5 py-4"><span className={`rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}>{status.label}</span></td>
                       <td className="px-5 py-4">{row.priority}</td>
-                      <td className="px-5 py-4 text-right"><button onClick={() => editPromotion(row)} className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold">Sửa</button><button onClick={() => toggleStatus(row)} className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold">{row.status === "ACTIVE" ? "Tắt" : "Bật"}</button>{adminMode ? <button onClick={() => remove(row.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600">Xoá</button> : null}</td>
+                      <td className="px-5 py-4 text-right">{canEditPromotion ? <button onClick={() => editPromotion(row)} className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold">Sửa</button> : null}{(row.status === "ACTIVE" ? canPausePromotion : canActivatePromotion) ? <button onClick={() => toggleStatus(row)} className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold">{row.status === "ACTIVE" ? "Tắt" : "Bật"}</button> : null}{adminMode ? <button onClick={() => remove(row.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600">Xoá</button> : null}</td>
                     </tr>
                   );
                 })}

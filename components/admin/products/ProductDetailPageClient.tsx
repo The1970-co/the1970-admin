@@ -48,7 +48,9 @@ function parseCommaTokens(value: string) {
 }
 
 function uniqueValues(values: Array<string | undefined | null>) {
-  return Array.from(new Set(values.map((v) => String(v || "").trim()).filter(Boolean)));
+  return Array.from(
+    new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
+  );
 }
 
 function hasCommaFormat(value: string) {
@@ -68,8 +70,20 @@ function createEmptyBranchStocks(branches: BranchItem[]) {
   return Object.fromEntries(branches.map((branch) => [branch.id, "0"]));
 }
 
-function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-3xl border border-neutral-200 bg-white shadow-sm ${className}`}>{children}</div>;
+function Panel({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`rounded-3xl border border-neutral-200 bg-white shadow-sm ${className}`}
+    >
+      {children}
+    </div>
+  );
 }
 
 function Button({
@@ -87,7 +101,8 @@ function Button({
   className?: string;
   type?: "button" | "submit" | "reset";
 }) {
-  const base = "inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-medium transition";
+  const base =
+    "inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-medium transition";
   const tone =
     variant === "primary"
       ? "bg-neutral-900 text-white hover:bg-neutral-800"
@@ -97,13 +112,24 @@ function Button({
           ? "bg-red-600 text-white hover:bg-red-500"
           : "border border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50";
   return (
-    <button type={type} onClick={() => void onClick?.()} disabled={disabled} className={`${base} ${tone} ${disabled ? "cursor-not-allowed opacity-50" : ""} ${className}`}>
+    <button
+      type={type}
+      onClick={() => void onClick?.()}
+      disabled={disabled}
+      className={`${base} ${tone} ${disabled ? "cursor-not-allowed opacity-50" : ""} ${className}`}
+    >
       {children}
     </button>
   );
 }
 
-function Badge({ children, tone = "gray" }: { children: ReactNode; tone?: "gray" | "green" | "amber" | "red" | "blue" }) {
+function Badge({
+  children,
+  tone = "gray",
+}: {
+  children: ReactNode;
+  tone?: "gray" | "green" | "amber" | "red" | "blue";
+}) {
   const styles = {
     gray: "bg-neutral-100 text-neutral-700 border-neutral-200",
     green: "bg-green-50 text-green-700 border-green-200",
@@ -111,56 +137,105 @@ function Badge({ children, tone = "gray" }: { children: ReactNode; tone?: "gray"
     red: "bg-red-50 text-red-700 border-red-200",
     blue: "bg-blue-50 text-blue-700 border-blue-200",
   };
-  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${styles[tone]}`}>{children}</span>;
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${styles[tone]}`}
+    >
+      {children}
+    </span>
+  );
 }
 
-function Field({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
+function Field({
+  label,
+  children,
+  wide = false,
+}: {
+  label: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   return (
     <div className={wide ? "md:col-span-2" : ""}>
-      <label className="mb-2 block text-sm font-medium text-neutral-700">{label}</label>
+      <label className="mb-2 block text-sm font-medium text-neutral-700">
+        {label}
+      </label>
       {children}
     </div>
   );
 }
 
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={`w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 ${props.className || ""}`} />;
+  return (
+    <input
+      {...props}
+      className={`w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 ${props.className || ""}`}
+    />
+  );
 }
 
 function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...props} className={`min-h-[110px] w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 ${props.className || ""}`} />;
+  return (
+    <textarea
+      {...props}
+      className={`min-h-[110px] w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 ${props.className || ""}`}
+    />
+  );
 }
 
 function TokenPreview({ value }: { value: string }) {
   const valid = hasCommaFormat(value);
   const tokens = parseCommaTokens(value);
-  if (!value.trim()) return <p className="text-xs text-neutral-400">Chưa có dữ liệu.</p>;
+  if (!value.trim())
+    return <p className="text-xs text-neutral-400">Chưa có dữ liệu.</p>;
   return (
     <div className="mt-2 space-y-2">
       <div className="flex flex-wrap gap-2">
-        {valid ? tokens.map((token) => <Badge key={token} tone="green">{token}</Badge>) : <Badge tone="red">{value}</Badge>}
+        {valid ? (
+          tokens.map((token) => (
+            <Badge key={token} tone="green">
+              {token}
+            </Badge>
+          ))
+        ) : (
+          <Badge tone="red">{value}</Badge>
+        )}
       </div>
-      {!valid ? <p className="text-xs text-red-600">Sai định dạng. Hãy nhập kiểu: S, M, L hoặc ĐEN, TRẮNG.</p> : null}
+      {!valid ? (
+        <p className="text-xs text-red-600">
+          Sai định dạng. Hãy nhập kiểu: S, M, L hoặc ĐEN, TRẮNG.
+        </p>
+      ) : null}
     </div>
   );
 }
 
 async function fetchProductById(productId: string): Promise<ProductItem> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-  const res = await fetch(`${API_BASE}/products/${encodeURIComponent(productId)}`, {
-    headers: {
-      Accept: "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  const res = await fetch(
+    `${API_BASE}/products/${encodeURIComponent(productId)}`,
+    {
+      headers: {
+        Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      cache: "no-store",
     },
-    cache: "no-store",
-  });
+  );
 
   if (res.ok) return await res.json();
 
-  const fallback = await (getProducts as any)({ page: 1, limit: 100, q: productId });
+  const fallback = await (getProducts as any)({
+    page: 1,
+    limit: 100,
+    q: productId,
+  });
   const rows = Array.isArray(fallback) ? fallback : fallback?.data || [];
-  const found = rows.find((item: ProductItem) => item.id === productId || item.slug === productId);
+  const found = rows.find(
+    (item: ProductItem) => item.id === productId || item.slug === productId,
+  );
   if (found) return found;
 
   const json = await res.json().catch(() => null);
@@ -203,10 +278,14 @@ function normalizeInventoryRows(raw: any): InventoryProductStockRow[] {
       reservedQty: Number(item.reservedQty ?? 0),
       incomingQty: Number(item.incomingQty ?? 0),
     }))
-    .filter((item: InventoryProductStockRow) => item.variantId && item.branchId);
+    .filter(
+      (item: InventoryProductStockRow) => item.variantId && item.branchId,
+    );
 }
 
-async function fetchInventoryByProduct(productId: string): Promise<InventoryProductStockRow[]> {
+async function fetchInventoryByProduct(
+  productId: string,
+): Promise<InventoryProductStockRow[]> {
   const endpoints = [
     `${API_BASE}/inventory/by-product/${encodeURIComponent(productId)}`,
     `${API_BASE}/inventory/product/${encodeURIComponent(productId)}`,
@@ -236,7 +315,9 @@ async function fetchInventoryByProduct(productId: string): Promise<InventoryProd
   return [];
 }
 
-function inventoryRowsFromProduct(product: ProductItem | null): InventoryProductStockRow[] {
+function inventoryRowsFromProduct(
+  product: ProductItem | null,
+): InventoryProductStockRow[] {
   if (!product) return [];
 
   return (product.variants || []).flatMap((variant: any) => {
@@ -257,10 +338,13 @@ function inventoryRowsFromProduct(product: ProductItem | null): InventoryProduct
           reservedQty: Number(item.reservedQty ?? 0),
           incomingQty: Number(item.incomingQty ?? 0),
         }))
-        .filter((item: InventoryProductStockRow) => item.variantId && item.branchId);
+        .filter(
+          (item: InventoryProductStockRow) => item.variantId && item.branchId,
+        );
     }
 
-    const branchStocks = variant.inventoryByBranch || variant.branchStocks || {};
+    const branchStocks =
+      variant.inventoryByBranch || variant.branchStocks || {};
     return Object.entries(branchStocks).map(([branchId, qty]) => ({
       variantId: String(variant.id || ""),
       branchId: String(branchId),
@@ -271,17 +355,16 @@ function inventoryRowsFromProduct(product: ProductItem | null): InventoryProduct
   });
 }
 
-
 function filterInventoryRowsForProduct(
   product: ProductItem | null,
-  rows: InventoryProductStockRow[]
+  rows: InventoryProductStockRow[],
 ): InventoryProductStockRow[] {
   if (!product) return [];
 
   const variantIds = new Set(
     (product.variants || [])
       .map((variant: any) => String(variant.id || ""))
-      .filter(Boolean)
+      .filter(Boolean),
   );
 
   if (!variantIds.size) return [];
@@ -291,16 +374,22 @@ function filterInventoryRowsForProduct(
 
 function getProductInventoryRows(
   product: ProductItem | null,
-  apiRows: InventoryProductStockRow[]
+  apiRows: InventoryProductStockRow[],
 ): InventoryProductStockRow[] {
   const filteredApiRows = filterInventoryRowsForProduct(product, apiRows);
   if (filteredApiRows.length) return filteredApiRows;
 
-  return filterInventoryRowsForProduct(product, inventoryRowsFromProduct(product));
+  return filterInventoryRowsForProduct(
+    product,
+    inventoryRowsFromProduct(product),
+  );
 }
 
-
-export default function ProductDetailPageClient({ productId }: { productId: string }) {
+export default function ProductDetailPageClient({
+  productId,
+}: {
+  productId: string;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -308,7 +397,9 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [categories, setCategories] = useState<ProductCategoryItem[]>([]);
   const [product, setProduct] = useState<ProductItem | null>(null);
-  const [inventoryRows, setInventoryRows] = useState<InventoryProductStockRow[]>([]);
+  const [inventoryRows, setInventoryRows] = useState<
+    InventoryProductStockRow[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -333,20 +424,30 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
   const [variantSize, setVariantSize] = useState("");
   const [variantPrice, setVariantPrice] = useState("");
   const [variantCostPrice, setVariantCostPrice] = useState("");
-  const [variantBranchStocks, setVariantBranchStocks] = useState<Record<string, string>>({});
+  const [variantBranchStocks, setVariantBranchStocks] = useState<
+    Record<string, string>
+  >({});
   const [variantSaving, setVariantSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
 
   const isOwner = role === "admin" || role === "owner";
+  const canViewProduct = hasPermission(role, "products.view");
   const canEditProduct = hasPermission(role, "products.edit");
+  const canEditProductPrice = hasPermission(role, "products.price.edit");
+  const canCreateProductVariant = hasPermission(
+    role,
+    "products.variant.create",
+  );
+  const canToggleProductStatus = hasPermission(role, "products.status.edit");
   const canViewCost = isOwner || hasPermission(role, "products.cost.view");
 
   const getAvailableQty = (variantId?: string, branchId?: string) => {
     if (!variantId || !branchId) return 0;
     return Number(
-      inventoryRows.find((row) => row.variantId === variantId && row.branchId === branchId)
-        ?.availableQty || 0
+      inventoryRows.find(
+        (row) => row.variantId === variantId && row.branchId === branchId,
+      )?.availableQty || 0,
     );
   };
 
@@ -357,21 +458,24 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       .reduce((sum, row) => sum + Number(row.availableQty || 0), 0);
   };
 
-
   const loadAll = async () => {
     try {
       setLoading(true);
       setError("");
-      const [branchData, categoryData, productData, inventoryData] = await Promise.all([
-        getBranches(),
-        getCategories().catch(() => []),
-        fetchProductById(productId),
-        fetchInventoryByProduct(productId),
-      ]);
+      const [branchData, categoryData, productData, inventoryData] =
+        await Promise.all([
+          getBranches(),
+          getCategories().catch(() => []),
+          fetchProductById(productId),
+          fetchInventoryByProduct(productId),
+        ]);
 
       const nextBranches = Array.isArray(branchData) ? branchData : [];
       const nextCategories = Array.isArray(categoryData) ? categoryData : [];
-      const nextInventoryRows = getProductInventoryRows(productData, inventoryData);
+      const nextInventoryRows = getProductInventoryRows(
+        productData,
+        inventoryData,
+      );
 
       setBranches(nextBranches);
       setCategories(nextCategories);
@@ -394,17 +498,40 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
     }
   };
 
-  const hydrateForm = (item: ProductItem, branchRows: BranchItem[], categoryRows: ProductCategoryItem[], stockRows: InventoryProductStockRow[] = inventoryRowsFromProduct(item)) => {
-    const uniqueColors = uniqueValues(item.variants?.map((variant) => variant.color) || []);
-    const uniqueSizes = uniqueValues(item.variants?.map((variant) => variant.size) || []);
-    const minPrice = item.variants?.length ? Math.min(...item.variants.map((v) => Number(v.price || 0))) : 0;
-    const minCostPrice = item.variants?.length ? Math.min(...item.variants.map((v) => Number(v.costPrice || 0))) : 0;
-    const foundCategory = categoryRows.find((c) => c.name === (item.category || ""));
+  const hydrateForm = (
+    item: ProductItem,
+    branchRows: BranchItem[],
+    categoryRows: ProductCategoryItem[],
+    stockRows: InventoryProductStockRow[] = inventoryRowsFromProduct(item),
+  ) => {
+    const uniqueColors = uniqueValues(
+      item.variants?.map((variant) => variant.color) || [],
+    );
+    const uniqueSizes = uniqueValues(
+      item.variants?.map((variant) => variant.size) || [],
+    );
+    const minPrice = item.variants?.length
+      ? Math.min(...item.variants.map((v) => Number(v.price || 0)))
+      : 0;
+    const minCostPrice = item.variants?.length
+      ? Math.min(...item.variants.map((v) => Number(v.costPrice || 0)))
+      : 0;
+    const foundCategory = categoryRows.find(
+      (c) => c.name === (item.category || ""),
+    );
     const aggregatedStocks = Object.fromEntries(
       branchRows.map((branch) => [
         branch.id,
-        String(stockRows.reduce((sum, row) => row.branchId === branch.id ? sum + Number(row.availableQty || 0) : sum, 0)),
-      ])
+        String(
+          stockRows.reduce(
+            (sum, row) =>
+              row.branchId === branch.id
+                ? sum + Number(row.availableQty || 0)
+                : sum,
+            0,
+          ),
+        ),
+      ]),
     );
 
     setName(item.name || "");
@@ -431,29 +558,54 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
   }, [productId]);
 
   const totalStock = useMemo(() => {
-    return inventoryRows.reduce((sum, row) => sum + Number(row.availableQty || 0), 0);
+    return inventoryRows.reduce(
+      (sum, row) => sum + Number(row.availableQty || 0),
+      0,
+    );
   }, [inventoryRows]);
 
   const variantCount = product?.variants?.length || 0;
 
   const catalogValue = useMemo(() => {
     return (product?.variants || []).reduce((sum, variant) => {
-      return sum + getVariantTotalQty(variant.id) * Number(variant.costPrice || 0);
+      return (
+        sum + getVariantTotalQty(variant.id) * Number(variant.costPrice || 0)
+      );
     }, 0);
   }, [product, inventoryRows]);
 
   const branchStockAlerts = useMemo(() => {
     return branches.map((branch) => {
       const qty = Number(branchStocks[branch.id] || 0);
-      const tone = qty <= 0 ? "red" : qty <= 3 ? "amber" : qty > 50 ? "blue" : "green";
-      const label = qty <= 0 ? "Hết hàng" : qty <= 3 ? "Sắp hết" : qty > 50 ? "Tồn cao" : "Ổn";
-      return { branchId: branch.id, branchName: branch.name, qty, tone: tone as "gray" | "green" | "amber" | "red" | "blue", label };
+      const tone =
+        qty <= 0 ? "red" : qty <= 3 ? "amber" : qty > 50 ? "blue" : "green";
+      const label =
+        qty <= 0
+          ? "Hết hàng"
+          : qty <= 3
+            ? "Sắp hết"
+            : qty > 50
+              ? "Tồn cao"
+              : "Ổn";
+      return {
+        branchId: branch.id,
+        branchName: branch.name,
+        qty,
+        tone: tone as "gray" | "green" | "amber" | "red" | "blue",
+        label,
+      };
     });
   }, [branches, branchStocks]);
 
-  const criticalBranchCount = branchStockAlerts.filter((item) => item.tone === "red").length;
-  const lowBranchCount = branchStockAlerts.filter((item) => item.tone === "amber").length;
-  const highBranchCount = branchStockAlerts.filter((item) => item.tone === "blue").length;
+  const criticalBranchCount = branchStockAlerts.filter(
+    (item) => item.tone === "red",
+  ).length;
+  const lowBranchCount = branchStockAlerts.filter(
+    (item) => item.tone === "amber",
+  ).length;
+  const highBranchCount = branchStockAlerts.filter(
+    (item) => item.tone === "blue",
+  ).length;
 
   const initialSnapshot = useMemo(() => {
     if (!product) return "";
@@ -465,18 +617,56 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       weight: String(product.weight || 0),
       imageUrl: product.imageUrl || "",
       description: product.description || "",
-      defaultPrice: String(product.variants?.length ? Math.min(...product.variants.map((v) => Number(v.price || 0))) : 0),
-      defaultCostPrice: String(product.variants?.length ? Math.min(...product.variants.map((v) => Number(v.costPrice || 0))) : 0),
-      colors: uniqueValues(product.variants?.map((variant) => variant.color) || []).join(", "),
-      sizes: uniqueValues(product.variants?.map((variant) => variant.size) || []).join(", "),
+      defaultPrice: String(
+        product.variants?.length
+          ? Math.min(...product.variants.map((v) => Number(v.price || 0)))
+          : 0,
+      ),
+      defaultCostPrice: String(
+        product.variants?.length
+          ? Math.min(...product.variants.map((v) => Number(v.costPrice || 0)))
+          : 0,
+      ),
+      colors: uniqueValues(
+        product.variants?.map((variant) => variant.color) || [],
+      ).join(", "),
+      sizes: uniqueValues(
+        product.variants?.map((variant) => variant.size) || [],
+      ).join(", "),
     });
   }, [product]);
 
   const currentSnapshot = useMemo(() => {
-    return JSON.stringify({ name, skuCode, category, brand, weight, imageUrl, description, defaultPrice, defaultCostPrice, colors, sizes });
-  }, [name, skuCode, category, brand, weight, imageUrl, description, defaultPrice, defaultCostPrice, colors, sizes]);
+    return JSON.stringify({
+      name,
+      skuCode,
+      category,
+      brand,
+      weight,
+      imageUrl,
+      description,
+      defaultPrice,
+      defaultCostPrice,
+      colors,
+      sizes,
+    });
+  }, [
+    name,
+    skuCode,
+    category,
+    brand,
+    weight,
+    imageUrl,
+    description,
+    defaultPrice,
+    defaultCostPrice,
+    colors,
+    sizes,
+  ]);
 
-  const hasUnsavedChanges = Boolean(product && initialSnapshot && currentSnapshot !== initialSnapshot);
+  const hasUnsavedChanges = Boolean(
+    product && initialSnapshot && currentSnapshot !== initialSnapshot,
+  );
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -500,7 +690,9 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       return;
     }
     if (!hasCommaFormat(colors) || !hasCommaFormat(sizes)) {
-      setMessage("Màu hoặc size sai định dạng. Hãy nhập kiểu: ĐEN, TRẮNG hoặc S, M, L.");
+      setMessage(
+        "Màu hoặc size sai định dạng. Hãy nhập kiểu: ĐEN, TRẮNG hoặc S, M, L.",
+      );
       return;
     }
 
@@ -516,8 +708,12 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
         weight: Number(weight || 0),
         imageUrl: imageUrl.trim(),
         description: description.trim(),
-        defaultPrice: Number(defaultPrice || 0),
-        ...(canViewCost ? { defaultCostPrice: Number(defaultCostPrice || 0) } : {}),
+        ...(canEditProductPrice
+          ? { defaultPrice: Number(defaultPrice || 0) }
+          : {}),
+        ...(canViewCost && canEditProductPrice
+          ? { defaultCostPrice: Number(defaultCostPrice || 0) }
+          : {}),
         colors: parseCommaTokens(colors),
         sizes: parseCommaTokens(sizes),
         // Tồn kho không lưu ở ProductDetail nữa.
@@ -527,7 +723,10 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
 
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
-      const normalizedInventoryRows = getProductInventoryRows(next, nextInventoryRows);
+      const normalizedInventoryRows = getProductInventoryRows(
+        next,
+        nextInventoryRows,
+      );
 
       setProduct(next);
       setInventoryRows(normalizedInventoryRows);
@@ -539,13 +738,21 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
         router.push(from || "/products");
       }
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không lưu được sản phẩm.");
+      setMessage(
+        err instanceof Error ? err.message : "Không lưu được sản phẩm.",
+      );
     } finally {
       setSaving(false);
     }
   };
 
   const handleUpload = async (file: File | null) => {
+    if (!canEditProduct) {
+      setMessage(
+        "Role hiện tại chỉ có quyền xem sản phẩm, không được upload/sửa ảnh.",
+      );
+      return;
+    }
     if (!file) return;
     try {
       setUploading(true);
@@ -561,7 +768,7 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
   };
 
   const handleAddVariant = async () => {
-    if (!product || !canEditProduct) return;
+    if (!product || !canCreateProductVariant) return;
     if (!variantColor.trim() || !variantSize.trim()) {
       setMessage("Thiếu màu hoặc size cho variant.");
       return;
@@ -576,14 +783,20 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
         price: Number(variantPrice || 0),
         costPrice: Number(variantCostPrice || 0),
         branchStocks: Object.fromEntries(
-          Object.entries(variantBranchStocks).map(([key, value]) => [key, Number(value || 0)])
+          Object.entries(variantBranchStocks).map(([key, value]) => [
+            key,
+            Number(value || 0),
+          ]),
         ),
       };
 
       await addVariant(product.id, payload);
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
-      const normalizedInventoryRows = getProductInventoryRows(next, nextInventoryRows);
+      const normalizedInventoryRows = getProductInventoryRows(
+        next,
+        nextInventoryRows,
+      );
 
       setProduct(next);
       setInventoryRows(normalizedInventoryRows);
@@ -595,38 +808,67 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       setVariantBranchStocks(createEmptyBranchStocks(branches));
       setMessage("Đã thêm variant mới.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không thêm được variant.");
+      setMessage(
+        err instanceof Error ? err.message : "Không thêm được variant.",
+      );
     } finally {
       setVariantSaving(false);
     }
   };
 
   const handleToggleStatus = async () => {
-    if (!product || !canEditProduct) return;
+    if (!product || !canToggleProductStatus) return;
     try {
       setStatusSaving(true);
       await toggleProductStatus(product.id);
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
-      const normalizedInventoryRows = getProductInventoryRows(next, nextInventoryRows);
+      const normalizedInventoryRows = getProductInventoryRows(
+        next,
+        nextInventoryRows,
+      );
 
       setProduct(next);
       setInventoryRows(normalizedInventoryRows);
       hydrateForm(next, branches, categories, normalizedInventoryRows);
       setMessage("Đã cập nhật trạng thái sản phẩm.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không đổi được trạng thái sản phẩm.");
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Không đổi được trạng thái sản phẩm.",
+      );
     } finally {
       setStatusSaving(false);
     }
   };
 
   if (loading) {
-    return <Panel className="p-5"><p className="text-sm text-neutral-500">Đang tải chi tiết sản phẩm...</p></Panel>;
+    return (
+      <Panel className="p-5">
+        <p className="text-sm text-neutral-500">
+          Đang tải chi tiết sản phẩm...
+        </p>
+      </Panel>
+    );
   }
 
   if (error || !product) {
-    return <Panel className="p-5"><p className="text-sm text-red-600">{error || "Không tìm thấy sản phẩm."}</p></Panel>;
+    return (
+      <Panel className="p-5">
+        <p className="text-sm text-red-600">
+          {error || "Không tìm thấy sản phẩm."}
+        </p>
+      </Panel>
+    );
+  }
+
+  if (!canViewProduct) {
+    return (
+      <Panel className="p-5">
+        <p className="text-sm text-red-600">Không có quyền xem sản phẩm.</p>
+      </Panel>
+    );
   }
 
   const statusActive = product.status === "ACTIVE";
@@ -636,7 +878,10 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
       <Panel className="sticky top-0 z-20 border-neutral-300 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
-            <Link href="/products" className="text-[11px] text-neutral-500 hover:text-neutral-900">
+            <Link
+              href="/products"
+              className="text-[11px] text-neutral-500 hover:text-neutral-900"
+            >
               ← Quay lại danh sách sản phẩm
             </Link>
 
@@ -644,30 +889,57 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
               <h1 className="max-w-[720px] truncate text-[20px] font-semibold tracking-tight text-neutral-950">
                 {product.name}
               </h1>
-              <Badge tone={statusActive ? "green" : "red"}>{product.status || "DRAFT"}</Badge>
+              <Badge tone={statusActive ? "green" : "red"}>
+                {product.status || "DRAFT"}
+              </Badge>
               <Badge tone="blue">/{product.slug || "—"}</Badge>
               <span className="text-xs text-neutral-400">ID: {product.id}</span>
-              {hasUnsavedChanges ? <Badge tone="amber">Có thay đổi chưa lưu</Badge> : null}
+              {hasUnsavedChanges ? (
+                <Badge tone="amber">Có thay đổi chưa lưu</Badge>
+              ) : null}
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void loadAll()}>Tải lại</Button>
-            <Button variant={statusActive ? "danger" : "success"} disabled={statusSaving || !canEditProduct} onClick={handleToggleStatus}>
-              {statusSaving ? "Đang cập nhật..." : statusActive ? "Ngừng bán" : "Kích hoạt"}
+            <Button variant="secondary" onClick={() => void loadAll()}>
+              Tải lại
             </Button>
-            <Button variant="secondary" disabled={saving || !canEditProduct || !hasUnsavedChanges} onClick={() => void saveProduct(false)}>
+            <Button
+              variant={statusActive ? "danger" : "success"}
+              disabled={statusSaving || !canToggleProductStatus}
+              onClick={handleToggleStatus}
+            >
+              {statusSaving
+                ? "Đang cập nhật..."
+                : statusActive
+                  ? "Ngừng bán"
+                  : "Kích hoạt"}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={saving || !canEditProduct || !hasUnsavedChanges}
+              onClick={() => void saveProduct(false)}
+            >
               Lưu & về danh sách
             </Button>
-            <Button disabled={saving || !canEditProduct || !hasUnsavedChanges} onClick={() => void saveProduct(true)}>
-              {saving ? "Đang lưu..." : hasUnsavedChanges ? "Lưu sản phẩm" : "Đã đồng bộ"}
+            <Button
+              disabled={saving || !canEditProduct || !hasUnsavedChanges}
+              onClick={() => void saveProduct(true)}
+            >
+              {saving
+                ? "Đang lưu..."
+                : hasUnsavedChanges
+                  ? "Lưu sản phẩm"
+                  : "Đã đồng bộ"}
             </Button>
           </div>
         </div>
       </Panel>
 
       {message ? (
-        <div className={`rounded-2xl border px-4 py-3 text-sm ${message.startsWith("Đã") ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+        <div
+          className={`rounded-2xl border px-4 py-3 text-sm ${message.startsWith("Đã") ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}
+        >
           {message}
         </div>
       ) : null}
@@ -678,61 +950,125 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-[16px] font-semibold">Thông tin chính</h2>
-                <p className="mt-0.5 text-xs text-neutral-500">Thông tin bán hàng, danh mục và cấu hình tạo variant.</p>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  Thông tin bán hàng, danh mục và cấu hình tạo variant.
+                </p>
               </div>
 
               <label className="flex shrink-0 items-center gap-2 text-xs text-neutral-600">
-                <input type="checkbox" checked={applyPriceToAllVariants} onChange={(e) => setApplyPriceToAllVariants(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={applyPriceToAllVariants}
+                  disabled={!canEditProductPrice}
+                  onChange={(e) => setApplyPriceToAllVariants(e.target.checked)}
+                />
                 Áp dụng cho toàn bộ variant
               </label>
             </div>
 
             <div className="grid gap-3 md:grid-cols-6">
               <Field label="Tên sản phẩm" wide>
-                <Input value={name} onChange={(e) => setName(e.target.value)} />
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={!canEditProduct}
+                />
               </Field>
 
               <Field label="Mã / slug">
-                <Input value={skuCode} onChange={(e) => setSkuCode(slugify(e.target.value))} />
+                <Input
+                  value={skuCode}
+                  onChange={(e) => setSkuCode(slugify(e.target.value))}
+                  disabled={!canEditProduct}
+                />
               </Field>
 
               <Field label="Danh mục">
-                <select className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500" value={categoryId} onChange={(e) => { const found = categories.find((c) => c.id === e.target.value); setCategoryId(e.target.value); setCategory(found?.name || ""); }}>
+                <select
+                  disabled={!canEditProduct}
+                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  value={categoryId}
+                  onChange={(e) => {
+                    const found = categories.find(
+                      (c) => c.id === e.target.value,
+                    );
+                    setCategoryId(e.target.value);
+                    setCategory(found?.name || "");
+                  }}
+                >
                   <option value="">Chọn danh mục</option>
-                  {categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  {categories.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
                 </select>
               </Field>
 
               <Field label="Brand">
-                <Input value={brand} onChange={(e) => setBrand(e.target.value)} />
+                <Input
+                  value={brand}
+                  onChange={(e) => setBrand(e.target.value)}
+                  disabled={!canEditProduct}
+                />
               </Field>
 
               <Field label="Khối lượng">
-                <Input type="number" value={weight} onChange={(e) => setWeight(e.target.value)} />
+                <Input
+                  type="number"
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  disabled={!canEditProduct}
+                />
               </Field>
 
               <Field label="Giá bán">
-                <Input type="number" value={defaultPrice} onChange={(e) => setDefaultPrice(e.target.value)} />
+                <Input
+                  type="number"
+                  value={defaultPrice}
+                  onChange={(e) => setDefaultPrice(e.target.value)}
+                  disabled={!canEditProductPrice}
+                />
               </Field>
 
               {canViewCost ? (
                 <Field label="Giá vốn">
-                  <Input type="number" value={defaultCostPrice} onChange={(e) => setDefaultCostPrice(e.target.value)} />
+                  <Input
+                    type="number"
+                    value={defaultCostPrice}
+                    onChange={(e) => setDefaultCostPrice(e.target.value)}
+                    disabled={!canEditProductPrice}
+                  />
                 </Field>
               ) : null}
 
               <Field label="Cấu hình màu">
-                <Input value={colors} onChange={(e) => setColors(e.target.value)} placeholder="ĐEN, TRẮNG, NÂU" />
+                <Input
+                  value={colors}
+                  onChange={(e) => setColors(e.target.value)}
+                  placeholder="ĐEN, TRẮNG, NÂU"
+                  disabled={!canEditProduct}
+                />
                 <TokenPreview value={colors} />
               </Field>
 
               <Field label="Cấu hình size">
-                <Input value={sizes} onChange={(e) => setSizes(e.target.value)} placeholder="S, M, L, XL" />
+                <Input
+                  value={sizes}
+                  onChange={(e) => setSizes(e.target.value)}
+                  placeholder="S, M, L, XL"
+                  disabled={!canEditProduct}
+                />
                 <TokenPreview value={sizes} />
               </Field>
 
               <Field label="Mô tả" wide>
-                <Textarea value={description} onChange={(e) => setDescription(e.target.value)} className="min-h-[76px]" />
+                <Textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="min-h-[76px]"
+                  disabled={!canEditProduct}
+                />
               </Field>
             </div>
           </Panel>
@@ -740,25 +1076,46 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
           <div className="grid gap-3 xl:grid-cols-[0.86fr_1.14fr]">
             <Panel className="p-4">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[16px] font-semibold">Tồn kho các chi nhánh</h2>
-                <span className="text-xs text-neutral-500">Tổng tồn của sản phẩm này • {totalStock}</span>
+                <h2 className="text-[16px] font-semibold">
+                  Tồn kho các chi nhánh
+                </h2>
+                <span className="text-xs text-neutral-500">
+                  Tổng tồn của sản phẩm này • {totalStock}
+                </span>
               </div>
 
               <div className="mb-3 flex flex-wrap gap-2">
-                {criticalBranchCount > 0 ? <Badge tone="red">{criticalBranchCount} chi nhánh hết hàng</Badge> : null}
-                {lowBranchCount > 0 ? <Badge tone="amber">{lowBranchCount} chi nhánh sắp hết</Badge> : null}
-                {highBranchCount > 0 ? <Badge tone="blue">{highBranchCount} chi nhánh tồn cao</Badge> : null}
-                {!criticalBranchCount && !lowBranchCount && !highBranchCount ? <Badge tone="green">Tồn ổn định</Badge> : null}
+                {criticalBranchCount > 0 ? (
+                  <Badge tone="red">
+                    {criticalBranchCount} chi nhánh hết hàng
+                  </Badge>
+                ) : null}
+                {lowBranchCount > 0 ? (
+                  <Badge tone="amber">{lowBranchCount} chi nhánh sắp hết</Badge>
+                ) : null}
+                {highBranchCount > 0 ? (
+                  <Badge tone="blue">{highBranchCount} chi nhánh tồn cao</Badge>
+                ) : null}
+                {!criticalBranchCount && !lowBranchCount && !highBranchCount ? (
+                  <Badge tone="green">Tồn ổn định</Badge>
+                ) : null}
               </div>
 
               <div className="grid gap-2 md:grid-cols-2">
                 {branches.map((branch) => {
-                  const alert = branchStockAlerts.find((item) => item.branchId === branch.id);
+                  const alert = branchStockAlerts.find(
+                    (item) => item.branchId === branch.id,
+                  );
                   const qty = Number(alert?.qty || 0);
                   return (
-                    <div key={branch.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2">
+                    <div
+                      key={branch.id}
+                      className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2"
+                    >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-medium text-neutral-600">{branch.name}</span>
+                        <span className="truncate text-xs font-medium text-neutral-600">
+                          {branch.name}
+                        </span>
                         <Badge tone={alert?.tone || "gray"}>{qty}</Badge>
                       </div>
                       <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
@@ -779,27 +1136,76 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
 
             <Panel className="p-4">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[16px] font-semibold">Thêm variant nhanh</h2>
-                <span className="text-xs text-neutral-500">{variantCount} variant</span>
+                <h2 className="text-[16px] font-semibold">
+                  Thêm variant nhanh
+                </h2>
+                <span className="text-xs text-neutral-500">
+                  {variantCount} variant
+                </span>
               </div>
 
               <div className="grid gap-2 md:grid-cols-4">
-                <Input value={variantColor} onChange={(e) => setVariantColor(e.target.value)} placeholder="Màu" className="py-2" />
-                <Input value={variantSize} onChange={(e) => setVariantSize(e.target.value)} placeholder="Size" className="py-2" />
-                <Input type="number" value={variantPrice} onChange={(e) => setVariantPrice(e.target.value)} placeholder="Giá bán" className="py-2" />
-                {canViewCost ? <Input type="number" value={variantCostPrice} onChange={(e) => setVariantCostPrice(e.target.value)} placeholder="Giá vốn" className="py-2" /> : null}
+                <Input
+                  value={variantColor}
+                  onChange={(e) => setVariantColor(e.target.value)}
+                  placeholder="Màu"
+                  className="py-2"
+                  disabled={!canCreateProductVariant}
+                />
+                <Input
+                  value={variantSize}
+                  onChange={(e) => setVariantSize(e.target.value)}
+                  placeholder="Size"
+                  className="py-2"
+                  disabled={!canCreateProductVariant}
+                />
+                <Input
+                  type="number"
+                  value={variantPrice}
+                  onChange={(e) => setVariantPrice(e.target.value)}
+                  placeholder="Giá bán"
+                  className="py-2"
+                  disabled={!canEditProductPrice}
+                />
+                {canViewCost ? (
+                  <Input
+                    type="number"
+                    value={variantCostPrice}
+                    onChange={(e) => setVariantCostPrice(e.target.value)}
+                    placeholder="Giá vốn"
+                    className="py-2"
+                    disabled={!canEditProductPrice}
+                  />
+                ) : null}
               </div>
 
               <div className="mt-2 grid gap-2 md:grid-cols-4">
                 {branches.map((branch) => (
                   <div key={branch.id} className="space-y-1">
-                    <span className="block truncate text-[10px] font-semibold uppercase text-neutral-400">{branch.name}</span>
-                    <Input type="number" value={variantBranchStocks[branch.id] || "0"} onChange={(e) => setVariantBranchStocks((prev) => ({ ...prev, [branch.id]: e.target.value }))} className="py-2" />
+                    <span className="block truncate text-[10px] font-semibold uppercase text-neutral-400">
+                      {branch.name}
+                    </span>
+                    <Input
+                      type="number"
+                      value={variantBranchStocks[branch.id] || "0"}
+                      onChange={(e) =>
+                        setVariantBranchStocks((prev) => ({
+                          ...prev,
+                          [branch.id]: e.target.value,
+                        }))
+                      }
+                      className="py-2"
+                      disabled={!canCreateProductVariant}
+                    />
                   </div>
                 ))}
               </div>
 
-              <Button className="mt-3 w-full" disabled={variantSaving || !canEditProduct} onClick={handleAddVariant}>
+              <Button
+                className="mt-3 w-full"
+                disabled={variantSaving || !canCreateProductVariant}
+                onClick={handleAddVariant}
+              >
                 {variantSaving ? "Đang thêm..." : "+ Thêm variant"}
               </Button>
             </Panel>
@@ -809,7 +1215,9 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
             <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
               <div>
                 <h2 className="text-[16px] font-semibold">Danh sách variant</h2>
-                <p className="mt-0.5 text-xs text-neutral-500">SKU, màu, size, giá và tồn theo từng chi nhánh.</p>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  SKU, màu, size, giá và tồn theo từng chi nhánh.
+                </p>
               </div>
               <Badge tone="gray">{variantCount} dòng</Badge>
             </div>
@@ -822,7 +1230,9 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
                     <th className="border-b px-4 py-3">Màu</th>
                     <th className="border-b px-4 py-3">Size</th>
                     <th className="border-b px-4 py-3">Giá bán</th>
-                    {canViewCost ? <th className="border-b px-4 py-3">Giá vốn</th> : null}
+                    {canViewCost ? (
+                      <th className="border-b px-4 py-3">Giá vốn</th>
+                    ) : null}
                     <th className="border-b px-4 py-3">Tồn chi nhánh</th>
                     <th className="border-b px-4 py-3 text-right">Thao tác</th>
                   </tr>
@@ -830,18 +1240,42 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
 
                 <tbody>
                   {(product.variants || []).map((variant) => (
-                    <tr key={variant.id || variant.sku} className="hover:bg-neutral-50">
-                      <td className="border-b px-4 py-3 font-medium">{variant.sku || "—"}</td>
-                      <td className="border-b px-4 py-3">{variant.color || "—"}</td>
-                      <td className="border-b px-4 py-3">{variant.size || "—"}</td>
-                      <td className="border-b px-4 py-3">{currency(Number(variant.price || 0))}</td>
-                      {canViewCost ? <td className="border-b px-4 py-3">{currency(Number(variant.costPrice || 0))}</td> : null}
+                    <tr
+                      key={variant.id || variant.sku}
+                      className="hover:bg-neutral-50"
+                    >
+                      <td className="border-b px-4 py-3 font-medium">
+                        {variant.sku || "—"}
+                      </td>
+                      <td className="border-b px-4 py-3">
+                        {variant.color || "—"}
+                      </td>
+                      <td className="border-b px-4 py-3">
+                        {variant.size || "—"}
+                      </td>
+                      <td className="border-b px-4 py-3">
+                        {currency(Number(variant.price || 0))}
+                      </td>
+                      {canViewCost ? (
+                        <td className="border-b px-4 py-3">
+                          {currency(Number(variant.costPrice || 0))}
+                        </td>
+                      ) : null}
                       <td className="border-b px-4 py-3">
                         <div className="flex flex-wrap gap-2">
                           {branches.map((branch) => {
                             const qty = getAvailableQty(variant.id, branch.id);
                             return (
-                              <Badge key={branch.id} tone={qty <= 0 ? "red" : qty <= 3 ? "amber" : "green"}>
+                              <Badge
+                                key={branch.id}
+                                tone={
+                                  qty <= 0
+                                    ? "red"
+                                    : qty <= 3
+                                      ? "amber"
+                                      : "green"
+                                }
+                              >
                                 {branch.name}: {qty}
                               </Badge>
                             );
@@ -850,8 +1284,25 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
                       </td>
                       <td className="border-b px-4 py-3 text-right">
                         <div className="inline-flex gap-2">
-                          <Link href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`} className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50">Kho</Link>
-                          <button type="button" onClick={() => setMessage("Sửa nhanh variant sẽ làm ở bước tiếp theo.")} className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50">Sửa</button>
+                          <Link
+                            href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
+                            className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                          >
+                            Kho
+                          </Link>
+                          {canEditProduct ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMessage(
+                                  "Sửa nhanh variant sẽ làm ở bước tiếp theo.",
+                                )
+                              }
+                              className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                            >
+                              Sửa
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -866,20 +1317,85 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
           <Panel className="p-4">
             <h2 className="text-[16px] font-semibold">Ảnh sản phẩm</h2>
             <div className="mt-3 overflow-hidden rounded-3xl border border-neutral-200 bg-neutral-100">
-              {imageUrl ? <img src={toAbsoluteFileUrl(imageUrl)} alt={name} className="h-[210px] w-full object-cover" /> : <div className="flex h-[210px] items-center justify-center text-sm text-neutral-400">No image</div>}
+              {imageUrl ? (
+                <img
+                  src={toAbsoluteFileUrl(imageUrl)}
+                  alt={name}
+                  className="h-[210px] w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-[210px] items-center justify-center text-sm text-neutral-400">
+                  No image
+                </div>
+              )}
             </div>
 
             <div className="mt-3 grid gap-2">
-              <Input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="Dán link ảnh hoặc upload" />
-              <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
+              <Input
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                placeholder="Dán link ảnh hoặc upload"
+                disabled={!canEditProduct}
+              />
+              <label
+                className={`inline-flex items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-900 hover:bg-neutral-50 ${!canEditProduct ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+              >
                 {uploading ? "Đang upload..." : "Upload ảnh"}
-                <input type="file" accept="image/*" className="hidden" onChange={async (e) => { const input = e.currentTarget; const file = input.files?.[0] || null; try { await handleUpload(file); } finally { input.value = ""; } }} />
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={!canEditProduct || uploading}
+                  onChange={async (e) => {
+                    const input = e.currentTarget;
+                    const file = input.files?.[0] || null;
+                    try {
+                      await handleUpload(file);
+                    } finally {
+                      input.value = "";
+                    }
+                  }}
+                />
               </label>
 
               <div className="grid grid-cols-3 gap-2">
-                <button type="button" disabled={!imageUrl} onClick={() => imageUrl && window.open(toAbsoluteFileUrl(imageUrl), "_blank", "noopener,noreferrer")} className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40">Xem lớn</button>
-                <button type="button" disabled={!imageUrl} onClick={async () => { if (!imageUrl) return; await navigator.clipboard?.writeText(toAbsoluteFileUrl(imageUrl)); setMessage("Đã copy link ảnh."); }} className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40">Copy link</button>
-                <button type="button" disabled={!imageUrl || !canEditProduct} onClick={() => setImageUrl("")} className="rounded-2xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-40">Xoá ảnh</button>
+                <button
+                  type="button"
+                  disabled={!imageUrl}
+                  onClick={() =>
+                    imageUrl &&
+                    window.open(
+                      toAbsoluteFileUrl(imageUrl),
+                      "_blank",
+                      "noopener,noreferrer",
+                    )
+                  }
+                  className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                >
+                  Xem lớn
+                </button>
+                <button
+                  type="button"
+                  disabled={!imageUrl}
+                  onClick={async () => {
+                    if (!imageUrl) return;
+                    await navigator.clipboard?.writeText(
+                      toAbsoluteFileUrl(imageUrl),
+                    );
+                    setMessage("Đã copy link ảnh.");
+                  }}
+                  className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                >
+                  Copy link
+                </button>
+                <button
+                  type="button"
+                  disabled={!imageUrl || !canEditProduct}
+                  onClick={() => setImageUrl("")}
+                  className="rounded-2xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-40"
+                >
+                  Xoá ảnh
+                </button>
               </div>
             </div>
           </Panel>
@@ -897,12 +1413,16 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-[11px] text-neutral-500">Giá thấp nhất</p>
-                <p className="mt-1 text-lg font-semibold">{currency(Number(defaultPrice || 0))}</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {currency(Number(defaultPrice || 0))}
+                </p>
               </div>
               {canViewCost ? (
                 <div className="rounded-2xl bg-neutral-50 p-3">
                   <p className="text-[11px] text-neutral-500">Giá trị tồn</p>
-                  <p className="mt-1 text-lg font-semibold">{currency(catalogValue)}</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {currency(catalogValue)}
+                  </p>
                 </div>
               ) : null}
             </div>
@@ -911,10 +1431,26 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
           <Panel className="p-4">
             <h2 className="text-[16px] font-semibold">Thông tin nhanh</h2>
             <div className="mt-3 space-y-2 text-sm">
-              <div className="flex justify-between gap-3"><span className="text-neutral-500">ID</span><span className="max-w-[210px] truncate font-medium">{product.id}</span></div>
-              <div className="flex justify-between gap-3"><span className="text-neutral-500">Danh mục</span><span className="font-medium">{category || "—"}</span></div>
-              <div className="flex justify-between gap-3"><span className="text-neutral-500">Brand</span><span className="font-medium">{brand || "—"}</span></div>
-              <div className="flex justify-between gap-3"><span className="text-neutral-500">Trạng thái</span><Badge tone={statusActive ? "green" : "red"}>{product.status || "DRAFT"}</Badge></div>
+              <div className="flex justify-between gap-3">
+                <span className="text-neutral-500">ID</span>
+                <span className="max-w-[210px] truncate font-medium">
+                  {product.id}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-neutral-500">Danh mục</span>
+                <span className="font-medium">{category || "—"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-neutral-500">Brand</span>
+                <span className="font-medium">{brand || "—"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-neutral-500">Trạng thái</span>
+                <Badge tone={statusActive ? "green" : "red"}>
+                  {product.status || "DRAFT"}
+                </Badge>
+              </div>
             </div>
           </Panel>
 
@@ -922,12 +1458,21 @@ export default function ProductDetailPageClient({ productId }: { productId: stri
             <h2 className="text-[16px] font-semibold">Nhật ký nhanh</h2>
             <div className="mt-3 space-y-3 text-sm">
               <div className="rounded-2xl bg-neutral-50 p-3">
-                <p className="text-xs font-medium text-neutral-700">Trạng thái dữ liệu</p>
-                <p className="mt-1 text-xs text-neutral-500">{hasUnsavedChanges ? "Có thay đổi chưa lưu trên form." : "Thông tin sản phẩm đã đồng bộ."}</p>
+                <p className="text-xs font-medium text-neutral-700">
+                  Trạng thái dữ liệu
+                </p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  {hasUnsavedChanges
+                    ? "Có thay đổi chưa lưu trên form."
+                    : "Thông tin sản phẩm đã đồng bộ."}
+                </p>
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-xs font-medium text-neutral-700">Tồn kho</p>
-                <p className="mt-1 text-xs text-neutral-500">Số tồn lấy theo sản phẩm hiện tại, không lưu trực tiếp ở form sản phẩm.</p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Số tồn lấy theo sản phẩm hiện tại, không lưu trực tiếp ở form
+                  sản phẩm.
+                </p>
               </div>
             </div>
           </Panel>

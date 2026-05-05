@@ -260,7 +260,7 @@ function isOwnerOrAdmin(user: any) {
   return roles.includes("owner") || roles.includes("admin");
 }
 
-function hasAnyBranchPermission(
+function hasExplicitBranchPermission(
   user: any,
   keys: Array<keyof BranchPermission>,
 ) {
@@ -270,9 +270,18 @@ function hasAnyBranchPermission(
     ? user.branchPermissions
     : [];
 
-  const hasLegacyPermission = permissionRows.some((row: BranchPermission) =>
+  return permissionRows.some((row: BranchPermission) =>
     keys.some((key) => Boolean(row?.[key])),
   );
+}
+
+function hasAnyBranchPermission(
+  user: any,
+  keys: Array<keyof BranchPermission>,
+) {
+  if (isOwnerOrAdmin(user)) return true;
+
+  const hasLegacyPermission = hasExplicitBranchPermission(user, keys);
 
   if (hasLegacyPermission) return true;
 
@@ -299,7 +308,9 @@ function canSeePermission(user: any, permission: PermissionKey) {
   }
 
   if (permission === "products.view") {
-    return hasAnyBranchPermission(user, ["canView"]);
+    // Sản phẩm phải ăn theo tick "Xem sản phẩm" thật từ branchPermissions.
+    // Không fallback theo roleCode, tránh việc gán role là tự thấy sản phẩm dù role template đã bỏ quyền xem.
+    return hasExplicitBranchPermission(user, ["canView"]);
   }
 
   if (permission === "orders.view") {
@@ -368,6 +379,46 @@ function canSeeMenuItem(user: any, item: MenuItem) {
   }
 
   return canSeePermission(user, item.permission);
+}
+
+function normalizeDisplayName(value?: string | null) {
+  return String(value || "")
+    .replace(/\s+-\s+[A-Za-z0-9À-ỹ]+\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeBranchCode(value?: string | null) {
+  const raw = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!raw) return "";
+  if (/^[A-Z0-9]{1,4}$/.test(raw)) return raw;
+
+  const words = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/Đ/g, "D")
+    .replace(/đ/g, "d")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return words
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 4)
+    .toUpperCase();
+}
+
+function getHeaderStaffName(user: any) {
+  const name = normalizeDisplayName(user?.name);
+  const branchCode = normalizeBranchCode(
+    user?.branchCode || user?.branchName || user?.branch || user?.branchId,
+  );
+  if (!name) return "Tài khoản";
+  if (name.includes(" - ")) return name;
+  return branchCode ? `${name} - ${branchCode}` : name;
 }
 
 function getPasswordScore(password: string) {
@@ -681,12 +732,10 @@ export default function AdminShell({
                     </div>
                     <div className="leading-tight">
                       <div className="text-sm font-medium text-neutral-900">
-                        {currentUser.name} · {currentUser.code}
+                        {getHeaderStaffName(currentUser)}
                       </div>
                       <div className="mt-1 text-xs text-neutral-500">
-                        {currentUser.branchName ||
-                          currentUser.branchId ||
-                          "Toàn hệ thống"}
+                        Chi nhánh làm việc
                       </div>
                     </div>
                   </div>

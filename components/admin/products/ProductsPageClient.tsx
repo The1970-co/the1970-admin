@@ -684,9 +684,22 @@ function safeSheetName(name: string) {
 function makeWorksheet(rows: Record<string, any>[]) {
   const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Không có dữ liệu": "" }]);
   const firstRow = rows[0] || { "Không có dữ liệu": "" };
+  const columnCount = Object.keys(firstRow).length;
+  const rowCount = Math.max(rows.length, 1) + 1;
+
   ws["!cols"] = Object.keys(firstRow).map((key) => ({
     wch: Math.min(Math.max(String(key).length + 4, 14), 42),
   }));
+
+  if (columnCount > 0) {
+    ws["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s: { r: 0, c: 0 },
+        e: { r: rowCount - 1, c: columnCount - 1 },
+      }),
+    };
+  }
+
   return ws;
 }
 
@@ -945,6 +958,8 @@ export default function ProductsPageClient() {
   const [togglingStatusId, setTogglingStatusId] = useState<string | null>(null);
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importProgressLabel, setImportProgressLabel] = useState("");
   const [uploadingCreateImage, setUploadingCreateImage] = useState(false);
   const [uploadingEditImage, setUploadingEditImage] = useState(false);
 
@@ -1028,22 +1043,22 @@ export default function ProductsPageClient() {
     return activeCategories.length ? activeCategories : fallbackProductGroups;
   }, [categoryOptions, categories]);
 
-  // Owner/admin và quản lý chi nhánh được tạo/sửa sản phẩm, sửa giá bán, thêm variant, đổi trạng thái.
-  // Fulltime / retail / kiểm kho / kho chỉ xem catalog và tồn theo chi nhánh.
-  // Giá nhập / giá vốn / giá trị tồn chỉ owner/admin thấy.
-  const isBranchManager = role === "branch-manager";
-
-  const canOperateProduct = isOwner || isBranchManager;
-
-  const canCreateProduct = canOperateProduct;
-  const canEditProduct = canOperateProduct;
-  const canToggleProductStatus = canOperateProduct;
-  const canDeleteProduct = isOwner;
-  const canManageProductMasterData = isOwner;
-  const canImportProducts = isOwner;
-  const canViewCost = isOwner;
-  const canViewInventoryValue = isOwner;
-
+  // UI permission lock theo authz.ts.
+  // - products.view: được vào xem catalog.
+  // - products.edit: được sửa thông tin sản phẩm.
+  // - products.price.edit: được sửa giá bán.
+  // - products.excel.export/import: được xuất/nhập Excel.
+  // Không hardcode role tại đây để tránh lệch với file authz.
+  const canCreateProduct = hasPermission(role, "products.create");
+  const canEditProduct = hasPermission(role, "products.edit");
+  const canEditProductPrice = hasPermission(role, "products.price.edit");
+  const canToggleProductStatus = hasPermission(role, "products.status.edit");
+  const canDeleteProduct = hasPermission(role, "products.delete");
+  const canManageProductMasterData = hasPermission(role, "system.manage");
+  const canImportProducts = hasPermission(role, "products.excel.import");
+  const canExportProducts = hasPermission(role, "products.excel.export");
+  const canViewCost = hasPermission(role, "products.cost.view");
+  const canViewInventoryValue = hasPermission(role, "inventory.value.view");
   const loadBranches = async () => {
     try {
       setLoadingBranches(true);
@@ -1316,6 +1331,8 @@ export default function ProductsPageClient() {
     setImportFileNames([]);
     setImportRows([]);
     setImportErrors([]);
+    setImportProgress(0);
+    setImportProgressLabel("");
   };
 
   const validateCreateForm = () => {
@@ -1394,6 +1411,7 @@ export default function ProductsPageClient() {
       await createProduct(payload);
       setCreateOpen(false);
       resetCreateForm();
+      setImportProgressLabel("Import xong, đang tải lại danh sách sản phẩm...");
       await loadCategories();
       await loadProductCategoryOptions();
       await loadProducts(1, limit);
@@ -1420,6 +1438,11 @@ export default function ProductsPageClient() {
   };
 
   const handleOpenEdit = (product: ProductItem) => {
+    if (!canEditProduct) {
+      setActionMessage("Role hiện tại chỉ có quyền xem sản phẩm, không được sửa.");
+      return;
+    }
+
     const uniqueColors = uniqueValues(product.variants.map((variant) => variant.color));
     const uniqueSizes = uniqueValues(product.variants.map((variant) => variant.size));
 
@@ -1468,6 +1491,10 @@ export default function ProductsPageClient() {
   };
 
   const handleSaveEditProduct = async () => {
+    if (!canEditProduct) {
+      setActionMessage("Role hiện tại chỉ có quyền xem sản phẩm, không được sửa.");
+      return;
+    }
     if (!editingProductId) return;
     if (!validateEditForm()) return;
 
@@ -1484,8 +1511,10 @@ export default function ProductsPageClient() {
         weight: Number(editWeight || 0),
         imageUrl: editImageUrl.trim(),
         description: editDescription.trim(),
-        defaultPrice: Number(editDefaultPrice || 0),
-        ...(canViewCost
+        ...(canEditProductPrice
+          ? { defaultPrice: Number(editDefaultPrice || 0) }
+          : {}),
+        ...(canViewCost && canEditProductPrice
           ? { defaultCostPrice: Number(editDefaultCostPrice || 0) }
           : {}),
         colors: parseCommaTokens(editColors),
@@ -1601,8 +1630,8 @@ export default function ProductsPageClient() {
       const payload: AddVariantPayload = {
         color: variantColor.trim(),
         size: variantSize.trim(),
-        price: Number(variantPrice || 0),
-        costPrice: Number(variantCostPrice || 0),
+        price: canEditProductPrice ? Number(variantPrice || 0) : 0,
+        costPrice: canViewCost && canEditProductPrice ? Number(variantCostPrice || 0) : 0,
         branchStocks: Object.fromEntries(
           Object.entries(variantBranchStocks).map(([key, value]) => [
             key,
@@ -1662,6 +1691,11 @@ export default function ProductsPageClient() {
   };
 
   const handleEditImageUpload = async (file: File | null) => {
+    if (!canEditProduct) {
+      setActionMessage("Role hiện tại chỉ có quyền xem sản phẩm, không được upload/sửa ảnh.");
+      return;
+    }
+
     console.log("handleEditImageUpload file:", file);
 
     if (!file) {
@@ -1877,6 +1911,11 @@ export default function ProductsPageClient() {
   };
 
   const handleCommitImport = async () => {
+    if (!canImportProducts) {
+      setActionMessage("Role hiện tại không có quyền nhập Excel sản phẩm.");
+      return;
+    }
+
     if (!selectedFiles.length) {
       setActionMessage("Chưa có file để import.");
       return;
@@ -1884,13 +1923,26 @@ export default function ProductsPageClient() {
 
     try {
       setImporting(true);
+      setImportProgress(1);
+      setImportProgressLabel("Đang upload file Excel...");
       setActionMessage("");
 
-      const result = await importProductsFiles(selectedFiles, true);
+      const result = await importProductsFiles(selectedFiles, true, (percent) => {
+        setImportProgress(percent);
+        setImportProgressLabel(
+          percent >= 100
+            ? "Hoàn tất import."
+            : percent >= 85
+              ? "Đã upload xong, server đang xử lý dữ liệu..."
+              : `Đang upload file Excel... ${percent}%`
+        );
+      });
       await loadCategories();
       await loadProductCategoryOptions();
       await loadProducts(1, limit);
       setPage(1);
+      setImportProgress(100);
+      setImportProgressLabel("Hoàn tất import.");
       setImportOpen(false);
 
       const successCount = Number(result?.successRows || 0);
@@ -1940,6 +1992,11 @@ export default function ProductsPageClient() {
   };
 
   const handleExportProductsExcel = async () => {
+    if (!canExportProducts) {
+      setActionMessage("Role hiện tại không có quyền xuất Excel sản phẩm.");
+      return;
+    }
+
     try {
       setExportingProducts(true);
       setActionMessage("Đang tạo file Excel sản phẩm...");
@@ -1984,6 +2041,159 @@ export default function ProductsPageClient() {
     }
   };
 
+  const applyExportPreset = (
+    preset: "management" | "accounting" | "stocktake" | "missing_cost" | "low_stock" | "full"
+  ) => {
+    if (preset === "management") {
+      setExportScope("filtered");
+      setExportOnlyInStock(false);
+      setExportOnlyMissingCost(false);
+      setExportOnlyLowStock(false);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(true);
+      setExportSortMode("value_desc");
+      setExportColumns({
+        ...defaultExportColumns,
+        imageUrl: false,
+        description: false,
+      });
+      return;
+    }
+
+    if (preset === "accounting") {
+      setExportScope("filtered");
+      setExportOnlyInStock(true);
+      setExportOnlyMissingCost(false);
+      setExportOnlyLowStock(false);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(true);
+      setExportSortMode("value_desc");
+      setExportColumns({
+        productName: true,
+        slug: true,
+        category: true,
+        brand: true,
+        weight: false,
+        imageUrl: false,
+        sku: true,
+        color: true,
+        size: true,
+        price: true,
+        costPrice: true,
+        branchStocks: true,
+        totalStock: true,
+        inventoryValue: true,
+        status: true,
+        description: false,
+      });
+      return;
+    }
+
+    if (preset === "stocktake") {
+      setExportScope("filtered");
+      setExportOnlyInStock(false);
+      setExportOnlyMissingCost(false);
+      setExportOnlyLowStock(false);
+      setExportIncludeSummarySheet(false);
+      setExportIncludeBranchSheets(true);
+      setExportSortMode("product_asc");
+      setExportColumns({
+        productName: true,
+        slug: true,
+        category: true,
+        brand: false,
+        weight: false,
+        imageUrl: false,
+        sku: true,
+        color: true,
+        size: true,
+        price: false,
+        costPrice: false,
+        branchStocks: true,
+        totalStock: true,
+        inventoryValue: false,
+        status: true,
+        description: false,
+      });
+      return;
+    }
+
+    if (preset === "missing_cost") {
+      setExportScope("filtered");
+      setExportOnlyInStock(true);
+      setExportOnlyMissingCost(true);
+      setExportOnlyLowStock(false);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(false);
+      setExportSortMode("missing_cost_first");
+      setExportColumns({
+        productName: true,
+        slug: true,
+        category: true,
+        brand: false,
+        weight: false,
+        imageUrl: false,
+        sku: true,
+        color: true,
+        size: true,
+        price: true,
+        costPrice: true,
+        branchStocks: true,
+        totalStock: true,
+        inventoryValue: true,
+        status: true,
+        description: false,
+      });
+      return;
+    }
+
+    if (preset === "low_stock") {
+      setExportScope("filtered");
+      setExportOnlyInStock(true);
+      setExportOnlyMissingCost(false);
+      setExportOnlyLowStock(true);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(true);
+      setExportSortMode("stock_desc");
+      setExportColumns({
+        ...defaultExportColumns,
+        price: false,
+        costPrice: false,
+        inventoryValue: false,
+        imageUrl: false,
+        description: false,
+      });
+      return;
+    }
+
+    setExportScope("all");
+    setExportOnlyInStock(false);
+    setExportOnlyMissingCost(false);
+    setExportOnlyLowStock(false);
+    setExportIncludeSummarySheet(true);
+    setExportIncludeBranchSheets(true);
+    setExportSortMode("product_asc");
+    setExportColumns(
+      Object.fromEntries(
+        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [key, true])
+      ) as ExportColumnState
+    );
+  };
+
+  const exportSelectedBranchCount = exportBranchIds.length || visibleBranches.length;
+  const exportSelectedColumnCount = Object.values(exportColumns).filter(Boolean).length;
+  const exportScopeLabel =
+    exportScope === "all"
+      ? "Tất cả sản phẩm"
+      : exportScope === "current_page"
+        ? "Chỉ trang hiện tại"
+        : "Theo bộ lọc hiện tại";
+  const exportFilterLabels = [
+    exportOnlyInStock ? "còn tồn" : "",
+    exportOnlyMissingCost ? "thiếu giá nhập" : "",
+    exportOnlyLowStock ? "tồn thấp" : "",
+  ].filter(Boolean);
+
   return (
     <div className="space-y-6 p-6">
       <SectionTitle
@@ -1991,26 +2201,26 @@ export default function ProductsPageClient() {
         description="Xem nhanh catalog theo dạng bảng, ảnh lớn hơn để lướt nhanh và nhìn rõ tồn kho theo từng chi nhánh."
         action={
           <div className="flex flex-wrap gap-3">
-            {canImportProducts ? (
-              <>
-                <Button
-                  variant="secondary"
-                  onClick={() => setExportOpen(true)}
-                  className="rounded-full"
-                  disabled={loading || !products.length}
-                >
-                  Xuất Excel
-                </Button>
+            {canExportProducts ? (
+              <Button
+                variant="secondary"
+                onClick={() => setExportOpen(true)}
+                className="rounded-full"
+                disabled={loading || !products.length}
+              >
+                Xuất Excel
+              </Button>
+            ) : null}
 
-                <Button
-                  variant="danger"
-                  onClick={() => void handleClearAllDescriptions()}
-                  className="rounded-full"
-                  disabled={loading}
-                >
-                  Xoá mô tả SP
-                </Button>
-              </>
+            {canManageProductMasterData ? (
+              <Button
+                variant="danger"
+                onClick={() => void handleClearAllDescriptions()}
+                className="rounded-full"
+                disabled={loading}
+              >
+                Xoá mô tả SP
+              </Button>
             ) : null}
 
             {canImportProducts ? (
@@ -2582,6 +2792,46 @@ export default function ProductsPageClient() {
           </div>
 
           <Panel className="p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-neutral-900">Preset xuất nhanh</p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Chọn cấu hình có sẵn để khỏi tick thủ công từng cột khi xuất Excel.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => applyExportPreset("management")}>Quản lý</Button>
+                <Button variant="secondary" onClick={() => applyExportPreset("accounting")}>Kế toán tồn</Button>
+                <Button variant="secondary" onClick={() => applyExportPreset("stocktake")}>Kiểm kho</Button>
+                <Button variant="secondary" onClick={() => applyExportPreset("missing_cost")}>Thiếu giá nhập</Button>
+                <Button variant="secondary" onClick={() => applyExportPreset("low_stock")}>Tồn thấp</Button>
+                <Button variant="secondary" onClick={() => applyExportPreset("full")}>Full SAPO</Button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-xs text-neutral-500">Phạm vi</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">{exportScopeLabel}</p>
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-xs text-neutral-500">Chi nhánh</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">{exportSelectedBranchCount} chi nhánh</p>
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-xs text-neutral-500">Cột dữ liệu</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">{exportSelectedColumnCount} cột</p>
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-xs text-neutral-500">Lọc thêm</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">
+                  {exportFilterLabels.length ? exportFilterLabels.join(", ") : "Không"}
+                </p>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel className="p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-sm font-semibold text-neutral-900">Chọn chi nhánh</p>
@@ -2649,6 +2899,18 @@ export default function ProductsPageClient() {
                 >
                   Chọn tất cả
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    setExportColumns(
+                      Object.fromEntries(
+                        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [key, false])
+                      ) as ExportColumnState
+                    )
+                  }
+                >
+                  Bỏ hết cột
+                </Button>
               </div>
             </div>
 
@@ -2678,7 +2940,7 @@ export default function ProductsPageClient() {
             <Button variant="secondary" onClick={() => setExportOpen(false)}>
               Huỷ
             </Button>
-            <Button onClick={() => void handleExportProductsExcel()} disabled={exportingProducts}>
+            <Button onClick={() => void handleExportProductsExcel()} disabled={exportingProducts || !canExportProducts}>
               {exportingProducts ? "Đang xuất..." : "Xuất Excel"}
             </Button>
           </div>
@@ -2741,9 +3003,11 @@ export default function ProductsPageClient() {
               <Button
                 variant="secondary"
                 onClick={() => {
+                  if (!canEditProduct) return;
                   resetQuickCategoryForm();
                   setQuickCategoryOpen(true);
                 }}
+                disabled={!canEditProduct}
               >
                 +
               </Button>
@@ -2799,6 +3063,7 @@ export default function ProductsPageClient() {
                   type="file"
                   accept="image/*"
                   className="hidden"
+                  disabled={!canEditProduct}
                   onChange={async (e) => {
                     const input = e.currentTarget;
                     const file = input.files?.[0] || null;
@@ -2947,6 +3212,7 @@ export default function ProductsPageClient() {
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
+              disabled={!canEditProduct}
               placeholder="Ví dụ: Vintage Oxford Shirt"
             />
           </div>
@@ -2959,6 +3225,7 @@ export default function ProductsPageClient() {
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editSkuCode}
               onChange={(e) => setEditSkuCode(slugify(e.target.value))}
+              disabled={!canEditProduct}
               placeholder="sm935"
             />
           </div>
@@ -2971,6 +3238,7 @@ export default function ProductsPageClient() {
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={editCategoryId}
+                disabled={!canEditProduct}
                 onChange={(e) => {
                   const nextId = e.target.value;
                   const found = categories.find((item) => item.id === nextId);
@@ -2989,9 +3257,11 @@ export default function ProductsPageClient() {
               <Button
                 variant="secondary"
                 onClick={() => {
+                  if (!canEditProduct) return;
                   resetQuickCategoryForm();
                   setQuickCategoryOpen(true);
                 }}
+                disabled={!canEditProduct}
               >
                 +
               </Button>
@@ -3005,6 +3275,7 @@ export default function ProductsPageClient() {
             <select
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editBrand}
+              disabled={!canEditProduct}
               onChange={(e) => setEditBrand(e.target.value)}
             >
               {brandOptions.map((item) => (
@@ -3024,6 +3295,7 @@ export default function ProductsPageClient() {
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editWeight}
               onChange={(e) => setEditWeight(e.target.value)}
+              disabled={!canEditProduct}
               placeholder="450"
             />
           </div>
@@ -3038,15 +3310,17 @@ export default function ProductsPageClient() {
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={editImageUrl}
                 onChange={(e) => setEditImageUrl(e.target.value)}
+                disabled={!canEditProduct}
                 placeholder="Dán link ảnh hoặc upload từ máy"
               />
 
               <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-                {uploadingEditImage ? "Đang upload..." : "Upload ảnh"}
+                {canEditProduct ? (uploadingEditImage ? "Đang upload..." : "Upload ảnh") : "Không có quyền upload"}
                 <input
                   type="file"
                   accept="image/*"
                   className="hidden"
+                  disabled={!canEditProduct}
                   onChange={async (e) => {
                     const input = e.currentTarget;
                     const file = input.files?.[0] || null;
@@ -3083,12 +3357,14 @@ export default function ProductsPageClient() {
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editDefaultPrice}
               onChange={(e) => setEditDefaultPrice(e.target.value)}
+              disabled={!canEditProductPrice}
               placeholder="590000"
             />
             <label className="mt-3 flex items-center gap-2 text-sm text-neutral-700">
               <input
                 type="checkbox"
                 checked={applyPriceToAllVariants}
+                disabled={!canEditProductPrice}
                 onChange={(e) => setApplyPriceToAllVariants(e.target.checked)}
               />
               Cập nhật giá bán cho toàn bộ size và màu của sản phẩm này
@@ -3105,6 +3381,7 @@ export default function ProductsPageClient() {
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={editDefaultCostPrice}
                 onChange={(e) => setEditDefaultCostPrice(e.target.value)}
+                disabled={!canEditProductPrice}
                 placeholder="240000"
               />
             </div>
@@ -3118,6 +3395,7 @@ export default function ProductsPageClient() {
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editColors}
               onChange={(e) => setEditColors(e.target.value)}
+              disabled={!canEditProduct}
               placeholder="ĐEN, TRẮNG, NÂU"
             />
             <div className="mt-2">
@@ -3133,6 +3411,7 @@ export default function ProductsPageClient() {
               className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editSizes}
               onChange={(e) => setEditSizes(e.target.value)}
+              disabled={!canEditProduct}
               placeholder="S, M, L, XL"
             />
             <div className="mt-2">
@@ -3148,6 +3427,7 @@ export default function ProductsPageClient() {
               className="min-h-[100px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={editDescription}
               onChange={(e) => setEditDescription(e.target.value)}
+              disabled={!canEditProduct}
               placeholder="Mô tả ngắn sản phẩm..."
             />
           </div>
@@ -3166,6 +3446,7 @@ export default function ProductsPageClient() {
                     type="number"
                     className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                     value={editBranchStocks[branch.id] || "0"}
+                    disabled={!canEditProduct}
                     onChange={(e) =>
                       setEditBranchStocks((prev) => ({
                         ...prev,
@@ -3183,7 +3464,7 @@ export default function ProductsPageClient() {
           <Button variant="secondary" onClick={() => setEditOpen(false)}>
             Đóng
           </Button>
-          <Button onClick={() => void handleSaveEditProduct()} disabled={savingProduct}>
+          <Button onClick={() => void handleSaveEditProduct()} disabled={savingProduct || !canEditProduct}>
             {savingProduct ? "Đang lưu..." : "Lưu thay đổi"}
           </Button>
         </div>

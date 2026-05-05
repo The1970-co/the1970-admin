@@ -4,9 +4,10 @@ export type AppRole =
   | "branch-manager"
   | "fulltime"
   | "retail-staff"
-  | "stock-auditor";
+  | "stock-auditor"
+  | "stock-staff";
 
-export type BranchId = "b1" | "b2" | "b3";
+export type BranchId = "b1" | "b2" | "b3" | string;
 
 export type PermissionKey =
   | "dashboard.view"
@@ -14,21 +15,35 @@ export type PermissionKey =
   | "orders.create"
   | "orders.update_status"
   | "orders.cancel"
+  | "orders.return"
   | "products.view"
   | "products.create"
   | "products.edit"
   | "products.price.edit"
+  | "products.variant.create"
+  | "products.status.edit"
   | "products.cost.view"
   | "products.delete"
+  | "products.excel.export"
+  | "products.excel.import"
+  | "promotions.view"
+  | "promotions.create"
+  | "promotions.edit"
+  | "promotions.activate"
+  | "promotions.pause"
   | "inventory.view"
   | "inventory.logs.view"
   | "inventory.value.view"
   | "inventory.3d.view"
+  | "inventory.excel.export"
   | "stocktake.view"
   | "stocktake.apply"
   | "permissions.view"
   | "reports.view"
   | "customers.view"
+  | "customers.edit"
+  | "customers.excel.export"
+  | "orders.excel.export"
   | "system.manage"
   | "settings.payment_sources.view"
   | "settings.payment_sources.manage"
@@ -58,7 +73,7 @@ export type CurrentUserProfile = {
   status?: "active" | "inactive";
 };
 
-export const BRANCH_LABELS: Record<BranchId, string> = {
+export const BRANCH_LABELS: Record<string, string> = {
   b1: "Hoàn Kiếm",
   b2: "Hai Bà Trưng",
   b3: "Online Warehouse",
@@ -71,18 +86,31 @@ const GLOBAL_PERMISSIONS: PermissionKey[] = [
   "orders.create",
   "orders.update_status",
   "orders.cancel",
+  "orders.return",
+  "orders.excel.export",
 
   "products.view",
   "products.create",
   "products.edit",
   "products.price.edit",
+  "products.variant.create",
+  "products.status.edit",
   "products.cost.view",
   "products.delete",
+  "products.excel.export",
+  "products.excel.import",
+
+  "promotions.view",
+  "promotions.create",
+  "promotions.edit",
+  "promotions.activate",
+  "promotions.pause",
 
   "inventory.view",
   "inventory.logs.view",
   "inventory.value.view",
   "inventory.3d.view",
+  "inventory.excel.export",
 
   "stocktake.view",
   "stocktake.apply",
@@ -90,6 +118,8 @@ const GLOBAL_PERMISSIONS: PermissionKey[] = [
   "permissions.view",
   "reports.view",
   "customers.view",
+  "customers.edit",
+  "customers.excel.export",
   "system.manage",
 
   "settings.payment_sources.view",
@@ -129,20 +159,32 @@ export const ROLE_DEFINITIONS: Record<AppRole, RoleDefinition> = {
       "orders.create",
       "orders.update_status",
       "orders.cancel",
+      "orders.return",
+      "orders.excel.export",
 
       "products.view",
       "products.create",
       "products.edit",
       "products.price.edit",
+      "products.variant.create",
+      "products.status.edit",
+      "products.excel.export",
+
+      "promotions.view",
+      "promotions.create",
+      "promotions.edit",
+      "promotions.activate",
+      "promotions.pause",
 
       "inventory.view",
       "inventory.logs.view",
+      "inventory.excel.export",
 
       "stocktake.view",
       "stocktake.apply",
 
-      "reports.view",
       "customers.view",
+      "customers.edit",
       "ai_content.view",
       "shipments.cod.edit",
     ],
@@ -156,16 +198,16 @@ export const ROLE_DEFINITIONS: Record<AppRole, RoleDefinition> = {
       "orders.view",
       "orders.create",
       "orders.update_status",
+      "orders.return",
 
       "products.view",
-      "products.edit",
-      "products.create",
+      "promotions.view",
 
       "inventory.view",
       "inventory.logs.view",
-
       "stocktake.view",
 
+      "customers.view",
       "shipments.cod.edit",
     ],
   },
@@ -177,14 +219,30 @@ export const ROLE_DEFINITIONS: Record<AppRole, RoleDefinition> = {
     permissions: [
       "orders.view",
       "orders.create",
+      "orders.return",
       "products.view",
+      "promotions.view",
       "inventory.view",
+      "customers.view",
     ],
   },
 
   "stock-auditor": {
     id: "stock-auditor",
     label: "Nhân viên kiểm kho",
+    scope: "branch",
+    permissions: [
+      "products.view",
+      "inventory.view",
+      "inventory.logs.view",
+      "stocktake.view",
+      "stocktake.apply",
+    ],
+  },
+
+  "stock-staff": {
+    id: "stock-staff",
+    label: "Nhân viên kho",
     scope: "branch",
     permissions: [
       "products.view",
@@ -203,7 +261,7 @@ export function getRoleLabel(role: AppRole | string | undefined) {
 
 export function hasPermission(
   role: AppRole | string | undefined,
-  permission: PermissionKey
+  permission: PermissionKey,
 ) {
   if (!role) return false;
   const definition = ROLE_DEFINITIONS[role as AppRole];
@@ -211,9 +269,58 @@ export function hasPermission(
   return definition.permissions.includes(permission);
 }
 
+export function hasAnyPermission(
+  role: AppRole | string | undefined,
+  permissions: PermissionKey[],
+) {
+  return permissions.some((permission) => hasPermission(role, permission));
+}
+
+export function canViewProduct(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.view");
+}
+
+export function canEditProduct(role: AppRole | string | undefined) {
+  return hasAnyPermission(role, [
+    "products.create",
+    "products.edit",
+    "products.price.edit",
+    "products.variant.create",
+    "products.status.edit",
+  ]);
+}
+
+export function canCreateProduct(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.create");
+}
+
+export function canEditProductPrice(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.price.edit");
+}
+
+export function canCreateProductVariant(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.variant.create");
+}
+
+export function canToggleProductStatus(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.status.edit");
+}
+
+export function canViewProductCost(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.cost.view");
+}
+
+export function canExportProductExcel(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.excel.export");
+}
+
+export function canImportProductExcel(role: AppRole | string | undefined) {
+  return hasPermission(role, "products.excel.import");
+}
+
 export function canAccessBranch(
   user: CurrentUserProfile,
-  branchId?: string | null
+  branchId?: string | null,
 ) {
   if (!branchId) return true;
 
@@ -223,7 +330,7 @@ export function canAccessBranch(
 
   const branchIds = user.branchIds || [];
   if (branchIds.length) {
-    return branchIds.includes(branchId as BranchId);
+    return branchIds.includes(branchId);
   }
 
   return user.branchId === branchId || user.branchName === branchId;
@@ -242,7 +349,7 @@ export function getScopedBranchIds(user: CurrentUserProfile): BranchId[] {
 
 export function filterRowsByBranch<T extends { branchId?: string | null }>(
   user: CurrentUserProfile,
-  rows: T[]
+  rows: T[],
 ) {
   const roleDefinition = ROLE_DEFINITIONS[user.role];
   if (!roleDefinition) return [];
@@ -261,7 +368,7 @@ export async function changeMyPassword(newPassword: string) {
         Authorization: `Bearer ${localStorage.getItem("token")}`,
       },
       body: JSON.stringify({ newPassword }),
-    }
+    },
   );
 
   if (!res.ok) throw new Error("Đổi mật khẩu thất bại");

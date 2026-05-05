@@ -1,5 +1,6 @@
 "use client";
 import { API_BASE } from "@/lib/api-base";
+import * as XLSX from "xlsx";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
@@ -607,6 +608,251 @@ function isRedeliveryOrder(order: AdminOrder) {
   );
 }
 
+
+type OrderExportScope = "filtered" | "current_page" | "checked";
+type OrderExportSortMode = "created_desc" | "amount_desc" | "cod_desc";
+
+type OrderExportColumnKey =
+  | "orderCode"
+  | "createdAt"
+  | "customerName"
+  | "customerPhone"
+  | "orderStatus"
+  | "paymentStatus"
+  | "fulfillmentStatus"
+  | "branch"
+  | "createdBy"
+  | "salesChannel"
+  | "shippingMode"
+  | "shippingPartner"
+  | "trackingCode"
+  | "itemCount"
+  | "shippingAddress"
+  | "note"
+  | "shippingFee"
+  | "codAmount"
+  | "amountDue"
+  | "finalAmount";
+
+type OrderExportColumnState = Record<OrderExportColumnKey, boolean>;
+
+const defaultOrderExportColumns: OrderExportColumnState = {
+  orderCode: true,
+  createdAt: true,
+  customerName: true,
+  customerPhone: true,
+  orderStatus: true,
+  paymentStatus: true,
+  fulfillmentStatus: true,
+  branch: true,
+  createdBy: true,
+  salesChannel: true,
+  shippingMode: true,
+  shippingPartner: true,
+  trackingCode: true,
+  itemCount: true,
+  shippingAddress: true,
+  note: true,
+  shippingFee: true,
+  codAmount: true,
+  amountDue: true,
+  finalAmount: true,
+};
+
+const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
+  orderCode: "Mã đơn",
+  createdAt: "Ngày tạo",
+  customerName: "Khách hàng",
+  customerPhone: "SĐT",
+  orderStatus: "Trạng thái đơn",
+  paymentStatus: "Thanh toán",
+  fulfillmentStatus: "Giao vận",
+  branch: "Chi nhánh",
+  createdBy: "Nhân viên tạo đơn",
+  salesChannel: "Kênh bán",
+  shippingMode: "Cách giao",
+  shippingPartner: "Đơn vị VC",
+  trackingCode: "Mã vận đơn",
+  itemCount: "Số món",
+  shippingAddress: "Địa chỉ giao",
+  note: "Ghi chú",
+  shippingFee: "Phí ship",
+  codAmount: "Thu hộ COD",
+  amountDue: "Khách còn phải trả",
+  finalAmount: "Tổng tiền",
+};
+
+function makeOrderWorksheet(rows: Record<string, any>[]) {
+  const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Không có dữ liệu": "" }]);
+  const firstRow = rows[0] || { "Không có dữ liệu": "" };
+  const columnCount = Object.keys(firstRow).length;
+  const rowCount = Math.max(rows.length, 1) + 1;
+
+  ws["!cols"] = Object.keys(firstRow).map((key) => ({
+    wch: Math.min(Math.max(String(key).length + 4, 14), 42),
+  }));
+
+  if (columnCount > 0) {
+    ws["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s: { r: 0, c: 0 },
+        e: { r: rowCount - 1, c: columnCount - 1 },
+      }),
+    };
+  }
+
+  return ws;
+}
+
+function safeOrderSheetName(name: string) {
+  return String(name || "Sheet")
+    .replace(/[\/?*\[\]:]/g, " ")
+    .trim()
+    .slice(0, 31) || "Sheet";
+}
+
+function getOrderExportRows(
+  exportOrders: NormalizedOrder[],
+  branches: BranchItem[],
+  columns: OrderExportColumnState,
+) {
+  return exportOrders.map((order) => {
+    const meta = order._meta;
+    const row: Record<string, any> = {};
+
+    if (columns.orderCode) row["Mã đơn"] = order.orderCode || "";
+    if (columns.createdAt) row["Ngày tạo"] = order.createdAt || "";
+    if (columns.customerName) row["Khách hàng"] = order.customerName || "";
+    if (columns.customerPhone) row["SĐT"] = order.customerPhone || "";
+    if (columns.orderStatus) row["Trạng thái đơn"] = orderStatusLabel(order.status);
+    if (columns.paymentStatus) row["Thanh toán"] = paymentStatusLabel(order.paymentStatus);
+    if (columns.fulfillmentStatus) row["Giao vận"] = fulfillmentStatusLabel(order.fulfillmentStatus);
+    if (columns.branch) row["Chi nhánh"] = branches.find((b) => b.id === order.branchId)?.name || order.branchId || "";
+    if (columns.createdBy) row["Nhân viên tạo đơn"] = order._createdByName || "";
+    if (columns.salesChannel) row["Kênh bán"] = order.salesChannel || "";
+    if (columns.shippingMode) row["Cách giao"] = meta.shippingMode || "";
+    if (columns.shippingPartner) row["Đơn vị VC"] = order.shipment?.carrier || meta.shippingPartner || "";
+    if (columns.trackingCode) row["Mã vận đơn"] = order.shipment?.trackingCode || "";
+    if (columns.itemCount) row["Số món"] = (order.items || []).length;
+    if (columns.shippingAddress) row["Địa chỉ giao"] = meta.address || "";
+    if (columns.note) row["Ghi chú"] = meta.noteText || meta.shippingNote || order.note || "";
+    if (columns.shippingFee) row["Phí ship"] = order._shippingFee;
+    if (columns.codAmount) row["Thu hộ COD"] = order._codAmount;
+    if (columns.amountDue) row["Khách còn phải trả"] = order._amountDue;
+    if (columns.finalAmount) row["Tổng tiền"] = Number(order.finalAmount || 0);
+
+    return row;
+  });
+}
+
+function exportOrdersExcel({
+  orders,
+  branches,
+  columns,
+  includeSummarySheet,
+  includeBranchSheets,
+  includeItemSheet,
+  sortMode,
+}: {
+  orders: NormalizedOrder[];
+  branches: BranchItem[];
+  columns: OrderExportColumnState;
+  includeSummarySheet: boolean;
+  includeBranchSheets: boolean;
+  includeItemSheet: boolean;
+  sortMode: OrderExportSortMode;
+}) {
+  const sortedOrders = [...orders].sort((a, b) => {
+    if (sortMode === "amount_desc") return Number(b.finalAmount || 0) - Number(a.finalAmount || 0);
+    if (sortMode === "cod_desc") return Number(b._codAmount || 0) - Number(a._codAmount || 0);
+    return (b._createdAtDate?.getTime() || 0) - (a._createdAtDate?.getTime() || 0);
+  });
+
+  const rows = getOrderExportRows(sortedOrders, branches, columns);
+  const wb = XLSX.utils.book_new();
+
+  const totalRevenue = sortedOrders.reduce((sum, o) => sum + Number(o.finalAmount || 0), 0);
+  const totalPaidRevenue = sortedOrders
+    .filter((o) => o.paymentStatus === "PAID")
+    .reduce((sum, o) => sum + Number(o.finalAmount || 0), 0);
+  const totalCod = sortedOrders.reduce((sum, o) => sum + Number(o._codAmount || 0), 0);
+  const totalDue = sortedOrders.reduce((sum, o) => sum + Number(o._amountDue || 0), 0);
+
+  if (includeSummarySheet) {
+    const summaryRows = [
+      { "Chỉ số": "Tổng đơn", "Giá trị": sortedOrders.length },
+      { "Chỉ số": "Tổng tiền", "Giá trị": totalRevenue },
+      { "Chỉ số": "Doanh thu đã thanh toán", "Giá trị": totalPaidRevenue },
+      { "Chỉ số": "Tổng COD", "Giá trị": totalCod },
+      { "Chỉ số": "Khách còn phải trả", "Giá trị": totalDue },
+      { "Chỉ số": "Thời gian xuất", "Giá trị": new Date().toLocaleString("vi-VN") },
+    ];
+    XLSX.utils.book_append_sheet(wb, makeOrderWorksheet(summaryRows), "Tổng quan");
+  }
+
+  XLSX.utils.book_append_sheet(wb, makeOrderWorksheet(rows), "Danh sách đơn");
+
+  const codRows = sortedOrders
+    .filter((o) => o.paymentStatus === "PENDING_COD" || Number(o._codAmount || 0) > 0 || Number(o._amountDue || 0) > 0)
+    .map((o) => ({
+      "Mã đơn": o.orderCode,
+      "Khách hàng": o.customerName,
+      "SĐT": o.customerPhone,
+      "Chi nhánh": branches.find((b) => b.id === o.branchId)?.name || o.branchId || "",
+      "Thanh toán": paymentStatusLabel(o.paymentStatus),
+      "COD": o._codAmount,
+      "Còn phải trả": o._amountDue,
+      "Tổng tiền": Number(o.finalAmount || 0),
+      "Mã vận đơn": o.shipment?.trackingCode || "",
+    }));
+  if (codRows.length) XLSX.utils.book_append_sheet(wb, makeOrderWorksheet(codRows), "COD - công nợ");
+
+  if (includeItemSheet) {
+    const itemRows: Record<string, any>[] = [];
+    for (const order of sortedOrders) {
+      for (const item of order.items || []) {
+        const anyItem = item as any;
+        itemRows.push({
+          "Mã đơn": order.orderCode,
+          "Ngày tạo": order.createdAt,
+          "Khách hàng": order.customerName,
+          "Chi nhánh": branches.find((b) => b.id === order.branchId)?.name || order.branchId || "",
+          "SKU": anyItem.sku || anyItem.variant?.sku || "",
+          "Sản phẩm": anyItem.productName || anyItem.name || anyItem.product?.name || "",
+          "Màu": anyItem.color || anyItem.variant?.color || "",
+          "Size": anyItem.size || anyItem.variant?.size || "",
+          "SL": Number(anyItem.quantity || anyItem.qty || 0),
+          "Đơn giá": Number(anyItem.price || anyItem.unitPrice || 0),
+          "Thành tiền": Number(anyItem.total || anyItem.lineTotal || Number(anyItem.quantity || anyItem.qty || 0) * Number(anyItem.price || anyItem.unitPrice || 0)),
+        });
+      }
+    }
+    XLSX.utils.book_append_sheet(wb, makeOrderWorksheet(itemRows), "Sản phẩm trong đơn");
+  }
+
+  if (includeBranchSheets) {
+    for (const branch of branches) {
+      const branchOrders = sortedOrders.filter((o) => o.branchId === branch.id);
+      if (!branchOrders.length) continue;
+      XLSX.utils.book_append_sheet(
+        wb,
+        makeOrderWorksheet(getOrderExportRows(branchOrders, branches, columns)),
+        safeOrderSheetName(branch.name),
+      );
+    }
+  }
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mi = String(now.getMinutes()).padStart(2, "0");
+
+  XLSX.writeFile(wb, `orders_export_${yyyy}${mm}${dd}_${hh}${mi}.xlsx`);
+  return sortedOrders.length;
+}
+
 export default function OrdersPageClient() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -623,6 +869,20 @@ export default function OrdersPageClient() {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [branches, setBranches] = useState<BranchItem[]>([]);
+
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<OrderExportScope>("filtered");
+  const [exportBranchIds, setExportBranchIds] = useState<string[]>([]);
+  const [exportColumns, setExportColumns] = useState<OrderExportColumnState>({
+    ...defaultOrderExportColumns,
+  });
+  const [exportOnlyUnpaid, setExportOnlyUnpaid] = useState(false);
+  const [exportOnlyCod, setExportOnlyCod] = useState(false);
+  const [exportIncludeSummarySheet, setExportIncludeSummarySheet] = useState(true);
+  const [exportIncludeBranchSheets, setExportIncludeBranchSheets] = useState(true);
+  const [exportIncludeItemSheet, setExportIncludeItemSheet] = useState(true);
+  const [exportSortMode, setExportSortMode] = useState<OrderExportSortMode>("created_desc");
+  const [exportingOrders, setExportingOrders] = useState(false);
 
   const loadBranches = async () => {
     try {
@@ -1643,6 +1903,132 @@ export default function OrdersPageClient() {
     });
   };
 
+  const handleExportOrdersExcel = () => {
+    try {
+      setExportingOrders(true);
+      setActionMessage("Đang tạo file Excel đơn hàng...");
+
+      let sourceOrders =
+        exportScope === "checked"
+          ? checkedOrders
+          : exportScope === "current_page"
+            ? normalizedOrders
+            : visibleOrders;
+
+      if (exportBranchIds.length) {
+        sourceOrders = sourceOrders.filter((order) =>
+          exportBranchIds.includes(String(order.branchId || "")),
+        );
+      }
+
+      if (exportOnlyUnpaid) {
+        sourceOrders = sourceOrders.filter((order) =>
+          ["UNPAID", "PARTIAL", "PENDING_COD"].includes(order.paymentStatus),
+        );
+      }
+
+      if (exportOnlyCod) {
+        sourceOrders = sourceOrders.filter(
+          (order) =>
+            order.paymentStatus === "PENDING_COD" || Number(order._codAmount || 0) > 0,
+        );
+      }
+
+      const branchListForExport = exportBranchIds.length
+        ? branches.filter((branch) => exportBranchIds.includes(branch.id))
+        : branches;
+
+      const rowCount = exportOrdersExcel({
+        orders: sourceOrders,
+        branches: branchListForExport.length ? branchListForExport : branches,
+        columns: exportColumns,
+        includeSummarySheet: exportIncludeSummarySheet,
+        includeBranchSheets: exportIncludeBranchSheets,
+        includeItemSheet: exportIncludeItemSheet,
+        sortMode: exportSortMode,
+      });
+
+      setExportOpen(false);
+      setActionMessage(`Đã xuất Excel ${rowCount} đơn hàng.`);
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "Xuất Excel đơn hàng thất bại.");
+    } finally {
+      setExportingOrders(false);
+    }
+  };
+
+  const applyOrderExportPreset = (preset: "management" | "accounting" | "shipping" | "cod" | "full") => {
+    if (preset === "management") {
+      setExportScope("filtered");
+      setExportOnlyUnpaid(false);
+      setExportOnlyCod(false);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(true);
+      setExportIncludeItemSheet(true);
+      setExportSortMode("amount_desc");
+      setExportColumns({ ...defaultOrderExportColumns });
+      return;
+    }
+
+    if (preset === "accounting") {
+      setExportScope("filtered");
+      setExportOnlyUnpaid(false);
+      setExportOnlyCod(false);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(true);
+      setExportIncludeItemSheet(false);
+      setExportSortMode("amount_desc");
+      setExportColumns({
+        ...defaultOrderExportColumns,
+        shippingAddress: false,
+        note: false,
+      });
+      return;
+    }
+
+    if (preset === "shipping") {
+      setExportScope("filtered");
+      setExportOnlyUnpaid(false);
+      setExportOnlyCod(false);
+      setExportIncludeSummarySheet(false);
+      setExportIncludeBranchSheets(true);
+      setExportIncludeItemSheet(false);
+      setExportSortMode("created_desc");
+      setExportColumns({
+        ...defaultOrderExportColumns,
+        shippingFee: false,
+        codAmount: true,
+        amountDue: false,
+        finalAmount: false,
+      });
+      return;
+    }
+
+    if (preset === "cod") {
+      setExportScope("filtered");
+      setExportOnlyUnpaid(true);
+      setExportOnlyCod(true);
+      setExportIncludeSummarySheet(true);
+      setExportIncludeBranchSheets(true);
+      setExportIncludeItemSheet(false);
+      setExportSortMode("cod_desc");
+      setExportColumns({
+        ...defaultOrderExportColumns,
+        note: false,
+      });
+      return;
+    }
+
+    setExportScope("filtered");
+    setExportOnlyUnpaid(false);
+    setExportOnlyCod(false);
+    setExportIncludeSummarySheet(true);
+    setExportIncludeBranchSheets(true);
+    setExportIncludeItemSheet(true);
+    setExportSortMode("created_desc");
+    setExportColumns(Object.fromEntries((Object.keys(defaultOrderExportColumns) as OrderExportColumnKey[]).map((key) => [key, true])) as OrderExportColumnState);
+  };
+
   const toggleColumn = (key: ColumnKey) => {
     setVisibleColumns((prev) => {
       if (prev.includes(key)) {
@@ -2274,6 +2660,10 @@ export default function OrdersPageClient() {
             Làm mới
           </Button>
 
+          <Button onClick={() => setExportOpen(true)} size="md" variant="primary">
+            Xuất Excel
+          </Button>
+
           <div className="relative" ref={columnMenuRef}>
             <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">
               Cột hiển thị
@@ -2860,6 +3250,198 @@ export default function OrdersPageClient() {
           </p>
           <p className="mt-1 text-lg font-semibold">{currency(paidRevenue)}</p>
         </Panel>
+      ) : null}
+
+      {exportOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-3xl font-semibold tracking-tight">Xuất Excel đơn hàng</h3>
+              <button
+                onClick={() => setExportOpen(false)}
+                className="text-xl text-neutral-500"
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+        <div className="space-y-5">
+          <Panel className="bg-neutral-50 p-4">
+            <div className="grid gap-3 md:grid-cols-5">
+              <Button variant="secondary" onClick={() => applyOrderExportPreset("management")}>Quản lý</Button>
+              <Button variant="secondary" onClick={() => applyOrderExportPreset("accounting")}>Kế toán</Button>
+              <Button variant="secondary" onClick={() => applyOrderExportPreset("shipping")}>Giao vận</Button>
+              <Button variant="secondary" onClick={() => applyOrderExportPreset("cod")}>COD / công nợ</Button>
+              <Button variant="secondary" onClick={() => applyOrderExportPreset("full")}>Full dữ liệu</Button>
+            </div>
+          </Panel>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Panel className="p-4">
+              <p className="text-sm font-semibold text-neutral-900">Phạm vi đơn hàng</p>
+              <div className="mt-3 space-y-2 text-sm">
+                {([
+                  ["filtered", "Theo bộ lọc hiện tại"],
+                  ["current_page", "Chỉ trang đang xem"],
+                  ["checked", `Chỉ đơn đã tick (${checkedIds.length})`],
+                ] as Array<[OrderExportScope, string]>).map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2">
+                    <input
+                      type="radio"
+                      checked={exportScope === value}
+                      onChange={() => setExportScope(value)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+
+              <div className="mt-4 space-y-2 text-sm">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportOnlyUnpaid}
+                    onChange={(e) => setExportOnlyUnpaid(e.target.checked)}
+                  />
+                  Chỉ đơn chưa thanh toán / COD
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={exportOnlyCod}
+                    onChange={(e) => setExportOnlyCod(e.target.checked)}
+                  />
+                  Chỉ đơn có COD
+                </label>
+              </div>
+            </Panel>
+
+            <Panel className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-neutral-900">Chi nhánh</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExportBranchIds(branches.map((branch) => branch.id))}
+                    className="text-xs font-semibold text-neutral-700 underline"
+                  >
+                    Chọn tất cả
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportBranchIds([])}
+                    className="text-xs font-semibold text-neutral-500 underline"
+                  >
+                    Bỏ chọn
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 max-h-64 space-y-2 overflow-auto pr-1 text-sm">
+                {branches.length ? (
+                  branches.map((branch) => (
+                    <label key={branch.id} className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={exportBranchIds.includes(branch.id)}
+                        onChange={(e) => {
+                          setExportBranchIds((prev) =>
+                            e.target.checked
+                              ? Array.from(new Set([...prev, branch.id]))
+                              : prev.filter((id) => id !== branch.id),
+                          );
+                        }}
+                      />
+                      {branch.name}
+                    </label>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                    Chưa tải được chi nhánh. Kiểm tra token hoặc API /branches.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
+            <Panel className="p-4">
+              <p className="text-sm font-semibold text-neutral-900">Sheet & sắp xếp</p>
+              <div className="mt-3 space-y-2 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={exportIncludeSummarySheet} onChange={(e) => setExportIncludeSummarySheet(e.target.checked)} />
+                  Sheet tổng quan
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={exportIncludeBranchSheets} onChange={(e) => setExportIncludeBranchSheets(e.target.checked)} />
+                  Sheet theo chi nhánh
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={exportIncludeItemSheet} onChange={(e) => setExportIncludeItemSheet(e.target.checked)} />
+                  Sheet sản phẩm trong đơn
+                </label>
+                <select
+                  className="mt-2 w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                  value={exportSortMode}
+                  onChange={(e) => setExportSortMode(e.target.value as OrderExportSortMode)}
+                >
+                  <option value="created_desc">Mới nhất trước</option>
+                  <option value="amount_desc">Tổng tiền cao trước</option>
+                  <option value="cod_desc">COD cao trước</option>
+                </select>
+              </div>
+            </Panel>
+          </div>
+
+          <Panel className="p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-neutral-900">Cột dữ liệu</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExportColumns({ ...defaultOrderExportColumns })}
+                  className="text-xs font-semibold text-neutral-700 underline"
+                >
+                  Chọn mặc định
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExportColumns(Object.fromEntries((Object.keys(defaultOrderExportColumns) as OrderExportColumnKey[]).map((key) => [key, true])) as OrderExportColumnState)}
+                  className="text-xs font-semibold text-neutral-700 underline"
+                >
+                  Chọn tất cả
+                </button>
+              </div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-4">
+              {(Object.keys(defaultOrderExportColumns) as OrderExportColumnKey[])
+                .filter((key) => canSeeMoney || !COLUMN_DEFS.find((col) => col.key === key)?.money)
+                .map((key) => (
+                  <label key={key} className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={exportColumns[key]}
+                      onChange={(e) =>
+                        setExportColumns((prev) => ({ ...prev, [key]: e.target.checked }))
+                      }
+                    />
+                    {orderExportColumnLabels[key]}
+                  </label>
+                ))}
+            </div>
+          </Panel>
+
+          <div className="flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 md:flex-row md:items-center md:justify-between">
+            <div className="text-sm text-neutral-600">
+              Xuất {exportScope === "checked" ? checkedIds.length : exportScope === "current_page" ? normalizedOrders.length : visibleOrders.length} đơn · {exportBranchIds.length ? `${exportBranchIds.length} chi nhánh` : "Tất cả chi nhánh"}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setExportOpen(false)}>Huỷ</Button>
+              <Button variant="primary" onClick={handleExportOrdersExcel} disabled={exportingOrders || (exportScope === "checked" && !checkedIds.length)}>
+                {exportingOrders ? "Đang xuất..." : "Xuất Excel"}
+              </Button>
+            </div>
+          </div>
+        </div>
+          </div>
+        </div>
       ) : null}
 
       <ConfirmDialog

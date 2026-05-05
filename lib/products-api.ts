@@ -75,9 +75,37 @@ export type AddVariantPayload = {
 };
 
 
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+
+  const directToken =
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken") ||
+    localStorage.getItem("access_token");
+
+  if (directToken) return directToken;
+
+  try {
+    const raw = localStorage.getItem("currentUser");
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    return (
+      parsed?.token ||
+      parsed?.accessToken ||
+      parsed?.access_token ||
+      parsed?.data?.token ||
+      parsed?.data?.accessToken ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = getAuthToken();
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -287,36 +315,9 @@ export async function toggleProductStatus(productId: string) {
   });
 }
 
-export async function importProductsFiles(files: File[], overwrite = true) {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const formData = new FormData();
-  files.forEach((file) => formData.append("files", file));
-  formData.append("overwrite", overwrite ? "true" : "false");
-
-  const res = await fetch(`${API_BASE}/products/import`, {
-    method: "POST",
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`,
-        }
-      : undefined,
-    body: formData,
-  });
-
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    throw new Error(data?.message || "Import sản phẩm thất bại.");
-  }
-
-  return data;
-}
 
 export async function uploadProductImage(file: File) {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = getAuthToken();
 
   const formData = new FormData();
   formData.append("file", file);
@@ -357,4 +358,60 @@ export async function clearAllProductDescriptions() {
       method: "PATCH",
     }
   );
+}
+
+
+export async function importProductsFiles(
+  files: File[],
+  overwrite = true,
+  onProgress?: (percent: number) => void
+) {
+  const token = getAuthToken();
+
+  const formData = new FormData();
+  files.forEach((file) => formData.append("files", file));
+  formData.append("overwrite", overwrite ? "true" : "false");
+
+  return new Promise<any>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.open("POST", `${API_BASE}/products/import`);
+
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+
+      // Upload chỉ là một phần nhỏ; giữ tối đa 85% để còn chờ backend xử lý Excel.
+      const uploadPercent = Math.round((event.loaded / event.total) * 85);
+      onProgress?.(Math.min(85, Math.max(1, uploadPercent)));
+    };
+
+    xhr.onload = () => {
+      let data: any = {};
+
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        data = {};
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve(data);
+        return;
+      }
+
+      reject(new Error(data?.message || "Import sản phẩm thất bại."));
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Không kết nối được server khi import sản phẩm."));
+    };
+
+    onProgress?.(1);
+    xhr.send(formData);
+  });
 }
