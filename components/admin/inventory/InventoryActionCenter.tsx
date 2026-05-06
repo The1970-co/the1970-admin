@@ -42,7 +42,7 @@ export default function InventoryActionCenter({
   currentUser,
   defaultBranchId,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>("missing-cost");
+  const [activeTab, setActiveTab] = useState<TabKey>("ledger");
   const [summary, setSummary] = useState<InventorySummary | null>(null);
   const [missingCostRows, setMissingCostRows] = useState<MissingCostItem[]>([]);
   const [movements, setMovements] = useState<InventoryMovementRow[]>([]);
@@ -76,6 +76,13 @@ export default function InventoryActionCenter({
 
   const role = String(currentUser?.role || "").toLowerCase();
   const isAdmin = role === "owner" || role === "admin";
+  const adminOnlyTabs: TabKey[] = [
+    "missing-cost",
+    "lock-cost",
+    "upload-stock",
+    "adjust",
+    "transfer",
+  ];
 
   const missingCostCount = missingCostRows.length;
 
@@ -131,6 +138,13 @@ export default function InventoryActionCenter({
     reloadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultBranchId]);
+
+  useEffect(() => {
+    if (!isAdmin && adminOnlyTabs.includes(activeTab)) {
+      setActiveTab("ledger");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, activeTab]);
 
   async function saveMissingCosts() {
     if (!isAdmin) {
@@ -249,6 +263,11 @@ export default function InventoryActionCenter({
   }
 
   async function submitAuditOneFile() {
+    if (!isAdmin) {
+      setError("Chỉ admin/owner được đối chiếu SAPO.");
+      return;
+    }
+
     if (!auditFile) {
       setError("Chưa chọn file SAPO để đối chiếu.");
       return;
@@ -271,6 +290,11 @@ export default function InventoryActionCenter({
   }
 
   async function submitAuditTwoFiles() {
+    if (!isAdmin) {
+      setError("Chỉ admin/owner được đối chiếu SAPO.");
+      return;
+    }
+
     if (!stockReportFile || !productFile) {
       setError("Cần chọn đủ 2 file: báo cáo tồn kho và danh sách sản phẩm.");
       return;
@@ -340,10 +364,15 @@ export default function InventoryActionCenter({
     [missingCostCount, movements.length, summary],
   );
 
+  const visibleCards = useMemo(
+    () => cards.filter((card) => isAdmin || !adminOnlyTabs.includes(card.key)),
+    [cards, isAdmin],
+  );
+
   return (
     <div className="space-y-5">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {cards.map((card) => (
+        {visibleCards.map((card) => (
           <button
             key={card.key}
             type="button"
@@ -371,12 +400,12 @@ export default function InventoryActionCenter({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-4">
           <div>
             <h2 className="text-lg font-bold text-neutral-950">
-              {cards.find((x) => x.key === activeTab)?.title}
+              {visibleCards.find((x) => x.key === activeTab)?.title}
             </h2>
             <p className="text-sm text-neutral-500">
               {isAdmin
                 ? "Admin/Owner được thao tác đầy đủ."
-                : "Nhân viên chỉ xem cảnh báo, không thấy/sửa giá vốn."}
+                : "Nhân viên chỉ xem tồn kho và ledger được phân quyền."}
             </p>
           </div>
 
@@ -402,7 +431,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {activeTab === "missing-cost" || activeTab === "lock-cost" ? (
+        {isAdmin && (activeTab === "missing-cost" || activeTab === "lock-cost") ? (
           <div className="mt-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-neutral-900">
@@ -533,7 +562,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {activeTab === "upload-stock" ? (
+        {isAdmin && activeTab === "upload-stock" ? (
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
             <div className="rounded-xl border border-neutral-200 p-4">
               <div className="font-bold">Import báo cáo tồn kho</div>
@@ -612,7 +641,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {activeTab === "adjust" ? (
+        {isAdmin && activeTab === "adjust" ? (
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <input
               value={adjustForm.variantId}
@@ -660,7 +689,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {activeTab === "transfer" ? (
+        {isAdmin && activeTab === "transfer" ? (
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <input
               value={transferForm.variantId}

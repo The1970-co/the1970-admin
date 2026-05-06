@@ -3,6 +3,7 @@
 import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import {
   AlertTriangle,
   ChevronDown,
@@ -56,7 +57,6 @@ type HomeResponse = {
   alerts: string[];
   finance?: HomeFinance;
 };
-
 
 function getTokenFromStorage(): string | null {
   if (typeof window === "undefined") return null;
@@ -197,12 +197,12 @@ export default function MobileHomePage() {
     void loadData(branchId);
   }, [branchId, loadData]);
 
-const orderBlocks = [
-  { label: "Mới", value: home?.orders.NEW ?? 0, status: "NEW" },
-  { label: "Đã duyệt", value: home?.orders.APPROVED ?? 0, status: "APPROVED" },
-  { label: "Đóng gói", value: home?.orders.PACKING ?? 0, status: "PACKING" },
-  { label: "Đang giao", value: home?.orders.SHIPPED ?? 0, status: "SHIPPED" },
-];
+  const orderBlocks = [
+    { label: "Mới", value: home?.orders.NEW ?? 0, status: "NEW" },
+    { label: "Đã duyệt", value: home?.orders.APPROVED ?? 0, status: "APPROVED" },
+    { label: "Đóng gói", value: home?.orders.PACKING ?? 0, status: "PACKING" },
+    { label: "Đang giao", value: home?.orders.SHIPPED ?? 0, status: "SHIPPED" },
+  ];
 
   return (
     <div className="min-h-screen bg-neutral-100">
@@ -234,11 +234,14 @@ const orderBlocks = [
                   onChange={(e) => setBranchId(e.target.value)}
                   className="h-11 w-full appearance-none rounded-2xl border border-neutral-200 bg-neutral-50 px-4 pr-10 text-sm font-medium text-neutral-900 outline-none ring-0"
                 >
-                  {branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </option>
-                  ))}
+                  <option value="all">Tất cả chi nhánh</option>
+                  {branches
+                    .filter((branch) => branch.id !== "all")
+                    .map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
               </div>
@@ -246,7 +249,7 @@ const orderBlocks = [
           </div>
         </header>
 
-        <main className="flex-1 space-y-4 px-4 py-4">
+        <main className="flex-1 space-y-4 px-4 py-4 pb-24">
           {loading ? (
             <div className="space-y-4">
               <LoadingCard />
@@ -278,23 +281,41 @@ const orderBlocks = [
                 </div>
               </SectionCard>
 
+              <div className="grid grid-cols-4 gap-3">
+                <Link href="/mobile/orders" className="rounded-2xl bg-white p-4 text-center shadow-sm active:scale-[0.98] transition">
+                  <div className="text-2xl">📦</div>
+                  <div className="mt-2 text-xs font-medium text-neutral-700">Đơn hàng</div>
+                </Link>
+                <Link href="/mobile/inventory" className="rounded-2xl bg-white p-4 text-center shadow-sm active:scale-[0.98] transition">
+                  <div className="text-2xl">🏪</div>
+                  <div className="mt-2 text-xs font-medium text-neutral-700">Tồn kho</div>
+                </Link>
+                <Link href="/mobile/reports" className="rounded-2xl bg-white p-4 text-center shadow-sm active:scale-[0.98] transition">
+                  <div className="text-2xl">📊</div>
+                  <div className="mt-2 text-xs font-medium text-neutral-700">Báo cáo</div>
+                </Link>
+                <Link href="/mobile/profile" className="rounded-2xl bg-white p-4 text-center shadow-sm active:scale-[0.98] transition">
+                  <div className="text-2xl">👤</div>
+                  <div className="mt-2 text-xs font-medium text-neutral-700">Cá nhân</div>
+                </Link>
+              </div>
 
-<SectionCard title="Đơn hàng chờ xử lý">
-  <div className="grid grid-cols-2 gap-3">
-    {orderBlocks.map((item) => (
-      <Link
-        key={item.label}
-        href={`/mobile/orders?status=${item.status}`}
-        className="block rounded-2xl bg-neutral-50 p-3 active:scale-[0.98] transition"
-      >
-        <div className="text-sm text-neutral-500">{item.label}</div>
-        <div className="mt-1 text-2xl font-bold text-neutral-950">
-          {item.value}
-        </div>
-      </Link>
-    ))}
-  </div>
-</SectionCard>
+              <SectionCard title="Đơn hàng chờ xử lý">
+                <div className="grid grid-cols-2 gap-3">
+                  {orderBlocks.map((item) => (
+                    <Link
+                      key={item.label}
+                      href={`/mobile/orders?status=${item.status}`}
+                      className="block rounded-2xl bg-neutral-50 p-3 active:scale-[0.98] transition"
+                    >
+                      <div className="text-sm text-neutral-500">{item.label}</div>
+                      <div className="mt-1 text-2xl font-bold text-neutral-950">
+                        {item.value}
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </SectionCard>
 
               <SectionCard title="Tồn kho">
                 <div className="grid grid-cols-2 gap-3">
@@ -408,6 +429,7 @@ const orderBlocks = [
             </>
           ) : null}
         </main>
+        <MobileBottomNav />
       </div>
     </div>
   );

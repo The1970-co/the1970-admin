@@ -3,6 +3,7 @@
 import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 
 type MobileOrder = {
   id: string;
@@ -17,6 +18,10 @@ type MobileOrder = {
   createdAt: string;
 };
 
+function getInitialStatus() {
+  if (typeof window === "undefined") return "all";
+  return new URLSearchParams(window.location.search).get("status") || "all";
+}
 
 function money(v: number) {
   return new Intl.NumberFormat("vi-VN").format(v || 0);
@@ -30,6 +35,19 @@ function statusLabel(status: string) {
     SHIPPED: "Đang giao",
     COMPLETED: "Hoàn thành",
     CANCELLED: "Đã huỷ",
+  };
+
+  return map[status] || status;
+}
+
+function paymentLabel(status: string) {
+  const map: Record<string, string> = {
+    UNPAID: "Chưa thanh toán",
+    PARTIAL: "Một phần",
+    PAID: "Đã thanh toán",
+    PENDING_COD: "Chờ COD",
+    REFUNDED: "Hoàn tiền",
+    FAILED: "Thất bại",
   };
 
   return map[status] || status;
@@ -66,7 +84,7 @@ async function fetchWithAuth<T>(path: string): Promise<T> {
 
 export default function MobileOrdersPage() {
   const [orders, setOrders] = useState<MobileOrder[]>([]);
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(getInitialStatus);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -108,7 +126,7 @@ export default function MobileOrdersPage() {
 
   return (
     <div className="min-h-screen bg-neutral-100">
-      <div className="mx-auto min-h-screen w-full max-w-md bg-neutral-100 px-4 py-4">
+      <div className="mx-auto min-h-screen w-full max-w-md bg-neutral-100 px-4 py-4 pb-24">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="text-sm text-neutral-500">The 1970 Operations</div>
@@ -146,11 +164,7 @@ export default function MobileOrdersPage() {
           />
 
           <div className="text-sm text-neutral-500">
-            Tổng:{" "}
-            <span className="font-semibold text-neutral-950">
-              {filteredOrders.length}
-            </span>{" "}
-            đơn
+            Tổng: <span className="font-semibold text-neutral-950">{filteredOrders.length}</span> đơn
           </div>
         </div>
 
@@ -174,20 +188,14 @@ export default function MobileOrdersPage() {
               <Link
                 key={order.id}
                 href={`/mobile/orders/${order.id}`}
-                className="block rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm"
+                className="block rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm active:scale-[0.99] transition"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-base font-bold text-neutral-950">
-                      {order.orderCode}
-                    </div>
-                    <div className="mt-1 text-sm text-neutral-500">
-                      {order.customerName}
-                    </div>
+                    <div className="text-base font-bold text-neutral-950">{order.orderCode}</div>
+                    <div className="mt-1 text-sm text-neutral-500">{order.customerName}</div>
                     {order.customerPhone ? (
-                      <div className="mt-1 text-sm text-neutral-500">
-                        {order.customerPhone}
-                      </div>
+                      <div className="mt-1 text-sm text-neutral-500">{order.customerPhone}</div>
                     ) : null}
                   </div>
 
@@ -205,7 +213,7 @@ export default function MobileOrdersPage() {
                   <div className="rounded-2xl bg-neutral-50 p-3">
                     <div className="text-neutral-500">Thanh toán</div>
                     <div className="mt-1 font-medium text-neutral-950">
-                      {order.paymentStatus}
+                      {paymentLabel(order.paymentStatus)}
                     </div>
                   </div>
 
@@ -221,6 +229,7 @@ export default function MobileOrdersPage() {
           </div>
         )}
       </div>
+      <MobileBottomNav />
     </div>
   );
 }

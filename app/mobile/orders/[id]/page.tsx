@@ -4,6 +4,7 @@ import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 
 type OrderItem = {
   id: string;
@@ -51,7 +52,6 @@ type OrderDetail = {
   items: OrderItem[];
   shipment: Shipment | null;
 };
-
 
 function money(v: number | null | undefined) {
   return new Intl.NumberFormat("vi-VN").format(Number(v || 0));
@@ -176,7 +176,7 @@ export default function MobileOrderDetailPage() {
 
   return (
     <div className="min-h-screen bg-neutral-100">
-      <div className="mx-auto min-h-screen w-full max-w-md bg-neutral-100 px-4 py-4">
+      <div className="mx-auto min-h-screen w-full max-w-md bg-neutral-100 px-4 py-4 pb-24">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="text-sm text-neutral-500">Chi tiết đơn hàng</div>
@@ -320,6 +320,7 @@ export default function MobileOrderDetailPage() {
           </div>
         ) : null}
       </div>
+      <MobileBottomNav />
     </div>
   );
 }

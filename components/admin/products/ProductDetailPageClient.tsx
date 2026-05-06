@@ -1126,12 +1126,14 @@ export default function ProductDetailPageClient({
                 })}
               </div>
 
-              <Link
-                href={`/inventory?productId=${encodeURIComponent(product.id)}`}
-                className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
-              >
-                Mở trong Kho hàng
-              </Link>
+              {isOwner ? (
+                <Link
+                  href={`/inventory?productId=${encodeURIComponent(product.id)}`}
+                  className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                >
+                  Mở trong Kho hàng
+                </Link>
+              ) : null}
             </Panel>
 
             <Panel className="p-4">
@@ -1284,12 +1286,14 @@ export default function ProductDetailPageClient({
                       </td>
                       <td className="border-b px-4 py-3 text-right">
                         <div className="inline-flex gap-2">
-                          <Link
-                            href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
-                            className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                          >
-                            Kho
-                          </Link>
+                          {isOwner ? (
+                            <Link
+                              href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
+                              className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                            >
+                              Kho
+                            </Link>
+                          ) : null}
                           {canEditProduct ? (
                             <button
                               type="button"

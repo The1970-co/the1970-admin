@@ -495,6 +495,7 @@ export default function InventoryPageClient() {
 
   const isOwner = role === "admin" || role === "owner";
   const canViewMoney = isOwner;
+  const canViewCostTools = isOwner;
 
   const canViewInventory = hasPermission(role as AppRole, "inventory.view");
   const canViewLogs = hasPermission(role as AppRole, "inventory.logs.view");
@@ -543,6 +544,11 @@ export default function InventoryPageClient() {
   };
 
   const handleAuditFile = async (file: File) => {
+    if (!canViewCostTools) {
+      setActionMessage("Role hiện tại không có quyền đối chiếu SAPO.");
+      return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -616,6 +622,12 @@ export default function InventoryPageClient() {
 
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  useEffect(() => {
+    if (!canViewCostTools && quickFilter === "missing_cost") {
+      setQuickFilter("all");
+    }
+  }, [canViewCostTools, quickFilter]);
 
   const rows = useMemo<InventoryRow[]>(() => {
     return products.flatMap((product) => {
@@ -960,6 +972,8 @@ export default function InventoryPageClient() {
   );
 
   const fillAllSuggestedCosts = () => {
+    if (!canViewCostTools) return;
+
     const source = currentMissingCostRows.length > 0 ? currentMissingCostRows : missingCostRows;
     const next: Record<string, number> = {};
 
@@ -973,6 +987,11 @@ export default function InventoryPageClient() {
   };
 
   const handleUploadStockReport = async (file: File | null) => {
+    if (!canViewCostTools) {
+      setActionMessage("Role hiện tại không có quyền import báo cáo tồn kho.");
+      return;
+    }
+
     if (!file) return;
 
     const ok = window.confirm(
@@ -1007,6 +1026,11 @@ export default function InventoryPageClient() {
   };
 
   const saveMissingCosts = async () => {
+    if (!canViewCostTools) {
+      setActionMessage("Role hiện tại không có quyền cập nhật giá vốn.");
+      return;
+    }
+
     const items = Object.entries(editingCosts)
       .filter(([, costPrice]) => Number(costPrice) > 0)
       .map(([sku, costPrice]) => {
@@ -1046,6 +1070,7 @@ export default function InventoryPageClient() {
   };
 
   const exportMissingCostCSV = () => {
+    if (!canViewCostTools) return;
     if (!lastImportResult?.zeroCostSkus) return;
 
     const csv = lastImportResult.zeroCostSkus
@@ -1061,6 +1086,11 @@ export default function InventoryPageClient() {
     a.click();
   };
   const handleAuditSapoFile = async (file: File | null) => {
+    if (!canViewCostTools) {
+      setActionMessage("Role hiện tại không có quyền đối chiếu SAPO.");
+      return;
+    }
+
     if (!file) return;
 
     try {
@@ -1085,6 +1115,11 @@ export default function InventoryPageClient() {
 
 
   const handleAuditTwoSapoFiles = async () => {
+    if (!canViewCostTools) {
+      setActionMessage("Role hiện tại không có quyền đối chiếu SAPO.");
+      return;
+    }
+
     if (!stockReportAuditFile || !productListAuditFile) {
       setActionMessage("Cần chọn đủ 2 file: Báo cáo tồn kho và Danh sách sản phẩm.");
       return;
@@ -1115,16 +1150,20 @@ export default function InventoryPageClient() {
   ).length;
 
   const inventoryControlCards = [
-    {
-      title: "SKU thiếu giá vốn",
-      status: lockCostBlockingSkuCount > 0 ? "Cần xử lý" : "Đạt",
-      tone: lockCostBlockingSkuCount > 0 ? "red" : "green",
-      value: `${numberFormat(currentMissingCostRows.length)} thiếu / ${numberFormat(lockCostBlockingSkuCount)} có tồn`,
-      desc:
-        lockCostBlockingSkuCount > 0
-          ? "Ưu tiên bổ sung giá vốn cho SKU đang còn tồn để kho và sổ sách không lệch."
-          : "Không có SKU còn tồn bị thiếu giá vốn trong phạm vi hiện tại.",
-    },
+    ...(canViewCostTools
+      ? [
+          {
+            title: "SKU thiếu giá vốn",
+            status: lockCostBlockingSkuCount > 0 ? "Cần xử lý" : "Đạt",
+            tone: lockCostBlockingSkuCount > 0 ? "red" : "green",
+            value: `${numberFormat(currentMissingCostRows.length)} thiếu / ${numberFormat(lockCostBlockingSkuCount)} có tồn`,
+            desc:
+              lockCostBlockingSkuCount > 0
+                ? "Ưu tiên bổ sung giá vốn cho SKU đang còn tồn để kho và sổ sách không lệch."
+                : "Không có SKU còn tồn bị thiếu giá vốn trong phạm vi hiện tại.",
+          },
+        ]
+      : []),
     {
       title: "Tồn bán được",
       status: "Đã có nền",
@@ -1139,15 +1178,19 @@ export default function InventoryPageClient() {
       value: "Nhập / xuất / chỉnh tồn",
       desc: "Theo dõi mọi biến động kho: nhập, xuất, chuyển kho, kiểm kho và điều chỉnh.",
     },
-    {
-      title: "Đối chiếu SAPO",
-      status: twoFileAuditResult ? "Đang có dữ liệu" : "Chờ đối chiếu",
-      tone: twoFileAuditResult ? "green" : "gray",
-      value: twoFileAuditResult
-        ? currency(twoFileAuditResult.total.diff)
-        : "Upload 2 file",
-      desc: "So sánh báo cáo tồn kho và danh sách sản phẩm để bóc lệch giá vốn, số lượng và SKU.",
-    },
+    ...(canViewCostTools
+      ? [
+          {
+            title: "Đối chiếu SAPO",
+            status: twoFileAuditResult ? "Đang có dữ liệu" : "Chờ đối chiếu",
+            tone: twoFileAuditResult ? "green" : "gray",
+            value: twoFileAuditResult
+              ? currency(twoFileAuditResult.total.diff)
+              : "Upload 2 file",
+            desc: "So sánh báo cáo tồn kho và danh sách sản phẩm để bóc lệch giá vốn, số lượng và SKU.",
+          },
+        ]
+      : []),
   ] as const;
 
   const handleControlCenterCardClick = (title: string) => {
@@ -1228,13 +1271,17 @@ export default function InventoryPageClient() {
             <Button href="/control/inventory-logs">Lịch sử kho</Button>
           ) : null}
 
-          <Button href="/products/missing-cost">SKU thiếu giá vốn</Button>
-          <button
-            className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-100"
-            onClick={() => setShowAuditModal(true)}
-          >
-            Đối chiếu SAPO
-          </button>
+          {canViewCostTools ? (
+            <>
+              <Button href="/products/missing-cost">SKU thiếu giá vốn</Button>
+              <button
+                className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-100"
+                onClick={() => setShowAuditModal(true)}
+              >
+                Đối chiếu SAPO
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -1247,11 +1294,15 @@ export default function InventoryPageClient() {
                 Giá trị tồn, SKU, tồn thấp và giá trị theo từng chi nhánh.
               </p>
             </div>
-            <Badge tone={lockCostBlockingSkuCount > 0 ? "red" : "green"}>
-              {lockCostBlockingSkuCount > 0
-                ? `${numberFormat(lockCostBlockingSkuCount)} SKU cần xử lý`
-                : "Giá vốn OK"}
-            </Badge>
+            {canViewCostTools ? (
+              <Badge tone={lockCostBlockingSkuCount > 0 ? "red" : "green"}>
+                {lockCostBlockingSkuCount > 0
+                  ? `${numberFormat(lockCostBlockingSkuCount)} SKU cần xử lý`
+                  : "Giá vốn OK"}
+              </Badge>
+            ) : (
+              <Badge tone="blue">Theo chi nhánh</Badge>
+            )}
           </div>
         </div>
 
@@ -1568,7 +1619,7 @@ export default function InventoryPageClient() {
           <div className="flex flex-wrap gap-2">
             {[
               ["all", "Tất cả"],
-              ["missing_cost", "Thiếu giá vốn"],
+              ...(canViewCostTools ? [["missing_cost", "Thiếu giá vốn"]] : []),
               ["in_stock", "Còn tồn"],
               ["low_stock", "Tồn thấp"],
               ["out_stock", "Hết hàng"],
