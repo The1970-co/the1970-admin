@@ -65,3 +65,23 @@ export function clearCurrentUserFromStorage() {
 export function isOwnerUser(user?: any) {
   return user?.role === "owner" || user?.role === "admin";
 }
+
+export function getCurrentUserPermissions(user?: any): string[] {
+  const source = user || getCurrentUserFromStorage();
+  if (!source) return [];
+
+  const keys: string[] = [];
+
+  if (Array.isArray(source.permissions)) keys.push(...source.permissions);
+  if (Array.isArray(source.permissionKeys)) keys.push(...source.permissionKeys);
+
+  const branchPermissions = Array.isArray(source.branchPermissions)
+    ? source.branchPermissions
+    : [];
+
+  for (const row of branchPermissions) {
+    if (Array.isArray(row?.permissionKeys)) keys.push(...row.permissionKeys);
+  }
+
+  return Array.from(new Set(keys.map((key) => String(key || "").trim()).filter(Boolean)));
+}

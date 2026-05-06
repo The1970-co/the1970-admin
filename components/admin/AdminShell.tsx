@@ -10,6 +10,7 @@ import { getRoleLabel, hasPermission, type PermissionKey } from "@/lib/authz";
 import {
   clearCurrentUserFromStorage,
   getCurrentUserFromStorage,
+  setCurrentUserToStorage,
 } from "@/lib/current-user";
 
 type MenuItem = {
@@ -44,7 +45,7 @@ const MENU: MenuItem[] = [
     permission: "products.view",
     children: [
       { href: "/products", label: "Danh sách", permission: "products.view" },
-      { href: "/promotions", label: "Khuyến mại", permission: "products.view" },
+      { href: "/promotions", label: "Khuyến mại", permission: "promotions.view" },
       // Danh mục / nhà cung cấp là cấu hình dữ liệu gốc, chỉ admin/owner thấy.
       {
         href: "/control/product-categories",
@@ -63,22 +64,22 @@ const MENU: MenuItem[] = [
     permission: "inventory.view",
     children: [
       // Kho hàng tổng / lịch sử kho là màn nhạy cảm, chỉ admin/owner thấy.
-      { href: "/inventory", label: "Kho hàng", permission: "system.manage" },
+      { href: "/inventory", label: "Kho hàng", permission: "inventory.view" },
       {
         href: "/inventory-logs",
         label: "Lịch sử kho",
-        permission: "system.manage",
+        permission: "inventory.logs.view",
       },
       // Phiếu nhập và phiếu chuyển kho chuyển về đúng nhóm Kho.
       {
         href: "/control/purchase-receipts",
         label: "Phiếu nhập",
-        permission: "inventory.view",
+        permission: "purchase_receipt.view",
       },
       {
         href: "/control/stock-transfers",
         label: "Phiếu chuyển kho",
-        permission: "inventory.view",
+        permission: "stock_transfer.view",
       },
       { href: "/stocktake", label: "Kiểm kho", permission: "stocktake.view" },
       {
@@ -295,85 +296,18 @@ function hasAnyBranchPermission(
 }
 
 function canSeePermission(user: any, permission: PermissionKey) {
-  if (!user?.role) return false;
-  if (isOwnerOrAdmin(user)) return true;
-
-  // Các nhóm quản trị / tài chính / cấu hình chỉ owner-admin thấy.
-  if (permission === "system.manage" || permission === "reports.view") {
-    return false;
-  }
-
-  if (permission === "dashboard.view") {
-    return hasPermission(user.role, permission);
-  }
-
-  if (permission === "products.view") {
-    // Sản phẩm phải ăn theo tick "Xem sản phẩm" thật từ branchPermissions.
-    // Không fallback theo roleCode, tránh việc gán role là tự thấy sản phẩm dù role template đã bỏ quyền xem.
-    return hasExplicitBranchPermission(user, ["canView"]);
-  }
-
-  if (permission === "orders.view") {
-    return hasAnyBranchPermission(user, [
-      "canSell",
-      "canCreateOrder",
-      "canViewOwnOrders",
-      "canViewBranchOrders",
-      "canHandleReturn",
-    ]);
-  }
-
-  if (permission === "orders.create") {
-    return hasAnyBranchPermission(user, ["canSell", "canCreateOrder"]);
-  }
-
-  if (permission === "inventory.view") {
-    return hasAnyBranchPermission(user, [
-      "canViewStock",
-      "canManageStock",
-      "canStocktake",
-      "canTransferStock",
-      "canReceiveStock",
-    ]);
-  }
-
-  if (permission === "stocktake.view") {
-    return hasAnyBranchPermission(user, ["canStocktake"]);
-  }
-
-  if (permission === "customers.view") {
-    return false;
-  }
-
-  // Các quyền cũ vẫn fallback theo role để không phá trang admin khác.
-  return hasPermission(user.role, permission);
+  if (!user) return false;
+  return hasPermission(user, permission);
 }
 
 function canSeeMenuItem(user: any, item: MenuItem) {
-  // Route cụ thể đọc trực tiếp branch permission để menu phản ánh đúng phân quyền mới.
-  if (item.href === "/control/purchase-receipts") {
-    return hasAnyBranchPermission(user, ["canReceiveStock"]);
-  }
-
-  if (item.href === "/control/stock-transfers") {
-    return hasAnyBranchPermission(user, ["canTransferStock"]);
-  }
-
-  if (item.href === "/stocktake") {
-    return hasAnyBranchPermission(user, ["canStocktake"]);
-  }
-
-  // Kho hàng tổng / lịch sử kho / sơ đồ kho / tài chính / cấu hình chỉ admin-owner.
+  // Các route cấu hình/master data vẫn khóa owner/admin để tránh nhân viên mò vào màn nhạy cảm.
   if (
-    item.href === "/inventory" ||
-    item.href === "/inventory-logs" ||
-    item.href === "/control/warehouse-map" ||
-    item.href?.startsWith("/finance") ||
     item.href === "/control/product-categories" ||
     item.href === "/control/suppliers" ||
     item.href === "/settings" ||
     item.href === "/permissions" ||
-    item.href === "/control/customers"
+    item.href?.startsWith("/finance")
   ) {
     return isOwnerOrAdmin(user);
   }
@@ -468,6 +402,7 @@ export default function AdminShell({
         if (!nextUser) return;
 
         setCurrentUser(nextUser);
+        setCurrentUserToStorage(nextUser);
 
         try {
           localStorage.setItem("currentUser", JSON.stringify(nextUser));

@@ -67,12 +67,15 @@ type BranchPermission = {
   canExportOrderExcel?: boolean;
   canExportInventoryExcel?: boolean;
   canExportCustomerExcel?: boolean;
+  canViewReport?: boolean;
+  canViewMoney?: boolean;
+  permissionKeys?: string[];
   note?: string | null;
 };
 
 type BranchPermissionKey = Exclude<
   keyof BranchPermission,
-  "id" | "staffId" | "branchId" | "note"
+  "id" | "staffId" | "branchId" | "permissionKeys" | "note"
 >;
 
 type BranchRoleItem = {
@@ -287,6 +290,124 @@ const permissionToBranchKey: Record<string, BranchPermissionKey> = {
   "Tạo khách hàng": "canEditCustomer",
 };
 
+
+const permissionLabelToKey: Record<string, string> = {
+  "Xem sản phẩm": "products.view",
+  "Tạo sản phẩm": "products.create",
+  "Sửa sản phẩm": "products.edit",
+  "Xóa sản phẩm": "products.delete",
+  "Sửa giá bán": "products.price.edit",
+  "Xuất file sản phẩm": "products.excel.export",
+  "Nhập file sản phẩm": "products.excel.import",
+
+  "Xem tồn kho": "inventory.view",
+  "Quản kho": "inventory.manage",
+  "Xem lịch sử kho": "inventory.logs.view",
+  "Xem giá trị tồn kho": "inventory.value.view",
+
+  "Xem đơn nhập": "purchase_receipt.view",
+  "Tạo đơn nhập": "purchase_receipt.create",
+  "Sửa đơn nhập": "purchase_receipt.edit",
+  "Thanh toán đơn nhập": "purchase_receipt.pay",
+  "Hoàn trả đơn nhập": "purchase_receipt.return",
+  "Nhận hàng vào kho": "purchase_receipt.receive",
+  "Kết thúc đơn nhập": "purchase_receipt.close",
+  "Hủy đơn nhập": "purchase_receipt.cancel",
+  "Xuất file đơn nhập": "purchase_receipt.excel.export",
+  "Nhập file đơn nhập": "purchase_receipt.excel.import",
+
+  "Xem phiếu chuyển": "stock_transfer.view",
+  "Tạo phiếu chuyển": "stock_transfer.create",
+  "Sửa phiếu chuyển": "stock_transfer.edit",
+  "Xác nhận chuyển": "stock_transfer.confirm",
+  "Hủy phiếu chuyển": "stock_transfer.cancel",
+  "Xuất file phiếu chuyển": "stock_transfer.excel.export",
+  "Nhập file phiếu chuyển": "stock_transfer.excel.import",
+
+  "Xem phiếu kiểm hàng": "stocktake.view",
+  "Tạo phiếu kiểm hàng": "stocktake.create",
+  "Sửa phiếu kiểm hàng": "stocktake.edit",
+  "Xác nhận phiếu kiểm hàng": "stocktake.confirm",
+  "Hủy phiếu kiểm hàng": "stocktake.cancel",
+  "Xóa phiếu kiểm hàng": "stocktake.delete",
+  "Cân bằng kho": "stocktake.apply",
+  "Xuất file phiếu kiểm hàng": "stocktake.excel.export",
+  "Nhập file phiếu kiểm hàng": "stocktake.excel.import",
+
+  "Bán hàng / POS": "pos.access",
+  "Xem đơn hàng được phụ trách": "orders.view_own",
+  "Xem tất cả đơn hàng": "orders.view",
+  "Tạo đơn hàng": "orders.create",
+  "Sửa đơn hàng": "orders.edit",
+  "Duyệt đơn hàng": "orders.approve",
+  "Hủy đơn hàng": "orders.cancel",
+  "Đóng gói và giao hàng": "orders.pack_ship",
+  "Thanh toán đơn hàng": "orders.pay",
+  "Xuất file đơn hàng": "orders.excel.export",
+  "Nhập file đơn hàng": "orders.excel.import",
+
+  "Xem đơn trả hàng": "returns.view",
+  "Tạo đơn trả hàng": "returns.create",
+  "Hủy đơn trả hàng": "returns.cancel",
+  "Thanh toán đơn trả": "returns.pay",
+  "Xuất file đơn trả hàng": "returns.excel.export",
+
+  "Xem khách hàng được phụ trách": "customers.view_own",
+  "Xem tất cả khách hàng": "customers.view",
+  "Tạo khách hàng": "customers.create",
+  "Sửa khách hàng": "customers.edit",
+  "Xóa khách hàng": "customers.delete",
+  "Xuất file khách hàng": "customers.excel.export",
+  "Nhập file khách hàng": "customers.excel.import",
+
+  "Xem phiếu thu": "payment_receipt.view",
+  "Tạo phiếu thu": "payment_receipt.create",
+  "Sửa phiếu thu": "payment_receipt.edit",
+  "Hủy phiếu thu": "payment_receipt.cancel",
+  "Xem phiếu chi": "payment_expense.view",
+  "Tạo phiếu chi": "payment_expense.create",
+  "Sửa phiếu chi": "payment_expense.edit",
+  "Hủy phiếu chi": "payment_expense.cancel",
+
+  "Báo cáo bán hàng": "reports.sales.view",
+  "Báo cáo nhập hàng": "reports.purchase.view",
+  "Báo cáo kho": "reports.inventory.view",
+  "Báo cáo lãi lỗ": "reports.profit.view",
+  "Báo cáo khách hàng": "reports.customers.view",
+  "Báo cáo công nợ khách hàng/nhà cung cấp": "reports.debt.view",
+  "Sổ quỹ": "reports.cashbook.view",
+
+  "Xem khuyến mãi": "promotions.view",
+  "Tạo khuyến mãi": "promotions.create",
+  "Sửa khuyến mãi": "promotions.edit",
+  "Kích hoạt khuyến mãi": "promotions.activate",
+  "Tạm dừng khuyến mãi": "promotions.pause",
+  "Xóa khuyến mãi": "promotions.delete",
+
+  "Tải Excel sản phẩm": "products.excel.export",
+  "Nhập Excel sản phẩm": "products.excel.import",
+  "Tải Excel đơn hàng": "orders.excel.export",
+  "Tải Excel tồn kho": "inventory.excel.export",
+  "Tải Excel khách hàng": "customers.excel.export",
+  "Quản lý phân quyền": "permissions.view",
+  "Cấu hình hệ thống": "system.manage",
+};
+
+function fallbackPermissionKey(groupKey: PermissionGroupKey, permissionName: string) {
+  return `${groupKey}.${permissionName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")}`;
+}
+
+function getPermissionKey(groupKey: PermissionGroupKey, permissionName: string) {
+  return permissionLabelToKey[permissionName] || fallbackPermissionKey(groupKey, permissionName);
+}
+
 const branchPermissionGroups: {
   id: PermissionGroupKey;
   title: string;
@@ -294,80 +415,81 @@ const branchPermissionGroups: {
   tone: "blue" | "green" | "amber" | "gray" | "purple";
   permissions: { key: BranchPermissionKey; label: string; hint?: string }[];
 }[] = [
-  {
-    id: "products",
-    title: "Sản phẩm / Dữ liệu",
-    desc: "Xem dữ liệu sản phẩm và dữ liệu vận hành cơ bản tại chi nhánh.",
-    tone: "blue",
-    permissions: [{ key: "canView", label: "Xem sản phẩm" }],
-  },
-  {
-    id: "orders",
-    title: "Đơn hàng / POS",
-    desc: "Bán tại quầy, giới hạn xem đơn theo mình/chi nhánh, duyệt/hủy và đổi trả.",
-    tone: "green",
-    permissions: [
-      { key: "canSell", label: "Bán hàng / POS" },
-      {
-        key: "canViewOwnOrders",
-        label: "Xem đơn của mình",
-        hint: "Chỉ thấy đơn do chính nhân viên này tạo.",
-      },
-      {
-        key: "canViewBranchOrders",
-        label: "Xem đơn chi nhánh",
-        hint: "Thấy đơn của chi nhánh được cấp quyền.",
-      },
-      { key: "canCreateOrder", label: "Tạo đơn hàng" },
-      { key: "canApproveOrder", label: "Duyệt đơn hàng" },
-      { key: "canCancelOrder", label: "Hủy đơn hàng" },
-      { key: "canHandleReturn", label: "Đổi trả hàng" },
-    ],
-  },
-  {
-    id: "inventory",
-    title: "Kho / Kiểm kho",
-    desc: "Xem tồn, quản kho, kiểm kho, chuyển và nhận hàng.",
-    tone: "amber",
-    permissions: [
-      { key: "canViewStock", label: "Xem tồn kho" },
-      { key: "canManageStock", label: "Quản kho" },
-      { key: "canStocktake", label: "Kiểm kho" },
-      { key: "canTransferStock", label: "Chuyển kho" },
-      { key: "canReceiveStock", label: "Nhận kho" },
-    ],
-  },
-  {
-    id: "customers",
-    title: "Khách hàng",
-    desc: "Xem và cập nhật thông tin khách hàng tại chi nhánh.",
-    tone: "gray",
-    permissions: [
-      { key: "canViewCustomer", label: "Xem khách hàng" },
-      { key: "canEditCustomer", label: "Sửa khách hàng" },
-    ],
-  },
-  {
-    id: "excel",
-    title: "Excel / Tải dữ liệu",
-    desc: "Cho phép tải xuống hoặc nhập dữ liệu bằng Excel.",
-    tone: "purple",
-    permissions: [
-      { key: "canExportProductExcel", label: "Tải Excel sản phẩm" },
-      { key: "canImportProductExcel", label: "Nhập Excel sản phẩm" },
-      { key: "canExportOrderExcel", label: "Tải Excel đơn hàng" },
-      { key: "canExportInventoryExcel", label: "Tải Excel tồn kho" },
-      { key: "canExportCustomerExcel", label: "Tải Excel khách hàng" },
-    ],
-  },
-];
+    {
+      id: "products",
+      title: "Sản phẩm / Dữ liệu",
+      desc: "Xem dữ liệu sản phẩm và dữ liệu vận hành cơ bản tại chi nhánh.",
+      tone: "blue",
+      permissions: [{ key: "canView", label: "Xem sản phẩm" }],
+    },
+    {
+      id: "orders",
+      title: "Đơn hàng / POS",
+      desc: "Bán tại quầy, giới hạn xem đơn theo mình/chi nhánh, duyệt/hủy và đổi trả.",
+      tone: "green",
+      permissions: [
+        { key: "canSell", label: "Bán hàng / POS" },
+        {
+          key: "canViewOwnOrders",
+          label: "Xem đơn của mình",
+          hint: "Chỉ thấy đơn do chính nhân viên này tạo.",
+        },
+        {
+          key: "canViewBranchOrders",
+          label: "Xem đơn chi nhánh",
+          hint: "Thấy đơn của chi nhánh được cấp quyền.",
+        },
+        { key: "canCreateOrder", label: "Tạo đơn hàng" },
+        { key: "canApproveOrder", label: "Duyệt đơn hàng" },
+        { key: "canCancelOrder", label: "Hủy đơn hàng" },
+        { key: "canHandleReturn", label: "Đổi trả hàng" },
+      ],
+    },
+    {
+      id: "inventory",
+      title: "Kho / Kiểm kho",
+      desc: "Xem tồn, quản kho, kiểm kho, chuyển và nhận hàng.",
+      tone: "amber",
+      permissions: [
+        { key: "canViewStock", label: "Xem tồn kho" },
+        { key: "canManageStock", label: "Quản kho" },
+        { key: "canStocktake", label: "Kiểm kho" },
+        { key: "canTransferStock", label: "Chuyển kho" },
+        { key: "canReceiveStock", label: "Nhận kho" },
+      ],
+    },
+    {
+      id: "customers",
+      title: "Khách hàng",
+      desc: "Xem và cập nhật thông tin khách hàng tại chi nhánh.",
+      tone: "gray",
+      permissions: [
+        { key: "canViewCustomer", label: "Xem khách hàng" },
+        { key: "canEditCustomer", label: "Sửa khách hàng" },
+      ],
+    },
+    {
+      id: "excel",
+      title: "Excel / Tải dữ liệu",
+      desc: "Cho phép tải xuống hoặc nhập dữ liệu bằng Excel.",
+      tone: "purple",
+      permissions: [
+        { key: "canExportProductExcel", label: "Tải Excel sản phẩm" },
+        { key: "canImportProductExcel", label: "Nhập Excel sản phẩm" },
+        { key: "canExportOrderExcel", label: "Tải Excel đơn hàng" },
+        { key: "canExportInventoryExcel", label: "Tải Excel tồn kho" },
+        { key: "canExportCustomerExcel", label: "Tải Excel khách hàng" },
+      ],
+    },
+  ];
 
 const branchPermissionColumns = branchPermissionGroups.flatMap(
   (group) => group.permissions,
 );
 
 const rolesSeed: RoleItem[] = [
-  { id: "owner", name: "Owner", scope: "ALL_BRANCHES", description: "Toàn quyền hệ thống.", createdAt: "07/08/2025", updatedAt: "02/05/2026", note: "Owner", permissions: {
+  {
+    id: "owner", name: "Owner", scope: "ALL_BRANCHES", description: "Toàn quyền hệ thống.", createdAt: "07/08/2025", updatedAt: "02/05/2026", note: "Owner", permissions: {
       products: [...permissionGroupMeta.products.allPermissions],
       inventory: [...permissionGroupMeta.inventory.allPermissions],
       purchaseOrders: [...permissionGroupMeta.purchaseOrders.allPermissions],
@@ -392,8 +514,10 @@ const rolesSeed: RoleItem[] = [
       excel: [...permissionGroupMeta.excel.allPermissions],
       system: [...permissionGroupMeta.system.allPermissions],
       others: [...permissionGroupMeta.others.allPermissions]
-    } },
-  { id: "branch-manager", name: "Quản lý chi nhánh", scope: "ONE_BRANCH", description: "Quản lý vận hành của một chi nhánh, không thấy toàn hệ thống.", createdAt: "08/08/2025", updatedAt: "02/05/2026", note: "Theo chi nhánh", permissions: {
+    }
+  },
+  {
+    id: "branch-manager", name: "Quản lý chi nhánh", scope: "ONE_BRANCH", description: "Quản lý vận hành của một chi nhánh, không thấy toàn hệ thống.", createdAt: "08/08/2025", updatedAt: "02/05/2026", note: "Theo chi nhánh", permissions: {
       products: [...permissionGroupMeta.products.allPermissions],
       inventory: [...permissionGroupMeta.inventory.allPermissions],
       purchaseOrders: [...permissionGroupMeta.purchaseOrders.allPermissions],
@@ -418,8 +542,10 @@ const rolesSeed: RoleItem[] = [
       excel: [...permissionGroupMeta.excel.allPermissions],
       system: [...permissionGroupMeta.system.allPermissions],
       others: [...permissionGroupMeta.others.allPermissions]
-    } },
-  { id: "fulltime", name: "Nhân viên fulltime", scope: "ONE_BRANCH", description: "Vận hành mạnh hơn bán lẻ, xử lý đơn và thao tác kho cơ bản.", createdAt: "07/08/2025", updatedAt: "02/05/2026", note: "Không xem báo cáo", permissions: {
+    }
+  },
+  {
+    id: "fulltime", name: "Nhân viên fulltime", scope: "ONE_BRANCH", description: "Vận hành mạnh hơn bán lẻ, xử lý đơn và thao tác kho cơ bản.", createdAt: "07/08/2025", updatedAt: "02/05/2026", note: "Không xem báo cáo", permissions: {
       products: ["Xem sản phẩm"],
       inventory: ["Xem tồn kho"],
       purchaseOrders: [],
@@ -444,8 +570,10 @@ const rolesSeed: RoleItem[] = [
       excel: [],
       system: [],
       others: []
-    } },
-  { id: "retail-staff", name: "Nhân viên bán lẻ", scope: "ONE_BRANCH", description: "Bán hàng tại quầy, xử lý đơn cơ bản theo chuẩn Sapo.", createdAt: "05/12/2025", updatedAt: "02/05/2026", note: "POS + đơn cơ bản", permissions: {
+    }
+  },
+  {
+    id: "retail-staff", name: "Nhân viên bán lẻ", scope: "ONE_BRANCH", description: "Bán hàng tại quầy, xử lý đơn cơ bản theo chuẩn Sapo.", createdAt: "05/12/2025", updatedAt: "02/05/2026", note: "POS + đơn cơ bản", permissions: {
       products: ["Xem sản phẩm"],
       inventory: ["Xem tồn kho"],
       purchaseOrders: [],
@@ -470,8 +598,10 @@ const rolesSeed: RoleItem[] = [
       excel: [],
       system: [],
       others: []
-    } },
-  { id: "stock-auditor", name: "Nhân viên kiểm kho", scope: "ONE_BRANCH", description: "Tập trung kiểm kho và đối chiếu tồn.", createdAt: "18/03/2026", updatedAt: "02/05/2026", note: "Không xử lý đơn bán", permissions: {
+    }
+  },
+  {
+    id: "stock-auditor", name: "Nhân viên kiểm kho", scope: "ONE_BRANCH", description: "Tập trung kiểm kho và đối chiếu tồn.", createdAt: "18/03/2026", updatedAt: "02/05/2026", note: "Không xử lý đơn bán", permissions: {
       products: ["Xem sản phẩm"],
       inventory: ["Xem tồn kho"],
       purchaseOrders: [],
@@ -496,8 +626,10 @@ const rolesSeed: RoleItem[] = [
       excel: [],
       system: [],
       others: []
-    } },
-  { id: "stock-staff", name: "Nhân viên kho", scope: "ONE_BRANCH", description: "Xử lý kho, chuyển hàng và nhận hàng theo phân quyền chi nhánh.", createdAt: "02/05/2026", updatedAt: "02/05/2026", note: "Kho vận hành", permissions: {
+    }
+  },
+  {
+    id: "stock-staff", name: "Nhân viên kho", scope: "ONE_BRANCH", description: "Xử lý kho, chuyển hàng và nhận hàng theo phân quyền chi nhánh.", createdAt: "02/05/2026", updatedAt: "02/05/2026", note: "Kho vận hành", permissions: {
       products: ["Xem sản phẩm"],
       inventory: ["Xem tồn kho"],
       purchaseOrders: [],
@@ -522,7 +654,8 @@ const rolesSeed: RoleItem[] = [
       excel: [],
       system: [],
       others: []
-    } },
+    }
+  },
 ];
 
 const MANAGEMENT_ROLE_IDS = new Set(["owner", "admin", "branch-manager"]);
@@ -651,11 +784,11 @@ function getBranchShortCode(branches: BranchItem[], branchId?: string | null) {
   const branch = branches.find((item) => item.id === branchId) as any;
   const raw = String(
     branch?.code ||
-      branch?.shortCode ||
-      branch?.name ||
-      branch?.id ||
-      branchId ||
-      "",
+    branch?.shortCode ||
+    branch?.name ||
+    branch?.id ||
+    branchId ||
+    "",
   )
     .trim()
     .toUpperCase();
@@ -730,14 +863,17 @@ function defaultBranchPermission(branchId: string): BranchPermission {
     canExportOrderExcel: false,
     canExportInventoryExcel: false,
     canExportCustomerExcel: false,
+    canViewReport: false,
+    canViewMoney: false,
+    permissionKeys: [],
   };
 }
 
 function normalizeStaffRoles(item: any): string[] {
   const relationRoles = Array.isArray(item.roles)
     ? item.roles
-        .map((r: any) => String(r.roleCode || r).toLowerCase())
-        .filter(Boolean)
+      .map((r: any) => String(r.roleCode || r).toLowerCase())
+      .filter(Boolean)
     : [];
   const legacyRole = item.role ? [String(item.role).toLowerCase()] : [];
   return Array.from(new Set([...relationRoles, ...legacyRole]));
@@ -844,15 +980,22 @@ function applySmartDependencies(
 
 function roleToBranchPermission(role: RoleItem, branchId: string) {
   let row = defaultBranchPermission(branchId);
+  const permissionKeys: string[] = [];
+
   (Object.keys(permissionGroupMeta) as PermissionGroupKey[]).forEach(
     (groupKey) => {
       role.permissions[groupKey].forEach((permissionName) => {
+        permissionKeys.push(getPermissionKey(groupKey, permissionName));
         const key = permissionToBranchKey[permissionName];
         if (key) row = applySmartDependencies(row, key, true);
       });
     },
   );
-  return row;
+
+  return {
+    ...row,
+    permissionKeys: Array.from(new Set(permissionKeys)),
+  };
 }
 
 function rolesToBranchPermission(
@@ -996,11 +1139,10 @@ function RolePermissionPreview({ row }: { row: BranchPermission }) {
                   return (
                     <div
                       key={permission.key}
-                      className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm ${
-                        checked
+                      className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm ${checked
                           ? "border-blue-200 bg-blue-50 text-neutral-900"
                           : "border-neutral-200 bg-white text-neutral-400"
-                      }`}
+                        }`}
                     >
                       <span>{permission.label}</span>
                       <span
@@ -1078,6 +1220,9 @@ export default function PermissionsPageClient() {
   const [togglingEmployeeForId, setTogglingEmployeeForId] = useState<
     string | null
   >(null);
+  const [deletingEmployeeForId, setDeletingEmployeeForId] = useState<
+    string | null
+  >(null);
   const [editName, setEditName] = useState("");
   const [editCode, setEditCode] = useState("");
   const [editUsername, setEditUsername] = useState("");
@@ -1108,16 +1253,6 @@ export default function PermissionsPageClient() {
     () => roleSummary(selectedRole),
     [selectedRole],
   );
-  const roleEmployees = useMemo(
-    () =>
-      employees.filter(
-        (employee) =>
-          employee.roles.includes(selectedRoleId) ||
-          employee.roleId === selectedRoleId,
-      ),
-    [employees, selectedRoleId],
-  );
-
   const totalWorking = employees.filter((e) => e.status === "ACTIVE").length;
   const totalInactive = employees.filter((e) => e.status === "INACTIVE").length;
   const branchRoles = roles.filter(
@@ -1178,7 +1313,37 @@ export default function PermissionsPageClient() {
       branchPermissions: Array.isArray(item.branchPermissions)
         ? item.branchPermissions
         : [],
-      branchRoles: Array.isArray(item.branchRoles) ? item.branchRoles : [],
+      branchRoles:
+        Array.isArray(item.branchRoles) && item.branchRoles.length
+          ? item.branchRoles
+          : Array.isArray(item.branchPermissions)
+            ? item.branchPermissions
+              .filter((p: any) => p?.branchId)
+              .map((p: any) => ({
+                branchId: p.branchId,
+                roleCode:
+                  String(
+                    item.role ??
+                    item.roleId ??
+                    normalizedRoles[0] ??
+                    "retail-staff",
+                  ).toLowerCase(),
+                branch: p.branch ?? null,
+              }))
+            : item.branchId
+              ? [
+                {
+                  branchId: item.branchId,
+                  roleCode:
+                    String(
+                      item.role ??
+                      item.roleId ??
+                      normalizedRoles[0] ??
+                      "retail-staff",
+                    ).toLowerCase(),
+                },
+              ]
+              : [],
       status: item.isActive ? "ACTIVE" : "INACTIVE",
       lastLoginAt: item.lastLoginAt ?? null,
     };
@@ -1228,11 +1393,11 @@ export default function PermissionsPageClient() {
     const rawNext = current.includes(roleId)
       ? current.filter((item) => item !== roleId)
       : [
-          ...(isExclusiveRole(roleId)
-            ? []
-            : current.filter((item) => !isExclusiveRole(item))),
-          roleId,
-        ];
+        ...(isExclusiveRole(roleId)
+          ? []
+          : current.filter((item) => !isExclusiveRole(item))),
+        roleId,
+      ];
     const next = normalizeSelectedRoles(rawNext);
     setter(next.length ? next : ["retail-staff"]);
   };
@@ -1410,6 +1575,42 @@ export default function PermissionsPageClient() {
       );
     } finally {
       setTogglingEmployeeForId(null);
+    }
+  };
+
+
+  const deleteEmployee = async (employeeId: string) => {
+    if (deletingEmployeeForId) return;
+    const current = employees.find((employee) => employee.id === employeeId);
+    const label = current?.name || current?.code || "nhân viên này";
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Xoá ${label}? Thao tác này sẽ xoá nhân viên khỏi hệ thống.`,
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      setDeletingEmployeeForId(employeeId);
+      setMessage("Đang xoá nhân viên...");
+      await apiJson(`/staff/${employeeId}`, {
+        method: "DELETE",
+      });
+      await loadEmployees();
+      setProfileEmployeeId((currentId) =>
+        currentId === employeeId ? null : currentId,
+      );
+      setPermissionEmployeeId((currentId) =>
+        currentId === employeeId ? null : currentId,
+      );
+      setMessage("Đã xoá nhân viên.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Xoá nhân viên thất bại.",
+      );
+    } finally {
+      setDeletingEmployeeForId(null);
     }
   };
 
@@ -1608,11 +1809,10 @@ export default function PermissionsPageClient() {
             type="button"
             key={role.id}
             onClick={() => toggleRoleId(role.id, value, onChange)}
-            className={`rounded-2xl border px-3 py-2 text-sm transition ${
-              active
+            className={`rounded-2xl border px-3 py-2 text-sm transition ${active
                 ? "border-neutral-900 bg-neutral-900 text-white"
                 : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
-            }`}
+              }`}
           >
             {role.name}
             {active ? (
@@ -1652,11 +1852,10 @@ export default function PermissionsPageClient() {
                   : [...value, branch.id],
               )
             }
-            className={`rounded-3xl border p-4 text-left transition ${
-              active
+            className={`rounded-3xl border p-4 text-left transition ${active
                 ? "border-blue-200 bg-blue-50 text-neutral-900"
                 : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
-            }`}
+              }`}
           >
             <div className="flex items-center justify-between gap-3">
               <span className="font-semibold">{branch.name}</span>
@@ -1802,11 +2001,10 @@ export default function PermissionsPageClient() {
         return (
           <div
             key={branch.id}
-            className={`rounded-3xl border p-4 transition ${
-              roleCode
+            className={`rounded-3xl border p-4 transition ${roleCode
                 ? "border-blue-200 bg-blue-50/40"
                 : "border-neutral-200 bg-white"
-            }`}
+              }`}
           >
             <div className="grid gap-3 md:grid-cols-[1fr_260px_140px] md:items-center">
               <div>
@@ -2013,495 +2211,506 @@ export default function PermissionsPageClient() {
       ) : null}
 
       {activeTab === "staff" ? (
-      <Panel>
-        <div className="p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-xl font-semibold text-neutral-900">
-                Tạo nhân viên mới
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Nhập thông tin cơ bản. Chọn vai trò và chi nhánh, hệ thống tự áp
-                mẫu quyền role.
-              </p>
-            </div>
-            <Badge tone="purple">Role template → Staff</Badge>
-          </div>
-          <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr]">
-            <div className="grid grid-cols-[minmax(0,1fr)_92px] gap-2">
-              <input
-                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
-                value={quickName}
-                onChange={(e) =>
-                  setQuickName(normalizeStaffNameBase(e.target.value))
-                }
-                placeholder="Tên nhân viên (VD: MAI)"
-              />
-              <input
-                readOnly
-                className="h-14 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 text-center text-sm font-semibold text-neutral-700 outline-none"
-                value={getBranchShortCode(branches, quickBranchId)}
-                placeholder="CN"
-                title="Mã chi nhánh tự nhảy theo chi nhánh làm việc"
-              />
-            </div>
-            <select
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickCode}
-              onChange={(e) => setQuickCode(e.target.value)}
-            >
-              <option value="">Chọn mã nhân viên theo chuẩn NV</option>
-              {staffCodeOptions.map((code) => (
-                <option key={code} value={code}>
-                  {code} · còn trống
-                </option>
-              ))}
-            </select>
-            <input
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickUsername}
-              onChange={(e) =>
-                setQuickUsername(normalizeUsername(e.target.value))
-              }
-              placeholder="Tên đăng nhập (viết thường)"
-            />
-            <input
-              type="password"
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickPassword}
-              onChange={(e) => setQuickPassword(e.target.value)}
-              placeholder="Mật khẩu"
-            />
-            <input
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickEmail}
-              onChange={(e) => setQuickEmail(e.target.value)}
-              placeholder="Email"
-            />
-            <input
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickPhone}
-              onChange={(e) => setQuickPhone(e.target.value)}
-              placeholder="Số điện thoại"
-            />
-            <input
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickAddress}
-              onChange={(e) => setQuickAddress(e.target.value)}
-              placeholder="Địa chỉ"
-            />
-            <select
-              className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-              value={quickBranchId}
-              onChange={(e) => setQuickBranchId(e.target.value)}
-            >
-              {branches.map((branch) => (
-                <option key={branch.id} value={branch.id}>
-                  {branch.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_auto] xl:items-end">
-            <div>
-              <p className="mb-2 text-sm font-semibold text-neutral-800">
-                Chọn vai trò
-              </p>
-              {renderRolePicker(quickRoleIds, setQuickRoleIds)}
-            </div>
-            <Button
-              onClick={quickAssignUser}
-              className="h-12 min-w-[150px]"
-              isLoading={creatingStaff}
-              loadingText="Đang tạo..."
-            >
-              + Tạo nhân viên
-            </Button>
-          </div>
-        </div>
-      </Panel>
-
-      ) : null}
-
-      {activeTab === "roles" ? (
-      <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <Panel className="overflow-hidden xl:sticky xl:top-4 xl:self-start">
+        <div className="space-y-6">
+        <Panel>
           <div className="p-5">
-            <div className="flex items-center justify-between gap-3">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-semibold text-neutral-900">
-                  Danh sách vai trò
+                  Tạo nhân viên mới
                 </h3>
                 <p className="mt-1 text-sm text-neutral-500">
-                  Click role để chỉnh mẫu quyền và xem nhân viên đang dùng role
-                  đó.
+                  Nhập thông tin cơ bản. Chọn vai trò và chi nhánh, hệ thống tự áp
+                  mẫu quyền role.
                 </p>
               </div>
-              <Badge tone="blue">Role V2</Badge>
+              <Badge tone="purple">Role template → Staff</Badge>
             </div>
-            <div className="mt-5 space-y-2">
-              {roles.map((role) => {
-                const active = selectedRoleId === role.id;
-                const count = getRolePermissionCount(role);
-                return (
-                  <button
-                    type="button"
-                    key={role.id}
-                    onClick={() => setSelectedRoleId(role.id)}
-                    className={`w-full rounded-3xl border p-4 text-left transition ${active ? "border-neutral-900 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"}`}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="text-base font-semibold">
-                          {role.name}
-                        </div>
-                        <p
-                          className={`mt-1 text-sm ${active ? "text-neutral-300" : "text-neutral-500"}`}
-                        >
-                          {role.description}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span
-                          className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-white/20 bg-white/10 text-white" : "border-blue-200 bg-blue-50 text-blue-700"}`}
-                        >
-                          {scopeBadge(role.scope)}
-                        </span>
-                        <span
-                          className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-white/20 bg-white/10 text-white" : "border-green-200 bg-green-50 text-green-700"}`}
-                        >
-                          {count} quyền
-                        </span>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr]">
+              <div className="grid grid-cols-[minmax(0,1fr)_92px] gap-2">
+                <input
+                  className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
+                  value={quickName}
+                  onChange={(e) =>
+                    setQuickName(normalizeStaffNameBase(e.target.value))
+                  }
+                  placeholder="Tên nhân viên (VD: MAI)"
+                />
+                <input
+                  readOnly
+                  className="h-14 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 text-center text-sm font-semibold text-neutral-700 outline-none"
+                  value={getBranchShortCode(branches, quickBranchId)}
+                  placeholder="CN"
+                  title="Mã chi nhánh tự nhảy theo chi nhánh làm việc"
+                />
+              </div>
+              <select
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickCode}
+                onChange={(e) => setQuickCode(e.target.value)}
+              >
+                <option value="">Chọn mã nhân viên theo chuẩn NV</option>
+                {staffCodeOptions.map((code) => (
+                  <option key={code} value={code}>
+                    {code} · còn trống
+                  </option>
+                ))}
+              </select>
+              <input
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickUsername}
+                onChange={(e) =>
+                  setQuickUsername(normalizeUsername(e.target.value))
+                }
+                placeholder="Tên đăng nhập (viết thường)"
+              />
+              <input
+                type="password"
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickPassword}
+                onChange={(e) => setQuickPassword(e.target.value)}
+                placeholder="Mật khẩu"
+              />
+              <input
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickEmail}
+                onChange={(e) => setQuickEmail(e.target.value)}
+                placeholder="Email"
+              />
+              <input
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickPhone}
+                onChange={(e) => setQuickPhone(e.target.value)}
+                placeholder="Số điện thoại"
+              />
+              <input
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickAddress}
+                onChange={(e) => setQuickAddress(e.target.value)}
+                placeholder="Địa chỉ"
+              />
+              <select
+                className="h-14 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={quickBranchId}
+                onChange={(e) => setQuickBranchId(e.target.value)}
+              >
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_auto] xl:items-end">
+              <div>
+                <p className="mb-2 text-sm font-semibold text-neutral-800">
+                  Chọn vai trò
+                </p>
+                {renderRolePicker(quickRoleIds, setQuickRoleIds)}
+              </div>
+              <Button
+                onClick={quickAssignUser}
+                className="h-12 min-w-[150px]"
+                isLoading={creatingStaff}
+                loadingText="Đang tạo..."
+              >
+                + Tạo nhân viên
+              </Button>
             </div>
           </div>
         </Panel>
 
-        <div className="space-y-6">
-          <Panel className="overflow-hidden">
-            <div className="border-b border-neutral-100 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            <Panel className="p-5">
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xl font-semibold text-neutral-900">Quyền của vai trò: {selectedRole.name}</h3>
-                    <Badge tone="blue">{scopeBadge(selectedRole.scope)}</Badge>
-                    <Badge tone="gray">{getRolePermissionCount(selectedRole)} quyền</Badge>
-                  </div>
-                  <p className="mt-1 text-sm text-neutral-500">Bên trái chọn danh mục quyền chính, bên phải tick quyền chi tiết của danh mục đó.</p>
+                  <h3 className="text-xl font-semibold text-neutral-900">
+                    Quản lý nhân viên
+                  </h3>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Quản lý thông tin, vai trò, chi nhánh, PIN, trạng thái và xoá nhân viên.
+                  </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={resetRoleTemplates}>Reset mẫu</Button>
-                  <Button onClick={saveRoleTemplates} disabled={!roleTemplateDirty} isLoading={savingRoleTemplates} loadingText="Đang lưu...">{roleTemplateDirty ? "Lưu mẫu quyền" : "Đã lưu mẫu"}</Button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid min-h-[620px] xl:grid-cols-[310px_minmax(0,1fr)]">
-              <div className="border-r border-neutral-100 bg-neutral-50/50 p-4">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">Danh mục quyền</p>
-                  <Badge tone="gray">{Object.keys(permissionGroupMeta).length}</Badge>
-                </div>
-                <div className="space-y-1.5">
-                  {(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map((key) => {
-                    const meta = permissionGroupMeta[key];
-                    const current = selectedRole.permissions[key] || [];
-                    const active = selectedPermissionGroup === key;
-                    return (
-                      <button key={key} type="button" onClick={() => setSelectedPermissionGroup(key)} className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left text-sm transition ${active ? "border-neutral-900 bg-white text-neutral-950 shadow-sm" : "border-transparent bg-transparent text-neutral-700 hover:border-neutral-200 hover:bg-white"}`}>
-                        <span className="truncate font-medium">{meta.title}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-neutral-900 text-white" : "bg-white text-neutral-500"}`}>{current.length}/{meta.allPermissions.length}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <Badge tone="blue">{employees.length} nhân viên</Badge>
               </div>
 
-              <div className="p-5">
-                {(() => {
-                  const meta = permissionGroupMeta[selectedPermissionGroup];
-                  const currentPermissions = selectedRole.permissions[selectedPermissionGroup] || [];
-                  const allowedPermissions = getAllowedGroupPermissions(selectedRole.id, selectedPermissionGroup);
-                  return (
-                    <div>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
+              <div className="mt-4 space-y-4">
+                {loadingEmployees ? (
+                  <p className="text-sm text-neutral-500">Đang tải nhân sự...</p>
+                ) : employees.length === 0 ? (
+                  <p className="text-sm text-neutral-500">
+                    Chưa có nhân viên.
+                  </p>
+                ) : (
+                  employees.map((employee) => (
+                    <div
+                      key={employee.id}
+                      className="rounded-3xl border border-neutral-200 px-5 py-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="text-2xl font-semibold text-neutral-900">{meta.title}</h4>
-                            <Badge tone={currentPermissions.length ? "green" : "gray"}>{currentPermissions.length}/{meta.allPermissions.length}</Badge>
+                            <span className="text-lg font-medium text-neutral-900">
+                              {employee.name}
+                            </span>
+                            <Badge
+                              tone={
+                                employee.status === "ACTIVE" ? "green" : "gray"
+                              }
+                            >
+                              {employee.status === "ACTIVE"
+                                ? "Đang làm"
+                                : "Đã nghỉ"}
+                            </Badge>
+                            <Badge tone="gray">{employee.code}</Badge>
                           </div>
-                          <p className="mt-1 text-sm text-neutral-500">{meta.desc}</p>
-                          <p className="mt-2 text-xs italic text-neutral-500">{groupPermissionSummary(selectedRole, selectedPermissionGroup)}</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(employee.roles.length
+                              ? employee.roles
+                              : [employee.roleId]
+                            ).map((roleId) => (
+                              <Badge key={roleId} tone="blue">
+                                {roleLabel(roles, roleId)}
+                              </Badge>
+                            ))}
+                          </div>
+                          <p className="mt-2 text-sm text-neutral-500">
+                            Chi nhánh chính: {employee.branch}
+                          </p>
+                          <div className="mt-1 grid gap-1 text-sm text-neutral-400 md:grid-cols-2">
+                            <p>
+                              Lần đăng nhập cuối:{" "}
+                              {formatLastLogin(employee.lastLoginAt)}
+                            </p>
+                            <p>Email: {employee.email || "Chưa có"}</p>
+                            <p>SĐT: {employee.phone || "Chưa có"}</p>
+                            <p>Địa chỉ: {employee.address || "Chưa có"}</p>
+                          </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <Button variant="secondary" onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, true)} disabled={!allowedPermissions.length}>Chọn tất cả</Button>
-                          <Button variant="secondary" onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, false)}>Bỏ chọn tất cả</Button>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 overflow-hidden rounded-3xl border border-neutral-200">
-                        <div className="grid grid-cols-[52px_minmax(220px,1fr)_210px_minmax(280px,1fr)] border-b border-neutral-200 bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                          <div />
-                          <div>Quyền</div>
-                          <div>Mã quyền</div>
-                          <div>Mô tả</div>
-                        </div>
-                        <div className="divide-y divide-neutral-100">
-                          {meta.allPermissions.map((permissionName) => {
-                            const checked = currentPermissions.includes(permissionName);
-                            const disabled = !isPermissionAllowedForRole(selectedRole.id, selectedPermissionGroup, permissionName);
-                            const code = permissionName.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
-                            return (
-                              <label key={permissionName} className={`grid cursor-pointer grid-cols-[52px_minmax(220px,1fr)_210px_minmax(280px,1fr)] items-center px-4 py-3 text-sm transition ${disabled ? "cursor-not-allowed bg-neutral-50 text-neutral-400" : checked ? "bg-blue-50/60 text-neutral-900" : "bg-white text-neutral-700 hover:bg-neutral-50"}`}>
-                                <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => updateRolePermission(selectedRole.id, selectedPermissionGroup, permissionName, event.target.checked)} className="h-4 w-4" />
-                                <div className="font-medium">{permissionName}</div>
-                                <div className="text-xs text-neutral-500">{code}</div>
-                                <div className="text-sm text-neutral-500">{disabled ? "Chỉ dành cho Owner/Admin/Quản lý chi nhánh." : `Cho phép: ${permissionName.toLowerCase()}.`}</div>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </Panel>
-
-          <Panel className="p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-xl font-semibold text-neutral-900">
-                  Nhân viên đang dùng role này
-                </h3>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Nằm ngay dưới mẫu quyền để dễ kiểm tra role này đang áp cho
-                  ai.
-                </p>
-              </div>
-              <Badge tone="blue">{roleEmployees.length} user</Badge>
-            </div>
-
-            <div className="mt-4 space-y-4">
-              {loadingEmployees ? (
-                <p className="text-sm text-neutral-500">Đang tải nhân sự...</p>
-              ) : roleEmployees.length === 0 ? (
-                <p className="text-sm text-neutral-500">
-                  Chưa có user cho role này.
-                </p>
-              ) : (
-                roleEmployees.map((employee) => (
-                  <div
-                    key={employee.id}
-                    className="rounded-3xl border border-neutral-200 px-5 py-4"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-lg font-medium text-neutral-900">
-                            {employee.name}
-                          </span>
-                          <Badge
-                            tone={
-                              employee.status === "ACTIVE" ? "green" : "gray"
-                            }
+                          <Button
+                            variant="secondary"
+                            onClick={() => openProfileEditor(employee)}
                           >
-                            {employee.status === "ACTIVE"
-                              ? "Đang làm"
-                              : "Đã nghỉ"}
-                          </Badge>
-                          <Badge tone="gray">{employee.code}</Badge>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {(employee.roles.length
-                            ? employee.roles
-                            : [employee.roleId]
-                          ).map((roleId) => (
-                            <Badge key={roleId} tone="blue">
-                              {roleLabel(roles, roleId)}
-                            </Badge>
-                          ))}
-                        </div>
-                        <p className="mt-2 text-sm text-neutral-500">
-                          Chi nhánh chính: {employee.branch}
-                        </p>
-                        <div className="mt-1 grid gap-1 text-sm text-neutral-400 md:grid-cols-2">
-                          <p>
-                            Lần đăng nhập cuối:{" "}
-                            {formatLastLogin(employee.lastLoginAt)}
-                          </p>
-                          <p>Email: {employee.email || "Chưa có"}</p>
-                          <p>SĐT: {employee.phone || "Chưa có"}</p>
-                          <p>Địa chỉ: {employee.address || "Chưa có"}</p>
+                            Sửa thông tin
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => openPermissionEditor(employee)}
+                          >
+                            Gán role/chi nhánh
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => openProfileEditor(employee)}
-                        >
-                          Sửa thông tin
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => openPermissionEditor(employee)}
-                        >
-                          Gán role/chi nhánh
-                        </Button>
-                      </div>
-                    </div>
 
-                    {renderProfileEditor(employee)}
-                    {renderPermissionEditor(employee)}
+                      {renderProfileEditor(employee)}
+                      {renderPermissionEditor(employee)}
 
-                    {resetPasswordForId === employee.id ? (
-                      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                        <input
-                          type="password"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                          placeholder="Mật khẩu mới"
-                        />
-                        <Button
-                          onClick={() => changePassword(employee.id)}
-                          isLoading={savingPasswordForId === employee.id}
-                          loadingText="Đang lưu..."
-                        >
-                          Lưu mật khẩu
-                        </Button>
+                      {resetPasswordForId === employee.id ? (
+                        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                          <input
+                            type="password"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                            placeholder="Mật khẩu mới"
+                          />
+                          <Button
+                            onClick={() => changePassword(employee.id)}
+                            isLoading={savingPasswordForId === employee.id}
+                            loadingText="Đang lưu..."
+                          >
+                            Lưu mật khẩu
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setResetPasswordForId(null);
+                              setNewPassword("");
+                            }}
+                          >
+                            Hủy
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {secondPasswordForId === employee.id ? (
+                        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                          <input
+                            type="text"
+                            name="staff-security-pin"
+                            autoComplete="off"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
+                            inputMode="numeric"
+                            maxLength={6}
+                            value={secondPassword}
+                            onChange={(e) =>
+                              setSecondPassword(
+                                e.target.value.replace(/\D/g, "").slice(0, 6),
+                              )
+                            }
+                            className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                            placeholder="PIN bảo mật 6 số"
+                          />
+                          <Button
+                            isLoading={savingPinForId === employee.id}
+                            loadingText="Đang lưu..."
+                            onClick={async () => {
+                              if (savingPinForId) return;
+                              if (!/^\d{6}$/.test(secondPassword)) {
+                                setMessage("PIN phải gồm đúng 6 số.");
+                                return;
+                              }
+                              if (
+                                ["000000", "111111", "123456", "654321"].includes(
+                                  secondPassword,
+                                )
+                              ) {
+                                setMessage("PIN quá dễ đoán, hãy đặt mã khác.");
+                                return;
+                              }
+                              try {
+                                setSavingPinForId(employee.id);
+                                setMessage("Đang lưu PIN bảo mật...");
+                                await apiJson(
+                                  `/staff/${employee.id}/second-password`,
+                                  {
+                                    method: "PATCH",
+                                    body: JSON.stringify({ secondPassword }),
+                                  },
+                                );
+                                setSecondPassword("");
+                                setSecondPasswordForId(null);
+                                setMessage("Đã set PIN bảo mật cho nhân viên.");
+                              } catch (err) {
+                                setMessage(
+                                  err instanceof Error
+                                    ? err.message
+                                    : "Lưu PIN bảo mật thất bại.",
+                                );
+                              } finally {
+                                setSavingPinForId(null);
+                              }
+                            }}
+                          >
+                            Lưu PIN
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setSecondPasswordForId(null);
+                              setSecondPassword("");
+                            }}
+                          >
+                            Hủy
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
                         <Button
                           variant="secondary"
                           onClick={() => {
-                            setResetPasswordForId(null);
+                            setResetPasswordForId(employee.id);
                             setNewPassword("");
                           }}
                         >
-                          Hủy
-                        </Button>
-                      </div>
-                    ) : null}
-
-                    {secondPasswordForId === employee.id ? (
-                      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                        <input
-                          type="text"
-                          name="staff-security-pin"
-                          autoComplete="off"
-                          data-lpignore="true"
-                          data-1p-ignore="true"
-                          inputMode="numeric"
-                          maxLength={6}
-                          value={secondPassword}
-                          onChange={(e) =>
-                            setSecondPassword(
-                              e.target.value.replace(/\D/g, "").slice(0, 6),
-                            )
-                          }
-                          className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                          placeholder="PIN bảo mật 6 số"
-                        />
-                        <Button
-                          isLoading={savingPinForId === employee.id}
-                          loadingText="Đang lưu..."
-                          onClick={async () => {
-                            if (savingPinForId) return;
-                            if (!/^\d{6}$/.test(secondPassword)) {
-                              setMessage("PIN phải gồm đúng 6 số.");
-                              return;
-                            }
-                            if (
-                              ["000000", "111111", "123456", "654321"].includes(
-                                secondPassword,
-                              )
-                            ) {
-                              setMessage("PIN quá dễ đoán, hãy đặt mã khác.");
-                              return;
-                            }
-                            try {
-                              setSavingPinForId(employee.id);
-                              setMessage("Đang lưu PIN bảo mật...");
-                              await apiJson(
-                                `/staff/${employee.id}/second-password`,
-                                {
-                                  method: "PATCH",
-                                  body: JSON.stringify({ secondPassword }),
-                                },
-                              );
-                              setSecondPassword("");
-                              setSecondPasswordForId(null);
-                              setMessage("Đã set PIN bảo mật cho nhân viên.");
-                            } catch (err) {
-                              setMessage(
-                                err instanceof Error
-                                  ? err.message
-                                  : "Lưu PIN bảo mật thất bại.",
-                              );
-                            } finally {
-                              setSavingPinForId(null);
-                            }
-                          }}
-                        >
-                          Lưu PIN
+                          Đổi mật khẩu
                         </Button>
                         <Button
                           variant="secondary"
                           onClick={() => {
-                            setSecondPasswordForId(null);
+                            setSecondPasswordForId(employee.id);
                             setSecondPassword("");
                           }}
                         >
-                          Hủy
+                          Đặt/Reset PIN
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => toggleEmployee(employee.id)}
+                          isLoading={togglingEmployeeForId === employee.id}
+                          loadingText={
+                            employee.status === "ACTIVE"
+                              ? "Đang cho nghỉ..."
+                              : "Đang kích hoạt..."
+                          }
+                        >
+                          {employee.status === "ACTIVE"
+                            ? "Cho nghỉ"
+                            : "Kích hoạt lại"}
+                        </Button>
+                        <Button
+                          variant="danger"
+                          onClick={() => deleteEmployee(employee.id)}
+                          isLoading={deletingEmployeeForId === employee.id}
+                          loadingText="Đang xoá..."
+                        >
+                          Xoá nhân viên
                         </Button>
                       </div>
-                    ) : null}
-
-                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setResetPasswordForId(employee.id);
-                          setNewPassword("");
-                        }}
-                      >
-                        Đổi mật khẩu
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setSecondPasswordForId(employee.id);
-                          setSecondPassword("");
-                        }}
-                      >
-                        Đặt/Reset PIN
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => toggleEmployee(employee.id)}
-                        isLoading={togglingEmployeeForId === employee.id}
-                        loadingText={
-                          employee.status === "ACTIVE"
-                            ? "Đang cho nghỉ..."
-                            : "Đang kích hoạt..."
-                        }
-                      >
-                        {employee.status === "ACTIVE"
-                          ? "Cho nghỉ"
-                          : "Kích hoạt lại"}
-                      </Button>
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
+            </Panel>
+        </div>
+
+      ) : null}
+
+      {activeTab === "roles" ? (
+        <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+          <Panel className="overflow-hidden xl:sticky xl:top-4 xl:self-start">
+            <div className="p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-semibold text-neutral-900">
+                    Danh sách vai trò
+                  </h3>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Click role để chỉnh mẫu quyền và xem nhân viên đang dùng role
+                    đó.
+                  </p>
+                </div>
+                <Badge tone="blue">Role V2</Badge>
+              </div>
+              <div className="mt-5 space-y-2">
+                {roles.map((role) => {
+                  const active = selectedRoleId === role.id;
+                  const count = getRolePermissionCount(role);
+                  return (
+                    <button
+                      type="button"
+                      key={role.id}
+                      onClick={() => setSelectedRoleId(role.id)}
+                      className={`w-full rounded-3xl border p-4 text-left transition ${active ? "border-neutral-900 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"}`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-base font-semibold">
+                            {role.name}
+                          </div>
+                          <p
+                            className={`mt-1 text-sm ${active ? "text-neutral-300" : "text-neutral-500"}`}
+                          >
+                            {role.description}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span
+                            className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-white/20 bg-white/10 text-white" : "border-blue-200 bg-blue-50 text-blue-700"}`}
+                          >
+                            {scopeBadge(role.scope)}
+                          </span>
+                          <span
+                            className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-white/20 bg-white/10 text-white" : "border-green-200 bg-green-50 text-green-700"}`}
+                          >
+                            {count} quyền
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </Panel>
+
+          <div className="space-y-6">
+            <Panel className="overflow-hidden">
+              <div className="border-b border-neutral-100 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-xl font-semibold text-neutral-900">Quyền của vai trò: {selectedRole.name}</h3>
+                      <Badge tone="blue">{scopeBadge(selectedRole.scope)}</Badge>
+                      <Badge tone="gray">{getRolePermissionCount(selectedRole)} quyền</Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-neutral-500">Bên trái chọn danh mục quyền chính, bên phải tick quyền chi tiết của danh mục đó.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={resetRoleTemplates}>Reset mẫu</Button>
+                    <Button onClick={saveRoleTemplates} disabled={!roleTemplateDirty} isLoading={savingRoleTemplates} loadingText="Đang lưu...">{roleTemplateDirty ? "Lưu mẫu quyền" : "Đã lưu mẫu"}</Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid min-h-[620px] xl:grid-cols-[310px_minmax(0,1fr)]">
+                <div className="border-r border-neutral-100 bg-neutral-50/50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">Danh mục quyền</p>
+                    <Badge tone="gray">{Object.keys(permissionGroupMeta).length}</Badge>
+                  </div>
+                  <div className="space-y-1.5">
+                    {(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map((key) => {
+                      const meta = permissionGroupMeta[key];
+                      const current = selectedRole.permissions[key] || [];
+                      const active = selectedPermissionGroup === key;
+                      return (
+                        <button key={key} type="button" onClick={() => setSelectedPermissionGroup(key)} className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left text-sm transition ${active ? "border-neutral-900 bg-white text-neutral-950 shadow-sm" : "border-transparent bg-transparent text-neutral-700 hover:border-neutral-200 hover:bg-white"}`}>
+                          <span className="truncate font-medium">{meta.title}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-neutral-900 text-white" : "bg-white text-neutral-500"}`}>{current.length}/{meta.allPermissions.length}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-5">
+                  {(() => {
+                    const meta = permissionGroupMeta[selectedPermissionGroup];
+                    const currentPermissions = selectedRole.permissions[selectedPermissionGroup] || [];
+                    const allowedPermissions = getAllowedGroupPermissions(selectedRole.id, selectedPermissionGroup);
+                    return (
+                      <div>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-2xl font-semibold text-neutral-900">{meta.title}</h4>
+                              <Badge tone={currentPermissions.length ? "green" : "gray"}>{currentPermissions.length}/{meta.allPermissions.length}</Badge>
+                            </div>
+                            <p className="mt-1 text-sm text-neutral-500">{meta.desc}</p>
+                            <p className="mt-2 text-xs italic text-neutral-500">{groupPermissionSummary(selectedRole, selectedPermissionGroup)}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="secondary" onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, true)} disabled={!allowedPermissions.length}>Chọn tất cả</Button>
+                            <Button variant="secondary" onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, false)}>Bỏ chọn tất cả</Button>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 overflow-hidden rounded-3xl border border-neutral-200">
+                          <div className="grid grid-cols-[52px_minmax(220px,1fr)_210px_minmax(280px,1fr)] border-b border-neutral-200 bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                            <div />
+                            <div>Quyền</div>
+                            <div>Mã quyền</div>
+                            <div>Mô tả</div>
+                          </div>
+                          <div className="divide-y divide-neutral-100">
+                            {meta.allPermissions.map((permissionName) => {
+                              const checked = currentPermissions.includes(permissionName);
+                              const disabled = !isPermissionAllowedForRole(selectedRole.id, selectedPermissionGroup, permissionName);
+                              const code = permissionName.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
+                              return (
+                                <label key={permissionName} className={`grid cursor-pointer grid-cols-[52px_minmax(220px,1fr)_210px_minmax(280px,1fr)] items-center px-4 py-3 text-sm transition ${disabled ? "cursor-not-allowed bg-neutral-50 text-neutral-400" : checked ? "bg-blue-50/60 text-neutral-900" : "bg-white text-neutral-700 hover:bg-neutral-50"}`}>
+                                  <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => updateRolePermission(selectedRole.id, selectedPermissionGroup, permissionName, event.target.checked)} className="h-4 w-4" />
+                                  <div className="font-medium">{permissionName}</div>
+                                  <div className="text-xs text-neutral-500">{code}</div>
+                                  <div className="text-sm text-neutral-500">{disabled ? "Chỉ dành cho Owner/Admin/Quản lý chi nhánh." : `Cho phép: ${permissionName.toLowerCase()}.`}</div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </Panel>
+
+
+          </div>
         </div>
-      </div>
       ) : null}
     </div>
   );
