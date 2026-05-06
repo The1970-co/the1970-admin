@@ -1,6 +1,6 @@
 "use client";
 
-import { API_BASE } from "@/lib/api-base";
+import { apiJson } from "@/lib/api";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -462,17 +462,7 @@ export default function AdminShell({
     const storedUser = getCurrentUserFromStorage();
     setCurrentUser(storedUser);
 
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    fetch(`${API_BASE}/auth/me`, {
-      credentials: "include",
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    })
-      .then(async (res) => {
-        if (!res.ok) return null;
-        return res.json().catch(() => null);
-      })
+    apiJson("/auth/me")
       .then((data) => {
         const nextUser = data?.user || data;
         if (!nextUser) return;
@@ -523,9 +513,8 @@ export default function AdminShell({
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE}/auth/logout`, {
+      await apiJson("/auth/logout", {
         method: "POST",
-        credentials: "include",
       });
     } catch {
       // vẫn logout local nếu backend lỗi
@@ -581,26 +570,13 @@ export default function AdminShell({
     try {
       setPasswordSaving(true);
 
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-      const res = await fetch(`${API_BASE}/auth/me/password`, {
+      await apiJson("/auth/me/password", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           oldPassword,
           newPassword,
         }),
       });
-
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        throw new Error(data?.message || "Đổi mật khẩu thất bại.");
-      }
 
       setPasswordSuccess("Đổi mật khẩu thành công.");
       setOldPassword("");
@@ -648,11 +624,10 @@ export default function AdminShell({
                 return (
                   <div
                     key={item.label}
-                    className={`rounded-[26px] border px-3 py-3 transition ${
-                      parentActive
-                        ? "border-neutral-300 bg-neutral-50"
-                        : "border-neutral-200 bg-white"
-                    }`}
+                    className={`rounded-[26px] border px-3 py-3 transition ${parentActive
+                      ? "border-neutral-300 bg-neutral-50"
+                      : "border-neutral-200 bg-white"
+                      }`}
                   >
                     <div className="px-2 pb-2 text-sm font-semibold text-neutral-950">
                       {item.label}
@@ -666,11 +641,10 @@ export default function AdminShell({
                           <Link
                             key={child.href}
                             href={child.href!}
-                            className={`block rounded-2xl px-3 py-2.5 text-sm transition ${
-                              isActive
-                                ? "bg-neutral-900 font-medium text-white shadow-sm"
-                                : "text-neutral-700 hover:bg-neutral-100"
-                            }`}
+                            className={`block rounded-2xl px-3 py-2.5 text-sm transition ${isActive
+                              ? "bg-neutral-900 font-medium text-white shadow-sm"
+                              : "text-neutral-700 hover:bg-neutral-100"
+                              }`}
                           >
                             {child.label}
                           </Link>
@@ -687,11 +661,10 @@ export default function AdminShell({
                 <Link
                   key={item.href}
                   href={item.href!}
-                  className={`block rounded-2xl px-4 py-3 text-sm transition ${
-                    isActive
-                      ? "bg-neutral-900 font-medium text-white shadow-sm"
-                      : "text-neutral-800 hover:bg-neutral-100"
-                  }`}
+                  className={`block rounded-2xl px-4 py-3 text-sm transition ${isActive
+                    ? "bg-neutral-900 font-medium text-white shadow-sm"
+                    : "text-neutral-800 hover:bg-neutral-100"
+                    }`}
                 >
                   {item.label}
                 </Link>
@@ -842,15 +815,14 @@ export default function AdminShell({
                     {[1, 2, 3, 4, 5].map((item) => (
                       <div
                         key={item}
-                        className={`h-2 flex-1 rounded-full ${
-                          passwordScore >= item
-                            ? passwordScore <= 2
-                              ? "bg-red-500"
-                              : passwordScore <= 4
-                                ? "bg-amber-500"
-                                : "bg-emerald-500"
-                            : "bg-neutral-200"
-                        }`}
+                        className={`h-2 flex-1 rounded-full ${passwordScore >= item
+                          ? passwordScore <= 2
+                            ? "bg-red-500"
+                            : passwordScore <= 4
+                              ? "bg-amber-500"
+                              : "bg-emerald-500"
+                          : "bg-neutral-200"
+                          }`}
                       />
                     ))}
                   </div>
@@ -888,9 +860,8 @@ export default function AdminShell({
 
                 {confirmPassword ? (
                   <p
-                    className={`mt-2 text-xs ${
-                      passwordMatch ? "text-emerald-600" : "text-red-600"
-                    }`}
+                    className={`mt-2 text-xs ${passwordMatch ? "text-emerald-600" : "text-red-600"
+                      }`}
                   >
                     {passwordMatch
                       ? "Mật khẩu nhập lại khớp."

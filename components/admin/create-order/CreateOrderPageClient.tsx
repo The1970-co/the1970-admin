@@ -236,6 +236,7 @@ function calculatePromotionDiscount(input: {
 
 type ShippingQuoteApplyPayload = {
   shippingFee: number;
+  applyFeeToInput?: boolean;
   shippingPartner: string;
   shippingMode: string;
   selectedServiceId?: number;
@@ -264,6 +265,20 @@ function normalizeSpaces(value?: string | null) {
 
 function normalizePhone(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeSkuSearch(value?: string | null) {
+  return removeVietnameseTones(String(value || ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeSearchText(value?: string | null) {
+  return removeVietnameseTones(String(value || ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeProvinceName(value?: string | null) {
@@ -448,6 +463,25 @@ function extractDetailAddress(raw: string, parts: string[]) {
     .replace(/,+/g, ",")
     .trim()
     .replace(/^,|,$/g, "");
+}
+
+function cleanupParsedDetailAddress(raw: string, parts: string[]) {
+  let result = cleanupDetailAddress(extractDetailAddress(raw, parts));
+  const normalizedParts = parts.map((part) => normalizeAddressToken(part)).filter(Boolean);
+
+  result = result
+    .split(/[,;]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => {
+      const normalizedSegment = normalizeAddressToken(segment);
+      if (!normalizedSegment) return false;
+      return !normalizedParts.some(
+        (part) => normalizedSegment === part || normalizedSegment.includes(part)
+      );
+    })
+    .join(", ");
+
+  return cleanupDetailAddress(result);
 }
 function extractPhoneFromRawAddress(raw: string) {
   const matches = String(raw || "").match(/(?:\+?84|0)\d{8,10}/g);
@@ -738,6 +772,8 @@ export default function CreateOrderPageClient() {
     shippingPartner: "ghn",
   });
   const phoneLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const phoneLookupSeqRef = useRef(0);
+  const suppressPhoneSuggestionRef = useRef(false);
   const phoneSuggestionRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const [products, setProducts] = useState<OrderProduct[]>([]);
@@ -758,7 +794,7 @@ export default function CreateOrderPageClient() {
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [shippingAddress, setShippingAddress] = useState("");
-  const [salesChannel, setSalesChannel] = useState("ADMIN");
+  const [salesChannel, setSalesChannel] = useState("FACEBOOK");
   const [branchId, setBranchId] = useState("");
 
   const [phoneSearching, setPhoneSearching] = useState(false);
@@ -810,13 +846,13 @@ export default function CreateOrderPageClient() {
   const [note, setNote] = useState("");
 
   const [discountTotal, setDiscountTotal] = useState("0");
-  const [shippingFee, setShippingFee] = useState("0");
+  const [shippingFee, setShippingFee] = useState("30000");
   const [couponCode, setCouponCode] = useState("");
   const [customerPaid, setCustomerPaid] = useState("0");
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [paymentSourceId, setPaymentSourceId] = useState("");
   const [shippingMode, setShippingMode] = useState<ShippingMode>("partner");
-  const [shippingPayer, setShippingPayer] = useState<ShippingPayer>("customer");
+  const [shippingPayer, setShippingPayer] = useState<ShippingPayer>("shop");
   const [shippingUiMode, setShippingUiMode] = useState<ShippingUiMode>("carrier");
   const [shippingPartner, setShippingPartner] = useState("ghn");
   const [deliveryRequirement, setDeliveryRequirement] =
@@ -844,7 +880,6 @@ export default function CreateOrderPageClient() {
   const [newCustomerSaving, setNewCustomerSaving] = useState(false);
   const [newCustomerError, setNewCustomerError] = useState("");
 
-  const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
   const [newCustomerEmail, setNewCustomerEmail] = useState("");
   const [newCustomerRecipientName, setNewCustomerRecipientName] = useState("");
@@ -1246,14 +1281,22 @@ export default function CreateOrderPageClient() {
   }, [products, branchId]);
 
   const filteredVariants = useMemo(() => {
-    const q = productSearch.trim().toLowerCase();
-    if (!q) return allVariants;
+    const raw = productSearch.trim();
+    const skuQuery = normalizeSkuSearch(raw);
+    const textQuery = normalizeSearchText(raw);
+
+    if (!skuQuery && !textQuery) return allVariants;
+
     return allVariants.filter((variant) => {
+      const sku = normalizeSkuSearch(variant.sku || "");
+      const productName = normalizeSearchText((variant as any).productName || "");
+      const color = normalizeSearchText((variant as any).color || "");
+      const size = normalizeSearchText((variant as any).size || "");
+      const combinedText = [productName, color, size].filter(Boolean).join(" ");
+
       return (
-        String(variant.sku || "").toLowerCase().includes(q) ||
-        String((variant as any).productName || "").toLowerCase().includes(q) ||
-        String((variant as any).color || "").toLowerCase().includes(q) ||
-        String((variant as any).size || "").toLowerCase().includes(q)
+        Boolean(skuQuery && sku.includes(skuQuery)) ||
+        Boolean(textQuery && combinedText.includes(textQuery))
       );
     });
   }, [allVariants, productSearch]);
@@ -1500,6 +1543,7 @@ export default function CreateOrderPageClient() {
   };
 
   const handlePhoneChange = (value: string) => {
+    suppressPhoneSuggestionRef.current = false;
     setCustomerPhone(value);
     setCustomerHint("");
 
@@ -1509,6 +1553,8 @@ export default function CreateOrderPageClient() {
     }
 
     const cleaned = normalizePhone(value);
+
+    const lookupSeq = ++phoneLookupSeqRef.current;
 
     if (cleaned.length < 1) {
       setCustomerSuggestions(customerDefaultSuggestions);
@@ -1532,6 +1578,10 @@ export default function CreateOrderPageClient() {
               : result
                 ? [result]
                 : [];
+
+        if (lookupSeq !== phoneLookupSeqRef.current || suppressPhoneSuggestionRef.current) {
+          return;
+        }
 
         const normalizedRows = rows
           .filter(Boolean)
@@ -1557,18 +1607,34 @@ export default function CreateOrderPageClient() {
             : "Chưa có khách cũ cho từ khóa này."
         );
       } catch {
+        if (lookupSeq !== phoneLookupSeqRef.current || suppressPhoneSuggestionRef.current) {
+          return;
+        }
+
         setCustomerSuggestions([]);
         setCustomerSuggestionOpen(false);
         setCustomerHint("");
       } finally {
-        setPhoneSearching(false);
+        if (lookupSeq === phoneLookupSeqRef.current) {
+          setPhoneSearching(false);
+        }
       }
     }, 120);
   };
 
   const handlePickSuggestedCustomer = async (customer: CustomerSuggestionItem) => {
+    suppressPhoneSuggestionRef.current = true;
+    phoneLookupSeqRef.current += 1;
+
+    if (phoneLookupTimerRef.current) {
+      clearTimeout(phoneLookupTimerRef.current);
+      phoneLookupTimerRef.current = null;
+    }
+
     setCustomerSuggestions([]);
     setCustomerSuggestionOpen(false);
+    setPhoneSearching(false);
+
     await applyCustomerSelection(customer);
   };
 
@@ -1643,7 +1709,7 @@ export default function CreateOrderPageClient() {
         wardName || "",
       ]);
 
-      setAddressLine1(cleanupDetailAddress(detail || addressOnly));
+      setAddressLine1(cleanupParsedDetailAddress(addressOnly, [provinceName, districtName, wardName || ""]) || cleanupDetailAddress(detail || addressOnly));
 
       const normalizedRaw = normalizeAddressToken(addressOnly);
       const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
@@ -1680,7 +1746,6 @@ export default function CreateOrderPageClient() {
 
       if (parsed.recipientName) {
         setNewCustomerRecipientName(parsed.recipientName);
-        setCustomerName(parsed.recipientName);
       }
 
       if (parsed.phone) {
@@ -1734,7 +1799,7 @@ export default function CreateOrderPageClient() {
         wardName || "",
       ]);
 
-      setNewCustomerAddressLine(cleanupDetailAddress(detail || addressOnly));
+      setNewCustomerAddressLine(cleanupParsedDetailAddress(addressOnly, [provinceName, districtName, wardName || ""]) || cleanupDetailAddress(detail || addressOnly));
 
       const normalizedRaw = normalizeAddressToken(addressOnly);
       const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
@@ -1800,14 +1865,13 @@ export default function CreateOrderPageClient() {
   };
 
   const handleBarcodeAdd = () => {
-    const code = barcodeInput.trim().toLowerCase();
+    const code = normalizeSkuSearch(barcodeInput);
     if (!code) return;
 
-    const found = allVariants.find(
-      (v) =>
-        String(v.sku || "").toLowerCase() === code ||
-        String(v.sku || "").toLowerCase().includes(code)
-    );
+    const found = allVariants.find((v) => {
+      const sku = normalizeSkuSearch(v.sku || "");
+      return sku === code || sku.includes(code);
+    });
 
     if (!found) {
       setError(`Không tìm thấy SKU / mã vạch: ${barcodeInput}`);
@@ -1841,7 +1905,7 @@ export default function CreateOrderPageClient() {
     setCustomerName("");
     setCustomerPhone("");
     setShippingAddress("");
-    setSalesChannel("ADMIN");
+    setSalesChannel("FACEBOOK");
     setBranchId(branchOptions[0]?.value || "");
     setCustomerHint("");
     setCustomerPolicyLabel("");
@@ -1863,11 +1927,11 @@ export default function CreateOrderPageClient() {
     setTags("");
     setNote("");
     setDiscountTotal("0");
-    setShippingFee("0");
+    setShippingFee("30000");
     setCouponCode("");
     setCustomerPaid("0");
     setShippingMode("partner");
-    setShippingPayer("customer");
+    setShippingPayer("shop");
     setShippingUiMode("carrier");
     setShippingPartner("ghn");
     setDeliveryRequirement("CHOXEMHANG_KHONGTHU");
@@ -1888,7 +1952,6 @@ export default function CreateOrderPageClient() {
 
   const resetNewCustomerForm = () => {
     setNewCustomerError("");
-    setNewCustomerName("");
     setNewCustomerPhone("");
     setNewCustomerEmail("");
     setNewCustomerRecipientName("");
@@ -1906,8 +1969,10 @@ export default function CreateOrderPageClient() {
   };
 
   const createNewCustomerAndApply = async () => {
-    if (!newCustomerName.trim()) {
-      setNewCustomerError("Chưa nhập tên khách.");
+    const recipientName = newCustomerRecipientName.trim();
+
+    if (!recipientName) {
+      setNewCustomerError("Chưa nhập người nhận.");
       return;
     }
 
@@ -1942,7 +2007,7 @@ export default function CreateOrderPageClient() {
 
       const payload: any = {
         legacyCode: newCustomerCode.trim() || undefined,
-        fullName: newCustomerName.trim(),
+        fullName: recipientName,
         phone: newCustomerPhone.trim(),
         email: newCustomerEmail.trim() || undefined,
         source: salesChannel,
@@ -1952,8 +2017,7 @@ export default function CreateOrderPageClient() {
         district: normalizeDistrictName(newCustomerDistrict),
         province: normalizeProvinceName(newCustomerProvince),
         postalCode: newCustomerPostalCode.trim() || undefined,
-        recipientName:
-          newCustomerRecipientName.trim() || newCustomerName.trim(),
+        recipientName,
         customerNote: newCustomerNote.trim() || undefined,
         label: "Địa chỉ giao hàng",
         isDefaultAddress: true,
@@ -1962,7 +2026,7 @@ export default function CreateOrderPageClient() {
       const created: any = await createCustomer(payload);
 
       setCustomerId(created.id || null);
-      setCustomerName(created.fullName || newCustomerName.trim());
+      setCustomerName(created.fullName || recipientName);
       setCustomerPhone(created.phone || newCustomerPhone.trim());
 
       if (created.id) {
@@ -2137,7 +2201,13 @@ export default function CreateOrderPageClient() {
 
   useEffect(() => {
     applyShippingRef.current = (payload: ShippingQuoteApplyPayload) => {
-      setShippingFee(String(payload.shippingFee || 0));
+      setShippingFee((prev) => {
+        if (payload.applyFeeToInput) {
+          return String(payload.shippingFee || 0);
+        }
+
+        return Number(prev || 0) > 0 ? prev : "30000";
+      });
       setShippingMode(payload.shippingMode === "pickup" ? "pickup" : "partner");
       setShippingPartner(payload.shippingPartner || "ghn");
       setSelectedShippingServiceId(payload.selectedServiceId);
@@ -2150,6 +2220,12 @@ export default function CreateOrderPageClient() {
       setGhnWardCode(payload.ghnWardCode);
     };
   }, []);
+
+  useEffect(() => {
+    if (shippingUiMode === "carrier" && shippingPartner === "ghn") {
+      setShippingFee((prev) => (Number(prev || 0) > 0 ? prev : "30000"));
+    }
+  }, [shippingUiMode, shippingPartner]);
 
   useEffect(() => {
     const isPickupShipping = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
@@ -2363,15 +2439,48 @@ export default function CreateOrderPageClient() {
     const finalCreateMode: CreateOrderMode =
       isPickupOrder && mode !== "draft" ? "ship" : mode;
 
+    let submitGhnDistrictId = ghnDistrictId;
+    let submitGhnWardCode = ghnWardCode;
+
     if (!isPickupOrder && mode === "ship" && shippingUiMode === "carrier" && shippingPartner === "ghn") {
       if (!shippingAddress.trim()) {
         setError("Thiếu địa chỉ giao hàng.");
         return;
       }
 
-      if (!ghnDistrictId || !ghnWardCode) {
-        setError("Địa chỉ chưa map được GHN.");
-        return;
+      if (!submitGhnDistrictId || !submitGhnWardCode) {
+        if (!quoteProvince || !quoteDistrict || !quoteWard) {
+          setError("Địa chỉ chưa map được GHN.");
+          return;
+        }
+
+        try {
+          setSaving(true);
+          setError(null);
+          setShippingError("");
+          setShippingHint("Đang map lại địa chỉ GHN trước khi tạo đơn...");
+
+          const resolved = await resolveGhnAddress({
+            province: quoteProvince,
+            district: quoteDistrict,
+            ward: quoteWard,
+          });
+
+          if (!resolved?.districtId || !resolved?.wardCode) {
+            setError("Địa chỉ chưa map được GHN.");
+            setSaving(false);
+            return;
+          }
+
+          submitGhnDistrictId = Number(resolved.districtId);
+          submitGhnWardCode = String(resolved.wardCode);
+          setGhnDistrictId(submitGhnDistrictId);
+          setGhnWardCode(submitGhnWardCode);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Địa chỉ chưa map được GHN.");
+          setSaving(false);
+          return;
+        }
       }
     }
 
@@ -2416,8 +2525,8 @@ export default function CreateOrderPageClient() {
           : "",
         `Khối lượng: ${shippingWeight}g`,
         `Kích thước: ${shippingLength}x${shippingWidth}x${shippingHeight}`,
-        ghnDistrictId ? `GHN DistrictId: ${ghnDistrictId}` : "",
-        ghnWardCode ? `GHN WardCode: ${ghnWardCode}` : "",
+        submitGhnDistrictId ? `GHN DistrictId: ${submitGhnDistrictId}` : "",
+        submitGhnWardCode ? `GHN WardCode: ${submitGhnWardCode}` : "",
       ].filter(Boolean);
 
       const payload = {
@@ -2466,8 +2575,8 @@ export default function CreateOrderPageClient() {
           shippingPostalCode: isPickupOrder
             ? undefined
             : selectedAddress?.postalCode || addressPostalCode || undefined,
-          shippingGhnDistrictId: isPickupOrder ? undefined : ghnDistrictId ?? undefined,
-          shippingGhnWardCode: isPickupOrder ? undefined : ghnWardCode || undefined,
+          shippingGhnDistrictId: isPickupOrder ? undefined : submitGhnDistrictId ?? undefined,
+          shippingGhnWardCode: isPickupOrder ? undefined : submitGhnWardCode || undefined,
           shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
           shippingPayer,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
@@ -2499,8 +2608,8 @@ export default function CreateOrderPageClient() {
             selectedAddress?.addressLine1 ||
             addressLine1.trim() ||
             shippingAddress.trim(),
-          toDistrictId: Number(ghnDistrictId),
-          toWardCode: String(ghnWardCode),
+          toDistrictId: Number(submitGhnDistrictId),
+          toWardCode: String(submitGhnWardCode),
           codAmount: remaining > 0 ? remaining : 0,
           insuranceValue: customerMustPay,
           note: note.trim() || "",
@@ -2632,6 +2741,8 @@ export default function CreateOrderPageClient() {
                         value={customerPhone}
                         onChange={(e) => handlePhoneChange(e.target.value)}
                         onFocus={() => {
+                          if (suppressPhoneSuggestionRef.current) return;
+
                           if (customerPhone.trim()) {
                             if (customerSuggestions.length) setCustomerSuggestionOpen(true);
                             return;
@@ -2654,6 +2765,7 @@ export default function CreateOrderPageClient() {
                             <button
                               key={`${item.id || item.phone || "customer"}-${index}`}
                               type="button"
+                              onMouseDown={(e) => e.preventDefault()}
                               onClick={() => void handlePickSuggestedCustomer(item)}
                               className="flex w-full flex-col rounded-xl px-3 py-3 text-left transition hover:bg-neutral-50"
                             >
@@ -3208,6 +3320,7 @@ export default function CreateOrderPageClient() {
                         onClick={() =>
                           applyShippingRef.current?.({
                             shippingFee: getFeeNumber(quote),
+                            applyFeeToInput: true,
                             shippingPartner: "ghn",
                             shippingMode: "partner",
                             selectedServiceId: quote.serviceId,
@@ -3306,13 +3419,20 @@ export default function CreateOrderPageClient() {
                     </div>
                   ) : null}
 
-                  <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-neutral-500">Phí ship</span>
-                    <input
-                      className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
-                      value={shippingFee}
-                      onChange={(e) => setShippingFee(e.target.value)}
-                    />
+                  <div className="space-y-1 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-neutral-500">Phí ship</span>
+                      <input
+                        className="w-32 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none focus:border-neutral-900"
+                        value={shippingFee}
+                        onChange={(e) => setShippingFee(e.target.value)}
+                        inputMode="numeric"
+                        placeholder="30000"
+                      />
+                    </div>
+                    <p className="text-right text-xs text-neutral-400">
+                      GHN mặc định 30.000đ. Người trả ship là bên thanh toán phí với GHN; tiền khách thanh toán vẫn cộng phí ship.
+                    </p>
                   </div>
 
                   <div className="border-t border-dashed border-neutral-200 pt-3" />
@@ -3409,11 +3529,12 @@ export default function CreateOrderPageClient() {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Tên khách</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">Người nhận</p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-                value={newCustomerName}
-                onChange={(e) => setNewCustomerName(e.target.value)}
+                value={newCustomerRecipientName}
+                onChange={(e) => setNewCustomerRecipientName(e.target.value)}
+                placeholder="Tên người nhận / khách hàng"
               />
             </div>
 
@@ -3432,15 +3553,6 @@ export default function CreateOrderPageClient() {
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerEmail}
                 onChange={(e) => setNewCustomerEmail(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Người nhận</p>
-              <input
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-                value={newCustomerRecipientName}
-                onChange={(e) => setNewCustomerRecipientName(e.target.value)}
               />
             </div>
 

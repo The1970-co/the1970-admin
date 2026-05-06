@@ -6,11 +6,29 @@ import { getBranches, type BranchItem } from "@/lib/products-api";
 
 type PermissionGroupKey =
   | "products"
-  | "orders"
   | "inventory"
+  | "purchaseOrders"
+  | "purchaseReceipts"
+  | "transfers"
+  | "stocktakes"
+  | "inventoryAdjustments"
+  | "suppliers"
+  | "orders"
+  | "returns"
+  | "shippingReconcile"
+  | "carriers"
   | "customers"
+  | "warranty"
+  | "paymentReceipts"
+  | "paymentReceiptTypes"
+  | "paymentExpenses"
+  | "paymentExpenseTypes"
+  | "reports"
+  | "channels"
   | "promotions"
-  | "excel";
+  | "excel"
+  | "system"
+  | "others";
 
 type RoleScope = "ALL_BRANCHES" | "ONE_BRANCH";
 
@@ -198,69 +216,30 @@ function StatCard({
 }
 
 const permissionGroupMeta: Record<PermissionGroupKey, PermissionGroupMeta> = {
-  products: {
-    title: "Sản phẩm / Dữ liệu",
-    desc: "Quyền sản phẩm. Nhân viên thường chỉ được xem; tạo/sửa/giá/variant/trạng thái chỉ dành cho quản lý trở lên.",
-    allPermissions: [
-      "Xem sản phẩm",
-      "Tạo sản phẩm",
-      "Sửa thông tin sản phẩm",
-      "Sửa giá bán",
-      "Thêm variant",
-      "Đổi trạng thái sản phẩm",
-    ],
-  },
-  orders: {
-    title: "Đơn hàng / POS",
-    desc: "Bán tại quầy, tạo đơn, giới hạn xem đơn theo nhân viên/chi nhánh, duyệt/hủy và xử lý đổi trả.",
-    allPermissions: [
-      "Bán hàng / POS",
-      "Xem đơn của mình",
-      "Xem đơn chi nhánh",
-      "Tạo đơn hàng",
-      "Duyệt đơn hàng",
-      "Hủy đơn hàng",
-      "Đổi trả hàng",
-    ],
-  },
-  inventory: {
-    title: "Kho / Kiểm kho",
-    desc: "Xem tồn, quản kho, kiểm kho, chuyển kho và nhận hàng.",
-    allPermissions: [
-      "Xem tồn kho",
-      "Quản kho",
-      "Kiểm kho",
-      "Chuyển kho",
-      "Nhận kho",
-    ],
-  },
-  customers: {
-    title: "Khách hàng",
-    desc: "Xem và cập nhật thông tin khách hàng tại chi nhánh.",
-    allPermissions: ["Xem khách hàng", "Sửa khách hàng"],
-  },
-  promotions: {
-    title: "Khuyến mãi",
-    desc: "Quyền xem, tạo, sửa, kích hoạt và tạm dừng chương trình khuyến mãi.",
-    allPermissions: [
-      "Xem khuyến mãi",
-      "Tạo khuyến mãi",
-      "Sửa khuyến mãi",
-      "Kích hoạt khuyến mãi",
-      "Tạm dừng khuyến mãi",
-    ],
-  },
-  excel: {
-    title: "Excel / Tải dữ liệu",
-    desc: "Quyền tải xuống hoặc nhập file Excel. Mặc định nhân viên chỉ xem, không được tải/import nếu chưa cấp quyền.",
-    allPermissions: [
-      "Tải Excel sản phẩm",
-      "Nhập Excel sản phẩm",
-      "Tải Excel đơn hàng",
-      "Tải Excel tồn kho",
-      "Tải Excel khách hàng",
-    ],
-  },
+  products: { title: "Sản phẩm", desc: "Catalog, giá bán, tạo/sửa sản phẩm và import/export sản phẩm.", allPermissions: ["Xem sản phẩm", "Tạo sản phẩm", "Sửa sản phẩm", "Xóa sản phẩm", "Sửa giá bán", "Xuất file sản phẩm", "Nhập file sản phẩm"] },
+  inventory: { title: "Kho hàng", desc: "Tồn kho tổng, lịch sử kho và thao tác quản kho cơ bản.", allPermissions: ["Xem tồn kho", "Quản kho", "Xem lịch sử kho", "Xem giá trị tồn kho"] },
+  purchaseOrders: { title: "Đặt hàng nhập", desc: "Đơn đặt hàng nhập trước khi nhập kho.", allPermissions: ["Xem đơn đặt hàng nhập", "Tạo đơn đặt hàng nhập", "Sửa đơn đặt hàng nhập", "Hủy đơn đặt hàng nhập", "Kết thúc đơn đặt hàng nhập", "Xuất file đơn đặt hàng nhập", "Nhập file đơn đặt hàng nhập"] },
+  purchaseReceipts: { title: "Nhập hàng", desc: "Phiếu nhập hàng, thanh toán, hoàn trả và nhận hàng vào kho.", allPermissions: ["Xem đơn nhập", "Tạo đơn nhập", "Sửa đơn nhập", "Thanh toán đơn nhập", "Hoàn trả đơn nhập", "Nhận hàng vào kho", "Kết thúc đơn nhập", "Hủy đơn nhập", "Xuất file đơn nhập", "Nhập file đơn nhập"] },
+  transfers: { title: "Chuyển hàng", desc: "Phiếu chuyển hàng giữa các chi nhánh/kho.", allPermissions: ["Xem phiếu chuyển", "Tạo phiếu chuyển", "Sửa phiếu chuyển", "Xác nhận chuyển", "Nhận hàng vào kho", "Hủy phiếu chuyển", "Xuất file phiếu chuyển", "Nhập file phiếu chuyển"] },
+  stocktakes: { title: "Kiểm hàng", desc: "Phiếu kiểm kho, cân bằng kho và import/export kiểm kho.", allPermissions: ["Xem phiếu kiểm hàng", "Tạo phiếu kiểm hàng", "Sửa phiếu kiểm hàng", "Xác nhận phiếu kiểm hàng", "Hủy phiếu kiểm hàng", "Xóa phiếu kiểm hàng", "Cân bằng kho", "Xuất file phiếu kiểm hàng", "Nhập file phiếu kiểm hàng"] },
+  inventoryAdjustments: { title: "Điều chỉnh giá vốn", desc: "Phiếu điều chỉnh tồn/giá vốn, chỉ nên cấp cho quản lý/admin.", allPermissions: ["Xem phiếu điều chỉnh", "Tạo phiếu điều chỉnh", "Sửa phiếu điều chỉnh", "Hủy phiếu điều chỉnh", "Xóa phiếu điều chỉnh", "Điều chỉnh giá vốn", "Nhập file phiếu điều chỉnh"] },
+  suppliers: { title: "Nhà cung cấp", desc: "Danh bạ nhà cung cấp và import/export.", allPermissions: ["Xem nhà cung cấp", "Tạo nhà cung cấp", "Sửa nhà cung cấp", "Xóa nhà cung cấp", "Xuất file nhà cung cấp", "Nhập file nhà cung cấp"] },
+  orders: { title: "Đơn hàng", desc: "Bán tại quầy, tạo/sửa/duyệt/hủy, đóng gói, thanh toán và import/export đơn.", allPermissions: ["Bán hàng / POS", "Xem đơn hàng được phụ trách", "Xem tất cả đơn hàng", "Tạo đơn hàng", "Sửa đơn hàng", "Duyệt đơn hàng", "Hủy đơn hàng", "Đóng gói và giao hàng", "Thanh toán đơn hàng", "Xuất file đơn hàng", "Nhập file đơn hàng"] },
+  returns: { title: "Đơn trả hàng", desc: "Xem/tạo đơn trả hàng, nhận hàng vào kho, thanh toán đơn trả.", allPermissions: ["Xem đơn trả hàng", "Tạo đơn trả hàng", "Hủy đơn trả hàng", "Nhận hàng vào kho", "Thanh toán đơn trả", "Xuất file đơn trả hàng"] },
+  shippingReconcile: { title: "Đối soát vận chuyển", desc: "Đối soát COD/vận chuyển, xác nhận và thanh toán.", allPermissions: ["Xem phiếu đối soát", "Tạo phiếu đối soát", "Sửa phiếu đối soát", "Xác nhận đối soát", "Thanh toán đối soát", "Hủy phiếu đối soát", "Xuất file đối soát", "Nhập file đối soát"] },
+  carriers: { title: "Đối tác vận chuyển", desc: "Đối tác vận chuyển/giao hàng và thiết lập phí.", allPermissions: ["Xem đối tác vận chuyển", "Tạo đối tác vận chuyển", "Sửa đối tác vận chuyển", "Xóa đối tác vận chuyển", "Xuất file đối tác vận chuyển", "Thiết lập phí theo khu vực"] },
+  customers: { title: "Khách hàng", desc: "Khách hàng được phụ trách/tất cả, tạo/sửa/xóa/import/export.", allPermissions: ["Xem khách hàng được phụ trách", "Xem tất cả khách hàng", "Tạo khách hàng", "Sửa khách hàng", "Xóa khách hàng", "Xuất file khách hàng", "Nhập file khách hàng"] },
+  warranty: { title: "Bảo hành", desc: "Chính sách bảo hành, phiếu bảo hành và yêu cầu bảo hành.", allPermissions: ["Cấu hình bảo hành", "Xem phiếu bảo hành", "Tạo phiếu bảo hành", "Sửa phiếu bảo hành", "Xem phiếu yêu cầu bảo hành", "Xử lý phiếu yêu cầu bảo hành"] },
+  paymentReceipts: { title: "Phiếu thu", desc: "Quyền xem/tạo/sửa/hủy phiếu thu.", allPermissions: ["Xem phiếu thu", "Tạo phiếu thu", "Sửa phiếu thu", "Hủy phiếu thu"] },
+  paymentReceiptTypes: { title: "Loại phiếu thu", desc: "Danh mục loại phiếu thu.", allPermissions: ["Xem loại phiếu thu", "Tạo loại phiếu thu", "Sửa loại phiếu thu", "Xóa loại phiếu thu"] },
+  paymentExpenses: { title: "Phiếu chi", desc: "Quyền xem/tạo/sửa/hủy phiếu chi.", allPermissions: ["Xem phiếu chi", "Tạo phiếu chi", "Sửa phiếu chi", "Hủy phiếu chi"] },
+  paymentExpenseTypes: { title: "Loại phiếu chi", desc: "Danh mục loại phiếu chi.", allPermissions: ["Xem loại phiếu chi", "Tạo loại phiếu chi", "Sửa loại phiếu chi", "Xóa loại phiếu chi"] },
+  reports: { title: "Báo cáo", desc: "Báo cáo bán hàng, nhập hàng, kho, lãi lỗ, khách hàng, công nợ và sổ quỹ.", allPermissions: ["Báo cáo bán hàng", "Báo cáo nhập hàng", "Báo cáo kho", "Báo cáo lãi lỗ", "Báo cáo khách hàng", "Báo cáo công nợ khách hàng/nhà cung cấp", "Sổ quỹ"] },
+  channels: { title: "Kênh bán hàng", desc: "Các kênh bán hàng và đồng bộ đơn.", allPermissions: ["Sapo POS - Bán hàng tại quầy", "Sapo Web - Bán hàng qua website", "Kênh Social", "Kênh đặt hàng online", "Sàn Thương mại điện tử", "Kênh GrabMart"] },
+  promotions: { title: "Khuyến mãi", desc: "Cấu hình, xem, tạo, sửa, xóa và điều khiển chương trình khuyến mãi.", allPermissions: ["Xem khuyến mãi", "Tạo khuyến mãi", "Sửa khuyến mãi", "Kích hoạt khuyến mãi", "Tạm dừng khuyến mãi", "Xóa khuyến mãi"] },
+  excel: { title: "Excel / Tải dữ liệu", desc: "Quyền tải xuống hoặc nhập file Excel.", allPermissions: ["Tải Excel sản phẩm", "Nhập Excel sản phẩm", "Tải Excel đơn hàng", "Tải Excel tồn kho", "Tải Excel khách hàng"] },
+  system: { title: "Cấu hình hệ thống", desc: "Cấu hình chung, ứng dụng và tham số vận hành.", allPermissions: ["Cấu hình hệ thống", "Cấu hình ứng dụng", "Quản lý chi nhánh", "Quản lý phân quyền"] },
+  others: { title: "Khác", desc: "Các quyền vận hành phụ chưa tách module riêng.", allPermissions: ["Xem hoạt động hệ thống", "Audit log", "Cấu hình thông báo", "Cấu hình tích hợp"] },
 };
 
 const permissionToBranchKey: Record<string, BranchPermissionKey> = {
@@ -284,6 +263,28 @@ const permissionToBranchKey: Record<string, BranchPermissionKey> = {
   "Tải Excel đơn hàng": "canExportOrderExcel",
   "Tải Excel tồn kho": "canExportInventoryExcel",
   "Tải Excel khách hàng": "canExportCustomerExcel",
+  "Xem đơn hàng được phụ trách": "canViewOwnOrders",
+  "Xem tất cả đơn hàng": "canViewBranchOrders",
+  "Sửa đơn hàng": "canApproveOrder",
+  "Đóng gói và giao hàng": "canCreateOrder",
+  "Thanh toán đơn hàng": "canCreateOrder",
+  "Xem phiếu chuyển": "canTransferStock",
+  "Tạo phiếu chuyển": "canTransferStock",
+  "Sửa phiếu chuyển": "canTransferStock",
+  "Xác nhận chuyển": "canTransferStock",
+  "Hủy phiếu chuyển": "canTransferStock",
+  "Xem phiếu kiểm hàng": "canStocktake",
+  "Tạo phiếu kiểm hàng": "canStocktake",
+  "Sửa phiếu kiểm hàng": "canStocktake",
+  "Xác nhận phiếu kiểm hàng": "canStocktake",
+  "Hủy phiếu kiểm hàng": "canStocktake",
+  "Cân bằng kho": "canManageStock",
+  "Xem đơn nhập": "canReceiveStock",
+  "Tạo đơn nhập": "canReceiveStock",
+  "Sửa đơn nhập": "canReceiveStock",
+  "Xem khách hàng được phụ trách": "canViewCustomer",
+  "Xem tất cả khách hàng": "canViewCustomer",
+  "Tạo khách hàng": "canEditCustomer",
 };
 
 const branchPermissionGroups: {
@@ -366,129 +367,162 @@ const branchPermissionColumns = branchPermissionGroups.flatMap(
 );
 
 const rolesSeed: RoleItem[] = [
-  {
-    id: "owner",
-    name: "Owner",
-    scope: "ALL_BRANCHES",
-    description: "Toàn quyền hệ thống.",
-    createdAt: "07/08/2025",
-    updatedAt: "02/05/2026",
-    note: "Owner",
-    permissions: {
+  { id: "owner", name: "Owner", scope: "ALL_BRANCHES", description: "Toàn quyền hệ thống.", createdAt: "07/08/2025", updatedAt: "02/05/2026", note: "Owner", permissions: {
       products: [...permissionGroupMeta.products.allPermissions],
-      orders: [...permissionGroupMeta.orders.allPermissions],
       inventory: [...permissionGroupMeta.inventory.allPermissions],
+      purchaseOrders: [...permissionGroupMeta.purchaseOrders.allPermissions],
+      purchaseReceipts: [...permissionGroupMeta.purchaseReceipts.allPermissions],
+      transfers: [...permissionGroupMeta.transfers.allPermissions],
+      stocktakes: [...permissionGroupMeta.stocktakes.allPermissions],
+      inventoryAdjustments: [...permissionGroupMeta.inventoryAdjustments.allPermissions],
+      suppliers: [...permissionGroupMeta.suppliers.allPermissions],
+      orders: [...permissionGroupMeta.orders.allPermissions],
+      returns: [...permissionGroupMeta.returns.allPermissions],
+      shippingReconcile: [...permissionGroupMeta.shippingReconcile.allPermissions],
+      carriers: [...permissionGroupMeta.carriers.allPermissions],
       customers: [...permissionGroupMeta.customers.allPermissions],
+      warranty: [...permissionGroupMeta.warranty.allPermissions],
+      paymentReceipts: [...permissionGroupMeta.paymentReceipts.allPermissions],
+      paymentReceiptTypes: [...permissionGroupMeta.paymentReceiptTypes.allPermissions],
+      paymentExpenses: [...permissionGroupMeta.paymentExpenses.allPermissions],
+      paymentExpenseTypes: [...permissionGroupMeta.paymentExpenseTypes.allPermissions],
+      reports: [...permissionGroupMeta.reports.allPermissions],
+      channels: [...permissionGroupMeta.channels.allPermissions],
       promotions: [...permissionGroupMeta.promotions.allPermissions],
       excel: [...permissionGroupMeta.excel.allPermissions],
-    },
-  },
-  {
-    id: "branch-manager",
-    name: "Quản lý chi nhánh",
-    scope: "ONE_BRANCH",
-    description:
-      "Quản lý vận hành của một chi nhánh, không thấy toàn hệ thống.",
-    createdAt: "08/08/2025",
-    updatedAt: "02/05/2026",
-    note: "Theo chi nhánh",
-    permissions: {
+      system: [...permissionGroupMeta.system.allPermissions],
+      others: [...permissionGroupMeta.others.allPermissions]
+    } },
+  { id: "branch-manager", name: "Quản lý chi nhánh", scope: "ONE_BRANCH", description: "Quản lý vận hành của một chi nhánh, không thấy toàn hệ thống.", createdAt: "08/08/2025", updatedAt: "02/05/2026", note: "Theo chi nhánh", permissions: {
       products: [...permissionGroupMeta.products.allPermissions],
-      orders: [...permissionGroupMeta.orders.allPermissions],
       inventory: [...permissionGroupMeta.inventory.allPermissions],
+      purchaseOrders: [...permissionGroupMeta.purchaseOrders.allPermissions],
+      purchaseReceipts: [...permissionGroupMeta.purchaseReceipts.allPermissions],
+      transfers: [...permissionGroupMeta.transfers.allPermissions],
+      stocktakes: [...permissionGroupMeta.stocktakes.allPermissions],
+      inventoryAdjustments: [...permissionGroupMeta.inventoryAdjustments.allPermissions],
+      suppliers: [...permissionGroupMeta.suppliers.allPermissions],
+      orders: [...permissionGroupMeta.orders.allPermissions],
+      returns: [...permissionGroupMeta.returns.allPermissions],
+      shippingReconcile: [...permissionGroupMeta.shippingReconcile.allPermissions],
+      carriers: [...permissionGroupMeta.carriers.allPermissions],
       customers: [...permissionGroupMeta.customers.allPermissions],
+      warranty: [...permissionGroupMeta.warranty.allPermissions],
+      paymentReceipts: [...permissionGroupMeta.paymentReceipts.allPermissions],
+      paymentReceiptTypes: [...permissionGroupMeta.paymentReceiptTypes.allPermissions],
+      paymentExpenses: [...permissionGroupMeta.paymentExpenses.allPermissions],
+      paymentExpenseTypes: [...permissionGroupMeta.paymentExpenseTypes.allPermissions],
+      reports: [...permissionGroupMeta.reports.allPermissions],
+      channels: [...permissionGroupMeta.channels.allPermissions],
       promotions: [...permissionGroupMeta.promotions.allPermissions],
       excel: [...permissionGroupMeta.excel.allPermissions],
-    },
-  },
-  {
-    id: "fulltime",
-    name: "Nhân viên fulltime",
-    scope: "ONE_BRANCH",
-    description:
-      "Vận hành mạnh hơn bán lẻ, được xử lý đơn và thao tác kho cơ bản.",
-    createdAt: "07/08/2025",
-    updatedAt: "02/05/2026",
-    note: "Không xem báo cáo",
-    permissions: {
+      system: [...permissionGroupMeta.system.allPermissions],
+      others: [...permissionGroupMeta.others.allPermissions]
+    } },
+  { id: "fulltime", name: "Nhân viên fulltime", scope: "ONE_BRANCH", description: "Vận hành mạnh hơn bán lẻ, xử lý đơn và thao tác kho cơ bản.", createdAt: "07/08/2025", updatedAt: "02/05/2026", note: "Không xem báo cáo", permissions: {
       products: ["Xem sản phẩm"],
-      orders: [
-        "Bán hàng / POS",
-        "Xem đơn của mình",
-        "Xem đơn chi nhánh",
-        "Tạo đơn hàng",
-        "Đổi trả hàng",
-      ],
-      inventory: ["Xem tồn kho", "Kiểm kho", "Chuyển kho", "Nhận kho"],
-      customers: ["Xem khách hàng"],
-      promotions: ["Xem khuyến mãi"],
-      excel: [],
-    },
-  },
-  {
-    id: "retail-staff",
-    name: "Nhân viên bán lẻ",
-    scope: "ONE_BRANCH",
-    description:
-      "Tập trung bán hàng tại quầy, quyền gọn và an toàn hơn fulltime.",
-    createdAt: "05/12/2025",
-    updatedAt: "02/05/2026",
-    note: "Không xem báo cáo, không đụng kho",
-    permissions: {
-      products: ["Xem sản phẩm"],
-      orders: [
-        "Bán hàng / POS",
-        "Xem đơn của mình",
-        "Tạo đơn hàng",
-        "Đổi trả hàng",
-      ],
       inventory: ["Xem tồn kho"],
-      customers: ["Xem khách hàng"],
+      purchaseOrders: [],
+      purchaseReceipts: [],
+      transfers: ["Xem phiếu chuyển", "Tạo phiếu chuyển", "Xác nhận chuyển", "Nhận hàng vào kho"],
+      stocktakes: ["Xem phiếu kiểm hàng", "Tạo phiếu kiểm hàng", "Sửa phiếu kiểm hàng"],
+      inventoryAdjustments: [],
+      suppliers: ["Xem nhà cung cấp"],
+      orders: ["Bán hàng / POS", "Xem đơn hàng được phụ trách", "Tạo đơn hàng", "Sửa đơn hàng", "Đóng gói và giao hàng", "Thanh toán đơn hàng"],
+      returns: ["Xem đơn trả hàng", "Tạo đơn trả hàng", "Nhận hàng vào kho", "Thanh toán đơn trả"],
+      shippingReconcile: [],
+      carriers: ["Xem đối tác vận chuyển"],
+      customers: ["Xem khách hàng được phụ trách", "Tạo khách hàng", "Sửa khách hàng"],
+      warranty: [],
+      paymentReceipts: ["Xem phiếu thu", "Tạo phiếu thu"],
+      paymentReceiptTypes: [],
+      paymentExpenses: ["Xem phiếu chi", "Tạo phiếu chi"],
+      paymentExpenseTypes: [],
+      reports: [],
+      channels: ["Sapo POS - Bán hàng tại quầy", "Kênh Social"],
       promotions: ["Xem khuyến mãi"],
       excel: [],
-    },
-  },
-  {
-    id: "stock-auditor",
-    name: "Nhân viên kiểm kho",
-    scope: "ONE_BRANCH",
-    description: "Chỉ tập trung kiểm kho và đối chiếu tồn.",
-    createdAt: "18/03/2026",
-    updatedAt: "02/05/2026",
-    note: "Không xử lý đơn bán",
-    permissions: {
+      system: [],
+      others: []
+    } },
+  { id: "retail-staff", name: "Nhân viên bán lẻ", scope: "ONE_BRANCH", description: "Bán hàng tại quầy, xử lý đơn cơ bản theo chuẩn Sapo.", createdAt: "05/12/2025", updatedAt: "02/05/2026", note: "POS + đơn cơ bản", permissions: {
       products: ["Xem sản phẩm"],
+      inventory: ["Xem tồn kho"],
+      purchaseOrders: [],
+      purchaseReceipts: [],
+      transfers: ["Xem phiếu chuyển", "Tạo phiếu chuyển", "Xác nhận chuyển", "Nhận hàng vào kho"],
+      stocktakes: ["Xem phiếu kiểm hàng", "Tạo phiếu kiểm hàng", "Sửa phiếu kiểm hàng"],
+      inventoryAdjustments: [],
+      suppliers: [],
+      orders: ["Bán hàng / POS", "Xem đơn hàng được phụ trách", "Tạo đơn hàng", "Sửa đơn hàng", "Đóng gói và giao hàng", "Thanh toán đơn hàng"],
+      returns: ["Xem đơn trả hàng", "Tạo đơn trả hàng", "Nhận hàng vào kho", "Thanh toán đơn trả"],
+      shippingReconcile: [],
+      carriers: ["Xem đối tác vận chuyển"],
+      customers: ["Xem khách hàng được phụ trách", "Tạo khách hàng", "Sửa khách hàng"],
+      warranty: [],
+      paymentReceipts: ["Xem phiếu thu", "Tạo phiếu thu"],
+      paymentReceiptTypes: [],
+      paymentExpenses: ["Xem phiếu chi", "Tạo phiếu chi"],
+      paymentExpenseTypes: [],
+      reports: [],
+      channels: ["Sapo POS - Bán hàng tại quầy", "Kênh Social"],
+      promotions: ["Xem khuyến mãi"],
+      excel: [],
+      system: [],
+      others: []
+    } },
+  { id: "stock-auditor", name: "Nhân viên kiểm kho", scope: "ONE_BRANCH", description: "Tập trung kiểm kho và đối chiếu tồn.", createdAt: "18/03/2026", updatedAt: "02/05/2026", note: "Không xử lý đơn bán", permissions: {
+      products: ["Xem sản phẩm"],
+      inventory: ["Xem tồn kho"],
+      purchaseOrders: [],
+      purchaseReceipts: [],
+      transfers: ["Xem phiếu chuyển"],
+      stocktakes: ["Xem phiếu kiểm hàng", "Tạo phiếu kiểm hàng", "Sửa phiếu kiểm hàng", "Xác nhận phiếu kiểm hàng"],
+      inventoryAdjustments: [],
+      suppliers: [],
       orders: [],
-      inventory: ["Xem tồn kho", "Kiểm kho"],
+      returns: [],
+      shippingReconcile: [],
+      carriers: [],
       customers: [],
+      warranty: [],
+      paymentReceipts: [],
+      paymentReceiptTypes: [],
+      paymentExpenses: [],
+      paymentExpenseTypes: [],
+      reports: [],
+      channels: [],
       promotions: [],
       excel: [],
-    },
-  },
-  {
-    id: "stock-staff",
-    name: "Nhân viên kho",
-    scope: "ONE_BRANCH",
-    description:
-      "Xử lý kho, chuyển hàng và nhận hàng theo phân quyền chi nhánh.",
-    createdAt: "02/05/2026",
-    updatedAt: "02/05/2026",
-    note: "Kho vận hành",
-    permissions: {
+      system: [],
+      others: []
+    } },
+  { id: "stock-staff", name: "Nhân viên kho", scope: "ONE_BRANCH", description: "Xử lý kho, chuyển hàng và nhận hàng theo phân quyền chi nhánh.", createdAt: "02/05/2026", updatedAt: "02/05/2026", note: "Kho vận hành", permissions: {
       products: ["Xem sản phẩm"],
+      inventory: ["Xem tồn kho"],
+      purchaseOrders: [],
+      purchaseReceipts: ["Xem đơn nhập", "Tạo đơn nhập", "Nhận hàng vào kho"],
+      transfers: ["Xem phiếu chuyển", "Tạo phiếu chuyển", "Sửa phiếu chuyển", "Xác nhận chuyển", "Nhận hàng vào kho"],
+      stocktakes: ["Xem phiếu kiểm hàng", "Tạo phiếu kiểm hàng", "Sửa phiếu kiểm hàng", "Xác nhận phiếu kiểm hàng"],
+      inventoryAdjustments: [],
+      suppliers: ["Xem nhà cung cấp"],
       orders: [],
-      inventory: [
-        "Xem tồn kho",
-        "Quản kho",
-        "Kiểm kho",
-        "Chuyển kho",
-        "Nhận kho",
-      ],
+      returns: ["Xem đơn trả hàng", "Nhận hàng vào kho"],
+      shippingReconcile: [],
+      carriers: [],
       customers: [],
+      warranty: [],
+      paymentReceipts: [],
+      paymentReceiptTypes: [],
+      paymentExpenses: [],
+      paymentExpenseTypes: [],
+      reports: [],
+      channels: [],
       promotions: [],
       excel: [],
-    },
-  },
+      system: [],
+      others: []
+    } },
 ];
 
 const MANAGEMENT_ROLE_IDS = new Set(["owner", "admin", "branch-manager"]);
@@ -897,24 +931,15 @@ function loadRoleTemplatesFromStorage() {
       return sanitizeRoleTemplate({
         ...seed,
         permissions: {
-          products: Array.isArray(saved.permissions?.products)
-            ? saved.permissions.products
-            : seed.permissions.products,
-          orders: Array.isArray(saved.permissions?.orders)
-            ? saved.permissions.orders
-            : seed.permissions.orders,
-          inventory: Array.isArray(saved.permissions?.inventory)
-            ? saved.permissions.inventory
-            : seed.permissions.inventory,
-          customers: Array.isArray(saved.permissions?.customers)
-            ? saved.permissions.customers
-            : seed.permissions.customers,
-          promotions: Array.isArray(saved.permissions?.promotions)
-            ? saved.permissions.promotions
-            : seed.permissions.promotions,
-          excel: Array.isArray(saved.permissions?.excel)
-            ? saved.permissions.excel
-            : seed.permissions.excel,
+          ...(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).reduce(
+            (acc, key) => ({
+              ...acc,
+              [key]: Array.isArray(saved.permissions?.[key])
+                ? saved.permissions[key]
+                : seed.permissions[key],
+            }),
+            {} as Record<PermissionGroupKey, string[]>,
+          ),
         },
         updatedAt: saved.updatedAt || seed.updatedAt,
       });
@@ -1008,6 +1033,8 @@ export default function PermissionsPageClient() {
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [selectedRoleId, setSelectedRoleId] = useState("fulltime");
+  const [activeTab, setActiveTab] = useState<"roles" | "staff">("roles");
+  const [selectedPermissionGroup, setSelectedPermissionGroup] = useState<PermissionGroupKey>("orders");
   const [message, setMessage] = useState("");
   const [roleTemplateDirty, setRoleTemplateDirty] = useState(false);
 
@@ -1513,6 +1540,19 @@ export default function PermissionsPageClient() {
         body: JSON.stringify({ branchRoles }),
       });
 
+      // Lưu cả branchPermissions chi tiết để menu/quyền theo chi nhánh ăn ngay sau khi đổi role.
+      const branchPermissions = branchRoles.map(({ branchId, roleCode }) => {
+        const role = roles.find((item) => item.id === roleCode);
+        return sanitizeBranchPermissionForApi(
+          role ? roleToBranchPermission(role, branchId) : defaultBranchPermission(branchId),
+        );
+      });
+
+      await apiJson(`/staff/${currentEmployeeId}/permissions`, {
+        method: "PATCH",
+        body: JSON.stringify({ branchPermissions }),
+      });
+
       await loadEmployees();
       setSelectedRoleId(primary.roleCode);
       setBranchRoleDirty(false);
@@ -1844,7 +1884,7 @@ export default function PermissionsPageClient() {
   const renderPermissionEditor = (employee: EmployeeItem) => {
     if (permissionEmployeeId !== employee.id) return null;
 
-    const assignedRoles = Object.values(editBranchRoleMap).filter(Boolean);
+    const assignedRoles = Object.values(editBranchRoleMap).filter(Boolean) as string[];
     const roleLabels = Array.from(new Set(assignedRoles)).map((roleId) =>
       roleLabel(roles, roleId),
     );
@@ -1961,12 +2001,18 @@ export default function PermissionsPageClient() {
         />
       </div>
 
+      <div className="flex flex-wrap gap-2 border-b border-neutral-200">
+        <button type="button" onClick={() => setActiveTab("roles")} className={`px-4 py-3 text-sm font-semibold ${activeTab === "roles" ? "border-b-2 border-neutral-900 text-neutral-900" : "text-neutral-500"}`}>Quản lý vai trò</button>
+        <button type="button" onClick={() => setActiveTab("staff")} className={`px-4 py-3 text-sm font-semibold ${activeTab === "staff" ? "border-b-2 border-neutral-900 text-neutral-900" : "text-neutral-500"}`}>Quản lý nhân viên</button>
+      </div>
+
       {message ? (
         <Panel className="px-5 py-4">
           <p className="text-sm text-neutral-700">{message}</p>
         </Panel>
       ) : null}
 
+      {activeTab === "staff" ? (
       <Panel>
         <div className="p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -2075,7 +2121,10 @@ export default function PermissionsPageClient() {
         </div>
       </Panel>
 
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      ) : null}
+
+      {activeTab === "roles" ? (
+      <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <Panel className="overflow-hidden xl:sticky xl:top-4 xl:self-start">
           <div className="p-5">
             <div className="flex items-center justify-between gap-3">
@@ -2133,173 +2182,94 @@ export default function PermissionsPageClient() {
         </Panel>
 
         <div className="space-y-6">
-          <Panel className="p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-2xl font-semibold text-neutral-900">
-                    Role Control Center: {selectedRole.name}
-                  </h3>
-                  <Badge tone="blue">{scopeBadge(selectedRole.scope)}</Badge>
-                  <Badge tone="amber">{selectedRole.note}</Badge>
+          <Panel className="overflow-hidden">
+            <div className="border-b border-neutral-100 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-xl font-semibold text-neutral-900">Quyền của vai trò: {selectedRole.name}</h3>
+                    <Badge tone="blue">{scopeBadge(selectedRole.scope)}</Badge>
+                    <Badge tone="gray">{getRolePermissionCount(selectedRole)} quyền</Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-neutral-500">Bên trái chọn danh mục quyền chính, bên phải tick quyền chi tiết của danh mục đó.</p>
                 </div>
-                <p className="mt-2 text-sm text-neutral-500">
-                  Tick quyền tại đây. Danh sách nhân viên dùng role này nằm ngay
-                  bên dưới để kiểm tra nhanh.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={resetRoleTemplates}>
-                  Reset mẫu
-                </Button>
-                <Button
-                  onClick={saveRoleTemplates}
-                  disabled={!roleTemplateDirty}
-                  isLoading={savingRoleTemplates}
-                  loadingText="Đang lưu..."
-                >
-                  {roleTemplateDirty ? "Lưu mẫu quyền" : "Đã lưu mẫu"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={resetRoleTemplates}>Reset mẫu</Button>
+                  <Button onClick={saveRoleTemplates} disabled={!roleTemplateDirty} isLoading={savingRoleTemplates} loadingText="Đang lưu...">{roleTemplateDirty ? "Lưu mẫu quyền" : "Đã lưu mẫu"}</Button>
+                </div>
               </div>
             </div>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-3">
-              <div className="rounded-3xl border border-neutral-200 p-4">
-                <p className="text-sm text-neutral-500">Đang được gán</p>
-                <p className="mt-3 text-4xl font-semibold tracking-tight text-neutral-900">
-                  {roleEmployees.length}
-                </p>
+            <div className="grid min-h-[620px] xl:grid-cols-[310px_minmax(0,1fr)]">
+              <div className="border-r border-neutral-100 bg-neutral-50/50 p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">Danh mục quyền</p>
+                  <Badge tone="gray">{Object.keys(permissionGroupMeta).length}</Badge>
+                </div>
+                <div className="space-y-1.5">
+                  {(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map((key) => {
+                    const meta = permissionGroupMeta[key];
+                    const current = selectedRole.permissions[key] || [];
+                    const active = selectedPermissionGroup === key;
+                    return (
+                      <button key={key} type="button" onClick={() => setSelectedPermissionGroup(key)} className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left text-sm transition ${active ? "border-neutral-900 bg-white text-neutral-950 shadow-sm" : "border-transparent bg-transparent text-neutral-700 hover:border-neutral-200 hover:bg-white"}`}>
+                        <span className="truncate font-medium">{meta.title}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-neutral-900 text-white" : "bg-white text-neutral-500"}`}>{current.length}/{meta.allPermissions.length}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="rounded-3xl border border-neutral-200 p-4">
-                <p className="text-sm text-neutral-500">Tổng quyền</p>
-                <p className="mt-3 text-4xl font-semibold tracking-tight text-neutral-900">
-                  {getRolePermissionCount(selectedRole)}
-                </p>
-              </div>
-              <div className="rounded-3xl border border-neutral-200 p-4">
-                <p className="text-sm text-neutral-500">Cập nhật cuối</p>
-                <p className="mt-3 text-3xl font-semibold tracking-tight text-neutral-900">
-                  {selectedRole.updatedAt}
-                </p>
-              </div>
-            </div>
 
-            <div className="mt-5 space-y-4">
-              {(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).map(
-                (key) => {
-                  const meta = permissionGroupMeta[key];
-                  const currentPermissions =
-                    selectedRole.permissions[key] || [];
-                  const allChecked = groupHasAllAllowedPermissions(
-                    selectedRole,
-                    key,
-                  );
-                  const allowedPermissions = getAllowedGroupPermissions(
-                    selectedRole.id,
-                    key,
-                  );
+              <div className="p-5">
+                {(() => {
+                  const meta = permissionGroupMeta[selectedPermissionGroup];
+                  const currentPermissions = selectedRole.permissions[selectedPermissionGroup] || [];
+                  const allowedPermissions = getAllowedGroupPermissions(selectedRole.id, selectedPermissionGroup);
                   return (
-                    <div
-                      key={key}
-                      className="rounded-3xl border border-neutral-200 bg-white p-4"
-                    >
+                    <div>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="text-lg font-semibold text-neutral-900">
-                              {meta.title}
-                            </h4>
-                            <Badge
-                              tone={
-                                currentPermissions.length ? "green" : "gray"
-                              }
-                            >
-                              {currentPermissions.length}/
-                              {meta.allPermissions.length}
-                            </Badge>
+                            <h4 className="text-2xl font-semibold text-neutral-900">{meta.title}</h4>
+                            <Badge tone={currentPermissions.length ? "green" : "gray"}>{currentPermissions.length}/{meta.allPermissions.length}</Badge>
                           </div>
-                          <p className="mt-1 text-sm text-neutral-500">
-                            {meta.desc}
-                          </p>
-                          <p className="mt-2 text-xs italic text-neutral-500">
-                            {groupPermissionSummary(selectedRole, key)}
-                          </p>
+                          <p className="mt-1 text-sm text-neutral-500">{meta.desc}</p>
+                          <p className="mt-2 text-xs italic text-neutral-500">{groupPermissionSummary(selectedRole, selectedPermissionGroup)}</p>
                         </div>
-                        <label className="flex cursor-pointer items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-medium text-neutral-700">
-                          <input
-                            type="checkbox"
-                            checked={allChecked}
-                            disabled={!allowedPermissions.length}
-                            onChange={(e) =>
-                              togglePermissionGroup(
-                                selectedRole.id,
-                                key,
-                                e.target.checked,
-                              )
-                            }
-                          />
-                          {canRoleUseActionPermissions(selectedRole.id) ||
-                          !["products", "promotions"].includes(key)
-                            ? "Cả nhóm"
-                            : "Chỉ quyền xem"}
-                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="secondary" onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, true)} disabled={!allowedPermissions.length}>Chọn tất cả</Button>
+                          <Button variant="secondary" onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, false)}>Bỏ chọn tất cả</Button>
+                        </div>
                       </div>
-                      <div className="mt-4 grid gap-3 md:grid-cols-2">
-                        {meta.allPermissions.map((permissionName) => {
-                          const checked =
-                            currentPermissions.includes(permissionName);
-                          const disabled = !isPermissionAllowedForRole(
-                            selectedRole.id,
-                            key,
-                            permissionName,
-                          );
-                          const isLockedAction =
-                            disabled && isActionPermission(key, permissionName);
-                          return (
-                            <label
-                              key={permissionName}
-                              title={
-                                isLockedAction
-                                  ? "Quyền này chỉ dành cho Owner/Admin/Quản lý chi nhánh"
-                                  : undefined
-                              }
-                              className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm transition ${
-                                disabled
-                                  ? "cursor-not-allowed border-neutral-200 bg-neutral-50 text-neutral-400"
-                                  : checked
-                                    ? "cursor-pointer border-blue-200 bg-blue-50 text-neutral-900"
-                                    : "cursor-pointer border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2">
-                                {permissionName}
-                                {isLockedAction ? (
-                                  <span className="rounded-full border border-neutral-200 bg-white px-2 py-0.5 text-[11px] text-neutral-400">
-                                    Quản lý+
-                                  </span>
-                                ) : null}
-                              </span>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={disabled}
-                                onChange={(e) =>
-                                  updateRolePermission(
-                                    selectedRole.id,
-                                    key,
-                                    permissionName,
-                                    e.target.checked,
-                                  )
-                                }
-                              />
-                            </label>
-                          );
-                        })}
+
+                      <div className="mt-5 overflow-hidden rounded-3xl border border-neutral-200">
+                        <div className="grid grid-cols-[52px_minmax(220px,1fr)_210px_minmax(280px,1fr)] border-b border-neutral-200 bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          <div />
+                          <div>Quyền</div>
+                          <div>Mã quyền</div>
+                          <div>Mô tả</div>
+                        </div>
+                        <div className="divide-y divide-neutral-100">
+                          {meta.allPermissions.map((permissionName) => {
+                            const checked = currentPermissions.includes(permissionName);
+                            const disabled = !isPermissionAllowedForRole(selectedRole.id, selectedPermissionGroup, permissionName);
+                            const code = permissionName.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
+                            return (
+                              <label key={permissionName} className={`grid cursor-pointer grid-cols-[52px_minmax(220px,1fr)_210px_minmax(280px,1fr)] items-center px-4 py-3 text-sm transition ${disabled ? "cursor-not-allowed bg-neutral-50 text-neutral-400" : checked ? "bg-blue-50/60 text-neutral-900" : "bg-white text-neutral-700 hover:bg-neutral-50"}`}>
+                                <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => updateRolePermission(selectedRole.id, selectedPermissionGroup, permissionName, event.target.checked)} className="h-4 w-4" />
+                                <div className="font-medium">{permissionName}</div>
+                                <div className="text-xs text-neutral-500">{code}</div>
+                                <div className="text-sm text-neutral-500">{disabled ? "Chỉ dành cho Owner/Admin/Quản lý chi nhánh." : `Cho phép: ${permissionName.toLowerCase()}.`}</div>
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   );
-                },
-              )}
+                })()}
+              </div>
             </div>
           </Panel>
 
@@ -2532,6 +2502,7 @@ export default function PermissionsPageClient() {
           </Panel>
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

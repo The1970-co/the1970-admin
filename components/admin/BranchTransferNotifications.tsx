@@ -1,6 +1,6 @@
 "use client";
 
-import { API_BASE } from "@/lib/api-base";
+import { apiJson } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type BranchNotification = {
@@ -73,25 +73,12 @@ export default function BranchTransferNotifications() {
         currentUser?.assignedBranches?.[0]?.id
     );
   }, [currentUser]);
-
-  const loadCurrentUser = useCallback(async () => {
-    try {
-      const token = localStorage.getItem("token");
-      if (!token) return;
-
-      const res = await fetch(`${API_BASE}/auth/me`, {
-        cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      setCurrentUser(data?.user || data);
-    } catch {}
-  }, []);
+const loadCurrentUser = useCallback(async () => {
+  try {
+    const data = await apiJson("/auth/me");
+    setCurrentUser(data?.user || data);
+  } catch {}
+}, []);
 
   const loadNotifications = useCallback(
     async (silent = false) => {

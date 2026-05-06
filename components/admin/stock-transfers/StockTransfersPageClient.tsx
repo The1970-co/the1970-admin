@@ -1,6 +1,6 @@
 "use client";
 
-import { API_BASE } from "@/lib/api-base";
+import { apiJson } from "@/lib/api";
 import { useEffect, useMemo, useState } from "react";
 import {
   getBranches,
@@ -493,19 +493,8 @@ const lockedSourceBranchName = useMemo(() => {
 
 async function loadCurrentUser() {
   try {
-    const token = localStorage.getItem("token");
-    if (!token) return;
+    const data = await apiJson("/auth/me");
 
-    const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      cache: "no-store",
-    });
-
-    if (!res.ok) return;
-
-    const data = await res.json();
     console.log("USER FROM API:", data);
     setCurrentUser(data);
   } catch (err) {
