@@ -1,6 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { updateOrderStatus } from "@/lib/orders-api";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import ProductPicker from "./ProductPicker";
@@ -215,6 +216,42 @@ function paymentStatusText(status?: string | null) {
       return "Lỗi";
     case "UNPAID":
       return "Chưa thanh toán";
+    default:
+      return status || "—";
+  }
+}
+
+function orderStatusText(status?: string | null) {
+  switch (status) {
+    case "NEW":
+      return "Mới tạo";
+    case "APPROVED":
+      return "Đã duyệt";
+    case "PACKING":
+      return "Đang đóng gói";
+    case "SHIPPED":
+      return "Đã xuất kho";
+    case "COMPLETED":
+      return "Hoàn thành";
+    case "CANCELLED":
+      return "Đã huỷ";
+    default:
+      return status || "—";
+  }
+}
+
+function fulfillmentStatusText(status?: string | null) {
+  switch (status) {
+    case "UNFULFILLED":
+      return "Chưa giao";
+    case "PROCESSING":
+      return "Đang chuẩn bị";
+    case "PARTIAL":
+      return "Giao một phần";
+    case "FULFILLED":
+      return "Đã giao";
+    case "RETURNED":
+      return "Đã trả hàng";
     default:
       return status || "—";
   }
@@ -548,8 +585,10 @@ function stageIndex(status?: string | null) {
   }
 }
 
-function Timeline({ status }: { status?: string | null }) {
-  const current = stageIndex(status);
+function Timeline({ order }: { order?: OrderDetail | null }) {
+  const current = stageIndex(order?.status);
+  const createdTime = formatDateTime(order?.createdAt) || "—";
+  const updatedTime = formatDateTime(order?.updatedAt) || createdTime;
   const steps = [
     { key: 1, label: "Đặt hàng" },
     { key: 2, label: "Duyệt" },
@@ -558,31 +597,41 @@ function Timeline({ status }: { status?: string | null }) {
     { key: 5, label: "Hoàn thành" },
   ];
 
+  const timeForStep = (key: number) => {
+    if (key === 1) return createdTime;
+    if (current >= key && key === current) return updatedTime;
+    if (current > key) return "Đã qua";
+    return "—";
+  };
+
   return (
-    <div className="flex items-center">
+    <div className="flex items-start">
       {steps.map((step, index) => {
         const active = current >= step.key;
         const last = index === steps.length - 1;
 
         return (
-          <div key={step.key} className="flex items-center">
-            <div className="flex flex-col items-center">
+          <div key={step.key} className="flex items-start">
+            <div className="flex min-w-[54px] flex-col items-center text-center">
               <div
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${active
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${active
                   ? "bg-blue-600 text-white"
                   : "bg-neutral-200 text-neutral-500"
                   }`}
               >
                 {step.key}
               </div>
-              <span className="mt-0.5 text-[9px] text-neutral-500">
+              <span className="mt-1 text-[10px] font-medium text-neutral-600">
                 {step.label}
+              </span>
+              <span className="mt-0.5 max-w-[74px] text-[9px] leading-tight text-neutral-400">
+                {timeForStep(step.key)}
               </span>
             </div>
 
             {!last ? (
               <div
-                className={`mx-1.5 h-[2px] w-6 md:w-8 ${current > step.key ? "bg-blue-600" : "bg-neutral-200"
+                className={`mx-1.5 mt-3 h-[2px] w-7 md:w-9 ${current > step.key ? "bg-blue-600" : "bg-neutral-200"
                   }`}
               />
             ) : null}
@@ -1723,6 +1772,70 @@ export default function OrderDetailPageClient({
     }
   };
 
+  const handleCopyOrder = () => {
+    if (!viewOrder) return;
+    router.push(`/orders/create?copyFrom=${encodeURIComponent(viewOrder.id)}`);
+  };
+
+  const handleInternalCancelOrder = async () => {
+    if (!order) return;
+    const ok = window.confirm(
+      `Huỷ nội bộ đơn ${order.orderCode}? Nút này chỉ đổi trạng thái trong hệ thống, không gửi lệnh huỷ sang GHN.`,
+    );
+    if (!ok) return;
+
+    try {
+      setSaving(true);
+      setMessage("");
+      const updated = await updateOrderStatus(order.id, "CANCELLED");
+      const nextOrder = { ...order, ...updated } as OrderDetail;
+      setOrder(nextOrder);
+      setDraftOrder(nextOrder);
+      setMessage("Đã huỷ đơn nội bộ.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không huỷ được đơn nội bộ.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelGhnOrder = async () => {
+    if (!order) return;
+    const ok = window.confirm(
+      `Huỷ GHN cho đơn ${order.orderCode}? Nút này gửi yêu cầu huỷ vận đơn sang GHN.`,
+    );
+    if (!ok) return;
+
+    try {
+      setSaving(true);
+      setMessage("");
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      const res = await fetch(`${API_BASE}/shipments/${order.id}/cancel`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.message || json?.error || "Huỷ GHN thất bại.");
+      }
+
+      const nextOrder = { ...order, ...(json?.order || json || {}) } as OrderDetail;
+      setOrder(nextOrder);
+      setDraftOrder(nextOrder);
+      setMessage("Đã gửi yêu cầu huỷ GHN.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Huỷ GHN thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handlePrint = () => {
     if (!viewOrder) return;
 
@@ -1856,10 +1969,10 @@ export default function OrderDetailPageClient({
               {viewOrder.orderCode}
             </h1>
             <Badge tone={toneForOrderStatus(viewOrder.status)}>
-              {viewOrder.status || "—"}
+              {orderStatusText(viewOrder.status)}
             </Badge>
             <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
-              {viewOrder.paymentStatus || "—"}
+              {paymentStatusText(viewOrder.paymentStatus)}
             </Badge>
             {partialDelivery ? (
               <Badge tone="amber">Giao hàng 1 phần</Badge>
@@ -1869,10 +1982,26 @@ export default function OrderDetailPageClient({
 
         <div className="ml-4 flex items-start gap-3">
           <div className="hidden xl:block">
-            <Timeline status={viewOrder.status} />
+            <Timeline order={viewOrder} />
           </div>
           <div className="flex flex-wrap gap-2">
             <ActionButton onClick={handlePrint}>In đơn hàng</ActionButton>
+            <ActionButton onClick={handleCopyOrder}>Sao chép đơn</ActionButton>
+            <ActionButton
+              tone="danger"
+              disabled={saving || viewOrder.status === "CANCELLED" || viewOrder.status === "COMPLETED"}
+              onClick={handleInternalCancelOrder}
+            >
+              Huỷ nội bộ
+            </ActionButton>
+            {viewOrder.shipment?.trackingCode ? (
+              <ActionButton
+                disabled={saving}
+                onClick={handleCancelGhnOrder}
+              >
+                Huỷ GHN
+              </ActionButton>
+            ) : null}
 
             <Link
               href={`/returns/create?orderId=${viewOrder.id}`}
@@ -2124,7 +2253,7 @@ export default function OrderDetailPageClient({
 
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
-                  {viewOrder.paymentStatus || "—"}
+                  {paymentStatusText(viewOrder.paymentStatus)}
                 </Badge>
                 {viewOrder.shipment?.codAmount ? (
                   <span className="text-[12px] text-neutral-600">
@@ -2492,9 +2621,9 @@ export default function OrderDetailPageClient({
                   <DataRow label="Ngày tạo" value={viewOrder.createdAt || "—"} />
                   <DataRow label="Cập nhật" value={viewOrder.updatedAt || "—"} />
                   <DataRow label="Nhân viên" value={viewOrder.createdByStaffName || "—"} />
-                  <DataRow label="Trạng thái" value={viewOrder.status || "—"} />
-                  <DataRow label="Thanh toán" value={viewOrder.paymentStatus || "—"} />
-                  <DataRow label="Giao vận" value={viewOrder.fulfillmentStatus || "—"} />
+                  <DataRow label="Trạng thái" value={orderStatusText(viewOrder.status)} />
+                  <DataRow label="Thanh toán" value={paymentStatusText(viewOrder.paymentStatus)} />
+                  <DataRow label="Giao vận" value={fulfillmentStatusText(viewOrder.fulfillmentStatus)} />
                   <DataRow label="Chi nhánh" value={viewOrder.branchId || "—"} />
                 </>
               ) : (
@@ -2504,9 +2633,9 @@ export default function OrderDetailPageClient({
                   <DataRow label="Ngày tạo" value={viewOrder.createdAt || "—"} />
                   <DataRow label="Cập nhật" value={viewOrder.updatedAt || "—"} />
                   <DataRow label="Nhân viên" value={viewOrder.createdByStaffName || "—"} />
-                  <DataRow label="Trạng thái" value={viewOrder.status || "—"} />
-                  <DataRow label="Thanh toán" value={viewOrder.paymentStatus || "—"} />
-                  <DataRow label="Giao vận" value={viewOrder.fulfillmentStatus || "—"} />
+                  <DataRow label="Trạng thái" value={orderStatusText(viewOrder.status)} />
+                  <DataRow label="Thanh toán" value={paymentStatusText(viewOrder.paymentStatus)} />
+                  <DataRow label="Giao vận" value={fulfillmentStatusText(viewOrder.fulfillmentStatus)} />
                   <DataRow label="Chi nhánh" value={viewOrder.branchId || "—"} />
                   <DataRow label="Kênh bán" value={viewOrder.salesChannel || "—"} />
                   <DataRow

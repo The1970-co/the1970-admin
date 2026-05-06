@@ -9,7 +9,8 @@ type SettingsTab =
   | "shipping"
   | "mapping"
   | "printing"
-  | "paymentSources";
+  | "paymentSources"
+  | "security";
 
 type WarehouseItem = {
   id: string;
@@ -223,6 +224,13 @@ export default function SettingsPage() {
     note: "",
   });
   const [savingPaymentSource, setSavingPaymentSource] = useState(false);
+
+  const [totpSetupData, setTotpSetupData] = useState<any>(null);
+  const [totpCode, setTotpCode] = useState("");
+  const [totpLoading, setTotpLoading] = useState(false);
+  const [totpVerifying, setTotpVerifying] = useState(false);
+  const [totpMessage, setTotpMessage] = useState("");
+  const [totpError, setTotpError] = useState("");
 
   const [newWarehouse, setNewWarehouse] = useState<Omit<WarehouseItem, "id">>({
     code: "",
@@ -603,6 +611,16 @@ const addWarehouse = async () => {
               }`}
           >
             Nguồn tiền
+          </button>
+
+          <button
+            onClick={() => setTab("security")}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "security"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
+          >
+            Bảo mật
           </button>
         </div>
 
@@ -1356,6 +1374,133 @@ const addWarehouse = async () => {
         </div>
       )}
       {tab === "printing" && <PrintTemplatesTab />}
+
+      {tab === "security" && (
+        <Panel className="p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xl font-semibold text-neutral-900">
+                Google Authenticator
+              </h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                Dùng để xác nhận giao hàng 1 phần, sửa COD và thao tác nhạy cảm.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-6 xl:grid-cols-[260px_1fr]">
+            <div className="flex min-h-[260px] items-center justify-center rounded-3xl border border-dashed border-neutral-300 bg-neutral-50 p-4">
+              {totpSetupData?.qrCodeDataUrl ? (
+                <img
+                  src={totpSetupData.qrCodeDataUrl}
+                  alt="QR"
+                  className="h-56 w-56 rounded-2xl bg-white object-contain p-2"
+                />
+              ) : (
+                <div className="text-center text-sm text-neutral-500">
+                  Bấm tạo mã QR để cài authen.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-3xl bg-neutral-50 p-4">
+                <div className="font-semibold text-neutral-900">
+                  Cách cài
+                </div>
+
+                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-neutral-600">
+                  <li>Bấm “Tạo mã QR”.</li>
+                  <li>Mở Google Authenticator trên điện thoại.</li>
+                  <li>Quét mã QR.</li>
+                  <li>Nhập mã 6 số để bật authen.</li>
+                </ol>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={async () => {
+                    try {
+                      setTotpLoading(true);
+                      setTotpError("");
+
+                      const data = await apiJson("/auth/totp/setup", {
+                        method: "POST",
+                      });
+
+                      setTotpSetupData(data);
+                    } catch (err: any) {
+                      setTotpError(err?.message || "Không tạo được QR.");
+                    } finally {
+                      setTotpLoading(false);
+                    }
+                  }}
+                >
+                  {totpLoading ? "Đang tạo..." : "Tạo mã QR"}
+                </Button>
+
+                <input
+                  value={totpCode}
+                  onChange={(e) =>
+                    setTotpCode(
+                      e.target.value.replace(/\D/g, "").slice(0, 6)
+                    )
+                  }
+                  placeholder="Nhập mã 6 số"
+                  className="h-11 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                />
+
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      setTotpVerifying(true);
+                      setTotpError("");
+
+                      const data = await apiJson(
+                        "/auth/totp/verify-setup",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({
+                            code: totpCode,
+                          }),
+                        }
+                      );
+
+                      setTotpMessage(
+                        data?.message || "Đã bật authen."
+                      );
+                    } catch (err: any) {
+                      setTotpError(
+                        err?.message || "Mã authen không đúng."
+                      );
+                    } finally {
+                      setTotpVerifying(false);
+                    }
+                  }}
+                >
+                  {totpVerifying
+                    ? "Đang xác nhận..."
+                    : "Bật authen"}
+                </Button>
+              </div>
+
+              {totpMessage ? (
+                <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                  {totpMessage}
+                </div>
+              ) : null}
+
+              {totpError ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {totpError}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </Panel>
+      )}
+
     </div>
   );
 }
