@@ -1,6 +1,6 @@
 "use client";
 
-import { apiJson } from "@/lib/api";
+import { apiFetch, apiJson } from "@/lib/api";
 import { useEffect, useMemo, useState } from "react";
 import {
   getBranches,
@@ -527,11 +527,7 @@ async function loadCurrentUser() {
     if (!canManageAutoTransfer) return;
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE}/stock-transfers/auto-rebalance/config`, {
-        cache: "no-store",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
+      const res = await apiFetch("/stock-transfers/auto-rebalance/config");
 
       if (!res.ok) return;
 
@@ -954,13 +950,8 @@ useEffect(() => {
       setError(null);
       setNotice(null);
 
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE}/stock-transfers/auto-rebalance/config`, {
+      const res = await apiFetch("/stock-transfers/auto-rebalance/config", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           isEnabled: autoEnabled,
           runHour,

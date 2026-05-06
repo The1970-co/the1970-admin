@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api-base";
 import { apiJson } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -54,8 +55,8 @@ function playNotificationSound() {
   try {
     const audio = new Audio("/notification.mp3");
     audio.volume = 0.45;
-    void audio.play().catch(() => {});
-  } catch {}
+    void audio.play().catch(() => { });
+  } catch { }
 }
 
 export default function BranchTransferNotifications() {
@@ -68,17 +69,17 @@ export default function BranchTransferNotifications() {
   const branchId = useMemo(() => {
     return normalizeKey(
       currentUser?.branchId ||
-        currentUser?.branch?.id ||
-        currentUser?.branches?.[0]?.id ||
-        currentUser?.assignedBranches?.[0]?.id
+      currentUser?.branch?.id ||
+      currentUser?.branches?.[0]?.id ||
+      currentUser?.assignedBranches?.[0]?.id
     );
   }, [currentUser]);
-const loadCurrentUser = useCallback(async () => {
-  try {
-    const data = await apiJson("/auth/me");
-    setCurrentUser(data?.user || data);
-  } catch {}
-}, []);
+  const loadCurrentUser = useCallback(async () => {
+    try {
+      const data = await apiJson("/auth/me");
+      setCurrentUser(data?.user || data);
+    } catch { }
+  }, []);
 
   const loadNotifications = useCallback(
     async (silent = false) => {
@@ -124,7 +125,7 @@ const loadCurrentUser = useCallback(async () => {
         }
 
         if (!bootedRef.current) bootedRef.current = true;
-      } catch {}
+      } catch { }
     },
     [branchId]
   );
@@ -176,7 +177,7 @@ const loadCurrentUser = useCallback(async () => {
 
       const result = await res.json().catch(() => null);
       console.log("branch notification mark-read result:", result);
-    } catch {}
+    } catch { }
 
     window.setTimeout(() => {
       void loadNotifications(true);
