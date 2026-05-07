@@ -2793,6 +2793,54 @@ export default function OrdersPageClient() {
     }
   };
 
+  const mobileSummaryCards = [
+    {
+      key: "WAITING_APPROVE" as QuickStatusKey,
+      title: "Chờ duyệt",
+      value: counts.waitingApprove,
+      icon: "✓",
+    },
+    {
+      key: "WAITING_PAYMENT" as QuickStatusKey,
+      title: "Chờ thanh toán",
+      value: counts.waitingPayment,
+      icon: "₫",
+    },
+    {
+      key: "WAITING_PACKING" as QuickStatusKey,
+      title: "Chờ đóng gói",
+      value: counts.waitingPacking,
+      icon: "□",
+    },
+    {
+      key: "WAITING_SHIP" as QuickStatusKey,
+      title: "Chờ gửi hãng",
+      value: counts.waitingShip,
+      icon: "→",
+    },
+    {
+      key: "DELIVERING" as QuickStatusKey,
+      title: "Đang giao",
+      value: counts.delivering,
+      icon: "↗",
+    },
+    {
+      key: "FAIL" as QuickStatusKey,
+      title: "Giao lỗi",
+      value: counts.failed,
+      icon: "!",
+    },
+  ];
+
+  const mobileQuickDates: Array<{ key: QuickDateKey; label: string }> = [
+    { key: "all", label: "Tất cả" },
+    { key: "today", label: "Hôm nay" },
+    { key: "yesterday", label: "Hôm qua" },
+    { key: "7d", label: "7 ngày" },
+    { key: "30d", label: "30 ngày" },
+    { key: "month", label: "Tháng này" },
+  ];
+
   if (loading) {
     return (
       <Panel className="p-6">
@@ -2810,7 +2858,281 @@ export default function OrdersPageClient() {
   }
 
   return (
-    <div className="space-y-4">
+    <>
+      <div className="space-y-3 lg:hidden">
+        <Panel className="p-3">
+          <div className="grid grid-cols-2 gap-2">
+            {mobileSummaryCards.map((item) => {
+              const active = quickStatus === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() =>
+                    setQuickStatus((prev) =>
+                      prev === item.key ? "ALL" : item.key,
+                    )
+                  }
+                  className={`rounded-[22px] border p-3 text-left transition ${
+                    active
+                      ? "border-neutral-900 bg-neutral-950 text-white shadow-sm"
+                      : "border-neutral-200 bg-white text-neutral-900"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-2xl border text-sm ${
+                        active
+                          ? "border-white/20 bg-white/10 text-white"
+                          : "border-neutral-200 bg-neutral-50 text-neutral-700"
+                      }`}
+                    >
+                      {item.icon}
+                    </span>
+                    <span
+                      className={`text-[11px] font-semibold ${
+                        active ? "text-white/70" : "text-neutral-500"
+                      }`}
+                    >
+                      Xem
+                    </span>
+                  </div>
+                  <p
+                    className={`mt-3 text-[12px] font-medium ${
+                      active ? "text-white/75" : "text-neutral-600"
+                    }`}
+                  >
+                    {item.title}
+                  </p>
+                  <p className="mt-1 text-[30px] font-semibold leading-none tracking-tight">
+                    {item.value}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+
+          {quickStatus !== "ALL" ? (
+            <button
+              type="button"
+              onClick={() => setQuickStatus("ALL")}
+              className="mt-3 w-full rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700"
+            >
+              Bỏ lọc nhanh
+            </button>
+          ) : null}
+        </Panel>
+
+        <Panel className="p-3">
+          <input
+            className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-[15px] outline-none"
+            placeholder="Tìm mã đơn, khách hàng, SĐT..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+            {mobileQuickDates.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => applyQuickDate(item.key)}
+                className={`shrink-0 rounded-full border px-3.5 py-2 text-xs font-semibold ${
+                  quickDate === item.key
+                    ? "border-neutral-900 bg-neutral-900 text-white"
+                    : "border-neutral-300 bg-white text-neutral-700"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <select
+              className="min-w-0 rounded-2xl border border-neutral-300 px-3 py-3 text-xs outline-none"
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              disabled={
+                !!currentUser?.branchId &&
+                currentUser?.role !== "admin" &&
+                currentUser?.role !== "owner"
+              }
+            >
+              {branchOptions.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="min-w-0 rounded-2xl border border-neutral-300 px-3 py-3 text-xs outline-none"
+              value={paymentFilter}
+              onChange={(e) =>
+                setPaymentFilter(e.target.value as "ALL" | OrderPaymentStatus)
+              }
+            >
+              <option value="ALL">Tất cả thanh toán</option>
+              <option value="UNPAID">Chưa thanh toán</option>
+              <option value="PARTIAL">Một phần</option>
+              <option value="PAID">Đã thanh toán</option>
+              <option value="PENDING_COD">Chờ COD</option>
+              <option value="REFUNDED">Hoàn tiền</option>
+              <option value="FAILED">Lỗi thanh toán</option>
+            </select>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-2 text-xs text-neutral-500">
+            <span>
+              Trang {page}/{totalPages} · {totalItems} đơn
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadOrders()}
+              className="rounded-full border border-neutral-300 px-3 py-1.5 font-semibold text-neutral-700"
+            >
+              Làm mới
+            </button>
+          </div>
+        </Panel>
+
+        {actionMessage ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-700">
+            {actionMessage}
+          </div>
+        ) : null}
+
+        <div className="space-y-2">
+          {visibleOrders.length === 0 ? (
+            <Panel className="p-5 text-center text-sm text-neutral-500">
+              Không có đơn hàng phù hợp bộ lọc.
+            </Panel>
+          ) : (
+            visibleOrders.map((order) => {
+              const checked = checkedIds.includes(order.id);
+              return (
+                <Panel key={order.id} className="overflow-hidden p-0">
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => openOrderInNewTab(order)}
+                          className="block truncate text-left text-[16px] font-semibold tracking-tight text-neutral-950"
+                        >
+                          {order.orderCode}
+                        </button>
+                        <p className="mt-1 truncate text-xs text-neutral-500">
+                          {order.createdAt || "—"} · {branchLabel(order.branchId)}
+                        </p>
+                      </div>
+
+                      <label className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-neutral-300 bg-white">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleCheckOne(order.id)}
+                          className="h-4 w-4"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 text-xs text-neutral-600">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate">{order.customerName || "Khách lẻ"}</span>
+                        <span className="shrink-0 font-semibold text-neutral-900">
+                          {order.customerPhone || "—"}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <StatusBadge
+                          label={orderStatusLabel(order.status)}
+                          tone={orderStatusTone(order.status)}
+                        />
+                        <StatusBadge
+                          label={paymentStatusLabel(order.paymentStatus)}
+                          tone={paymentStatusTone(order.paymentStatus)}
+                        />
+                        <StatusBadge
+                          label={fulfillmentStatusLabel(order.fulfillmentStatus)}
+                          tone={fulfillmentStatusTone(order.fulfillmentStatus)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl bg-neutral-50 p-3 text-xs">
+                      <div>
+                        <p className="text-neutral-500">Số món</p>
+                        <p className="mt-1 font-semibold text-neutral-950">
+                          {(order.items || []).length}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-500">COD</p>
+                        <p className="mt-1 font-semibold text-neutral-950">
+                          {canSeeMoney ? currency(order._codAmount) : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-500">Tổng</p>
+                        <p className="mt-1 font-semibold text-neutral-950">
+                          {canSeeMoney ? currency(Number(order.finalAmount || 0)) : "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openOrderInNewTab(order)}
+                        className="flex-1 rounded-2xl bg-neutral-900 px-4 py-3 text-xs font-semibold text-white"
+                      >
+                        Chi tiết
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copyOrderToNewTab(order)}
+                        className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-xs font-semibold text-neutral-800"
+                      >
+                        Sao chép
+                      </button>
+                    </div>
+                  </div>
+                </Panel>
+              );
+            })
+          )}
+        </div>
+
+        <Panel className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-xs font-semibold text-neutral-700 disabled:opacity-40"
+            >
+              ← Trước
+            </button>
+            <p className="text-xs text-neutral-500">
+              Trang {page}/{totalPages}
+            </p>
+            <button
+              type="button"
+              disabled={page >= totalPages || loading}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-xs font-semibold text-neutral-700 disabled:opacity-40"
+            >
+              Sau →
+            </button>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="hidden lg:block">
+        <div className="space-y-4">
       <Panel className="p-5">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
           <SummaryCard
@@ -3951,6 +4273,8 @@ export default function OrdersPageClient() {
           setConfirmOpen(false);
         }}
       />
-    </div>
+        </div>
+      </div>
+    </>
   );
 }

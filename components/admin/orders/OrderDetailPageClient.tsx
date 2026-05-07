@@ -167,16 +167,18 @@ function currency(n?: number | null) {
 }
 function codReconciliationLabel(status?: string | null) {
   if (status === "MATCHED") return "Đã đối soát";
-  if (status === "MATCHED_BY_PARTIAL_DELIVERY") return "Đã đối soát qua giao 1 phần";
+  if (status === "MATCHED_BY_PARTIAL_DELIVERY")
+    return "Đã đối soát qua giao 1 phần";
   if (status === "MISMATCH") return "Đối soát lệch";
   if (status === "NOT_FOUND") return "Không tìm thấy trong phiên GHN";
   return "Chưa đối soát";
 }
 
 function codReconciliationTone(
-  status?: string | null
+  status?: string | null,
 ): "gray" | "green" | "amber" | "red" | "blue" {
-  if (status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY") return "green";
+  if (status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY")
+    return "green";
   if (status === "MISMATCH" || status === "NOT_FOUND") return "red";
   return "gray";
 }
@@ -335,8 +337,9 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={() => void onClick?.()}
-      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${disabled ? "cursor-not-allowed opacity-45" : ""
-        }`}
+      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${
+        disabled ? "cursor-not-allowed opacity-45" : ""
+      }`}
     >
       {children}
     </button>
@@ -367,13 +370,7 @@ function Badge({
   );
 }
 
-function DataRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: ReactNode;
-}) {
+function DataRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="grid grid-cols-[92px_1fr] gap-3 text-[12px] leading-5">
       <div className="text-neutral-500">{label}</div>
@@ -519,7 +516,7 @@ function parseStructuredNote(note?: string | null) {
 
 function buildAddress(
   order: OrderDetail,
-  meta: ReturnType<typeof parseStructuredNote>
+  meta: ReturnType<typeof parseStructuredNote>,
 ) {
   const full = [
     order.shippingAddressLine1,
@@ -536,7 +533,7 @@ function buildAddress(
 }
 
 function toneForOrderStatus(
-  status?: string | null
+  status?: string | null,
 ): "gray" | "green" | "amber" | "red" | "blue" {
   switch (status) {
     case "APPROVED":
@@ -554,7 +551,7 @@ function toneForOrderStatus(
 }
 
 function toneForPaymentStatus(
-  status?: string | null
+  status?: string | null,
 ): "gray" | "green" | "amber" | "red" | "blue" {
   switch (status) {
     case "PAID":
@@ -614,10 +611,11 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
           <div key={step.key} className="flex items-start">
             <div className="flex min-w-[54px] flex-col items-center text-center">
               <div
-                className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${active
-                  ? "bg-blue-600 text-white"
-                  : "bg-neutral-200 text-neutral-500"
-                  }`}
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${
+                  active
+                    ? "bg-blue-600 text-white"
+                    : "bg-neutral-200 text-neutral-500"
+                }`}
               >
                 {step.key}
               </div>
@@ -631,8 +629,9 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
 
             {!last ? (
               <div
-                className={`mx-1.5 mt-3 h-[2px] w-7 md:w-9 ${current > step.key ? "bg-blue-600" : "bg-neutral-200"
-                  }`}
+                className={`mx-1.5 mt-3 h-[2px] w-7 md:w-9 ${
+                  current > step.key ? "bg-blue-600" : "bg-neutral-200"
+                }`}
               />
             ) : null}
           </div>
@@ -665,7 +664,9 @@ function canEditShipmentInfo(order?: OrderDetail | null) {
   if (!order) return false;
 
   const orderStatus = String(order.status || "").toUpperCase();
-  const shipmentStatus = normalizeShipmentStatus(order.shipment?.shippingStatus);
+  const shipmentStatus = normalizeShipmentStatus(
+    order.shipment?.shippingStatus,
+  );
   const hasShipment = !!order.shipment?.trackingCode;
 
   if (!hasShipment) return false;
@@ -686,7 +687,9 @@ function canEditCod(order?: OrderDetail | null) {
   if (!order.shipment?.trackingCode) return false;
 
   const orderStatus = String(order.status || "").toUpperCase();
-  const shipmentStatus = normalizeShipmentStatus(order.shipment?.shippingStatus);
+  const shipmentStatus = normalizeShipmentStatus(
+    order.shipment?.shippingStatus,
+  );
 
   if (orderStatus === "CANCELLED" || orderStatus === "COMPLETED") return false;
   if (isShipmentDelivered(shipmentStatus)) return false;
@@ -697,7 +700,10 @@ function isPartialDelivery(order?: OrderDetail | null) {
   if (!order) return false;
 
   const itemTotal =
-    (order.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0) +
+    (order.items || []).reduce(
+      (sum, item) => sum + Number(item.lineTotal || 0),
+      0,
+    ) +
     Number(order.shippingFee || 0) -
     Number(order.discountAmount || 0);
 
@@ -727,7 +733,7 @@ function buildShipmentEditDraft(order?: OrderDetail | null): ShipmentEditDraft {
 
 function buildPartialDeliveryDraft(
   order?: OrderDetail | null,
-  adjustedCod = 0
+  adjustedCod = 0,
 ): PartialDeliveryDraft {
   const items = (order?.items || []).map((item) => ({
     orderItemId: item.id,
@@ -741,7 +747,7 @@ function buildPartialDeliveryDraft(
   const originalCod =
     (order?.items || []).reduce(
       (sum, item) => sum + Number(item.lineTotal || 0),
-      0
+      0,
     ) + Number(order?.shippingFee || 0);
 
   return {
@@ -757,7 +763,7 @@ function buildPartialDeliveryDraft(
 function upsertStructuredNotePart(
   note: string | null | undefined,
   prefix: string,
-  value: string
+  value: string,
 ) {
   const parts = String(note || "")
     .split(" | ")
@@ -771,6 +777,399 @@ function upsertStructuredNotePart(
   }
 
   return nextParts.join(" | ");
+}
+
+type MobileOrderDetailViewProps = {
+  viewOrder: OrderDetail;
+  meta: ReturnType<typeof parseStructuredNote>;
+  fullAddress: string;
+  totalItems: number;
+  itemsSubtotal: number;
+  shownFinalAmount: number;
+  customerPaid: number;
+  amountDue: number;
+  paymentsTotal: number;
+  paymentLines: PaymentItem[];
+  partialDelivery: boolean;
+  saving: boolean;
+  canEdit: boolean;
+  shipmentEditable: boolean;
+  codEditable: boolean;
+  redeliveryAvailable: boolean;
+  orderHistory: OrderHistoryEntry[];
+  onPrint: () => void;
+  onCopyOrder: () => void;
+  onInternalCancel: () => void | Promise<void>;
+  onCancelGhn: () => void | Promise<void>;
+  onOpenShipmentEdit: () => void | Promise<void>;
+  onOpenCodEdit: () => void;
+};
+
+function MobileInfoLine({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-neutral-100 py-2.5 last:border-b-0">
+      <span className="shrink-0 text-[11px] font-medium text-neutral-500">
+        {label}
+      </span>
+      <span className="min-w-0 text-right text-[12px] font-semibold leading-5 text-neutral-900">
+        {value || "—"}
+      </span>
+    </div>
+  );
+}
+
+function MobileOrderCard({
+  title,
+  children,
+  action,
+}: {
+  title: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3">
+        <h3 className="text-[14px] font-semibold text-neutral-950">{title}</h3>
+        {action}
+      </div>
+      <div className="px-4 py-3">{children}</div>
+    </section>
+  );
+}
+
+function MobileOrderDetailView({
+  viewOrder,
+  meta,
+  fullAddress,
+  totalItems,
+  itemsSubtotal,
+  shownFinalAmount,
+  customerPaid,
+  amountDue,
+  paymentsTotal,
+  paymentLines,
+  partialDelivery,
+  saving,
+  canEdit,
+  shipmentEditable,
+  codEditable,
+  redeliveryAvailable,
+  orderHistory,
+  onPrint,
+  onCopyOrder,
+  onInternalCancel,
+  onCancelGhn,
+  onOpenShipmentEdit,
+  onOpenCodEdit,
+}: MobileOrderDetailViewProps) {
+  return (
+    <div className="lg:hidden">
+      <div className="space-y-3 pb-24">
+        <div className="rounded-[24px] border border-neutral-200 bg-white p-4 shadow-sm">
+          <Link
+            href="/orders"
+            className="text-[12px] font-medium text-neutral-500"
+          >
+            ← Danh sách đơn
+          </Link>
+
+          <div className="mt-3 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="truncate text-[22px] font-semibold tracking-tight text-neutral-950">
+                {viewOrder.orderCode}
+              </h1>
+              <p className="mt-1 text-[12px] text-neutral-500">
+                {formatDateTime(viewOrder.createdAt) || "Chưa có thời gian"}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] text-neutral-500">Còn phải thu</p>
+              <p className="mt-1 text-[18px] font-semibold text-red-600">
+                {currency(amountDue)}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge tone={toneForOrderStatus(viewOrder.status)}>
+              {orderStatusText(viewOrder.status)}
+            </Badge>
+            <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
+              {paymentStatusText(viewOrder.paymentStatus)}
+            </Badge>
+            <Badge tone="blue">
+              {fulfillmentStatusText(viewOrder.fulfillmentStatus)}
+            </Badge>
+            {partialDelivery ? (
+              <Badge tone="amber">Giao hàng 1 phần</Badge>
+            ) : null}
+          </div>
+
+          <div className="mt-4 overflow-x-auto pb-1">
+            <Timeline order={viewOrder} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onPrint}
+            className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-[12px] font-semibold text-neutral-900 shadow-sm"
+          >
+            In đơn
+          </button>
+          <button
+            type="button"
+            onClick={onCopyOrder}
+            className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-[12px] font-semibold text-neutral-900 shadow-sm"
+          >
+            Sao chép
+          </button>
+          <Link
+            href={`/returns/create?orderId=${viewOrder.id}`}
+            className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-center text-[12px] font-semibold text-blue-700 shadow-sm"
+          >
+            Đổi / Trả
+          </Link>
+          {shipmentEditable ? (
+            <button
+              type="button"
+              onClick={() => void onOpenShipmentEdit()}
+              className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-[12px] font-semibold text-neutral-900 shadow-sm"
+            >
+              Sửa giao hàng
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onInternalCancel}
+              disabled={saving || !canEdit}
+              className="rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-[12px] font-semibold text-red-700 shadow-sm disabled:opacity-50"
+            >
+              Huỷ nội bộ
+            </button>
+          )}
+          {codEditable ? (
+            <button
+              type="button"
+              onClick={onOpenCodEdit}
+              className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] font-semibold text-amber-700 shadow-sm"
+            >
+              Sửa COD
+            </button>
+          ) : null}
+          {viewOrder.shipment?.trackingCode ? (
+            <button
+              type="button"
+              onClick={onCancelGhn}
+              disabled={saving}
+              className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-[12px] font-semibold text-neutral-900 shadow-sm disabled:opacity-50"
+            >
+              Huỷ GHN
+            </button>
+          ) : null}
+          {redeliveryAvailable ? (
+            <Link
+              href={`/orders/${viewOrder.id}?action=redelivery`}
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-center text-[12px] font-semibold text-emerald-700 shadow-sm"
+            >
+              Giao lại
+            </Link>
+          ) : null}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-[20px] border border-neutral-200 bg-white p-3 shadow-sm">
+            <p className="text-[11px] text-neutral-500">Tổng tiền</p>
+            <p className="mt-1 text-[18px] font-semibold text-neutral-950">
+              {currency(shownFinalAmount)}
+            </p>
+          </div>
+          <div className="rounded-[20px] border border-neutral-200 bg-white p-3 shadow-sm">
+            <p className="text-[11px] text-neutral-500">Đã trả</p>
+            <p className="mt-1 text-[18px] font-semibold text-emerald-600">
+              {currency(customerPaid)}
+            </p>
+          </div>
+          <div className="rounded-[20px] border border-neutral-200 bg-white p-3 shadow-sm">
+            <p className="text-[11px] text-neutral-500">Tiền hàng</p>
+            <p className="mt-1 text-[18px] font-semibold text-neutral-950">
+              {currency(itemsSubtotal)}
+            </p>
+          </div>
+          <div className="rounded-[20px] border border-neutral-200 bg-white p-3 shadow-sm">
+            <p className="text-[11px] text-neutral-500">Phí ship</p>
+            <p className="mt-1 text-[18px] font-semibold text-neutral-950">
+              {currency(viewOrder.shippingFee)}
+            </p>
+          </div>
+        </div>
+
+        <MobileOrderCard title="Khách hàng & giao hàng">
+          <MobileInfoLine
+            label="Khách"
+            value={
+              viewOrder.customerName || viewOrder.customer?.fullName || "—"
+            }
+          />
+          <MobileInfoLine
+            label="SĐT"
+            value={viewOrder.customerPhone || viewOrder.customer?.phone || "—"}
+          />
+          <MobileInfoLine
+            label="Người nhận"
+            value={
+              viewOrder.shippingRecipientName || viewOrder.customerName || "—"
+            }
+          />
+          <MobileInfoLine
+            label="SĐT nhận"
+            value={viewOrder.shippingPhone || viewOrder.customerPhone || "—"}
+          />
+          <MobileInfoLine label="Địa chỉ" value={fullAddress} />
+          <MobileInfoLine
+            label="Ghi chú"
+            value={meta.noteText || meta.shippingNote || "—"}
+          />
+        </MobileOrderCard>
+
+        <MobileOrderCard title="Thanh toán">
+          <MobileInfoLine
+            label="Tổng thanh toán"
+            value={currency(shownFinalAmount)}
+          />
+          <MobileInfoLine
+            label="Đã thanh toán"
+            value={currency(customerPaid)}
+          />
+          <MobileInfoLine label="Còn phải trả" value={currency(amountDue)} />
+          <MobileInfoLine
+            label="COD"
+            value={currency(viewOrder.shipment?.codAmount)}
+          />
+          <MobileInfoLine
+            label="Nguồn tiền"
+            value={`Tổng ${currency(paymentsTotal)}`}
+          />
+
+          {paymentLines.length ? (
+            <div className="mt-3 space-y-2">
+              {paymentLines.map((payment, index) => (
+                <div
+                  key={
+                    payment.id || `${payment.paymentSourceId || "pay"}-${index}`
+                  }
+                  className="rounded-2xl bg-neutral-50 px-3 py-2"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[12px] font-semibold text-neutral-900">
+                        {paymentSourceLabel(payment)}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-neutral-500">
+                        {paymentStatusText(payment.status)}
+                      </p>
+                    </div>
+                    <p className="text-[12px] font-semibold text-neutral-900">
+                      {currency(payment.amount)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </MobileOrderCard>
+
+        {!String(viewOrder.salesChannel || "")
+          .toUpperCase()
+          .includes("POS") ? (
+          <MobileOrderCard title="Vận đơn GHN">
+            <MobileInfoLine
+              label="Đơn vị"
+              value={viewOrder.shipment?.carrier || meta.shippingPartner || "—"}
+            />
+            <MobileInfoLine
+              label="Mã vận đơn"
+              value={viewOrder.shipment?.trackingCode || "—"}
+            />
+            <MobileInfoLine
+              label="Trạng thái"
+              value={viewOrder.shipment?.shippingStatus || "—"}
+            />
+            <MobileInfoLine
+              label="Phí GHN"
+              value={currency(viewOrder.shipment?.shippingFee)}
+            />
+            <MobileInfoLine
+              label="Đối soát"
+              value={codReconciliationLabel(
+                viewOrder.shipment?.codReconciliationStatus,
+              )}
+            />
+          </MobileOrderCard>
+        ) : null}
+
+        <MobileOrderCard title={`Sản phẩm (${totalItems})`}>
+          <div className="space-y-2">
+            {(viewOrder.items || []).map((item) => (
+              <div
+                key={item.id}
+                className="rounded-2xl bg-neutral-50 px-3 py-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold leading-5 text-neutral-950">
+                      {item.productName || "Sản phẩm"}
+                    </p>
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      {item.sku || "—"} · {item.color || "—"} ·{" "}
+                      {item.size || "—"}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-[12px] font-semibold text-neutral-900">
+                      x{item.qty}
+                    </p>
+                    <p className="mt-1 text-[12px] font-semibold text-neutral-950">
+                      {currency(item.lineTotal)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </MobileOrderCard>
+
+        <MobileOrderCard title="Lịch sử">
+          {orderHistory.length ? (
+            <div className="space-y-2">
+              {orderHistory.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="rounded-2xl bg-neutral-50 px-3 py-3"
+                >
+                  <p className="text-[12px] font-semibold text-neutral-950">
+                    {entry.title}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-neutral-600">
+                    {entry.description}
+                  </p>
+                  {entry.createdAt ? (
+                    <p className="mt-1 text-[10px] text-neutral-400">
+                      {entry.createdAt}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[12px] text-neutral-500">Chưa có lịch sử.</p>
+          )}
+        </MobileOrderCard>
+      </div>
+    </div>
+  );
 }
 
 export default function OrderDetailPageClient({
@@ -835,7 +1234,7 @@ export default function OrderDetailPageClient({
           Accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-      }
+      },
     );
 
     const json = await res.json().catch(() => []);
@@ -858,7 +1257,7 @@ export default function OrderDetailPageClient({
           Accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-      }
+      },
     );
 
     const json = await res.json().catch(() => []);
@@ -877,7 +1276,7 @@ export default function OrderDetailPageClient({
           Accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-      }
+      },
     );
 
     const provinces = await provinceRes.json().catch(() => []);
@@ -892,14 +1291,14 @@ export default function OrderDetailPageClient({
             Accept: "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-        }
+        },
       );
 
       const districts = await districtRes.json().catch(() => []);
       const districtList = Array.isArray(districts) ? districts : [];
 
       const found = districtList.find(
-        (d: any) => String(d.id) === String(districtId)
+        (d: any) => String(d.id) === String(districtId),
       );
 
       if (found) {
@@ -971,14 +1370,14 @@ export default function OrderDetailPageClient({
     setDraftOrder((prev) =>
       prev
         ? {
-          ...prev,
-          shippingProvince: province?.name || "",
-          shippingDistrict: "",
-          shippingWard: "",
-          shippingGhnDistrictId: null,
-          shippingGhnWardCode: null,
-        }
-        : prev
+            ...prev,
+            shippingProvince: province?.name || "",
+            shippingDistrict: "",
+            shippingWard: "",
+            shippingGhnDistrictId: null,
+            shippingGhnWardCode: null,
+          }
+        : prev,
     );
 
     await loadDistricts(provinceId);
@@ -994,13 +1393,13 @@ export default function OrderDetailPageClient({
     setDraftOrder((prev) =>
       prev
         ? {
-          ...prev,
-          shippingDistrict: district?.name || "",
-          shippingWard: "",
-          shippingGhnDistrictId: districtId ? Number(districtId) : null,
-          shippingGhnWardCode: null,
-        }
-        : prev
+            ...prev,
+            shippingDistrict: district?.name || "",
+            shippingWard: "",
+            shippingGhnDistrictId: districtId ? Number(districtId) : null,
+            shippingGhnWardCode: null,
+          }
+        : prev,
     );
 
     await loadWards(districtId);
@@ -1014,11 +1413,11 @@ export default function OrderDetailPageClient({
     setDraftOrder((prev) =>
       prev
         ? {
-          ...prev,
-          shippingWard: ward?.name || "",
-          shippingGhnWardCode: wardCode || null,
-        }
-        : prev
+            ...prev,
+            shippingWard: ward?.name || "",
+            shippingGhnWardCode: wardCode || null,
+          }
+        : prev,
     );
   };
   const [showShipmentEditModal, setShowShipmentEditModal] = useState(false);
@@ -1027,14 +1426,15 @@ export default function OrderDetailPageClient({
   const [codSuccessText, setCodSuccessText] = useState("");
 
   const [shipmentDraft, setShipmentDraft] = useState<ShipmentEditDraft>(
-    buildShipmentEditDraft(null)
+    buildShipmentEditDraft(null),
   );
   const [shipmentSaving, setShipmentSaving] = useState(false);
 
   const [editMode, setEditMode] = useState<"full" | "cod">("full");
   const [authCode, setAuthCode] = useState("");
   const [authVerifying, setAuthVerifying] = useState(false);
-  const [showPartialDeliveryModal, setShowPartialDeliveryModal] = useState(false);
+  const [showPartialDeliveryModal, setShowPartialDeliveryModal] =
+    useState(false);
   const [partialSaving, setPartialSaving] = useState(false);
   const [partialDraft, setPartialDraft] = useState<PartialDeliveryDraft>({
     originalCod: 0,
@@ -1091,7 +1491,9 @@ export default function OrderDetailPageClient({
         }
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Không tải được chi tiết đơn hàng."
+          err instanceof Error
+            ? err.message
+            : "Không tải được chi tiết đơn hàng.",
         );
       } finally {
         setLoading(false);
@@ -1172,7 +1574,8 @@ export default function OrderDetailPageClient({
   }, [order, shipmentDraft.codAmountInput]);
 
   useEffect(() => {
-    if (!created || loading || !viewOrder || createdToastShownRef.current) return;
+    if (!created || loading || !viewOrder || createdToastShownRef.current)
+      return;
 
     createdToastShownRef.current = true;
     setShowCreatedToast(true);
@@ -1187,44 +1590,56 @@ export default function OrderDetailPageClient({
     return () => window.clearTimeout(timer);
   }, [created, loading, viewOrder, orderId, router]);
 
-  const meta = useMemo(() => parseStructuredNote(viewOrder?.note), [viewOrder?.note]);
-  const isPOSOrder = String(viewOrder?.salesChannel || "").toUpperCase() === "POS";
-  const isPaidOrder = String(viewOrder?.paymentStatus || "").toUpperCase() === "PAID";
+  const meta = useMemo(
+    () => parseStructuredNote(viewOrder?.note),
+    [viewOrder?.note],
+  );
+  const isPOSOrder =
+    String(viewOrder?.salesChannel || "").toUpperCase() === "POS";
+  const isPaidOrder =
+    String(viewOrder?.paymentStatus || "").toUpperCase() === "PAID";
   const fullAddress = useMemo(
     () => (viewOrder ? buildAddress(viewOrder, meta) : "—"),
-    [viewOrder, meta]
+    [viewOrder, meta],
   );
 
   const totalItems = useMemo(
     () =>
-      (viewOrder?.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0),
-    [viewOrder]
+      (viewOrder?.items || []).reduce(
+        (sum, item) => sum + Number(item.qty || 0),
+        0,
+      ),
+    [viewOrder],
   );
 
   const itemsSubtotal = useMemo(
     () =>
       (viewOrder?.items || []).reduce(
         (sum, item) => sum + Number(item.lineTotal || 0),
-        0
+        0,
       ),
-    [viewOrder]
+    [viewOrder],
   );
 
   const paymentLines = useMemo(
     () => (Array.isArray(viewOrder?.payments) ? viewOrder.payments : []),
-    [viewOrder?.payments]
+    [viewOrder?.payments],
   );
 
   const paymentsTotal = useMemo(
-    () => paymentLines.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
-    [paymentLines]
+    () =>
+      paymentLines.reduce(
+        (sum, payment) => sum + Number(payment.amount || 0),
+        0,
+      ),
+    [paymentLines],
   );
 
   const computedFinalAmount = Math.max(
     0,
     itemsSubtotal -
       Number(viewOrder?.discountAmount || 0) +
-      Number(viewOrder?.shippingFee || 0)
+      Number(viewOrder?.shippingFee || 0),
   );
 
   const shipmentCodAmount = Number(viewOrder?.shipment?.codAmount || 0);
@@ -1244,14 +1659,18 @@ export default function OrderDetailPageClient({
 
   const amountDue = Math.max(shownFinalAmount - customerPaid, 0);
 
-  const partialDelivery = useMemo(() => isPartialDelivery(viewOrder), [viewOrder]);
+  const partialDelivery = useMemo(
+    () => isPartialDelivery(viewOrder),
+    [viewOrder],
+  );
 
   const canEdit =
-    !!order &&
-    order.status !== "CANCELLED" &&
-    order.status !== "COMPLETED";
+    !!order && order.status !== "CANCELLED" && order.status !== "COMPLETED";
 
-  const updateDraft = <K extends keyof OrderDetail>(key: K, value: OrderDetail[K]) => {
+  const updateDraft = <K extends keyof OrderDetail>(
+    key: K,
+    value: OrderDetail[K],
+  ) => {
     setDraftOrder((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
@@ -1276,7 +1695,7 @@ export default function OrderDetailPageClient({
 
       const subtotal = nextItems.reduce(
         (sum, item) => sum + Number(item.lineTotal || 0),
-        0
+        0,
       );
 
       return {
@@ -1298,7 +1717,7 @@ export default function OrderDetailPageClient({
       const nextItems = (prev.items || []).filter((item) => item.id !== itemId);
       const subtotal = nextItems.reduce(
         (sum, item) => sum + Number(item.lineTotal || 0),
-        0
+        0,
       );
 
       return {
@@ -1408,7 +1827,7 @@ export default function OrderDetailPageClient({
       const nextNote = upsertStructuredNotePart(
         order.note,
         "Ghi chú giao hàng:",
-        shipmentDraft.shippingNote
+        shipmentDraft.shippingNote,
       );
 
       const nextOrder: OrderDetail = {
@@ -1499,19 +1918,21 @@ export default function OrderDetailPageClient({
             codAmount: nextCod,
             code: authCode.trim(),
           }),
-        }
+        },
       );
 
       const json = await res.json().catch(() => null);
 
       if (!res.ok) {
-        throw new Error(json?.message || "Xác thực hoặc cập nhật COD thất bại.");
+        throw new Error(
+          json?.message || "Xác thực hoặc cập nhật COD thất bại.",
+        );
       }
 
       const nextNote = upsertStructuredNotePart(
         order.note,
         "Tình trạng giao:",
-        nextCod < computedFinalAmount ? "Giao hàng 1 phần" : ""
+        nextCod < computedFinalAmount ? "Giao hàng 1 phần" : "",
       );
 
       const nextOrder: OrderDetail = {
@@ -1537,7 +1958,7 @@ export default function OrderDetailPageClient({
       }
 
       setCodSuccessText(
-        `Đã cập nhật COD từ ${currency(oldCod)} → ${currency(nextCod)}`
+        `Đã cập nhật COD từ ${currency(oldCod)} → ${currency(nextCod)}`,
       );
       setShowCodSuccessToast(true);
 
@@ -1560,26 +1981,29 @@ export default function OrderDetailPageClient({
       setAuthCode("");
     } catch (err) {
       setMessage(
-        err instanceof Error ? err.message : "Không cập nhật được COD."
+        err instanceof Error ? err.message : "Không cập nhật được COD.",
       );
     } finally {
       setAuthVerifying(false);
     }
   };
 
-  const updatePartialDeliveredQty = (orderItemId: string, deliveredQty: number) => {
+  const updatePartialDeliveredQty = (
+    orderItemId: string,
+    deliveredQty: number,
+  ) => {
     setPartialDraft((prev) => ({
       ...prev,
       items: prev.items.map((item) =>
         item.orderItemId === orderItemId
           ? {
-            ...item,
-            deliveredQty: Math.max(
-              0,
-              Math.min(Number(deliveredQty || 0), item.orderedQty)
-            ),
-          }
-          : item
+              ...item,
+              deliveredQty: Math.max(
+                0,
+                Math.min(Number(deliveredQty || 0), item.orderedQty),
+              ),
+            }
+          : item,
       ),
     }));
   };
@@ -1628,7 +2052,9 @@ export default function OrderDetailPageClient({
         const json = await res.json().catch(() => null);
 
         if (!res.ok) {
-          throw new Error(json?.message || "Không lưu được phiếu giao hàng 1 phần.");
+          throw new Error(
+            json?.message || "Không lưu được phiếu giao hàng 1 phần.",
+          );
         }
 
         savedRecord = json;
@@ -1649,7 +2075,7 @@ export default function OrderDetailPageClient({
       const nextNote = upsertStructuredNotePart(
         order.note,
         "PHIEU_GIAO_HANG_1_PHAN:",
-        partialNoteValue
+        partialNoteValue,
       );
 
       const nextOrder: OrderDetail = {
@@ -1673,13 +2099,13 @@ export default function OrderDetailPageClient({
       setMessage(
         savedRecord
           ? "Đã lưu phiếu giao hàng 1 phần."
-          : "Đã lưu phiếu giao hàng 1 phần trên giao diện."
+          : "Đã lưu phiếu giao hàng 1 phần trên giao diện.",
       );
     } catch (err) {
       setMessage(
         err instanceof Error
           ? err.message
-          : "Không lưu được phiếu giao hàng 1 phần."
+          : "Không lưu được phiếu giao hàng 1 phần.",
       );
     } finally {
       setPartialSaving(false);
@@ -1687,7 +2113,6 @@ export default function OrderDetailPageClient({
   };
 
   const handleSaveEdit = async () => {
-
     if (!draftOrder || !order) return;
 
     try {
@@ -1715,7 +2140,7 @@ export default function OrderDetailPageClient({
 
       const totalAmount = sanitizedItems.reduce(
         (sum, item) => sum + Number(item.lineTotal || 0),
-        0
+        0,
       );
 
       const payload = {
@@ -1793,7 +2218,9 @@ export default function OrderDetailPageClient({
       setDraftOrder(nextOrder);
       setMessage("Đã huỷ đơn nội bộ.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không huỷ được đơn nội bộ.");
+      setMessage(
+        err instanceof Error ? err.message : "Không huỷ được đơn nội bộ.",
+      );
     } finally {
       setSaving(false);
     }
@@ -1825,7 +2252,10 @@ export default function OrderDetailPageClient({
         throw new Error(json?.message || json?.error || "Huỷ GHN thất bại.");
       }
 
-      const nextOrder = { ...order, ...(json?.order || json || {}) } as OrderDetail;
+      const nextOrder = {
+        ...order,
+        ...(json?.order || json || {}),
+      } as OrderDetail;
       setOrder(nextOrder);
       setDraftOrder(nextOrder);
       setMessage("Đã gửi yêu cầu huỷ GHN.");
@@ -1887,7 +2317,9 @@ export default function OrderDetailPageClient({
   if (loading) {
     return (
       <Panel className="p-5">
-        <p className="text-sm text-neutral-500">Đang tải chi tiết đơn hàng...</p>
+        <p className="text-sm text-neutral-500">
+          Đang tải chi tiết đơn hàng...
+        </p>
       </Panel>
     );
   }
@@ -1903,7 +2335,7 @@ export default function OrderDetailPageClient({
   }
 
   return (
-    <div className="min-h-screen space-y-3 bg-neutral-50 p-4">
+    <div className="min-h-screen bg-neutral-50 p-3 lg:space-y-3 lg:p-4">
       {showCreatedToast ? (
         <div className="fixed right-4 top-4 z-50 w-[360px] rounded-2xl border border-emerald-200 bg-white p-4 shadow-xl">
           <div className="flex items-start gap-3">
@@ -1955,761 +2387,998 @@ export default function OrderDetailPageClient({
         </div>
       ) : null}
 
-      <div className="flex items-center justify-between rounded-[18px] border border-neutral-200 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="min-w-0">
-          <Link
-            href="/orders"
-            className="text-[11px] text-neutral-500 transition hover:text-neutral-900"
-          >
-            ← Quay lại danh sách đơn hàng
-          </Link>
+      <MobileOrderDetailView
+        viewOrder={viewOrder}
+        meta={meta}
+        fullAddress={fullAddress}
+        totalItems={totalItems}
+        itemsSubtotal={itemsSubtotal}
+        shownFinalAmount={shownFinalAmount}
+        customerPaid={customerPaid}
+        amountDue={amountDue}
+        paymentsTotal={paymentsTotal}
+        paymentLines={paymentLines}
+        partialDelivery={partialDelivery}
+        saving={saving}
+        canEdit={canEdit}
+        shipmentEditable={shipmentEditable}
+        codEditable={codEditable}
+        redeliveryAvailable={redeliveryAvailable}
+        orderHistory={orderHistory}
+        onPrint={handlePrint}
+        onCopyOrder={handleCopyOrder}
+        onInternalCancel={handleInternalCancelOrder}
+        onCancelGhn={handleCancelGhnOrder}
+        onOpenShipmentEdit={handleOpenShipmentEdit}
+        onOpenCodEdit={handleOpenCodEdit}
+      />
 
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="text-[16px] font-semibold tracking-tight text-neutral-900">
-              {viewOrder.orderCode}
-            </h1>
-            <Badge tone={toneForOrderStatus(viewOrder.status)}>
-              {orderStatusText(viewOrder.status)}
-            </Badge>
-            <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
-              {paymentStatusText(viewOrder.paymentStatus)}
-            </Badge>
-            {partialDelivery ? (
-              <Badge tone="amber">Giao hàng 1 phần</Badge>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="ml-4 flex items-start gap-3">
-          <div className="hidden xl:block">
-            <Timeline order={viewOrder} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={handlePrint}>In đơn hàng</ActionButton>
-            <ActionButton onClick={handleCopyOrder}>Sao chép đơn</ActionButton>
-            <ActionButton
-              tone="danger"
-              disabled={saving || viewOrder.status === "CANCELLED" || viewOrder.status === "COMPLETED"}
-              onClick={handleInternalCancelOrder}
-            >
-              Huỷ nội bộ
-            </ActionButton>
-            {viewOrder.shipment?.trackingCode ? (
-              <ActionButton
-                disabled={saving}
-                onClick={handleCancelGhnOrder}
-              >
-                Huỷ GHN
-              </ActionButton>
-            ) : null}
-
+      <div className="hidden lg:block">
+        <div className="flex items-center justify-between rounded-[18px] border border-neutral-200 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+          <div className="min-w-0">
             <Link
-              href={`/returns/create?orderId=${viewOrder.id}`}
-              className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+              href="/orders"
+              className="text-[11px] text-neutral-500 transition hover:text-neutral-900"
             >
-              Đổi / Trả hàng
+              ← Quay lại danh sách đơn hàng
             </Link>
 
-            {!isEditing ? (
-              <ActionButton
-                disabled={!canEdit}
-                onClick={() => {
-                  if (!order) return;
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h1 className="text-[16px] font-semibold tracking-tight text-neutral-900">
+                {viewOrder.orderCode}
+              </h1>
+              <Badge tone={toneForOrderStatus(viewOrder.status)}>
+                {orderStatusText(viewOrder.status)}
+              </Badge>
+              <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
+                {paymentStatusText(viewOrder.paymentStatus)}
+              </Badge>
+              {partialDelivery ? (
+                <Badge tone="amber">Giao hàng 1 phần</Badge>
+              ) : null}
+            </div>
+          </div>
 
-                  const metaNote = parseStructuredNote(order.note);
-
-                  setDraftOrder({
-                    ...order,
-                    shippingRecipientName:
-                      order.shippingRecipientName || order.customerName || "",
-                    shippingPhone:
-                      order.shippingPhone || order.customerPhone || "",
-                    shippingAddressLine1:
-                      order.shippingAddressLine1 || metaNote.address || "",
-                    shippingProvince: order.shippingProvince || "",
-                    note: metaNote.noteText || metaNote.shippingNote || "",
-                  });
-
-                  setSelectedProvinceId("");
-                  setSelectedDistrictId("");
-                  setSelectedWardCode("");
-                  void loadProvinces();
-
-                  setIsEditing(true);
-                  setMessage("");
-                }}
-              >
-                Sửa đơn hàng
+          <div className="ml-4 flex items-start gap-3">
+            <div className="hidden xl:block">
+              <Timeline order={viewOrder} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton onClick={handlePrint}>In đơn hàng</ActionButton>
+              <ActionButton onClick={handleCopyOrder}>
+                Sao chép đơn
               </ActionButton>
-            ) : (
-              <>
+              <ActionButton
+                tone="danger"
+                disabled={
+                  saving ||
+                  viewOrder.status === "CANCELLED" ||
+                  viewOrder.status === "COMPLETED"
+                }
+                onClick={handleInternalCancelOrder}
+              >
+                Huỷ nội bộ
+              </ActionButton>
+              {viewOrder.shipment?.trackingCode ? (
+                <ActionButton disabled={saving} onClick={handleCancelGhnOrder}>
+                  Huỷ GHN
+                </ActionButton>
+              ) : null}
+
+              <Link
+                href={`/returns/create?orderId=${viewOrder.id}`}
+                className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+              >
+                Đổi / Trả hàng
+              </Link>
+
+              {!isEditing ? (
                 <ActionButton
-                  tone="dark"
-                  disabled={saving}
-                  onClick={() => void handleSaveEdit()}
+                  disabled={!canEdit}
+                  onClick={() => {
+                    if (!order) return;
+
+                    const metaNote = parseStructuredNote(order.note);
+
+                    setDraftOrder({
+                      ...order,
+                      shippingRecipientName:
+                        order.shippingRecipientName || order.customerName || "",
+                      shippingPhone:
+                        order.shippingPhone || order.customerPhone || "",
+                      shippingAddressLine1:
+                        order.shippingAddressLine1 || metaNote.address || "",
+                      shippingProvince: order.shippingProvince || "",
+                      note: metaNote.noteText || metaNote.shippingNote || "",
+                    });
+
+                    setSelectedProvinceId("");
+                    setSelectedDistrictId("");
+                    setSelectedWardCode("");
+                    void loadProvinces();
+
+                    setIsEditing(true);
+                    setMessage("");
+                  }}
                 >
-                  {saving ? "Đang lưu..." : "Lưu thay đổi"}
+                  Sửa đơn hàng
                 </ActionButton>
-                <ActionButton disabled={saving} onClick={handleCancelEdit}>
-                  Huỷ
-                </ActionButton>
-              </>
-            )}
+              ) : (
+                <>
+                  <ActionButton
+                    tone="dark"
+                    disabled={saving}
+                    onClick={() => void handleSaveEdit()}
+                  >
+                    {saving ? "Đang lưu..." : "Lưu thay đổi"}
+                  </ActionButton>
+                  <ActionButton disabled={saving} onClick={handleCancelEdit}>
+                    Huỷ
+                  </ActionButton>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {message ? (
-        <Panel className="px-4 py-3">
-          <p
-            className={`text-sm ${message.includes("Đã lưu") ||
-              message.includes("Đã cập nhật") ||
-              message.includes("Đã xác thực")
-              ? "text-emerald-600"
-              : "text-red-600"
+        {message ? (
+          <Panel className="px-4 py-3">
+            <p
+              className={`text-sm ${
+                message.includes("Đã lưu") ||
+                message.includes("Đã cập nhật") ||
+                message.includes("Đã xác thực")
+                  ? "text-emerald-600"
+                  : "text-red-600"
               }`}
-          >
-            {message}
-          </p>
-        </Panel>
-      ) : null}
+            >
+              {message}
+            </p>
+          </Panel>
+        ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-[2.3fr_0.6fr]">
-        <div className="space-y-3">
-          <div className="grid gap-3 lg:grid-cols-[1.8fr_0.7fr]">
+        <div className="grid gap-3 xl:grid-cols-[2.3fr_0.6fr]">
+          <div className="space-y-3">
+            <div className="grid gap-3 lg:grid-cols-[1.8fr_0.7fr]">
+              <Panel>
+                <SectionHeader
+                  title="Thông tin khách hàng"
+                  subtitle="Người mua, người nhận, địa chỉ."
+                />
+                <div className="space-y-3 px-4 py-3">
+                  {isEditing ? (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Người nhận
+                        </p>
+                        <EditInput
+                          value={draftOrder?.shippingRecipientName}
+                          onChange={(v) =>
+                            updateDraft("shippingRecipientName", v)
+                          }
+                        />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          SĐT nhận
+                        </p>
+                        <EditInput
+                          value={draftOrder?.shippingPhone}
+                          onChange={(v) => updateDraft("shippingPhone", v)}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Địa chỉ dòng 1
+                        </p>
+                        <EditInput
+                          value={draftOrder?.shippingAddressLine1}
+                          onChange={(v) =>
+                            updateDraft("shippingAddressLine1", v)
+                          }
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Địa chỉ dòng 2
+                        </p>
+                        <EditInput
+                          value={draftOrder?.shippingAddressLine2}
+                          onChange={(v) =>
+                            updateDraft("shippingAddressLine2", v)
+                          }
+                        />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Tỉnh / thành
+                        </p>
+                        <EditSelect
+                          value={selectedProvinceId}
+                          onChange={handleEditProvinceChange}
+                          options={provinceOptions.map((item) => ({
+                            value: String(item.id),
+                            label: item.name,
+                          }))}
+                          placeholder="Chọn tỉnh / thành"
+                        />
+                      </div>
+
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Quận / huyện
+                        </p>
+                        <EditSelect
+                          value={selectedDistrictId}
+                          onChange={handleEditDistrictChange}
+                          options={districtOptions.map((item) => ({
+                            value: String(item.id),
+                            label: item.name,
+                          }))}
+                          placeholder="Chọn quận / huyện"
+                        />
+                      </div>
+
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Phường / xã
+                        </p>
+                        <EditSelect
+                          value={selectedWardCode}
+                          onChange={handleEditWardChange}
+                          options={wardOptions.map((item) => ({
+                            value: item.code,
+                            label: item.name,
+                          }))}
+                          placeholder="Chọn phường / xã"
+                        />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-500">
+                          Mã bưu chính
+                        </p>
+                        <EditInput
+                          value={draftOrder?.shippingPostalCode}
+                          onChange={(v) => updateDraft("shippingPostalCode", v)}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <DataRow
+                        label="Khách hàng"
+                        value={
+                          viewOrder.customerName ||
+                          viewOrder.customer?.fullName ||
+                          "—"
+                        }
+                      />
+                      <DataRow
+                        label="SĐT"
+                        value={
+                          viewOrder.customerPhone ||
+                          viewOrder.customer?.phone ||
+                          "—"
+                        }
+                      />
+                      <DataRow
+                        label="Người nhận"
+                        value={
+                          viewOrder.shippingRecipientName ||
+                          viewOrder.customerName ||
+                          "—"
+                        }
+                      />
+                      <DataRow
+                        label="SĐT nhận"
+                        value={
+                          viewOrder.shippingPhone ||
+                          viewOrder.customerPhone ||
+                          "—"
+                        }
+                      />
+                      <DataRow label="Địa chỉ" value={fullAddress} />
+                      <DataRow label="Ghi chú" value={meta.noteText || "—"} />
+                    </>
+                  )}
+                </div>
+              </Panel>
+
+              <Panel>
+                <SectionHeader title="Tổng quan" subtitle="Số liệu nhanh." />
+                <div className="space-y-3 px-4 py-3">
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-neutral-500">Nợ phải thu</span>
+                    <span className="font-semibold text-red-600">
+                      {currency(amountDue)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-neutral-500">Tổng chi tiêu</span>
+                    <span className="font-semibold text-neutral-900">
+                      {currency(shownFinalAmount)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-neutral-500">Trả hàng</span>
+                    <span className="font-semibold text-neutral-900">0đ</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-neutral-500">Thất bại</span>
+                    <span className="font-semibold text-neutral-900">0đ</span>
+                  </div>
+                </div>
+              </Panel>
+            </div>
+
             <Panel>
               <SectionHeader
-                title="Thông tin khách hàng"
-                subtitle="Người mua, người nhận, địa chỉ."
+                title="Thanh toán"
+                subtitle="Tổng tiền, đã thanh toán và còn lại."
               />
               <div className="space-y-3 px-4 py-3">
                 {isEditing ? (
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <p className="mb-1 text-[11px] text-neutral-500">Người nhận</p>
+                      <p className="mb-1 text-[11px] text-neutral-500">
+                        Giảm giá
+                      </p>
                       <EditInput
-                        value={draftOrder?.shippingRecipientName}
-                        onChange={(v) => updateDraft("shippingRecipientName", v)}
+                        type="number"
+                        value={draftOrder?.discountAmount || 0}
+                        onChange={(v) =>
+                          updateDraft("discountAmount", Number(v || 0))
+                        }
                       />
                     </div>
                     <div>
-                      <p className="mb-1 text-[11px] text-neutral-500">SĐT nhận</p>
+                      <p className="mb-1 text-[11px] text-neutral-500">
+                        Phí ship
+                      </p>
                       <EditInput
-                        value={draftOrder?.shippingPhone}
-                        onChange={(v) => updateDraft("shippingPhone", v)}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <p className="mb-1 text-[11px] text-neutral-500">Địa chỉ dòng 1</p>
-                      <EditInput
-                        value={draftOrder?.shippingAddressLine1}
-                        onChange={(v) => updateDraft("shippingAddressLine1", v)}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <p className="mb-1 text-[11px] text-neutral-500">Địa chỉ dòng 2</p>
-                      <EditInput
-                        value={draftOrder?.shippingAddressLine2}
-                        onChange={(v) => updateDraft("shippingAddressLine2", v)}
-                      />
-                    </div>
-                    <div>
-                      <p className="mb-1 text-[11px] text-neutral-500">Tỉnh / thành</p>
-                      <EditSelect
-                        value={selectedProvinceId}
-                        onChange={handleEditProvinceChange}
-                        options={provinceOptions.map((item) => ({
-                          value: String(item.id),
-                          label: item.name,
-                        }))}
-                        placeholder="Chọn tỉnh / thành"
-                      />
-                    </div>
-
-                    <div>
-                      <p className="mb-1 text-[11px] text-neutral-500">Quận / huyện</p>
-                      <EditSelect
-                        value={selectedDistrictId}
-                        onChange={handleEditDistrictChange}
-                        options={districtOptions.map((item) => ({
-                          value: String(item.id),
-                          label: item.name,
-                        }))}
-                        placeholder="Chọn quận / huyện"
-                      />
-                    </div>
-
-                    <div>
-                      <p className="mb-1 text-[11px] text-neutral-500">Phường / xã</p>
-                      <EditSelect
-                        value={selectedWardCode}
-                        onChange={handleEditWardChange}
-                        options={wardOptions.map((item) => ({
-                          value: item.code,
-                          label: item.name,
-                        }))}
-                        placeholder="Chọn phường / xã"
-                      />
-                    </div>
-                    <div>
-                      <p className="mb-1 text-[11px] text-neutral-500">Mã bưu chính</p>
-                      <EditInput
-                        value={draftOrder?.shippingPostalCode}
-                        onChange={(v) => updateDraft("shippingPostalCode", v)}
+                        type="number"
+                        value={draftOrder?.shippingFee || 0}
+                        onChange={(v) =>
+                          updateDraft("shippingFee", Number(v || 0))
+                        }
                       />
                     </div>
                   </div>
+                ) : null}
+
+                <div className="grid gap-2 md:grid-cols-3">
+                  <MiniStat label="Tiền hàng" value={currency(itemsSubtotal)} />
+                  <MiniStat
+                    label="Giảm giá"
+                    value={currency(viewOrder.discountAmount)}
+                  />
+                  <MiniStat
+                    label="Phí ship"
+                    value={currency(viewOrder.shippingFee)}
+                  />
+                  <MiniStat
+                    label="Khách phải trả"
+                    value={currency(shownFinalAmount)}
+                  />
+                  <MiniStat
+                    label="Đã thanh toán"
+                    value={currency(customerPaid)}
+                  />
+                  <MiniStat
+                    label="Còn phải trả"
+                    value={currency(amountDue)}
+                    tone="danger"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
+                    {paymentStatusText(viewOrder.paymentStatus)}
+                  </Badge>
+                  {viewOrder.shipment?.codAmount ? (
+                    <span className="text-[12px] text-neutral-600">
+                      COD {currency(viewOrder.shipment.codAmount)}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[12px] font-semibold text-neutral-900">
+                      Chi tiết nguồn tiền
+                    </p>
+                    <span className="text-[11px] text-neutral-500">
+                      Tổng {currency(paymentsTotal)}
+                    </span>
+                  </div>
+
+                  {paymentLines.length ? (
+                    <div className="space-y-2">
+                      {paymentLines.map((payment, index) => (
+                        <div
+                          key={
+                            payment.id ||
+                            `${payment.paymentSourceId || "pay"}-${index}`
+                          }
+                          className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-[12px]"
+                        >
+                          <div>
+                            <p className="font-semibold text-neutral-900">
+                              {paymentSourceLabel(payment)}
+                            </p>
+                            <p className="mt-0.5 text-[10px] text-neutral-500">
+                              {paymentStatusText(payment.status)}
+                              {payment.paidAt
+                                ? ` · ${formatDateTime(payment.paidAt)}`
+                                : ""}
+                            </p>
+                          </div>
+                          <p className="font-semibold text-neutral-900">
+                            {currency(payment.amount)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[12px] text-neutral-500">
+                      Chưa có dòng thanh toán chi tiết.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            {!isPOSOrder ? (
+              <Panel>
+                <SectionHeader
+                  title="Đóng gói và giao hàng"
+                  subtitle="Mã vận đơn, đối tác, phí ship."
+                  action={
+                    <div className="flex flex-wrap gap-2">
+                      {shipmentEditable ? (
+                        <ActionButton onClick={handleOpenShipmentEdit}>
+                          Sửa giao hàng
+                        </ActionButton>
+                      ) : null}
+
+                      {codEditable ? (
+                        <ActionButton tone="danger" onClick={handleOpenCodEdit}>
+                          Sửa COD giao hàng 1 phần
+                        </ActionButton>
+                      ) : null}
+
+                      {redeliveryAvailable ? (
+                        <ActionButton
+                          tone="dark"
+                          onClick={() =>
+                            setMessage("Flow giao lại sẽ làm ở bước sau")
+                          }
+                        >
+                          Giao lại
+                        </ActionButton>
+                      ) : null}
+                    </div>
+                  }
+                />
+
+                <div className="space-y-3 px-4 py-3">
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <MiniStat
+                      label="Cho sửa giao hàng"
+                      value={shipmentEditable ? "Có" : "Không"}
+                      tone={shipmentEditable ? "success" : "default"}
+                    />
+                    <MiniStat
+                      label="Cho sửa COD"
+                      value={codEditable ? "Có" : "Không"}
+                      tone={codEditable ? "success" : "default"}
+                    />
+                    <MiniStat
+                      label="Cho giao lại"
+                      value={redeliveryAvailable ? "Có" : "Không"}
+                      tone={redeliveryAvailable ? "danger" : "default"}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {viewOrder.shipment?.id ? (
+                      <Link
+                        href={`/control/shipments/${viewOrder.shipment.id}`}
+                        className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
+                      >
+                        {viewOrder.shipment?.trackingCode ||
+                          tracking ||
+                          "Chưa có mã vận đơn"}
+                      </Link>
+                    ) : (
+                      <Badge
+                        tone={
+                          viewOrder.shipment?.trackingCode ? "blue" : "gray"
+                        }
+                      >
+                        {viewOrder.shipment?.trackingCode ||
+                          tracking ||
+                          "Chưa có mã vận đơn"}
+                      </Badge>
+                    )}
+
+                    <Badge
+                      tone={
+                        viewOrder.shipment?.shippingStatus ? "amber" : "gray"
+                      }
+                    >
+                      {viewOrder.shipment?.shippingStatus ||
+                        "Chưa đẩy trạng thái"}
+                    </Badge>
+
+                    <Badge
+                      tone={codReconciliationTone(
+                        viewOrder.shipment?.codReconciliationStatus,
+                      )}
+                    >
+                      {codReconciliationLabel(
+                        viewOrder.shipment?.codReconciliationStatus,
+                      )}
+                    </Badge>
+                  </div>
+                </div>
+              </Panel>
+            ) : null}
+
+            {viewOrder.isPartialDelivery || partialDelivery ? (
+              <Panel>
+                <SectionHeader
+                  title="Phiếu giao hàng 1 phần"
+                  subtitle="Ghi nhận phần khách thực nhận để điều chỉnh COD và phục vụ đối soát."
+                />
+                <div className="space-y-4 px-4 py-4">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-2xl bg-neutral-50 p-4">
+                      <p className="text-[11px] text-neutral-500">
+                        Tổng đơn gốc
+                      </p>
+                      <p className="mt-2 text-[18px] font-semibold text-neutral-900">
+                        {currency(
+                          itemsSubtotal + Number(viewOrder.shippingFee || 0),
+                        )}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-neutral-50 p-4">
+                      <p className="text-[11px] text-neutral-500">Phí ship</p>
+                      <p className="mt-2 text-[18px] font-semibold text-neutral-900">
+                        {currency(viewOrder.shippingFee)}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                      <p className="text-[11px] text-red-600">COD ban đầu</p>
+                      <p className="mt-2 text-[18px] font-semibold text-red-700">
+                        {currency(
+                          itemsSubtotal + Number(viewOrder.shippingFee || 0),
+                        )}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                      <p className="text-[11px] text-emerald-600">
+                        COD sau điều chỉnh
+                      </p>
+                      <p className="mt-2 text-[18px] font-semibold text-emerald-700">
+                        {currency(viewOrder.shipment?.codAmount)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-neutral-50 p-4 text-[12px]">
+                    <p className="text-neutral-500">Lý do</p>
+                    <p className="mt-1 font-medium text-neutral-900">
+                      {viewOrder.partialReason ||
+                        "Đơn đã được xử lý theo flow giao hàng 1 phần."}
+                    </p>
+                  </div>
+                </div>
+              </Panel>
+            ) : null}
+
+            <Panel className="overflow-visible">
+              <SectionHeader
+                title="Sản phẩm"
+                subtitle={`${totalItems} món trong đơn hàng`}
+                action={
+                  isEditing ? (
+                    <ActionButton onClick={addDraftItem}>
+                      + Thêm sản phẩm
+                    </ActionButton>
+                  ) : null
+                }
+              />
+              <div className={isEditing ? "overflow-visible" : "overflow-auto"}>
+                <table className="w-full min-w-[1160px] border-collapse">
+                  <thead className="bg-neutral-50 text-left text-[10px] uppercase tracking-wide text-neutral-500">
+                    <tr>
+                      <th className="w-[56px] border-b border-neutral-200 px-3 py-2.5">
+                        STT
+                      </th>
+                      <th className="w-[360px] border-b border-neutral-200 px-3 py-2.5">
+                        Tên sản phẩm
+                      </th>
+                      <th className="w-[170px] border-b border-neutral-200 px-3 py-2.5">
+                        SKU
+                      </th>
+                      <th className="w-[140px] border-b border-neutral-200 px-3 py-2.5">
+                        Màu
+                      </th>
+                      <th className="w-[110px] border-b border-neutral-200 px-3 py-2.5">
+                        Size
+                      </th>
+                      <th className="w-[100px] border-b border-neutral-200 px-3 py-2.5 text-center">
+                        SL
+                      </th>
+                      <th className="w-[140px] border-b border-neutral-200 px-3 py-2.5 text-right">
+                        Đơn giá
+                      </th>
+                      <th className="w-[140px] border-b border-neutral-200 px-3 py-2.5 text-right">
+                        Thành tiền
+                      </th>
+                      {isEditing ? (
+                        <th className="w-[110px] border-b border-neutral-200 px-3 py-2.5 text-right">
+                          Thao tác
+                        </th>
+                      ) : null}
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {(viewOrder.items || []).length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={isEditing ? 9 : 8}
+                          className="px-3 py-5 text-sm text-neutral-500"
+                        >
+                          Không có sản phẩm.
+                        </td>
+                      </tr>
+                    ) : (
+                      (viewOrder.items || []).map((item, index) => (
+                        <tr
+                          key={item.id}
+                          className="transition hover:bg-neutral-50"
+                        >
+                          <td className="border-b border-neutral-100 px-3 py-2.5">
+                            {index + 1}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 align-top">
+                            {isEditing ? (
+                              <div className="min-w-[340px]">
+                                <ProductPicker
+                                  value={item.productName || item.sku || ""}
+                                  onSelect={(variant) => {
+                                    updateDraftItem(item.id, {
+                                      productName: variant.productName,
+                                      sku: variant.sku,
+                                      color: variant.color,
+                                      size: variant.size,
+                                      unitPrice: variant.price,
+                                    });
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <div className="font-medium text-[12px] text-neutral-900">
+                                {item.productName || "—"}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 text-[12px]">
+                            {isEditing ? (
+                              <input
+                                value={item.sku || ""}
+                                disabled
+                                className="h-9 w-full rounded-xl border border-neutral-200 bg-neutral-100 px-3 text-[12px]"
+                              />
+                            ) : (
+                              item.sku || "—"
+                            )}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 text-[12px]">
+                            {isEditing ? (
+                              <input
+                                value={item.color || ""}
+                                disabled
+                                className="h-9 w-full rounded-xl border border-neutral-200 bg-neutral-100 px-3 text-[12px]"
+                              />
+                            ) : (
+                              item.color || "—"
+                            )}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 text-[12px]">
+                            {isEditing ? (
+                              <input
+                                value={item.size || ""}
+                                disabled
+                                className="h-9 w-full rounded-xl border border-neutral-200 bg-neutral-100 px-3 text-[12px]"
+                              />
+                            ) : (
+                              item.size || "—"
+                            )}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 text-center text-[12px]">
+                            {isEditing ? (
+                              <EditInput
+                                type="number"
+                                value={item.qty}
+                                onChange={(v) =>
+                                  updateDraftItem(item.id, {
+                                    qty: Math.max(Number(v || 0), 0),
+                                  })
+                                }
+                              />
+                            ) : (
+                              item.qty
+                            )}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 text-right text-[12px]">
+                            {isEditing ? (
+                              <EditInput
+                                type="number"
+                                value={item.unitPrice}
+                                onChange={(v) =>
+                                  updateDraftItem(item.id, {
+                                    unitPrice: Math.max(Number(v || 0), 0),
+                                  })
+                                }
+                              />
+                            ) : (
+                              currency(item.unitPrice)
+                            )}
+                          </td>
+
+                          <td className="border-b border-neutral-100 px-3 py-2.5 text-right text-[12px] font-medium">
+                            {currency(item.lineTotal)}
+                          </td>
+
+                          {isEditing ? (
+                            <td className="border-b border-neutral-100 px-3 py-2.5 text-right">
+                              <ActionButton
+                                tone="danger"
+                                onClick={() => removeDraftItem(item.id)}
+                              >
+                                Xóa
+                              </ActionButton>
+                            </td>
+                          ) : null}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
+            <Panel>
+              <div className="flex items-end justify-between px-4 py-3">
+                <div>
+                  <h3 className="text-[16px] font-semibold tracking-tight text-neutral-900">
+                    Tổng kết
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-neutral-500">
+                    {totalItems} món · giảm giá{" "}
+                    {currency(viewOrder.discountAmount)} · phí ship{" "}
+                    {currency(viewOrder.shippingFee)}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-[10px] text-neutral-500">Khách phải trả</p>
+                  <p className="mt-1 text-[20px] font-semibold tracking-tight text-neutral-900">
+                    {currency(shownFinalAmount)}
+                  </p>
+                </div>
+              </div>
+            </Panel>
+          </div>
+
+          <div className="space-y-3">
+            <Panel>
+              <SectionHeader
+                title="Thông tin đơn hàng"
+                subtitle="Thông tin vận hành và trạng thái."
+              />
+              <div className="space-y-3 px-4 py-3">
+                {isEditing ? (
+                  <>
+                    <div>
+                      <p className="mb-1 text-[11px] text-neutral-500">
+                        Kênh bán
+                      </p>
+                      <EditInput
+                        value={draftOrder?.salesChannel}
+                        onChange={(v) => updateDraft("salesChannel", v)}
+                      />
+                    </div>
+                    <DataRow label="Mã đơn" value={viewOrder.orderCode} />
+                    <DataRow
+                      label="Ngày bán"
+                      value={
+                        formatDateTime(viewOrder.soldAt) ||
+                        viewOrder.createdAt ||
+                        "—"
+                      }
+                    />
+                    <DataRow
+                      label="Ngày tạo"
+                      value={viewOrder.createdAt || "—"}
+                    />
+                    <DataRow
+                      label="Cập nhật"
+                      value={viewOrder.updatedAt || "—"}
+                    />
+                    <DataRow
+                      label="Nhân viên"
+                      value={viewOrder.createdByStaffName || "—"}
+                    />
+                    <DataRow
+                      label="Trạng thái"
+                      value={orderStatusText(viewOrder.status)}
+                    />
+                    <DataRow
+                      label="Thanh toán"
+                      value={paymentStatusText(viewOrder.paymentStatus)}
+                    />
+                    <DataRow
+                      label="Giao vận"
+                      value={fulfillmentStatusText(viewOrder.fulfillmentStatus)}
+                    />
+                    <DataRow
+                      label="Chi nhánh"
+                      value={viewOrder.branchId || "—"}
+                    />
+                  </>
                 ) : (
                   <>
+                    <DataRow label="Mã đơn" value={viewOrder.orderCode} />
                     <DataRow
-                      label="Khách hàng"
-                      value={viewOrder.customerName || viewOrder.customer?.fullName || "—"}
+                      label="Ngày bán"
+                      value={
+                        formatDateTime(viewOrder.soldAt) ||
+                        viewOrder.createdAt ||
+                        "—"
+                      }
                     />
                     <DataRow
-                      label="SĐT"
-                      value={viewOrder.customerPhone || viewOrder.customer?.phone || "—"}
+                      label="Ngày tạo"
+                      value={viewOrder.createdAt || "—"}
                     />
                     <DataRow
-                      label="Người nhận"
-                      value={viewOrder.shippingRecipientName || viewOrder.customerName || "—"}
+                      label="Cập nhật"
+                      value={viewOrder.updatedAt || "—"}
                     />
                     <DataRow
-                      label="SĐT nhận"
-                      value={viewOrder.shippingPhone || viewOrder.customerPhone || "—"}
+                      label="Nhân viên"
+                      value={viewOrder.createdByStaffName || "—"}
                     />
-                    <DataRow label="Địa chỉ" value={fullAddress} />
-                    <DataRow label="Ghi chú" value={meta.noteText || "—"} />
+                    <DataRow
+                      label="Trạng thái"
+                      value={orderStatusText(viewOrder.status)}
+                    />
+                    <DataRow
+                      label="Thanh toán"
+                      value={paymentStatusText(viewOrder.paymentStatus)}
+                    />
+                    <DataRow
+                      label="Giao vận"
+                      value={fulfillmentStatusText(viewOrder.fulfillmentStatus)}
+                    />
+                    <DataRow
+                      label="Chi nhánh"
+                      value={viewOrder.branchId || "—"}
+                    />
+                    <DataRow
+                      label="Kênh bán"
+                      value={viewOrder.salesChannel || "—"}
+                    />
+                    <DataRow
+                      label="Nguồn tiền"
+                      value={
+                        paymentLines.length
+                          ? paymentLines
+                              .map(
+                                (p) =>
+                                  `${paymentSourceLabel(p)}: ${currency(p.amount)}`,
+                              )
+                              .join(" · ")
+                          : "—"
+                      }
+                    />
                   </>
                 )}
               </div>
             </Panel>
 
             <Panel>
-              <SectionHeader title="Tổng quan" subtitle="Số liệu nhanh." />
+              <SectionHeader
+                title="Lịch sử sửa đơn"
+                subtitle="Theo dõi các mốc thay đổi quan trọng của đơn hàng."
+              />
               <div className="space-y-3 px-4 py-3">
-                <div className="flex items-center justify-between text-[12px]">
-                  <span className="text-neutral-500">Nợ phải thu</span>
-                  <span className="font-semibold text-red-600">
-                    {currency(amountDue)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[12px]">
-                  <span className="text-neutral-500">Tổng chi tiêu</span>
-                  <span className="font-semibold text-neutral-900">
-                    {currency(shownFinalAmount)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[12px]">
-                  <span className="text-neutral-500">Trả hàng</span>
-                  <span className="font-semibold text-neutral-900">0đ</span>
-                </div>
-                <div className="flex items-center justify-between text-[12px]">
-                  <span className="text-neutral-500">Thất bại</span>
-                  <span className="font-semibold text-neutral-900">0đ</span>
-                </div>
-              </div>
-            </Panel>
-          </div>
-
-          <Panel>
-            <SectionHeader
-              title="Thanh toán"
-              subtitle="Tổng tiền, đã thanh toán và còn lại."
-            />
-            <div className="space-y-3 px-4 py-3">
-              {isEditing ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div>
-                    <p className="mb-1 text-[11px] text-neutral-500">Giảm giá</p>
-                    <EditInput
-                      type="number"
-                      value={draftOrder?.discountAmount || 0}
-                      onChange={(v) => updateDraft("discountAmount", Number(v || 0))}
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-[11px] text-neutral-500">Phí ship</p>
-                    <EditInput
-                      type="number"
-                      value={draftOrder?.shippingFee || 0}
-                      onChange={(v) => updateDraft("shippingFee", Number(v || 0))}
-                    />
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid gap-2 md:grid-cols-3">
-                <MiniStat label="Tiền hàng" value={currency(itemsSubtotal)} />
-                <MiniStat label="Giảm giá" value={currency(viewOrder.discountAmount)} />
-                <MiniStat label="Phí ship" value={currency(viewOrder.shippingFee)} />
-                <MiniStat label="Khách phải trả" value={currency(shownFinalAmount)} />
-                <MiniStat label="Đã thanh toán" value={currency(customerPaid)} />
-                <MiniStat
-                  label="Còn phải trả"
-                  value={currency(amountDue)}
-                  tone="danger"
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
-                  {paymentStatusText(viewOrder.paymentStatus)}
-                </Badge>
-                {viewOrder.shipment?.codAmount ? (
-                  <span className="text-[12px] text-neutral-600">
-                    COD {currency(viewOrder.shipment.codAmount)}
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-[12px] font-semibold text-neutral-900">
-                    Chi tiết nguồn tiền
-                  </p>
-                  <span className="text-[11px] text-neutral-500">
-                    Tổng {currency(paymentsTotal)}
-                  </span>
-                </div>
-
-                {paymentLines.length ? (
-                  <div className="space-y-2">
-                    {paymentLines.map((payment, index) => (
-                      <div
-                        key={payment.id || `${payment.paymentSourceId || "pay"}-${index}`}
-                        className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-[12px]"
-                      >
+                {orderHistory.length ? (
+                  orderHistory.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-neutral-900">
-                            {paymentSourceLabel(payment)}
+                          <p className="text-[13px] font-semibold text-neutral-900">
+                            {entry.title}
                           </p>
-                          <p className="mt-0.5 text-[10px] text-neutral-500">
-                            {paymentStatusText(payment.status)}
-                            {payment.paidAt ? ` · ${formatDateTime(payment.paidAt)}` : ""}
+                          <p className="mt-1 text-[12px] text-neutral-600">
+                            {entry.description}
                           </p>
                         </div>
-                        <p className="font-semibold text-neutral-900">
-                          {currency(payment.amount)}
-                        </p>
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-medium ${
+                            entry.tone === "success"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : entry.tone === "warning"
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-neutral-200 text-neutral-700"
+                          }`}
+                        >
+                          {entry.tone === "success"
+                            ? "Đã lưu"
+                            : entry.tone === "warning"
+                              ? "Cảnh báo"
+                              : "Nội bộ"}
+                        </span>
                       </div>
-                    ))}
-                  </div>
+                      {entry.createdAt ? (
+                        <p className="mt-2 text-[11px] text-neutral-500">
+                          {entry.createdAt}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))
                 ) : (
                   <p className="text-[12px] text-neutral-500">
-                    Chưa có dòng thanh toán chi tiết.
+                    Chưa có lịch sử chỉnh sửa.
                   </p>
                 )}
               </div>
-            </div>
-          </Panel>
+            </Panel>
 
-          {!isPOSOrder ? (
             <Panel>
-              <SectionHeader
-                title="Đóng gói và giao hàng"
-                subtitle="Mã vận đơn, đối tác, phí ship."
-                action={
-                  <div className="flex flex-wrap gap-2">
-                    {shipmentEditable ? (
-                      <ActionButton onClick={handleOpenShipmentEdit}>
-                        Sửa giao hàng
-                      </ActionButton>
-                    ) : null}
-
-                    {codEditable ? (
-                      <ActionButton tone="danger" onClick={handleOpenCodEdit}>
-                        Sửa COD giao hàng 1 phần
-                      </ActionButton>
-                    ) : null}
-
-                    {redeliveryAvailable ? (
-                      <ActionButton
-                        tone="dark"
-                        onClick={() =>
-                          setMessage("Flow giao lại sẽ làm ở bước sau")
-                        }
-                      >
-                        Giao lại
-                      </ActionButton>
-                    ) : null}
-                  </div>
-                }
-              />
-
+              <SectionHeader title="Ghi chú" subtitle="Thông tin bổ sung." />
               <div className="space-y-3 px-4 py-3">
-                <div className="grid gap-2 md:grid-cols-3">
-                  <MiniStat
-                    label="Cho sửa giao hàng"
-                    value={shipmentEditable ? "Có" : "Không"}
-                    tone={shipmentEditable ? "success" : "default"}
+                {isEditing ? (
+                  <EditTextarea
+                    value={draftOrder?.note}
+                    onChange={(v) => updateDraft("note", v)}
+                    placeholder="Nhập ghi chú đơn hàng"
                   />
-                  <MiniStat
-                    label="Cho sửa COD"
-                    value={codEditable ? "Có" : "Không"}
-                    tone={codEditable ? "success" : "default"}
-                  />
-                  <MiniStat
-                    label="Cho giao lại"
-                    value={redeliveryAvailable ? "Có" : "Không"}
-                    tone={redeliveryAvailable ? "danger" : "default"}
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {viewOrder.shipment?.id ? (
-                    <Link
-                      href={`/control/shipments/${viewOrder.shipment.id}`}
-                      className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
-                    >
-                      {viewOrder.shipment?.trackingCode || tracking || "Chưa có mã vận đơn"}
-                    </Link>
-                  ) : (
-                    <Badge tone={viewOrder.shipment?.trackingCode ? "blue" : "gray"}>
-                      {viewOrder.shipment?.trackingCode || tracking || "Chưa có mã vận đơn"}
-                    </Badge>
-                  )}
-
-                  <Badge tone={viewOrder.shipment?.shippingStatus ? "amber" : "gray"}>
-                    {viewOrder.shipment?.shippingStatus || "Chưa đẩy trạng thái"}
-                  </Badge>
-
-                  <Badge
-                    tone={codReconciliationTone(
-                      viewOrder.shipment?.codReconciliationStatus
-                    )}
-                  >
-                    {codReconciliationLabel(
-                      viewOrder.shipment?.codReconciliationStatus
-                    )}
-                  </Badge>
-                </div>
-              </div>
-            </Panel>
-          ) : null}
-
-          {(viewOrder.isPartialDelivery || partialDelivery) ? (
-            <Panel>
-              <SectionHeader
-                title="Phiếu giao hàng 1 phần"
-                subtitle="Ghi nhận phần khách thực nhận để điều chỉnh COD và phục vụ đối soát."
-              />
-              <div className="space-y-4 px-4 py-4">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-2xl bg-neutral-50 p-4">
-                    <p className="text-[11px] text-neutral-500">Tổng đơn gốc</p>
-                    <p className="mt-2 text-[18px] font-semibold text-neutral-900">
-                      {currency(itemsSubtotal + Number(viewOrder.shippingFee || 0))}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-neutral-50 p-4">
-                    <p className="text-[11px] text-neutral-500">Phí ship</p>
-                    <p className="mt-2 text-[18px] font-semibold text-neutral-900">
-                      {currency(viewOrder.shippingFee)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-                    <p className="text-[11px] text-red-600">COD ban đầu</p>
-                    <p className="mt-2 text-[18px] font-semibold text-red-700">
-                      {currency(itemsSubtotal + Number(viewOrder.shippingFee || 0))}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                    <p className="text-[11px] text-emerald-600">COD sau điều chỉnh</p>
-                    <p className="mt-2 text-[18px] font-semibold text-emerald-700">
-                      {currency(viewOrder.shipment?.codAmount)}
-                    </p>
-                  </div>
-                </div>
-                <div className="rounded-2xl bg-neutral-50 p-4 text-[12px]">
-                  <p className="text-neutral-500">Lý do</p>
-                  <p className="mt-1 font-medium text-neutral-900">
-                    {viewOrder.partialReason || "Đơn đã được xử lý theo flow giao hàng 1 phần."}
-                  </p>
-                </div>
-              </div>
-            </Panel>
-          ) : null}
-
-          <Panel className="overflow-visible">
-            <SectionHeader
-              title="Sản phẩm"
-              subtitle={`${totalItems} món trong đơn hàng`}
-              action={
-                isEditing ? (
-                  <ActionButton onClick={addDraftItem}>+ Thêm sản phẩm</ActionButton>
-                ) : null
-              }
-            />
-            <div className={isEditing ? "overflow-visible" : "overflow-auto"}>
-              <table className="w-full min-w-[1160px] border-collapse">
-                <thead className="bg-neutral-50 text-left text-[10px] uppercase tracking-wide text-neutral-500">
-                  <tr>
-                    <th className="w-[56px] border-b border-neutral-200 px-3 py-2.5">STT</th>
-                    <th className="w-[360px] border-b border-neutral-200 px-3 py-2.5">Tên sản phẩm</th>
-                    <th className="w-[170px] border-b border-neutral-200 px-3 py-2.5">SKU</th>
-                    <th className="w-[140px] border-b border-neutral-200 px-3 py-2.5">Màu</th>
-                    <th className="w-[110px] border-b border-neutral-200 px-3 py-2.5">Size</th>
-                    <th className="w-[100px] border-b border-neutral-200 px-3 py-2.5 text-center">SL</th>
-                    <th className="w-[140px] border-b border-neutral-200 px-3 py-2.5 text-right">Đơn giá</th>
-                    <th className="w-[140px] border-b border-neutral-200 px-3 py-2.5 text-right">Thành tiền</th>
-                    {isEditing ? (
-                      <th className="w-[110px] border-b border-neutral-200 px-3 py-2.5 text-right">
-                        Thao tác
-                      </th>
-                    ) : null}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {(viewOrder.items || []).length === 0 ? (
-                    <tr>
-                      <td colSpan={isEditing ? 9 : 8} className="px-3 py-5 text-sm text-neutral-500">
-                        Không có sản phẩm.
-                      </td>
-                    </tr>
-                  ) : (
-                    (viewOrder.items || []).map((item, index) => (
-                      <tr key={item.id} className="transition hover:bg-neutral-50">
-                        <td className="border-b border-neutral-100 px-3 py-2.5">{index + 1}</td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 align-top">
-                          {isEditing ? (
-                            <div className="min-w-[340px]">
-                              <ProductPicker
-                                value={item.productName || item.sku || ""}
-                                onSelect={(variant) => {
-                                  updateDraftItem(item.id, {
-                                    productName: variant.productName,
-                                    sku: variant.sku,
-                                    color: variant.color,
-                                    size: variant.size,
-                                    unitPrice: variant.price,
-                                  });
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <div className="font-medium text-[12px] text-neutral-900">
-                              {item.productName || "—"}
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 text-[12px]">
-                          {isEditing ? (
-                            <input
-                              value={item.sku || ""}
-                              disabled
-                              className="h-9 w-full rounded-xl border border-neutral-200 bg-neutral-100 px-3 text-[12px]"
-                            />
-                          ) : (
-                            item.sku || "—"
-                          )}
-                        </td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 text-[12px]">
-                          {isEditing ? (
-                            <input
-                              value={item.color || ""}
-                              disabled
-                              className="h-9 w-full rounded-xl border border-neutral-200 bg-neutral-100 px-3 text-[12px]"
-                            />
-                          ) : (
-                            item.color || "—"
-                          )}
-                        </td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 text-[12px]">
-                          {isEditing ? (
-                            <input
-                              value={item.size || ""}
-                              disabled
-                              className="h-9 w-full rounded-xl border border-neutral-200 bg-neutral-100 px-3 text-[12px]"
-                            />
-                          ) : (
-                            item.size || "—"
-                          )}
-                        </td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 text-center text-[12px]">
-                          {isEditing ? (
-                            <EditInput
-                              type="number"
-                              value={item.qty}
-                              onChange={(v) =>
-                                updateDraftItem(item.id, {
-                                  qty: Math.max(Number(v || 0), 0),
-                                })
-                              }
-                            />
-                          ) : (
-                            item.qty
-                          )}
-                        </td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 text-right text-[12px]">
-                          {isEditing ? (
-                            <EditInput
-                              type="number"
-                              value={item.unitPrice}
-                              onChange={(v) =>
-                                updateDraftItem(item.id, {
-                                  unitPrice: Math.max(Number(v || 0), 0),
-                                })
-                              }
-                            />
-                          ) : (
-                            currency(item.unitPrice)
-                          )}
-                        </td>
-
-                        <td className="border-b border-neutral-100 px-3 py-2.5 text-right text-[12px] font-medium">
-                          {currency(item.lineTotal)}
-                        </td>
-
-                        {isEditing ? (
-                          <td className="border-b border-neutral-100 px-3 py-2.5 text-right">
-                            <ActionButton tone="danger" onClick={() => removeDraftItem(item.id)}>
-                              Xóa
-                            </ActionButton>
-                          </td>
-                        ) : null}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-
-          <Panel>
-            <div className="flex items-end justify-between px-4 py-3">
-              <div>
-                <h3 className="text-[16px] font-semibold tracking-tight text-neutral-900">
-                  Tổng kết
-                </h3>
-                <p className="mt-0.5 text-[11px] text-neutral-500">
-                  {totalItems} món · giảm giá {currency(viewOrder.discountAmount)} · phí ship {currency(viewOrder.shippingFee)}
-                </p>
-              </div>
-
-              <div className="text-right">
-                <p className="text-[10px] text-neutral-500">Khách phải trả</p>
-                <p className="mt-1 text-[20px] font-semibold tracking-tight text-neutral-900">
-                  {currency(shownFinalAmount)}
-                </p>
-              </div>
-            </div>
-          </Panel>
-        </div>
-
-        <div className="space-y-3">
-          <Panel>
-            <SectionHeader title="Thông tin đơn hàng" subtitle="Thông tin vận hành và trạng thái." />
-            <div className="space-y-3 px-4 py-3">
-              {isEditing ? (
-                <>
-                  <div>
-                    <p className="mb-1 text-[11px] text-neutral-500">Kênh bán</p>
-                    <EditInput
-                      value={draftOrder?.salesChannel}
-                      onChange={(v) => updateDraft("salesChannel", v)}
+                ) : (
+                  <>
+                    <DataRow label="Ghi chú đơn" value={meta.noteText || "—"} />
+                    <DataRow
+                      label="Ghi chú giao"
+                      value={meta.shippingNote || "—"}
                     />
-                  </div>
-                  <DataRow label="Mã đơn" value={viewOrder.orderCode} />
-                  <DataRow label="Ngày bán" value={formatDateTime(viewOrder.soldAt) || viewOrder.createdAt || "—"} />
-                  <DataRow label="Ngày tạo" value={viewOrder.createdAt || "—"} />
-                  <DataRow label="Cập nhật" value={viewOrder.updatedAt || "—"} />
-                  <DataRow label="Nhân viên" value={viewOrder.createdByStaffName || "—"} />
-                  <DataRow label="Trạng thái" value={orderStatusText(viewOrder.status)} />
-                  <DataRow label="Thanh toán" value={paymentStatusText(viewOrder.paymentStatus)} />
-                  <DataRow label="Giao vận" value={fulfillmentStatusText(viewOrder.fulfillmentStatus)} />
-                  <DataRow label="Chi nhánh" value={viewOrder.branchId || "—"} />
-                </>
-              ) : (
-                <>
-                  <DataRow label="Mã đơn" value={viewOrder.orderCode} />
-                  <DataRow label="Ngày bán" value={formatDateTime(viewOrder.soldAt) || viewOrder.createdAt || "—"} />
-                  <DataRow label="Ngày tạo" value={viewOrder.createdAt || "—"} />
-                  <DataRow label="Cập nhật" value={viewOrder.updatedAt || "—"} />
-                  <DataRow label="Nhân viên" value={viewOrder.createdByStaffName || "—"} />
-                  <DataRow label="Trạng thái" value={orderStatusText(viewOrder.status)} />
-                  <DataRow label="Thanh toán" value={paymentStatusText(viewOrder.paymentStatus)} />
-                  <DataRow label="Giao vận" value={fulfillmentStatusText(viewOrder.fulfillmentStatus)} />
-                  <DataRow label="Chi nhánh" value={viewOrder.branchId || "—"} />
-                  <DataRow label="Kênh bán" value={viewOrder.salesChannel || "—"} />
-                  <DataRow
-                    label="Nguồn tiền"
-                    value={
-                      paymentLines.length
-                        ? paymentLines.map((p) => `${paymentSourceLabel(p)}: ${currency(p.amount)}`).join(" · ")
-                        : "—"
-                    }
-                  />
-                </>
-              )}
-            </div>
-          </Panel>
+                  </>
+                )}
+              </div>
+            </Panel>
 
-          <Panel>
-            <SectionHeader title="Lịch sử sửa đơn" subtitle="Theo dõi các mốc thay đổi quan trọng của đơn hàng." />
-            <div className="space-y-3 px-4 py-3">
-              {orderHistory.length ? (
-                orderHistory.map((entry) => (
-                  <div key={entry.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[13px] font-semibold text-neutral-900">{entry.title}</p>
-                        <p className="mt-1 text-[12px] text-neutral-600">{entry.description}</p>
-                      </div>
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${entry.tone === "success"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : entry.tone === "warning"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-neutral-200 text-neutral-700"
-                        }`}>
-                        {entry.tone === "success"
-                          ? "Đã lưu"
-                          : entry.tone === "warning"
-                            ? "Cảnh báo"
-                            : "Nội bộ"}
-                      </span>
-                    </div>
-                    {entry.createdAt ? (
-                      <p className="mt-2 text-[11px] text-neutral-500">{entry.createdAt}</p>
-                    ) : null}
-                  </div>
-                ))
-              ) : (
-                <p className="text-[12px] text-neutral-500">Chưa có lịch sử chỉnh sửa.</p>
-              )}
-            </div>
-          </Panel>
-
-          <Panel>
-            <SectionHeader title="Ghi chú" subtitle="Thông tin bổ sung." />
-            <div className="space-y-3 px-4 py-3">
-              {isEditing ? (
-                <EditTextarea
-                  value={draftOrder?.note}
-                  onChange={(v) => updateDraft("note", v)}
-                  placeholder="Nhập ghi chú đơn hàng"
-                />
-              ) : (
-                <>
-                  <DataRow label="Ghi chú đơn" value={meta.noteText || "—"} />
-                  <DataRow label="Ghi chú giao" value={meta.shippingNote || "—"} />
-                </>
-              )}
-            </div>
-          </Panel>
-
-          <Panel>
-            <SectionHeader title="Tags" subtitle="Phân loại nhanh." />
-            <div className="space-y-2.5 px-4 py-3">
-              <DataRow label="Tags" value={meta.tags || "Chưa có tag"} />
-            </div>
-          </Panel>
+            <Panel>
+              <SectionHeader title="Tags" subtitle="Phân loại nhanh." />
+              <div className="space-y-2.5 px-4 py-3">
+                <DataRow label="Tags" value={meta.tags || "Chưa có tag"} />
+              </div>
+            </Panel>
+          </div>
         </div>
       </div>
 
@@ -2722,7 +3391,8 @@ export default function OrderDetailPageClient({
                   Phiếu giao hàng 1 phần
                 </p>
                 <p className="mt-1 text-[12px] text-neutral-500">
-                  Ghi nhận phần khách thực nhận để điều chỉnh COD và phục vụ đối soát.
+                  Ghi nhận phần khách thực nhận để điều chỉnh COD và phục vụ đối
+                  soát.
                 </p>
               </div>
               <button
@@ -2738,9 +3408,12 @@ export default function OrderDetailPageClient({
               <div className="space-y-5">
                 <div className="rounded-3xl border border-neutral-200 bg-white shadow-sm">
                   <div className="border-b border-neutral-200 px-5 py-4">
-                    <h2 className="text-lg font-semibold">Phiếu giao hàng 1 phần</h2>
+                    <h2 className="text-lg font-semibold">
+                      Phiếu giao hàng 1 phần
+                    </h2>
                     <p className="mt-1 text-sm text-neutral-500">
-                      Ghi nhận phần khách thực nhận để điều chỉnh COD và phục vụ đối soát.
+                      Ghi nhận phần khách thực nhận để điều chỉnh COD và phục vụ
+                      đối soát.
                     </p>
                   </div>
 
@@ -2750,22 +3423,32 @@ export default function OrderDetailPageClient({
                       <textarea
                         value={partialDraft.reason}
                         onChange={(e) =>
-                          setPartialDraft((prev) => ({ ...prev, reason: e.target.value }))
+                          setPartialDraft((prev) => ({
+                            ...prev,
+                            reason: e.target.value,
+                          }))
                         }
                         className="mt-2 min-h-[88px] w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-[13px] outline-none focus:border-neutral-500"
                       />
                     </div>
 
                     <div className="rounded-2xl bg-neutral-50 p-4">
-                      <p className="text-xs text-neutral-500">Người duyệt chỉnh COD</p>
+                      <p className="text-xs text-neutral-500">
+                        Người duyệt chỉnh COD
+                      </p>
                       <input
                         value={partialDraft.approvedBy}
                         onChange={(e) =>
-                          setPartialDraft((prev) => ({ ...prev, approvedBy: e.target.value }))
+                          setPartialDraft((prev) => ({
+                            ...prev,
+                            approvedBy: e.target.value,
+                          }))
                         }
                         className="mt-2 h-10 w-full rounded-xl border border-neutral-300 bg-white px-3 text-[13px] outline-none focus:border-neutral-500"
                       />
-                      <p className="mt-2 text-xs text-neutral-500">Google Authenticator đã xác thực</p>
+                      <p className="mt-2 text-xs text-neutral-500">
+                        Google Authenticator đã xác thực
+                      </p>
                     </div>
                   </div>
 
@@ -2779,15 +3462,26 @@ export default function OrderDetailPageClient({
                             <th className="px-4 py-3 text-center">Đặt</th>
                             <th className="px-4 py-3 text-center">Thực giao</th>
                             <th className="px-4 py-3 text-right">Đơn giá</th>
-                            <th className="px-4 py-3 text-right">Thành tiền giao</th>
+                            <th className="px-4 py-3 text-right">
+                              Thành tiền giao
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
                           {partialDraft.items.map((item, idx) => (
-                            <tr key={idx} className="border-t border-neutral-200 bg-white">
-                              <td className="px-4 py-4 font-medium">{item.productName}</td>
-                              <td className="px-4 py-4 text-neutral-500">{item.sku || "—"}</td>
-                              <td className="px-4 py-4 text-center">{item.orderedQty}</td>
+                            <tr
+                              key={idx}
+                              className="border-t border-neutral-200 bg-white"
+                            >
+                              <td className="px-4 py-4 font-medium">
+                                {item.productName}
+                              </td>
+                              <td className="px-4 py-4 text-neutral-500">
+                                {item.sku || "—"}
+                              </td>
+                              <td className="px-4 py-4 text-center">
+                                {item.orderedQty}
+                              </td>
                               <td className="px-4 py-4 text-center">
                                 <input
                                   type="number"
@@ -2795,12 +3489,17 @@ export default function OrderDetailPageClient({
                                   max={item.orderedQty}
                                   value={item.deliveredQty}
                                   onChange={(e) =>
-                                    updatePartialDeliveredQty(item.orderItemId, Number(e.target.value || 0))
+                                    updatePartialDeliveredQty(
+                                      item.orderItemId,
+                                      Number(e.target.value || 0),
+                                    )
                                   }
                                   className="mx-auto h-9 w-[88px] rounded-xl border border-neutral-300 px-3 text-center text-[13px] outline-none focus:border-neutral-500"
                                 />
                               </td>
-                              <td className="px-4 py-4 text-right">{currency(item.unitPrice)}</td>
+                              <td className="px-4 py-4 text-right">
+                                {currency(item.unitPrice)}
+                              </td>
                               <td className="px-4 py-4 text-right font-medium">
                                 {currency(item.deliveredQty * item.unitPrice)}
                               </td>
@@ -2814,28 +3513,43 @@ export default function OrderDetailPageClient({
 
                 <div className="rounded-3xl border border-neutral-200 bg-white shadow-sm">
                   <div className="border-b border-neutral-200 px-5 py-4">
-                    <h2 className="text-lg font-semibold">Tác động thanh toán</h2>
-                    <p className="mt-1 text-sm text-neutral-500">So sánh giữa đơn gốc và số tiền thực thu sau điều chỉnh.</p>
+                    <h2 className="text-lg font-semibold">
+                      Tác động thanh toán
+                    </h2>
+                    <p className="mt-1 text-sm text-neutral-500">
+                      So sánh giữa đơn gốc và số tiền thực thu sau điều chỉnh.
+                    </p>
                   </div>
 
                   <div className="grid gap-4 p-5 md:grid-cols-4">
                     <div className="rounded-2xl bg-neutral-50 p-4">
                       <p className="text-xs text-neutral-500">Tổng đơn gốc</p>
                       <p className="mt-2 text-xl font-semibold">
-                        {currency(partialDraft.originalCod - Number(order?.shippingFee || 0))}
+                        {currency(
+                          partialDraft.originalCod -
+                            Number(order?.shippingFee || 0),
+                        )}
                       </p>
                     </div>
                     <div className="rounded-2xl bg-neutral-50 p-4">
                       <p className="text-xs text-neutral-500">Phí ship</p>
-                      <p className="mt-2 text-xl font-semibold">{currency(order?.shippingFee)}</p>
+                      <p className="mt-2 text-xl font-semibold">
+                        {currency(order?.shippingFee)}
+                      </p>
                     </div>
                     <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
                       <p className="text-xs text-red-600">COD ban đầu</p>
-                      <p className="mt-2 text-xl font-semibold text-red-700">{currency(partialDraft.originalCod)}</p>
+                      <p className="mt-2 text-xl font-semibold text-red-700">
+                        {currency(partialDraft.originalCod)}
+                      </p>
                     </div>
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                      <p className="text-xs text-emerald-600">COD sau điều chỉnh</p>
-                      <p className="mt-2 text-xl font-semibold text-emerald-700">{currency(partialDraft.adjustedCod)}</p>
+                      <p className="text-xs text-emerald-600">
+                        COD sau điều chỉnh
+                      </p>
+                      <p className="mt-2 text-xl font-semibold text-emerald-700">
+                        {currency(partialDraft.adjustedCod)}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2847,19 +3561,33 @@ export default function OrderDetailPageClient({
                   <div className="mt-4 space-y-3 text-sm">
                     <div className="rounded-2xl bg-neutral-50 p-4">
                       <p className="text-xs text-neutral-500">Khách hàng</p>
-                      <p className="mt-1 font-medium">{order?.customerName || order?.customer?.fullName || "—"} • {order?.customerPhone || order?.customer?.phone || "—"}</p>
+                      <p className="mt-1 font-medium">
+                        {order?.customerName ||
+                          order?.customer?.fullName ||
+                          "—"}{" "}
+                        •{" "}
+                        {order?.customerPhone || order?.customer?.phone || "—"}
+                      </p>
                     </div>
                     <div className="rounded-2xl bg-neutral-50 p-4">
                       <p className="text-xs text-neutral-500">Địa chỉ giao</p>
-                      <p className="mt-1 font-medium">{buildAddress(order!, parseStructuredNote(order?.note))}</p>
+                      <p className="mt-1 font-medium">
+                        {buildAddress(order!, parseStructuredNote(order?.note))}
+                      </p>
                     </div>
                     <div className="rounded-2xl bg-neutral-50 p-4">
-                      <p className="text-xs text-neutral-500">Trạng thái vận đơn</p>
-                      <p className="mt-1 font-medium">{order?.shipment?.shippingStatus || "—"}</p>
+                      <p className="text-xs text-neutral-500">
+                        Trạng thái vận đơn
+                      </p>
+                      <p className="mt-1 font-medium">
+                        {order?.shipment?.shippingStatus || "—"}
+                      </p>
                     </div>
                     <div className="rounded-2xl bg-neutral-50 p-4">
                       <p className="text-xs text-neutral-500">Mã vận đơn GHN</p>
-                      <p className="mt-1 font-medium">{order?.shipment?.trackingCode || "—"}</p>
+                      <p className="mt-1 font-medium">
+                        {order?.shipment?.trackingCode || "—"}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2873,19 +3601,25 @@ export default function OrderDetailPageClient({
                       onClick={() => void handleSavePartialDelivery()}
                       className="w-full rounded-2xl border border-neutral-900 bg-neutral-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-50"
                     >
-                      {partialSaving ? "Đang lưu..." : "Lưu phiếu giao hàng 1 phần"}
+                      {partialSaving
+                        ? "Đang lưu..."
+                        : "Lưu phiếu giao hàng 1 phần"}
                     </button>
                     <button
                       type="button"
                       className="w-full rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium"
-                      onClick={() => setMessage("Bước in phiếu sẽ nối tiếp ở bước sau.")}
+                      onClick={() =>
+                        setMessage("Bước in phiếu sẽ nối tiếp ở bước sau.")
+                      }
                     >
                       In phiếu
                     </button>
                     <button
                       type="button"
                       className="w-full rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium"
-                      onClick={() => setMessage("Lịch sử chỉnh COD sẽ nối tiếp ở bước sau.")}
+                      onClick={() =>
+                        setMessage("Lịch sử chỉnh COD sẽ nối tiếp ở bước sau.")
+                      }
                     >
                       Xem lịch sử chỉnh COD
                     </button>
@@ -2948,7 +3682,8 @@ export default function OrderDetailPageClient({
                     Thay đổi COD là hành động nhạy cảm
                   </p>
                   <p className="mt-0.5 text-[11px] text-red-600">
-                    Nhập COD mới trước, sau đó xác nhận bằng Google Authenticator.
+                    Nhập COD mới trước, sau đó xác nhận bằng Google
+                    Authenticator.
                   </p>
                 </div>
 
@@ -2966,11 +3701,16 @@ export default function OrderDetailPageClient({
             ) : (
               <div className="grid gap-3 px-4 py-4 md:grid-cols-2">
                 <div>
-                  <p className="mb-1 text-[11px] text-neutral-500">Người nhận</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Người nhận
+                  </p>
                   <EditInput
                     value={shipmentDraft.recipientName}
                     onChange={(v) =>
-                      setShipmentDraft((prev) => ({ ...prev, recipientName: v }))
+                      setShipmentDraft((prev) => ({
+                        ...prev,
+                        recipientName: v,
+                      }))
                     }
                   />
                 </div>
@@ -2986,7 +3726,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div className="md:col-span-2">
-                  <p className="mb-1 text-[11px] text-neutral-500">Địa chỉ dòng 1</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Địa chỉ dòng 1
+                  </p>
                   <EditInput
                     value={shipmentDraft.addressLine1}
                     onChange={(v) =>
@@ -2996,7 +3738,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div className="md:col-span-2">
-                  <p className="mb-1 text-[11px] text-neutral-500">Địa chỉ dòng 2</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Địa chỉ dòng 2
+                  </p>
                   <EditInput
                     value={shipmentDraft.addressLine2}
                     onChange={(v) =>
@@ -3006,7 +3750,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div>
-                  <p className="mb-1 text-[11px] text-neutral-500">Tỉnh / thành</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Tỉnh / thành
+                  </p>
                   <EditSelect
                     value={selectedProvinceId}
                     onChange={handleProvinceChange}
@@ -3019,7 +3765,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div>
-                  <p className="mb-1 text-[11px] text-neutral-500">Quận / huyện</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Quận / huyện
+                  </p>
                   <EditSelect
                     value={selectedDistrictId}
                     onChange={handleDistrictChange}
@@ -3032,7 +3780,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div>
-                  <p className="mb-1 text-[11px] text-neutral-500">Phường / xã</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Phường / xã
+                  </p>
                   <EditSelect
                     value={selectedWardCode}
                     onChange={handleWardChange}
@@ -3045,7 +3795,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div>
-                  <p className="mb-1 text-[11px] text-neutral-500">Mã bưu chính</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Mã bưu chính
+                  </p>
                   <EditInput
                     value={shipmentDraft.postalCode}
                     onChange={(v) =>
@@ -3055,7 +3807,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div className="md:col-span-2">
-                  <p className="mb-1 text-[11px] text-neutral-500">Ghi chú giao hàng</p>
+                  <p className="mb-1 text-[11px] text-neutral-500">
+                    Ghi chú giao hàng
+                  </p>
                   <EditTextarea
                     value={shipmentDraft.shippingNote}
                     onChange={(v) =>
