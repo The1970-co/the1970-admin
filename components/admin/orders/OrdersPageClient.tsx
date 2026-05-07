@@ -51,7 +51,9 @@ type ColumnKey =
   | "customerName"
   | "customerPhone"
   | "orderStatus"
+  | "paymentDotStatus"
   | "paymentStatus"
+  | "stockOutStatus"
   | "fulfillmentStatus"
   | "branch"
   | "createdBy"
@@ -59,6 +61,7 @@ type ColumnKey =
   | "shippingMode"
   | "shippingPartner"
   | "trackingCode"
+  | "printStatus"
   | "itemCount"
   | "shippingAddress"
   | "note"
@@ -116,6 +119,8 @@ type NormalizedOrder = AdminOrder & {
 
 const TABLE_MIN_WIDTH = 2600;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
+const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
+const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
 
 const COLUMN_DEFS: ColumnDef[] = [
   { key: "orderCode", label: "Mã đơn", defaultVisible: true },
@@ -123,7 +128,9 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "customerName", label: "Khách hàng", defaultVisible: true },
   { key: "customerPhone", label: "SĐT", defaultVisible: true },
   { key: "orderStatus", label: "Trạng thái đơn", defaultVisible: true },
+  { key: "paymentDotStatus", label: "TT thanh toán", defaultVisible: true },
   { key: "paymentStatus", label: "Thanh toán", defaultVisible: true },
+  { key: "stockOutStatus", label: "TT xuất kho", defaultVisible: true },
   { key: "fulfillmentStatus", label: "Giao vận", defaultVisible: true },
   { key: "branch", label: "Chi nhánh", defaultVisible: true },
   { key: "createdBy", label: "Nhân viên tạo đơn", defaultVisible: true },
@@ -131,6 +138,7 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "shippingMode", label: "Cách giao", defaultVisible: true },
   { key: "shippingPartner", label: "Đơn vị VC", defaultVisible: true },
   { key: "trackingCode", label: "Mã vận đơn", defaultVisible: true },
+  { key: "printStatus", label: "Số lần in tem", defaultVisible: true },
   { key: "itemCount", label: "Số món", defaultVisible: true },
   { key: "shippingAddress", label: "Địa chỉ giao", defaultVisible: true },
   { key: "note", label: "Ghi chú", defaultVisible: true },
@@ -147,6 +155,246 @@ const COLUMN_DEFS: ColumnDef[] = [
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
+}
+
+
+type ConfiguredSalesChannel = {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  note?: string;
+};
+
+function loadConfiguredSalesChannels(): ConfiguredSalesChannel[] {
+  try {
+    if (typeof window === "undefined") return [];
+    const raw = localStorage.getItem(SALES_CHANNELS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function salesChannelLabel(value?: string | null) {
+  const raw = String(value || "").trim();
+  const upper = raw.toUpperCase();
+
+  const configured = loadConfiguredSalesChannels().find(
+    (item) => String(item.code || "").toUpperCase() === upper
+  );
+
+  if (configured?.name) return configured.name;
+
+  switch (upper) {
+    case "FACEBOOK_MANUAL":
+    case "FACEBOOK":
+      return "Facebook";
+    case "POS":
+      return "POS";
+    case "SHOWROOM":
+      return "Showroom";
+    case "VN_WEB":
+      return "Website VN";
+    case "INTL_WEB":
+      return "Website quốc tế";
+    case "TIKTOK":
+      return "TikTok";
+    case "SHOPEE":
+      return "Shopee";
+    case "ZALO":
+      return "Zalo";
+    case "OTHER":
+      return "Khác";
+    default:
+      return raw || "—";
+  }
+}
+
+function shippingModeLabel(value?: string | null) {
+  const raw = String(value || "").trim();
+  const upper = raw.toUpperCase();
+
+  switch (upper) {
+    case "PARTNER":
+    case "SHIP":
+    case "DELIVERY":
+    case "GHN":
+    case "AHAMOVE":
+      return "Giao hàng";
+    case "PICKUP":
+    case "STORE_PICKUP":
+    case "IN_STORE":
+      return "Nhận tại cửa hàng";
+    case "POS":
+      return "Bán tại quầy";
+    default:
+      return raw || "—";
+  }
+}
+
+type DotState = "empty" | "partial" | "filled";
+
+function paymentDotState(status?: string | null): DotState {
+  const value = String(status || "").toUpperCase();
+
+  if (value === "PAID" || value === "REFUNDED") return "filled";
+  if (value === "PARTIAL" || value === "PENDING_COD") return "partial";
+
+  return "empty";
+}
+
+function stockOutDotState(status?: string | null): DotState {
+  const value = String(status || "").toUpperCase();
+
+  if (value === "SHIPPED" || value === "COMPLETED") return "filled";
+  if (value === "PACKING") return "partial";
+
+  return "empty";
+}
+
+function dotStateLabel(state: DotState) {
+  if (state === "filled") return "Đã xong";
+  if (state === "partial") return "Một phần / đang xử lý";
+  return "Chưa";
+}
+
+function DotStatus({
+  state,
+  title,
+}: {
+  state: DotState;
+  title?: string;
+}) {
+  const label = dotStateLabel(state);
+
+  if (state === "filled") {
+    return (
+      <span
+        title={title || label}
+        className="inline-flex h-4 w-4 rounded-full border border-neutral-900 bg-neutral-900"
+        aria-label={label}
+      />
+    );
+  }
+
+  if (state === "partial") {
+    return (
+      <span
+        title={title || label}
+        className="relative inline-flex h-4 w-4 overflow-hidden rounded-full border border-neutral-900 bg-white"
+        aria-label={label}
+      >
+        <span className="absolute left-0 top-0 h-full w-1/2 bg-neutral-900" />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      title={title || label}
+      className="inline-flex h-4 w-4 rounded-full border-2 border-neutral-700 bg-white"
+      aria-label={label}
+    />
+  );
+}
+
+
+
+function getOrderItemCount(order: AdminOrder) {
+  const anyOrder = order as any;
+
+  const explicit = Number(
+    anyOrder.itemCount ??
+      anyOrder.itemsCount ??
+      anyOrder.totalItems ??
+      anyOrder.totalQuantity ??
+      anyOrder.quantity ??
+      0
+  );
+
+  if (explicit > 0) return explicit;
+
+  if (Array.isArray(order.items) && order.items.length) {
+    const totalQty = order.items.reduce((sum: number, item: any) => {
+      return (
+        sum +
+        Number(
+          item.qty ??
+            item.quantity ??
+            item.quantityOrdered ??
+            item.orderedQty ??
+            1
+        )
+      );
+    }, 0);
+
+    return totalQty || order.items.length;
+  }
+
+  return 0;
+}
+
+function getOrderPrintCounts(): Record<string, number> {
+  try {
+    if (typeof window === "undefined") return {};
+    const raw = localStorage.getItem(ORDER_PRINT_COUNT_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getOrderPrintCount(orderId?: string | null) {
+  if (!orderId) return 0;
+  return Number(getOrderPrintCounts()[orderId] || 0);
+}
+
+function saveOrderPrintCount(orderId: string, nextCount: number) {
+  if (typeof window === "undefined" || !orderId) return;
+  const counts = getOrderPrintCounts();
+  counts[orderId] = Math.max(0, Number(nextCount || 0));
+  localStorage.setItem(ORDER_PRINT_COUNT_STORAGE_KEY, JSON.stringify(counts));
+}
+
+function bumpOrderPrintCount(orderId: string) {
+  saveOrderPrintCount(orderId, getOrderPrintCount(orderId) + 1);
+}
+
+function PrintStatusBadge({ orderId }: { orderId: string }) {
+  const count = getOrderPrintCount(orderId);
+
+  if (count <= 0) {
+    return (
+      <span
+        title="Chưa in tem"
+        className="mx-auto inline-flex h-4 w-4 rounded-full border-2 border-neutral-700 bg-white"
+        aria-label="Chưa in tem"
+      />
+    );
+  }
+
+  if (count === 1) {
+    return (
+      <span
+        title="Đã in tem 1 lần"
+        className="mx-auto inline-flex h-4 w-4 rounded-full border border-neutral-900 bg-neutral-900"
+        aria-label="Đã in tem 1 lần"
+      />
+    );
+  }
+
+  return (
+    <span
+      title={`Đã in tem ${count} lần`}
+      className="mx-auto inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-neutral-900 bg-neutral-900 px-1.5 text-[11px] font-bold leading-none text-white"
+      aria-label={`Đã in tem ${count} lần`}
+    >
+      {count}
+    </span>
+  );
 }
 
 function Panel({
@@ -303,7 +551,7 @@ function orderStatusLabel(status?: string) {
     case "PACKING":
       return "Đang xử lý";
     case "SHIPPED":
-      return "Đã gửi hàng";
+      return "Đã xuất kho";
     case "COMPLETED":
       return "Hoàn thành";
     case "CANCELLED":
@@ -346,6 +594,72 @@ function fulfillmentStatusLabel(status?: string | null) {
       return "Trả hàng";
     default:
       return status || "—";
+  }
+}
+
+
+function shipmentStatusValue(order: AdminOrder) {
+  const status = String(order.shipment?.shippingStatus || "").trim();
+  if (status) return status;
+
+  // Đã có mã vận đơn nhưng hãng chưa trả status rõ ràng:
+  // coi là chờ lấy hàng, không dùng fulfillmentStatus PROCESSING nữa.
+  if (order.shipment?.trackingCode) return "READY_TO_PICK";
+
+  return "";
+}
+
+function shipmentDisplayStatusLabel(order: AdminOrder) {
+  const value = shipmentStatusValue(order).toUpperCase();
+
+  switch (value) {
+    case "READY_TO_PICK":
+    case "READY_TO_PICKING":
+    case "WAITING_PICK":
+    case "WAITING_TO_PICK":
+    case "CREATED":
+    case "PENDING":
+      return "Chờ lấy hàng";
+
+    case "PICKING":
+    case "PICK":
+    case "PICKED":
+      return "Đang lấy hàng";
+
+    case "STORING":
+    case "IN_TRANSIT":
+    case "TRANSPORTING":
+    case "SORTING":
+    case "DELIVERING":
+    case "DELIVERY":
+      return "Đang giao hàng";
+
+    case "DELIVERED":
+    case "DELIVERY_SUCCESS":
+    case "COMPLETED":
+      return "Giao thành công";
+
+    case "RETURN":
+    case "RETURNING":
+    case "WAITING_TO_RETURN":
+      return "Đang hoàn hàng";
+
+    case "RETURNED":
+    case "RETURNED_TO_CLIENT":
+      return "Đã hoàn hàng";
+
+    case "CANCEL":
+    case "CANCELLED":
+      return "Đã huỷ vận đơn";
+
+    case "FAILED":
+    case "EXCEPTION":
+    case "LOST":
+    case "DAMAGE":
+      return "Có sự cố";
+
+    default:
+      return value || fulfillmentStatusLabel(order.fulfillmentStatus);
   }
 }
 
@@ -401,6 +715,55 @@ function fulfillmentStatusTone(status?: string | null) {
       return "bg-red-50 text-red-700 border-red-200";
     default:
       return "bg-neutral-100 text-neutral-700 border-neutral-200";
+  }
+}
+
+
+function shipmentDisplayStatusTone(order: AdminOrder) {
+  const value = shipmentStatusValue(order).toUpperCase();
+
+  switch (value) {
+    case "READY_TO_PICK":
+    case "READY_TO_PICKING":
+    case "WAITING_PICK":
+    case "WAITING_TO_PICK":
+    case "CREATED":
+    case "PENDING":
+    case "PICKING":
+    case "PICK":
+    case "PICKED":
+      return "bg-indigo-50 text-indigo-700 border-indigo-200";
+
+    case "STORING":
+    case "IN_TRANSIT":
+    case "TRANSPORTING":
+    case "SORTING":
+    case "DELIVERING":
+    case "DELIVERY":
+      return "bg-blue-50 text-blue-700 border-blue-200";
+
+    case "DELIVERED":
+    case "DELIVERY_SUCCESS":
+    case "COMPLETED":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+
+    case "RETURN":
+    case "RETURNING":
+    case "WAITING_TO_RETURN":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+
+    case "RETURNED":
+    case "RETURNED_TO_CLIENT":
+    case "CANCEL":
+    case "CANCELLED":
+    case "FAILED":
+    case "EXCEPTION":
+    case "LOST":
+    case "DAMAGE":
+      return "bg-red-50 text-red-700 border-red-200";
+
+    default:
+      return fulfillmentStatusTone(order.fulfillmentStatus);
   }
 }
 
@@ -721,7 +1084,10 @@ function defaultVisibleColumns(canSeeMoney: boolean) {
 }
 
 function normalizeShipmentStatus(order: AdminOrder) {
-  return String(order.shipment?.shippingStatus || "").toUpperCase();
+  const status = String(order.shipment?.shippingStatus || "").toUpperCase();
+  if (status) return status;
+  if (order.shipment?.trackingCode) return "READY_TO_PICK";
+  return "";
 }
 
 function isSoonDeliveryOrder(order: AdminOrder) {
@@ -758,7 +1124,9 @@ type OrderExportColumnKey =
   | "customerName"
   | "customerPhone"
   | "orderStatus"
+  | "paymentDotStatus"
   | "paymentStatus"
+  | "stockOutStatus"
   | "fulfillmentStatus"
   | "branch"
   | "createdBy"
@@ -766,6 +1134,7 @@ type OrderExportColumnKey =
   | "shippingMode"
   | "shippingPartner"
   | "trackingCode"
+  | "printStatus"
   | "itemCount"
   | "shippingAddress"
   | "note"
@@ -782,7 +1151,9 @@ const defaultOrderExportColumns: OrderExportColumnState = {
   customerName: true,
   customerPhone: true,
   orderStatus: true,
+  paymentDotStatus: true,
   paymentStatus: true,
+  stockOutStatus: true,
   fulfillmentStatus: true,
   branch: true,
   createdBy: true,
@@ -790,6 +1161,7 @@ const defaultOrderExportColumns: OrderExportColumnState = {
   shippingMode: true,
   shippingPartner: true,
   trackingCode: true,
+  printStatus: true,
   itemCount: true,
   shippingAddress: true,
   note: true,
@@ -805,7 +1177,9 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   customerName: "Khách hàng",
   customerPhone: "SĐT",
   orderStatus: "Trạng thái đơn",
+  paymentDotStatus: "Trạng thái thanh toán",
   paymentStatus: "Thanh toán",
+  stockOutStatus: "Trạng thái xuất kho",
   fulfillmentStatus: "Giao vận",
   branch: "Chi nhánh",
   createdBy: "Nhân viên tạo đơn",
@@ -813,6 +1187,7 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   shippingMode: "Cách giao",
   shippingPartner: "Đơn vị VC",
   trackingCode: "Mã vận đơn",
+  printStatus: "Số lần in tem",
   itemCount: "Số món",
   shippingAddress: "Địa chỉ giao",
   note: "Ghi chú",
@@ -870,10 +1245,14 @@ function getOrderExportRows(
     if (columns.customerPhone) row["SĐT"] = order.customerPhone || "";
     if (columns.orderStatus)
       row["Trạng thái đơn"] = orderStatusLabel(order.status);
+    if (columns.paymentDotStatus)
+      row["Trạng thái thanh toán"] = dotStateLabel(paymentDotState(order.paymentStatus));
     if (columns.paymentStatus)
       row["Thanh toán"] = paymentStatusLabel(order.paymentStatus);
+    if (columns.stockOutStatus)
+      row["Trạng thái xuất kho"] = dotStateLabel(stockOutDotState(order.status));
     if (columns.fulfillmentStatus)
-      row["Giao vận"] = fulfillmentStatusLabel(order.fulfillmentStatus);
+      row["Giao vận"] = shipmentDisplayStatusLabel(order);
     if (columns.branch)
       row["Chi nhánh"] =
         branches.find((b) => b.id === order.branchId)?.name ||
@@ -881,13 +1260,18 @@ function getOrderExportRows(
         "";
     if (columns.createdBy)
       row["Nhân viên tạo đơn"] = order._createdByName || "";
-    if (columns.salesChannel) row["Kênh bán"] = order.salesChannel || "";
-    if (columns.shippingMode) row["Cách giao"] = meta.shippingMode || "";
+    if (columns.salesChannel) row["Kênh bán"] = salesChannelLabel(order.salesChannel);
+    if (columns.shippingMode) row["Cách giao"] = shippingModeLabel(meta.shippingMode);
     if (columns.shippingPartner)
       row["Đơn vị VC"] = order.shipment?.carrier || meta.shippingPartner || "";
     if (columns.trackingCode)
       row["Mã vận đơn"] = order.shipment?.trackingCode || "";
-    if (columns.itemCount) row["Số món"] = (order.items || []).length;
+    if (columns.printStatus)
+      row["In đơn"] =
+        getOrderPrintCount(order.id) > 0
+          ? `Đã in ${getOrderPrintCount(order.id)} lần`
+          : "Chưa in";
+    if (columns.itemCount) row["Số món"] = getOrderItemCount(order);
     if (columns.shippingAddress) row["Địa chỉ giao"] = meta.address || "";
     if (columns.note)
       row["Ghi chú"] = meta.noteText || meta.shippingNote || order.note || "";
@@ -1055,6 +1439,7 @@ function exportOrdersExcel({
 export default function OrdersPageClient() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [printVersion, setPrintVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -1096,7 +1481,7 @@ export default function OrdersPageClient() {
   };
 
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(50);
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
 
@@ -1360,8 +1745,22 @@ export default function OrdersPageClient() {
         canSeeMoney ? true : !col.money,
       ).map((c) => c.key);
       const cleaned = parsed.filter((key) => allowed.includes(key));
+      const defaults = defaultVisibleColumns(canSeeMoney);
+      const merged = cleaned.length
+        ? [
+            ...cleaned,
+            ...defaults.filter((key) => !cleaned.includes(key)),
+          ]
+        : defaults;
+
+      const orderIndex = new Map(
+        COLUMN_DEFS.map((col, index) => [col.key, index])
+      );
+
       setVisibleColumns(
-        cleaned.length ? cleaned : defaultVisibleColumns(canSeeMoney),
+        merged.sort(
+          (a, b) => (orderIndex.get(a) ?? 999) - (orderIndex.get(b) ?? 999)
+        )
       );
     } catch {
       setVisibleColumns(defaultVisibleColumns(canSeeMoney));
@@ -2273,6 +2672,10 @@ export default function OrdersPageClient() {
       paperSize: paper,
       bodyHtml: html,
     });
+
+    sourceOrders.forEach((order) => bumpOrderPrintCount(order.id));
+    setPrintVersion((value) => value + 1);
+    setActionMessage(`Đã gửi lệnh in ${sourceOrders.length} đơn.`);
   };
 
   const handleExportOrdersExcel = () => {
@@ -2463,7 +2866,9 @@ export default function OrdersPageClient() {
     customerName: "w-[150px]",
     customerPhone: "w-[120px]",
     orderStatus: "w-[140px]",
+    paymentDotStatus: "w-[120px]",
     paymentStatus: "w-[150px]",
+    stockOutStatus: "w-[115px]",
     fulfillmentStatus: "w-[135px]",
     branch: "w-[120px]",
     createdBy: "w-[155px]",
@@ -2471,6 +2876,7 @@ export default function OrdersPageClient() {
     shippingMode: "w-[115px]",
     shippingPartner: "w-[110px]",
     trackingCode: "w-[170px]",
+    printStatus: "w-[120px]",
     itemCount: "w-[80px]",
     shippingAddress: "w-[260px]",
     note: "w-[230px]",
@@ -2602,6 +3008,18 @@ export default function OrdersPageClient() {
             />
           </td>
         );
+      case "paymentDotStatus":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center"
+          >
+            <DotStatus
+              state={paymentDotState(order.paymentStatus)}
+              title={`Thanh toán: ${paymentStatusLabel(order.paymentStatus)}`}
+            />
+          </td>
+        );
       case "paymentStatus":
         return (
           <td
@@ -2611,6 +3029,18 @@ export default function OrdersPageClient() {
             <StatusBadge
               label={paymentStatusLabel(order.paymentStatus)}
               tone={paymentStatusTone(order.paymentStatus)}
+            />
+          </td>
+        );
+      case "stockOutStatus":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center"
+          >
+            <DotStatus
+              state={stockOutDotState(order.status)}
+              title={`Xuất kho: ${orderStatusLabel(order.status)}`}
             />
           </td>
         );
@@ -2626,8 +3056,8 @@ export default function OrdersPageClient() {
               title="Lọc theo trạng thái giao vận này"
             >
               <StatusBadge
-                label={fulfillmentStatusLabel(order.fulfillmentStatus)}
-                tone={fulfillmentStatusTone(order.fulfillmentStatus)}
+                label={shipmentDisplayStatusLabel(order)}
+                tone={shipmentDisplayStatusTone(order)}
               />
             </button>
           </td>
@@ -2682,7 +3112,9 @@ export default function OrdersPageClient() {
               className={filterButtonClass}
               title="Lọc theo kênh bán này"
             >
-              {order.salesChannel || "—"}
+              <span className="block max-w-[120px] truncate">
+                {salesChannelLabel(order.salesChannel)}
+              </span>
             </button>
           </td>
         );
@@ -2698,7 +3130,7 @@ export default function OrdersPageClient() {
               className={filterButtonClass}
               title="Lọc theo cách giao này"
             >
-              {meta.shippingMode || "—"}
+              {shippingModeLabel(meta.shippingMode)}
             </button>
           </td>
         );
@@ -2751,13 +3183,22 @@ export default function OrdersPageClient() {
             )}
           </td>
         );
+      case "printStatus":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center"
+          >
+            <PrintStatusBadge orderId={order.id} />
+          </td>
+        );
       case "itemCount":
         return (
           <td
             key={key}
             className="border-b border-neutral-100 px-3 py-3 text-center whitespace-nowrap"
           >
-            {(order.items || []).length}
+            {getOrderItemCount(order) || "—"}
           </td>
         );
       case "shippingAddress":
@@ -3078,18 +3519,32 @@ export default function OrdersPageClient() {
                         </span>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <StatusBadge
                           label={orderStatusLabel(order.status)}
                           tone={orderStatusTone(order.status)}
                         />
+                        <span className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1">
+                          <DotStatus
+                            state={stockOutDotState(order.status)}
+                            title={`Xuất kho: ${orderStatusLabel(order.status)}`}
+                          />
+                          <span className="text-[10px] font-semibold text-neutral-500">XK</span>
+                        </span>
                         <StatusBadge
                           label={paymentStatusLabel(order.paymentStatus)}
                           tone={paymentStatusTone(order.paymentStatus)}
                         />
+                        <span className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1">
+                          <DotStatus
+                            state={paymentDotState(order.paymentStatus)}
+                            title={`Thanh toán: ${paymentStatusLabel(order.paymentStatus)}`}
+                          />
+                          <span className="text-[10px] font-semibold text-neutral-500">TT</span>
+                        </span>
                         <StatusBadge
-                          label={fulfillmentStatusLabel(order.fulfillmentStatus)}
-                          tone={fulfillmentStatusTone(order.fulfillmentStatus)}
+                          label={shipmentDisplayStatusLabel(order)}
+                          tone={shipmentDisplayStatusTone(order)}
                         />
                       </div>
                     </div>
@@ -3098,7 +3553,7 @@ export default function OrdersPageClient() {
                       <div>
                         <p className="text-neutral-500">Số món</p>
                         <p className="mt-1 font-semibold text-neutral-950">
-                          {(order.items || []).length}
+                          {getOrderItemCount(order)}
                         </p>
                       </div>
                       <div>
@@ -3340,7 +3795,7 @@ export default function OrdersPageClient() {
             <option value="NEW">Mới tạo</option>
             <option value="APPROVED">Đã duyệt</option>
             <option value="PACKING">Đang xử lý</option>
-            <option value="SHIPPED">Đã gửi hàng</option>
+            <option value="SHIPPED">Đã xuất kho</option>
             <option value="COMPLETED">Hoàn thành</option>
             <option value="CANCELLED">Đã hủy</option>
           </select>
@@ -3381,58 +3836,76 @@ export default function OrdersPageClient() {
             </Button>
 
             {showColumnMenu ? (
-              <div className="absolute right-0 z-30 mt-2 w-72 rounded-3xl border border-neutral-200 bg-white p-3 shadow-xl">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold">Chọn cột</p>
-                  <button
-                    onClick={resetColumns}
-                    className="text-xs text-neutral-500 hover:text-neutral-900"
-                  >
-                    Mặc định
-                  </button>
+              <div className="fixed inset-y-0 right-0 z-[120] flex w-full max-w-[420px] flex-col border-l border-neutral-200 bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-3 border-b border-neutral-100 p-4">
+                  <div>
+                    <p className="text-base font-semibold text-neutral-900">
+                      Cột hiển thị
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Tick để hiện/ẩn, dùng ↑ ↓ để đổi thứ tự cột.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={resetColumns}
+                      className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-50"
+                    >
+                      Mặc định
+                    </button>
+                    <button
+                      onClick={() => setShowColumnMenu(false)}
+                      className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
+                    >
+                      Đóng
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid max-h-96 gap-2 overflow-auto pr-1">
-                  {COLUMN_DEFS.filter((col) =>
-                    canSeeMoney ? true : !col.money,
-                  ).map((col) => {
-                    const index = visibleColumns.indexOf(col.key);
-                    return (
-                      <div
-                        key={col.key}
-                        className="flex items-center gap-2 rounded-2xl border border-neutral-100 px-2.5 py-2 text-sm hover:bg-neutral-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isColumnVisible(col.key)}
-                          onChange={() => toggleColumn(col.key)}
-                        />
-                        <span className="min-w-0 flex-1 truncate">
-                          {col.label}
-                        </span>
-                        <button
-                          type="button"
-                          disabled={index <= 0}
-                          onClick={() => moveColumn(col.key, "up")}
-                          className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-600 disabled:opacity-30"
-                          title="Đưa cột lên trước"
+                <div className="flex-1 overflow-y-auto p-4">
+                  <div className="grid gap-2">
+                    {COLUMN_DEFS.filter((col) =>
+                      canSeeMoney ? true : !col.money,
+                    ).map((col) => {
+                      const index = visibleColumns.indexOf(col.key);
+                      return (
+                        <div
+                          key={col.key}
+                          className="grid grid-cols-[24px_1fr_38px_38px] items-center gap-2 rounded-2xl border border-neutral-100 bg-white px-3 py-2.5 text-sm shadow-sm hover:bg-neutral-50"
                         >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            index < 0 || index >= visibleColumns.length - 1
-                          }
-                          onClick={() => moveColumn(col.key, "down")}
-                          className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-600 disabled:opacity-30"
-                          title="Đưa cột xuống sau"
-                        >
-                          ↓
-                        </button>
-                      </div>
-                    );
-                  })}
+                          <input
+                            type="checkbox"
+                            checked={isColumnVisible(col.key)}
+                            onChange={() => toggleColumn(col.key)}
+                          />
+                          <span className="min-w-0 truncate font-medium text-neutral-800">
+                            {col.label}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={index <= 0}
+                            onClick={() => moveColumn(col.key, "up")}
+                            className="rounded-xl border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-700 disabled:opacity-30"
+                            title="Đưa cột lên trước"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            disabled={
+                              index < 0 || index >= visibleColumns.length - 1
+                            }
+                            onClick={() => moveColumn(col.key, "down")}
+                            className="rounded-xl border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-700 disabled:opacity-30"
+                            title="Đưa cột xuống sau"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -3599,15 +4072,14 @@ export default function OrdersPageClient() {
         </div>
       </Panel>
 
-      {checkedIds.length > 0 ? (
-        <Panel className="p-4">
+      <Panel className="p-4">
           <div className="flex flex-wrap items-center gap-3">
             {canApproveOrder ? (
               <Button
                 variant="primary"
                 size="md"
                 onClick={() => void handleBulkApprove()}
-                disabled={savingOrderStatus}
+                disabled={!checkedIds.length || savingOrderStatus}
               >
                 Duyệt đơn
               </Button>
@@ -3618,7 +4090,7 @@ export default function OrdersPageClient() {
                 variant="secondary"
                 size="md"
                 onClick={() => void handleBulkSendToCarrier()}
-                disabled={savingOrderStatus}
+                disabled={!checkedIds.length || savingOrderStatus}
               >
                 Gửi hãng vận chuyển
               </Button>
@@ -3629,7 +4101,7 @@ export default function OrdersPageClient() {
                 variant="secondary"
                 size="md"
                 onClick={() => void handleBulkMarkPaid()}
-                disabled={savingPaymentStatus}
+                disabled={!checkedIds.length || savingPaymentStatus}
               >
                 Đánh dấu đã thanh toán
               </Button>
@@ -3650,7 +4122,7 @@ export default function OrdersPageClient() {
                 variant="warning"
                 size="md"
                 onClick={() => void handleBulkInternalCancel()}
-                disabled={savingOrderStatus}
+                disabled={!checkedIds.length || savingOrderStatus}
               >
                 Huỷ nội bộ
               </Button>
@@ -3673,7 +4145,7 @@ export default function OrdersPageClient() {
                 variant="warning"
                 size="md"
                 onClick={() => void handleBulkCancel()}
-                disabled={savingOrderStatus}
+                disabled={!checkedIds.length || savingOrderStatus}
               >
                 Hủy GHN
               </Button>
@@ -3684,18 +4156,22 @@ export default function OrdersPageClient() {
                 variant="danger"
                 size="md"
                 onClick={() => void handleBulkDelete()}
-                disabled={deletingOrders}
+                disabled={!checkedIds.length || deletingOrders}
               >
                 {deletingOrders ? "Đang xóa..." : "Xóa đơn"}
               </Button>
             ) : null}
 
-            <span className="ml-2 text-sm text-neutral-500">
-              {checkedIds.length} đã chọn
+            <span className={`ml-2 rounded-full px-3 py-1 text-sm font-semibold ${
+              checkedIds.length
+                ? "bg-neutral-900 text-white"
+                : "bg-neutral-100 text-neutral-500"
+            }`}>
+              {checkedIds.length ? `Đã chọn ${checkedIds.length} kết quả` : "Chưa chọn kết quả"}
             </span>
 
             <div className="relative" ref={printMenuRef}>
-              <Button onClick={() => setShowPrintMenu((v) => !v)}>
+              <Button onClick={() => setShowPrintMenu((v) => !v)} disabled={!checkedIds.length}>
                 In đơn hàng
               </Button>
 
@@ -3745,7 +4221,6 @@ export default function OrdersPageClient() {
             </div>
           </div>
         </Panel>
-      ) : null}
 
       {actionMessage ? (
         <Panel className="p-3">
@@ -3952,25 +4427,111 @@ export default function OrdersPageClient() {
         }
       `}</style>
 
-      <Panel className="p-4">
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-neutral-500">
-            Trang {page}/{totalPages} • Tổng {totalItems} đơn
-          </p>
+      <Panel className="sticky bottom-3 z-40 border-neutral-200 bg-white/95 p-3 backdrop-blur">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-600" data-print-version={printVersion}>
+            <span className="font-semibold text-neutral-900">
+              Hiển thị
+            </span>
 
-          <div className="flex gap-2">
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value || 50));
+                setPage(1);
+              }}
+              disabled={loading}
+              className="h-9 rounded-xl border border-neutral-300 bg-white px-3 text-xs font-semibold outline-none"
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+
+            <span>kết quả / trang</span>
+
+            <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
+              Từ {totalItems ? (page - 1) * pageSize + 1 : 0} đến{" "}
+              {Math.min(page * pageSize, totalItems)} trên tổng {totalItems}
+            </span>
+
+            <span className={`rounded-full px-3 py-1 font-medium ${
+              checkedIds.length
+                ? "bg-neutral-900 text-white"
+                : "bg-neutral-100 text-neutral-700"
+            }`}>
+              {checkedIds.length ? `Đã chọn ${checkedIds.length} kết quả` : "Chưa chọn kết quả"}
+            </span>
+
+            <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
+              Trang {page} / {Math.max(totalPages, 1)}
+            </span>
+
+            <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
+              Đang lọc: {visibleOrders.length} dòng
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              disabled={page <= 1 || loading}
+              onClick={() => setPage(1)}
+              size="sm"
+            >
+              « Đầu
+            </Button>
+
             <Button
               disabled={page <= 1 || loading}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
+              size="sm"
             >
-              ← Trước
+              ‹ Trước
+            </Button>
+
+            {Array.from({ length: Math.min(5, Math.max(totalPages, 1)) }).map(
+              (_, index) => {
+                const maxPages = Math.max(totalPages, 1);
+                const start = Math.min(
+                  Math.max(page - 2, 1),
+                  Math.max(maxPages - 4, 1)
+                );
+                const pageNumber = start + index;
+
+                if (pageNumber > maxPages) return null;
+
+                return (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    onClick={() => setPage(pageNumber)}
+                    disabled={loading}
+                    className={`h-9 min-w-9 rounded-xl border px-3 text-xs font-semibold transition ${
+                      pageNumber === page
+                        ? "border-neutral-900 bg-neutral-900 text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                    }`}
+                  >
+                    {pageNumber}
+                  </button>
+                );
+              }
+            )}
+
+            <Button
+              disabled={page >= totalPages || loading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              size="sm"
+            >
+              Sau ›
             </Button>
 
             <Button
               disabled={page >= totalPages || loading}
-              onClick={() => setPage((p) => p + 1)}
+              onClick={() => setPage(totalPages)}
+              size="sm"
             >
-              Sau →
+              Cuối »
             </Button>
           </div>
         </div>

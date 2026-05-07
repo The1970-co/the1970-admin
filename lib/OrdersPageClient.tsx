@@ -4,7 +4,7 @@ import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { AdminOrder, OrderPaymentStatus, OrderStatus } from "@/lib/orders-api";
-import { updateOrderPaymentStatus, updateOrderStatus } from "@/lib/orders-api";
+import { deleteOrder, updateOrderPaymentStatus, updateOrderStatus } from "@/lib/orders-api";
 import { BRANCH_LABELS } from "@/lib/authz";
 import {
   findPrintTemplate,
@@ -153,7 +153,7 @@ function orderStatusLabel(status?: string) {
     case "PACKING":
       return "Đang xử lý";
     case "SHIPPED":
-      return "Đã gửi hàng";
+      return "Đã xuất kho";
     case "COMPLETED":
       return "Hoàn thành";
     case "CANCELLED":
@@ -197,6 +197,60 @@ function fulfillmentStatusLabel(status?: string | null) {
     default:
       return status || "—";
   }
+}
+
+
+function shippingStatusLabel(status?: string | null) {
+  const value = String(status || "").trim();
+  const upper = value.toUpperCase();
+
+  switch (upper) {
+    case "READY_TO_PICK":
+    case "READY_TO_PICKING":
+    case "WAITING_PICK":
+    case "WAITING_TO_PICK":
+    case "PICKING":
+    case "PICK":
+    case "PICKED":
+      return "Chờ lấy hàng";
+    case "STORING":
+    case "TRANSPORTING":
+    case "SORTING":
+    case "DELIVERING":
+    case "DELIVERY":
+      return "Đang giao hàng";
+    case "DELIVERED":
+    case "DELIVERY_SUCCESS":
+    case "COMPLETED":
+      return "Giao thành công";
+    case "WAITING_TO_RETURN":
+    case "RETURN":
+    case "RETURNING":
+      return "Đang hoàn hàng";
+    case "RETURNED":
+    case "RETURNED_TO_CLIENT":
+      return "Đã hoàn hàng";
+    case "CANCEL":
+    case "CANCELLED":
+      return "Đã huỷ vận đơn";
+    case "EXCEPTION":
+    case "LOST":
+    case "DAMAGE":
+      return "Có sự cố";
+    default:
+      return value || "—";
+  }
+}
+
+function deliveryDisplayStatus(order: AdminOrder) {
+  const shipmentStatus = order.shipment?.shippingStatus;
+  if (shipmentStatus) return shipmentStatus;
+
+  // Có mã vận đơn GHN rồi nhưng backend chưa lưu shippingStatus:
+  // coi như đang chờ lấy hàng thay vì fallback "Đang chuẩn bị".
+  if (order.shipment?.trackingCode) return "READY_TO_PICK";
+
+  return order.fulfillmentStatus || null;
 }
 
 function orderStatusTone(status?: string) {
@@ -249,6 +303,51 @@ function fulfillmentStatusTone(status?: string | null) {
       return "bg-emerald-50 text-emerald-700 border-emerald-200";
     case "RETURNED":
       return "bg-red-50 text-red-700 border-red-200";
+    default:
+      return "bg-neutral-100 text-neutral-700 border-neutral-200";
+  }
+}
+
+
+function shippingStatusTone(status?: string | null) {
+  const upper = String(status || "").trim().toUpperCase();
+
+  switch (upper) {
+    case "READY_TO_PICK":
+    case "READY_TO_PICKING":
+    case "WAITING_PICK":
+    case "WAITING_TO_PICK":
+    case "PICKING":
+    case "PICK":
+    case "PICKED":
+      return "bg-indigo-50 text-indigo-700 border-indigo-200";
+    case "STORING":
+    case "TRANSPORTING":
+    case "SORTING":
+    case "DELIVERING":
+    case "DELIVERY":
+      return "bg-blue-50 text-blue-700 border-blue-200";
+    case "DELIVERED":
+    case "DELIVERY_SUCCESS":
+    case "COMPLETED":
+    case "FULFILLED":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "WAITING_TO_RETURN":
+    case "RETURN":
+    case "RETURNING":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "RETURNED":
+    case "RETURNED_TO_CLIENT":
+    case "CANCEL":
+    case "CANCELLED":
+    case "EXCEPTION":
+    case "LOST":
+    case "DAMAGE":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "PROCESSING":
+      return "bg-indigo-50 text-indigo-700 border-indigo-200";
+    case "UNFULFILLED":
+      return "bg-neutral-100 text-neutral-700 border-neutral-200";
     default:
       return "bg-neutral-100 text-neutral-700 border-neutral-200";
   }
@@ -461,6 +560,8 @@ export default function OrdersPageClient() {
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingOrders, setDeletingOrders] = useState(false);
 
   const [currentUser, setCurrentUser] = useState<CurrentUserLite | null>(null);
 
@@ -547,7 +648,7 @@ export default function OrdersPageClient() {
         return;
       }
 
-      const res = await fetch("${API_BASE}/orders", {
+      const res = await fetch(`${API_BASE}/orders`, {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -834,6 +935,65 @@ export default function OrdersPageClient() {
     }
   };
 
+
+  const handleBulkDelete = async () => {
+    if (!checkedIds.length || deletingOrders) return;
+
+    const selectedOrders = orders.filter((o) => checkedIds.includes(o.id));
+    const deletableOrders = selectedOrders.filter((o) => o.status === "CANCELLED");
+
+    if (!deletableOrders.length) {
+      setActionMessage("Chỉ xoá được các đơn đã huỷ.");
+      setShowDeleteConfirm(false);
+      return;
+    }
+
+    try {
+      setDeletingOrders(true);
+      setActionMessage("");
+
+      let successCount = 0;
+      const failed: string[] = [];
+
+      for (const order of deletableOrders) {
+        try {
+          await deleteOrder(order.id);
+          successCount += 1;
+        } catch (err) {
+          failed.push(
+            `${order.orderCode || order.id}: ${
+              err instanceof Error ? err.message : "Không xoá được"
+            }`
+          );
+        }
+      }
+
+      setOrders((prev) =>
+        prev.filter((order) => !deletableOrders.some((deleted) => deleted.id === order.id))
+      );
+      setCheckedIds((prev) =>
+        prev.filter((id) => !deletableOrders.some((deleted) => deleted.id === id))
+      );
+
+      if (failed.length) {
+        setActionMessage(
+          `Đã xoá ${successCount} đơn. Lỗi: ${failed.join(" | ")}`
+        );
+      } else {
+        setActionMessage(`Đã xoá ${successCount} đơn.`);
+      }
+
+      setShowDeleteConfirm(false);
+      await loadOrders();
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Lỗi xoá đơn hàng loạt."
+      );
+    } finally {
+      setDeletingOrders(false);
+    }
+  };
+
   const handlePrint = (type: "shipping" | "sales", paper: PrintPaperSize) => {
     if (!checkedOrders.length) return;
 
@@ -990,7 +1150,7 @@ export default function OrdersPageClient() {
             <option value="NEW">Mới tạo</option>
             <option value="APPROVED">Đã duyệt</option>
             <option value="PACKING">Đang xử lý</option>
-            <option value="SHIPPED">Đã gửi hàng</option>
+            <option value="SHIPPED">Đã xuất kho</option>
             <option value="COMPLETED">Hoàn thành</option>
             <option value="CANCELLED">Đã hủy</option>
           </select>
@@ -1173,12 +1333,57 @@ export default function OrdersPageClient() {
             <Button
               variant="danger"
               onClick={() => void handleBulkCancel()}
-              disabled={savingOrderStatus}
+              disabled={savingOrderStatus || deletingOrders}
             >
               Hủy đơn
             </Button>
+
+            <Button
+              variant="danger"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={deletingOrders}
+            >
+              Xoá đơn
+            </Button>
           </div>
         </Panel>
+      ) : null}
+
+      {showDeleteConfirm ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
+            <p className="text-xs font-medium text-red-500">⚠️ Hành động nguy hiểm</p>
+            <h3 className="mt-3 text-base font-semibold text-neutral-900">
+              Xoá đơn hàng
+            </h3>
+            <p className="mt-2 text-sm text-neutral-600">
+              Bạn đang xoá {checkedIds.length} đơn đã chọn. Chỉ đơn đã huỷ mới có thể xoá.
+              Hành động này không thể hoàn tác.
+            </p>
+
+            {deletingOrders ? (
+              <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+                Đang xoá đơn, vui lòng không tắt trang...
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deletingOrders}
+              >
+                Đóng
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => void handleBulkDelete()}
+                disabled={deletingOrders}
+              >
+                {deletingOrders ? "Đang xoá..." : "Xoá đơn"}
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {actionMessage ? (
@@ -1339,8 +1544,16 @@ export default function OrdersPageClient() {
                       {isColumnVisible("fulfillmentStatus") ? (
                         <td className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap">
                           <Badge
-                            label={fulfillmentStatusLabel(order.fulfillmentStatus)}
-                            tone={fulfillmentStatusTone(order.fulfillmentStatus)}
+                            label={
+                              order.shipment?.shippingStatus || order.shipment?.trackingCode
+                                ? shippingStatusLabel(deliveryDisplayStatus(order))
+                                : fulfillmentStatusLabel(order.fulfillmentStatus)
+                            }
+                            tone={
+                              order.shipment?.shippingStatus || order.shipment?.trackingCode
+                                ? shippingStatusTone(deliveryDisplayStatus(order))
+                                : fulfillmentStatusTone(order.fulfillmentStatus)
+                            }
                           />
                         </td>
                       ) : null}

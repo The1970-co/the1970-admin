@@ -1,4 +1,4 @@
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch } from "@/lib/api";
 export type BranchStockMap = Record<string, number>;
 
 export type ProductVariant = {
@@ -75,60 +75,35 @@ export type AddVariantPayload = {
 };
 
 
-function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null;
 
-  const directToken =
-    localStorage.getItem("token") ||
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("access_token");
-
-  if (directToken) return directToken;
-
-  try {
-    const raw = localStorage.getItem("currentUser");
-    if (!raw) return null;
-
-    const parsed = JSON.parse(raw);
-    return (
-      parsed?.token ||
-      parsed?.accessToken ||
-      parsed?.access_token ||
-      parsed?.data?.token ||
-      parsed?.data?.accessToken ||
-      null
-    );
-  } catch {
-    return null;
-  }
-}
 
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getAuthToken();
-
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
-    },
     cache: "no-store",
   });
 
   if (!res.ok) {
     let message = `Request failed: ${res.status}`;
+
     try {
       const data = await res.json();
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
         : data?.message || message;
     } catch {}
+
     throw new Error(message);
   }
 
-  return res.json();
+  const text = await res.text();
+
+  if (!text) {
+    return ([] as unknown) as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 function toNumber(value: unknown) {
@@ -317,18 +292,11 @@ export async function toggleProductStatus(productId: string) {
 
 
 export async function uploadProductImage(file: File) {
-  const token = getAuthToken();
-
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch(`${API_BASE}/products/upload-image`, {
+  const res = await apiFetch("/products/upload-image", {
     method: "POST",
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`,
-        }
-      : undefined,
     body: formData,
   });
 
@@ -366,52 +334,23 @@ export async function importProductsFiles(
   overwrite = true,
   onProgress?: (percent: number) => void
 ) {
-  const token = getAuthToken();
-
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
   formData.append("overwrite", overwrite ? "true" : "false");
 
-  return new Promise<any>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+  onProgress?.(1);
 
-    xhr.open("POST", `${API_BASE}/products/import`);
-
-    if (token) {
-      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    }
-
-    xhr.upload.onprogress = (event) => {
-      if (!event.lengthComputable) return;
-
-      // Upload chỉ là một phần nhỏ; giữ tối đa 85% để còn chờ backend xử lý Excel.
-      const uploadPercent = Math.round((event.loaded / event.total) * 85);
-      onProgress?.(Math.min(85, Math.max(1, uploadPercent)));
-    };
-
-    xhr.onload = () => {
-      let data: any = {};
-
-      try {
-        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
-      } catch {
-        data = {};
-      }
-
-      if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress?.(100);
-        resolve(data);
-        return;
-      }
-
-      reject(new Error(data?.message || "Import sản phẩm thất bại."));
-    };
-
-    xhr.onerror = () => {
-      reject(new Error("Không kết nối được server khi import sản phẩm."));
-    };
-
-    onProgress?.(1);
-    xhr.send(formData);
+  const res = await apiFetch("/products/import", {
+    method: "POST",
+    body: formData,
   });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data?.message || "Import sản phẩm thất bại.");
+  }
+
+  onProgress?.(100);
+  return data;
 }

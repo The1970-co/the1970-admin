@@ -1,4 +1,4 @@
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch } from "@/lib/api";
 export type OrderStatus =
   | "NEW"
   | "APPROVED"
@@ -156,61 +156,31 @@ export type CreateShipmentPayload = {
 
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const res = await apiFetch(path, {
+    ...init,
+    cache: "no-store",
+  });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    console.log("[orders-api] request", `${API_BASE}${path}`);
-
-    const res = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(init?.headers || {}),
-      },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-
-    console.log("[orders-api] status", path, res.status);
-
-    if (!res.ok) {
-      let message = `Request failed: ${res.status}`;
-      try {
-        const data = await res.json();
-        message = Array.isArray(data?.message)
-          ? data.message.join(", ")
-          : data?.message || message;
-      } catch {}
-      throw new Error(message);
-    }
-
-    const text = await res.text();
-    console.log("[orders-api] raw text", path, text);
-
-    if (!text) {
-      return ([] as unknown) as T;
-    }
+  if (!res.ok) {
+    let message = `Request failed: ${res.status}`;
 
     try {
-      return JSON.parse(text) as T;
-    } catch (err) {
-      console.error("[orders-api] json parse error", path, err);
-      throw new Error(`Response JSON không hợp lệ: ${path}`);
-    }
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      throw new Error(`Request timeout: ${path}`);
-    }
-    console.error("[orders-api] error", path, err);
-    throw err;
-  } finally {
-    clearTimeout(timeout);
+      const data = await res.json();
+      message = Array.isArray(data?.message)
+        ? data.message.join(", ")
+        : data?.message || message;
+    } catch {}
+
+    throw new Error(message);
   }
+
+  const text = await res.text();
+
+  if (!text) {
+    return ([] as unknown) as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 function toNumber(value: unknown) {

@@ -10,6 +10,7 @@ type SettingsTab =
   | "mapping"
   | "printing"
   | "paymentSources"
+  | "salesChannels"
   | "security";
 
 type WarehouseItem = {
@@ -49,6 +50,60 @@ type PaymentSourceItem = {
   sortOrder: number;
   note?: string | null;
 };
+
+type SalesChannelItem = {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+  note?: string;
+};
+
+const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
+
+const defaultSalesChannels: SalesChannelItem[] = [
+  {
+    id: "facebook_manual",
+    code: "FACEBOOK_MANUAL",
+    name: "Facebook",
+    isActive: true,
+    sortOrder: 10,
+    note: "Đơn chốt tay từ Facebook",
+  },
+  {
+    id: "pos",
+    code: "POS",
+    name: "POS",
+    isActive: true,
+    sortOrder: 20,
+    note: "Bán tại quầy",
+  },
+  {
+    id: "showroom",
+    code: "SHOWROOM",
+    name: "Showroom",
+    isActive: true,
+    sortOrder: 30,
+    note: "Đơn showroom",
+  },
+  {
+    id: "vn_web",
+    code: "VN_WEB",
+    name: "Website VN",
+    isActive: true,
+    sortOrder: 40,
+    note: "Website Việt Nam",
+  },
+];
+
+function normalizeSalesChannelCode(value: string) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Z0-9_]/g, "");
+}
 
 type OperationMapping = {
   webDefaultWarehouseId: string;
@@ -225,6 +280,14 @@ export default function SettingsPage() {
   });
   const [savingPaymentSource, setSavingPaymentSource] = useState(false);
 
+  const [salesChannels, setSalesChannels] = useState<SalesChannelItem[]>([]);
+  const [salesChannelForm, setSalesChannelForm] = useState({
+    code: "",
+    name: "",
+    sortOrder: 0,
+    note: "",
+  });
+
   const [totpSetupData, setTotpSetupData] = useState<any>(null);
   const [totpCode, setTotpCode] = useState("");
   const [totpLoading, setTotpLoading] = useState(false);
@@ -311,7 +374,103 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadBranches();
     void loadPaymentSources();
+    loadSalesChannels();
   }, []);
+
+  const loadSalesChannels = () => {
+    try {
+      const raw = localStorage.getItem(SALES_CHANNELS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      const list = Array.isArray(parsed) && parsed.length ? parsed : defaultSalesChannels;
+      setSalesChannels(
+        list
+          .map((item: any, index: number) => ({
+            id: String(item.id || item.code || `channel_${index}`),
+            code: normalizeSalesChannelCode(item.code || item.id || ""),
+            name: String(item.name || item.code || ""),
+            isActive: typeof item.isActive === "boolean" ? item.isActive : true,
+            sortOrder: Number(item.sortOrder || index + 1),
+            note: String(item.note || ""),
+          }))
+          .filter((item: SalesChannelItem) => item.code && item.name)
+          .sort((a: SalesChannelItem, b: SalesChannelItem) => a.sortOrder - b.sortOrder)
+      );
+    } catch {
+      setSalesChannels(defaultSalesChannels);
+    }
+  };
+
+  const saveSalesChannels = (items: SalesChannelItem[]) => {
+    const cleaned = [...items]
+      .map((item, index) => ({
+        ...item,
+        code: normalizeSalesChannelCode(item.code),
+        name: String(item.name || "").trim(),
+        sortOrder: Number(item.sortOrder || index + 1),
+      }))
+      .filter((item) => item.code && item.name)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+
+    setSalesChannels(cleaned);
+    localStorage.setItem(SALES_CHANNELS_STORAGE_KEY, JSON.stringify(cleaned));
+    setMessage("Đã lưu kênh bán. Màn tạo đơn sẽ dùng danh sách này.");
+  };
+
+  const createSalesChannel = () => {
+    const code = normalizeSalesChannelCode(salesChannelForm.code);
+    const name = salesChannelForm.name.trim();
+
+    if (!code || !name) {
+      setMessage("Thiếu mã kênh bán hoặc tên hiển thị.");
+      return;
+    }
+
+    if (salesChannels.some((item) => item.code === code)) {
+      setMessage("Mã kênh bán đã tồn tại.");
+      return;
+    }
+
+    const next: SalesChannelItem = {
+      id: `${code.toLowerCase()}_${Date.now()}`,
+      code,
+      name,
+      isActive: true,
+      sortOrder: Number(salesChannelForm.sortOrder || salesChannels.length + 1),
+      note: salesChannelForm.note.trim(),
+    };
+
+    saveSalesChannels([...salesChannels, next]);
+    setSalesChannelForm({
+      code: "",
+      name: "",
+      sortOrder: 0,
+      note: "",
+    });
+  };
+
+  const updateSalesChannel = (
+    id: string,
+    patch: Partial<SalesChannelItem>
+  ) => {
+    saveSalesChannels(
+      salesChannels.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              ...patch,
+              code:
+                patch.code !== undefined
+                  ? normalizeSalesChannelCode(patch.code)
+                  : item.code,
+            }
+          : item
+      )
+    );
+  };
+
+  const deleteSalesChannel = (id: string) => {
+    saveSalesChannels(salesChannels.filter((item) => item.id !== id));
+  };
   const loadPaymentSources = async () => {
     try {
       const data = await apiJson<PaymentSourceItem[]>("/payment-sources");
@@ -611,6 +770,16 @@ const addWarehouse = async () => {
               }`}
           >
             Nguồn tiền
+          </button>
+
+          <button
+            onClick={() => setTab("salesChannels")}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "salesChannels"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
+          >
+            Kênh bán
           </button>
 
           <button
@@ -1373,6 +1542,172 @@ const addWarehouse = async () => {
           </Panel>
         </div>
       )}
+
+      {tab === "salesChannels" && (
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <Panel className="overflow-hidden">
+            <div className="p-5">
+              <h3 className="text-xl font-semibold text-neutral-900">
+                Danh sách kênh bán
+              </h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                Các kênh này sẽ được dùng trong màn tạo đơn và danh sách đơn hàng.
+              </p>
+
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-neutral-200 text-sm text-neutral-400">
+                      <th className="pb-3 font-medium">Kênh bán</th>
+                      <th className="pb-3 font-medium">Mã lưu DB</th>
+                      <th className="pb-3 font-medium">Thứ tự</th>
+                      <th className="pb-3 font-medium">Trạng thái</th>
+                      <th className="pb-3 font-medium">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salesChannels.map((item) => (
+                      <tr key={item.id} className="border-b border-neutral-100">
+                        <td className="py-4">
+                          <input
+                            className="h-10 w-full rounded-2xl border border-neutral-300 px-3 text-sm outline-none"
+                            value={item.name}
+                            onChange={(e) =>
+                              updateSalesChannel(item.id, { name: e.target.value })
+                            }
+                          />
+                          <div className="mt-1 text-xs text-neutral-400">
+                            {item.note || "—"}
+                          </div>
+                        </td>
+                        <td className="py-4">
+                          <input
+                            className="h-10 w-full rounded-2xl border border-neutral-300 px-3 text-sm uppercase outline-none"
+                            value={item.code}
+                            onChange={(e) =>
+                              updateSalesChannel(item.id, { code: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="py-4">
+                          <input
+                            type="number"
+                            className="h-10 w-24 rounded-2xl border border-neutral-300 px-3 text-sm outline-none"
+                            value={item.sortOrder}
+                            onChange={(e) =>
+                              updateSalesChannel(item.id, {
+                                sortOrder: Number(e.target.value || 0),
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="py-4">
+                          <button
+                            onClick={() =>
+                              updateSalesChannel(item.id, {
+                                isActive: !item.isActive,
+                              })
+                            }
+                          >
+                            <Badge tone={item.isActive ? "green" : "gray"}>
+                              {item.isActive ? "ACTIVE" : "INACTIVE"}
+                            </Badge>
+                          </button>
+                        </td>
+                        <td className="py-4">
+                          <Button
+                            variant="danger"
+                            onClick={() => deleteSalesChannel(item.id)}
+                          >
+                            Xoá
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel className="p-5">
+            <h3 className="text-xl font-semibold text-neutral-900">
+              Thêm kênh bán
+            </h3>
+            <p className="mt-1 text-sm text-neutral-500">
+              Ví dụ: Facebook, TikTok, Shopee, Zalo, Website, Showroom.
+            </p>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={salesChannelForm.code}
+                onChange={(e) =>
+                  setSalesChannelForm((prev) => ({
+                    ...prev,
+                    code: e.target.value,
+                  }))
+                }
+                placeholder="Mã, VD: FACEBOOK_MANUAL"
+              />
+
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={salesChannelForm.name}
+                onChange={(e) =>
+                  setSalesChannelForm((prev) => ({
+                    ...prev,
+                    name: e.target.value,
+                  }))
+                }
+                placeholder="Tên hiển thị, VD: Facebook"
+              />
+
+              <input
+                type="number"
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={salesChannelForm.sortOrder}
+                onChange={(e) =>
+                  setSalesChannelForm((prev) => ({
+                    ...prev,
+                    sortOrder: Number(e.target.value || 0),
+                  }))
+                }
+                placeholder="Thứ tự"
+              />
+
+              <input
+                className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                value={salesChannelForm.note}
+                onChange={(e) =>
+                  setSalesChannelForm((prev) => ({
+                    ...prev,
+                    note: e.target.value,
+                  }))
+                }
+                placeholder="Ghi chú"
+              />
+            </div>
+
+            <div className="mt-4 flex gap-3">
+              <Button onClick={createSalesChannel}>Thêm kênh bán</Button>
+              <Button
+                variant="secondary"
+                onClick={() => saveSalesChannels(defaultSalesChannels)}
+              >
+                Khôi phục mặc định
+              </Button>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">
+              Mã kênh bán là giá trị lưu trong đơn hàng. Tên hiển thị là nhãn
+              đẹp trên UI. Màn tạo đơn cần đọc cùng key localStorage:
+              <span className="font-semibold"> the1970_sales_channels</span>.
+            </div>
+          </Panel>
+        </div>
+      )}
+
       {tab === "printing" && <PrintTemplatesTab />}
 
       {tab === "security" && (

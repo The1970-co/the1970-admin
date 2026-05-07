@@ -49,6 +49,7 @@ type ShipmentItem = {
   carrier?: string | null;
   trackingCode?: string | null;
   shippingStatus?: string | null;
+  partnerStatus?: string | null;
   codAmount?: number | null;
   shippingFee?: number | null;
   codReconciliationStatus?: string | null;
@@ -57,6 +58,10 @@ type ShipmentItem = {
   codReconciliationRowId?: string | null;
   codReconciliationIssue?: string | null;
   codReconciliationAmount?: number | null;
+  ahamoveOrderId?: string | null;
+  ahamoveTrackingUrl?: string | null;
+  ahamoveStatus?: string | null;
+  ahamoveSubStatus?: string | null;
 };
 
 type PaymentItem = {
@@ -181,6 +186,54 @@ function codReconciliationTone(
     return "green";
   if (status === "MISMATCH" || status === "NOT_FOUND") return "red";
   return "gray";
+}
+
+function getCarrierCode(order?: OrderDetail | null, meta?: ReturnType<typeof parseStructuredNote>) {
+  return String(order?.shipment?.carrier || meta?.shippingPartner || "GHN").toUpperCase();
+}
+
+function getCarrierLabel(order?: OrderDetail | null, meta?: ReturnType<typeof parseStructuredNote>) {
+  const code = getCarrierCode(order, meta);
+  if (code.includes("AHAMOVE")) return "AhaMove";
+  if (code.includes("GHN")) return "GHN";
+  if (code.includes("GHTK")) return "GHTK";
+  if (code.includes("VIETTEL")) return "Viettel Post";
+  if (code.includes("GRAB")) return "Grab Express";
+  return order?.shipment?.carrier || meta?.shippingPartner || "Vận chuyển";
+}
+
+function shipmentStatusText(status?: string | null, carrier?: string | null) {
+  const s = String(status || "").toUpperCase();
+  const c = String(carrier || "").toUpperCase();
+
+  if (!s) return "—";
+
+  if (s.includes("DELIVERED") || s.includes("COMPLETED") || s.includes("SUCCESS")) {
+    return "Giao thành công";
+  }
+  if (s.includes("DELIVERING") || s.includes("IN_PROCESS") || s.includes("IN PROCESS")) {
+    return "Đang giao";
+  }
+  if (s.includes("PICKING") || s.includes("ACCEPTED")) {
+    return c.includes("AHAMOVE") ? "Tài xế đã nhận / đang lấy hàng" : "Đang lấy hàng";
+  }
+  if (s.includes("CREATED") || s.includes("ASSIGNING") || s.includes("IDLE")) {
+    return c.includes("AHAMOVE") ? "Đang tìm tài xế" : "Chờ lấy hàng";
+  }
+  if (s.includes("CANCEL")) return "Đã huỷ vận đơn";
+  if (s.includes("FAIL")) return "Giao thất bại";
+  if (s.includes("RETURN")) return "Đang hoàn hàng";
+
+  return status || "—";
+}
+
+function trackingLinkForShipment(shipment?: ShipmentItem | null) {
+  if (!shipment) return "";
+  const carrier = String(shipment.carrier || "").toUpperCase();
+  if (carrier.includes("AHAMOVE")) {
+    return shipment.ahamoveTrackingUrl || "";
+  }
+  return "";
 }
 
 function formatDateTime(value?: string | null) {
@@ -880,7 +933,7 @@ type MobileOrderDetailViewProps = {
   onPrint: () => void;
   onCopyOrder: () => void;
   onInternalCancel: () => void | Promise<void>;
-  onCancelGhn: () => void | Promise<void>;
+  onCancelShipment: () => void | Promise<void>;
   onOpenShipmentEdit: () => void | Promise<void>;
   onOpenCodEdit: () => void;
 };
@@ -939,7 +992,7 @@ function MobileOrderDetailView({
   onPrint,
   onCopyOrder,
   onInternalCancel,
-  onCancelGhn,
+  onCancelShipment,
   onOpenShipmentEdit,
   onOpenCodEdit,
 }: MobileOrderDetailViewProps) {
@@ -1042,11 +1095,11 @@ function MobileOrderDetailView({
           {viewOrder.shipment?.trackingCode ? (
             <button
               type="button"
-              onClick={onCancelGhn}
+              onClick={onCancelShipment}
               disabled={saving}
               className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-[12px] font-semibold text-neutral-900 shadow-sm disabled:opacity-50"
             >
-              Huỷ GHN
+              Huỷ {getCarrierLabel(viewOrder, meta)}
             </button>
           ) : null}
           {redeliveryAvailable ? (
@@ -1164,7 +1217,7 @@ function MobileOrderDetailView({
         {!String(viewOrder.salesChannel || "")
           .toUpperCase()
           .includes("POS") ? (
-          <MobileOrderCard title="Vận đơn GHN">
+          <MobileOrderCard title={`Vận đơn ${getCarrierLabel(viewOrder, meta)}`}>
             <MobileInfoLine
               label="Đơn vị"
               value={viewOrder.shipment?.carrier || meta.shippingPartner || "—"}
@@ -1173,12 +1226,30 @@ function MobileOrderDetailView({
               label="Mã vận đơn"
               value={viewOrder.shipment?.trackingCode || "—"}
             />
+            {trackingLinkForShipment(viewOrder.shipment) ? (
+              <MobileInfoLine
+                label="Tracking"
+                value={
+                  <a
+                    href={trackingLinkForShipment(viewOrder.shipment)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-600 underline"
+                  >
+                    Mở tracking
+                  </a>
+                }
+              />
+            ) : null}
             <MobileInfoLine
               label="Trạng thái"
-              value={viewOrder.shipment?.shippingStatus || "—"}
+              value={shipmentStatusText(
+                viewOrder.shipment?.shippingStatus || viewOrder.shipment?.partnerStatus,
+                viewOrder.shipment?.carrier || meta.shippingPartner,
+              )}
             />
             <MobileInfoLine
-              label="Phí GHN"
+              label={`Phí ${getCarrierLabel(viewOrder, meta)}`}
               value={currency(viewOrder.shipment?.shippingFee)}
             />
             <MobileInfoLine
@@ -2314,10 +2385,12 @@ export default function OrderDetailPageClient({
     }
   };
 
-  const handleCancelGhnOrder = async () => {
+  const handleCancelShipment = async () => {
     if (!order) return;
+    const carrierLabel = getCarrierLabel(order, meta);
+    const carrierCode = getCarrierCode(order, meta);
     const ok = window.confirm(
-      `Huỷ GHN cho đơn ${order.orderCode}? Nút này gửi yêu cầu huỷ vận đơn sang GHN.`,
+      `Huỷ ${carrierLabel} cho đơn ${order.orderCode}? Nút này gửi yêu cầu huỷ vận đơn sang ${carrierLabel}.`,
     );
     if (!ok) return;
 
@@ -2327,7 +2400,11 @@ export default function OrderDetailPageClient({
       const token =
         typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-      const res = await fetch(`${API_BASE}/shipments/${order.id}/cancel`, {
+      const cancelPath = carrierCode.includes("AHAMOVE")
+        ? `/shipments/${order.id}/ahamove/cancel`
+        : `/shipments/${order.id}/cancel`;
+
+      const res = await fetch(`${API_BASE}${cancelPath}`, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -2337,7 +2414,7 @@ export default function OrderDetailPageClient({
 
       const json = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(json?.message || json?.error || "Huỷ GHN thất bại.");
+        throw new Error(json?.message || json?.error || `Huỷ ${carrierLabel} thất bại.`);
       }
 
       const nextOrder = {
@@ -2346,9 +2423,9 @@ export default function OrderDetailPageClient({
       } as OrderDetail;
       setOrder(nextOrder);
       setDraftOrder(nextOrder);
-      setMessage("Đã gửi yêu cầu huỷ GHN.");
+      setMessage(`Đã gửi yêu cầu huỷ ${carrierLabel}.`);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Huỷ GHN thất bại.");
+      setMessage(err instanceof Error ? err.message : `Huỷ ${carrierLabel} thất bại.`);
     } finally {
       setSaving(false);
     }
@@ -2496,7 +2573,7 @@ export default function OrderDetailPageClient({
         onPrint={handlePrint}
         onCopyOrder={handleCopyOrder}
         onInternalCancel={handleInternalCancelOrder}
-        onCancelGhn={handleCancelGhnOrder}
+        onCancelShipment={handleCancelShipment}
         onOpenShipmentEdit={handleOpenShipmentEdit}
         onOpenCodEdit={handleOpenCodEdit}
       />
@@ -2549,8 +2626,8 @@ export default function OrderDetailPageClient({
                 Huỷ nội bộ
               </ActionButton>
               {viewOrder.shipment?.trackingCode && canPackShipOrderPermission ? (
-                <ActionButton disabled={saving} onClick={handleCancelGhnOrder}>
-                  Huỷ GHN
+                <ActionButton disabled={saving} onClick={handleCancelShipment}>
+                  {`Huỷ ${getCarrierLabel(viewOrder, meta)}`}
                 </ActionButton>
               ) : null}
 

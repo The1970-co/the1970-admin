@@ -2195,7 +2195,7 @@ export default function ProductsPageClient() {
   ].filter(Boolean);
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-4 p-3 pb-24 md:space-y-6 md:p-6">
       <SectionTitle
         title="Sản phẩm"
         description="Xem nhanh catalog theo dạng bảng, ảnh lớn hơn để lướt nhanh và nhìn rõ tồn kho theo từng chi nhánh."
@@ -2257,7 +2257,7 @@ export default function ProductsPageClient() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Tổng sản phẩm" value={totalProducts} sub="Theo bộ lọc hiện tại" />
         <StatCard
           title="Tổng variants"
@@ -2382,7 +2382,214 @@ export default function ProductsPageClient() {
             <p className="text-sm text-neutral-500">Không có sản phẩm phù hợp.</p>
           </div>
         ) : (
-          <div className="overflow-auto">
+          <>
+            <div className="space-y-3 p-3 md:hidden">
+              {filteredProducts.map((product) => {
+                const variants = product.variants || [];
+                const productStock = variants.reduce(
+                  (sum, v) => sum + getVariantScopedStock(v),
+                  0
+                );
+                const branchBadges = visibleBranches.map((branch) => ({
+                  id: branch.id,
+                  name: branch.name,
+                  qty: variants.reduce(
+                    (s, v) => s + Number(v.branchStocks?.[branch.id] || 0),
+                    0
+                  ),
+                }));
+                const minPrice =
+                  variants.length > 0
+                    ? Math.min(...variants.map((v) => Number(v.price || 0)))
+                    : 0;
+                const minCostPrice =
+                  variants.length > 0
+                    ? Math.min(...variants.map((v) => Number((v as any).costPrice || 0)))
+                    : 0;
+                const colorsList = uniqueValues(variants.map((variant) => variant.color));
+                const sizesList = uniqueValues(variants.map((variant) => variant.size));
+
+                return (
+                  <div
+                    key={product.id}
+                    className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => openProductDetail(product)}
+                        className="shrink-0 rounded-2xl transition hover:opacity-80"
+                      >
+                        <ProductImage src={product.imageUrl} alt={product.name} />
+                      </button>
+
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => openProductDetail(product)}
+                          className="block w-full truncate text-left text-[16px] font-semibold leading-6 text-neutral-950"
+                        >
+                          {product.name}
+                        </button>
+
+                        <div className="mt-1 truncate text-sm text-neutral-500">
+                          /{product.slug || getMainSku(product)} · {product.weight || 0}g
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <Badge tone={toneForStatus(product.status)}>
+                            {product.status || "DRAFT"}
+                          </Badge>
+                          <Badge tone="blue">{variants.length} SKU</Badge>
+                          <Badge tone={productStock <= 3 ? "amber" : "green"}>
+                            {productStock} tồn
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-neutral-50 p-3 text-sm">
+                      <div>
+                        <p className="text-neutral-500">Giá bán</p>
+                        <p className="mt-1 font-semibold text-neutral-950">
+                          {currency(minPrice)}
+                        </p>
+                      </div>
+                      {canViewCost ? (
+                        <div>
+                          <p className="text-neutral-500">Giá nhập</p>
+                          <p className="mt-1 font-semibold text-neutral-950">
+                            {currency(minCostPrice)}
+                          </p>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-neutral-500">SKU chính</p>
+                          <p className="mt-1 font-semibold text-neutral-950">
+                            {getMainSku(product)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {colorsList.slice(0, 4).map((color) => (
+                        <Badge key={color} tone="gray">
+                          {color}
+                        </Badge>
+                      ))}
+                      {sizesList.slice(0, 5).map((size) => (
+                        <Badge key={size} tone="gray">
+                          {size}
+                        </Badge>
+                      ))}
+                    </div>
+
+                    {branchBadges.length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {branchBadges.slice(0, 6).map((item) => (
+                          <Badge key={item.id} tone={item.qty <= 3 ? "amber" : "green"}>
+                            {item.name}: {item.qty}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
+                      <Button
+                        onClick={() => openProductDetail(product)}
+                        className="w-full rounded-2xl"
+                      >
+                        Chi tiết
+                      </Button>
+
+                      {canEditProduct ? (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleOpenEdit(product)}
+                          className="rounded-2xl px-5"
+                        >
+                          Sửa
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {canEditProduct ? (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setActiveProductId(product.id);
+                            resetVariantForm();
+                            setVariantOpen(true);
+                          }}
+                          className="w-full rounded-2xl"
+                        >
+                          + Variant
+                        </Button>
+                      ) : null}
+
+                      {canToggleProductStatus ? (
+                        <Button
+                          variant={product.status === "ACTIVE" ? "danger" : "success"}
+                          onClick={() => void handleToggleStatus(product.id)}
+                          disabled={togglingStatusId === product.id}
+                          className="w-full rounded-2xl"
+                        >
+                          {togglingStatusId === product.id
+                            ? "Đang cập nhật..."
+                            : product.status === "ACTIVE"
+                              ? "Ngừng bán"
+                              : "Kích hoạt"}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {canDeleteProduct ? (
+                      <Button
+                        variant="danger"
+                        onClick={() => void handleDeleteProduct(product)}
+                        disabled={deletingProductId === product.id}
+                        className="mt-2 w-full rounded-2xl"
+                      >
+                        {deletingProductId === product.id ? "Đang xóa..." : "Xóa sản phẩm"}
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              })}
+
+              <div className="rounded-[24px] border border-neutral-200 bg-white p-3 shadow-sm">
+                <div className="text-sm text-neutral-500">
+                  Trang {page} / {Math.max(1, Math.ceil(totalProducts / limit))} · {totalProducts} sản phẩm
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={page <= 1 || loading}
+                    onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                    className="w-full"
+                  >
+                    ← Trước
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={page >= Math.max(1, Math.ceil(totalProducts / limit)) || loading}
+                    onClick={() =>
+                      setPage((prev) =>
+                        Math.min(Math.max(1, Math.ceil(totalProducts / limit)), prev + 1)
+                      )
+                    }
+                    className="w-full"
+                  >
+                    Sau →
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="hidden overflow-auto md:block">
             <table className="min-w-[1750px] w-full border-collapse">
               <thead className="bg-neutral-50">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
@@ -2687,6 +2894,7 @@ export default function ProductsPageClient() {
               </div>
             </div>
           </div>
+          </>
         )}
       </Panel>
 

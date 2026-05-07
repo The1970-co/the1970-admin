@@ -1,16 +1,8 @@
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch } from "@/lib/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
-    },
     cache: "no-store",
   });
 
@@ -27,7 +19,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
 
-  return res.json();
+  const text = await res.text();
+
+  if (!text) {
+    return ([] as unknown) as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 export type TransferDirection =

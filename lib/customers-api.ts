@@ -1,4 +1,4 @@
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch } from "@/lib/api";
 export type CustomerAddressItem = {
   id: string;
   label?: string | null;
@@ -144,38 +144,31 @@ export type UpdateCustomerAddressPayload = {
 
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("token") ||
-        localStorage.getItem("accessToken") ||
-        localStorage.getItem("auth_token")
-      : null;
-
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
-    },
     cache: "no-store",
   });
 
   if (!res.ok) {
-    let message = "API request failed";
+    let message = `Request failed: ${res.status}`;
+
     try {
       const data = await res.json();
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
-        : data?.message || JSON.stringify(data);
-    } catch {
-      const text = await res.text();
-      message = text || message;
-    }
+        : data?.message || message;
+    } catch {}
+
     throw new Error(message);
   }
 
-  return res.json();
+  const text = await res.text();
+
+  if (!text) {
+    return ([] as unknown) as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 export async function getCustomers(): Promise<CustomerItem[]> {
