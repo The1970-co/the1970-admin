@@ -2202,10 +2202,9 @@ export default function CreateOrderPageClient() {
   useEffect(() => {
     applyShippingRef.current = (payload: ShippingQuoteApplyPayload) => {
       setShippingFee((prev) => {
-        if (payload.applyFeeToInput) {
-          return String(payload.shippingFee || 0);
-        }
-
+        // The 1970 mặc định thu khách 30.000đ tiền ship.
+        // Báo giá GHN chỉ dùng để chọn dịch vụ/đẩy vận đơn, không tự đổi phí thu khách.
+        if (payload.shippingMode === "pickup") return "0";
         return Number(prev || 0) > 0 ? prev : "30000";
       });
       setShippingMode(payload.shippingMode === "pickup" ? "pickup" : "partner");
@@ -2359,7 +2358,8 @@ export default function CreateOrderPageClient() {
         setSelectedShippingServiceTypeId(best.serviceTypeId);
         setShippingHint("Đã tự chọn dịch vụ GHN rẻ nhất.");
         applyShippingRef.current?.({
-          shippingFee: getFeeNumber(best),
+          shippingFee: 30000,
+          applyFeeToInput: false,
           shippingPartner: "ghn",
           shippingMode: "partner",
           selectedServiceId: best.serviceId,
@@ -2554,8 +2554,15 @@ export default function CreateOrderPageClient() {
         paidAmount: effectivePaidAmount,
         paymentNote: note,
         discountAmount: manualDiscount + lineDiscountTotal,
+        shippingFee: isPickupOrder ? 0 : Number(fee || 0),
+        shipFee: isPickupOrder ? 0 : Number(fee || 0),
+        deliveryFee: isPickupOrder ? 0 : Number(fee || 0),
+        finalAmount: customerMustPay,
 
         shippingSnapshot: {
+          shippingFee: isPickupOrder ? 0 : Number(fee || 0),
+          shipFee: isPickupOrder ? 0 : Number(fee || 0),
+          fee: isPickupOrder ? 0 : Number(fee || 0),
           shippingAddressId: isPickupOrder ? undefined : selectedAddress?.id || undefined,
           shippingRecipientName:
             selectedAddress?.recipientName || customerName.trim(),
@@ -2577,6 +2584,8 @@ export default function CreateOrderPageClient() {
             : selectedAddress?.postalCode || addressPostalCode || undefined,
           shippingGhnDistrictId: isPickupOrder ? undefined : submitGhnDistrictId ?? undefined,
           shippingGhnWardCode: isPickupOrder ? undefined : submitGhnWardCode || undefined,
+          ghnDistrictId: isPickupOrder ? undefined : submitGhnDistrictId ?? undefined,
+          ghnWardCode: isPickupOrder ? undefined : submitGhnWardCode || undefined,
           shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
           shippingPayer,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
@@ -3319,8 +3328,8 @@ export default function CreateOrderPageClient() {
                         type="button"
                         onClick={() =>
                           applyShippingRef.current?.({
-                            shippingFee: getFeeNumber(quote),
-                            applyFeeToInput: true,
+                            shippingFee: 30000,
+                            applyFeeToInput: false,
                             shippingPartner: "ghn",
                             shippingMode: "partner",
                             selectedServiceId: quote.serviceId,

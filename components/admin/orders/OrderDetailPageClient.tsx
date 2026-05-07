@@ -1220,27 +1220,27 @@ export default function OrderDetailPageClient({
     [paymentLines]
   );
 
-  const customerPaid = paymentLines.length
-    ? paymentsTotal
-    : isPOSOrder || isPaidOrder
-      ? Number(viewOrder?.finalAmount || 0)
-      : meta.customerPaidText
-        ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
-        : 0;
-
-  const computedFinalAmount =
+  const computedFinalAmount = Math.max(
+    0,
     itemsSubtotal -
-    Number(viewOrder?.discountAmount || 0) +
-    Number(viewOrder?.shippingFee || 0);
+      Number(viewOrder?.discountAmount || 0) +
+      Number(viewOrder?.shippingFee || 0)
+  );
 
   const shipmentCodAmount = Number(viewOrder?.shipment?.codAmount || 0);
 
-  const shownFinalAmount =
-    shipmentCodAmount > 0
-      ? shipmentCodAmount
-      : isEditing
-        ? computedFinalAmount
-        : Number(viewOrder?.finalAmount || 0);
+  // Số khách phải trả phải luôn cộng phí ship.
+  // Một số đơn cũ/backend đang trả finalAmount thiếu shippingFee,
+  // nên màn chi tiết không được lấy thẳng viewOrder.finalAmount để hiển thị.
+  const shownFinalAmount = computedFinalAmount;
+
+  const customerPaid = paymentLines.length
+    ? paymentsTotal
+    : isPOSOrder || isPaidOrder
+      ? shownFinalAmount
+      : meta.customerPaidText
+        ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
+        : 0;
 
   const amountDue = Math.max(shownFinalAmount - customerPaid, 0);
 
@@ -1856,8 +1856,8 @@ export default function OrderDetailPageClient({
     const html = renderOrderTemplateHtml({
       order: {
         ...viewOrder,
-        totalAmount: Number(viewOrder.totalAmount || itemsSubtotal || 0),
-        finalAmount: Number(viewOrder.finalAmount || computedFinalAmount || 0),
+        totalAmount: Number(itemsSubtotal || viewOrder.totalAmount || 0),
+        finalAmount: Number(shownFinalAmount || computedFinalAmount || 0),
         shippingFee: Number(viewOrder.shippingFee || 0),
         shipment: viewOrder.shipment || undefined,
         items: viewOrder.items || [],

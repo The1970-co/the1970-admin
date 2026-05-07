@@ -23,6 +23,9 @@ export type OrderProduct = {
 
 export type CreateOrderShippingSnapshot = {
   shippingAddressId?: string;
+  shippingFee?: number;
+  customerShippingFee?: number;
+  ghnActualFee?: number;
   shippingRecipientName?: string;
   shippingPhone?: string;
   shippingAddressLine1?: string;
@@ -52,6 +55,13 @@ export type CreateOrderPayload = {
   customerPhone: string;
   note?: string;
   mode?: CreateOrderMode;
+  discountAmount?: number;
+  shippingFee?: number;
+  shipFee?: number;
+  deliveryFee?: number;
+  paidAmount?: number;
+  paymentSourceId?: string | null;
+  paymentNote?: string;
   items: Array<{
     variantId: string;
     qty: number;
@@ -375,6 +385,15 @@ export async function createCustomer(
 export async function createOrder(
   payload: CreateOrderPayload
 ): Promise<CreatedOrder> {
+  const customerShippingFee = toNumber(
+    payload.shippingFee ??
+      payload.shipFee ??
+      payload.deliveryFee ??
+      payload.shippingSnapshot?.shippingFee ??
+      payload.shippingSnapshot?.customerShippingFee ??
+      0
+  );
+
   const body = {
     customerId: payload.customerId,
     salesChannel: normalizeSalesChannel(payload.salesChannel),
@@ -383,9 +402,19 @@ export async function createOrder(
     customerPhone: String(payload.customerPhone || "").replace(/\D/g, ""),
     branchId: payload.branchId,
     mode: payload.mode || "draft",
+    discountAmount: toNumber(payload.discountAmount || 0),
+    shippingFee: customerShippingFee,
+    shipFee: customerShippingFee,
+    deliveryFee: customerShippingFee,
+    paidAmount: payload.paidAmount !== undefined ? toNumber(payload.paidAmount) : undefined,
+    paymentSourceId: payload.paymentSourceId || undefined,
+    paymentNote: payload.paymentNote || payload.note || "",
     shippingSnapshot: payload.shippingSnapshot
       ? {
         shippingAddressId: payload.shippingSnapshot.shippingAddressId,
+        shippingFee: customerShippingFee,
+        customerShippingFee,
+        ghnActualFee: toNumber(payload.shippingSnapshot.ghnActualFee || 0),
         shippingRecipientName:
           payload.shippingSnapshot.shippingRecipientName,
         shippingPhone: payload.shippingSnapshot.shippingPhone,

@@ -231,6 +231,46 @@ function hasDirectAppPermission(user: any, permission: string) {
   return getUserPermissionKeys(user).has(permission);
 }
 
+function normalizeId(value: any) {
+  return String(value || "").trim();
+}
+
+function getCurrentBranchId(user: any) {
+  return normalizeId(user?.branchId || user?.workingBranchId || user?.currentBranchId);
+}
+
+function getScopedMenuPermissionKeys(user: any) {
+  const keys = new Set<string>();
+  const currentBranchId = getCurrentBranchId(user);
+  const rows = Array.isArray(user?.branchPermissions) ? user.branchPermissions : [];
+
+  // Với nhân viên theo chi nhánh, menu phải lấy từ permissionKeys của đúng chi nhánh đang làm việc.
+  // Không fallback từ branchRoles/legacy flags/action permissions để tránh tick action làm lòi menu.
+  const scopedRows = currentBranchId
+    ? rows.filter((row: any) => normalizeId(row?.branchId) === currentBranchId)
+    : rows;
+
+  scopedRows.forEach((row: any) => {
+    if (Array.isArray(row?.permissionKeys)) {
+      row.permissionKeys.forEach((permission: any) => {
+        const key = String(permission || "");
+        if (key.startsWith("menu.")) keys.add(key);
+      });
+    }
+  });
+
+  // Chỉ dùng global menu keys khi user không có branchPermissions.
+  // Tránh case nhân viên cũ còn cache/global key làm hiện menu sai chi nhánh.
+  if (!rows.length) {
+    [...(Array.isArray(user?.permissions) ? user.permissions : []), ...(Array.isArray(user?.permissionKeys) ? user.permissionKeys : [])].forEach((permission: any) => {
+      const key = String(permission || "");
+      if (key.startsWith("menu.")) keys.add(key);
+    });
+  }
+
+  return keys;
+}
+
 function hasExplicitBranchPermission(
   user: any,
   keys: Array<keyof BranchPermission>,
@@ -270,45 +310,15 @@ function hasAnyAppPermission(user: any, permissions: string[]) {
   return permissions.some((permission) => hasDirectAppPermission(user, permission));
 }
 
-const MENU_ACTION_FALLBACKS: Record<string, string[]> = {
-  "/orders": ["orders.view", "orders.view_own"],
-  "/create-order": ["orders.create"],
-  "/pos": ["pos.access"],
-  "/returns": ["returns.view", "returns.create"],
-  "/products": ["products.view"],
-  "/promotions": ["promotions.view"],
-  "/control/purchase-receipts": ["purchase_receipt.view", "purchase_receipt.create", "purchase_receipt.receive"],
-  "/control/stock-transfers": [
-    "stock_transfer.view",
-    "stock_transfer.create",
-    "stock_transfer.edit",
-    "stock_transfer.confirm",
-    "stock_transfer.receive",
-    "stock_transfer.cancel",
-  ],
-  "/stocktake": [
-    "stocktake.view",
-    "stocktake.create",
-    "stocktake.edit",
-    "stocktake.confirm",
-    "stocktake.cancel",
-  ],
-  "/finance/ghn-reconciliation": ["shipping_reconcile.view"],
-};
-
 function canSeeMenuItem(user: any, item: MenuItem) {
   if (!user) return false;
   if (isOwnerOrAdmin(user)) return true;
 
-  if (hasDirectAppPermission(user, item.permission)) return true;
+  // Sidebar chỉ được điều khiển bằng quyền menu.*.
+  // Action permissions như orders.create, orders.approve, inventory.view... không được làm hiện menu.
+  if (!String(item.permission || "").startsWith("menu.")) return false;
 
-  // Chỉ fallback action -> menu cho đúng route vận hành chính.
-  // Không fallback cho Danh mục, Sơ đồ kho 3D, Nhà cung cấp... để tránh hiện lung tung.
-  if (item.href && MENU_ACTION_FALLBACKS[item.href]) {
-    return hasAnyAppPermission(user, MENU_ACTION_FALLBACKS[item.href]);
-  }
-
-  return false;
+  return getScopedMenuPermissionKeys(user).has(item.permission);
 }
 
 function normalizeDisplayName(value?: string | null) {
