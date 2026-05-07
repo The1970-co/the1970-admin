@@ -87,6 +87,12 @@ type CurrentUserLite = {
   branchPermissions?: Array<{
     branchId?: string | null;
     permissionKeys?: string[];
+    canViewOwnOrders?: boolean;
+    canViewBranchOrders?: boolean;
+    canCreateOrder?: boolean;
+    canApproveOrder?: boolean;
+    canCancelOrder?: boolean;
+    canSell?: boolean;
   }>;
 };
 
@@ -439,6 +445,20 @@ function isOwnerOrAdminUser(user?: CurrentUserLite | null) {
   return role === "owner" || role === "admin";
 }
 
+function normalizeId(value: any) {
+  return String(value || "").trim();
+}
+
+function getScopedBranchPermissionRows(user?: CurrentUserLite | null) {
+  const rows = Array.isArray(user?.branchPermissions) ? user.branchPermissions : [];
+  const currentBranchId = normalizeId(user?.branchId);
+
+  if (!currentBranchId) return rows;
+
+  const scoped = rows.filter((row) => normalizeId(row?.branchId) === currentBranchId);
+  return scoped.length ? scoped : rows;
+}
+
 function getCurrentUserPermissionKeys(user?: CurrentUserLite | null) {
   const keys = new Set<string>();
 
@@ -454,22 +474,34 @@ function getCurrentUserPermissionKeys(user?: CurrentUserLite | null) {
     });
   }
 
-  if (Array.isArray(user?.branchPermissions)) {
-    user.branchPermissions.forEach((row) => {
-      if (Array.isArray(row?.permissionKeys)) {
-        row.permissionKeys.forEach((permission) => {
-          if (permission) keys.add(String(permission));
-        });
-      }
-    });
-  }
+  getScopedBranchPermissionRows(user).forEach((row) => {
+    if (Array.isArray(row?.permissionKeys)) {
+      row.permissionKeys.forEach((permission) => {
+        if (permission) keys.add(String(permission));
+      });
+    }
+  });
 
   return keys;
 }
 
+function hasLegacyOrderPermission(user: CurrentUserLite | null, permission: string) {
+  return getScopedBranchPermissionRows(user).some((row) => {
+    if (permission === "orders.view_own") return !!row.canViewOwnOrders;
+    if (permission === "orders.view") return !!row.canViewBranchOrders;
+    if (permission === "orders.create") return !!row.canCreateOrder;
+    if (permission === "orders.approve") return !!row.canApproveOrder;
+    if (permission === "orders.cancel") return !!row.canCancelOrder;
+    if (permission === "orders.pay") return false;
+    if (permission === "orders.pack_ship") return false;
+    if (permission === "pos.access") return !!row.canSell;
+    return false;
+  });
+}
+
 function hasOrderPermission(user: CurrentUserLite | null, permission: string) {
   if (isOwnerOrAdminUser(user)) return true;
-  return getCurrentUserPermissionKeys(user).has(permission);
+  return getCurrentUserPermissionKeys(user).has(permission) || hasLegacyOrderPermission(user, permission);
 }
 
 function normalizeComparableText(value?: string | null) {

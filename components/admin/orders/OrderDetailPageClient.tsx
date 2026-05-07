@@ -185,13 +185,24 @@ function codReconciliationTone(
 
 function formatDateTime(value?: string | null) {
   if (!value) return "";
-  return new Intl.DateTimeFormat("vi-VN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(new Date(value));
+
+  try {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+
+    return new Intl.DateTimeFormat("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(date);
+  } catch {
+    return String(value || "");
+  }
 }
 
 function paymentSourceLabel(payment: PaymentItem) {
@@ -268,6 +279,65 @@ function formatVndInput(value: string | number | null | undefined) {
 function parseVndInput(value: string | null | undefined) {
   const digits = String(value ?? "").replace(/\D/g, "");
   return digits ? Number(digits) : 0;
+}
+
+function isOwnerOrAdminUser(user: any) {
+  const roles = [user?.role, ...(Array.isArray(user?.roles) ? user.roles : [])]
+    .map((role) => String(role || "").toLowerCase())
+    .filter(Boolean);
+  return roles.includes("owner") || roles.includes("admin");
+}
+
+function normalizeId(value: any) {
+  return String(value || "").trim();
+}
+
+function getScopedPermissionRows(user: any) {
+  const rows = Array.isArray(user?.branchPermissions) ? user.branchPermissions : [];
+  const branchId = normalizeId(user?.branchId || user?.workingBranchId || user?.currentBranchId);
+  if (!branchId) return rows;
+  const scoped = rows.filter((row: any) => normalizeId(row?.branchId) === branchId);
+  return scoped.length ? scoped : rows;
+}
+
+function getUserPermissionKeys(user: any) {
+  const keys = new Set<string>();
+
+  if (Array.isArray(user?.permissions)) {
+    user.permissions.forEach((permission: any) => {
+      if (permission) keys.add(String(permission));
+    });
+  }
+
+  if (Array.isArray(user?.permissionKeys)) {
+    user.permissionKeys.forEach((permission: any) => {
+      if (permission) keys.add(String(permission));
+    });
+  }
+
+  getScopedPermissionRows(user).forEach((row: any) => {
+    if (Array.isArray(row?.permissionKeys)) {
+      row.permissionKeys.forEach((permission: any) => {
+        if (permission) keys.add(String(permission));
+      });
+    }
+  });
+
+  return keys;
+}
+
+function hasOrderPermission(user: any, permission: string) {
+  if (isOwnerOrAdminUser(user)) return true;
+  if (getUserPermissionKeys(user).has(permission)) return true;
+
+  return getScopedPermissionRows(user).some((row: any) => {
+    if (permission === "orders.view_own") return !!row.canViewOwnOrders;
+    if (permission === "orders.view") return !!row.canViewBranchOrders;
+    if (permission === "orders.create") return !!row.canCreateOrder;
+    if (permission === "orders.approve") return !!row.canApproveOrder;
+    if (permission === "orders.cancel") return !!row.canCancelOrder;
+    return false;
+  });
 }
 
 function uid() {
@@ -723,7 +793,17 @@ function buildShipmentEditDraft(order?: OrderDetail | null): ShipmentEditDraft {
     province: order?.shippingProvince || "",
     postalCode: order?.shippingPostalCode || "",
     shippingNote: parseStructuredNote(order?.note).shippingNote || "",
-    codAmountInput: formatVndInput(order?.shipment?.codAmount || 0),
+    codAmountInput: formatVndInput(
+      order?.shipment?.codAmount ??
+        Math.max(
+          0,
+          Number(order?.finalAmount || 0) -
+            (order?.payments || []).reduce(
+              (sum, payment) => sum + Number(payment.amount || 0),
+              0,
+            ),
+        ),
+    ),
     ghnDistrictId: order?.shippingGhnDistrictId
       ? String(order.shippingGhnDistrictId)
       : "",
@@ -1036,7 +1116,7 @@ function MobileOrderDetailView({
 
         <MobileOrderCard title="Thanh toán">
           <MobileInfoLine
-            label="Tổng thanh toán"
+            label="Tổng cần thu"
             value={currency(shownFinalAmount)}
           />
           <MobileInfoLine
@@ -1185,6 +1265,9 @@ export default function OrderDetailPageClient({
 }) {
   const router = useRouter();
   const currentUser = getCurrentUserFromStorage();
+  const canEditOrderPermission = hasOrderPermission(currentUser, "orders.edit");
+  const canCancelOrderPermission = hasOrderPermission(currentUser, "orders.cancel");
+  const canPackShipOrderPermission = hasOrderPermission(currentUser, "orders.pack_ship");
 
   const [provinceOptions, setProvinceOptions] = useState<ProvinceOption[]>([]);
   const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
@@ -1665,7 +1748,10 @@ export default function OrderDetailPageClient({
   );
 
   const canEdit =
-    !!order && order.status !== "CANCELLED" && order.status !== "COMPLETED";
+    canEditOrderPermission &&
+    !!order &&
+    order.status !== "CANCELLED" &&
+    order.status !== "COMPLETED";
 
   const updateDraft = <K extends keyof OrderDetail>(
     key: K,
@@ -1937,7 +2023,8 @@ export default function OrderDetailPageClient({
 
       const nextOrder: OrderDetail = {
         ...order,
-        finalAmount: nextCod,
+        // Sửa COD chỉ thay đổi số tiền GHN thu hộ, không đổi tổng giá trị đơn.
+        finalAmount: order.finalAmount,
         note: nextNote,
         shipment: {
           ...order.shipment,
@@ -1948,7 +2035,8 @@ export default function OrderDetailPageClient({
       if (draftOrder) {
         setDraftOrder({
           ...draftOrder,
-          finalAmount: nextCod,
+          // Không được biến finalAmount thành COD.
+          finalAmount: draftOrder.finalAmount,
           note: nextNote,
           shipment: {
             ...draftOrder.shipment,
@@ -2452,6 +2540,7 @@ export default function OrderDetailPageClient({
                 tone="danger"
                 disabled={
                   saving ||
+                  !canCancelOrderPermission ||
                   viewOrder.status === "CANCELLED" ||
                   viewOrder.status === "COMPLETED"
                 }
@@ -2459,7 +2548,7 @@ export default function OrderDetailPageClient({
               >
                 Huỷ nội bộ
               </ActionButton>
-              {viewOrder.shipment?.trackingCode ? (
+              {viewOrder.shipment?.trackingCode && canPackShipOrderPermission ? (
                 <ActionButton disabled={saving} onClick={handleCancelGhnOrder}>
                   Huỷ GHN
                 </ActionButton>
@@ -2758,7 +2847,7 @@ export default function OrderDetailPageClient({
                     value={currency(viewOrder.shippingFee)}
                   />
                   <MiniStat
-                    label="Khách phải trả"
+                    label="Tổng cần thu"
                     value={currency(shownFinalAmount)}
                   />
                   <MiniStat
@@ -3173,9 +3262,9 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div className="text-right">
-                  <p className="text-[10px] text-neutral-500">Khách phải trả</p>
-                  <p className="mt-1 text-[20px] font-semibold tracking-tight text-neutral-900">
-                    {currency(shownFinalAmount)}
+                  <p className="text-[10px] text-neutral-500">Còn phải thu / COD</p>
+                  <p className="mt-1 text-[20px] font-semibold tracking-tight text-red-600">
+                    {currency(amountDue)}
                   </p>
                 </div>
               </div>

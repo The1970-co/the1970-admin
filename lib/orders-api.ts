@@ -354,6 +354,14 @@ export async function updateOrderDetail(
   return updateOrder(id, payload);
 }
 
+
+
+export async function deleteOrder(id: string): Promise<{ success?: boolean; message?: string }> {
+  return request<{ success?: boolean; message?: string }>(`/orders/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function updateOrderStatus(
   id: string,
   status: OrderStatus

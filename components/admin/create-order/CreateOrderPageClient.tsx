@@ -255,8 +255,16 @@ function currency(n: number) {
 
 function parseNumber(value: string | number) {
   if (typeof value === "number") return value;
-  const cleaned = String(value || "").replace(/[^\d.-]/g, "");
+  // Tiền VND đang hiển thị dạng 1.005.000, dấu chấm là phân tách nghìn.
+  // Không dùng Number("5.000") vì JS sẽ hiểu thành số thập phân 5.
+  const cleaned = String(value || "").replace(/[^\d]/g, "");
   return Number(cleaned || 0);
+}
+
+function formatVndInput(value: string | number) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return Number(digits).toLocaleString("vi-VN");
 }
 
 function normalizeSpaces(value?: string | null) {
@@ -1301,6 +1309,9 @@ export default function CreateOrderPageClient() {
     });
   }, [allVariants, productSearch]);
 
+  const shouldShowProductResults =
+    productSearch.trim().length > 0 || barcodeInput.trim().length > 0;
+
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + line.price * line.qty, 0),
     [lines]
@@ -1338,27 +1349,76 @@ export default function CreateOrderPageClient() {
     const selected = paymentSources.find((s) => s.id === paymentSourceId);
     if (!selected) return;
 
-    if (selected.type === "COD") {
+    // Chỉ nguồn COD mới tự đưa khách đã trả về 0.
+    // Tiền mặt/chuyển khoản phải giữ nguyên số nhân viên nhập tay.
+    if (String(selected.type || "").toUpperCase() === "COD") {
       setCustomerPaid("0");
     }
-
-    if (selected.type === "CASH" || selected.type === "BANK") {
-      setCustomerPaid(String(customerMustPay));
-    }
-  }, [paymentSourceId, paymentSources, customerMustPay]);
+  }, [paymentSourceId, paymentSources]);
 
   const visiblePaymentSources = useMemo(() => {
-    return paymentSources.filter((s) => {
-      if (s.isActive === false) return false;
+    const selectedBranch = branchOptions.find(
+      (item) => String(item.value) === String(branchId) || String(item.code || "") === String(branchId)
+    );
+
+    const selectedBranchTexts = [
+      branchId,
+      selectedBranch?.code,
+      selectedBranch?.label,
+      (BRANCH_LABELS as Record<string, string>)[branchId],
+      branchId === "QO" ? "QUOC OAI" : "",
+      branchId === "TH" ? "THAI HA" : "",
+      branchId === "XD" ? "XA DAN" : "",
+      branchId === "CL" ? "CHUA LANG" : "",
+    ]
+      .filter(Boolean)
+      .map((value) => normalizeSearchText(String(value)));
+
+    const knownBranchTokens = [
+      "qo",
+      "quoc oai",
+      "th",
+      "thai ha",
+      "xd",
+      "xa dan",
+      "cl",
+      "chua lang",
+    ];
+
+    return paymentSources.filter((source) => {
+      if (source.isActive === false) return false;
 
       const sourceBranchId =
-        s.branchId || s.branch?.id || s.warehouseId || s.storeId;
+        source.branchId || source.branch?.id || source.warehouseId || source.storeId;
 
-      if (!sourceBranchId) return true;
+      if (sourceBranchId) {
+        return (
+          String(sourceBranchId) === String(branchId) ||
+          String(sourceBranchId) === String(selectedBranch?.code || "")
+        );
+      }
 
-      return String(sourceBranchId) === String(branchId);
+      const sourceText = normalizeSearchText(
+        [
+          source.name,
+          source.label,
+          source.code,
+          source.branch?.name,
+          source.branch?.code,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+
+      const hasBranchMarker = knownBranchTokens.some((token) =>
+        sourceText.includes(token)
+      );
+
+      if (!hasBranchMarker) return true;
+
+      return selectedBranchTexts.some((token) => token && sourceText.includes(token));
     });
-  }, [paymentSources, branchId]);
+  }, [paymentSources, branchId, branchOptions]);
 
   useEffect(() => {
     if (!paymentSourceId) return;
@@ -1831,6 +1891,9 @@ export default function CreateOrderPageClient() {
   const addVariantToOrder = (variantId: string) => {
     const found = allVariants.find((v) => v.id === variantId);
     if (!found) return;
+
+    setProductSearch("");
+    setBarcodeInput("");
 
     setLines((prev) => {
       const existing = prev.find((line) => line.variantId === variantId);
@@ -2494,12 +2557,12 @@ export default function CreateOrderPageClient() {
         (isPickupOrder ? String(visiblePaymentSources[0]?.id || "") : "");
       const effectivePaidAmount = isPickupOrder
         ? customerMustPay
-        : Number(customerPaid || 0);
+        : parseNumber(customerPaid);
 
       const extraNoteParts = [
         note.trim() ? `Ghi chú: ${note.trim()}` : "",
         shippingAddress.trim() ? `Địa chỉ: ${shippingAddress.trim()}` : "",
-        tags.trim() ? `Tags: ${tags.trim()}` : "",
+        tags.trim() ? `Ghi chú nội bộ: ${tags.trim()}` : "",
         couponCode.trim() ? `Mã giảm giá: ${couponCode.trim()}` : "",
         customerId ? `CustomerId: ${customerId}` : "",
         selectedAddressId ? `CustomerAddressId: ${selectedAddressId}` : "",
@@ -2511,7 +2574,7 @@ export default function CreateOrderPageClient() {
         `Giảm giá dòng: ${lineDiscountTotal}`,
         autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
         `Phí ship: ${fee}`,
-        `Khách đã trả: ${paid}`,
+        `Khách đã trả: ${effectivePaidAmount}`,
         `Còn phải trả: ${remaining}`,
         `Kiểu vận chuyển UI: ${shippingUiMode}`,
         `Cách giao: ${shippingMode}`,
@@ -2981,13 +3044,14 @@ export default function CreateOrderPageClient() {
                   </div>
                 </div>
 
-                <div className="mt-4 max-h-[260px] overflow-auto rounded-2xl border border-neutral-200">
-                  {loadingProducts ? (
-                    <div className="p-4 text-sm text-neutral-500">Đang tải sản phẩm...</div>
-                  ) : filteredVariants.length === 0 ? (
-                    <div className="p-4 text-sm text-neutral-500">Không có variant phù hợp.</div>
-                  ) : (
-                    filteredVariants.map((variant) => (
+                {shouldShowProductResults ? (
+                  <div className="mt-4 max-h-[260px] overflow-auto rounded-2xl border border-neutral-200">
+                    {loadingProducts ? (
+                      <div className="p-4 text-sm text-neutral-500">Đang tải sản phẩm...</div>
+                    ) : filteredVariants.length === 0 ? (
+                      <div className="p-4 text-sm text-neutral-500">Không có variant phù hợp.</div>
+                    ) : (
+                      filteredVariants.map((variant) => (
                       <button
                         key={variant.id}
                         type="button"
@@ -3008,9 +3072,10 @@ export default function CreateOrderPageClient() {
                           <p className="mt-1 text-xs text-neutral-500">Tồn {(variant as any).stock}</p>
                         </div>
                       </button>
-                    ))
-                  )}
-                </div>
+                      ))
+                    )}
+                  </div>
+                ) : null}
               </div>
 
               <div className="overflow-x-auto">
@@ -3123,15 +3188,15 @@ export default function CreateOrderPageClient() {
 
             <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
               <Panel className="p-4">
-                <h3 className="text-base font-semibold">Tags & ghi chú</h3>
+                <h3 className="text-base font-semibold">Ghi chú</h3>
                 <div className="mt-4 space-y-4">
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">Tags</p>
+                    <p className="mb-2 text-sm font-medium text-neutral-700">Ghi chú nội bộ</p>
                     <textarea
                       className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       value={tags}
                       onChange={(e) => setTags(e.target.value)}
-                      placeholder="VD: VIP, chốt live, ưu tiên ship"
+                      placeholder="VD: khách VIP, lưu ý nội bộ, ưu tiên xử lý"
                     />
                   </div>
 
@@ -3143,7 +3208,7 @@ export default function CreateOrderPageClient() {
                       className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
-                      placeholder="VD: Hàng tặng gói riêng"
+                      placeholder="VD: Hàng tặng gói riêng / lưu ý giao hàng"
                     />
                   </div>
                 </div>
@@ -3404,8 +3469,9 @@ export default function CreateOrderPageClient() {
                     <span className="text-neutral-500">Giảm giá nhập tay</span>
                     <input
                       className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
-                      value={discountTotal}
-                      onChange={(e) => setDiscountTotal(e.target.value)}
+                      value={formatVndInput(discountTotal)}
+                      onChange={(e) => setDiscountTotal(String(parseNumber(e.target.value)))}
+                      inputMode="numeric"
                     />
                   </div>
 
@@ -3433,15 +3499,12 @@ export default function CreateOrderPageClient() {
                       <span className="text-neutral-500">Phí ship</span>
                       <input
                         className="w-32 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none focus:border-neutral-900"
-                        value={shippingFee}
-                        onChange={(e) => setShippingFee(e.target.value)}
+                        value={formatVndInput(shippingFee)}
+                        onChange={(e) => setShippingFee(String(parseNumber(e.target.value)))}
                         inputMode="numeric"
                         placeholder="30000"
                       />
                     </div>
-                    <p className="text-right text-xs text-neutral-400">
-                      GHN mặc định 30.000đ. Người trả ship là bên thanh toán phí với GHN; tiền khách thanh toán vẫn cộng phí ship.
-                    </p>
                   </div>
 
                   <div className="border-t border-dashed border-neutral-200 pt-3" />
@@ -3455,8 +3518,8 @@ export default function CreateOrderPageClient() {
                     <span className="text-neutral-500">Khách đã trả</span>
                     <input
                       className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
-                      value={customerPaid}
-                      onChange={(e) => setCustomerPaid(e.target.value)}
+                      value={formatVndInput(customerPaid)}
+                      onChange={(e) => setCustomerPaid(String(parseNumber(e.target.value)))}
                     />
                     {/* 🔥 Nguồn tiền */}
                     <div className="mt-3">
@@ -3673,7 +3736,7 @@ export default function CreateOrderPageClient() {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Tags</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">Ghi chú nội bộ</p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerTags}
