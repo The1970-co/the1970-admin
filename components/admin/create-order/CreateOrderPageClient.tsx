@@ -7,9 +7,11 @@ import {
   createCustomer,
   createOrder,
   createGhnShipment,
+  createAhamoveShipment,
   findCustomerByPhone,
   getProductsForOrder,
   quoteShipment,
+  quoteAhamoveShipment,
   resolveGhnAddress,
   type CreateOrderMode,
   type CreateOrderPayload,
@@ -735,7 +737,7 @@ const shippingUiModeOptions: Array<{
     {
       value: "carrier",
       label: "Đẩy qua hãng vận chuyển",
-      description: "Ưu tiên GHN để lấy phí ship và đẩy đơn.",
+      description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
     },
     {
       value: "external",
@@ -759,7 +761,7 @@ const shippingPartnerOptions = [
   { value: "ghtk", label: "GHTK", enabled: false },
   { value: "viettelpost", label: "Viettel Post", enabled: false },
   { value: "grab", label: "Grab Express", enabled: false },
-  { value: "ahamove", label: "Ahamove", enabled: false },
+  { value: "ahamove", label: "AhaMove", enabled: true },
   { value: "outside", label: "Vận chuyển ngoài", enabled: false },
 ];
 
@@ -2284,7 +2286,7 @@ export default function CreateOrderPageClient() {
   }, []);
 
   useEffect(() => {
-    if (shippingUiMode === "carrier" && shippingPartner === "ghn") {
+    if (shippingUiMode === "carrier" && (shippingPartner === "ghn" || shippingPartner === "ahamove")) {
       setShippingFee((prev) => (Number(prev || 0) > 0 ? prev : "30000"));
     }
   }, [shippingUiMode, shippingPartner]);
@@ -2334,29 +2336,174 @@ export default function CreateOrderPageClient() {
       return;
     }
 
-    if (shippingPartner !== "ghn") {
-      setShippingHint("Hiện mới bật quote tự động cho GHN.");
+    if (shippingPartner !== "ghn" && shippingPartner !== "ahamove") {
+      setShippingHint("Hãng vận chuyển này chưa bật quote tự động.");
       setShippingError("");
       setShippingQuotes([]);
       return;
     }
 
     const run = async () => {
-      if (!quoteProvince || !quoteDistrict || !quoteWard) {
-        setShippingQuotes([]);
-        setSelectedShippingServiceId(undefined);
-        setSelectedShippingServiceTypeId(undefined);
-        setShippingError("");
-        setShippingHint("Thiếu tỉnh/thành, quận/huyện hoặc xã/phường để tính phí ship.");
-        return;
-      }
-
       if (!quoteItems.length) {
         setShippingQuotes([]);
         setSelectedShippingServiceId(undefined);
         setSelectedShippingServiceTypeId(undefined);
         setShippingError("");
         setShippingHint("Cần có ít nhất 1 sản phẩm trong đơn để tính phí ship.");
+        return;
+      }
+
+      if (shippingPartner === "ahamove") {
+        const toAddress =
+          selectedAddress?.addressLine1 ||
+          addressLine1.trim() ||
+          shippingAddress.trim();
+
+        if (!toAddress) {
+          setShippingQuotes([]);
+          setSelectedShippingServiceId(undefined);
+          setSelectedShippingServiceTypeId(undefined);
+          setShippingError("");
+          setShippingHint("Thiếu địa chỉ giao hàng để lấy phí AhaMove.");
+          return;
+        }
+
+        try {
+          setShippingLoading(true);
+          setShippingError("");
+          setShippingHint("Đang lấy báo giá AhaMove...");
+
+          const quote = await quoteAhamoveShipment({
+            toName: selectedAddress?.recipientName || customerName.trim() || "Khách hàng",
+            toPhone: selectedAddress?.phone || customerPhone.trim(),
+            toAddress,
+            codAmount: remaining > 0 ? remaining : 0,
+            serviceId: "HAN-BIKE",
+            note: note.trim() || "",
+            items: quoteItems.map((item) => ({
+              name: item.name,
+              quantity: item.quantity,
+              num: item.quantity,
+              price: 0,
+              weight: item.weight,
+            })),
+          });
+
+          const currentShippingStateAfterQuote = shippingStateRef.current;
+          if (
+            currentShippingStateAfterQuote.shippingUiMode !== "carrier" ||
+            currentShippingStateAfterQuote.shippingMode === "pickup" ||
+            currentShippingStateAfterQuote.shippingPartner !== "ahamove"
+          ) {
+            return;
+          }
+
+          const rawQuote: any = quote as any;
+
+          const firstQuote =
+            Array.isArray(rawQuote)
+              ? rawQuote[0]
+              : Array.isArray(rawQuote?.data)
+                ? rawQuote.data[0]
+                : rawQuote?.estimates?.[0] ||
+                  rawQuote?.data?.estimates?.[0] ||
+                  rawQuote?.services?.[0] ||
+                  rawQuote?.data?.services?.[0] ||
+                  rawQuote;
+
+          const quoteData = firstQuote?.data || firstQuote || {};
+
+          const quoteFee = Number(
+            quoteData?.total_fee ||
+              quoteData?.totalFee ||
+              quoteData?.total_price ||
+              quoteData?.totalPrice ||
+              quoteData?.subtotal_price ||
+              quoteData?.subtotalPrice ||
+              quoteData?.service_fee ||
+              quoteData?.serviceFee ||
+              quoteData?.distance_fee ||
+              quoteData?.distanceFee ||
+              rawQuote?.fee ||
+              rawQuote?.totalFee ||
+              rawQuote?.total_fee ||
+              0
+          );
+
+          const serviceLabel =
+            firstQuote?.service_id ||
+            firstQuote?.serviceId ||
+            quoteData?.service_id ||
+            quoteData?.serviceId ||
+            "AhaMove";
+
+          const distanceKm = Number(quoteData?.distance || 0);
+          const durationSeconds = Number(quoteData?.duration || 0);
+          const durationMinutes = durationSeconds
+            ? Math.max(1, Math.round(durationSeconds / 60))
+            : 0;
+
+          const fakeQuote: ShipmentQuoteResult = {
+            serviceId: 0,
+            serviceTypeId: 0,
+            shortName: String(serviceLabel),
+            fee: {
+              total: quoteFee,
+              total_fee: quoteFee,
+              service_fee: quoteFee,
+            },
+            leadtime: {
+              label:
+                distanceKm || durationMinutes
+                  ? `${distanceKm ? `${distanceKm}km` : ""}${
+                      distanceKm && durationMinutes ? " · " : ""
+                    }${durationMinutes ? `${durationMinutes} phút` : ""}`
+                  : "Nội thành",
+            },
+          };
+
+          setShippingQuotes([fakeQuote]);
+          setSelectedShippingServiceId(0);
+          setSelectedShippingServiceTypeId(0);
+          setShippingHint(
+            quoteFee > 0
+              ? `Đã lấy báo giá AhaMove: ${currency(quoteFee)}.`
+              : "AhaMove đã trả báo giá, nhưng chưa có phí rõ ràng."
+          );
+
+          applyShippingRef.current?.({
+            shippingFee: quoteFee > 0 ? quoteFee : 30000,
+            applyFeeToInput: quoteFee > 0,
+            shippingPartner: "ahamove",
+            shippingMode: "partner",
+            selectedServiceId: 0,
+            selectedServiceTypeId: 0,
+            weight: Number(shippingWeight || 200),
+            length: Number(shippingLength || 10),
+            width: Number(shippingWidth || 10),
+            height: Number(shippingHeight || 10),
+          });
+        } catch (err) {
+          setShippingQuotes([]);
+          setSelectedShippingServiceId(undefined);
+          setSelectedShippingServiceTypeId(undefined);
+          setShippingHint("");
+          setShippingError(
+            err instanceof Error ? err.message : "Không lấy được phí AhaMove."
+          );
+        } finally {
+          setShippingLoading(false);
+        }
+
+        return;
+      }
+
+      if (!quoteProvince || !quoteDistrict || !quoteWard) {
+        setShippingQuotes([]);
+        setSelectedShippingServiceId(undefined);
+        setSelectedShippingServiceTypeId(undefined);
+        setShippingError("");
+        setShippingHint("Thiếu tỉnh/thành, quận/huyện hoặc xã/phường để tính phí ship.");
         return;
       }
 
@@ -2465,6 +2612,13 @@ export default function CreateOrderPageClient() {
     shippingUiMode,
     shippingMode,
     shippingPartner,
+    selectedAddress,
+    addressLine1,
+    shippingAddress,
+    customerName,
+    customerPhone,
+    remaining,
+    note,
   ]);
 
   const handleSubmit = async (mode: CreateOrderMode) => {
@@ -2505,13 +2659,13 @@ export default function CreateOrderPageClient() {
     let submitGhnDistrictId = ghnDistrictId;
     let submitGhnWardCode = ghnWardCode;
 
-    if (!isPickupOrder && mode === "ship" && shippingUiMode === "carrier" && shippingPartner === "ghn") {
+    if (!isPickupOrder && mode === "ship" && shippingUiMode === "carrier" && (shippingPartner === "ghn" || shippingPartner === "ahamove")) {
       if (!shippingAddress.trim()) {
         setError("Thiếu địa chỉ giao hàng.");
         return;
       }
 
-      if (!submitGhnDistrictId || !submitGhnWardCode) {
+      if (shippingPartner === "ghn" && (!submitGhnDistrictId || !submitGhnWardCode)) {
         if (!quoteProvince || !quoteDistrict || !quoteWard) {
           setError("Địa chỉ chưa map được GHN.");
           return;
@@ -2665,7 +2819,7 @@ export default function CreateOrderPageClient() {
 
       const created = await createOrder(payload);
 
-      let ghnTrackingCode = "";
+      let carrierTrackingCode = "";
 
       if (
         !isPickupOrder &&
@@ -2709,11 +2863,54 @@ export default function CreateOrderPageClient() {
           })),
         });
 
-        ghnTrackingCode =
+        carrierTrackingCode =
           ghnCreated?.shipment?.trackingCode ||
           ghnCreated?.trackingCode ||
           ghnCreated?.ghn?.order_code ||
           ghnCreated?.ghn?.order_code_return ||
+          "";
+      }
+
+      if (
+        !isPickupOrder &&
+        finalCreateMode === "ship" &&
+        shippingUiMode === "carrier" &&
+        shippingPartner === "ahamove"
+      ) {
+        const toAddress =
+          selectedAddress?.addressLine1 ||
+          addressLine1.trim() ||
+          shippingAddress.trim();
+
+        const ahamoveCreated = await createAhamoveShipment(created.id, {
+          toName: selectedAddress?.recipientName || customerName.trim(),
+          toPhone: selectedAddress?.phone || customerPhone.trim(),
+          toAddress,
+          codAmount: remaining > 0 ? remaining : 0,
+          serviceId: "HAN-BIKE",
+          clientOrderCode: created.orderCode,
+          orderCode: created.orderCode,
+          note: note.trim() || "",
+          items: lines.map((line) => ({
+            name: line.productName || line.sku || "Sản phẩm",
+            quantity: Number(line.qty || 0),
+            num: Number(line.qty || 0),
+            price: Number(line.price || 0),
+            weight: Math.max(
+              1,
+              Math.floor(
+                Number(shippingWeight || 200) / Math.max(lines.length, 1)
+              )
+            ),
+          })),
+        });
+
+        carrierTrackingCode =
+          ahamoveCreated?.shipment?.trackingCode ||
+          ahamoveCreated?.trackingCode ||
+          ahamoveCreated?.ahamoveOrderId ||
+          ahamoveCreated?.order_id ||
+          ahamoveCreated?.id ||
           "";
       }
 
@@ -2723,8 +2920,8 @@ export default function CreateOrderPageClient() {
         created: "1",
       });
 
-      if (ghnTrackingCode) {
-        nextSearch.set("tracking", ghnTrackingCode);
+      if (carrierTrackingCode) {
+        nextSearch.set("tracking", carrierTrackingCode);
       }
 
       router.push(`/orders/${encodeURIComponent(created.id)}?${nextSearch.toString()}`);

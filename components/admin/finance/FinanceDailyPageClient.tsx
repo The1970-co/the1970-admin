@@ -110,7 +110,7 @@ export default function FinanceDailyPageClient() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">Đối soát tiền</h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Theo dõi dòng tiền theo ngày, chi nhánh, nguồn tiền và trạng thái.
+          Theo dõi tiền thực thu theo ngày, chi nhánh, nguồn tiền và trạng thái. Đơn COD có khách chuyển khoản trước vẫn được ghi nhận ngay khi phát sinh thanh toán.
         </p>
       </div>
 
@@ -237,7 +237,7 @@ export default function FinanceDailyPageClient() {
 
       <div className="grid gap-4 xl:grid-cols-5">
         {[
-          ["Tổng đã thu", summary.totalPaid],
+          ["Tổng đã thu", summary.totalCollected ?? summary.totalPaid],
           ["COD chờ về", summary.totalCodPending],
           ["Thanh toán một phần", summary.totalPartial],
           ["Hoàn / lỗi", Number(summary.totalRefunded || 0) + Number(summary.totalFailed || 0)],
@@ -263,7 +263,7 @@ export default function FinanceDailyPageClient() {
                 <tr className="border-b text-neutral-400">
                   <th className="pb-3 font-medium">Nguồn tiền</th>
                   <th className="pb-3 font-medium">Loại</th>
-                  <th className="pb-3 font-medium text-right">Đã thu</th>
+                  <th className="pb-3 font-medium text-right">Thực thu</th>
                   <th className="pb-3 font-medium text-right">COD chờ</th>
                   <th className="pb-3 font-medium text-right">Tổng</th>
                   <th className="pb-3 font-medium text-right">Số đơn</th>
@@ -274,7 +274,7 @@ export default function FinanceDailyPageClient() {
                   <tr key={row.paymentSourceId || row.sourceCode} className="border-b">
                     <td className="py-3 font-medium">{row.sourceName}</td>
                     <td className="py-3 text-neutral-500">{row.sourceType}</td>
-                    <td className="py-3 text-right">{currency(row.paidAmount)}</td>
+                    <td className="py-3 text-right">{currency(row.collectedAmount ?? row.paidAmount)}</td>
                     <td className="py-3 text-right">{currency(row.codPendingAmount)}</td>
                     <td className="py-3 text-right font-medium">{currency(row.totalAmount)}</td>
                     <td className="py-3 text-right">{row.count}</td>

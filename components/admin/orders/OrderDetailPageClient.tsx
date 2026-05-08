@@ -44,6 +44,26 @@ type WardOption = {
   districtId?: number;
 };
 
+type ShipmentTimelineEntry = {
+  id: string;
+  shipmentId?: string;
+  orderId?: string | null;
+  carrier?: string | null;
+  trackingCode?: string | null;
+  status?: string | null;
+  partnerStatus?: string | null;
+  title?: string | null;
+  description?: string | null;
+  driverName?: string | null;
+  driverPhone?: string | null;
+  driverPlate?: string | null;
+  eta?: string | null;
+  locationText?: string | null;
+  source?: string | null;
+  eventTime?: string | null;
+  createdAt?: string | null;
+};
+
 type ShipmentItem = {
   id?: string;
   carrier?: string | null;
@@ -1323,6 +1343,98 @@ function MobileOrderDetailView({
   );
 }
 
+function ShipmentRealtimeTimeline({
+  timeline,
+  refreshing,
+  message,
+  onRefresh,
+}: {
+  timeline: ShipmentTimelineEntry[];
+  refreshing: boolean;
+  message?: string;
+  onRefresh: () => void;
+}) {
+  return (
+    <Panel>
+      <SectionHeader
+        title="Tracking realtime"
+        subtitle="Tự cập nhật mỗi 30 giây khi đơn có mã vận đơn."
+        action={
+          <ActionButton disabled={refreshing} onClick={onRefresh}>
+            {refreshing ? "Đang refresh..." : "Refresh"}
+          </ActionButton>
+        }
+      />
+      <div className="space-y-3 p-4">
+        {message ? (
+          <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            {message}
+          </div>
+        ) : null}
+
+        {timeline.length ? (
+          <div className="space-y-3">
+            {timeline.map((entry) => (
+              <div
+                key={entry.id}
+                className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-neutral-950">
+                        {entry.title || shipmentStatusText(entry.status)}
+                      </p>
+                      <Badge tone="blue">
+                        {entry.carrier || "Vận chuyển"}
+                      </Badge>
+                    </div>
+
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {shipmentStatusText(entry.status || entry.partnerStatus)}
+                      {entry.partnerStatus ? ` · ${entry.partnerStatus}` : ""}
+                    </p>
+
+                    {entry.description ? (
+                      <p className="mt-1 text-xs leading-5 text-neutral-600">
+                        {entry.description}
+                      </p>
+                    ) : null}
+
+                    {entry.driverName || entry.driverPhone || entry.driverPlate ? (
+                      <div className="mt-2 grid gap-1 text-xs text-neutral-600 md:grid-cols-3">
+                        <span>Tài xế: {entry.driverName || "—"}</span>
+                        <span>SĐT: {entry.driverPhone || "—"}</span>
+                        <span>Biển số: {entry.driverPlate || "—"}</span>
+                      </div>
+                    ) : null}
+
+                    {entry.locationText || entry.eta ? (
+                      <p className="mt-1 text-xs text-neutral-500">
+                        {entry.locationText ? `Vị trí: ${entry.locationText}` : ""}
+                        {entry.locationText && entry.eta ? " · " : ""}
+                        {entry.eta ? `ETA: ${entry.eta}` : ""}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="shrink-0 text-right text-[11px] text-neutral-400">
+                    {formatDateTime(entry.eventTime || entry.createdAt)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center text-sm text-neutral-500">
+            Chưa có timeline tracking. Bấm Refresh để đồng bộ từ hãng vận chuyển.
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 export default function OrderDetailPageClient({
   orderId,
   created = false,
@@ -1599,6 +1711,9 @@ export default function OrderDetailPageClient({
     items: [],
   });
   const [orderHistory, setOrderHistory] = useState<OrderHistoryEntry[]>([]);
+  const [shipmentTimeline, setShipmentTimeline] = useState<ShipmentTimelineEntry[]>([]);
+  const [trackingRefreshing, setTrackingRefreshing] = useState(false);
+  const [trackingMessage, setTrackingMessage] = useState("");
 
   useEffect(() => {
     const run = async () => {
@@ -1656,6 +1771,96 @@ export default function OrderDetailPageClient({
 
     void run();
   }, [orderId, created]);
+
+  const refreshShipmentTracking = async (force = false) => {
+    try {
+      if (force) {
+        setTrackingRefreshing(true);
+        setTrackingMessage("");
+      }
+
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      const endpoint = force
+        ? `${API_BASE}/shipments/order/${orderId}/tracking/refresh`
+        : `${API_BASE}/shipments/order/${orderId}/tracking`;
+
+      const res = await fetch(endpoint, {
+        method: force ? "POST" : "GET",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        cache: "no-store",
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        if (force) {
+          throw new Error(json?.message || "Không refresh được tracking.");
+        }
+        return;
+      }
+
+      if (json?.shipment) {
+        setOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                shipment: {
+                  ...(prev.shipment || {}),
+                  ...(json.shipment || {}),
+                },
+              }
+            : prev,
+        );
+
+        setDraftOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                shipment: {
+                  ...(prev.shipment || {}),
+                  ...(json.shipment || {}),
+                },
+              }
+            : prev,
+        );
+      }
+
+      if (Array.isArray(json?.timeline)) {
+        setShipmentTimeline(json.timeline);
+      }
+
+      if (force) {
+        setTrackingMessage("Đã refresh tracking.");
+      }
+    } catch (err) {
+      if (force) {
+        setTrackingMessage(
+          err instanceof Error ? err.message : "Không refresh được tracking.",
+        );
+      }
+    } finally {
+      if (force) {
+        setTrackingRefreshing(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!order?.shipment?.trackingCode) return;
+
+    void refreshShipmentTracking(false);
+
+    const timer = window.setInterval(() => {
+      void refreshShipmentTracking(false);
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [orderId, order?.shipment?.trackingCode]);
 
   useEffect(() => {
     if (!order) return;
@@ -2701,6 +2906,17 @@ export default function OrderDetailPageClient({
               {message}
             </p>
           </Panel>
+        ) : null}
+
+        {viewOrder.shipment?.trackingCode ? (
+          <div className="mt-4">
+            <ShipmentRealtimeTimeline
+              timeline={shipmentTimeline}
+              refreshing={trackingRefreshing}
+              message={trackingMessage}
+              onRefresh={() => void refreshShipmentTracking(true)}
+            />
+          </div>
         ) : null}
 
         <div className="grid gap-3 xl:grid-cols-[2.3fr_0.6fr]">

@@ -343,56 +343,55 @@ function buildShippingTemplateHtml(params: {
 
   if (isSquare80) {
     return `
-<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:10.6px;line-height:1.15;padding:2.6mm 2.8mm;border:1px solid #111;overflow:hidden;">
-  <div style="text-align:center;margin:0 0 3px 0;">
-    <div style="font-size:16.5px;font-weight:900;letter-spacing:.6px;line-height:1;">${data.storeName}</div>
-    <div style="font-size:13.8px;font-weight:900;letter-spacing:.2px;margin-top:1px;">${data.title || "PHIẾU GIAO HÀNG"}</div>
+<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.6px;line-height:1.08;padding:2.2mm 2.5mm;border:1px solid #111;overflow:hidden;position:relative;">
+  <div style="text-align:center;margin:0 0 2px 0;">
+    <div style="font-size:14px;font-weight:900;letter-spacing:.5px;line-height:1;">${data.storeName}</div>
+    <div style="font-size:11px;font-weight:900;letter-spacing:.1px;margin-top:1px;">${data.title || "PHIẾU GIAO HÀNG"}</div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:start;margin-bottom:3px;font-size:10px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:start;margin-bottom:2px;font-size:8.8px;border-bottom:1px dashed #999;padding-bottom:2px;">
     <div><b>Mã đơn:</b> ${data.orderCode || trackingCode || "—"}</div>
     <div style="text-align:right;"><b>Ngày tạo:</b> ${data.createdAt}</div>
   </div>
 
-  <div style="font-size:10.7px;margin-bottom:3px;">
+  <div style="font-size:9.5px;margin-bottom:2px;">
     <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Người nhận:</b> ${data.customerName}</div>
     <div><b>SĐT:</b> ${data.customerPhone}</div>
-    <div style="height:27px;overflow:hidden;"><b>Đ/C:</b> ${data.shippingAddress}</div>
+    <div style="height:22px;overflow:hidden;"><b>Đ/C:</b> ${data.shippingAddress}</div>
   </div>
 
   ${data.financialBlock || ""}
 
-  <div style="margin-top:3px;">
-    <div style="font-size:11px;font-weight:900;margin-bottom:1px;">Nội dung hàng (${itemCount} sản phẩm)</div>
-    <table style="width:100%;border-collapse:collapse;font-size:10.1px;line-height:1.08;">
+  <div style="position:absolute;left:2.5mm;right:2.5mm;top:37mm;bottom:17mm;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
       <thead>
         <tr>
-          <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;">Sản phẩm</th>
-          <th style="text-align:center;width:17px;border-bottom:1px solid #999;padding:1px 0;">SL</th>
+          <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;font-size:9.6px;">Sản phẩm</th>
+          <th style="text-align:center;width:17px;border-bottom:1px solid #999;padding:1px 0;font-size:9.6px;">SL</th>
         </tr>
       </thead>
       <tbody>${data.itemsRows}</tbody>
     </table>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 19mm;gap:5px;align-items:center;margin-top:3px;">
+  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:5.5mm;height:11mm;border-top:1px solid #111;padding-top:2mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
     <div style="text-align:center;">
       ${
         hasTracking && template.showBarcode
-          ? `<img src="${barcodeUrl(trackingCode)}" style="width:28mm;height:9mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:25mm;height:7.5mm;object-fit:contain;display:block;margin:0 auto;" />`
           : ""
       }
     </div>
     <div style="text-align:center;">
       ${
         hasTracking && template.showQr
-          ? `<img src="${qrUrl(trackingCode)}" style="width:18mm;height:18mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
           : ""
       }
     </div>
   </div>
 
-  <div style="margin-top:1px;text-align:center;font-size:9.5px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:1.7mm;text-align:center;font-size:8.3px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
     ${data.footerNote || "Cảm ơn quý khách. Hẹn gặp lại!"}
   </div>
 </div>
@@ -426,7 +425,7 @@ function buildShippingTemplateHtml(params: {
   ${data.financialBlock || ""}
 
   <div style="border-top:1px dashed #999;border-bottom:1px dashed #999;padding:6px 0;margin-bottom:8px;">
-    <div style="font-weight:700;margin-bottom:4px;">Nội dung hàng (${itemCount} sản phẩm)</div>
+    <div style="font-weight:700;margin-bottom:4px;">Sản phẩm</div>
     <table style="width:100%;border-collapse:collapse;">
       <thead><tr><th style="text-align:left;font-size:11px;padding-bottom:4px;">Sản phẩm</th><th style="text-align:right;font-size:11px;padding-bottom:4px;">SL</th></tr></thead>
       <tbody>${data.itemsRows}</tbody>
@@ -590,12 +589,12 @@ export function renderOrderTemplateHtml(params: {
     qrBlock: "",
     financialBlock:
         template.templateType === "shipping"
-          ? `<div style="margin:3px 0 3px;">
+          ? `<div style="margin:2px 0 2px;">
               <table style="width:100%;border-collapse:collapse;text-align:center;">
                 <tr>
-                  <td style="border:1px solid #111;padding:4px 4px;">
-                    <div style="font-size:10px;">THU HỘ (COD)</div>
-                    <div style="font-size:16px;font-weight:900;">${money(codAmount || amountDue || 0)}</div>
+                  <td style="border:1px solid #111;padding:2px 4px;">
+                    <span style="font-size:9px;">THU HỘ (COD): </span>
+                    <span style="font-size:13px;font-weight:900;">${money(codAmount || amountDue || 0)}</span>
                   </td>
                 </tr>
               </table>
@@ -616,11 +615,11 @@ export function renderOrderTemplateHtml(params: {
       ...data,
       barcodeBlock:
         trackingCode && template.showBarcode
-          ? `<img src="${barcodeUrl(trackingCode)}" style="width:28mm;height:9mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:25mm;height:7.5mm;object-fit:contain;display:block;margin:0 auto;" />`
           : "",
       qrBlock:
         trackingCode && template.showQr
-          ? `<img src="${qrUrl(trackingCode)}" style="width:18mm;height:18mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
           : "",
     });
 

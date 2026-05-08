@@ -1092,6 +1092,45 @@ function loadRoleTemplatesFromStorage() {
   }
 }
 
+async function loadRoleTemplatesFromApi() {
+  try {
+    const saved = await apiJson<RoleItem[]>("/staff/role-templates");
+    if (!Array.isArray(saved) || !saved.length) {
+      return loadRoleTemplatesFromStorage();
+    }
+
+    return rolesSeed.map((seed) => {
+      const apiRole = saved.find(
+        (role) => String(role.id || "").toLowerCase() === seed.id,
+      );
+
+      if (!apiRole) return sanitizeRoleTemplate(seed);
+
+      return sanitizeRoleTemplate({
+        ...seed,
+        name: apiRole.name || seed.name,
+        scope: apiRole.scope || seed.scope,
+        description: apiRole.description || seed.description,
+        note: apiRole.note || seed.note,
+        permissions: {
+          ...(Object.keys(permissionGroupMeta) as PermissionGroupKey[]).reduce(
+            (acc, key) => ({
+              ...acc,
+              [key]: Array.isArray(apiRole.permissions?.[key])
+                ? apiRole.permissions[key]
+                : seed.permissions[key],
+            }),
+            {} as Record<PermissionGroupKey, string[]>,
+          ),
+        },
+        updatedAt: apiRole.updatedAt || seed.updatedAt,
+      });
+    });
+  } catch {
+    return loadRoleTemplatesFromStorage();
+  }
+}
+
 function RolePermissionPreview({ row }: { row: BranchPermission }) {
   const activeCount = branchPermissionColumns.filter((column) =>
     Boolean(row[column.key]),
@@ -1378,6 +1417,10 @@ export default function PermissionsPageClient() {
 
   useEffect(() => {
     setRoles(loadRoleTemplatesFromStorage());
+    void loadRoleTemplatesFromApi().then((nextRoles) => {
+      setRoles(nextRoles);
+      setRoleTemplateDirty(false);
+    });
     void loadBranches();
   }, []);
 
@@ -1454,6 +1497,11 @@ export default function PermissionsPageClient() {
 
     try {
       const nextRoles = roles.map(sanitizeRoleTemplate);
+
+      await apiJson("/staff/role-templates", {
+        method: "PATCH",
+        body: JSON.stringify({ roles: nextRoles }),
+      });
 
       if (typeof window !== "undefined") {
         localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(nextRoles));
