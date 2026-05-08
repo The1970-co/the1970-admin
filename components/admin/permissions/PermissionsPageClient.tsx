@@ -2232,8 +2232,345 @@ export default function PermissionsPageClient() {
     );
   };
 
+  const mobilePermissionGroups = Object.keys(permissionGroupMeta) as PermissionGroupKey[];
+  const mobileSelectedGroupMeta = permissionGroupMeta[selectedPermissionGroup];
+  const mobileCurrentPermissions = selectedRole.permissions[selectedPermissionGroup] || [];
+  const mobileAllowedPermissions = getAllowedGroupPermissions(selectedRole.id, selectedPermissionGroup);
+
   return (
-    <div className="space-y-6">
+    <>
+      <div className="space-y-4 pb-24 lg:hidden">
+        <div className="rounded-[28px] border border-neutral-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
+                Permission center
+              </p>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight text-neutral-950">
+                Phân quyền
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-neutral-500">
+                Mobile view rút gọn: chọn role, tick quyền, hoặc gán role cho nhân viên.
+              </p>
+            </div>
+            <Badge tone="blue">V2</Badge>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="rounded-2xl bg-neutral-50 px-3 py-2">
+              <p className="text-[11px] text-neutral-500">Vai trò</p>
+              <p className="mt-1 text-lg font-semibold text-neutral-900">{roles.length}</p>
+            </div>
+            <div className="rounded-2xl bg-neutral-50 px-3 py-2">
+              <p className="text-[11px] text-neutral-500">Đang làm</p>
+              <p className="mt-1 text-lg font-semibold text-neutral-900">{totalWorking}</p>
+            </div>
+            <div className="rounded-2xl bg-neutral-50 px-3 py-2">
+              <p className="text-[11px] text-neutral-500">Theo CN</p>
+              <p className="mt-1 text-lg font-semibold text-neutral-900">{branchRoles}</p>
+            </div>
+            <div className="rounded-2xl bg-neutral-50 px-3 py-2">
+              <p className="text-[11px] text-neutral-500">Đã nghỉ</p>
+              <p className="mt-1 text-lg font-semibold text-neutral-900">{totalInactive}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="sticky top-0 z-20 -mx-3 border-y border-neutral-200 bg-neutral-50/95 px-3 py-3 backdrop-blur">
+          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-neutral-200/70 p-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab("roles")}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${activeTab === "roles" ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"}`}
+            >
+              Vai trò
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("staff")}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${activeTab === "staff" ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"}`}
+            >
+              Nhân viên
+            </button>
+          </div>
+        </div>
+
+        {message ? (
+          <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700 shadow-sm">
+            {message}
+          </div>
+        ) : null}
+
+        {activeTab === "roles" ? (
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-neutral-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">
+                    Chọn vai trò
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-neutral-950">
+                    {selectedRole.name}
+                  </h3>
+                </div>
+                <Badge tone="green">{getRolePermissionCount(selectedRole)} quyền</Badge>
+              </div>
+
+              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                {roles.map((role) => {
+                  const active = selectedRoleId === role.id;
+                  return (
+                    <button
+                      type="button"
+                      key={role.id}
+                      onClick={() => setSelectedRoleId(role.id)}
+                      className={`shrink-0 rounded-2xl border px-3 py-2 text-sm font-semibold transition ${active ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-700"}`}
+                    >
+                      {role.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-neutral-200 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">
+                    Nhóm quyền
+                  </p>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Chọn nhóm rồi tick quyền bên dưới.
+                  </p>
+                </div>
+                <Badge tone="gray">{mobilePermissionGroups.length}</Badge>
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {mobilePermissionGroups.map((key) => {
+                  const meta = permissionGroupMeta[key];
+                  const current = selectedRole.permissions[key] || [];
+                  const active = selectedPermissionGroup === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSelectedPermissionGroup(key)}
+                      className={`shrink-0 rounded-2xl border px-3 py-2 text-left text-sm transition ${active ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-700"}`}
+                    >
+                      <span className="font-semibold">{meta.title}</span>
+                      <span className={`ml-2 text-xs ${active ? "text-neutral-300" : "text-neutral-400"}`}>
+                        {current.length}/{meta.allPermissions.length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+              <div className="border-b border-neutral-100 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-semibold text-neutral-950">
+                      {mobileSelectedGroupMeta.title}
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-neutral-500">
+                      {mobileSelectedGroupMeta.desc}
+                    </p>
+                  </div>
+                  <Badge tone={mobileCurrentPermissions.length ? "green" : "gray"}>
+                    {mobileCurrentPermissions.length}/{mobileSelectedGroupMeta.allPermissions.length}
+                  </Badge>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button
+                    variant="secondary"
+                    className="w-full px-3 py-2 text-xs"
+                    onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, true)}
+                    disabled={!mobileAllowedPermissions.length}
+                  >
+                    Chọn tất cả
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="w-full px-3 py-2 text-xs"
+                    onClick={() => togglePermissionGroup(selectedRole.id, selectedPermissionGroup, false)}
+                  >
+                    Bỏ chọn
+                  </Button>
+                </div>
+              </div>
+
+              <div className="divide-y divide-neutral-100">
+                {mobileSelectedGroupMeta.allPermissions.map((permissionName) => {
+                  const checked = mobileCurrentPermissions.includes(permissionName);
+                  const disabled = !isPermissionAllowedForRole(selectedRole.id, selectedPermissionGroup, permissionName);
+                  const code = getPermissionKey(selectedPermissionGroup, permissionName);
+                  return (
+                    <label
+                      key={permissionName}
+                      className={`flex items-start gap-3 px-4 py-3 ${disabled ? "bg-neutral-50 text-neutral-400" : checked ? "bg-blue-50/70 text-neutral-900" : "bg-white text-neutral-700"}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={disabled}
+                        onChange={(event) => updateRolePermission(selectedRole.id, selectedPermissionGroup, permissionName, event.target.checked)}
+                        className="mt-1 h-4 w-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold">{permissionName}</span>
+                        <span className="mt-1 block break-all text-[11px] text-neutral-500">{code}</span>
+                        {disabled ? (
+                          <span className="mt-1 block text-[11px] text-red-500">
+                            Chỉ dành cho Owner/Admin/Quản lý chi nhánh.
+                          </span>
+                        ) : null}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="sticky bottom-3 z-20 rounded-[24px] border border-neutral-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-neutral-900">
+                    {roleTemplateDirty ? "Có thay đổi chưa lưu" : "Mẫu quyền đã lưu"}
+                  </p>
+                  <p className="text-xs text-neutral-500">{selectedRole.name}</p>
+                </div>
+                <Button
+                  onClick={saveRoleTemplates}
+                  disabled={!roleTemplateDirty}
+                  isLoading={savingRoleTemplates}
+                  loadingText="Đang lưu..."
+                  className="shrink-0"
+                >
+                  Lưu
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "staff" ? (
+          <div className="space-y-4">
+            <details className="rounded-[28px] border border-neutral-200 bg-white p-4 shadow-sm">
+              <summary className="cursor-pointer list-none text-base font-semibold text-neutral-950">
+                + Tạo nhân viên mới
+              </summary>
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_76px] gap-2">
+                  <input
+                    className="h-11 rounded-2xl border border-neutral-300 px-3 text-sm uppercase outline-none"
+                    value={quickName}
+                    onChange={(e) => setQuickName(normalizeStaffNameBase(e.target.value))}
+                    placeholder="Tên nhân viên"
+                  />
+                  <input
+                    readOnly
+                    className="h-11 rounded-2xl border border-neutral-200 bg-neutral-50 px-2 text-center text-sm font-semibold text-neutral-700 outline-none"
+                    value={getBranchShortCode(branches, quickBranchId)}
+                    placeholder="CN"
+                  />
+                </div>
+                <select className="h-11 w-full rounded-2xl border border-neutral-300 px-3 text-sm outline-none" value={quickCode} onChange={(e) => setQuickCode(e.target.value)}>
+                  <option value="">Chọn mã NV</option>
+                  {staffCodeOptions.map((code) => <option key={code} value={code}>{code}</option>)}
+                </select>
+                <input className="h-11 w-full rounded-2xl border border-neutral-300 px-3 text-sm outline-none" value={quickUsername} onChange={(e) => setQuickUsername(normalizeUsername(e.target.value))} placeholder="Tên đăng nhập" />
+                <input type="password" className="h-11 w-full rounded-2xl border border-neutral-300 px-3 text-sm outline-none" value={quickPassword} onChange={(e) => setQuickPassword(e.target.value)} placeholder="Mật khẩu" />
+                <select className="h-11 w-full rounded-2xl border border-neutral-300 px-3 text-sm outline-none" value={quickBranchId} onChange={(e) => setQuickBranchId(e.target.value)}>
+                  {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+                </select>
+                <div>{renderRolePicker(quickRoleIds, setQuickRoleIds)}</div>
+                <Button onClick={quickAssignUser} isLoading={creatingStaff} loadingText="Đang tạo..." className="w-full">
+                  Tạo nhân viên
+                </Button>
+              </div>
+            </details>
+
+            <div className="rounded-[28px] border border-neutral-200 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-neutral-950">Nhân viên</h3>
+                  <p className="text-xs text-neutral-500">Click từng nhân viên để sửa hồ sơ hoặc gán role.</p>
+                </div>
+                <Badge tone="blue">{employees.length}</Badge>
+              </div>
+
+              <div className="space-y-3">
+                {loadingEmployees ? (
+                  <p className="text-sm text-neutral-500">Đang tải nhân sự...</p>
+                ) : employees.length === 0 ? (
+                  <p className="text-sm text-neutral-500">Chưa có nhân viên.</p>
+                ) : (
+                  employees.map((employee) => (
+                    <div key={employee.id} className="rounded-3xl border border-neutral-200 bg-white p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-base font-semibold text-neutral-950">{employee.name}</p>
+                            <Badge tone={employee.status === "ACTIVE" ? "green" : "gray"}>{employee.status === "ACTIVE" ? "Đang làm" : "Đã nghỉ"}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-neutral-500">{employee.code} · {employee.username || "chưa có username"}</p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {(employee.roles.length ? employee.roles : [employee.roleId]).filter(Boolean).map((roleId) => (
+                              <Badge key={roleId} tone="blue">{roleLabel(roles, roleId)}</Badge>
+                            ))}
+                            <Badge tone="gray">{employee.branch}</Badge>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openProfileEditor(employee)}>
+                          Sửa hồ sơ
+                        </Button>
+                        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openPermissionEditor(employee)}>
+                          Gán quyền
+                        </Button>
+                        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => setResetPasswordForId(employee.id)}>
+                          Mật khẩu
+                        </Button>
+                        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => toggleEmployee(employee.id)} disabled={togglingEmployeeForId === employee.id}>
+                          {employee.status === "ACTIVE" ? "Cho nghỉ" : "Kích hoạt"}
+                        </Button>
+                      </div>
+
+                      {renderProfileEditor(employee)}
+                      {renderPermissionEditor(employee)}
+
+                      {resetPasswordForId === employee.id ? (
+                        <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                          <input
+                            type="password"
+                            className="h-11 w-full rounded-2xl border border-neutral-300 px-3 text-sm outline-none"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="Mật khẩu mới"
+                          />
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <Button onClick={() => changePassword(employee.id)} isLoading={savingPasswordForId === employee.id} loadingText="Đang lưu..." className="px-3 py-2 text-xs">Lưu</Button>
+                            <Button variant="secondary" onClick={() => { setResetPasswordForId(null); setNewPassword(""); }} className="px-3 py-2 text-xs">Hủy</Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="hidden lg:block">
+        <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-neutral-900">
           Phân quyền
@@ -2780,6 +3117,8 @@ export default function PermissionsPageClient() {
           </div>
         </div>
       ) : null}
-    </div>
+        </div>
+      </div>
+    </>
   );
 }

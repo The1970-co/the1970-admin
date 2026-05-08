@@ -66,6 +66,8 @@ type ColumnKey =
   | "shippingAddress"
   | "note"
   | "shippingFee"
+  | "carrierShippingFee"
+  | "assignedStaff"
   | "codAmount"
   | "amountDue"
   | "finalAmount";
@@ -99,6 +101,16 @@ type CurrentUserLite = {
   }>;
 };
 
+type StaffLite = {
+  id: string;
+  code?: string | null;
+  name?: string | null;
+  fullName?: string | null;
+  branchId?: string | null;
+  branchName?: string | null;
+  isActive?: boolean;
+};
+
 type ParsedNote = {
   noteText: string;
   address: string;
@@ -112,12 +124,14 @@ type NormalizedOrder = AdminOrder & {
   _meta: ParsedNote;
   _createdByName: string;
   _shippingFee: number;
+  _carrierShippingFee: number;
+  _assignedStaffName: string;
   _codAmount: number;
   _amountDue: number;
   _createdAtDate: Date | null;
 };
 
-const TABLE_MIN_WIDTH = 2600;
+const TABLE_MIN_WIDTH = 2900;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
@@ -142,7 +156,19 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "itemCount", label: "Số món", defaultVisible: true },
   { key: "shippingAddress", label: "Địa chỉ giao", defaultVisible: true },
   { key: "note", label: "Ghi chú", defaultVisible: true },
-  { key: "shippingFee", label: "Phí ship", money: true, defaultVisible: true },
+  {
+    key: "shippingFee",
+    label: "Phí khách trả",
+    money: true,
+    defaultVisible: true,
+  },
+  {
+    key: "carrierShippingFee",
+    label: "Phí hãng VC",
+    money: true,
+    defaultVisible: true,
+  },
+  { key: "assignedStaff", label: "NV phụ trách", defaultVisible: true },
   { key: "codAmount", label: "Thu hộ COD", money: true, defaultVisible: true },
   {
     key: "amountDue",
@@ -156,7 +182,6 @@ const COLUMN_DEFS: ColumnDef[] = [
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
 }
-
 
 type ConfiguredSalesChannel = {
   id: string;
@@ -182,7 +207,7 @@ function salesChannelLabel(value?: string | null) {
   const upper = raw.toUpperCase();
 
   const configured = loadConfiguredSalesChannels().find(
-    (item) => String(item.code || "").toUpperCase() === upper
+    (item) => String(item.code || "").toUpperCase() === upper,
   );
 
   if (configured?.name) return configured.name;
@@ -260,13 +285,7 @@ function dotStateLabel(state: DotState) {
   return "Chưa";
 }
 
-function DotStatus({
-  state,
-  title,
-}: {
-  state: DotState;
-  title?: string;
-}) {
+function DotStatus({ state, title }: { state: DotState; title?: string }) {
   const label = dotStateLabel(state);
 
   if (state === "filled") {
@@ -300,8 +319,6 @@ function DotStatus({
   );
 }
 
-
-
 function getOrderItemCount(order: AdminOrder) {
   const anyOrder = order as any;
 
@@ -311,7 +328,7 @@ function getOrderItemCount(order: AdminOrder) {
       anyOrder.totalItems ??
       anyOrder.totalQuantity ??
       anyOrder.quantity ??
-      0
+      0,
   );
 
   if (explicit > 0) return explicit;
@@ -325,7 +342,7 @@ function getOrderItemCount(order: AdminOrder) {
             item.quantity ??
             item.quantityOrdered ??
             item.orderedQty ??
-            1
+            1,
         )
       );
     }, 0);
@@ -597,7 +614,6 @@ function fulfillmentStatusLabel(status?: string | null) {
   }
 }
 
-
 function shipmentStatusValue(order: AdminOrder) {
   const status = String(order.shipment?.shippingStatus || "").trim();
   if (status) return status;
@@ -718,7 +734,6 @@ function fulfillmentStatusTone(status?: string | null) {
   }
 }
 
-
 function shipmentDisplayStatusTone(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
 
@@ -813,12 +828,16 @@ function normalizeId(value: any) {
 }
 
 function getScopedBranchPermissionRows(user?: CurrentUserLite | null) {
-  const rows = Array.isArray(user?.branchPermissions) ? user.branchPermissions : [];
+  const rows = Array.isArray(user?.branchPermissions)
+    ? user.branchPermissions
+    : [];
   const currentBranchId = normalizeId(user?.branchId);
 
   if (!currentBranchId) return rows;
 
-  const scoped = rows.filter((row) => normalizeId(row?.branchId) === currentBranchId);
+  const scoped = rows.filter(
+    (row) => normalizeId(row?.branchId) === currentBranchId,
+  );
   return scoped.length ? scoped : rows;
 }
 
@@ -848,7 +867,10 @@ function getCurrentUserPermissionKeys(user?: CurrentUserLite | null) {
   return keys;
 }
 
-function hasLegacyOrderPermission(user: CurrentUserLite | null, permission: string) {
+function hasLegacyOrderPermission(
+  user: CurrentUserLite | null,
+  permission: string,
+) {
   return getScopedBranchPermissionRows(user).some((row) => {
     if (permission === "orders.view_own") return !!row.canViewOwnOrders;
     if (permission === "orders.view") return !!row.canViewBranchOrders;
@@ -864,7 +886,10 @@ function hasLegacyOrderPermission(user: CurrentUserLite | null, permission: stri
 
 function hasOrderPermission(user: CurrentUserLite | null, permission: string) {
   if (isOwnerOrAdminUser(user)) return true;
-  return getCurrentUserPermissionKeys(user).has(permission) || hasLegacyOrderPermission(user, permission);
+  return (
+    getCurrentUserPermissionKeys(user).has(permission) ||
+    hasLegacyOrderPermission(user, permission)
+  );
 }
 
 function normalizeComparableText(value?: string | null) {
@@ -917,16 +942,16 @@ function isOrderCreatedByCurrentUser(order: any, user: CurrentUserLite | null) {
 }
 
 function parseStructuredNote(note?: string): ParsedNote {
-  if (!note) {
-    return {
-      noteText: "",
-      address: "",
-      tags: "",
-      shippingMode: "",
-      shippingPartner: "",
-      shippingNote: "",
-    };
-  }
+  const empty = {
+    noteText: "",
+    address: "",
+    tags: "",
+    shippingMode: "",
+    shippingPartner: "",
+    shippingNote: "",
+  };
+
+  if (!note) return empty;
 
   const parts = note
     .split(" | ")
@@ -939,13 +964,118 @@ function parseStructuredNote(note?: string): ParsedNote {
   };
 
   return {
-    noteText: getValue("Ghi chú:"),
+    noteText:
+      getValue("Ghi chú nội bộ:") ||
+      getValue("Ghi chú đơn hàng:") ||
+      getValue("Ghi chú:"),
     address: getValue("Địa chỉ:"),
     tags: getValue("Tags:"),
     shippingMode: getValue("Cách giao:"),
     shippingPartner: getValue("Đơn vị giao:"),
     shippingNote: getValue("Ghi chú giao hàng:"),
   };
+}
+
+function looksLikeSystemOrderNoteSegment(value: string) {
+  const lower = value.toLowerCase().trim();
+
+  return (
+    lower.startsWith("địa chỉ:") ||
+    lower.startsWith("tags:") ||
+    lower.startsWith("cách giao:") ||
+    lower.startsWith("đơn vị giao:") ||
+    lower.startsWith("sđt:") ||
+    lower.startsWith("sdt:") ||
+    lower.startsWith("điện thoại:") ||
+    lower.startsWith("phí ship:") ||
+    lower.startsWith("phi ship:") ||
+    lower.startsWith("phí vận chuyển:") ||
+    lower.startsWith("phi van chuyen:") ||
+    lower.startsWith("khách đã trả:") ||
+    lower.startsWith("khach da tra:") ||
+    lower.startsWith("khách trả:") ||
+    lower.startsWith("khach tra:") ||
+    lower.startsWith("khách còn phải trả:") ||
+    lower.startsWith("khach con phai tra:") ||
+    lower.startsWith("tổng tiền:") ||
+    lower.startsWith("tong tien:") ||
+    lower.startsWith("thu hộ cod:") ||
+    lower.startsWith("thu ho cod:") ||
+    lower.startsWith("cod:") ||
+    lower.startsWith("customerid:") ||
+    lower.startsWith("customer id:") ||
+    lower.startsWith("customer_id:") ||
+    lower.startsWith("customer:") ||
+    lower.startsWith("khách hàng id:") ||
+    lower.startsWith("customername:") ||
+    lower.startsWith("customerphone:") ||
+    lower.startsWith("customeraddressid:") ||
+    lower.startsWith("customeraddress id:") ||
+    lower.startsWith("customeraddress:") ||
+    lower.startsWith("giảm giá tay:") ||
+    lower.startsWith("giam gia tay:") ||
+    lower.startsWith("giảm giá dòng:") ||
+    lower.startsWith("giam gia dong:") ||
+    lower.startsWith("giảm giá:") ||
+    lower.startsWith("giam gia:") ||
+    lower.startsWith("tự áp dụng khuyến mại:") ||
+    lower.startsWith("tu ap dung khuyen mai:") ||
+    lower.startsWith("khuyến mại:") ||
+    lower.startsWith("khuyen mai:") ||
+    lower.startsWith("mã giảm giá:") ||
+    lower.startsWith("ma giam gia:") ||
+    /^customer[a-z0-9_ -]*id:/.test(lower) ||
+    /^[a-z0-9_ -]*addressid:/.test(lower)
+  );
+}
+
+function extractPrefixedNoteValue(segment: string) {
+  return segment
+    .replace(/^Ghi chú nội bộ:\s*/i, "")
+    .replace(/^Ghi chú đơn hàng:\s*/i, "")
+    .replace(/^Ghi chú giao hàng:\s*/i, "")
+    .replace(/^Ghi chú:\s*/i, "")
+    .trim();
+}
+
+function getOrderUserNoteForTable(order: any, meta?: ParsedNote) {
+  const directNote = [
+    order?.internalNote,
+    order?.orderNote,
+    order?.customerNote,
+    order?.shippingNote,
+    meta?.noteText,
+    meta?.shippingNote,
+  ]
+    .map((value) => String(value || "").trim())
+    .find((value) => value && !looksLikeSystemOrderNoteSegment(value));
+
+  if (directNote) return directNote;
+
+  const raw = String(order?.note || "").trim();
+  if (!raw) return "";
+
+  const parts = raw
+    .split(" | ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const explicitUserNotes = parts
+    .filter((item) =>
+      /^(Ghi chú nội bộ|Ghi chú đơn hàng|Ghi chú giao hàng|Ghi chú):/i.test(
+        item,
+      ),
+    )
+    .map(extractPrefixedNoteValue)
+    .filter((item) => item && !looksLikeSystemOrderNoteSegment(item));
+
+  if (explicitUserNotes.length) return explicitUserNotes.join(" | ");
+
+  // Nếu note là chuỗi tổng hợp của hệ thống thì để trống.
+  if (parts.length > 1 || looksLikeSystemOrderNoteSegment(raw)) return "";
+
+  // Nếu người dùng nhập ghi chú tự do dạng plain text thì vẫn hiển thị.
+  return raw;
 }
 
 function shortText(text?: string, max = 28) {
@@ -1139,6 +1269,8 @@ type OrderExportColumnKey =
   | "shippingAddress"
   | "note"
   | "shippingFee"
+  | "carrierShippingFee"
+  | "assignedStaff"
   | "codAmount"
   | "amountDue"
   | "finalAmount";
@@ -1166,6 +1298,8 @@ const defaultOrderExportColumns: OrderExportColumnState = {
   shippingAddress: true,
   note: true,
   shippingFee: true,
+  carrierShippingFee: true,
+  assignedStaff: true,
   codAmount: true,
   amountDue: true,
   finalAmount: true,
@@ -1191,7 +1325,9 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   itemCount: "Số món",
   shippingAddress: "Địa chỉ giao",
   note: "Ghi chú",
-  shippingFee: "Phí ship",
+  shippingFee: "Phí khách trả",
+  carrierShippingFee: "Phí hãng VC",
+  assignedStaff: "NV phụ trách",
   codAmount: "Thu hộ COD",
   amountDue: "Khách còn phải trả",
   finalAmount: "Tổng tiền",
@@ -1246,11 +1382,15 @@ function getOrderExportRows(
     if (columns.orderStatus)
       row["Trạng thái đơn"] = orderStatusLabel(order.status);
     if (columns.paymentDotStatus)
-      row["Trạng thái thanh toán"] = dotStateLabel(paymentDotState(order.paymentStatus));
+      row["Trạng thái thanh toán"] = dotStateLabel(
+        paymentDotState(order.paymentStatus),
+      );
     if (columns.paymentStatus)
       row["Thanh toán"] = paymentStatusLabel(order.paymentStatus);
     if (columns.stockOutStatus)
-      row["Trạng thái xuất kho"] = dotStateLabel(stockOutDotState(order.status));
+      row["Trạng thái xuất kho"] = dotStateLabel(
+        stockOutDotState(order.status),
+      );
     if (columns.fulfillmentStatus)
       row["Giao vận"] = shipmentDisplayStatusLabel(order);
     if (columns.branch)
@@ -1260,8 +1400,10 @@ function getOrderExportRows(
         "";
     if (columns.createdBy)
       row["Nhân viên tạo đơn"] = order._createdByName || "";
-    if (columns.salesChannel) row["Kênh bán"] = salesChannelLabel(order.salesChannel);
-    if (columns.shippingMode) row["Cách giao"] = shippingModeLabel(meta.shippingMode);
+    if (columns.salesChannel)
+      row["Kênh bán"] = salesChannelLabel(order.salesChannel);
+    if (columns.shippingMode)
+      row["Cách giao"] = shippingModeLabel(meta.shippingMode);
     if (columns.shippingPartner)
       row["Đơn vị VC"] = order.shipment?.carrier || meta.shippingPartner || "";
     if (columns.trackingCode)
@@ -1273,9 +1415,12 @@ function getOrderExportRows(
           : "Chưa in";
     if (columns.itemCount) row["Số món"] = getOrderItemCount(order);
     if (columns.shippingAddress) row["Địa chỉ giao"] = meta.address || "";
-    if (columns.note)
-      row["Ghi chú"] = meta.noteText || meta.shippingNote || order.note || "";
-    if (columns.shippingFee) row["Phí ship"] = order._shippingFee;
+    if (columns.note) row["Ghi chú"] = getOrderUserNoteForTable(order, meta);
+    if (columns.shippingFee) row["Phí khách trả"] = order._shippingFee;
+    if (columns.carrierShippingFee)
+      row["Phí hãng VC"] = order._carrierShippingFee;
+    if (columns.assignedStaff)
+      row["NV phụ trách"] = order._assignedStaffName || "";
     if (columns.codAmount) row["Thu hộ COD"] = order._codAmount;
     if (columns.amountDue) row["Khách còn phải trả"] = order._amountDue;
     if (columns.finalAmount) row["Tổng tiền"] = Number(order.finalAmount || 0);
@@ -1442,6 +1587,8 @@ export default function OrdersPageClient() {
   const [printVersion, setPrintVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
+  const [quickViewOrder, setQuickViewOrder] = useState<AdminOrder | null>(null);
+  const [quickViewLoading, setQuickViewLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("");
   const [confirmDescription, setConfirmDescription] = useState("");
@@ -1453,6 +1600,10 @@ export default function OrdersPageClient() {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [branches, setBranches] = useState<BranchItem[]>([]);
+  const [staffList, setStaffList] = useState<StaffLite[]>([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignStaffId, setAssignStaffId] = useState("");
+  const [assigningOrders, setAssigningOrders] = useState(false);
 
   const [exportOpen, setExportOpen] = useState(false);
   const [exportScope, setExportScope] = useState<OrderExportScope>("filtered");
@@ -1477,6 +1628,26 @@ export default function OrdersPageClient() {
       setBranches(Array.isArray(data) ? data : []);
     } catch {
       setBranches([]);
+    }
+  };
+
+  const loadStaffList = async () => {
+    try {
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const res = await fetch(`${API_BASE}/staff`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => null);
+      const data = Array.isArray(json)
+        ? json
+        : Array.isArray(json?.data)
+          ? json.data
+          : [];
+      setStaffList(data.filter((item: any) => item?.isActive !== false));
+    } catch {
+      setStaffList([]);
     }
   };
 
@@ -1560,11 +1731,28 @@ export default function OrdersPageClient() {
   const scrollStorageKey = `${TABLE_SCROLL_STORAGE_KEY}.${userStorageSuffix}`;
 
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>([]);
+  const [draftVisibleColumns, setDraftVisibleColumns] = useState<ColumnKey[]>(
+    [],
+  );
+  const dragColumnKeyRef = useRef<ColumnKey | null>(null);
 
   const branchLabel = (branchId?: string | null) => {
     if (!branchId) return "All";
     return branches.find((b) => b.id === branchId)?.name || branchId;
   };
+
+  const staffLabel = (staff?: StaffLite | null) => {
+    if (!staff) return "—";
+    return staff.name || staff.fullName || staff.code || staff.id;
+  };
+
+  const assignableStaffList = useMemo(() => {
+    if (isOwnerOrAdminUser(currentUser) || branchFilter === "ALL")
+      return staffList;
+    return staffList.filter(
+      (staff) => !staff.branchId || staff.branchId === branchFilter,
+    );
+  }, [staffList, currentUser, branchFilter]);
 
   const openOrderInNewTab = (order: AdminOrder, action?: string) => {
     const baseHref = `/orders/${encodeURIComponent(order.id)}`;
@@ -1596,6 +1784,51 @@ export default function OrdersPageClient() {
     });
 
     window.open(href, "_blank", "noopener,noreferrer");
+  };
+
+  const fetchFullOrderDetail = async (
+    order: AdminOrder,
+  ): Promise<AdminOrder> => {
+    const hasFullItems =
+      Array.isArray(order.items) &&
+      order.items.some((item: any) => item?.productName || item?.sku);
+
+    if (hasFullItems) return order;
+
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+    const res = await fetch(
+      `${API_BASE}/orders/${encodeURIComponent(order.id)}`,
+      {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      },
+    );
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      throw new Error(json?.message || "Không tải được chi tiết đơn hàng.");
+    }
+
+    return json as AdminOrder;
+  };
+
+  const openQuickViewOrder = async (order: AdminOrder) => {
+    try {
+      setQuickViewLoading(true);
+      setActionMessage("");
+      const fullOrder = await fetchFullOrderDetail(order);
+      setQuickViewOrder(fullOrder);
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error
+          ? err.message
+          : "Không mở được xem nhanh đơn hàng.",
+      );
+    } finally {
+      setQuickViewLoading(false);
+    }
   };
 
   const updateTableScrollState = () => {
@@ -1730,13 +1963,16 @@ export default function OrdersPageClient() {
       });
 
     void loadBranches();
+    void loadStaffList();
   }, []);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(columnStorageKey);
       if (!raw) {
-        setVisibleColumns(defaultVisibleColumns(canSeeMoney));
+        const defaults = defaultVisibleColumns(canSeeMoney);
+        setVisibleColumns(defaults);
+        setDraftVisibleColumns(defaults);
         return;
       }
 
@@ -1747,23 +1983,17 @@ export default function OrdersPageClient() {
       const cleaned = parsed.filter((key) => allowed.includes(key));
       const defaults = defaultVisibleColumns(canSeeMoney);
       const merged = cleaned.length
-        ? [
-            ...cleaned,
-            ...defaults.filter((key) => !cleaned.includes(key)),
-          ]
+        ? [...cleaned, ...defaults.filter((key) => !cleaned.includes(key))]
         : defaults;
 
-      const orderIndex = new Map(
-        COLUMN_DEFS.map((col, index) => [col.key, index])
-      );
-
-      setVisibleColumns(
-        merged.sort(
-          (a, b) => (orderIndex.get(a) ?? 999) - (orderIndex.get(b) ?? 999)
-        )
-      );
+      // Giữ đúng thứ tự đã kéo thả trong localStorage, không sort lại theo COLUMN_DEFS.
+      const nextColumns = merged;
+      setVisibleColumns(nextColumns);
+      setDraftVisibleColumns(nextColumns);
     } catch {
-      setVisibleColumns(defaultVisibleColumns(canSeeMoney));
+      const defaults = defaultVisibleColumns(canSeeMoney);
+      setVisibleColumns(defaults);
+      setDraftVisibleColumns(defaults);
     }
   }, [canSeeMoney, columnStorageKey]);
 
@@ -1799,6 +2029,10 @@ export default function OrdersPageClient() {
       window.removeEventListener("resize", updateTableScrollState);
     };
   }, [visibleColumns.length, orders.length, page, scrollStorageKey]);
+
+  useEffect(() => {
+    if (showColumnMenu) setDraftVisibleColumns(visibleColumns);
+  }, [showColumnMenu]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -1959,9 +2193,15 @@ export default function OrdersPageClient() {
         ...order,
         _meta: meta,
         _createdByName: getCreatedByName(order),
-        _shippingFee: Number(
-          order.shippingFee || order.shipment?.shippingFee || 0,
-        ),
+        _assignedStaffName: String(
+          (order as any).assignedStaffName ||
+            (order as any).assignedStaff?.name ||
+            (order as any).assignedToStaffName ||
+            getCreatedByName(order) ||
+            "",
+        ).trim(),
+        _shippingFee: Number(order.shippingFee || 0),
+        _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
         _codAmount: Number(order.shipment?.codAmount || 0),
         _amountDue: amountCustomerStillOwes(order),
         _createdAtDate: parseOrderDate(order.createdAt),
@@ -2640,7 +2880,7 @@ export default function OrdersPageClient() {
 
     setConfirmOpen(true);
   };
-  const handlePrint = (
+  const handlePrint = async (
     type: "shipping" | "sales",
     paper: PrintPaperSize,
     sourceOrders: NormalizedOrder[] = checkedOrders,
@@ -2649,7 +2889,11 @@ export default function OrdersPageClient() {
 
     const templates = loadPrintTemplates();
 
-    const html = sourceOrders
+    const fullOrders = await Promise.all(
+      sourceOrders.map((order) => fetchFullOrderDetail(order)),
+    );
+
+    const html = fullOrders
       .map((order) => {
         const template = findPrintTemplate({
           templates,
@@ -2816,7 +3060,7 @@ export default function OrdersPageClient() {
   };
 
   const toggleColumn = (key: ColumnKey) => {
-    setVisibleColumns((prev) => {
+    setDraftVisibleColumns((prev) => {
       if (prev.includes(key)) {
         if (prev.length === 1) return prev;
         return prev.filter((x) => x !== key);
@@ -2826,11 +3070,23 @@ export default function OrdersPageClient() {
   };
 
   const resetColumns = () => {
-    setVisibleColumns(defaultVisibleColumns(canSeeMoney));
+    setDraftVisibleColumns(defaultVisibleColumns(canSeeMoney));
+  };
+
+  const saveColumns = () => {
+    const allowed = COLUMN_DEFS.filter((col) =>
+      canSeeMoney ? true : !col.money,
+    ).map((col) => col.key);
+    const cleaned = draftVisibleColumns.filter((key) => allowed.includes(key));
+    const next = cleaned.length ? cleaned : defaultVisibleColumns(canSeeMoney);
+    setVisibleColumns(next);
+    localStorage.setItem(columnStorageKey, JSON.stringify(next));
+    setShowColumnMenu(false);
+    window.requestAnimationFrame(updateTableScrollState);
   };
 
   const moveColumn = (key: ColumnKey, direction: "up" | "down") => {
-    setVisibleColumns((prev) => {
+    setDraftVisibleColumns((prev) => {
       const index = prev.indexOf(key);
       if (index < 0) return prev;
       const nextIndex = direction === "up" ? index - 1 : index + 1;
@@ -2843,7 +3099,25 @@ export default function OrdersPageClient() {
     });
   };
 
-  const isColumnVisible = (key: ColumnKey) => visibleColumns.includes(key);
+  const handleColumnDragStart = (key: ColumnKey) => {
+    dragColumnKeyRef.current = key;
+  };
+
+  const handleColumnDrop = (targetKey: ColumnKey) => {
+    const sourceKey = dragColumnKeyRef.current;
+    dragColumnKeyRef.current = null;
+    if (!sourceKey || sourceKey === targetKey) return;
+
+    setDraftVisibleColumns((prev) => {
+      if (!prev.includes(sourceKey) || !prev.includes(targetKey)) return prev;
+      const next = prev.filter((key) => key !== sourceKey);
+      const targetIndex = next.indexOf(targetKey);
+      next.splice(targetIndex, 0, sourceKey);
+      return next;
+    });
+  };
+
+  const isColumnVisible = (key: ColumnKey) => draftVisibleColumns.includes(key);
 
   const applyQuickDate = (key: QuickDateKey) => {
     setQuickDate(key);
@@ -2881,6 +3155,8 @@ export default function OrdersPageClient() {
     shippingAddress: "w-[260px]",
     note: "w-[230px]",
     shippingFee: "w-[120px]",
+    carrierShippingFee: "w-[120px]",
+    assignedStaff: "w-[150px]",
     codAmount: "w-[125px]",
     amountDue: "w-[150px]",
     finalAmount: "w-[130px]",
@@ -3218,11 +3494,10 @@ export default function OrdersPageClient() {
             key={key}
             className="border-b border-neutral-100 px-3 py-3 min-w-[200px]"
           >
-            <span
-              title={meta.noteText || meta.shippingNote || order.note || ""}
-            >
-              {shortText(meta.noteText || meta.shippingNote || order.note, 34)}
-            </span>
+            {(() => {
+              const noteText = getOrderUserNoteForTable(order, meta);
+              return <span title={noteText}>{shortText(noteText, 34)}</span>;
+            })()}
           </td>
         );
       case "shippingFee":
@@ -3230,8 +3505,30 @@ export default function OrdersPageClient() {
           <td
             key={key}
             className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+            title="Phí ship tính vào đơn khách thanh toán"
           >
             {currency(order._shippingFee)}
+          </td>
+        );
+      case "carrierShippingFee":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+            title="Phí thực tế hãng vận chuyển trả về trên vận đơn"
+          >
+            {order._carrierShippingFee
+              ? currency(order._carrierShippingFee)
+              : "—"}
+          </td>
+        );
+      case "assignedStaff":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs text-neutral-700"
+          >
+            {order._assignedStaffName || "—"}
           </td>
         );
       case "codAmount":
@@ -3263,6 +3560,57 @@ export default function OrdersPageClient() {
         );
       default:
         return null;
+    }
+  };
+
+  const openAssignDialog = () => {
+    if (!checkedIds.length) {
+      setActionMessage("Chọn ít nhất 1 đơn trước khi gán nhân viên.");
+      return;
+    }
+    setAssignStaffId("");
+    setAssignOpen(true);
+  };
+
+  const handleAssignOrders = async () => {
+    if (!assignStaffId) {
+      setActionMessage("Chưa chọn nhân viên để gán đơn.");
+      return;
+    }
+
+    try {
+      setAssigningOrders(true);
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      await Promise.all(
+        checkedIds.map(async (orderId) => {
+          const res = await fetch(
+            `${API_BASE}/orders/${encodeURIComponent(orderId)}/assign-staff`,
+            {
+              method: "PATCH",
+              headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify({ assignedStaffId: assignStaffId }),
+            },
+          );
+          const json = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(json?.message || "Không gán được đơn.");
+        }),
+      );
+
+      setAssignOpen(false);
+      setActionMessage(`Đã gán ${checkedIds.length} đơn.`);
+      setCheckedIds([]);
+      await loadOrders();
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Không gán được đơn.",
+      );
+    } finally {
+      setAssigningOrders(false);
     }
   };
 
@@ -3497,7 +3845,8 @@ export default function OrdersPageClient() {
                           {order.orderCode}
                         </button>
                         <p className="mt-1 truncate text-xs text-neutral-500">
-                          {order.createdAt || "—"} · {branchLabel(order.branchId)}
+                          {order.createdAt || "—"} ·{" "}
+                          {branchLabel(order.branchId)}
                         </p>
                       </div>
 
@@ -3513,7 +3862,9 @@ export default function OrdersPageClient() {
 
                     <div className="mt-3 grid gap-2 text-xs text-neutral-600">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="truncate">{order.customerName || "Khách lẻ"}</span>
+                        <span className="truncate">
+                          {order.customerName || "Khách lẻ"}
+                        </span>
                         <span className="shrink-0 font-semibold text-neutral-900">
                           {order.customerPhone || "—"}
                         </span>
@@ -3529,7 +3880,9 @@ export default function OrdersPageClient() {
                             state={stockOutDotState(order.status)}
                             title={`Xuất kho: ${orderStatusLabel(order.status)}`}
                           />
-                          <span className="text-[10px] font-semibold text-neutral-500">XK</span>
+                          <span className="text-[10px] font-semibold text-neutral-500">
+                            XK
+                          </span>
                         </span>
                         <StatusBadge
                           label={paymentStatusLabel(order.paymentStatus)}
@@ -3540,7 +3893,9 @@ export default function OrdersPageClient() {
                             state={paymentDotState(order.paymentStatus)}
                             title={`Thanh toán: ${paymentStatusLabel(order.paymentStatus)}`}
                           />
-                          <span className="text-[10px] font-semibold text-neutral-500">TT</span>
+                          <span className="text-[10px] font-semibold text-neutral-500">
+                            TT
+                          </span>
                         </span>
                         <StatusBadge
                           label={shipmentDisplayStatusLabel(order)}
@@ -3565,7 +3920,9 @@ export default function OrdersPageClient() {
                       <div>
                         <p className="text-neutral-500">Tổng</p>
                         <p className="mt-1 font-semibold text-neutral-950">
-                          {canSeeMoney ? currency(Number(order.finalAmount || 0)) : "—"}
+                          {canSeeMoney
+                            ? currency(Number(order.finalAmount || 0))
+                            : "—"}
                         </p>
                       </div>
                     </div>
@@ -3620,626 +3977,755 @@ export default function OrdersPageClient() {
 
       <div className="hidden lg:block">
         <div className="space-y-4">
-      <Panel className="p-5">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-          <SummaryCard
-            title="Chờ duyệt"
-            value={counts.waitingApprove}
-            active={quickStatus === "WAITING_APPROVE"}
-            icon="✓"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "WAITING_APPROVE" ? "ALL" : "WAITING_APPROVE",
-              )
-            }
-          />
-          <SummaryCard
-            title="Chờ thanh toán"
-            value={counts.waitingPayment}
-            active={quickStatus === "WAITING_PAYMENT"}
-            icon="₫"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "WAITING_PAYMENT" ? "ALL" : "WAITING_PAYMENT",
-              )
-            }
-          />
-          <SummaryCard
-            title="Chờ đóng gói"
-            value={counts.waitingPacking}
-            active={quickStatus === "WAITING_PACKING"}
-            icon="□"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "WAITING_PACKING" ? "ALL" : "WAITING_PACKING",
-              )
-            }
-          />
-          <SummaryCard
-            title="Chờ gửi hãng"
-            value={counts.waitingShip}
-            active={quickStatus === "WAITING_SHIP"}
-            icon="→"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "WAITING_SHIP" ? "ALL" : "WAITING_SHIP",
-              )
-            }
-          />
-          <SummaryCard
-            title="Đang giao hàng"
-            value={counts.delivering}
-            active={quickStatus === "DELIVERING"}
-            icon="↗"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "DELIVERING" ? "ALL" : "DELIVERING",
-              )
-            }
-          />
-          <SummaryCard
-            title="Sắp giao"
-            value={counts.soonDelivery}
-            active={quickStatus === "SOON_DELIVERY"}
-            icon="◔"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "SOON_DELIVERY" ? "ALL" : "SOON_DELIVERY",
-              )
-            }
-          />
-          <SummaryCard
-            title="Đơn giao không thành công"
-            value={counts.failed}
-            active={quickStatus === "FAIL"}
-            icon="!"
-            onClick={() =>
-              setQuickStatus((prev) => (prev === "FAIL" ? "ALL" : "FAIL"))
-            }
-          />
-          <SummaryCard
-            title="Đơn giao lại"
-            value={counts.redelivery}
-            active={quickStatus === "REDELIVERY"}
-            icon="↺"
-            onClick={() =>
-              setQuickStatus((prev) =>
-                prev === "REDELIVERY" ? "ALL" : "REDELIVERY",
-              )
-            }
-          />
-        </div>
+          <Panel className="p-5">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+              <SummaryCard
+                title="Chờ duyệt"
+                value={counts.waitingApprove}
+                active={quickStatus === "WAITING_APPROVE"}
+                icon="✓"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "WAITING_APPROVE" ? "ALL" : "WAITING_APPROVE",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Chờ thanh toán"
+                value={counts.waitingPayment}
+                active={quickStatus === "WAITING_PAYMENT"}
+                icon="₫"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "WAITING_PAYMENT" ? "ALL" : "WAITING_PAYMENT",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Chờ đóng gói"
+                value={counts.waitingPacking}
+                active={quickStatus === "WAITING_PACKING"}
+                icon="□"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "WAITING_PACKING" ? "ALL" : "WAITING_PACKING",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Chờ gửi hãng"
+                value={counts.waitingShip}
+                active={quickStatus === "WAITING_SHIP"}
+                icon="→"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "WAITING_SHIP" ? "ALL" : "WAITING_SHIP",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Đang giao hàng"
+                value={counts.delivering}
+                active={quickStatus === "DELIVERING"}
+                icon="↗"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "DELIVERING" ? "ALL" : "DELIVERING",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Sắp giao"
+                value={counts.soonDelivery}
+                active={quickStatus === "SOON_DELIVERY"}
+                icon="◔"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "SOON_DELIVERY" ? "ALL" : "SOON_DELIVERY",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Đơn giao không thành công"
+                value={counts.failed}
+                active={quickStatus === "FAIL"}
+                icon="!"
+                onClick={() =>
+                  setQuickStatus((prev) => (prev === "FAIL" ? "ALL" : "FAIL"))
+                }
+              />
+              <SummaryCard
+                title="Đơn giao lại"
+                value={counts.redelivery}
+                active={quickStatus === "REDELIVERY"}
+                icon="↺"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "REDELIVERY" ? "ALL" : "REDELIVERY",
+                  )
+                }
+              />
+            </div>
 
-        {quickStatus !== "ALL" ? (
-          <div className="mt-4">
-            <Button onClick={() => setQuickStatus("ALL")} size="sm">
-              Bỏ lọc nhanh
-            </Button>
-          </div>
-        ) : null}
-      </Panel>
-
-      <Panel className="p-4">
-        <div className="flex flex-wrap gap-2">
-          <SmallChip
-            active={quickDate === "all"}
-            onClick={() => applyQuickDate("all")}
-          >
-            Tất cả
-          </SmallChip>
-          <SmallChip
-            active={quickDate === "today"}
-            onClick={() => applyQuickDate("today")}
-          >
-            Hôm nay
-          </SmallChip>
-          <SmallChip
-            active={quickDate === "yesterday"}
-            onClick={() => applyQuickDate("yesterday")}
-          >
-            Hôm qua
-          </SmallChip>
-          <SmallChip
-            active={quickDate === "7d"}
-            onClick={() => applyQuickDate("7d")}
-          >
-            7 ngày
-          </SmallChip>
-          <SmallChip
-            active={quickDate === "30d"}
-            onClick={() => applyQuickDate("30d")}
-          >
-            30 ngày
-          </SmallChip>
-          <SmallChip
-            active={quickDate === "month"}
-            onClick={() => applyQuickDate("month")}
-          >
-            Tháng này
-          </SmallChip>
-        </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-[1.7fr_1fr_1fr_1fr_auto_auto]">
-          <input
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-            placeholder="Tìm mã đơn, khách hàng, SĐT, địa chỉ..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-            value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value)}
-            disabled={
-              !!currentUser?.branchId &&
-              currentUser?.role !== "admin" &&
-              currentUser?.role !== "owner"
-            }
-          >
-            {branchOptions.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-            value={orderFilter}
-            onChange={(e) =>
-              setOrderFilter(e.target.value as "ALL" | OrderStatus)
-            }
-          >
-            <option value="ALL">Tất cả trạng thái đơn</option>
-            <option value="NEW">Mới tạo</option>
-            <option value="APPROVED">Đã duyệt</option>
-            <option value="PACKING">Đang xử lý</option>
-            <option value="SHIPPED">Đã xuất kho</option>
-            <option value="COMPLETED">Hoàn thành</option>
-            <option value="CANCELLED">Đã hủy</option>
-          </select>
-
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-            value={paymentFilter}
-            onChange={(e) =>
-              setPaymentFilter(e.target.value as "ALL" | OrderPaymentStatus)
-            }
-          >
-            <option value="ALL">Tất cả thanh toán</option>
-            <option value="UNPAID">Chưa thanh toán</option>
-            <option value="PARTIAL">Thanh toán một phần</option>
-            <option value="PAID">Đã thanh toán</option>
-            <option value="PENDING_COD">Chờ thu COD</option>
-            <option value="REFUNDED">Đã hoàn tiền</option>
-            <option value="FAILED">Thanh toán lỗi</option>
-          </select>
-
-          <Button onClick={() => void loadOrders()} size="md">
-            Làm mới
-          </Button>
-
-          {canExportOrderExcel ? (
-            <Button
-              onClick={() => setExportOpen(true)}
-              size="md"
-              variant="primary"
-            >
-              Xuất Excel
-            </Button>
-          ) : null}
-
-          <div className="relative" ref={columnMenuRef}>
-            <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">
-              Cột hiển thị
-            </Button>
-
-            {showColumnMenu ? (
-              <div className="fixed inset-y-0 right-0 z-[120] flex w-full max-w-[420px] flex-col border-l border-neutral-200 bg-white shadow-2xl">
-                <div className="flex items-start justify-between gap-3 border-b border-neutral-100 p-4">
-                  <div>
-                    <p className="text-base font-semibold text-neutral-900">
-                      Cột hiển thị
-                    </p>
-                    <p className="mt-1 text-xs text-neutral-500">
-                      Tick để hiện/ẩn, dùng ↑ ↓ để đổi thứ tự cột.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={resetColumns}
-                      className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-50"
-                    >
-                      Mặc định
-                    </button>
-                    <button
-                      onClick={() => setShowColumnMenu(false)}
-                      className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
-                    >
-                      Đóng
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="grid gap-2">
-                    {COLUMN_DEFS.filter((col) =>
-                      canSeeMoney ? true : !col.money,
-                    ).map((col) => {
-                      const index = visibleColumns.indexOf(col.key);
-                      return (
-                        <div
-                          key={col.key}
-                          className="grid grid-cols-[24px_1fr_38px_38px] items-center gap-2 rounded-2xl border border-neutral-100 bg-white px-3 py-2.5 text-sm shadow-sm hover:bg-neutral-50"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isColumnVisible(col.key)}
-                            onChange={() => toggleColumn(col.key)}
-                          />
-                          <span className="min-w-0 truncate font-medium text-neutral-800">
-                            {col.label}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={index <= 0}
-                            onClick={() => moveColumn(col.key, "up")}
-                            className="rounded-xl border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-700 disabled:opacity-30"
-                            title="Đưa cột lên trước"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            disabled={
-                              index < 0 || index >= visibleColumns.length - 1
-                            }
-                            onClick={() => moveColumn(col.key, "down")}
-                            className="rounded-xl border border-neutral-200 px-2 py-1 text-[11px] font-semibold text-neutral-700 disabled:opacity-30"
-                            title="Đưa cột xuống sau"
-                          >
-                            ↓
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+            {quickStatus !== "ALL" ? (
+              <div className="mt-4">
+                <Button onClick={() => setQuickStatus("ALL")} size="sm">
+                  Bỏ lọc nhanh
+                </Button>
               </div>
             ) : null}
-          </div>
-        </div>
+          </Panel>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setShowAdvancedFilters((v) => !v)}
-          >
-            {showAdvancedFilters ? "Ẩn bộ lọc nâng cao" : "Bộ lọc nâng cao"}
-            {activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
-          </Button>
+          <Panel className="p-4">
+            <div className="flex flex-wrap gap-2">
+              <SmallChip
+                active={quickDate === "all"}
+                onClick={() => applyQuickDate("all")}
+              >
+                Tất cả
+              </SmallChip>
+              <SmallChip
+                active={quickDate === "today"}
+                onClick={() => applyQuickDate("today")}
+              >
+                Hôm nay
+              </SmallChip>
+              <SmallChip
+                active={quickDate === "yesterday"}
+                onClick={() => applyQuickDate("yesterday")}
+              >
+                Hôm qua
+              </SmallChip>
+              <SmallChip
+                active={quickDate === "7d"}
+                onClick={() => applyQuickDate("7d")}
+              >
+                7 ngày
+              </SmallChip>
+              <SmallChip
+                active={quickDate === "30d"}
+                onClick={() => applyQuickDate("30d")}
+              >
+                30 ngày
+              </SmallChip>
+              <SmallChip
+                active={quickDate === "month"}
+                onClick={() => applyQuickDate("month")}
+              >
+                Tháng này
+              </SmallChip>
+            </div>
 
-          {activeAdvancedFilterCount ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={clearAdvancedFilters}
-            >
-              Xóa lọc nâng cao
-            </Button>
-          ) : null}
-
-          <p className="text-xs text-neutral-500">
-            Đang hiển thị {visibleOrders.length} / {totalItems} đơn theo bộ lọc
-            hiện tại
-          </p>
-        </div>
-
-        {showAdvancedFilters ? (
-          <div className="mt-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-3">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-4 grid gap-3 md:grid-cols-[1.7fr_1fr_1fr_1fr_auto_auto]">
               <input
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                placeholder="Lọc mọi thông tin trong bảng..."
-                value={freeTextFilter}
-                onChange={(e) => setFreeTextFilter(e.target.value)}
+                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                placeholder="Tìm mã đơn, khách hàng, SĐT, địa chỉ..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
               />
 
               <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                value={createdByFilter}
-                onChange={(e) => setCreatedByFilter(e.target.value)}
-              >
-                <option value="ALL">Tất cả nhân viên tạo đơn</option>
-                {createdByOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                value={fulfillmentFilter}
-                onChange={(e) => setFulfillmentFilter(e.target.value)}
-              >
-                <option value="ALL">Tất cả giao vận</option>
-                <option value="UNFULFILLED">Chưa giao</option>
-                <option value="PROCESSING">Đang chuẩn bị</option>
-                <option value="PARTIAL">Một phần</option>
-                <option value="FULFILLED">Đã giao vận</option>
-                <option value="RETURNED">Trả hàng</option>
-              </select>
-
-              <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                value={salesChannelFilter}
-                onChange={(e) => setSalesChannelFilter(e.target.value)}
-              >
-                <option value="ALL">Tất cả kênh bán</option>
-                {salesChannelOptions.map((channel) => (
-                  <option key={channel} value={channel}>
-                    {channel}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                value={shippingModeFilter}
-                onChange={(e) => setShippingModeFilter(e.target.value)}
-              >
-                <option value="ALL">Tất cả cách giao</option>
-                {shippingModeOptions.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {mode}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                value={shippingPartnerFilter}
-                onChange={(e) => setShippingPartnerFilter(e.target.value)}
-              >
-                <option value="ALL">Tất cả đơn vị vận chuyển</option>
-                {shippingPartnerOptions.map((partner) => (
-                  <option key={partner} value={partner}>
-                    {partner}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                value={trackingFilter}
-                onChange={(e) => setTrackingFilter(e.target.value)}
-              >
-                <option value="ALL">Tất cả mã vận đơn</option>
-                <option value="HAS">Có mã vận đơn</option>
-                <option value="NONE">Chưa có mã vận đơn</option>
-              </select>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-              Từ ngày
-            </label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setQuickDate("all");
-                setDateFrom(e.target.value);
-              }}
-              className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-              Đến ngày
-            </label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setQuickDate("all");
-                setDateTo(e.target.value);
-              }}
-              className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-            />
-          </div>
-
-          <div className="flex items-end">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setQuickDate("all");
-                setDateFrom("");
-                setDateTo("");
-              }}
-            >
-              Xóa lọc ngày
-            </Button>
-          </div>
-        </div>
-      </Panel>
-
-      <Panel className="p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            {canApproveOrder ? (
-              <Button
-                variant="primary"
-                size="md"
-                onClick={() => void handleBulkApprove()}
-                disabled={!checkedIds.length || savingOrderStatus}
-              >
-                Duyệt đơn
-              </Button>
-            ) : null}
-
-            {canPackShipOrder ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => void handleBulkSendToCarrier()}
-                disabled={!checkedIds.length || savingOrderStatus}
-              >
-                Gửi hãng vận chuyển
-              </Button>
-            ) : null}
-
-            {canPayOrder ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => void handleBulkMarkPaid()}
-                disabled={!checkedIds.length || savingPaymentStatus}
-              >
-                Đánh dấu đã thanh toán
-              </Button>
-            ) : null}
-
-            {singleCheckedOrder ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => copyOrderToNewTab(singleCheckedOrder)}
-              >
-                Sao chép đơn
-              </Button>
-            ) : null}
-
-            {canCancelOrder ? (
-              <Button
-                variant="warning"
-                size="md"
-                onClick={() => void handleBulkInternalCancel()}
-                disabled={!checkedIds.length || savingOrderStatus}
-              >
-                Huỷ nội bộ
-              </Button>
-            ) : null}
-
-            {canRedeliverySelected && singleCheckedOrder ? (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() =>
-                  openOrderInNewTab(singleCheckedOrder, "redelivery")
+                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                disabled={
+                  !!currentUser?.branchId &&
+                  currentUser?.role !== "admin" &&
+                  currentUser?.role !== "owner"
                 }
               >
-                Giao lại
-              </Button>
-            ) : null}
+                {branchOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
 
-            {canCancelOrder ? (
-              <Button
-                variant="warning"
-                size="md"
-                onClick={() => void handleBulkCancel()}
-                disabled={!checkedIds.length || savingOrderStatus}
+              <select
+                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                value={orderFilter}
+                onChange={(e) =>
+                  setOrderFilter(e.target.value as "ALL" | OrderStatus)
+                }
               >
-                Hủy GHN
-              </Button>
-            ) : null}
+                <option value="ALL">Tất cả trạng thái đơn</option>
+                <option value="NEW">Mới tạo</option>
+                <option value="APPROVED">Đã duyệt</option>
+                <option value="PACKING">Đang xử lý</option>
+                <option value="SHIPPED">Đã xuất kho</option>
+                <option value="COMPLETED">Hoàn thành</option>
+                <option value="CANCELLED">Đã hủy</option>
+              </select>
 
-            {canDeleteOrder ? (
-              <Button
-                variant="danger"
-                size="md"
-                onClick={() => void handleBulkDelete()}
-                disabled={!checkedIds.length || deletingOrders}
+              <select
+                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                value={paymentFilter}
+                onChange={(e) =>
+                  setPaymentFilter(e.target.value as "ALL" | OrderPaymentStatus)
+                }
               >
-                {deletingOrders ? "Đang xóa..." : "Xóa đơn"}
-              </Button>
-            ) : null}
+                <option value="ALL">Tất cả thanh toán</option>
+                <option value="UNPAID">Chưa thanh toán</option>
+                <option value="PARTIAL">Thanh toán một phần</option>
+                <option value="PAID">Đã thanh toán</option>
+                <option value="PENDING_COD">Chờ thu COD</option>
+                <option value="REFUNDED">Đã hoàn tiền</option>
+                <option value="FAILED">Thanh toán lỗi</option>
+              </select>
 
-            <span className={`ml-2 rounded-full px-3 py-1 text-sm font-semibold ${
-              checkedIds.length
-                ? "bg-neutral-900 text-white"
-                : "bg-neutral-100 text-neutral-500"
-            }`}>
-              {checkedIds.length ? `Đã chọn ${checkedIds.length} kết quả` : "Chưa chọn kết quả"}
-            </span>
-
-            <div className="relative" ref={printMenuRef}>
-              <Button onClick={() => setShowPrintMenu((v) => !v)} disabled={!checkedIds.length}>
-                In đơn hàng
+              <Button onClick={() => void loadOrders()} size="md">
+                Làm mới
               </Button>
 
-              {showPrintMenu ? (
-                <div className="absolute left-0 z-30 mt-2 w-64 rounded-3xl border border-neutral-200 bg-white p-2 shadow-xl">
-                  <button
-                    className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    onClick={() => {
-                      setShowPrintMenu(false);
-                      handlePrint("shipping", "80mm");
-                    }}
-                  >
-                    Phiếu giao hàng 80mm
-                  </button>
-
-                  <button
-                    className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    onClick={() => {
-                      setShowPrintMenu(false);
-                      handlePrint("shipping", "A4");
-                    }}
-                  >
-                    Phiếu giao hàng A4
-                  </button>
-
-                  <button
-                    className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    onClick={() => {
-                      setShowPrintMenu(false);
-                      handlePrint("shipping", "A5");
-                    }}
-                  >
-                    Phiếu giao hàng A5
-                  </button>
-
-                  <button
-                    className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    onClick={() => {
-                      setShowPrintMenu(false);
-                      handlePrint("sales", "80mm");
-                    }}
-                  >
-                    Phiếu bán hàng 80mm
-                  </button>
-                </div>
+              {canExportOrderExcel ? (
+                <Button
+                  onClick={() => setExportOpen(true)}
+                  size="md"
+                  variant="primary"
+                >
+                  Xuất Excel
+                </Button>
               ) : null}
+
+              <div className="w-full md:col-span-full" ref={columnMenuRef}>
+                <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">
+                  Cột hiển thị
+                </Button>
+
+                {showColumnMenu ? (
+                  <div className="mt-3 rounded-[24px] border border-neutral-200 bg-neutral-50 p-3">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-neutral-900">
+                          Cột hiển thị
+                        </p>
+                        <p className="mt-1 text-[11px] text-neutral-500">
+                          Tích để hiện/ẩn, dùng ↑ ↓ hoặc nắm ⋮⋮ để đổi thứ tự,
+                          bấm Lưu cột để áp dụng.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowColumnMenu(false)}
+                        className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-50"
+                      >
+                        Đóng
+                      </button>
+                    </div>
+
+                    <div className="max-h-[260px] overflow-y-auto pr-1">
+                      <div className="grid gap-1.5 sm:grid-cols-3 lg:grid-cols-6 2xl:grid-cols-9">
+                        {COLUMN_DEFS.filter((col) =>
+                          canSeeMoney ? true : !col.money,
+                        ).map((col) => {
+                          const index = draftVisibleColumns.indexOf(col.key);
+                          const visible = isColumnVisible(col.key);
+                          return (
+                            <div
+                              key={col.key}
+                              draggable={visible}
+                              onDragStart={() => handleColumnDragStart(col.key)}
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => handleColumnDrop(col.key)}
+                              className={`grid grid-cols-[18px_18px_minmax(0,1fr)_44px] items-center gap-1.5 rounded-2xl border px-2 py-2 text-[11px] transition ${
+                                visible
+                                  ? "border-neutral-200 bg-white hover:bg-neutral-50"
+                                  : "border-neutral-100 bg-white/70 text-neutral-400"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className="cursor-grab rounded-lg px-0.5 text-xs leading-none text-neutral-400 active:cursor-grabbing"
+                                title="Nắm để kéo thả cột"
+                              >
+                                ⋮⋮
+                              </button>
+                              <input
+                                type="checkbox"
+                                checked={visible}
+                                onChange={() => toggleColumn(col.key)}
+                              />
+                              <span className="min-w-0 truncate font-semibold text-neutral-800">
+                                {index >= 0 ? `${index + 1}. ` : ""}
+                                {col.label}
+                              </span>
+                              <span className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  disabled={!visible || index <= 0}
+                                  onClick={() => moveColumn(col.key, "up")}
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-neutral-200 bg-white text-[10px] font-bold text-neutral-600 disabled:cursor-not-allowed disabled:opacity-30"
+                                  title="Đẩy cột lên trước"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !visible ||
+                                    index < 0 ||
+                                    index >= draftVisibleColumns.length - 1
+                                  }
+                                  onClick={() => moveColumn(col.key, "down")}
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-neutral-200 bg-white text-[10px] font-bold text-neutral-600 disabled:cursor-not-allowed disabled:opacity-30"
+                                  title="Đẩy cột xuống sau"
+                                >
+                                  ↓
+                                </button>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-2 border-t border-neutral-200 pt-3">
+                      <button
+                        onClick={resetColumns}
+                        className="rounded-full border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-600 hover:bg-neutral-50"
+                      >
+                        Mặc định
+                      </button>
+                      <button
+                        onClick={saveColumns}
+                        className="rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-white hover:bg-neutral-800"
+                      >
+                        Lưu cột
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-        </Panel>
 
-      {actionMessage ? (
-        <Panel className="p-3">
-          <p className="text-xs text-neutral-700">{actionMessage}</p>
-        </Panel>
-      ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowAdvancedFilters((v) => !v)}
+              >
+                {showAdvancedFilters ? "Ẩn bộ lọc nâng cao" : "Bộ lọc nâng cao"}
+                {activeAdvancedFilterCount
+                  ? ` (${activeAdvancedFilterCount})`
+                  : ""}
+              </Button>
 
-      <Panel className="overflow-hidden">
-        <div className="sticky top-0 z-20 border-b border-neutral-200 bg-white px-3 py-3 shadow-[0_6px_18px_rgba(0,0,0,0.04)]">
-          <div className="flex items-center gap-3">
-            <Button
-              size="sm"
-              disabled={tableScrollLeft <= 0}
-              onClick={() => scrollTableBy(-420)}
+              {activeAdvancedFilterCount ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={clearAdvancedFilters}
+                >
+                  Xóa lọc nâng cao
+                </Button>
+              ) : null}
+
+              <p className="text-xs text-neutral-500">
+                Đang hiển thị {visibleOrders.length} / {totalItems} đơn theo bộ
+                lọc hiện tại
+              </p>
+            </div>
+
+            {showAdvancedFilters ? (
+              <div className="mt-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <input
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    placeholder="Lọc mọi thông tin trong bảng..."
+                    value={freeTextFilter}
+                    onChange={(e) => setFreeTextFilter(e.target.value)}
+                  />
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={createdByFilter}
+                    onChange={(e) => setCreatedByFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả nhân viên tạo đơn</option>
+                    {createdByOptions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={fulfillmentFilter}
+                    onChange={(e) => setFulfillmentFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả giao vận</option>
+                    <option value="UNFULFILLED">Chưa giao</option>
+                    <option value="PROCESSING">Đang chuẩn bị</option>
+                    <option value="PARTIAL">Một phần</option>
+                    <option value="FULFILLED">Đã giao vận</option>
+                    <option value="RETURNED">Trả hàng</option>
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={salesChannelFilter}
+                    onChange={(e) => setSalesChannelFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả kênh bán</option>
+                    {salesChannelOptions.map((channel) => (
+                      <option key={channel} value={channel}>
+                        {channel}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={shippingModeFilter}
+                    onChange={(e) => setShippingModeFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả cách giao</option>
+                    {shippingModeOptions.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {mode}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={shippingPartnerFilter}
+                    onChange={(e) => setShippingPartnerFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả đơn vị vận chuyển</option>
+                    {shippingPartnerOptions.map((partner) => (
+                      <option key={partner} value={partner}>
+                        {partner}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={trackingFilter}
+                    onChange={(e) => setTrackingFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả mã vận đơn</option>
+                    <option value="HAS">Có mã vận đơn</option>
+                    <option value="NONE">Chưa có mã vận đơn</option>
+                  </select>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Từ ngày
+                </label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => {
+                    setQuickDate("all");
+                    setDateFrom(e.target.value);
+                  }}
+                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Đến ngày
+                </label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => {
+                    setQuickDate("all");
+                    setDateTo(e.target.value);
+                  }}
+                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                />
+              </div>
+
+              <div className="flex items-end">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setQuickDate("all");
+                    setDateFrom("");
+                    setDateTo("");
+                  }}
+                >
+                  Xóa lọc ngày
+                </Button>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel className="p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              {canApproveOrder ? (
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={() => void handleBulkApprove()}
+                  disabled={!checkedIds.length || savingOrderStatus}
+                >
+                  Duyệt đơn
+                </Button>
+              ) : null}
+
+              {canPackShipOrder ? (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => void handleBulkSendToCarrier()}
+                  disabled={!checkedIds.length || savingOrderStatus}
+                >
+                  Gửi hãng vận chuyển
+                </Button>
+              ) : null}
+
+              {canPayOrder ? (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => void handleBulkMarkPaid()}
+                  disabled={!checkedIds.length || savingPaymentStatus}
+                >
+                  Đánh dấu đã thanh toán
+                </Button>
+              ) : null}
+
+              {singleCheckedOrder ? (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => copyOrderToNewTab(singleCheckedOrder)}
+                >
+                  Sao chép đơn
+                </Button>
+              ) : null}
+
+              {canCancelOrder ? (
+                <Button
+                  variant="warning"
+                  size="md"
+                  onClick={() => void handleBulkInternalCancel()}
+                  disabled={!checkedIds.length || savingOrderStatus}
+                >
+                  Huỷ nội bộ
+                </Button>
+              ) : null}
+
+              {canRedeliverySelected && singleCheckedOrder ? (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() =>
+                    openOrderInNewTab(singleCheckedOrder, "redelivery")
+                  }
+                >
+                  Giao lại
+                </Button>
+              ) : null}
+
+              {canCancelOrder ? (
+                <Button
+                  variant="warning"
+                  size="md"
+                  onClick={() => void handleBulkCancel()}
+                  disabled={!checkedIds.length || savingOrderStatus}
+                >
+                  Hủy GHN
+                </Button>
+              ) : null}
+
+              {canDeleteOrder ? (
+                <Button
+                  variant="danger"
+                  size="md"
+                  onClick={() => void handleBulkDelete()}
+                  disabled={!checkedIds.length || deletingOrders}
+                >
+                  {deletingOrders ? "Đang xóa..." : "Xóa đơn"}
+                </Button>
+              ) : null}
+
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={openAssignDialog}
+                disabled={!checkedIds.length || assigningOrders}
+              >
+                Gán nhân viên
+              </Button>
+
+              <span
+                className={`ml-2 rounded-full px-3 py-1 text-sm font-semibold ${
+                  checkedIds.length
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-100 text-neutral-500"
+                }`}
+              >
+                {checkedIds.length
+                  ? `Đã chọn ${checkedIds.length} kết quả`
+                  : "Chưa chọn kết quả"}
+              </span>
+
+              <div className="relative" ref={printMenuRef}>
+                <Button
+                  onClick={() => setShowPrintMenu((v) => !v)}
+                  disabled={!checkedIds.length}
+                >
+                  In đơn hàng
+                </Button>
+
+                {showPrintMenu ? (
+                  <div className="absolute right-0 z-[200] mt-2 w-64 rounded-3xl border border-neutral-200 bg-white p-2 shadow-2xl">
+                    <button
+                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                      onClick={() => {
+                        setShowPrintMenu(false);
+                        void void handlePrint("shipping", "80mm");
+                      }}
+                    >
+                      Phiếu giao hàng 80mm
+                    </button>
+
+                    <button
+                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                      onClick={() => {
+                        setShowPrintMenu(false);
+                        void void handlePrint("shipping", "A4");
+                      }}
+                    >
+                      Phiếu giao hàng A4
+                    </button>
+
+                    <button
+                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                      onClick={() => {
+                        setShowPrintMenu(false);
+                        void void handlePrint("shipping", "A5");
+                      }}
+                    >
+                      Phiếu giao hàng A5
+                    </button>
+
+                    <button
+                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                      onClick={() => {
+                        setShowPrintMenu(false);
+                        void void handlePrint("sales", "80mm");
+                      }}
+                    >
+                      Phiếu bán hàng 80mm
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </Panel>
+
+          {actionMessage ? (
+            <Panel className="p-3">
+              <p className="text-xs text-neutral-700">{actionMessage}</p>
+            </Panel>
+          ) : null}
+
+          <Panel className="overflow-hidden">
+            <div
+              ref={tableScrollRef}
+              onScroll={updateTableScrollState}
+              onMouseDown={handleTableMouseDown}
+              onDoubleClick={() => scrollTableTo(0)}
+              className={`orders-table-scroll-hidden w-full overflow-auto scroll-smooth ${
+                isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"
+              }`}
+              style={{ maxHeight: "calc(100vh - 430px)", minHeight: 360 }}
             >
-              ← Trái
-            </Button>
+              <table
+                className="w-full border-collapse table-fixed"
+                style={{ minWidth: TABLE_MIN_WIDTH }}
+              >
+                <thead className="sticky top-0 z-40 bg-neutral-50 shadow-[0_2px_0_rgba(0,0,0,0.08)]">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
+                    <th className="sticky left-0 z-20 w-[44px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)]">
+                      <input
+                        type="checkbox"
+                        checked={allChecked}
+                        onChange={toggleCheckAllVisible}
+                      />
+                    </th>
 
-            <div className="min-w-0 flex-1">
+                    {orderedVisibleColumns.map(renderColumnHeader)}
+
+                    <th className="sticky right-0 z-30 w-[96px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
+                      Mở
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {visibleOrders.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={orderedVisibleColumns.length + 2}
+                        className="px-4 py-6 text-sm text-neutral-500"
+                      >
+                        Không có đơn phù hợp.
+                      </td>
+                    </tr>
+                  ) : (
+                    visibleOrders.map((order) => {
+                      const checked = checkedIds.includes(order.id);
+                      const canShowRedelivery =
+                        isFailedOrder(order) || isRedeliveryOrder(order);
+
+                      return (
+                        <tr
+                          key={order.id}
+                          className="group bg-white text-sm transition hover:bg-neutral-50"
+                        >
+                          <td className="sticky left-0 z-30 border-b border-neutral-100 bg-white px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleCheckOne(order.id)}
+                            />
+                          </td>
+
+                          {orderedVisibleColumns.map((key) =>
+                            renderColumnCell(order, key),
+                          )}
+
+                          <td className="sticky right-0 z-20 border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
+                            <div className="flex justify-end">
+                              <div className="flex items-center gap-2 whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() => void openQuickViewOrder(order)}
+                                  className="inline-flex items-center rounded-xl border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-neutral-800"
+                                >
+                                  Xem nhanh
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openOrderInNewTab(order)}
+                                  className="inline-flex items-center rounded-xl border border-neutral-300 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
+                                >
+                                  Chi tiết
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="border-t border-neutral-200 bg-white px-4 py-4">
               <input
                 type="range"
                 min={0}
@@ -4250,622 +4736,821 @@ export default function OrdersPageClient() {
                   Math.max(tableMaxScrollLeft, 0),
                 )}
                 onChange={(e) => scrollTableTo(Number(e.target.value))}
-                className="orders-table-range w-full"
+                className="orders-table-range orders-table-range-bottom w-full"
                 aria-label="Kéo ngang bảng đơn hàng"
               />
-              <div className="mt-1 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+              <div className="mt-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                 <span>Đầu bảng</span>
-                <span>
-                  Giữ chuột kéo ngang trực tiếp trên bảng hoặc dùng thanh này
-                </span>
+                <span>Kéo thanh này để xem các cột bên phải</span>
                 <span>Cuối bảng</span>
               </div>
             </div>
+          </Panel>
 
-            <Button
-              size="sm"
-              disabled={tableScrollLeft >= tableMaxScrollLeft}
-              onClick={() => scrollTableBy(420)}
-            >
-              Phải →
-            </Button>
-          </div>
-        </div>
-
-        <div
-          ref={tableScrollRef}
-          onScroll={updateTableScrollState}
-          onMouseDown={handleTableMouseDown}
-          onDoubleClick={() => scrollTableTo(0)}
-          className={`orders-table-scroll-hidden w-full overflow-auto scroll-smooth ${
-            isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"
-          }`}
-          style={{ maxHeight: "calc(100vh - 430px)", minHeight: 360 }}
-        >
-          <table
-            className="w-full border-collapse table-fixed"
-            style={{ minWidth: TABLE_MIN_WIDTH }}
-          >
-            <thead className="sticky top-0 z-40 bg-neutral-50 shadow-[0_2px_0_rgba(0,0,0,0.08)]">
-              <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
-                <th className="sticky left-0 z-20 w-[44px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)]">
-                  <input
-                    type="checkbox"
-                    checked={allChecked}
-                    onChange={toggleCheckAllVisible}
-                  />
-                </th>
-
-                {orderedVisibleColumns.map(renderColumnHeader)}
-
-                <th className="sticky right-0 z-30 w-[96px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
-                  Mở
-                </th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {visibleOrders.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={orderedVisibleColumns.length + 2}
-                    className="px-4 py-6 text-sm text-neutral-500"
-                  >
-                    Không có đơn phù hợp.
-                  </td>
-                </tr>
-              ) : (
-                visibleOrders.map((order) => {
-                  const checked = checkedIds.includes(order.id);
-                  const canShowRedelivery =
-                    isFailedOrder(order) || isRedeliveryOrder(order);
-
-                  return (
-                    <tr
-                      key={order.id}
-                      className="group bg-white text-sm transition hover:bg-neutral-50"
-                    >
-                      <td className="sticky left-0 z-30 border-b border-neutral-100 bg-white px-3 py-3 shadow-[8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleCheckOne(order.id)}
-                        />
-                      </td>
-
-                      {orderedVisibleColumns.map((key) =>
-                        renderColumnCell(order, key),
-                      )}
-
-                      <td className="sticky right-0 z-20 border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
-                        <div className="flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => openOrderInNewTab(order)}
-                            className="inline-flex items-center rounded-xl border border-neutral-300 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                          >
-                            Chi tiết
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <style jsx global>{`
-        .orders-table-scroll-hidden {
-          scrollbar-width: thin;
-          scrollbar-color: #c7c7c7 transparent;
-        }
-
-        .orders-table-scroll-hidden::-webkit-scrollbar:horizontal {
-          height: 0;
-        }
-
-        .orders-table-scroll-hidden::-webkit-scrollbar:vertical {
-          width: 10px;
-        }
-
-        .orders-table-scroll-hidden::-webkit-scrollbar-track {
-          background: transparent;
-        }
-
-        .orders-table-scroll-hidden::-webkit-scrollbar-thumb {
-          background: #c7c7c7;
-          border-radius: 999px;
-          border: 2px solid white;
-        }
-
-        .orders-table-scroll-hidden::-webkit-scrollbar-thumb:hover {
-          background: #8f8f8f;
-        }
-
-        .orders-table-range {
-          height: 18px;
-          accent-color: #171717;
-          cursor: pointer;
-        }
-
-        .orders-table-range::-webkit-slider-runnable-track {
-          height: 12px;
-          border-radius: 999px;
-          background: #e5e7eb;
-          border: 1px solid #d4d4d4;
-        }
-
-        .orders-table-range::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 24px;
-          height: 24px;
-          margin-top: -7px;
-          border-radius: 999px;
-          background: #171717;
-          border: 4px solid white;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-        }
-
-        .orders-table-range::-moz-range-track {
-          height: 12px;
-          border-radius: 999px;
-          background: #e5e7eb;
-          border: 1px solid #d4d4d4;
-        }
-
-        .orders-table-range::-moz-range-thumb {
-          width: 18px;
-          height: 18px;
-          border-radius: 999px;
-          background: #171717;
-          border: 4px solid white;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-        }
-      `}</style>
-
-      <Panel className="sticky bottom-3 z-40 border-neutral-200 bg-white/95 p-3 backdrop-blur">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-600" data-print-version={printVersion}>
-            <span className="font-semibold text-neutral-900">
-              Hiển thị
-            </span>
-
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value || 50));
-                setPage(1);
-              }}
-              disabled={loading}
-              className="h-9 rounded-xl border border-neutral-300 bg-white px-3 text-xs font-semibold outline-none"
-            >
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-
-            <span>kết quả / trang</span>
-
-            <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
-              Từ {totalItems ? (page - 1) * pageSize + 1 : 0} đến{" "}
-              {Math.min(page * pageSize, totalItems)} trên tổng {totalItems}
-            </span>
-
-            <span className={`rounded-full px-3 py-1 font-medium ${
-              checkedIds.length
-                ? "bg-neutral-900 text-white"
-                : "bg-neutral-100 text-neutral-700"
-            }`}>
-              {checkedIds.length ? `Đã chọn ${checkedIds.length} kết quả` : "Chưa chọn kết quả"}
-            </span>
-
-            <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
-              Trang {page} / {Math.max(totalPages, 1)}
-            </span>
-
-            <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
-              Đang lọc: {visibleOrders.length} dòng
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              disabled={page <= 1 || loading}
-              onClick={() => setPage(1)}
-              size="sm"
-            >
-              « Đầu
-            </Button>
-
-            <Button
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              size="sm"
-            >
-              ‹ Trước
-            </Button>
-
-            {Array.from({ length: Math.min(5, Math.max(totalPages, 1)) }).map(
-              (_, index) => {
-                const maxPages = Math.max(totalPages, 1);
-                const start = Math.min(
-                  Math.max(page - 2, 1),
-                  Math.max(maxPages - 4, 1)
-                );
-                const pageNumber = start + index;
-
-                if (pageNumber > maxPages) return null;
-
-                return (
-                  <button
-                    key={pageNumber}
-                    type="button"
-                    onClick={() => setPage(pageNumber)}
-                    disabled={loading}
-                    className={`h-9 min-w-9 rounded-xl border px-3 text-xs font-semibold transition ${
-                      pageNumber === page
-                        ? "border-neutral-900 bg-neutral-900 text-white"
-                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
-                    }`}
-                  >
-                    {pageNumber}
-                  </button>
-                );
-              }
-            )}
-
-            <Button
-              disabled={page >= totalPages || loading}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              size="sm"
-            >
-              Sau ›
-            </Button>
-
-            <Button
-              disabled={page >= totalPages || loading}
-              onClick={() => setPage(totalPages)}
-              size="sm"
-            >
-              Cuối »
-            </Button>
-          </div>
-        </div>
-      </Panel>
-
-      {canSeeMoney ? (
-        <Panel className="p-4">
-          <p className="text-xs text-neutral-500">
-            Doanh thu đã thanh toán theo bộ lọc hiện tại
-          </p>
-          <p className="mt-1 text-lg font-semibold">{currency(paidRevenue)}</p>
-        </Panel>
-      ) : null}
-
-      {exportOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-          <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-3xl font-semibold tracking-tight">
-                Xuất Excel đơn hàng
-              </h3>
-              <button
-                onClick={() => setExportOpen(false)}
-                className="text-xl text-neutral-500"
-                type="button"
-              >
-                ×
-              </button>
-            </div>
-            <div className="space-y-5">
-              <Panel className="bg-neutral-50 p-4">
-                <div className="grid gap-3 md:grid-cols-5">
-                  <Button
-                    variant="secondary"
-                    onClick={() => applyOrderExportPreset("management")}
-                  >
-                    Quản lý
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => applyOrderExportPreset("accounting")}
-                  >
-                    Kế toán
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => applyOrderExportPreset("shipping")}
-                  >
-                    Giao vận
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => applyOrderExportPreset("cod")}
-                  >
-                    COD / công nợ
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => applyOrderExportPreset("full")}
-                  >
-                    Full dữ liệu
-                  </Button>
-                </div>
-              </Panel>
-
-              <div className="grid gap-4 lg:grid-cols-3">
-                <Panel className="p-4">
-                  <p className="text-sm font-semibold text-neutral-900">
-                    Phạm vi đơn hàng
+          {assignOpen ? (
+            <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/30 p-4">
+              <div className="w-full max-w-md rounded-[28px] border border-neutral-200 bg-white p-5 shadow-2xl">
+                <div className="mb-4">
+                  <p className="text-lg font-semibold text-neutral-900">
+                    Gán đơn cho nhân viên
                   </p>
-                  <div className="mt-3 space-y-2 text-sm">
-                    {(
-                      [
-                        ["filtered", "Theo bộ lọc hiện tại"],
-                        ["current_page", "Chỉ trang đang xem"],
-                        ["checked", `Chỉ đơn đã tick (${checkedIds.length})`],
-                      ] as Array<[OrderExportScope, string]>
-                    ).map(([value, label]) => (
-                      <label
-                        key={value}
-                        className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2"
-                      >
-                        <input
-                          type="radio"
-                          checked={exportScope === value}
-                          onChange={() => setExportScope(value)}
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-
-                  <div className="mt-4 space-y-2 text-sm">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={exportOnlyUnpaid}
-                        onChange={(e) => setExportOnlyUnpaid(e.target.checked)}
-                      />
-                      Chỉ đơn chưa thanh toán / COD
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={exportOnlyCod}
-                        onChange={(e) => setExportOnlyCod(e.target.checked)}
-                      />
-                      Chỉ đơn có COD
-                    </label>
-                  </div>
-                </Panel>
-
-                <Panel className="p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-neutral-900">
-                      Chi nhánh
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExportBranchIds(
-                            branches.map((branch) => branch.id),
-                          )
-                        }
-                        className="text-xs font-semibold text-neutral-700 underline"
-                      >
-                        Chọn tất cả
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setExportBranchIds([])}
-                        className="text-xs font-semibold text-neutral-500 underline"
-                      >
-                        Bỏ chọn
-                      </button>
-                    </div>
-                  </div>
-                  <div className="mt-3 max-h-64 space-y-2 overflow-auto pr-1 text-sm">
-                    {branches.length ? (
-                      branches.map((branch) => (
-                        <label
-                          key={branch.id}
-                          className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={exportBranchIds.includes(branch.id)}
-                            onChange={(e) => {
-                              setExportBranchIds((prev) =>
-                                e.target.checked
-                                  ? Array.from(new Set([...prev, branch.id]))
-                                  : prev.filter((id) => id !== branch.id),
-                              );
-                            }}
-                          />
-                          {branch.name}
-                        </label>
-                      ))
-                    ) : (
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
-                        Chưa tải được chi nhánh. Kiểm tra token hoặc API
-                        /branches.
-                      </div>
-                    )}
-                  </div>
-                </Panel>
-
-                <Panel className="p-4">
-                  <p className="text-sm font-semibold text-neutral-900">
-                    Sheet & sắp xếp
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Đang chọn {checkedIds.length} đơn. Người tạo đơn vẫn giữ
+                    nguyên, nhân viên phụ trách sẽ được cập nhật ở cột NV phụ
+                    trách.
                   </p>
-                  <div className="mt-3 space-y-2 text-sm">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={exportIncludeSummarySheet}
-                        onChange={(e) =>
-                          setExportIncludeSummarySheet(e.target.checked)
-                        }
-                      />
-                      Sheet tổng quan
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={exportIncludeBranchSheets}
-                        onChange={(e) =>
-                          setExportIncludeBranchSheets(e.target.checked)
-                        }
-                      />
-                      Sheet theo chi nhánh
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={exportIncludeItemSheet}
-                        onChange={(e) =>
-                          setExportIncludeItemSheet(e.target.checked)
-                        }
-                      />
-                      Sheet sản phẩm trong đơn
-                    </label>
-                    <select
-                      className="mt-2 w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
-                      value={exportSortMode}
-                      onChange={(e) =>
-                        setExportSortMode(e.target.value as OrderExportSortMode)
-                      }
-                    >
-                      <option value="created_desc">Mới nhất trước</option>
-                      <option value="amount_desc">Tổng tiền cao trước</option>
-                      <option value="cod_desc">COD cao trước</option>
-                    </select>
-                  </div>
-                </Panel>
-              </div>
-
-              <Panel className="p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-neutral-900">
-                    Cột dữ liệu
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExportColumns({ ...defaultOrderExportColumns })
-                      }
-                      className="text-xs font-semibold text-neutral-700 underline"
-                    >
-                      Chọn mặc định
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExportColumns(
-                          Object.fromEntries(
-                            (
-                              Object.keys(
-                                defaultOrderExportColumns,
-                              ) as OrderExportColumnKey[]
-                            ).map((key) => [key, true]),
-                          ) as OrderExportColumnState,
-                        )
-                      }
-                      className="text-xs font-semibold text-neutral-700 underline"
-                    >
-                      Chọn tất cả
-                    </button>
-                  </div>
                 </div>
-                <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-4">
-                  {(
-                    Object.keys(
-                      defaultOrderExportColumns,
-                    ) as OrderExportColumnKey[]
-                  )
-                    .filter(
-                      (key) =>
-                        canSeeMoney ||
-                        !COLUMN_DEFS.find((col) => col.key === key)?.money,
-                    )
-                    .map((key) => (
-                      <label
-                        key={key}
-                        className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={exportColumns[key]}
-                          onChange={(e) =>
-                            setExportColumns((prev) => ({
-                              ...prev,
-                              [key]: e.target.checked,
-                            }))
-                          }
-                        />
-                        {orderExportColumnLabels[key]}
-                      </label>
-                    ))}
-                </div>
-              </Panel>
-
-              <div className="flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 md:flex-row md:items-center md:justify-between">
-                <div className="text-sm text-neutral-600">
-                  Xuất{" "}
-                  {exportScope === "checked"
-                    ? checkedIds.length
-                    : exportScope === "current_page"
-                      ? normalizedOrders.length
-                      : visibleOrders.length}{" "}
-                  đơn ·{" "}
-                  {exportBranchIds.length
-                    ? `${exportBranchIds.length} chi nhánh`
-                    : "Tất cả chi nhánh"}
-                </div>
-                <div className="flex justify-end gap-2">
+                <select
+                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                  value={assignStaffId}
+                  onChange={(e) => setAssignStaffId(e.target.value)}
+                >
+                  <option value="">Chọn nhân viên nhận đơn</option>
+                  {assignableStaffList.map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staffLabel(staff)}
+                      {staff.branchName ? ` · ${staff.branchName}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-5 flex justify-end gap-2">
                   <Button
-                    variant="secondary"
-                    onClick={() => setExportOpen(false)}
+                    size="sm"
+                    onClick={() => setAssignOpen(false)}
+                    disabled={assigningOrders}
                   >
                     Huỷ
                   </Button>
                   <Button
+                    size="sm"
                     variant="primary"
-                    onClick={handleExportOrdersExcel}
-                    disabled={
-                      exportingOrders ||
-                      (exportScope === "checked" && !checkedIds.length)
-                    }
+                    onClick={handleAssignOrders}
+                    disabled={assigningOrders || !assignStaffId}
                   >
-                    {exportingOrders ? "Đang xuất..." : "Xuất Excel"}
+                    {assigningOrders ? "Đang gán..." : "Gán đơn"}
                   </Button>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      ) : null}
+          ) : null}
 
-      <ConfirmDialog
-        open={confirmOpen}
-        title={confirmTitle}
-        description={confirmDescription}
-        confirmText={confirmText}
-        cancelText="Đóng"
-        danger={confirmDanger}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={async () => {
-          await confirmAction?.();
-          setConfirmOpen(false);
-        }}
-      />
+          <style jsx global>{`
+            .orders-table-scroll-hidden {
+              scrollbar-width: thin;
+              scrollbar-color: #c7c7c7 transparent;
+            }
+
+            .orders-table-scroll-hidden::-webkit-scrollbar:horizontal {
+              height: 0;
+            }
+
+            .orders-table-scroll-hidden::-webkit-scrollbar:vertical {
+              width: 10px;
+            }
+
+            .orders-table-scroll-hidden::-webkit-scrollbar-track {
+              background: transparent;
+            }
+
+            .orders-table-scroll-hidden::-webkit-scrollbar-thumb {
+              background: #c7c7c7;
+              border-radius: 999px;
+              border: 2px solid white;
+            }
+
+            .orders-table-scroll-hidden::-webkit-scrollbar-thumb:hover {
+              background: #8f8f8f;
+            }
+
+            .orders-table-range {
+              height: 28px;
+              accent-color: #171717;
+              cursor: pointer;
+            }
+
+            .orders-table-range::-webkit-slider-runnable-track {
+              height: 16px;
+              border-radius: 999px;
+              background: #e5e7eb;
+              border: 1px solid #d4d4d4;
+            }
+
+            .orders-table-range::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 34px;
+              height: 34px;
+              margin-top: -10px;
+              border-radius: 999px;
+              background: #171717;
+              border: 4px solid white;
+              box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+            }
+
+            .orders-table-range::-moz-range-track {
+              height: 12px;
+              border-radius: 999px;
+              background: #e5e7eb;
+              border: 1px solid #d4d4d4;
+            }
+
+            .orders-table-range::-moz-range-thumb {
+              width: 18px;
+              height: 18px;
+              border-radius: 999px;
+              background: #171717;
+              border: 4px solid white;
+              box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+            }
+          `}</style>
+
+          <Panel className="sticky bottom-3 z-40 border-neutral-200 bg-white/95 p-3 backdrop-blur">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div
+                className="flex flex-wrap items-center gap-3 text-xs text-neutral-600"
+                data-print-version={printVersion}
+              >
+                <span className="font-semibold text-neutral-900">Hiển thị</span>
+
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value || 50));
+                    setPage(1);
+                  }}
+                  disabled={loading}
+                  className="h-9 rounded-xl border border-neutral-300 bg-white px-3 text-xs font-semibold outline-none"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+
+                <span>kết quả / trang</span>
+
+                <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
+                  Từ {totalItems ? (page - 1) * pageSize + 1 : 0} đến{" "}
+                  {Math.min(page * pageSize, totalItems)} trên tổng {totalItems}
+                </span>
+
+                <span
+                  className={`rounded-full px-3 py-1 font-medium ${
+                    checkedIds.length
+                      ? "bg-neutral-900 text-white"
+                      : "bg-neutral-100 text-neutral-700"
+                  }`}
+                >
+                  {checkedIds.length
+                    ? `Đã chọn ${checkedIds.length} kết quả`
+                    : "Chưa chọn kết quả"}
+                </span>
+
+                <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
+                  Trang {page} / {Math.max(totalPages, 1)}
+                </span>
+
+                <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
+                  Đang lọc: {visibleOrders.length} dòng
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage(1)}
+                  size="sm"
+                >
+                  « Đầu
+                </Button>
+
+                <Button
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  size="sm"
+                >
+                  ‹ Trước
+                </Button>
+
+                {Array.from({
+                  length: Math.min(5, Math.max(totalPages, 1)),
+                }).map((_, index) => {
+                  const maxPages = Math.max(totalPages, 1);
+                  const start = Math.min(
+                    Math.max(page - 2, 1),
+                    Math.max(maxPages - 4, 1),
+                  );
+                  const pageNumber = start + index;
+
+                  if (pageNumber > maxPages) return null;
+
+                  return (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => setPage(pageNumber)}
+                      disabled={loading}
+                      className={`h-9 min-w-9 rounded-xl border px-3 text-xs font-semibold transition ${
+                        pageNumber === page
+                          ? "border-neutral-900 bg-neutral-900 text-white"
+                          : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                      }`}
+                    >
+                      {pageNumber}
+                    </button>
+                  );
+                })}
+
+                <Button
+                  disabled={page >= totalPages || loading}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  size="sm"
+                >
+                  Sau ›
+                </Button>
+
+                <Button
+                  disabled={page >= totalPages || loading}
+                  onClick={() => setPage(totalPages)}
+                  size="sm"
+                >
+                  Cuối »
+                </Button>
+              </div>
+            </div>
+          </Panel>
+
+          {canSeeMoney ? (
+            <Panel className="p-4">
+              <p className="text-xs text-neutral-500">
+                Doanh thu đã thanh toán theo bộ lọc hiện tại
+              </p>
+              <p className="mt-1 text-lg font-semibold">
+                {currency(paidRevenue)}
+              </p>
+            </Panel>
+          ) : null}
+
+          {exportOpen ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+              <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-3xl font-semibold tracking-tight">
+                    Xuất Excel đơn hàng
+                  </h3>
+                  <button
+                    onClick={() => setExportOpen(false)}
+                    className="text-xl text-neutral-500"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="space-y-5">
+                  <Panel className="bg-neutral-50 p-4">
+                    <div className="grid gap-3 md:grid-cols-5">
+                      <Button
+                        variant="secondary"
+                        onClick={() => applyOrderExportPreset("management")}
+                      >
+                        Quản lý
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => applyOrderExportPreset("accounting")}
+                      >
+                        Kế toán
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => applyOrderExportPreset("shipping")}
+                      >
+                        Giao vận
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => applyOrderExportPreset("cod")}
+                      >
+                        COD / công nợ
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => applyOrderExportPreset("full")}
+                      >
+                        Full dữ liệu
+                      </Button>
+                    </div>
+                  </Panel>
+
+                  <div className="grid gap-4 lg:grid-cols-3">
+                    <Panel className="p-4">
+                      <p className="text-sm font-semibold text-neutral-900">
+                        Phạm vi đơn hàng
+                      </p>
+                      <div className="mt-3 space-y-2 text-sm">
+                        {(
+                          [
+                            ["filtered", "Theo bộ lọc hiện tại"],
+                            ["current_page", "Chỉ trang đang xem"],
+                            [
+                              "checked",
+                              `Chỉ đơn đã tick (${checkedIds.length})`,
+                            ],
+                          ] as Array<[OrderExportScope, string]>
+                        ).map(([value, label]) => (
+                          <label
+                            key={value}
+                            className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2"
+                          >
+                            <input
+                              type="radio"
+                              checked={exportScope === value}
+                              onChange={() => setExportScope(value)}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="mt-4 space-y-2 text-sm">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={exportOnlyUnpaid}
+                            onChange={(e) =>
+                              setExportOnlyUnpaid(e.target.checked)
+                            }
+                          />
+                          Chỉ đơn chưa thanh toán / COD
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={exportOnlyCod}
+                            onChange={(e) => setExportOnlyCod(e.target.checked)}
+                          />
+                          Chỉ đơn có COD
+                        </label>
+                      </div>
+                    </Panel>
+
+                    <Panel className="p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-neutral-900">
+                          Chi nhánh
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExportBranchIds(
+                                branches.map((branch) => branch.id),
+                              )
+                            }
+                            className="text-xs font-semibold text-neutral-700 underline"
+                          >
+                            Chọn tất cả
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setExportBranchIds([])}
+                            className="text-xs font-semibold text-neutral-500 underline"
+                          >
+                            Bỏ chọn
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-3 max-h-64 space-y-2 overflow-auto pr-1 text-sm">
+                        {branches.length ? (
+                          branches.map((branch) => (
+                            <label
+                              key={branch.id}
+                              className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={exportBranchIds.includes(branch.id)}
+                                onChange={(e) => {
+                                  setExportBranchIds((prev) =>
+                                    e.target.checked
+                                      ? Array.from(
+                                          new Set([...prev, branch.id]),
+                                        )
+                                      : prev.filter((id) => id !== branch.id),
+                                  );
+                                }}
+                              />
+                              {branch.name}
+                            </label>
+                          ))
+                        ) : (
+                          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                            Chưa tải được chi nhánh. Kiểm tra token hoặc API
+                            /branches.
+                          </div>
+                        )}
+                      </div>
+                    </Panel>
+
+                    <Panel className="p-4">
+                      <p className="text-sm font-semibold text-neutral-900">
+                        Sheet & sắp xếp
+                      </p>
+                      <div className="mt-3 space-y-2 text-sm">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={exportIncludeSummarySheet}
+                            onChange={(e) =>
+                              setExportIncludeSummarySheet(e.target.checked)
+                            }
+                          />
+                          Sheet tổng quan
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={exportIncludeBranchSheets}
+                            onChange={(e) =>
+                              setExportIncludeBranchSheets(e.target.checked)
+                            }
+                          />
+                          Sheet theo chi nhánh
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={exportIncludeItemSheet}
+                            onChange={(e) =>
+                              setExportIncludeItemSheet(e.target.checked)
+                            }
+                          />
+                          Sheet sản phẩm trong đơn
+                        </label>
+                        <select
+                          className="mt-2 w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                          value={exportSortMode}
+                          onChange={(e) =>
+                            setExportSortMode(
+                              e.target.value as OrderExportSortMode,
+                            )
+                          }
+                        >
+                          <option value="created_desc">Mới nhất trước</option>
+                          <option value="amount_desc">
+                            Tổng tiền cao trước
+                          </option>
+                          <option value="cod_desc">COD cao trước</option>
+                        </select>
+                      </div>
+                    </Panel>
+                  </div>
+
+                  <Panel className="p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-neutral-900">
+                        Cột dữ liệu
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExportColumns({ ...defaultOrderExportColumns })
+                          }
+                          className="text-xs font-semibold text-neutral-700 underline"
+                        >
+                          Chọn mặc định
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExportColumns(
+                              Object.fromEntries(
+                                (
+                                  Object.keys(
+                                    defaultOrderExportColumns,
+                                  ) as OrderExportColumnKey[]
+                                ).map((key) => [key, true]),
+                              ) as OrderExportColumnState,
+                            )
+                          }
+                          className="text-xs font-semibold text-neutral-700 underline"
+                        >
+                          Chọn tất cả
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-4">
+                      {(
+                        Object.keys(
+                          defaultOrderExportColumns,
+                        ) as OrderExportColumnKey[]
+                      )
+                        .filter(
+                          (key) =>
+                            canSeeMoney ||
+                            !COLUMN_DEFS.find((col) => col.key === key)?.money,
+                        )
+                        .map((key) => (
+                          <label
+                            key={key}
+                            className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={exportColumns[key]}
+                              onChange={(e) =>
+                                setExportColumns((prev) => ({
+                                  ...prev,
+                                  [key]: e.target.checked,
+                                }))
+                              }
+                            />
+                            {orderExportColumnLabels[key]}
+                          </label>
+                        ))}
+                    </div>
+                  </Panel>
+
+                  <div className="flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 md:flex-row md:items-center md:justify-between">
+                    <div className="text-sm text-neutral-600">
+                      Xuất{" "}
+                      {exportScope === "checked"
+                        ? checkedIds.length
+                        : exportScope === "current_page"
+                          ? normalizedOrders.length
+                          : visibleOrders.length}{" "}
+                      đơn ·{" "}
+                      {exportBranchIds.length
+                        ? `${exportBranchIds.length} chi nhánh`
+                        : "Tất cả chi nhánh"}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => setExportOpen(false)}
+                      >
+                        Huỷ
+                      </Button>
+                      <Button
+                        variant="primary"
+                        onClick={handleExportOrdersExcel}
+                        disabled={
+                          exportingOrders ||
+                          (exportScope === "checked" && !checkedIds.length)
+                        }
+                      >
+                        {exportingOrders ? "Đang xuất..." : "Xuất Excel"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {quickViewOrder ? (
+            <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/35 p-4">
+              <div className="max-h-[88vh] w-full max-w-4xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-neutral-100 p-5">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">
+                      Xem nhanh đơn hàng
+                    </p>
+                    <h3 className="mt-1 text-2xl font-semibold text-neutral-950">
+                      {quickViewOrder.orderCode}
+                    </h3>
+                    <p className="mt-1 text-sm text-neutral-500">
+                      {quickViewOrder.customerName || "Khách lẻ"} ·{" "}
+                      {quickViewOrder.customerPhone || "—"}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => openOrderInNewTab(quickViewOrder)}
+                    >
+                      Mở chi tiết
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => setQuickViewOrder(null)}
+                      className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-50"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-[calc(88vh-96px)] overflow-y-auto p-5">
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <Panel className="p-4">
+                      <p className="text-xs text-neutral-500">Trạng thái đơn</p>
+                      <div className="mt-2">
+                        <StatusBadge
+                          label={orderStatusLabel(quickViewOrder.status)}
+                          tone={orderStatusTone(quickViewOrder.status)}
+                        />
+                      </div>
+                    </Panel>
+
+                    <Panel className="p-4">
+                      <p className="text-xs text-neutral-500">Thanh toán</p>
+                      <div className="mt-2">
+                        <StatusBadge
+                          label={paymentStatusLabel(
+                            quickViewOrder.paymentStatus,
+                          )}
+                          tone={paymentStatusTone(quickViewOrder.paymentStatus)}
+                        />
+                      </div>
+                    </Panel>
+
+                    <Panel className="p-4">
+                      <p className="text-xs text-neutral-500">Giao vận</p>
+                      <div className="mt-2">
+                        <StatusBadge
+                          label={shipmentDisplayStatusLabel(quickViewOrder)}
+                          tone={shipmentDisplayStatusTone(quickViewOrder)}
+                        />
+                      </div>
+                    </Panel>
+
+                    <Panel className="p-4">
+                      <p className="text-xs text-neutral-500">Tổng tiền</p>
+                      <p className="mt-2 text-lg font-semibold">
+                        {currency(Number(quickViewOrder.finalAmount || 0))}
+                      </p>
+                    </Panel>
+                  </div>
+
+                  <Panel className="mt-4 overflow-hidden">
+                    <div className="border-b border-neutral-100 p-4">
+                      <h4 className="font-semibold text-neutral-950">
+                        Sản phẩm trong đơn
+                      </h4>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-neutral-50 text-xs text-neutral-500">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">Sản phẩm</th>
+                            <th className="px-4 py-3 font-medium">SKU</th>
+                            <th className="px-4 py-3 font-medium">
+                              Màu / Size
+                            </th>
+                            <th className="px-4 py-3 text-right font-medium">
+                              SL
+                            </th>
+                            <th className="px-4 py-3 text-right font-medium">
+                              Đơn giá
+                            </th>
+                            <th className="px-4 py-3 text-right font-medium">
+                              Thành tiền
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(quickViewOrder.items || []).length ? (
+                            (quickViewOrder.items || []).map(
+                              (item: any, index: number) => (
+                                <tr
+                                  key={item.id || `${item.sku}-${index}`}
+                                  className="border-t border-neutral-100"
+                                >
+                                  <td className="px-4 py-3 font-medium text-neutral-900">
+                                    {item.productName ||
+                                      item.name ||
+                                      item.product?.name ||
+                                      "Sản phẩm"}
+                                  </td>
+                                  <td className="px-4 py-3 text-neutral-600">
+                                    {item.sku || item.variant?.sku || "—"}
+                                  </td>
+                                  <td className="px-4 py-3 text-neutral-600">
+                                    {[
+                                      item.color || item.variant?.color,
+                                      item.size || item.variant?.size,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" / ") || "—"}
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    {Number(item.qty || item.quantity || 0)}
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    {currency(
+                                      Number(item.unitPrice || item.price || 0),
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-semibold">
+                                    {currency(
+                                      Number(
+                                        item.lineTotal ||
+                                          item.total ||
+                                          Number(
+                                            item.qty || item.quantity || 0,
+                                          ) *
+                                            Number(
+                                              item.unitPrice || item.price || 0,
+                                            ),
+                                      ),
+                                    )}
+                                  </td>
+                                </tr>
+                              ),
+                            )
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={6}
+                                className="px-4 py-8 text-center text-neutral-500"
+                              >
+                                Chưa có dữ liệu sản phẩm.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Panel>
+
+                  <Panel className="mt-4 p-4">
+                    <h4 className="font-semibold text-neutral-950">
+                      Thông tin giao hàng
+                    </h4>
+                    <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
+                      <div>
+                        <p className="text-neutral-500">Người nhận</p>
+                        <p className="font-medium">
+                          {quickViewOrder.shippingRecipientName ||
+                            quickViewOrder.customerName ||
+                            "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-500">SĐT nhận</p>
+                        <p className="font-medium">
+                          {quickViewOrder.shippingPhone ||
+                            quickViewOrder.customerPhone ||
+                            "—"}
+                        </p>
+                      </div>
+                      <div className="md:col-span-2">
+                        <p className="text-neutral-500">Địa chỉ</p>
+                        <p className="font-medium">
+                          {[
+                            quickViewOrder.shippingAddressLine1,
+                            quickViewOrder.shippingAddressLine2,
+                            quickViewOrder.shippingWard,
+                            quickViewOrder.shippingDistrict,
+                            quickViewOrder.shippingProvince,
+                          ]
+                            .filter(Boolean)
+                            .join(", ") || "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-500">Mã vận đơn</p>
+                        <p className="font-medium">
+                          {quickViewOrder.shipment?.trackingCode || "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-500">Đơn vị vận chuyển</p>
+                        <p className="font-medium">
+                          {quickViewOrder.shipment?.carrier || "—"}
+                        </p>
+                      </div>
+                    </div>
+                  </Panel>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {quickViewLoading ? (
+            <div className="fixed inset-0 z-[135] flex items-center justify-center bg-black/20 p-4">
+              <div className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold shadow-2xl">
+                Đang tải nhanh đơn hàng...
+              </div>
+            </div>
+          ) : null}
+
+          <ConfirmDialog
+            open={confirmOpen}
+            title={confirmTitle}
+            description={confirmDescription}
+            confirmText={confirmText}
+            cancelText="Đóng"
+            danger={confirmDanger}
+            onCancel={() => setConfirmOpen(false)}
+            onConfirm={async () => {
+              await confirmAction?.();
+              setConfirmOpen(false);
+            }}
+          />
         </div>
       </div>
     </>

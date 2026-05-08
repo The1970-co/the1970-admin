@@ -186,6 +186,44 @@ export type CreateGhnShipmentPayload = {
 };
 
 
+export type AhamoveQuoteItem = {
+  name: string;
+  num?: number;
+  quantity?: number;
+  price?: number;
+  weight?: number;
+};
+
+export type AhamoveQuotePayload = {
+  fromName?: string;
+  fromPhone?: string;
+  fromAddress?: string;
+  toName: string;
+  toPhone: string;
+  toAddress: string;
+  codAmount?: number;
+  serviceId?: string;
+  note?: string;
+  items?: AhamoveQuoteItem[];
+};
+
+export type CreateAhamoveShipmentPayload = AhamoveQuotePayload & {
+  clientOrderCode?: string;
+  orderCode?: string;
+};
+
+export type AhamoveQuoteResult = {
+  serviceId?: string;
+  service_id?: string;
+  fee?: number;
+  totalFee?: number;
+  total_fee?: number;
+  distance?: number;
+  duration?: number;
+  raw?: any;
+};
+
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(path, {
     ...init,
@@ -483,6 +521,37 @@ export async function createGhnShipment(
   return request<any>(`/shipments/${orderId}/ghn/create`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function quoteAhamoveShipment(
+  payload: AhamoveQuotePayload
+): Promise<AhamoveQuoteResult> {
+  return request<AhamoveQuoteResult>("/shipments/ahamove/quote", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createAhamoveShipment(
+  orderId: string,
+  payload: CreateAhamoveShipmentPayload
+) {
+  return request<any>(`/shipments/${orderId}/ahamove/create`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function trackAhamoveShipmentById(shipmentId: string) {
+  return request<any>(`/shipments/ahamove/${shipmentId}/tracking`, {
+    method: "GET",
+  });
+}
+
+export async function cancelAhamoveShipment(orderId: string) {
+  return request<any>(`/shipments/${orderId}/ahamove/cancel`, {
+    method: "POST",
   });
 }
 

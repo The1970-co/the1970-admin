@@ -69,22 +69,26 @@ function replaceAllTokens(template: string, data: Record<string, string>) {
 function buildItemsRows(order: any, type: string) {
   const items = Array.isArray(order?.items) ? order.items : [];
 
+  if (!items.length) {
+    return `<tr><td colspan="${type === "sales" ? 4 : 2}" style="padding:4px 0;color:#777;">Chưa có dữ liệu sản phẩm</td></tr>`;
+  }
+
   if (type === "sales") {
     return items
       .map(
         (item: any) => `
 <tr>
   <td style="padding:4px 0; border-bottom:1px dashed #ddd;">
-    ${escapeHtml(item.productName || "SP")}
-    <div style="font-size:11px; color:#666;">
-      ${escapeHtml(item.sku || "")}
-      ${item.color ? ` · ${escapeHtml(item.color)}` : ""}
-      ${item.size ? ` / ${escapeHtml(item.size)}` : ""}
+    ${escapeHtml(getItemName(item))}
+    <div style="font-size:10px; color:#666;">
+      ${escapeHtml(getItemSku(item))}
+      ${getItemColor(item) ? ` · ${escapeHtml(getItemColor(item))}` : ""}
+      ${getItemSize(item) ? ` / ${escapeHtml(getItemSize(item))}` : ""}
     </div>
   </td>
-  <td style="padding:4px 0; text-align:center; border-bottom:1px dashed #ddd;">${item.qty || 0}</td>
-  <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(Number(item.unitPrice || 0))}</td>
-  <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(Number(item.lineTotal || 0))}</td>
+  <td style="padding:4px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>
+  <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(getItemUnitPrice(item))}</td>
+  <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(getItemLineTotal(item))}</td>
 </tr>
         `.trim()
       )
@@ -95,19 +99,121 @@ function buildItemsRows(order: any, type: string) {
     .map(
       (item: any) => `
 <tr>
-  <td style="padding:4px 0; border-bottom:1px dashed #ddd;">
-    ${escapeHtml(item.productName || "SP")}
-    <div style="font-size:11px; color:#666;">
-      ${escapeHtml(item.sku || "")}
-      ${item.color ? ` · ${escapeHtml(item.color)}` : ""}
-      ${item.size ? ` / ${escapeHtml(item.size)}` : ""}
+  <td style="padding:3px 0; border-bottom:1px dashed #ddd;">
+    ${escapeHtml(getItemName(item))}
+    <div style="font-size:10px; color:#666;">
+      ${escapeHtml(getItemSku(item))}
+      ${getItemColor(item) ? ` · ${escapeHtml(getItemColor(item))}` : ""}
+      ${getItemSize(item) ? ` / ${escapeHtml(getItemSize(item))}` : ""}
     </div>
   </td>
-  <td style="padding:4px 0; text-align:center; border-bottom:1px dashed #ddd;">${item.qty || 0}</td>
+  <td style="padding:3px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>
 </tr>
       `.trim()
     )
     .join("");
+}
+
+
+function normalizeTextForCompare(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[,.，、;:]+/g, " ")
+    .trim();
+}
+
+
+function stripPhoneNoiseFromAddress(value: any) {
+  let text = String(value || "");
+
+  text = text.replace(
+    /([,;.\s]|^)(đt|dt|sđt|sdt|phone|tel|điện thoại)\s*[:.]?\s*0\d{8,11}.*$/gi,
+    ""
+  );
+
+  text = text.replace(/[,\s]*0\d{8,11}.*$/g, "");
+
+  return text
+    .replace(/\bĐịa chỉ\s*:\s*/gi, "")
+    .replace(/\bDia chi\s*:\s*/gi, "")
+    .replace(/\bAddress\s*:\s*/gi, "")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,+/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[,\s]+$/g, "")
+    .trim();
+}
+
+function cleanAddressText(value: any) {
+  let text = stripPhoneNoiseFromAddress(value)
+    .replace(/\s+/g, " ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,+/g, ",")
+    .trim();
+
+  text = text
+    .replace(/\bĐịa chỉ\s*:\s*/gi, "")
+    .replace(/\bDia chi\s*:\s*/gi, "")
+    .replace(/\bAddress\s*:\s*/gi, "")
+    .trim();
+
+  const parts = text
+    .split(",")
+    .map((part) => stripPhoneNoiseFromAddress(part).trim())
+    .filter(Boolean);
+
+  const unique: string[] = [];
+  const seen = new Set<string>();
+
+  for (const part of parts) {
+    const key = normalizeTextForCompare(part);
+    if (!key || seen.has(key)) continue;
+
+    if (/^(dt|đt|sdt|sđt|phone|tel)$/i.test(key)) continue;
+
+    seen.add(key);
+    unique.push(part);
+  }
+
+  return unique.join(", ");
+}
+
+
+function pickPureShippingAddress(order: any) {
+  // Chỉ lấy trường địa chỉ giao hàng thuần.
+  // Không lấy note/ghi chú/formatted address từ hãng vận chuyển.
+  const candidates = [
+    order?.shippingAddressLine1,
+    order?.shippingAddressLine,
+    order?.addressLine1,
+    order?.receiverAddress,
+    order?.recipientAddress,
+    order?.shippingStreet,
+  ];
+
+  for (const value of candidates) {
+    const text = String(value || "").trim();
+    if (!text) continue;
+    if (/ghi chú|note|hàng tặng|ship|cod/i.test(text)) continue;
+    return text;
+  }
+
+  return "";
+}
+
+function buildShippingNote(order: any) {
+  const raw =
+    order?.shippingNote ||
+    order?.deliveryNote ||
+    order?.noteForCarrier ||
+    "";
+
+  const note = String(raw || "").trim();
+  if (!note) return "";
+  if (/^\s*(địa chỉ|dia chi|address)\s*:/i.test(note)) return "";
+
+  return note;
 }
 
 function buildShippingAddress(order: any, fallbackAddress = "") {
@@ -137,6 +243,63 @@ function normalizeTrackingCode(order: any) {
   if (!code || code === "NO-GHN-CODE") return "";
   return code;
 }
+
+function displayPrintOrderCode(order: any) {
+  const trackingCode = normalizeTrackingCode(order);
+
+  const raw =
+    order?.externalOrderCode ||
+    order?.customerOrderCode ||
+    order?.referenceCode ||
+    order?.shipment?.clientOrderCode ||
+    order?.shipment?.trackingCode ||
+    trackingCode ||
+    "";
+
+  const code = String(raw || "").trim();
+
+  if (!code || code.toUpperCase().startsWith("ORD-")) return trackingCode || "";
+
+  return code;
+}
+
+function getItemName(item: any) {
+  return (
+    item?.productName ||
+    item?.name ||
+    item?.product?.name ||
+    item?.variant?.product?.name ||
+    item?.variantName ||
+    "Sản phẩm"
+  );
+}
+
+function getItemSku(item: any) {
+  return item?.sku || item?.variant?.sku || "";
+}
+
+function getItemColor(item: any) {
+  return item?.color || item?.variant?.color || "";
+}
+
+function getItemSize(item: any) {
+  return item?.size || item?.variant?.size || "";
+}
+
+function getItemQty(item: any) {
+  return Number(item?.qty ?? item?.quantity ?? item?.quantityOrdered ?? 0);
+}
+
+function getItemUnitPrice(item: any) {
+  return Number(item?.unitPrice ?? item?.price ?? item?.salePrice ?? 0);
+}
+
+function getItemLineTotal(item: any) {
+  return Number(
+    item?.lineTotal ?? item?.total ?? getItemQty(item) * getItemUnitPrice(item)
+  );
+}
+
 
 function shortenNote(value?: string, max = 140) {
   const text = String(value || "").trim();
@@ -175,34 +338,80 @@ function buildShippingTemplateHtml(params: {
   itemCount: number;
 }) {
   const { template, data, trackingCode, noteValue, itemCount } = params;
-
   const hasTracking = Boolean(trackingCode);
+  const isSquare80 = template.paperSize === "80mm";
+
+  if (isSquare80) {
+    return `
+<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:10.6px;line-height:1.15;padding:2.6mm 2.8mm;border:1px solid #111;overflow:hidden;">
+  <div style="text-align:center;margin:0 0 3px 0;">
+    <div style="font-size:16.5px;font-weight:900;letter-spacing:.6px;line-height:1;">${data.storeName}</div>
+    <div style="font-size:13.8px;font-weight:900;letter-spacing:.2px;margin-top:1px;">${data.title || "PHIẾU GIAO HÀNG"}</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:start;margin-bottom:3px;font-size:10px;">
+    <div><b>Mã đơn:</b> ${data.orderCode || trackingCode || "—"}</div>
+    <div style="text-align:right;"><b>Ngày tạo:</b> ${data.createdAt}</div>
+  </div>
+
+  <div style="font-size:10.7px;margin-bottom:3px;">
+    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Người nhận:</b> ${data.customerName}</div>
+    <div><b>SĐT:</b> ${data.customerPhone}</div>
+    <div style="height:27px;overflow:hidden;"><b>Đ/C:</b> ${data.shippingAddress}</div>
+  </div>
+
+  ${data.financialBlock || ""}
+
+  <div style="margin-top:3px;">
+    <div style="font-size:11px;font-weight:900;margin-bottom:1px;">Nội dung hàng (${itemCount} sản phẩm)</div>
+    <table style="width:100%;border-collapse:collapse;font-size:10.1px;line-height:1.08;">
+      <thead>
+        <tr>
+          <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;">Sản phẩm</th>
+          <th style="text-align:center;width:17px;border-bottom:1px solid #999;padding:1px 0;">SL</th>
+        </tr>
+      </thead>
+      <tbody>${data.itemsRows}</tbody>
+    </table>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 19mm;gap:5px;align-items:center;margin-top:3px;">
+    <div style="text-align:center;">
+      ${
+        hasTracking && template.showBarcode
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:28mm;height:9mm;object-fit:contain;display:block;margin:0 auto;" />`
+          : ""
+      }
+    </div>
+    <div style="text-align:center;">
+      ${
+        hasTracking && template.showQr
+          ? `<img src="${qrUrl(trackingCode)}" style="width:18mm;height:18mm;object-fit:contain;display:block;margin:0 auto;" />`
+          : ""
+      }
+    </div>
+  </div>
+
+  <div style="margin-top:1px;text-align:center;font-size:9.5px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+    ${data.footerNote || "Cảm ơn quý khách. Hẹn gặp lại!"}
+  </div>
+</div>
+    `.trim();
+  }
 
   return `
 <div style="width:72mm;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:11px;line-height:1.35;padding:2mm 2mm 4mm;">
   <div style="text-align:center;border-bottom:1px solid #000;padding-bottom:6px;margin-bottom:8px;">
-    <div style="font-size:18px;font-weight:700;letter-spacing:.4px;">
-      ${data.storeName}
-    </div>
-    ${
-      data.storeAddress
-        ? `<div style="font-size:11px;margin-top:2px;">${data.storeAddress}</div>`
-        : ""
-    }
+    <div style="font-size:18px;font-weight:700;letter-spacing:.4px;">${data.storeName}</div>
+    ${data.storeAddress ? `<div style="font-size:11px;margin-top:2px;">${data.storeAddress}</div>` : ""}
   </div>
 
-  <div style="text-align:center;font-size:20px;font-weight:700;margin-bottom:8px;">
-    PHIẾU GIAO HÀNG
-  </div>
+  <div style="text-align:center;font-size:20px;font-weight:700;margin-bottom:8px;">PHIẾU GIAO HÀNG</div>
 
   <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
     <tr>
-      <td style="vertical-align:top;font-size:11px;">
-        <div><strong>Mã đơn:</strong> ${data.orderCode}</div>
-      </td>
-      <td style="vertical-align:top;text-align:right;font-size:11px;">
-        <div><strong>Ngày tạo:</strong> ${data.createdAt}</div>
-      </td>
+      <td style="vertical-align:top;font-size:11px;"><div><strong>Mã đơn:</strong> ${data.orderCode || trackingCode || "—"}</div></td>
+      <td style="vertical-align:top;text-align:right;font-size:11px;"><div><strong>Ngày tạo:</strong> ${data.createdAt}</div></td>
     </tr>
   </table>
 
@@ -212,77 +421,31 @@ function buildShippingTemplateHtml(params: {
     <div style="margin-top:2px;"><strong>Đ/C:</strong> ${data.shippingAddress}</div>
   </div>
 
-  <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
-    <tr>
-      <td style="width:50%;vertical-align:top;">
-        <div><strong>Cách giao:</strong> ${data.shippingMode || "—"}</div>
-        <div style="margin-top:2px;"><strong>Thu hộ:</strong> ${data.codAmount || "0đ"}</div>
-      </td>
-      <td style="width:50%;vertical-align:top;text-align:right;">
-        <div><strong>Đơn vị VC:</strong> ${data.shippingPartner || "—"}</div>
-        <div style="margin-top:2px;"><strong>Phí ship:</strong> ${data.shippingFee || "0đ"}</div>
-      </td>
-    </tr>
-  </table>
+  ${noteValue ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>` : ""}
 
-  ${
-    noteValue
-      ? `
-    <div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;">
-      <div style="font-weight:700;margin-bottom:2px;">Ghi chú</div>
-      <div>${escapeHtml(noteValue)}</div>
-    </div>
-  `
-      : ""
-  }
+  ${data.financialBlock || ""}
 
   <div style="border-top:1px dashed #999;border-bottom:1px dashed #999;padding:6px 0;margin-bottom:8px;">
     <div style="font-weight:700;margin-bottom:4px;">Nội dung hàng (${itemCount} sản phẩm)</div>
     <table style="width:100%;border-collapse:collapse;">
-      <thead>
-        <tr>
-          <th style="text-align:left;font-size:11px;padding-bottom:4px;">Sản phẩm</th>
-          <th style="text-align:right;font-size:11px;padding-bottom:4px;">SL</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.itemsRows}
-      </tbody>
+      <thead><tr><th style="text-align:left;font-size:11px;padding-bottom:4px;">Sản phẩm</th><th style="text-align:right;font-size:11px;padding-bottom:4px;">SL</th></tr></thead>
+      <tbody>${data.itemsRows}</tbody>
     </table>
   </div>
 
   ${
     hasTracking && template.showBarcode
-      ? `
-    <div style="text-align:center;margin:10px 0 6px;">
-      <img
-        src="${barcodeUrl(trackingCode)}"
-        style="max-width:100%;height:72px;object-fit:contain;"
-      />
-      <div style="margin-top:4px;font-size:12px;font-weight:700;letter-spacing:.3px;">
-        ${escapeHtml(trackingCode)}
-      </div>
-    </div>
-  `
+      ? `<div style="text-align:center;margin:10px 0 6px;"><img src="${barcodeUrl(trackingCode)}" style="max-width:100%;height:72px;object-fit:contain;" /></div>`
       : ""
   }
 
   ${
     hasTracking && template.showQr
-      ? `
-    <div style="text-align:center;margin-top:6px;">
-      <img
-        src="${qrUrl(trackingCode)}"
-        style="width:96px;height:96px;object-fit:contain;"
-      />
-    </div>
-  `
+      ? `<div style="text-align:center;margin-top:6px;"><img src="${qrUrl(trackingCode)}" style="width:96px;height:96px;object-fit:contain;" /></div>`
       : ""
   }
 
-  <div style="text-align:center;font-size:10px;color:#555;margin-top:10px;">
-    ${data.footerNote || "Cảm ơn quý khách. Hẹn gặp lại!"}
-  </div>
+  <div style="text-align:center;font-size:10px;color:#555;margin-top:10px;">${data.footerNote || "Cảm ơn quý khách. Hẹn gặp lại!"}</div>
 </div>
   `.trim();
 }
@@ -388,7 +551,7 @@ export function renderOrderTemplateHtml(params: {
         ? codAmount
         : finalAmount;
 
-  const itemCount = Array.isArray(order?.items) ? order.items.length : 0;
+  const itemCount = Array.isArray(order?.items) ? order.items.reduce((sum: number, item: any) => sum + getItemQty(item), 0) : 0;
   const itemsRows = buildItemsRows(order, template.templateType);
   const shippingAddress = buildShippingAddress(order, meta.address || "");
   const noteValue = template.showNote ? buildCleanNote(order, meta) : "";
@@ -400,7 +563,7 @@ export function renderOrderTemplateHtml(params: {
     storeAddress: escapeHtml(order?.warehouseAddress || template.storeAddress || ""),
     footerNote: escapeHtml(template.footerNote || "Cảm ơn quý khách. Hẹn gặp lại!"),
 
-    orderCode: escapeHtml(order?.orderCode || ""),
+    orderCode: escapeHtml(displayPrintOrderCode(order)),
     createdAt: escapeHtml(order?.createdAt || ""),
     customerName: escapeHtml(
       order?.shippingRecipientName || order?.customerName || ""
@@ -425,8 +588,20 @@ export function renderOrderTemplateHtml(params: {
     itemsRows,
     barcodeBlock: "",
     qrBlock: "",
-    financialBlock: "",
-    noteBlock: "",
+    financialBlock:
+        template.templateType === "shipping"
+          ? `<div style="margin:3px 0 3px;">
+              <table style="width:100%;border-collapse:collapse;text-align:center;">
+                <tr>
+                  <td style="border:1px solid #111;padding:4px 4px;">
+                    <div style="font-size:10px;">THU HỘ (COD)</div>
+                    <div style="font-size:16px;font-weight:900;">${money(codAmount || amountDue || 0)}</div>
+                  </td>
+                </tr>
+              </table>
+            </div>`
+          : "",
+      noteBlock: "",
   };
 
   if (template.templateType === "sales") {
@@ -441,17 +616,11 @@ export function renderOrderTemplateHtml(params: {
       ...data,
       barcodeBlock:
         trackingCode && template.showBarcode
-          ? `<img src="${barcodeUrl(
-              trackingCode
-            )}" style="max-width:100%; height:72px; object-fit:contain;" /><div style="font-size:12px; margin-top:4px;">${escapeHtml(
-              trackingCode
-            )}</div>`
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:28mm;height:9mm;object-fit:contain;display:block;margin:0 auto;" />`
           : "",
       qrBlock:
         trackingCode && template.showQr
-          ? `<img src="${qrUrl(
-              trackingCode
-            )}" style="width:96px; height:96px; object-fit:contain;" />`
+          ? `<img src="${qrUrl(trackingCode)}" style="width:18mm;height:18mm;object-fit:contain;display:block;margin:0 auto;" />`
           : "",
     });
 
@@ -471,7 +640,7 @@ export function renderOrderTemplateHtml(params: {
 
 export function renderTemplatePreviewHtml(template: PrintTemplateConfig) {
   const mockOrder = {
-    orderCode: "ORD-DEMO-001",
+    orderCode: "DEMO-001",
     createdAt: "10:25:00 19/04/2026",
     customerName: "Nguyễn Văn A",
     shippingRecipientName: "Nguyễn Văn A",
@@ -521,10 +690,10 @@ export function openPrintDocument(params: {
   if (!win) return;
 
   const pageSize =
-    paperSize === "80mm" ? "80mm auto" : paperSize === "A5" ? "A5" : "A4";
+    paperSize === "80mm" ? "80mm 80mm" : paperSize === "A5" ? "A5" : "A4";
 
   const pageWidth =
-    paperSize === "80mm" ? "76mm" : paperSize === "A5" ? "148mm" : "190mm";
+    paperSize === "80mm" ? "80mm" : paperSize === "A5" ? "148mm" : "190mm";
 
   win.document.write(`
     <html>
@@ -533,7 +702,7 @@ export function openPrintDocument(params: {
         <style>
           @page {
             size: ${pageSize};
-            margin: 4mm;
+            margin: ${paperSize === "80mm" ? "0" : "4mm"};
           }
           * { box-sizing: border-box; }
           body {
@@ -544,7 +713,8 @@ export function openPrintDocument(params: {
           }
           .print-page {
             width: ${pageWidth};
-            margin: 0 auto 8mm auto;
+            min-height: ${paperSize === "80mm" ? "80mm" : "auto"};
+            margin: ${paperSize === "80mm" ? "0 auto" : "0 auto 8mm auto"};
             page-break-after: always;
           }
         </style>

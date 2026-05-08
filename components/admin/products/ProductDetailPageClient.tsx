@@ -874,7 +874,180 @@ export default function ProductDetailPageClient({
   const statusActive = product.status === "ACTIVE";
 
   return (
-    <div className="space-y-3 p-3 xl:p-4">
+    <>
+      <div className="space-y-3 p-3 pb-24 md:hidden">
+        <Panel className="overflow-hidden">
+          <div className="p-4">
+            <Link
+              href="/products"
+              className="text-[12px] text-neutral-500 hover:text-neutral-900"
+            >
+              ← Danh sách sản phẩm
+            </Link>
+
+            <div className="mt-3 flex gap-3">
+              <div className="h-20 w-20 shrink-0 overflow-hidden rounded-3xl bg-neutral-100">
+                {imageUrl ? (
+                  <img
+                    src={toAbsoluteFileUrl(imageUrl)}
+                    alt={product.name || "Sản phẩm"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
+                    No image
+                  </div>
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={statusActive ? "green" : "red"}>
+                    {product.status || "DRAFT"}
+                  </Badge>
+                  {hasUnsavedChanges ? <Badge tone="amber">Chưa lưu</Badge> : null}
+                </div>
+                <h1 className="mt-2 text-[22px] font-semibold leading-tight text-neutral-950">
+                  {product.name}
+                </h1>
+                <p className="mt-1 truncate text-sm text-neutral-500">
+                  /{product.slug || "—"} · {weight || 0}g
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-[11px] text-neutral-500">Tổng tồn</p>
+                <p className="mt-1 text-lg font-semibold text-neutral-950">{totalStock}</p>
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-[11px] text-neutral-500">Variant</p>
+                <p className="mt-1 text-lg font-semibold text-neutral-950">{variantCount}</p>
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                <p className="text-[11px] text-neutral-500">Giá bán</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-950">
+                  {currency(Number(defaultPrice || 0))}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => void loadAll()}>
+                Tải lại
+              </Button>
+              <Button
+                variant={statusActive ? "danger" : "success"}
+                disabled={statusSaving || !canToggleProductStatus}
+                onClick={handleToggleStatus}
+              >
+                {statusSaving ? "Đang cập nhật..." : statusActive ? "Ngừng bán" : "Kích hoạt"}
+              </Button>
+              <Button
+                className="col-span-2"
+                disabled={saving || !canEditProduct || !hasUnsavedChanges}
+                onClick={() => void saveProduct(true)}
+              >
+                {saving ? "Đang lưu..." : hasUnsavedChanges ? "Lưu sản phẩm" : "Đã đồng bộ"}
+              </Button>
+            </div>
+          </div>
+        </Panel>
+
+        {message ? (
+          <div
+            className={`rounded-2xl border px-4 py-3 text-sm ${message.startsWith("Đã") ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}
+          >
+            {message}
+          </div>
+        ) : null}
+
+        <Panel className="overflow-hidden">
+          <div className="border-b border-neutral-100 px-4 py-3">
+            <h2 className="text-[17px] font-semibold text-neutral-950">Tồn kho chi nhánh</h2>
+            <p className="mt-1 text-xs text-neutral-500">Tổng tồn của sản phẩm này: {totalStock}</p>
+          </div>
+          <div className="divide-y divide-neutral-100">
+            {branchStockAlerts.map((item) => (
+              <div key={item.branchId} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-neutral-900">{item.branchName}</p>
+                  <p className="mt-0.5 text-[11px] uppercase tracking-wide text-neutral-400">{item.label}</p>
+                </div>
+                <Badge tone={item.tone}>{item.qty}</Badge>
+              </div>
+            ))}
+          </div>
+          {isOwner ? (
+            <div className="border-t border-neutral-100 p-3">
+              <Link
+                href={`/inventory?productId=${encodeURIComponent(product.id)}`}
+                className="inline-flex w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-700"
+              >
+                Mở trong Kho hàng
+              </Link>
+            </div>
+          ) : null}
+        </Panel>
+
+        <Panel className="overflow-hidden">
+          <div className="border-b border-neutral-100 px-4 py-3">
+            <h2 className="text-[17px] font-semibold text-neutral-950">Variant</h2>
+            <p className="mt-1 text-xs text-neutral-500">{variantCount} màu / size đang có</p>
+          </div>
+          <div className="divide-y divide-neutral-100">
+            {(product.variants || []).map((variant: any) => (
+              <div key={variant.id || variant.sku} className="px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-neutral-950">
+                      {variant.sku || "SKU"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      {variant.color || "—"} · {variant.size || "—"}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-neutral-950">
+                      {getVariantTotalQty(variant.id)} tồn
+                    </p>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      {currency(Number(variant.price || 0))}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel className="p-4">
+          <h2 className="text-[17px] font-semibold text-neutral-950">Thông tin chính</h2>
+          <div className="mt-3 grid gap-3">
+            <Field label="Tên sản phẩm">
+              <Input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEditProduct} />
+            </Field>
+            <Field label="Mã / slug">
+              <Input value={skuCode} onChange={(e) => setSkuCode(slugify(e.target.value))} disabled={!canEditProduct} />
+            </Field>
+            <Field label="Giá bán">
+              <Input type="number" value={defaultPrice} onChange={(e) => setDefaultPrice(e.target.value)} disabled={!canEditProductPrice} />
+            </Field>
+            {canViewCost ? (
+              <Field label="Giá vốn">
+                <Input type="number" value={defaultCostPrice} onChange={(e) => setDefaultCostPrice(e.target.value)} disabled={!canEditProductPrice} />
+              </Field>
+            ) : null}
+            <Field label="Mô tả">
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEditProduct} />
+            </Field>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="hidden md:block">
+        <div className="space-y-3 p-3 xl:p-4">
       <Panel className="sticky top-0 z-20 border-neutral-300 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -1482,6 +1655,8 @@ export default function ProductDetailPageClient({
           </Panel>
         </div>
       </div>
-    </div>
+        </div>
+      </div>
+    </>
   );
 }

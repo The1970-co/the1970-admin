@@ -114,6 +114,34 @@ export default function PrintTemplatesTab() {
     setTimeout(() => setSavedMsg(""), 2000);
   };
 
+
+  const resetSelectedTemplate = () => {
+    if (!selected) return;
+
+    const defaults = buildDefaultPrintTemplates();
+    const replacement = defaults.find(
+      (row) =>
+        row.branchId === selected.branchId &&
+        row.templateType === selected.templateType &&
+        row.paperSize === selected.paperSize
+    );
+
+    if (!replacement) return;
+
+    const updated = {
+      ...replacement,
+      id: selected.id,
+      isDefault: selected.isDefault,
+    };
+
+    setRows((prev) =>
+      prev.map((row) => (row.id === selected.id ? updated : row))
+    );
+    setSelectedId(selected.id);
+    setSavedMsg("Đã reset riêng mẫu đang chọn. Bấm Lưu cấu hình để áp dụng.");
+    setTimeout(() => setSavedMsg(""), 2500);
+  };
+
   const setAsDefault = () => {
     if (!selected) return;
     setRows((prev) =>
@@ -237,7 +265,10 @@ export default function PrintTemplatesTab() {
                   </p>
                 </div>
 
-                <Button onClick={setAsDefault}>Đặt mặc định</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={resetSelectedTemplate}>Reset mẫu này</Button>
+                  <Button onClick={setAsDefault}>Đặt mặc định</Button>
+                </div>
               </div>
 
               <div className="grid gap-4">

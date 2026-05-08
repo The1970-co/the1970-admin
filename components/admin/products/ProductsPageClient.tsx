@@ -2383,7 +2383,7 @@ export default function ProductsPageClient() {
           </div>
         ) : (
           <>
-            <div className="space-y-3 p-3 md:hidden">
+            <div className="divide-y divide-neutral-100 md:hidden">
               {filteredProducts.map((product) => {
                 const variants = product.variants || [];
                 const productStock = variants.reduce(
@@ -2398,168 +2398,53 @@ export default function ProductsPageClient() {
                     0
                   ),
                 }));
-                const minPrice =
-                  variants.length > 0
-                    ? Math.min(...variants.map((v) => Number(v.price || 0)))
-                    : 0;
-                const minCostPrice =
-                  variants.length > 0
-                    ? Math.min(...variants.map((v) => Number((v as any).costPrice || 0)))
-                    : 0;
-                const colorsList = uniqueValues(variants.map((variant) => variant.color));
-                const sizesList = uniqueValues(variants.map((variant) => variant.size));
+                const shortBranchText = branchBadges
+                  .filter((item) => item.qty > 0)
+                  .slice(0, 4)
+                  .map((item) => `${item.name}: ${item.qty}`)
+                  .join(" · ");
 
                 return (
-                  <div
+                  <button
                     key={product.id}
-                    className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm"
+                    type="button"
+                    onClick={() => openProductDetail(product)}
+                    className="flex w-full items-center gap-3 bg-white px-3 py-3 text-left transition active:bg-neutral-50"
+                    title="Mở chi tiết sản phẩm"
                   >
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() => openProductDetail(product)}
-                        className="shrink-0 rounded-2xl transition hover:opacity-80"
-                      >
-                        <ProductImage src={product.imageUrl} alt={product.name} />
-                      </button>
+                    <ProductImage src={product.imageUrl} alt={product.name} />
 
-                      <div className="min-w-0 flex-1">
-                        <button
-                          type="button"
-                          onClick={() => openProductDetail(product)}
-                          className="block w-full truncate text-left text-[16px] font-semibold leading-6 text-neutral-950"
-                        >
-                          {product.name}
-                        </button>
-
-                        <div className="mt-1 truncate text-sm text-neutral-500">
-                          /{product.slug || getMainSku(product)} · {product.weight || 0}g
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <Badge tone={toneForStatus(product.status)}>
-                            {product.status || "DRAFT"}
-                          </Badge>
-                          <Badge tone="blue">{variants.length} SKU</Badge>
-                          <Badge tone={productStock <= 3 ? "amber" : "green"}>
-                            {productStock} tồn
-                          </Badge>
-                        </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[15px] font-semibold leading-5 text-neutral-950">
+                        {product.name}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-neutral-500">
+                        /{product.slug || getMainSku(product)} · {variants.length} SKU
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-neutral-500">
+                        {shortBranchText || "Chưa có tồn theo chi nhánh"}
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-neutral-50 p-3 text-sm">
-                      <div>
-                        <p className="text-neutral-500">Giá bán</p>
-                        <p className="mt-1 font-semibold text-neutral-950">
-                          {currency(minPrice)}
-                        </p>
-                      </div>
-                      {canViewCost ? (
-                        <div>
-                          <p className="text-neutral-500">Giá nhập</p>
-                          <p className="mt-1 font-semibold text-neutral-950">
-                            {currency(minCostPrice)}
-                          </p>
-                        </div>
-                      ) : (
-                        <div>
-                          <p className="text-neutral-500">SKU chính</p>
-                          <p className="mt-1 font-semibold text-neutral-950">
-                            {getMainSku(product)}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {colorsList.slice(0, 4).map((color) => (
-                        <Badge key={color} tone="gray">
-                          {color}
-                        </Badge>
-                      ))}
-                      {sizesList.slice(0, 5).map((size) => (
-                        <Badge key={size} tone="gray">
-                          {size}
-                        </Badge>
-                      ))}
-                    </div>
-
-                    {branchBadges.length ? (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {branchBadges.slice(0, 6).map((item) => (
-                          <Badge key={item.id} tone={item.qty <= 3 ? "amber" : "green"}>
-                            {item.name}: {item.qty}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
-                      <Button
-                        onClick={() => openProductDetail(product)}
-                        className="w-full rounded-2xl"
+                    <div className="shrink-0 text-right">
+                      <div
+                        className={`text-[17px] font-semibold leading-none ${
+                          productStock <= 0
+                            ? "text-red-600"
+                            : productStock <= 3
+                              ? "text-amber-600"
+                              : "text-neutral-950"
+                        }`}
                       >
-                        Chi tiết
-                      </Button>
-
-                      {canEditProduct ? (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleOpenEdit(product)}
-                          className="rounded-2xl px-5"
-                        >
-                          Sửa
-                        </Button>
-                      ) : null}
+                        {productStock}
+                      </div>
+                      <div className="mt-1 text-[11px] text-neutral-500">tồn</div>
                     </div>
-
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      {canEditProduct ? (
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setActiveProductId(product.id);
-                            resetVariantForm();
-                            setVariantOpen(true);
-                          }}
-                          className="w-full rounded-2xl"
-                        >
-                          + Variant
-                        </Button>
-                      ) : null}
-
-                      {canToggleProductStatus ? (
-                        <Button
-                          variant={product.status === "ACTIVE" ? "danger" : "success"}
-                          onClick={() => void handleToggleStatus(product.id)}
-                          disabled={togglingStatusId === product.id}
-                          className="w-full rounded-2xl"
-                        >
-                          {togglingStatusId === product.id
-                            ? "Đang cập nhật..."
-                            : product.status === "ACTIVE"
-                              ? "Ngừng bán"
-                              : "Kích hoạt"}
-                        </Button>
-                      ) : null}
-                    </div>
-
-                    {canDeleteProduct ? (
-                      <Button
-                        variant="danger"
-                        onClick={() => void handleDeleteProduct(product)}
-                        disabled={deletingProductId === product.id}
-                        className="mt-2 w-full rounded-2xl"
-                      >
-                        {deletingProductId === product.id ? "Đang xóa..." : "Xóa sản phẩm"}
-                      </Button>
-                    ) : null}
-                  </div>
+                  </button>
                 );
               })}
 
-              <div className="rounded-[24px] border border-neutral-200 bg-white p-3 shadow-sm">
+              <div className="bg-white p-3">
                 <div className="text-sm text-neutral-500">
                   Trang {page} / {Math.max(1, Math.ceil(totalProducts / limit))} · {totalProducts} sản phẩm
                 </div>
