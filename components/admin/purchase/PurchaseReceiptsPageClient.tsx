@@ -76,15 +76,19 @@ function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-      <div className="w-full max-w-5xl rounded-2xl bg-white p-4 shadow-2xl">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-2xl font-semibold tracking-tight">{title}</h3>
-          <button onClick={onClose} className="text-lg text-neutral-500" type="button">
-            ×
-          </button>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-hidden bg-black/35 p-4">
+      <div className="mt-2 flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="shrink-0 border-b border-neutral-200 bg-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-2xl font-semibold tracking-tight">{title}</h3>
+            <button onClick={onClose} className="text-lg text-neutral-500" type="button">
+              ×
+            </button>
+          </div>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -138,11 +142,79 @@ export default function PurchaseReceiptsPageClient() {
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [expandedReceiptIds, setExpandedReceiptIds] = useState<string[]>([]);
 
   const currentUser = getCurrentUserFromStorage();
   const createdById = currentUser?.id || undefined;
-const role = String(currentUser?.role || "").toLowerCase();
-const isAdmin = role === "admin" || role === "owner";
+  const role = String(currentUser?.role || "").toLowerCase();
+  const roles = Array.isArray(currentUser?.roles)
+    ? currentUser.roles.map((item: any) => String(item || "").toLowerCase())
+    : [];
+  const isAdmin =
+    role === "admin" ||
+    role === "owner" ||
+    roles.includes("admin") ||
+    roles.includes("owner");
+
+  function getPermissionKeys() {
+    const keys = new Set<string>();
+
+    if (Array.isArray((currentUser as any)?.permissionKeys)) {
+      (currentUser as any).permissionKeys.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray((currentUser as any)?.permissions)) {
+      (currentUser as any).permissions.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray((currentUser as any)?.branchPermissions)) {
+      (currentUser as any).branchPermissions.forEach((row: any) => {
+        if (Array.isArray(row?.permissionKeys)) {
+          row.permissionKeys.forEach((key: any) => {
+            if (key) keys.add(String(key));
+          });
+        }
+      });
+    }
+
+    return keys;
+  }
+
+  function hasAnyPermission(keys: string[]) {
+    if (isAdmin) return true;
+    const granted = getPermissionKeys();
+    return keys.some((key) => granted.has(key));
+  }
+
+  const canCreateReceipt = hasAnyPermission([
+    "purchase_receipt.create",
+    "purchaseReceipts.tao_don_nhap",
+    "purchaseReceipts.tao_don_dat_hang_nhap",
+    "purchaseOrders.tao_don_dat_hang_nhap",
+  ]);
+  const canEditReceipt = hasAnyPermission([
+    "purchase_receipt.edit",
+    "purchaseReceipts.sua_don_nhap",
+    "purchaseReceipts.sua_don_dat_hang_nhap",
+    "purchaseOrders.sua_don_dat_hang_nhap",
+  ]);
+  const canConfirmReceipt = hasAnyPermission([
+    "purchase_receipt.receive",
+    "purchase_receipt.close",
+    "purchaseReceipts.nhan_hang_vao_kho",
+    "purchaseReceipts.ket_thuc_don_nhap",
+    "purchaseOrders.ket_thuc_don_dat_hang_nhap",
+  ]);
+  const canCancelReceipt = hasAnyPermission([
+    "purchase_receipt.cancel",
+    "purchaseReceipts.huy_don_nhap",
+    "purchaseReceipts.huy_don_dat_hang_nhap",
+    "purchaseOrders.huy_don_dat_hang_nhap",
+  ]);
 
   function getReceiptItems(receipt: PurchaseReceipt) {
     return Array.isArray(receipt.items) ? receipt.items : [];
@@ -368,6 +440,15 @@ const isAdmin = role === "admin" || role === "owner";
     setEditingReceiptId(null);
   }
 
+
+  function toggleReceiptExpanded(receiptId: string) {
+    setExpandedReceiptIds((prev) =>
+      prev.includes(receiptId)
+        ? prev.filter((id) => id !== receiptId)
+        : [...prev, receiptId],
+    );
+  }
+
   function openPayment(receipt: PurchaseReceipt) {
     const total = getReceiptAmount(receipt);
     const paid = getPaidAmount(receipt);
@@ -414,7 +495,28 @@ const isAdmin = role === "admin" || role === "owner";
         unitCost: "0",
       },
     ]);
-    setSearchVariant("");
+    // Giữ nguyên mã đang tìm để có thể chọn tiếp nhiều SKU con cùng mã cha.
+  }
+
+
+  function addVisibleVariantsToDraft() {
+    const existingIds = new Set(items.map((item) => item.variantId));
+    const nextItems = variantOptions
+      .filter((option) => !existingIds.has(option.variantId))
+      .map((option) => ({
+        rowId: makeRowId(),
+        variantId: option.variantId,
+        sku: option.sku,
+        productName: option.productName,
+        color: option.color || "",
+        size: option.size || "",
+        qty: "1",
+        unitCost: "0",
+      }));
+
+    if (!nextItems.length) return;
+
+    setItems((prev) => [...prev, ...nextItems]);
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -604,12 +706,15 @@ const isAdmin = role === "admin" || role === "owner";
           </p>
         </div>
 
-        <button
-          onClick={openCreate}
-          className="rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
-        >
-          + Tạo phiếu nhập
-        </button>
+        {canCreateReceipt ? (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
+          >
+            + Tạo phiếu nhập
+          </button>
+        ) : null}
       </div>
 
       <Panel className="p-4">
@@ -670,6 +775,7 @@ const isAdmin = role === "admin" || role === "owner";
             const receiptAmount = getReceiptAmount(receipt);
             const paidAmount = getPaidAmount(receipt);
             const paidEnough = isReceiptPaidEnough(receipt);
+            const expanded = expandedReceiptIds.includes(receipt.id);
 
             return (
               <Panel key={receipt.id}>
@@ -701,45 +807,71 @@ const isAdmin = role === "admin" || role === "owner";
                       <p>Kho nhập: {receipt.branch?.name || "—"}</p>
                       {isAdmin ? <p>Nhà cung cấp: {receipt.supplier?.name || "—"}</p> : null}
                       <p>Tổng số lượng: {receiptQty}</p>
+                      <p>
+                        Số dòng SKU: {receiptItems.length}
+                        {receiptItems.length ? (
+                          <span className="ml-1 text-neutral-400">
+                            · {receiptItems.slice(0, 3).map((line) => line.sku).join(", ")}
+                            {receiptItems.length > 3 ? "..." : ""}
+                          </span>
+                        ) : null}
+                      </p>
                       {isAdmin ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
                       {isAdmin ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
-                      {isAdmin && receipt.status === "PAID" ? (
+                      {(isAdmin || canConfirmReceipt) && receipt.status === "PAID" ? (
                         <p className="font-medium text-green-700">Đã thanh toán đủ · chờ nhập kho</p>
                       ) : null}
                       {receipt.note ? <p>Ghi chú: {receipt.note}</p> : null}
                     </div>
                   </div>
 
-                  {isAdmin ? (
-                    <div className="flex flex-wrap gap-2">
-                      {receipt.status === "DRAFT" ? (
+                  <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleReceiptExpanded(receipt.id)}
+                        className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                      >
+                        {expanded ? "Thu gọn" : "Xem chi tiết"}
+                      </button>
+
+                      {receipt.status === "DRAFT" &&
+                      (canEditReceipt || canConfirmReceipt || canCancelReceipt) ? (
                         <>
-                          <button
-                            onClick={() => openEdit(receipt)}
-                            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
-                          >
-                            Sửa phiếu
-                          </button>
+                          {canEditReceipt ? (
+                            <button
+                              type="button"
+                              onClick={() => openEdit(receipt)}
+                              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                            >
+                              Sửa phiếu
+                            </button>
+                          ) : null}
 
-                          <button
-                            onClick={() => void handleRequestPayment(receipt.id)}
-                            disabled={importingId === receipt.id}
-                            className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${
-                              importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
-                            }`}
-                          >
-                            {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
-                          </button>
+                          {canConfirmReceipt ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleRequestPayment(receipt.id)}
+                              disabled={importingId === receipt.id}
+                              className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${
+                                importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                              }`}
+                            >
+                              {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
+                            </button>
+                          ) : null}
 
-                          <button
-                            onClick={() => void handleCancel(receipt.id)}
-                            disabled={cancellingId === receipt.id}
-                            className={`rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ${
-                              cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
-                            }`}
-                          >
-                            {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
-                          </button>
+                          {canCancelReceipt ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleCancel(receipt.id)}
+                              disabled={cancellingId === receipt.id}
+                              className={`rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ${
+                                cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                              }`}
+                            >
+                              {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
+                            </button>
+                          ) : null}
                         </>
                       ) : null}
 
@@ -755,7 +887,7 @@ const isAdmin = role === "admin" || role === "owner";
                         </a>
                       ) : null}
 
-                      {isAdmin && receipt.status === "PAID" ? (
+                      {(isAdmin || canConfirmReceipt) && receipt.status === "PAID" ? (
                         <button
                           onClick={() => void handleImportStock(receipt.id)}
                           disabled={importingId === receipt.id}
@@ -767,7 +899,7 @@ const isAdmin = role === "admin" || role === "owner";
                         </button>
                       ) : null}
 
-                      {receipt.status === "STOCK_IMPORTED" ? (
+                      {(isAdmin || canConfirmReceipt) && receipt.status === "STOCK_IMPORTED" ? (
                         <button
                           onClick={() => void handleComplete(receipt.id)}
                           disabled={completingId === receipt.id}
@@ -779,41 +911,43 @@ const isAdmin = role === "admin" || role === "owner";
                         </button>
                       ) : null}
                     </div>
-                  ) : null}
                 </div>
 
-                <div className="overflow-auto">
-                  <table className="min-w-full text-[13px]">
-                    <thead className="bg-neutral-50 text-left text-neutral-500">
-                      <tr>
-                        <th className="px-3 py-2.5 font-medium">SKU</th>
-                        <th className="px-3 py-2.5 font-medium">Sản phẩm</th>
-                        <th className="px-3 py-2.5 font-medium">Màu</th>
-                        <th className="px-3 py-2.5 font-medium">Size</th>
-                        <th className="px-3 py-2.5 font-medium">Số lượng</th>
-                        {isAdmin ? <th className="px-3 py-2.5 font-medium">Giá nhập</th> : null}
-                        {isAdmin ? <th className="px-3 py-2.5 font-medium">Thành tiền</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {getReceiptItems(receipt).map((item) => (
-                        <tr key={item.id} className="border-t border-neutral-200">
-                          <td className="px-3 py-2.5 font-medium">{item.sku}</td>
-                          <td className="px-3 py-2.5">{item.productName}</td>
-                          <td className="px-3 py-2.5">{item.color || "—"}</td>
-                          <td className="px-3 py-2.5">{item.size || "—"}</td>
-                          <td className="px-3 py-2.5">{item.qty}</td>
-                          {isAdmin ? (
-                            <td className="px-3 py-2.5">{currency(Number(item.unitCost || 0))}</td>
-                          ) : null}
-                          {isAdmin ? (
-                            <td className="px-3 py-2.5">{currency(Number(item.lineTotal || 0))}</td>
-                          ) : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {expanded ? (
+                  <div className="overflow-auto">
+                                    <table className="min-w-full text-[13px]">
+                                      <thead className="bg-neutral-50 text-left text-neutral-500">
+                                        <tr>
+                                          <th className="px-3 py-2.5 font-medium">SKU</th>
+                                          <th className="px-3 py-2.5 font-medium">Sản phẩm</th>
+                                          <th className="px-3 py-2.5 font-medium">Màu</th>
+                                          <th className="px-3 py-2.5 font-medium">Size</th>
+                                          <th className="px-3 py-2.5 font-medium">Số lượng</th>
+                                          {isAdmin ? <th className="px-3 py-2.5 font-medium">Giá nhập</th> : null}
+                                          {isAdmin ? <th className="px-3 py-2.5 font-medium">Thành tiền</th> : null}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {getReceiptItems(receipt).map((item) => (
+                                          <tr key={item.id} className="border-t border-neutral-200">
+                                            <td className="px-3 py-2.5 font-medium">{item.sku}</td>
+                                            <td className="px-3 py-2.5">{item.productName}</td>
+                                            <td className="px-3 py-2.5">{item.color || "—"}</td>
+                                            <td className="px-3 py-2.5">{item.size || "—"}</td>
+                                            <td className="px-3 py-2.5">{item.qty}</td>
+                                            {isAdmin ? (
+                                              <td className="px-3 py-2.5">{currency(Number(item.unitCost || 0))}</td>
+                                            ) : null}
+                                            {isAdmin ? (
+                                              <td className="px-3 py-2.5">{currency(Number(item.lineTotal || 0))}</td>
+                                            ) : null}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                
+                ) : null}
               </Panel>
             );
           })
@@ -887,34 +1021,49 @@ const isAdmin = role === "admin" || role === "owner";
                 <div className="p-4 text-sm text-neutral-500">Không có variant phù hợp.</div>
               ) : (
                 <div className="divide-y divide-neutral-200">
-                  {variantOptions.map((item) => (
-                    <button
-                      key={item.rowId}
-                      type="button"
-                      onClick={() => addVariantToDraft(item)}
-                      className="flex w-full items-center justify-between px-3 py-2.5 text-left transition hover:bg-neutral-50"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-neutral-900">{item.productName}</p>
-                        <p className="mt-1 text-xs text-neutral-500">
-                          {item.sku} · {item.color || "—"} / {item.size || "—"}
-                        </p>
-                      </div>
-                      <span className="text-xs font-medium text-neutral-500">Thêm</span>
-                    </button>
-                  ))}
+                  {variantOptions.map((item) => {
+                    const added = items.some((line) => line.variantId === item.variantId);
+
+                    return (
+                      <button
+                        key={item.rowId}
+                        type="button"
+                        onClick={() => addVariantToDraft(item)}
+                        disabled={added}
+                        className={`flex w-full items-center justify-between px-3 py-2.5 text-left transition ${
+                          added
+                            ? "cursor-not-allowed bg-emerald-50"
+                            : "hover:bg-neutral-50"
+                        }`}
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-neutral-900">{item.productName}</p>
+                          <p className="mt-1 text-xs text-neutral-500">
+                            {item.sku} · {item.color || "—"} / {item.size || "—"}
+                          </p>
+                        </div>
+                        <span
+                          className={`text-xs font-medium ${
+                            added ? "text-emerald-700" : "text-neutral-500"
+                          }`}
+                        >
+                          {added ? "Đã thêm" : "Thêm"}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </Panel>
 
-          <Panel className="overflow-hidden">
-            <div className="overflow-auto">
+          <Panel className="min-h-0 overflow-hidden">
+            <div className="max-h-[42vh] overflow-auto">
               {items.length === 0 ? (
                 <div className="p-4 text-sm text-neutral-500">Chưa có dòng hàng nào.</div>
               ) : (
-                <table className="min-w-full text-[13px]">
-                  <thead className="bg-neutral-50 text-left text-neutral-500">
+                <table className="min-w-[980px] text-[13px]">
+                  <thead className="sticky top-0 z-10 bg-neutral-50 text-left text-neutral-500">
                     <tr>
                       <th className="px-3 py-2.5 font-medium">SKU</th>
                       <th className="px-3 py-2.5 font-medium">Sản phẩm</th>
@@ -977,7 +1126,7 @@ const isAdmin = role === "admin" || role === "owner";
             </div>
           </Panel>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <div className="sticky bottom-0 z-20 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 bg-white px-4 py-3 shadow-[0_-8px_20px_rgba(0,0,0,0.04)]">
             <div className="text-xs text-neutral-500">
               Tổng số lượng: <span className="font-medium text-neutral-900">{totalQty}</span>
               {isAdmin ? (
@@ -998,7 +1147,7 @@ const isAdmin = role === "admin" || role === "owner";
               </button>
               <button
                 onClick={() => void handleSaveReceipt()}
-                disabled={saving}
+                disabled={saving || (editingReceiptId ? !canEditReceipt : !canCreateReceipt)}
                 type="button"
                 className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
                   saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"

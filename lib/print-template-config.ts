@@ -1,5 +1,5 @@
-export type PrintTemplateType = "shipping" | "sales" | "transfer";
-export type PrintPaperSize = "80mm" | "A4" | "A5";
+export type PrintTemplateType = "shipping" | "sales" | "transfer" | "product_label";
+export type PrintPaperSize = "50mm" | "80mm" | "A4" | "A5";
 
 export type PrintTemplateConfig = {
   id: string;
@@ -27,7 +27,7 @@ export type PrintTemplateConfig = {
 
 // Đổi key lên v21 để xoá cache template cũ đang lưu trong localStorage.
 // Nếu không đổi key, trình duyệt vẫn dùng HTML cũ nên sửa engine/config không ăn.
-const STORAGE_KEY = "the1970.printTemplates.v22";
+const STORAGE_KEY = "the1970.printTemplates.v23";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -201,10 +201,56 @@ function defaultShippingLongTemplateHtml() {
 `.trim();
 }
 
+
+function defaultProductLabel50TemplateHtml() {
+  return `
+<div style="width:50mm;height:50mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#111;font-family:Arial,sans-serif;border:1px solid #777;border-radius:1.4mm;overflow:hidden;position:relative;padding:1.2mm;">
+  <div style="display:grid;grid-template-columns:1fr 5mm 1fr;align-items:center;font-size:5px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;height:4.6mm;border-bottom:1px solid #999;">
+    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">THE 1970.VN®</div>
+    <div style="text-align:center;font-size:10px;line-height:1;">♻</div>
+    <div style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MADE IN VIETNAM</div>
+  </div>
+
+  <div style="position:absolute;left:1.2mm;right:1.2mm;top:6mm;height:17mm;text-align:center;border-left:1px solid #999;border-right:1px solid #999;">
+    <div style="font-size:8px;font-weight:900;line-height:1.1;height:4.2mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 .8mm;">
+      {{productName}}
+    </div>
+    <div style="height:9mm;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+      {{barcodeBlock}}
+    </div>
+    <div style="font-size:10px;font-weight:900;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      {{sku}}
+    </div>
+  </div>
+
+  <div style="position:absolute;left:1.2mm;right:1.2mm;top:23mm;height:17.2mm;border:1px solid #999;display:grid;grid-template-columns:10mm 1fr 17mm;grid-template-rows:8.6mm 8.6mm;">
+    <div style="border-right:1px solid #999;border-bottom:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;">CỠ</div>
+    <div style="border-right:1px solid #999;border-bottom:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;">{{size}}</div>
+    <div style="grid-row:1 / span 2;grid-column:3;border-left:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5mm;overflow:hidden;">
+      {{qrBlock}}
+      <div style="font-size:6px;font-weight:900;line-height:1;white-space:nowrap;max-width:15mm;overflow:hidden;text-overflow:ellipsis;">{{sku}}</div>
+    </div>
+    <div style="border-right:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;">MÀU</div>
+    <div style="border-right:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 .8mm;">{{color}}</div>
+  </div>
+
+  <div style="position:absolute;left:1.2mm;right:1.2mm;bottom:1.2mm;height:8.6mm;border:1px solid #999;display:grid;grid-template-columns:10mm 1fr;">
+    <div style="border-right:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;">GIÁ</div>
+    <div style="display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;letter-spacing:.2px;white-space:nowrap;overflow:hidden;">
+      {{price}}
+    </div>
+  </div>
+</div>
+`.trim();
+}
+
 function defaultTemplateHtml(
   type: PrintTemplateType,
   paperSize: PrintPaperSize
 ) {
+  if (type === "product_label") {
+    return defaultProductLabel50TemplateHtml();
+  }
   if (type === "shipping") {
     return paperSize === "80mm"
       ? defaultShipping80TemplateHtml()
@@ -452,6 +498,26 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
         showCod: true,
         showShippingFee: true,
         showNote: true,
+      },
+      {
+        id: uid(),
+        name: `${branch.name} - Tem sản phẩm 50x50`,
+        branchId: branch.id,
+        branchName: branch.name,
+        templateType: "product_label",
+        paperSize: "50mm",
+        isDefault: true,
+        title: "TEM SẢN PHẨM",
+        templateHtml: defaultTemplateHtml("product_label", "50mm"),
+        storeName: "THE 1970.VN",
+        storeAddress: "",
+        storePhone: "",
+        footerNote: "",
+        showBarcode: true,
+        showQr: true,
+        showCod: false,
+        showShippingFee: false,
+        showNote: false,
       }
     );
   });

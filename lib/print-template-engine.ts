@@ -533,6 +533,181 @@ function buildSalesTemplateHtml(params: {
   `.trim();
 }
 
+
+export type ProductLabelPrintItem = {
+  productName?: string;
+  name?: string;
+  sku?: string;
+  variantSku?: string;
+  barcode?: string;
+  size?: string;
+  color?: string;
+  price?: number;
+  salePrice?: number;
+  finalPrice?: number;
+  qrValue?: string;
+  quantity?: number;
+  qty?: number;
+  variant?: {
+    sku?: string;
+    size?: string;
+    color?: string;
+    price?: number;
+    salePrice?: number;
+    barcode?: string;
+    product?: { name?: string };
+  };
+  product?: { name?: string };
+};
+
+function formatLabelPrice(value: any) {
+  const amount = Number(value || 0);
+  if (!amount) return "";
+  return `${new Intl.NumberFormat("vi-VN").format(amount)} đ`;
+}
+
+function getProductLabelName(item: ProductLabelPrintItem) {
+  return (
+    item?.productName ||
+    item?.name ||
+    item?.product?.name ||
+    item?.variant?.product?.name ||
+    "Sản phẩm"
+  );
+}
+
+function getProductLabelSku(item: ProductLabelPrintItem) {
+  return item?.sku || item?.variantSku || item?.variant?.sku || item?.barcode || "";
+}
+
+function getProductLabelSize(item: ProductLabelPrintItem) {
+  return item?.size || item?.variant?.size || "";
+}
+
+function getProductLabelColor(item: ProductLabelPrintItem) {
+  return item?.color || item?.variant?.color || "";
+}
+
+function getProductLabelPrice(item: ProductLabelPrintItem) {
+  return (
+    item?.price ??
+    item?.salePrice ??
+    item?.finalPrice ??
+    item?.variant?.price ??
+    item?.variant?.salePrice ??
+    0
+  );
+}
+
+function getProductLabelQty(item: ProductLabelPrintItem) {
+  const qty = Number(item?.quantity ?? item?.qty ?? 1);
+  return Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1;
+}
+
+function buildProductLabelData(item: ProductLabelPrintItem) {
+  const sku = getProductLabelSku(item);
+  const qrValue = item?.qrValue || sku;
+
+  return {
+    productName: escapeHtml(getProductLabelName(item)),
+    sku: escapeHtml(sku),
+    size: escapeHtml(getProductLabelSize(item)),
+    color: escapeHtml(getProductLabelColor(item)),
+    price: escapeHtml(formatLabelPrice(getProductLabelPrice(item))),
+    barcodeValue: sku || "EMPTY",
+    qrValue: qrValue || sku || "EMPTY",
+  };
+}
+
+export function renderProductLabelTemplateHtml(params: {
+  item: ProductLabelPrintItem;
+  template?: PrintTemplateConfig | null;
+}) {
+  const { item, template } = params;
+  const data = buildProductLabelData(item);
+
+  const defaultHtml = `
+<div style="width:50mm;height:50mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#111;font-family:Arial,sans-serif;border:1px solid #777;border-radius:1.4mm;overflow:hidden;position:relative;padding:1.2mm;">
+  <div style="display:grid;grid-template-columns:1fr 5mm 1fr;align-items:center;font-size:5px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;height:4.6mm;border-bottom:1px solid #999;">
+    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">THE 1970.VN®</div>
+    <div style="text-align:center;font-size:10px;line-height:1;">♻</div>
+    <div style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MADE IN VIETNAM</div>
+  </div>
+
+  <div style="position:absolute;left:1.2mm;right:1.2mm;top:6mm;height:17mm;text-align:center;border-left:1px solid #999;border-right:1px solid #999;">
+    <div style="font-size:8px;font-weight:900;line-height:1.1;height:4.2mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 .8mm;">{{productName}}</div>
+    <div style="height:9mm;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{barcodeBlock}}</div>
+    <div style="font-size:10px;font-weight:900;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{sku}}</div>
+  </div>
+
+  <div style="position:absolute;left:1.2mm;right:1.2mm;top:23mm;height:17.2mm;border:1px solid #999;display:grid;grid-template-columns:10mm 1fr 17mm;grid-template-rows:8.6mm 8.6mm;">
+    <div style="border-right:1px solid #999;border-bottom:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;">CỠ</div>
+    <div style="border-right:1px solid #999;border-bottom:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;">{{size}}</div>
+    <div style="grid-row:1 / span 2;grid-column:3;border-left:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5mm;overflow:hidden;">{{qrBlock}}<div style="font-size:6px;font-weight:900;line-height:1;white-space:nowrap;max-width:15mm;overflow:hidden;text-overflow:ellipsis;">{{sku}}</div></div>
+    <div style="border-right:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;">MÀU</div>
+    <div style="border-right:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 .8mm;">{{color}}</div>
+  </div>
+
+  <div style="position:absolute;left:1.2mm;right:1.2mm;bottom:1.2mm;height:8.6mm;border:1px solid #999;display:grid;grid-template-columns:10mm 1fr;">
+    <div style="border-right:1px solid #999;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;">GIÁ</div>
+    <div style="display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;letter-spacing:.2px;white-space:nowrap;overflow:hidden;">{{price}}</div>
+  </div>
+</div>
+`.trim();
+
+  const html = template?.templateHtml || defaultHtml;
+
+  return replaceAllTokens(html, {
+    productName: data.productName,
+    sku: data.sku,
+    size: data.size,
+    color: data.color,
+    price: data.price,
+    barcodeValue: escapeHtml(data.barcodeValue),
+    qrValue: escapeHtml(data.qrValue),
+    barcodeBlock:
+      template?.showBarcode === false
+        ? ""
+        : `<img src="${barcodeUrl(data.barcodeValue)}" style="width:38mm;height:8.5mm;object-fit:contain;display:block;margin:0 auto;" />`,
+    qrBlock:
+      template?.showQr === false
+        ? ""
+        : `<img src="${qrUrl(data.qrValue)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`,
+  });
+}
+
+export function renderProductLabelsHtml(params: {
+  items: ProductLabelPrintItem[];
+  template?: PrintTemplateConfig | null;
+}) {
+  const { items, template } = params;
+  const pages: string[] = [];
+
+  items.forEach((item) => {
+    const qty = getProductLabelQty(item);
+    for (let index = 0; index < qty; index += 1) {
+      pages.push(`<div class="print-page">${renderProductLabelTemplateHtml({ item, template })}</div>`);
+    }
+  });
+
+  return pages.join("\n");
+}
+
+export function openProductLabelPrintDocument(params: {
+  title?: string;
+  items: ProductLabelPrintItem[];
+  template?: PrintTemplateConfig | null;
+}) {
+  const { title = "In tem sản phẩm", items, template } = params;
+  const bodyHtml = renderProductLabelsHtml({ items, template });
+
+  openPrintDocument({
+    title,
+    paperSize: "50mm",
+    bodyHtml,
+  });
+}
+
 export function renderOrderTemplateHtml(params: {
   order: any;
   template: PrintTemplateConfig;
@@ -695,10 +870,22 @@ export function openPrintDocument(params: {
   if (!win) return;
 
   const pageSize =
-    paperSize === "80mm" ? "80mm 80mm" : paperSize === "A5" ? "A5" : "A4";
+    paperSize === "50mm"
+      ? "50mm 50mm"
+      : paperSize === "80mm"
+        ? "80mm 80mm"
+        : paperSize === "A5"
+          ? "A5"
+          : "A4";
 
   const pageWidth =
-    paperSize === "80mm" ? "80mm" : paperSize === "A5" ? "148mm" : "190mm";
+    paperSize === "50mm"
+      ? "50mm"
+      : paperSize === "80mm"
+        ? "80mm"
+        : paperSize === "A5"
+          ? "148mm"
+          : "190mm";
 
   win.document.write(`
     <html>
@@ -707,7 +894,7 @@ export function openPrintDocument(params: {
         <style>
           @page {
             size: ${pageSize};
-            margin: ${paperSize === "80mm" ? "0" : "4mm"};
+            margin: ${paperSize === "50mm" || paperSize === "80mm" ? "0" : "4mm"};
           }
           * { box-sizing: border-box; }
           body {
@@ -718,8 +905,8 @@ export function openPrintDocument(params: {
           }
           .print-page {
             width: ${pageWidth};
-            min-height: ${paperSize === "80mm" ? "80mm" : "auto"};
-            margin: ${paperSize === "80mm" ? "0 auto" : "0 auto 8mm auto"};
+            min-height: ${paperSize === "50mm" ? "50mm" : paperSize === "80mm" ? "80mm" : "auto"};
+            margin: ${paperSize === "50mm" ? "0 auto 0.4mm auto" : paperSize === "80mm" ? "0 auto" : "0 auto 8mm auto"};
             page-break-after: always;
           }
         </style>

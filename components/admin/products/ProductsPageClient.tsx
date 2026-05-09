@@ -32,6 +32,12 @@ import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import { useScrollRestore } from "@/hooks/useScrollRestore";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
+import { findPrintTemplate, loadPrintTemplates } from "@/lib/print-template-config";
+import {
+  openProductLabelPrintDocument,
+  renderProductLabelsHtml,
+  type ProductLabelPrintItem,
+} from "@/lib/print-template-engine";
 
 
 function currency(n: number) {
@@ -462,7 +468,7 @@ function ProductImage({
   alt: string;
 }) {
   return (
-    <div className="h-16 w-16 overflow-hidden rounded-2xl bg-neutral-100">
+    <div className="h-12 w-12 overflow-hidden rounded-2xl bg-neutral-100">
       {src ? (
         <img
           src={toAbsoluteFileUrl(src)}
@@ -774,6 +780,28 @@ type EnterpriseExportOptions = {
   includeBranchSheets: boolean;
   sortMode: ExportSortMode;
 };
+
+type LabelPrintVariantRow = {
+  key: string;
+  productName: string;
+  sku: string;
+  size: string;
+  color: string;
+  price: number;
+  stock: number;
+};
+
+const labelPrinterOptions = [
+  "Máy in mặc định",
+  "Máy in tem 50x50",
+  "Xprinter / Godex / TSC",
+  "Máy in văn phòng",
+];
+
+const labelPaperOptions = [
+  { value: "50x50_gap04", label: "Tem cuộn 50 × 50mm · hở 0,4mm" },
+  { value: "50x50", label: "Tem cuộn 50 × 50mm" },
+];
 
 const defaultExportColumns: ExportColumnState = {
   productName: true,
@@ -1087,6 +1115,15 @@ export default function ProductsPageClient() {
   const [categoryNormalizerOpen, setCategoryNormalizerOpen] = useState(false);
   const [sortKey, setSortKey] = useState<ProductSortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+
+  const [labelPrintOpen, setLabelPrintOpen] = useState(false);
+  const [labelPrintProduct, setLabelPrintProduct] = useState<ProductItem | null>(null);
+  const [labelPrinterName, setLabelPrinterName] = useState("Máy in mặc định");
+  const [labelPaperMode, setLabelPaperMode] = useState("50x50_gap04");
+  const [labelPrintQtyMap, setLabelPrintQtyMap] = useState<Record<string, string>>({});
+  const [labelSelectedMap, setLabelSelectedMap] = useState<Record<string, boolean>>({});
+  const [labelPriceMode, setLabelPriceMode] = useState<"retail" | "hidden">("retail");
 
 
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
@@ -1495,6 +1532,107 @@ export default function ProductsPageClient() {
     });
   }, [products, sortKey, sortDirection, visibleBranches, currentBranchId, isOwner, canViewInventory]);
 
+
+  const selectedProducts = useMemo(() => {
+    const selected = new Set(selectedProductIds);
+    return filteredProducts.filter((product) => selected.has(product.id));
+  }, [filteredProducts, selectedProductIds]);
+
+  const allVisibleSelected =
+    filteredProducts.length > 0 &&
+    filteredProducts.every((product) => selectedProductIds.includes(product.id));
+
+  const toggleSelectProduct = (productId: string) => {
+    setSelectedProductIds((prev) =>
+      prev.includes(productId)
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId],
+    );
+  };
+
+  const toggleSelectAllVisibleProducts = () => {
+    setSelectedProductIds((prev) => {
+      const visibleIds = filteredProducts.map((product) => product.id);
+      const hasAllVisible =
+        visibleIds.length > 0 && visibleIds.every((id) => prev.includes(id));
+
+      if (hasAllVisible) {
+        return prev.filter((id) => !visibleIds.includes(id));
+      }
+
+      return Array.from(new Set([...prev, ...visibleIds]));
+    });
+  };
+
+  const clearSelectedProducts = () => {
+    setSelectedProductIds([]);
+  };
+
+  const handleBulkPrintLabels = () => {
+    if (!selectedProducts.length) {
+      setActionMessage("Chưa chọn sản phẩm để in tem.");
+      return;
+    }
+
+    if (selectedProducts.length > 1) {
+      setActionMessage("Đang chọn nhiều sản phẩm. Chọn 1 sản phẩm để mở popup cấu hình in tem chi tiết.");
+      return;
+    }
+
+    // Giữ nguyên flow in tem cũ: mở popup setting để chọn SKU, số lượng, khổ tem, giá...
+    openLabelPrintModal(selectedProducts[0]);
+  };
+
+  const handleBulkExportSelected = () => {
+    if (!selectedProducts.length) {
+      setActionMessage("Chưa chọn sản phẩm để xuất Excel.");
+      return;
+    }
+
+    buildEnterpriseProductExport(selectedProducts, visibleBranches, {
+      scope: "filtered",
+      branchIds: visibleBranches.map((branch) => branch.id),
+      columns: exportColumns,
+      onlyInStock: false,
+      onlyMissingCost: false,
+      onlyLowStock: false,
+      includeSummarySheet: true,
+      includeBranchSheets: true,
+      sortMode: "product_asc",
+    });
+
+    setActionMessage(`Đã xuất ${selectedProducts.length} sản phẩm đã chọn.`);
+  };
+
+  const handleBulkToggleInactive = async () => {
+    if (!selectedProducts.length) {
+      setActionMessage("Chưa chọn sản phẩm.");
+      return;
+    }
+
+    if (!canToggleProductStatus) {
+      setActionMessage("Role hiện tại không có quyền đổi trạng thái sản phẩm.");
+      return;
+    }
+
+    const ok = window.confirm(`Ngừng bán ${selectedProducts.length} sản phẩm đã chọn?`);
+    if (!ok) return;
+
+    try {
+      setActionMessage("");
+      for (const product of selectedProducts) {
+        if (String(product.status || "").toUpperCase() === "ACTIVE") {
+          await toggleProductStatus(product.id);
+        }
+      }
+      clearSelectedProducts();
+      await loadProducts(page, limit);
+      setActionMessage("Đã cập nhật trạng thái các sản phẩm đã chọn.");
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "Không cập nhật được sản phẩm đã chọn.");
+    }
+  };
+
   const getVariantScopedStock = (variant: ProductItem["variants"][number]) => {
     if (isOwner) {
       return Object.values(variant.branchStocks || {}).reduce(
@@ -1648,6 +1786,111 @@ export default function ProductsPageClient() {
     });
 
     window.open(href, "_blank", "noopener,noreferrer");
+  };
+
+  const getLabelPrintRows = (product: ProductItem | null): LabelPrintVariantRow[] => {
+    if (!product) return [];
+
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+
+    if (!variants.length) {
+      return [
+        {
+          key: product.id,
+          productName: product.name || "Sản phẩm",
+          sku: product.slug || product.id,
+          size: "",
+          color: "",
+          price: Number((product as any)?.price || 0),
+          stock: 0,
+        },
+      ];
+    }
+
+    return variants.map((variant: any, index) => {
+      const sku = variant?.sku || `${product.slug || product.id}-${index + 1}`;
+      const stock = visibleBranches.reduce(
+        (sum, branch) => sum + Number(variant?.branchStocks?.[branch.id] || 0),
+        0,
+      );
+
+      return {
+        key: sku,
+        productName: product.name || "Sản phẩm",
+        sku,
+        size: variant?.size || "",
+        color: variant?.color || "",
+        price: Number(variant?.price || (product as any)?.price || 0),
+        stock,
+      };
+    });
+  };
+
+  const openLabelPrintModal = (product: ProductItem) => {
+    const rows = getLabelPrintRows(product);
+
+    setLabelPrintProduct(product);
+    setLabelSelectedMap(Object.fromEntries(rows.map((row) => [row.key, true])));
+    setLabelPrintQtyMap(Object.fromEntries(rows.map((row) => [row.key, "1"])));
+    setLabelPrinterName((prev) => prev || "Máy in mặc định");
+    setLabelPaperMode("50x50_gap04");
+    setLabelPriceMode("retail");
+    setLabelPrintOpen(true);
+  };
+
+  const buildLabelPrintItems = () => {
+    const rows = getLabelPrintRows(labelPrintProduct);
+
+    return rows
+      .filter((row) => labelSelectedMap[row.key])
+      .map<ProductLabelPrintItem>((row) => ({
+        productName: row.productName,
+        sku: row.sku,
+        barcode: row.sku,
+        qrValue: row.sku,
+        size: row.size,
+        color: row.color,
+        price: labelPriceMode === "hidden" ? 0 : row.price,
+        quantity: Math.max(
+          1,
+          Math.floor(Number(String(labelPrintQtyMap[row.key] || "1").replace(/[^\d]/g, "")) || 1),
+        ),
+      }));
+  };
+
+  const getLabelPrintTemplate = () => {
+    const templates = loadPrintTemplates();
+    return findPrintTemplate({
+      templates,
+      branchId: currentBranchId || "__default__",
+      templateType: "product_label",
+      paperSize: "50mm",
+    });
+  };
+
+  const labelPrintRows = getLabelPrintRows(labelPrintProduct);
+  const labelPreviewItems = buildLabelPrintItems();
+  const labelPreviewHtml = labelPreviewItems.length
+    ? renderProductLabelsHtml({ items: labelPreviewItems, template: getLabelPrintTemplate() })
+    : `<div style="font-family:Arial,sans-serif;padding:16px;color:#666;">Chưa chọn SKU để in tem.</div>`;
+
+  const handlePrintProductLabels = (product: ProductItem) => {
+    openLabelPrintModal(product);
+  };
+
+  const handleConfirmPrintProductLabels = () => {
+    const items = buildLabelPrintItems();
+
+    if (!items.length) {
+      setActionMessage("Chưa chọn SKU để in tem.");
+      return;
+    }
+
+    openProductLabelPrintDocument({
+      title: `In tem ${labelPrintProduct?.name || labelPrintProduct?.slug || "sản phẩm"}`,
+      items,
+      template: getLabelPrintTemplate(),
+    });
   };
 
   const handleOpenEdit = (product: ProductItem) => {
@@ -2556,6 +2799,93 @@ export default function ProductsPageClient() {
         </Panel>
       ) : null}
 
+      <Panel className="sticky top-0 z-20 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-800">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={toggleSelectAllVisibleProducts}
+                  className="h-4 w-4 accent-neutral-900"
+                />
+                Chọn tất cả trang này
+              </label>
+
+              <span className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white">
+                Đã chọn {selectedProductIds.length} sản phẩm
+              </span>
+
+              {selectedProductIds.length ? (
+                <button
+                  type="button"
+                  onClick={clearSelectedProducts}
+                  className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                >
+                  Bỏ chọn
+                </button>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={handleBulkPrintLabels}
+                disabled={!selectedProductIds.length}
+                variant="secondary"
+                className="px-3 py-2 text-xs"
+              >
+                {selectedProductIds.length > 1 ? "In tem (chọn 1)" : "In tem"}
+              </Button>
+
+              {canExportProducts ? (
+                <Button
+                  onClick={handleBulkExportSelected}
+                  disabled={!selectedProductIds.length}
+                  variant="secondary"
+                  className="px-3 py-2 text-xs"
+                >
+                  Xuất Excel
+                </Button>
+              ) : null}
+
+              {canToggleProductStatus ? (
+                <Button
+                  onClick={handleBulkToggleInactive}
+                  disabled={!selectedProductIds.length}
+                  variant="secondary"
+                  className="px-3 py-2 text-xs"
+                >
+                  Ngừng bán
+                </Button>
+              ) : null}
+
+              {canEditProduct && selectedProducts.length === 1 ? (
+                <Button
+                  onClick={() => handleOpenEdit(selectedProducts[0])}
+                  variant="secondary"
+                  className="px-3 py-2 text-xs"
+                >
+                  Sửa nhanh
+                </Button>
+              ) : null}
+
+              {canEditProduct && selectedProducts.length === 1 ? (
+                <Button
+                  onClick={() => {
+                    setActiveProductId(selectedProducts[0].id);
+                    resetVariantForm();
+                    setVariantOpen(true);
+                  }}
+                  variant="secondary"
+                  className="px-3 py-2 text-xs"
+                >
+                  + Variant
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </Panel>
+
       {canManageProductMasterData ? (
         <Panel className="overflow-hidden">
           <button
@@ -2699,6 +3029,15 @@ export default function ProductsPageClient() {
             <table className="min-w-[1750px] w-full border-collapse">
               <thead className="bg-neutral-50">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
+                  <th className="w-10 border-b border-neutral-200 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Chọn tất cả sản phẩm đang hiện"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisibleProducts}
+                      className="h-4 w-4 accent-neutral-900"
+                    />
+                  </th>
                   <th className="border-b border-neutral-200 px-3 py-3">Ảnh</th>
                   <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Sản phẩm" active={sortKey === "name"} direction={sortDirection} onClick={() => handleSort("name")} /></th>
                   <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Loại" active={sortKey === "category"} direction={sortDirection} onClick={() => handleSort("category")} /></th>
@@ -2753,9 +3092,20 @@ export default function ProductsPageClient() {
                   return (
                     <tr
                       key={product.id}
-                      className="align-top bg-white text-sm hover:bg-neutral-50"
+                      className={`align-middle text-sm hover:bg-neutral-50 ${
+                        selectedProductIds.includes(product.id) ? "bg-neutral-50" : "bg-white"
+                      }`}
                     >
-                      <td className="border-b border-neutral-100 px-3 py-3">
+                      <td className="border-b border-neutral-100 px-3 py-3 align-middle">
+                        <input
+                          type="checkbox"
+                          aria-label={`Chọn ${product.name}`}
+                          checked={selectedProductIds.includes(product.id)}
+                          onChange={() => toggleSelectProduct(product.id)}
+                          className="h-4 w-4 accent-neutral-900"
+                        />
+                      </td>
+                      <td className="border-b border-neutral-100 px-3 py-3 align-middle">
                         <button
                           type="button"
                           onClick={() => openProductDetail(product)}
@@ -2854,65 +3204,23 @@ export default function ProductsPageClient() {
                         {shortText(product.description, 80)}
                       </td>
 
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        <div className="flex flex-col gap-2">
-                          <Button
-                            variant="secondary"
+                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3 align-middle">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
                             onClick={() => openProductDetail(product)}
-                            className="w-full"
+                            className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
                           >
                             Chi tiết
-                          </Button>
+                          </button>
 
-                          {canEditProduct ? (
-                            <Button
-                              variant="secondary"
-                              onClick={() => handleOpenEdit(product)}
-                              className="w-full"
-                            >
-                              Sửa nhanh
-                            </Button>
-                          ) : null}
-
-                          {canEditProduct ? (
-                            <Button
-                              variant="secondary"
-                              onClick={() => {
-                                setActiveProductId(product.id);
-                                resetVariantForm();
-                                setVariantOpen(true);
-                              }}
-                              className="w-full"
-                            >
-                              + Variant
-                            </Button>
-                          ) : null}
-
-                          {canDeleteProduct ? (
-                            <Button
-                              variant="danger"
-                              onClick={() => void handleDeleteProduct(product)}
-                              disabled={deletingProductId === product.id}
-                              className="w-full"
-                            >
-                              {deletingProductId === product.id ? "Đang xóa..." : "Xóa"}
-                            </Button>
-                          ) : null}
-
-                          {canToggleProductStatus ? (
-                            <Button
-                              variant={product.status === "ACTIVE" ? "danger" : "success"}
-                              onClick={() => void handleToggleStatus(product.id)}
-                              disabled={togglingStatusId === product.id}
-                              className="w-full"
-                            >
-                              {togglingStatusId === product.id
-                                ? "Đang cập nhật..."
-                                : product.status === "ACTIVE"
-                                  ? "Ngừng bán"
-                                  : "Kích hoạt"}
-                            </Button>
-                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => toggleSelectProduct(product.id)}
+                            className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                          >
+                            {selectedProductIds.includes(product.id) ? "Bỏ chọn" : "Chọn"}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -3930,7 +4238,7 @@ export default function ProductsPageClient() {
         maxWidthClass="max-w-6xl"
       >
         <div className="space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
             <div className="text-sm text-neutral-500">
               Import thông minh theo file Excel. Hiện ảnh sản phẩm dùng cột
               <strong> Image URL </strong>
@@ -4049,6 +4357,176 @@ export default function ProductsPageClient() {
               </div>
             </Panel>
           ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        open={labelPrintOpen}
+        onClose={() => setLabelPrintOpen(false)}
+        title={`In tem ${labelPrintProduct?.name || "sản phẩm"}`}
+        maxWidthClass="max-w-6xl"
+      >
+        <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="space-y-4">
+            <Panel>
+              <div className="p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-neutral-900">Chọn SKU và số tem</div>
+                    <div className="mt-1 text-xs text-neutral-500">
+                      Mặc định 1 tem / SKU. Có thể bỏ chọn SKU hoặc đổi số lượng từng dòng.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setLabelSelectedMap(
+                          Object.fromEntries(labelPrintRows.map((row) => [row.key, true])),
+                        )
+                      }
+                    >
+                      Chọn tất cả
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setLabelSelectedMap(
+                          Object.fromEntries(labelPrintRows.map((row) => [row.key, false])),
+                        )
+                      }
+                    >
+                      Bỏ chọn
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-4 max-h-[360px] overflow-auto rounded-2xl border border-neutral-200">
+                  <table className="w-full min-w-[760px] border-collapse text-sm">
+                    <thead className="sticky top-0 bg-neutral-50 text-left text-[11px] uppercase tracking-wide text-neutral-500">
+                      <tr>
+                        <th className="border-b border-neutral-200 px-3 py-2">In</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">SKU</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">Size</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">Màu</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">Tồn</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">Giá</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">Số tem</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {labelPrintRows.map((row) => (
+                        <tr key={row.key} className="bg-white hover:bg-neutral-50">
+                          <td className="border-b border-neutral-100 px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(labelSelectedMap[row.key])}
+                              onChange={(event) =>
+                                setLabelSelectedMap((prev) => ({
+                                  ...prev,
+                                  [row.key]: event.target.checked,
+                                }))
+                              }
+                            />
+                          </td>
+                          <td className="border-b border-neutral-100 px-3 py-2 font-medium text-neutral-900">
+                            {row.sku}
+                          </td>
+                          <td className="border-b border-neutral-100 px-3 py-2">{row.size || "—"}</td>
+                          <td className="border-b border-neutral-100 px-3 py-2">{row.color || "—"}</td>
+                          <td className="border-b border-neutral-100 px-3 py-2">{row.stock}</td>
+                          <td className="border-b border-neutral-100 px-3 py-2">{currency(row.price)}</td>
+                          <td className="border-b border-neutral-100 px-3 py-2">
+                            <input
+                              value={labelPrintQtyMap[row.key] || "1"}
+                              onChange={(event) =>
+                                setLabelPrintQtyMap((prev) => ({
+                                  ...prev,
+                                  [row.key]: event.target.value.replace(/[^\d]/g, ""),
+                                }))
+                              }
+                              className="w-20 rounded-xl border border-neutral-300 px-3 py-2 text-center"
+                              inputMode="numeric"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel>
+              <div className="grid gap-4 p-4 md:grid-cols-3">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-neutral-700">Máy in</label>
+                  <select
+                    value={labelPrinterName}
+                    onChange={(event) => setLabelPrinterName(event.target.value)}
+                    className="w-full rounded-2xl border border-neutral-300 px-3 py-3 text-sm"
+                  >
+                    {labelPrinterOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[11px] text-neutral-500">
+                    Web không chọn máy in trực tiếp được; chọn máy thật ở hộp thoại in của trình duyệt.
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-neutral-700">Khổ tem</label>
+                  <select
+                    value={labelPaperMode}
+                    onChange={(event) => setLabelPaperMode(event.target.value)}
+                    className="w-full rounded-2xl border border-neutral-300 px-3 py-3 text-sm"
+                  >
+                    {labelPaperOptions.map((item) => (
+                      <option key={item.value} value={item.value}>{item.label}</option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[11px] text-neutral-500">Preview đã chừa hở 0,4mm giữa 2 tem.</div>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-neutral-700">Giá bán</label>
+                  <select
+                    value={labelPriceMode}
+                    onChange={(event) => setLabelPriceMode(event.target.value as "retail" | "hidden")}
+                    className="w-full rounded-2xl border border-neutral-300 px-3 py-3 text-sm"
+                  >
+                    <option value="retail">Hiện giá bán lẻ</option>
+                    <option value="hidden">Không hiện giá</option>
+                  </select>
+                </div>
+              </div>
+            </Panel>
+          </div>
+
+          <Panel>
+            <div className="p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-neutral-900">Preview trước khi in</div>
+                  <div className="mt-1 text-xs text-neutral-500">
+                    {labelPreviewItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0)} tem sẽ được in
+                  </div>
+                </div>
+                <Button variant="success" onClick={handleConfirmPrintProductLabels}>
+                  {selectedProductIds.length > 1 ? "In tem (chọn 1)" : "In tem"}
+                </Button>
+              </div>
+
+              <div className="h-[560px] overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
+                <iframe
+                  title="Preview tem sản phẩm"
+                  className="h-full w-full bg-white"
+                  srcDoc={`<html><head><style>@page{size:50mm 50mm;margin:0}*{box-sizing:border-box}body{margin:0;padding:6mm;background:#f5f5f5;font-family:Arial,sans-serif}.print-page{width:50mm;min-height:50mm;margin:0 auto 0.4mm auto;page-break-after:always;background:white}</style></head><body>${labelPreviewHtml}</body></html>`}
+                />
+              </div>
+            </div>
+          </Panel>
         </div>
       </Modal>
     </div>
