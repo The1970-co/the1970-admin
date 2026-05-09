@@ -72,6 +72,8 @@ export type CreateOrderPayload = {
 export type CreatedOrder = {
   id: string;
   orderCode: string;
+  negativeStockWarnings?: string[];
+  hasNegativeStockWarning?: boolean;
 };
 
 export type CustomerLookupResult = {
@@ -204,6 +206,12 @@ export type AhamoveQuotePayload = {
   toAddress: string;
   codAmount?: number;
   serviceId?: string;
+  services?: string | string[];
+  serviceIds?: string | string[];
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
   payment_method?: string;
   paymentMethod?: string;
   order_time?: number;
@@ -215,6 +223,18 @@ export type AhamoveQuotePayload = {
 export type CreateAhamoveShipmentPayload = AhamoveQuotePayload & {
   clientOrderCode?: string;
   orderCode?: string;
+};
+
+export type ViettelPostInventory = {
+  groupAddressId: number;
+  cusId?: number;
+  name: string;
+  phone: string;
+  address: string;
+  provinceId: number;
+  districtId: number;
+  wardId?: number;
+  raw?: any;
 };
 
 export type ViettelPostQuotePayload = {
@@ -235,6 +255,14 @@ export type ViettelPostQuotePayload = {
   width?: number;
   height?: number;
   services?: string;
+  senderGroupAddressId?: number;
+  groupAddressId?: number;
+  senderProvinceId?: number;
+  senderDistrictId?: number;
+  senderWardId?: number;
+  fromName?: string;
+  fromPhone?: string;
+  fromAddress?: string;
 };
 
 export type CreateViettelPostShipmentPayload = ViettelPostQuotePayload & {
@@ -539,6 +567,10 @@ export async function createOrder(
   return {
     id: String(data.id),
     orderCode: String(data.orderCode || ""),
+    negativeStockWarnings: Array.isArray(data.negativeStockWarnings)
+      ? data.negativeStockWarnings.map((item: any) => String(item))
+      : [],
+    hasNegativeStockWarning: Boolean(data.hasNegativeStockWarning),
   };
 }
 
@@ -578,6 +610,26 @@ export async function quoteAhamoveShipment(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function getViettelPostInventories(): Promise<ViettelPostInventory[]> {
+  const data = await request<any>("/shipments/viettelpost/inventories", {
+    method: "GET",
+  });
+
+  const rows = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+
+  return rows.map((item: any) => ({
+    groupAddressId: Number(item.groupAddressId || item.group_address_id || 0),
+    cusId: Number(item.cusId || item.cus_id || 0) || undefined,
+    name: String(item.name || ""),
+    phone: String(item.phone || ""),
+    address: String(item.address || ""),
+    provinceId: Number(item.provinceId || item.province_id || 0),
+    districtId: Number(item.districtId || item.district_id || 0),
+    wardId: Number(item.wardId || item.wards_id || item.ward_id || 0) || undefined,
+    raw: item.raw || item,
+  })).filter((item: ViettelPostInventory) => item.groupAddressId && item.provinceId && item.districtId);
 }
 
 export async function quoteViettelPostShipment(

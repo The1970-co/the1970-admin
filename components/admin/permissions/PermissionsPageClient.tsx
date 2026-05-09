@@ -287,9 +287,9 @@ const permissionToBranchKey: Record<string, BranchPermissionKey> = {
   "Xem đơn nhập": "canReceiveStock",
   "Tạo đơn nhập": "canReceiveStock",
   "Sửa đơn nhập": "canReceiveStock",
-  "Xem khách hàng được phụ trách": "canViewCustomer",
-  "Xem tất cả khách hàng": "canViewCustomer",
-  "Tạo khách hàng": "canEditCustomer",
+  // Khách hàng dùng permissionKeys customers.* là source of truth.
+  // Không map customers.* sang legacy canViewCustomer/canEditCustomer ở mẫu role,
+  // tránh tick role/action khác làm page khách hàng hiểu nhầm là có quyền.
 };
 
 
@@ -940,12 +940,11 @@ function applySmartDependencies(
     next.canView = true;
     next.canViewOwnOrders = true;
     next.canViewStock = true;
-    next.canViewCustomer = true;
+    // Không tự bật quyền khách hàng. Khách hàng phải do customers.view_own/customers.view quyết định.
   }
 
   if (key === "canHandleReturn") {
     next.canView = true;
-    next.canViewCustomer = true;
   }
 
   if (key === "canViewBranchOrders") {
@@ -1456,36 +1455,42 @@ export default function PermissionsPageClient() {
 
     await Promise.all(
       targets.map(async (employee) => {
-        const rows = employee.branchRoles.length
-          ? employee.branchRoles
-          : employee.branchId
-            ? [
-                {
-                  branchId: employee.branchId,
-                  roleCode: employee.roleId || employee.roles[0] || "retail-staff",
-                },
-              ]
-            : [];
+        try {
+          const rows = employee.branchRoles.length
+            ? employee.branchRoles
+            : employee.branchId
+              ? [
+                  {
+                    branchId: employee.branchId,
+                    roleCode: employee.roleId || employee.roles[0] || "retail-staff",
+                  },
+                ]
+              : [];
 
-        const branchPermissions = rows
-          .filter((row) => row.branchId && row.roleCode)
-          .map((row) => {
-            const role = nextRoles.find(
-              (item) => item.id === String(row.roleCode || "").toLowerCase(),
-            );
-            return sanitizeBranchPermissionForApi(
-              role
-                ? roleToBranchPermission(role, String(row.branchId))
-                : defaultBranchPermission(String(row.branchId)),
-            );
+          const branchPermissions = rows
+            .filter((row) => row.branchId && row.roleCode)
+            .map((row) => {
+              const role = nextRoles.find(
+                (item) => item.id === String(row.roleCode || "").toLowerCase(),
+              );
+              return sanitizeBranchPermissionForApi(
+                role
+                  ? roleToBranchPermission(role, String(row.branchId))
+                  : defaultBranchPermission(String(row.branchId)),
+              );
+            });
+
+          if (!branchPermissions.length) return;
+
+          await apiJson(`/staff/${employee.id}/permissions`, {
+            method: "PATCH",
+            body: JSON.stringify({ branchPermissions }),
           });
-
-        if (!branchPermissions.length) return;
-
-        await apiJson(`/staff/${employee.id}/permissions`, {
-          method: "PATCH",
-          body: JSON.stringify({ branchPermissions }),
-        });
+        } catch (err) {
+          // Nếu danh sách nhân viên local bị stale/deploy vừa xoá nhân viên,
+          // không được làm fail toàn bộ lưu mẫu quyền. Reload danh sách sau khi lưu.
+          console.warn("Skip syncing stale staff permission", employee.id, err);
+        }
       }),
     );
   };
@@ -1507,7 +1512,8 @@ export default function PermissionsPageClient() {
         localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(nextRoles));
       }
 
-      await syncEmployeesWithRoleTemplates(nextRoles);
+      // Backend /staff/role-templates đã tự đồng bộ quyền theo role template.
+      // Không sync lại ở frontend bằng danh sách employees cũ để tránh lỗi stale id: "Nhân viên không tồn tại".
       await loadEmployees();
 
       setRoleTemplateDirty(false);
@@ -1558,15 +1564,10 @@ export default function PermissionsPageClient() {
 
         nextPermissions[groupKey] = Array.from(currentSet);
 
-        // Khi tick quyền thao tác thì tự mở đúng menu tương ứng,
-        // nhưng tuyệt đối không mở lan sang Danh mục / Sơ đồ kho 3D / Kho hàng nếu không liên quan.
-        if (checked && groupKey !== "menus") {
-          const menuSet = new Set(nextPermissions.menus || []);
-          getRequiredMenuPermissionsForAction(groupKey, permissionName).forEach(
-            (menuName) => menuSet.add(menuName),
-          );
-          nextPermissions.menus = Array.from(menuSet);
-        }
+        // RBAC STRICT:
+        // Menu hiển thị là quyền cấp 1 độc lập.
+        // Tick quyền con như orders.create / inventory.view / customers.view
+        // KHÔNG được tự bật menu.* nữa. Muốn hiện sidebar phải tick riêng ở nhóm "Menu hiển thị".
 
         return sanitizeRoleTemplate({
           ...role,
@@ -1827,7 +1828,16 @@ export default function PermissionsPageClient() {
   const saveEmployeeRoleAssignment = async () => {
     if (!permissionEmployeeId || savingBranchRolesForId) return;
 
-    const currentEmployeeId = permissionEmployeeId;
+    let currentEmployeeId = permissionEmployeeId;
+    const currentEmployee = employees.find((employee) => employee.id === currentEmployeeId);
+    if (!currentEmployee) {
+      await loadEmployees();
+      setMessage("Danh sách nhân viên vừa thay đổi. Chọn lại nhân viên rồi lưu lại.");
+      setPermissionEmployeeId(null);
+      setSavingBranchRolesForId(null);
+      return;
+    }
+
     const branchRoles = Object.entries(editBranchRoleMap)
       .filter(([, roleCode]) => Boolean(roleCode))
       .map(([branchId, roleCode]) => ({ branchId, roleCode }));
@@ -1844,14 +1854,8 @@ export default function PermissionsPageClient() {
 
       const primary = branchRoles[0];
 
-      await apiJson(`/staff/${currentEmployeeId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          role: primary.roleCode,
-          branchId: editMainBranchId || primary.branchId || null,
-        }),
-      });
-
+      // Chỉ gọi endpoint branch-roles. Backend sẽ tự cập nhật role chính + chi nhánh chính.
+      // Không gọi PATCH /staff/:id trước để tránh lỗi stale/staff id trong một số phiên admin cũ.
       await apiJson(`/staff/${currentEmployeeId}/branch-roles`, {
         method: "PATCH",
         body: JSON.stringify({ branchRoles }),

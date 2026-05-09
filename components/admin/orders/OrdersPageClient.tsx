@@ -1171,6 +1171,22 @@ function parseOrderDate(value?: string) {
   const fallback = new Date(value);
   return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
+function formatOrderDate(value?: string | null) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
 
 function amountCustomerStillOwes(order: AdminOrder) {
   if (order.status === "CANCELLED") return 0;
@@ -3283,7 +3299,7 @@ export default function OrdersPageClient() {
             key={key}
             className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs text-neutral-500"
           >
-            {order.createdAt}
+            {formatOrderDate(order.createdAt)}
           </td>
         );
       case "customerName":

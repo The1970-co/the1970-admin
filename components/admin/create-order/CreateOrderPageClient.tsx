@@ -14,11 +14,13 @@ import {
   quoteShipment,
   quoteAhamoveShipment,
   quoteViettelPostShipment,
+  getViettelPostInventories,
   resolveGhnAddress,
   type CreateOrderMode,
   type CreateOrderPayload,
   type OrderProduct,
   type ShipmentQuoteResult,
+  type ViettelPostInventory,
 } from "@/lib/create-order-api";
 import {
   createCustomerAddress,
@@ -59,6 +61,9 @@ type OrderLine = {
   size?: string;
   price: number;
   stock: number;
+  totalStock?: number;
+  branchStock?: number;
+  branchStocks?: Record<string, number>;
   qty: number;
   discount: number;
   imageUrl?: string;
@@ -548,25 +553,19 @@ function normalizeAhamoveQuoteItems(rawQuote: any) {
 }
 
 function shouldShowAhamoveService(serviceLabel: string, shippingWeight: number) {
-  const label = String(serviceLabel || "").toUpperCase();
-  const weight = Number(shippingWeight || 0);
-
-  // Đơn thời trang nhẹ không nên hiện xe tải.
-  // Khi sau này có đơn hàng nặng > 20kg thì mới mở xe tải.
-  if (label.includes("TRUCK") && weight < 20000) return false;
-
   return true;
 }
 
 function getAhamoveServiceDisplayName(serviceLabel: string) {
   const label = String(serviceLabel || "").toUpperCase();
 
-  if (label.includes("BIKE")) return "Xe máy";
-  if (label.includes("EXPRESS")) return "Siêu tốc";
-  if (label.includes("2H")) return "Giao 2 giờ";
   if (label.includes("TRUCK-1000")) return "Xe tải 1000kg";
   if (label.includes("TRUCK-2000")) return "Xe tải 2000kg";
   if (label.includes("TRUCK-5000")) return "Xe tải 5000kg";
+  if (label.includes("2H") || label.includes("SAVING") || label.includes("ECONOMY")) {
+    return "Siêu Tốc - Tiết Kiệm";
+  }
+  if (label.includes("BIKE") || label.includes("EXPRESS")) return "Siêu Tốc";
 
   return serviceLabel || "AhaMove";
 }
@@ -591,6 +590,8 @@ function parseAhamoveQuoteFee(rawQuote: any) {
   );
 
   const serviceLabel =
+    rawQuote?._serviceName ||
+    rawQuote?._ahamoveServiceId ||
     rawQuote?.service_id ||
     rawQuote?.serviceId ||
     quoteData?.service_id ||
@@ -644,6 +645,125 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
     } as ShipmentQuoteResult;
   });
 }
+
+
+function getCarrierMeta(carrier: string) {
+  const normalized = String(carrier || "").toLowerCase();
+
+  if (normalized === "viettelpost") {
+    return {
+      name: "Viettel Post",
+      sub: "Liên tỉnh / COD",
+      short: "VTP",
+      accent: "border-red-200 bg-red-50 text-red-700",
+      soft: "bg-red-50",
+      ring: "ring-red-200",
+    };
+  }
+
+  if (normalized === "ahamove") {
+    return {
+      name: "AhaMove",
+      sub: "Nội thành realtime",
+      short: "AHA",
+      accent: "border-orange-200 bg-orange-50 text-orange-700",
+      soft: "bg-orange-50",
+      ring: "ring-orange-200",
+    };
+  }
+
+  return {
+    name: "GHN",
+    sub: "Giao hàng nhanh",
+    short: "GHN",
+    accent: "border-amber-200 bg-amber-50 text-amber-700",
+    soft: "bg-amber-50",
+    ring: "ring-amber-200",
+  };
+}
+
+function getSmartQuoteNote(row: ShipmentQuoteResult) {
+  const carrier = getQuoteCarrier(row);
+  const name = getQuoteDisplayName(row).toLowerCase();
+  const badges = getQuoteBadges(row);
+
+  if (badges.includes("Khuyên dùng")) return "Cân bằng tốt giữa phí và độ ổn định";
+  if (badges.includes("Rẻ nhất")) return "Tối ưu chi phí cho đơn này";
+  if (badges.includes("Nhanh nhất")) return "Ưu tiên tốc độ giao hàng";
+  if (carrier === "viettelpost" && name.includes("tiêu chuẩn")) return "Gói VTP tiết kiệm, hợp đơn COD liên tỉnh";
+  if (carrier === "viettelpost" && name.includes("nhanh")) return "Gói VTP cân bằng tốc độ và chi phí";
+  if (carrier === "ahamove") return "Phù hợp nội thành cần realtime";
+  if (carrier === "ghn") return "Gói phổ thông, dễ vận hành";
+  return "Có thể chọn cho đơn này";
+}
+
+function getQuoteServiceCleanName(row: ShipmentQuoteResult) {
+  const carrier = getQuoteCarrier(row);
+  const display = getQuoteDisplayName(row);
+
+  return display
+    .replace(/^GHN\s*-\s*/i, "")
+    .replace(/^AhaMove\s*-\s*/i, "")
+    .replace(/^Viettel\s*Post\s*-\s*/i, "")
+    .replace(/^Viettel\s*Post\s*-\s*Viettel\s*Post\s*-\s*/i, "")
+    .replace(/^Viettel\s*Post\s*-\s*/i, "")
+    .replace(carrier === "viettelpost" ? /^Viettel\s*Post\s*-\s*/i : /^$/, "")
+    .trim();
+}
+
+function groupQuotesByCarrier(rows: ShipmentQuoteResult[]) {
+  const order = ["ghn", "viettelpost", "ahamove"];
+  const grouped = new Map<string, ShipmentQuoteResult[]>();
+
+  for (const row of rows) {
+    const carrier = getQuoteCarrier(row);
+    grouped.set(carrier, [...(grouped.get(carrier) || []), row]);
+  }
+
+  return Array.from(grouped.entries())
+    .sort(([a], [b]) => {
+      const ai = order.indexOf(a);
+      const bi = order.indexOf(b);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    })
+    .map(([carrier, quotes]) => ({
+      carrier,
+      meta: getCarrierMeta(carrier),
+      quotes: [...quotes].sort((a, b) => getFeeNumber(a) - getFeeNumber(b)),
+    }));
+}
+
+function getShippingInsight(row: ShipmentQuoteResult | null, customerFee: number) {
+  if (!row) {
+    return {
+      label: "Chưa chọn gói",
+      className: "border-neutral-200 bg-neutral-50 text-neutral-600",
+    };
+  }
+
+  const partnerFee = getFeeNumber(row);
+  const diff = Number(customerFee || 0) - partnerFee;
+
+  if (diff > 0) {
+    return {
+      label: `Khách trả dư ${currency(diff)}`,
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+
+  if (diff < 0) {
+    return {
+      label: `Shop bù ${currency(Math.abs(diff))}`,
+      className: "border-rose-200 bg-rose-50 text-rose-700",
+    };
+  }
+
+  return {
+    label: "Hòa phí ship",
+    className: "border-blue-200 bg-blue-50 text-blue-700",
+  };
+}
+
 
 function formatAddress(address?: CustomerAddressItem | null) {
   if (!address) return "";
@@ -1084,6 +1204,7 @@ export default function CreateOrderPageClient() {
 
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
+  const [stockWarningMessage, setStockWarningMessage] = useState("");
 
   const [createMode, setCreateMode] = useState<CreateOrderMode>("draft");
   const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -1176,6 +1297,9 @@ export default function CreateOrderPageClient() {
   const [shippingHint, setShippingHint] = useState("");
   const [shippingError, setShippingError] = useState("");
   const [shippingQuotes, setShippingQuotes] = useState<ShipmentQuoteResult[]>([]);
+  const [viettelInventories, setViettelInventories] = useState<ViettelPostInventory[]>([]);
+  const [viettelInventoryLoading, setViettelInventoryLoading] = useState(false);
+  const [selectedViettelInventoryId, setSelectedViettelInventoryId] = useState<number | undefined>();
 
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [newCustomerSaving, setNewCustomerSaving] = useState(false);
@@ -1215,6 +1339,38 @@ export default function CreateOrderPageClient() {
   useEffect(() => {
     void loadProducts();
   }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setViettelInventoryLoading(true);
+        const rows = await getViettelPostInventories();
+        setViettelInventories(rows);
+        setSelectedViettelInventoryId((current) => {
+          if (current && rows.some((row) => row.groupAddressId === current)) return current;
+          const preferred =
+            rows.find((row) => row.phone === "0975615475") ||
+            rows.find((row) => normalizeAddressToken(row.address).includes("sai son")) ||
+            rows[0];
+          return preferred?.groupAddressId;
+        });
+      } catch {
+        setViettelInventories([]);
+      } finally {
+        setViettelInventoryLoading(false);
+      }
+    };
+
+    void run();
+  }, []);
+
+  const selectedViettelInventory = useMemo(
+    () =>
+      viettelInventories.find(
+        (item) => item.groupAddressId === selectedViettelInventoryId
+      ) || null,
+    [viettelInventories, selectedViettelInventoryId]
+  );
 
 
   useEffect(() => {
@@ -1554,32 +1710,55 @@ export default function CreateOrderPageClient() {
     const canPickBranch = isOwnerUser(currentUser);
 
     return products.flatMap((product) =>
-      product.variants
-        .map((variant) => {
-          const branchStocks: Record<string, number> =
-            ((variant as any).branchStocks as Record<string, number>) || {};
-          let stock = 0;
+      product.variants.map((variant) => {
+        const branchStocks: Record<string, number> =
+          ((variant as any).branchStocks as Record<string, number>) || {};
 
-          if (canPickBranch) {
-            stock = Object.keys(branchStocks).reduce(
-              (sum, key) => sum + Number(branchStocks[key] || 0),
-              0
-            );
-          } else {
-            stock = Number(branchStocks[branchId] || 0);
-          }
+        const totalStock = Object.keys(branchStocks).reduce(
+          (sum, key) => sum + Number(branchStocks[key] || 0),
+          0
+        );
 
-          return {
-            ...variant,
-            productId: (product as any).id,
-            productName: product.name,
-            imageUrl: (product as any).imageUrl,
-            stock,
-          };
-        })
-        .filter((variant) => variant.stock > 0)
+        // ✅ Không ẩn sản phẩm khi chi nhánh đang làm việc hết hàng.
+        // Tồn theo branch chỉ dùng để hiển thị/cảnh báo, không dùng để chặn tìm kiếm.
+        const branchStock = Number(branchStocks[branchId] || 0);
+        const stock = canPickBranch ? totalStock : branchStock;
+
+        return {
+          ...variant,
+          productId: (product as any).id,
+          productName: product.name,
+          imageUrl: (product as any).imageUrl,
+          stock,
+          totalStock,
+          branchStock,
+          branchStocks,
+        };
+      })
     );
   }, [products, branchId]);
+
+  const buildStockWarning = (item: any, qty = 1) => {
+    const totalStock = Number(item?.totalStock ?? item?.stock ?? 0);
+    const branchStock = Number(item?.branchStock ?? item?.stock ?? 0);
+    const sku = String(item?.sku || "Sản phẩm");
+
+    if (totalStock <= 0) {
+      return `Cảnh báo: ${sku} đã hết hàng ở tất cả chi nhánh. Vẫn cho phép tạo đơn và sẽ xuất âm kho.`;
+    }
+
+    if (branchStock < qty) {
+      return `Cảnh báo: ${sku} không đủ tồn ở chi nhánh này. Tồn CN ${branchStock}, cần ${qty}. Vẫn cho phép tạo đơn và sẽ xuất âm kho tại chi nhánh đang bán.`;
+    }
+
+    return "";
+  };
+
+  const stockWarnings = useMemo(() => {
+    return lines
+      .map((line) => buildStockWarning(line, Number(line.qty || 1)))
+      .filter(Boolean);
+  }, [lines]);
 
   const filteredVariants = useMemo(() => {
     const raw = productSearch.trim();
@@ -2213,6 +2392,9 @@ export default function CreateOrderPageClient() {
     const found = allVariants.find((v) => v.id === variantId);
     if (!found) return;
 
+    const stockWarning = buildStockWarning(found, 1);
+    setStockWarningMessage(stockWarning);
+
     setProductSearch("");
     setBarcodeInput("");
 
@@ -2223,7 +2405,8 @@ export default function CreateOrderPageClient() {
           line.variantId === variantId
             ? {
               ...line,
-              qty: Math.min(line.qty + 1, line.stock || line.qty + 1),
+              // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
+              qty: line.qty + 1,
             }
             : line
         );
@@ -2240,6 +2423,9 @@ export default function CreateOrderPageClient() {
           size: (found as any).size,
           price: Number(found.price || 0),
           stock: Number((found as any).stock || 0),
+          totalStock: Number((found as any).totalStock ?? (found as any).stock ?? 0),
+          branchStock: Number((found as any).branchStock ?? (found as any).stock ?? 0),
+          branchStocks: ((found as any).branchStocks as Record<string, number>) || {},
           qty: 1,
           discount: 0,
           imageUrl: (found as any).imageUrl,
@@ -2273,7 +2459,7 @@ export default function CreateOrderPageClient() {
         if (line.variantId !== variantId) return line;
         const next = { ...line, ...patch };
         if (next.qty < 1) next.qty = 1;
-        if (next.qty > next.stock) next.qty = next.stock || 1;
+        // ✅ Cho phép bán âm, không tự ép số lượng về tồn kho.
         if (next.discount < 0) next.discount = 0;
         return next;
       })
@@ -2587,10 +2773,10 @@ export default function CreateOrderPageClient() {
     applyShippingRef.current = (payload: ShippingQuoteApplyPayload) => {
       setShippingFee((prev) => {
         if (payload.shippingMode === "pickup") return "0";
-        if (payload.applyFeeToInput && Number(payload.shippingFee || 0) > 0) {
-          return String(Number(payload.shippingFee || 0));
-        }
-        return Number(prev || 0) > 0 ? prev : "30000";
+
+        // ✅ Phí ship khách phải trả là phí thu khách, không tự đổi theo báo giá hãng.
+        // Báo giá GHN/AhaMove/ViettelPost chỉ dùng để tham khảo chi phí đối tác.
+        return parseNumber(prev || "0") > 0 ? prev : "30000";
       });
       setShippingMode(payload.shippingMode === "pickup" ? "pickup" : "partner");
       setShippingPartner(payload.shippingPartner || "ghn");
@@ -2751,7 +2937,12 @@ export default function CreateOrderPageClient() {
               toPhone: selectedAddress?.phone || customerPhone.trim(),
               toAddress,
               codAmount: remaining > 0 ? remaining : 0,
+              services: "HAN-BIKE,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
               serviceId: "HAN-BIKE",
+              weight: Number(shippingWeight || 200),
+              length: Number(shippingLength || 10),
+              width: Number(shippingWidth || 10),
+              height: Number(shippingHeight || 10),
               payment_method: "BALANCE",
               paymentMethod: "BALANCE",
               note: note.trim() || "",
@@ -2826,6 +3017,14 @@ export default function CreateOrderPageClient() {
                 "Khách hàng",
               toPhone: selectedAddress?.phone || customerPhone.trim(),
               toAddress,
+              services: "VHT,VTK,VCN",
+              senderGroupAddressId: selectedViettelInventory?.groupAddressId,
+              senderProvinceId: selectedViettelInventory?.provinceId,
+              senderDistrictId: selectedViettelInventory?.districtId,
+              senderWardId: selectedViettelInventory?.wardId,
+              fromName: selectedViettelInventory?.name,
+              fromPhone: selectedViettelInventory?.phone,
+              fromAddress: selectedViettelInventory?.address,
               province: viettelOldCarrierAddress.province,
               district: viettelOldCarrierAddress.district,
               ward: viettelOldCarrierAddress.ward,
@@ -2855,7 +3054,7 @@ export default function CreateOrderPageClient() {
                     row.serviceName ||
                     row._viettelServiceCode ||
                     "Viettel Post",
-                  _applyFeeToInput: true,
+                  _applyFeeToInput: !((row as any)?._disabled),
                 }) as ShipmentQuoteResult
             );
 
@@ -2918,7 +3117,7 @@ export default function CreateOrderPageClient() {
         });
 
         setShippingHint(
-          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)} · ${currency(getFeeNumber(selected))}.`
+          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)}. Phí đối tác: ${currency(getFeeNumber(selected))} | Khách đang trả: ${currency(parseNumber(shippingFee) || 30000)}.`
         );
         setShippingError(errors.length ? errors.join(" | ") : "");
       } catch (err) {
@@ -2986,11 +3185,16 @@ export default function CreateOrderPageClient() {
       return;
     }
 
-    const invalidLine = lines.find((line) => line.qty < 1 || line.qty > line.stock);
+    const invalidLine = lines.find((line) => line.qty < 1);
     if (invalidLine) {
       setError(`Số lượng không hợp lệ cho ${invalidLine.sku}.`);
       return;
     }
+
+    const nextStockWarnings = lines
+      .map((line) => buildStockWarning(line, Number(line.qty || 1)))
+      .filter(Boolean);
+    setStockWarningMessage(nextStockWarnings[0] || "");
 
     const isPickupOrder = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
     const finalCreateMode: CreateOrderMode =
@@ -3277,6 +3481,7 @@ export default function CreateOrderPageClient() {
         const selectedViettelQuote = shippingQuotes.find(
           (quote) =>
             getQuoteCarrier(quote) === "viettelpost" &&
+            !((quote as any)?._disabled) &&
             quote.serviceId === selectedShippingServiceId &&
             quote.serviceTypeId === selectedShippingServiceTypeId
         );
@@ -3285,6 +3490,13 @@ export default function CreateOrderPageClient() {
           toName: selectedAddress?.recipientName || customerName.trim(),
           toPhone: selectedAddress?.phone || customerPhone.trim(),
           toAddress,
+          senderGroupAddressId: selectedViettelInventory?.groupAddressId,
+          senderProvinceId: selectedViettelInventory?.provinceId,
+          senderDistrictId: selectedViettelInventory?.districtId,
+          senderWardId: selectedViettelInventory?.wardId,
+          fromName: selectedViettelInventory?.name,
+          fromPhone: selectedViettelInventory?.phone,
+          fromAddress: selectedViettelInventory?.address,
           toProvince: quoteProvince,
           toDistrict: quoteDistrict,
           toWard: quoteWard,
@@ -3374,6 +3586,14 @@ export default function CreateOrderPageClient() {
         {shouldShowGlobalError ? (
           <Panel className="p-4">
             <p className="text-sm text-red-600">{error}</p>
+          </Panel>
+        ) : null}
+
+        {stockWarningMessage || stockWarnings.length ? (
+          <Panel className="border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-medium text-amber-800">
+              {stockWarningMessage || stockWarnings[0]}
+            </p>
           </Panel>
         ) : null}
 
@@ -3677,10 +3897,20 @@ export default function CreateOrderPageClient() {
                           <p className="mt-1 text-xs text-neutral-500">
                             {(variant as any).color || "—"} / {(variant as any).size || "—"}
                           </p>
+                          {Number((variant as any).totalStock || 0) <= 0 ? (
+                            <p className="mt-1 text-xs font-semibold text-red-600">
+                              Hết hàng toàn hệ thống · vẫn cho phép tạo đơn âm kho
+                            </p>
+                          ) : Number((variant as any).branchStock || 0) <= 0 ? (
+                            <p className="mt-1 text-xs font-medium text-amber-700">
+                              Chi nhánh này hết hàng · còn {Number((variant as any).totalStock || 0)} ở chi nhánh khác
+                            </p>
+                          ) : null}
                         </div>
                         <div className="text-right">
                           <p className="font-medium">{currency((variant as any).price)}</p>
-                          <p className="mt-1 text-xs text-neutral-500">Tồn {(variant as any).stock}</p>
+                          <p className="mt-1 text-xs text-neutral-500">Tồn CN: {Number((variant as any).branchStock ?? (variant as any).stock ?? 0)}</p>
+                          <p className="mt-1 text-xs text-neutral-400">Tổng tồn: {Number((variant as any).totalStock ?? (variant as any).stock ?? 0)}</p>
                         </div>
                       </button>
                       ))
@@ -3739,15 +3969,23 @@ export default function CreateOrderPageClient() {
                             </div>
                             <p className="mt-1 text-sm text-neutral-500">{line.sku}</p>
                             <p className="mt-1 text-xs text-neutral-400">
-                              {line.color || "—"} / {line.size || "—"} · Tồn {line.stock}
+                              {line.color || "—"} / {line.size || "—"} · Tồn CN {Number((line as any).branchStock ?? line.stock ?? 0)} · Tổng tồn {Number((line as any).totalStock ?? line.stock ?? 0)}
                             </p>
+                            {Number((line as any).totalStock ?? line.stock ?? 0) <= 0 ? (
+                              <p className="mt-1 text-xs font-semibold text-red-600">
+                                Hết hàng toàn hệ thống · đơn này sẽ xuất âm kho.
+                              </p>
+                            ) : Number((line as any).branchStock ?? line.stock ?? 0) < Number(line.qty || 1) ? (
+                              <p className="mt-1 text-xs font-medium text-amber-700">
+                                Không đủ tồn ở chi nhánh này · vẫn cho phép bán âm.
+                              </p>
+                            ) : null}
                           </div>
 
                           <div>
                             <input
                               type="number"
                               min={1}
-                              max={line.stock}
                               value={line.qty}
                               onChange={(e) =>
                                 updateLine(line.variantId, {
@@ -3982,6 +4220,44 @@ export default function CreateOrderPageClient() {
                 </div>
               </div>
 
+              {shippingUiMode === "carrier" && shippingPartner === "viettelpost" ? (
+                <div className="mt-4 rounded-2xl border border-orange-100 bg-orange-50/60 p-4 text-sm">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-neutral-900">Kho gửi ViettelPost</div>
+                      <div className="text-xs text-neutral-500">
+                        Chọn kho lấy hàng giống Sapo để lấy đúng giá VTP.
+                      </div>
+                    </div>
+                    {viettelInventoryLoading ? (
+                      <span className="text-xs text-orange-600">Đang tải kho...</span>
+                    ) : null}
+                  </div>
+
+                  <select
+                    className="w-full rounded-2xl border border-orange-200 bg-white px-3 py-3 text-sm outline-none focus:border-orange-400"
+                    value={selectedViettelInventoryId || ""}
+                    onChange={(event) =>
+                      setSelectedViettelInventoryId(Number(event.target.value || 0) || undefined)
+                    }
+                  >
+                    <option value="">Dùng cấu hình mặc định</option>
+                    {viettelInventories.map((inventory) => (
+                      <option key={inventory.groupAddressId} value={inventory.groupAddressId}>
+                        {inventory.name || "Kho Viettel"} · {inventory.phone || "—"} · {inventory.address || "—"}
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedViettelInventory ? (
+                    <div className="mt-2 text-xs text-neutral-600">
+                      ID kho: {selectedViettelInventory.groupAddressId} · {selectedViettelInventory.provinceId}/
+                      {selectedViettelInventory.districtId}/{selectedViettelInventory.wardId || "—"}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {shippingHint ? (
                 <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
                   {shippingHint}
@@ -3994,112 +4270,249 @@ export default function CreateOrderPageClient() {
                 </div>
               ) : null}
 
-              {shippingQuotes.length > 0 ? (
-                <div className="mt-4 overflow-hidden rounded-2xl border border-neutral-200">
-                  <div className="grid grid-cols-[1.15fr_1.35fr_0.9fr_0.8fr] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                    <span>Đối tác</span>
-                    <span>Dịch vụ</span>
-                    <span>Thời gian dự kiến</span>
-                    <span className="text-right">Phí dự kiến</span>
-                  </div>
+              {shippingQuotes.length > 0 ? (() => {
+                const customerShippingFee = parseNumber(shippingFee) || 0;
+                const activeQuote =
+                  shippingQuotes.find(
+                    (q) =>
+                      getQuoteCarrier(q) === shippingPartner &&
+                      q.serviceId === selectedShippingServiceId &&
+                      q.serviceTypeId === selectedShippingServiceTypeId &&
+                      !((q as any)?._disabled)
+                  ) || selectedQuote;
 
-                  <div className="divide-y divide-neutral-100 bg-white">
-                    {shippingQuotes.map((quote) => {
-                      const carrier = getQuoteCarrier(quote);
-                      const active =
-                        carrier === shippingPartner &&
-                        quote.serviceId === selectedShippingServiceId &&
-                        quote.serviceTypeId === selectedShippingServiceTypeId;
-                      const badges = getQuoteBadges(quote);
-                      const feeValue = getFeeNumber(quote);
+                const validQuotes = shippingQuotes.filter(
+                  (quote) => getFeeNumber(quote) > 0 && !((quote as any)?._disabled)
+                );
+                const cheapestQuote = [...validQuotes].sort(
+                  (a, b) => getFeeNumber(a) - getFeeNumber(b)
+                )[0];
+                const fastestQuote = [...validQuotes]
+                  .filter((quote) => Number((quote as any)?._durationMinutes || 0) > 0)
+                  .sort(
+                    (a, b) =>
+                      Number((a as any)?._durationMinutes || 0) -
+                      Number((b as any)?._durationMinutes || 0)
+                  )[0];
+                const recommendedQuote =
+                  validQuotes.find((quote) => getQuoteBadges(quote).includes("Khuyên dùng")) ||
+                  cheapestQuote ||
+                  validQuotes[0];
 
-                      return (
-                        <button
-                          key={getQuoteKey(quote)}
-                          type="button"
-                          onClick={() =>
-                            applyShippingRef.current?.({
-                              shippingFee: feeValue || 30000,
-                              applyFeeToInput: Boolean((quote as any)._applyFeeToInput),
-                              shippingPartner: carrier,
-                              shippingMode: "partner",
-                              selectedServiceId: quote.serviceId,
-                              selectedServiceTypeId: quote.serviceTypeId,
-                              weight: Number(shippingWeight || 200),
-                              length: Number(shippingLength || 10),
-                              width: Number(shippingWidth || 10),
-                              height: Number(shippingHeight || 10),
-                              ghnDistrictId: (quote as any)._ghnDistrictId || ghnDistrictId,
-                              ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
-                            })
-                          }
-                          className={`grid w-full grid-cols-[1.15fr_1.35fr_0.9fr_0.8fr] items-center gap-3 px-4 py-3 text-left transition ${
-                            active ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900" : "hover:bg-neutral-50"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <span
-                              className={`h-4 w-4 rounded-full border ${
-                                active ? "border-neutral-900 bg-neutral-900" : "border-neutral-300"
-                              }`}
-                            />
-                            <div>
-                              <div className="text-sm font-semibold text-neutral-900">
-                                {carrier === "ahamove"
-                                  ? "AhaMove"
-                                  : carrier === "viettelpost"
-                                    ? "Viettel Post"
-                                    : "GHN"}
-                              </div>
-                              <div className="mt-0.5 text-[11px] text-neutral-500">
-                                {carrier === "ahamove"
-                                  ? "Nội thành realtime"
-                                  : carrier === "viettelpost"
-                                    ? "Liên tỉnh / COD"
-                                    : "Giao hàng nhanh"}
-                              </div>
-                            </div>
-                          </div>
+                const quickCards = [
+                  { key: "recommended", title: "Khuyên dùng", quote: recommendedQuote, tone: "emerald" },
+                  { key: "cheapest", title: "Rẻ nhất", quote: cheapestQuote, tone: "orange" },
+                  { key: "fastest", title: "Nhanh nhất", quote: fastestQuote, tone: "blue" },
+                ].filter((item) => item.quote);
 
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium text-neutral-900">
-                                {getQuoteDisplayName(quote)}
+                const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
+                const insight = getShippingInsight(activeQuote, customerShippingFee);
+
+                const applyQuote = (quote: ShipmentQuoteResult) => {
+                  const carrier = getQuoteCarrier(quote);
+                  const feeValue = getFeeNumber(quote);
+
+                  applyShippingRef.current?.({
+                    shippingFee: feeValue || 30000,
+                    applyFeeToInput: Boolean((quote as any)._applyFeeToInput),
+                    shippingPartner: carrier,
+                    shippingMode: "partner",
+                    selectedServiceId: quote.serviceId,
+                    selectedServiceTypeId: quote.serviceTypeId,
+                    weight: Number(shippingWeight || 200),
+                    length: Number(shippingLength || 10),
+                    width: Number(shippingWidth || 10),
+                    height: Number(shippingHeight || 10),
+                    ghnDistrictId: (quote as any)._ghnDistrictId || ghnDistrictId,
+                    ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
+                  });
+                };
+
+                return (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {quickCards.map((item) => {
+                        const quote = item.quote as ShipmentQuoteResult;
+                        const carrier = getQuoteCarrier(quote);
+                        const meta = getCarrierMeta(carrier);
+                        const active =
+                          activeQuote &&
+                          getQuoteKey(activeQuote) === getQuoteKey(quote);
+                        const feeValue = getFeeNumber(quote);
+
+                        const tone =
+                          item.tone === "emerald"
+                            ? "border-emerald-200 bg-emerald-50"
+                            : item.tone === "blue"
+                              ? "border-blue-200 bg-blue-50"
+                              : "border-orange-200 bg-orange-50";
+
+                        return (
+                          <button
+                            key={`${item.key}-${getQuoteKey(quote)}`}
+                            type="button"
+                            onClick={() => applyQuote(quote)}
+                            className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                              active ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10" : tone
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
+                                {item.title}
                               </span>
-                              {badges.map((badge) => (
-                                <span
-                                  key={badge}
-                                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                                    badge === "Rẻ nhất"
-                                      ? "bg-orange-50 text-orange-600"
-                                      : badge === "Nhanh nhất"
-                                        ? "bg-blue-50 text-blue-600"
-                                        : "bg-emerald-50 text-emerald-700"
-                                  }`}
-                                >
-                                  {badge}
-                                </span>
-                              ))}
+                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}>
+                                {meta.short}
+                              </span>
                             </div>
-                            <div className="mt-1 text-xs text-neutral-500">
-                              ServiceId: {quote.serviceId}
-                              {quote.serviceTypeId ? ` · TypeId: ${quote.serviceTypeId}` : ""}
+
+                            <div className="mt-3 text-sm font-semibold text-neutral-950">
+                              {meta.name} · {getQuoteServiceCleanName(quote)}
+                            </div>
+
+                            <div className="mt-2 flex items-end justify-between gap-3">
+                              <div>
+                                <div className="text-2xl font-bold tracking-tight text-neutral-950">
+                                  {currency(feeValue)}
+                                </div>
+                                <div className="mt-1 text-xs text-neutral-600">
+                                  {getQuoteLeadtimeLabel(quote)}
+                                </div>
+                              </div>
+                              <div className="text-right text-[11px] font-medium text-neutral-500">
+                                {getSmartQuoteNote(quote)}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span>{insight.label}</span>
+                        <span className="text-xs font-medium opacity-80">
+                          Phí khách đang trả: {currency(customerShippingFee)} · Gói đang chọn:{" "}
+                          {activeQuote ? currency(getFeeNumber(activeQuote)) : "—"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
+                      <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-neutral-950">
+                              So sánh gói vận chuyển
+                            </div>
+                            <div className="mt-0.5 text-xs text-neutral-500">
+                              Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn này.
                             </div>
                           </div>
-
-                          <div className="text-sm text-neutral-700">
-                            {getQuoteLeadtimeLabel(quote)}
+                          <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
+                            {shippingQuotes.length} gói
                           </div>
+                        </div>
+                      </div>
 
-                          <div className="text-right text-sm font-semibold text-neutral-950">
-                            {currency(feeValue)}
+                      <div className="divide-y divide-neutral-100">
+                        {groupedQuotes.map((group) => (
+                          <div key={group.carrier} className="grid grid-cols-[148px_1fr]">
+                            <div className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}>
+                              <div className="sticky top-3">
+                                <div className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}>
+                                  {group.meta.name}
+                                </div>
+                                <div className="mt-2 text-xs text-neutral-500">
+                                  {group.meta.sub}
+                                </div>
+                                <div className="mt-3 text-[11px] font-semibold text-neutral-500">
+                                  {group.quotes.length} lựa chọn
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="divide-y divide-neutral-100">
+                              {group.quotes.map((quote) => {
+                                const carrier = getQuoteCarrier(quote);
+                                const active =
+                                  carrier === shippingPartner &&
+                                  quote.serviceId === selectedShippingServiceId &&
+                                  quote.serviceTypeId === selectedShippingServiceTypeId;
+                                const badges = getQuoteBadges(quote);
+                                const feeValue = getFeeNumber(quote);
+                                const disabled = Boolean((quote as any)?._disabled);
+
+                                return (
+                                  <button
+                                    key={getQuoteKey(quote)}
+                                    type="button"
+                                    disabled={disabled}
+                                    onClick={() => applyQuote(quote)}
+                                    className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
+                                      active
+                                        ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
+                                        : "hover:bg-neutral-50"
+                                    } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <span
+                                        className={`mt-1 h-4 w-4 rounded-full border ${
+                                          active
+                                            ? "border-neutral-900 bg-neutral-900"
+                                            : "border-neutral-300 bg-white"
+                                        }`}
+                                      />
+                                      <div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-sm font-semibold text-neutral-950">
+                                            {getQuoteServiceCleanName(quote)}
+                                          </span>
+                                          {badges.map((badge) => (
+                                            <span
+                                              key={badge}
+                                              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                                badge === "Rẻ nhất"
+                                                  ? "bg-orange-50 text-orange-600"
+                                                  : badge === "Nhanh nhất"
+                                                    ? "bg-blue-50 text-blue-600"
+                                                    : "bg-emerald-50 text-emerald-700"
+                                              }`}
+                                            >
+                                              {badge}
+                                            </span>
+                                          ))}
+                                        </div>
+
+                                        <div className="mt-1 text-xs text-neutral-500">
+                                          {getSmartQuoteNote(quote)}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="text-sm text-neutral-700">
+                                      {getQuoteLeadtimeLabel(quote)}
+                                    </div>
+
+                                    <div className="text-right">
+                                      <div className="text-sm font-bold text-neutral-950">
+                                        {currency(feeValue)}
+                                      </div>
+                                      <div className="mt-0.5 text-[11px] text-neutral-400">
+                                        Service {quote.serviceId}
+                                        {quote.serviceTypeId ? ` · Type ${quote.serviceTypeId}` : ""}
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
-                        </button>
-                      );
-                    })}
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ) : null}
+                );
+              })() : null}
             </Panel>
           </div>
 

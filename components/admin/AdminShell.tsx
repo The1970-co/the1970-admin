@@ -242,32 +242,27 @@ function getCurrentBranchId(user: any) {
 
 function getScopedMenuPermissionKeys(user: any) {
   const keys = new Set<string>();
+  if (!user || isOwnerOrAdmin(user)) return keys;
+
   const currentBranchId = getCurrentBranchId(user);
   const rows = Array.isArray(user?.branchPermissions) ? user.branchPermissions : [];
 
-  // Với nhân viên theo chi nhánh, menu phải lấy từ permissionKeys của đúng chi nhánh đang làm việc.
-  // Không fallback từ branchRoles/legacy flags/action permissions để tránh tick action làm lòi menu.
+  // STRICT RBAC:
+  // Menu nhân viên chỉ lấy từ branchPermissions.permissionKeys của đúng chi nhánh đang làm việc.
+  // Không fallback từ role, branchRoles, global permissionKeys hay legacy flags.
+  // Như vậy tick action orders.create/inventory.view sẽ không tự làm hiện menu.
   const scopedRows = currentBranchId
     ? rows.filter((row: any) => normalizeId(row?.branchId) === currentBranchId)
-    : rows;
+    : [];
 
   scopedRows.forEach((row: any) => {
-    if (Array.isArray(row?.permissionKeys)) {
-      row.permissionKeys.forEach((permission: any) => {
-        const key = String(permission || "");
-        if (key.startsWith("menu.")) keys.add(key);
-      });
-    }
-  });
+    if (!Array.isArray(row?.permissionKeys)) return;
 
-  // Chỉ dùng global menu keys khi user không có branchPermissions.
-  // Tránh case nhân viên cũ còn cache/global key làm hiện menu sai chi nhánh.
-  if (!rows.length) {
-    [...(Array.isArray(user?.permissions) ? user.permissions : []), ...(Array.isArray(user?.permissionKeys) ? user.permissionKeys : [])].forEach((permission: any) => {
-      const key = String(permission || "");
+    row.permissionKeys.forEach((permission: any) => {
+      const key = String(permission || "").trim();
       if (key.startsWith("menu.")) keys.add(key);
     });
-  }
+  });
 
   return keys;
 }
@@ -293,17 +288,9 @@ function hasAnyBranchPermission(
 ) {
   if (isOwnerOrAdmin(user)) return true;
 
-  const hasLegacyPermission = hasExplicitBranchPermission(user, keys);
-
-  if (hasLegacyPermission) return true;
-
-  const roleRows = Array.isArray(user?.branchRoles) ? user.branchRoles : [];
-
-  return roleRows.some((row: BranchRole) => {
-    const roleCode = String(row?.roleCode || "").toLowerCase();
-    const rolePermissions = ROLE_PERMISSION_KEYS[roleCode] || [];
-    return keys.some((key) => rolePermissions.includes(key));
-  });
+  // STRICT RBAC: không dùng branchRoles/ROLE_PERMISSION_KEYS để tự mở quyền.
+  // Role chỉ là template để sinh permissionKeys khi lưu, runtime chỉ tin branchPermissions.
+  return hasExplicitBranchPermission(user, keys);
 }
 
 function hasAnyAppPermission(user: any, permissions: string[]) {
@@ -497,11 +484,16 @@ export default function AdminShell({
   const pathname = usePathname();
 
   useEffect(() => {
-    const storedUser = getCurrentUserFromStorage();
-    setCurrentUser(storedUser);
+    let cancelled = false;
+
+    // Không render menu từ localStorage ngay lúc đầu, vì localStorage có thể còn quyền cũ.
+    // Chỉ dùng /auth/me làm source of truth để tránh nhân viên thấy menu chưa được tick.
+    setCurrentUser(null);
 
     apiJson("/auth/me")
       .then((data) => {
+        if (cancelled) return;
+
         const nextUser = data?.user || data;
         if (!nextUser) return;
 
@@ -518,8 +510,14 @@ export default function AdminShell({
         }
       })
       .catch(() => {
-        // dùng user trong localStorage nếu auth/me lỗi
+        if (cancelled) return;
+        clearCurrentUserFromStorage();
+        setCurrentUser(null);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const passwordScore = useMemo(
@@ -534,6 +532,10 @@ export default function AdminShell({
 
     return MENU.map((item) => {
       if (item.children?.length) {
+        // STRICT: phải có quyền menu cha thì mới hiện nhóm.
+        // Ví dụ: có menu.stock_transfer nhưng không có menu.inventory => không hiện cả nhóm Kho.
+        if (!canSeeMenuItem(currentUser, item)) return null;
+
         const visibleChildren = item.children.filter((child) =>
           canSeeMenuItem(currentUser, child),
         );
