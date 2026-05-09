@@ -16,6 +16,7 @@ import {
   quoteViettelPostShipment,
   getViettelPostInventories,
   resolveGhnAddress,
+  getOrderForCopy,
   type CreateOrderMode,
   type CreateOrderPayload,
   type OrderProduct,
@@ -815,6 +816,133 @@ function getApiBaseUrl() {
   ).replace(/\/$/, "");
 }
 
+
+function extractCopyOrderNoteValue(note: string | undefined | null, labels: string[]) {
+  const raw = String(note || "");
+  if (!raw.trim()) return "";
+
+  const parts = raw
+    .split(" | ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  for (const label of labels) {
+    const found = parts.find((part) =>
+      part.toLowerCase().startsWith(label.toLowerCase())
+    );
+    if (found) {
+      return found.slice(label.length).trim();
+    }
+  }
+
+  return "";
+}
+
+function splitCopyOrderAddress(fullAddress: string) {
+  const parts = String(fullAddress || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (!parts.length) {
+    return { line1: "", ward: "", district: "", province: "" };
+  }
+
+  if (parts.length === 1) {
+    return { line1: parts[0], ward: "", district: "", province: "" };
+  }
+
+  if (parts.length === 2) {
+    return { line1: parts[0], ward: "", district: "", province: parts[1] };
+  }
+
+  if (parts.length === 3) {
+    return { line1: parts[0], ward: "", district: parts[1], province: parts[2] };
+  }
+
+  return {
+    line1: parts.slice(0, -3).join(", "),
+    ward: parts[parts.length - 3] || "",
+    district: parts[parts.length - 2] || "",
+    province: parts[parts.length - 1] || "",
+  };
+}
+
+function isCopyOrderSystemNoteSegment(value?: string | null) {
+  const lower = String(value || "").toLowerCase().trim();
+
+  return (
+    lower.startsWith("địa chỉ:") ||
+    lower.startsWith("dia chi:") ||
+    lower.startsWith("address:") ||
+    lower.startsWith("customerid:") ||
+    lower.startsWith("customer id:") ||
+    lower.startsWith("customer_id:") ||
+    lower.startsWith("customeraddressid:") ||
+    lower.startsWith("customeraddress id:") ||
+    lower.startsWith("customeraddress:") ||
+    lower.startsWith("giảm giá tay:") ||
+    lower.startsWith("giam gia tay:") ||
+    lower.startsWith("giảm giá dòng:") ||
+    lower.startsWith("giam gia dong:") ||
+    lower.startsWith("giảm giá:") ||
+    lower.startsWith("giam gia:") ||
+    lower.startsWith("phí ship:") ||
+    lower.startsWith("phi ship:") ||
+    lower.startsWith("khách đã trả:") ||
+    lower.startsWith("khach da tra:") ||
+    lower.startsWith("còn phải trả:") ||
+    lower.startsWith("con phai tra:") ||
+    lower.startsWith("kiểu vận chuyển ui:") ||
+    lower.startsWith("kieu van chuyen ui:") ||
+    lower.startsWith("cách giao:") ||
+    lower.startsWith("cach giao:") ||
+    lower.startsWith("partner:") ||
+    lower.startsWith("đơn vị giao:") ||
+    lower.startsWith("don vi giao:") ||
+    lower.startsWith("yêu cầu giao hàng:") ||
+    lower.startsWith("yeu cau giao hang:") ||
+    lower.startsWith("ghn service") ||
+    lower.startsWith("khối lượng:") ||
+    lower.startsWith("khoi luong:") ||
+    lower.startsWith("kích thước:") ||
+    lower.startsWith("kich thuoc:") ||
+    lower.startsWith("ghn districtid:") ||
+    lower.startsWith("ghn wardcode:")
+  );
+}
+
+function getCleanCopyOrderNote(note?: string | null) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+
+  const parts = raw
+    .split(" | ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const explicitNotes = parts
+    .filter((part) =>
+      /^(Ghi chú nội bộ|Ghi chú đơn hàng|Ghi chú giao hàng|Ghi chú):/i.test(part)
+    )
+    .map((part) =>
+      part
+        .replace(/^Ghi chú nội bộ:\s*/i, "")
+        .replace(/^Ghi chú đơn hàng:\s*/i, "")
+        .replace(/^Ghi chú giao hàng:\s*/i, "")
+        .replace(/^Ghi chú:\s*/i, "")
+        .trim()
+    )
+    .filter((part) => part && !isCopyOrderSystemNoteSegment(part));
+
+  if (explicitNotes.length) return explicitNotes.join(" | ");
+
+  if (parts.length > 1) return "";
+
+  return isCopyOrderSystemNoteSegment(raw) ? "" : raw;
+}
+
+
 function findBestProvinceName(
   raw: string,
   provinceOptions: ProvinceItem[]
@@ -1205,6 +1333,7 @@ export default function CreateOrderPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
   const [stockWarningMessage, setStockWarningMessage] = useState("");
+  const [copyingOrder, setCopyingOrder] = useState(false);
 
   const [createMode, setCreateMode] = useState<CreateOrderMode>("draft");
   const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -1339,6 +1468,391 @@ export default function CreateOrderPageClient() {
   useEffect(() => {
     void loadProducts();
   }, []);
+
+
+useEffect(() => {
+  const copyFrom =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("copyFrom")
+      : "";
+
+  if (!copyFrom) return;
+
+  setCopyingOrder(true);
+  setSuccessMessage("Đang sao chép đơn hàng cũ...");
+}, []);
+
+
+
+useEffect(() => {
+  const run = async () => {
+    const copyFrom =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("copyFrom")
+        : "";
+
+    if (!copyFrom || !products.length) return;
+
+    try {
+      setCopyingOrder(true);
+      setError(null);
+      setSuccessMessage("Đang sao chép đơn hàng cũ...");
+
+      const rawOrder = await getOrderForCopy(copyFrom);
+      const order =
+        rawOrder?.data?.id || rawOrder?.data?.orderCode
+          ? rawOrder.data
+          : rawOrder?.order?.id || rawOrder?.order?.orderCode
+            ? rawOrder.order
+            : rawOrder?.item?.id || rawOrder?.item?.orderCode
+              ? rawOrder.item
+              : rawOrder;
+
+      const snap =
+        order?.shippingSnapshot ||
+        order?.shipment?.shippingSnapshot ||
+        order?.shipment ||
+        order?.shipping ||
+        {};
+
+      const customer =
+        order?.customer ||
+        order?.customerInfo ||
+        order?.buyer ||
+        order?.recipient ||
+        {};
+
+      const noteCustomerId = extractCopyOrderNoteValue(order?.note, [
+        "CustomerId:",
+        "Customer ID:",
+        "customer_id:",
+      ]);
+
+      const noteCustomerAddressId = extractCopyOrderNoteValue(order?.note, [
+        "CustomerAddressId:",
+        "CustomerAddress ID:",
+        "customerAddressId:",
+      ]);
+
+      const noteAddress = extractCopyOrderNoteValue(order?.note, [
+        "Địa chỉ:",
+        "Dia chi:",
+        "Address:",
+      ]);
+
+      const nextCustomerId =
+        order?.customerId ||
+        customer?.id ||
+        noteCustomerId ||
+        null;
+
+      const nextCustomerName =
+        order?.customerName ||
+        order?.customerFullName ||
+        order?.receiverName ||
+        order?.recipientName ||
+        order?.toName ||
+        snap?.shippingRecipientName ||
+        snap?.toName ||
+        customer?.fullName ||
+        customer?.name ||
+        customer?.customerName ||
+        "";
+
+      const nextCustomerPhone =
+        order?.customerPhone ||
+        order?.phone ||
+        order?.receiverPhone ||
+        order?.recipientPhone ||
+        order?.toPhone ||
+        snap?.shippingPhone ||
+        snap?.toPhone ||
+        customer?.phone ||
+        "";
+
+      setCustomerId(nextCustomerId);
+      setCustomerName(nextCustomerName);
+      setCustomerPhone(nextCustomerPhone);
+      setCustomerHint(nextCustomerId ? `Khách cũ: ${nextCustomerName}` : "");
+      setSalesChannel(order?.salesChannel || "FACEBOOK");
+
+      if (order?.branchId) {
+        setBranchId(order.branchId);
+      }
+
+      setNote(
+        getCleanCopyOrderNote(
+          order?.internalNote ||
+            order?.orderNote ||
+            order?.customerNote ||
+            order?.shippingNote ||
+            order?.note ||
+            ""
+        )
+      );
+
+      const preferredAddressId =
+        snap?.shippingAddressId ||
+        order?.shippingAddressId ||
+        order?.customerAddressId ||
+        noteCustomerAddressId ||
+        customer?.defaultAddressId ||
+        "";
+
+      let addressApplied = false;
+
+      if (nextCustomerId) {
+        try {
+          const rows = await getCustomerAddresses(String(nextCustomerId));
+          setCustomerAddresses(rows);
+
+          const selected =
+            rows.find((item) => String(item.id) === String(preferredAddressId)) ||
+            rows.find((item) => item.isDefault) ||
+            rows[0] ||
+            null;
+
+          if (selected) {
+            setSelectedAddressId(selected.id);
+            setAddressRecipientName(selected.recipientName || nextCustomerName || "");
+            setAddressPhone(selected.phone || nextCustomerPhone || "");
+            setAddressProvince(selected.province || "");
+            setAddressDistrict((selected as any).district || "");
+            setAddressWard(selected.ward || "");
+            setAddressLine1(selected.addressLine1 || "");
+            setAddressLine2(selected.addressLine2 || "");
+            setAddressPostalCode(selected.postalCode || "");
+
+            const full = formatAddress(selected);
+            setShippingAddress(full);
+            setSmartAddressInput(full);
+            addressApplied = true;
+          }
+        } catch {
+          setCustomerAddresses([]);
+          setSelectedAddressId(null);
+        }
+      }
+
+      if (!addressApplied) {
+        const rawAddress =
+          snap?.shippingAddress ||
+          snap?.toAddress ||
+          order?.shippingAddress ||
+          order?.fullAddress ||
+          order?.address ||
+          customer?.fullAddress ||
+          customer?.address ||
+          noteAddress ||
+          "";
+
+        const parsedAddress = splitCopyOrderAddress(rawAddress);
+
+        const fallbackAddressLine1 =
+          snap?.shippingAddressLine1 ||
+          snap?.addressLine1 ||
+          order?.shippingAddressLine1 ||
+          order?.addressLine1 ||
+          customer?.addressLine1 ||
+          parsedAddress.line1 ||
+          rawAddress ||
+          "";
+
+        const fallbackWard =
+          snap?.shippingWard ||
+          snap?.ward ||
+          order?.shippingWard ||
+          order?.ward ||
+          customer?.ward ||
+          parsedAddress.ward ||
+          "";
+
+        const fallbackDistrict =
+          snap?.shippingDistrict ||
+          snap?.district ||
+          order?.shippingDistrict ||
+          order?.district ||
+          customer?.district ||
+          parsedAddress.district ||
+          "";
+
+        const fallbackProvince =
+          snap?.shippingProvince ||
+          snap?.province ||
+          order?.shippingProvince ||
+          order?.province ||
+          customer?.province ||
+          parsedAddress.province ||
+          "";
+
+        const fallbackFull = [
+          fallbackAddressLine1,
+          fallbackWard,
+          fallbackDistrict,
+          fallbackProvince,
+        ]
+          .filter(Boolean)
+          .join(", ");
+
+        setAddressRecipientName(nextCustomerName);
+        setAddressPhone(nextCustomerPhone);
+        setAddressLine1(fallbackAddressLine1);
+        setAddressLine2(snap?.shippingAddressLine2 || order?.shippingAddressLine2 || "");
+        setAddressWard(fallbackWard);
+        setAddressDistrict(fallbackDistrict);
+        setAddressProvince(fallbackProvince);
+
+        if (fallbackFull) {
+          const copiedAddressId = String(preferredAddressId || "copied-order-address");
+
+          const copiedAddress = {
+            id: copiedAddressId,
+            label: "Địa chỉ sao chép",
+            recipientName: nextCustomerName,
+            phone: nextCustomerPhone,
+            addressLine1: fallbackAddressLine1,
+            addressLine2: snap?.shippingAddressLine2 || order?.shippingAddressLine2 || "",
+            ward: fallbackWard,
+            district: fallbackDistrict,
+            province: fallbackProvince,
+            isDefault: true,
+          } as CustomerAddressItem;
+
+          setCustomerAddresses([copiedAddress]);
+          setSelectedAddressId(copiedAddressId);
+        } else {
+          setSelectedAddressId(null);
+        }
+
+        setShippingAddress(fallbackFull);
+        setSmartAddressInput(fallbackFull);
+      }
+
+      setShippingFee(String(order?.shippingFee ?? snap?.shippingFee ?? 30000));
+      setCustomerPaid("0");
+
+      setShippingMode("partner");
+      setShippingUiMode("carrier");
+      setShippingPartner("ghn");
+
+      setSelectedShippingServiceId(undefined);
+      setSelectedShippingServiceTypeId(undefined);
+      setShippingQuotes([]);
+
+      const orderItems = Array.isArray(order?.items)
+        ? order.items
+        : Array.isArray(order?.orderItems)
+          ? order.orderItems
+          : Array.isArray(order?.lines)
+            ? order.lines
+            : [];
+
+      const allProductVariants = products.flatMap((p) =>
+        p.variants.map((v) => ({
+          productId: p.id,
+          productName: p.name,
+          imageUrl: p.imageUrl,
+          ...v,
+        }))
+      );
+
+      const nextLines = orderItems
+        .map((item: any) => {
+          const variantId = String(
+            item.variantId ||
+              item.productVariantId ||
+              item.variant?.id ||
+              item.productVariant?.id ||
+              ""
+          );
+
+          const itemSku = String(
+            item.sku ||
+              item.variantSku ||
+              item.productVariant?.sku ||
+              item.variant?.sku ||
+              ""
+          );
+
+          const found = allProductVariants.find(
+            (v) =>
+              String(v.id) === variantId ||
+              String(v.sku) === itemSku
+          );
+
+          const safeVariantId = found?.id || variantId;
+          const safeSku = found?.sku || itemSku;
+
+          if (!safeVariantId && !safeSku) return null;
+
+          return {
+            productId:
+              found?.productId ||
+              item.productId ||
+              item.product?.id ||
+              item.productVariant?.productId ||
+              null,
+            variantId: safeVariantId,
+            sku: safeSku,
+            productName:
+              found?.productName ||
+              item.productName ||
+              item.name ||
+              item.product?.name ||
+              item.productVariant?.product?.name ||
+              safeSku ||
+              "Sản phẩm",
+            color:
+              found?.color ||
+              item.color ||
+              item.variant?.color ||
+              item.productVariant?.color ||
+              "",
+            size:
+              found?.size ||
+              item.size ||
+              item.variant?.size ||
+              item.productVariant?.size ||
+              "",
+            price: Number(
+              item.price ??
+                item.unitPrice ??
+                item.salePrice ??
+                item.productVariant?.price ??
+                found?.price ??
+                0
+            ),
+            stock: Number(found?.stock || 0),
+            totalStock: Number((found as any)?.totalStock || found?.stock || 0),
+            branchStock: Number((found as any)?.branchStock || found?.stock || 0),
+            branchStocks: found?.branchStocks || {},
+            qty: Number(item.qty ?? item.quantity ?? item.quantityOrdered ?? 1),
+            discount: Number(item.discount ?? item.discountAmount ?? 0),
+            imageUrl: found?.imageUrl || item.imageUrl || "",
+          };
+        })
+        .filter(Boolean) as OrderLine[];
+
+      setLines(nextLines);
+
+      setSuccessMessage(
+        `Đã sao chép đơn ${order?.orderCode || copyFrom}. Chọn lại hãng vận chuyển rồi tạo đơn mới.`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không sao chép được đơn hàng."
+      );
+    } finally {
+      setCopyingOrder(false);
+    }
+  };
+
+  void run();
+}, [products]);
+
+
 
   useEffect(() => {
     const run = async () => {
@@ -2774,9 +3288,11 @@ export default function CreateOrderPageClient() {
       setShippingFee((prev) => {
         if (payload.shippingMode === "pickup") return "0";
 
-        // ✅ Phí ship khách phải trả là phí thu khách, không tự đổi theo báo giá hãng.
+        // ✅ Giữ nguyên phí ship nhân viên nhập tay.
+        // Nếu nhân viên nhập free ship = 0 thì không được tự cộng lại 30.000.
         // Báo giá GHN/AhaMove/ViettelPost chỉ dùng để tham khảo chi phí đối tác.
-        return parseNumber(prev || "0") > 0 ? prev : "30000";
+        const current = String(prev ?? "").trim();
+        return current === "" ? "30000" : current;
       });
       setShippingMode(payload.shippingMode === "pickup" ? "pickup" : "partner");
       setShippingPartner(payload.shippingPartner || "ghn");
@@ -2793,7 +3309,12 @@ export default function CreateOrderPageClient() {
 
   useEffect(() => {
     if (shippingUiMode === "carrier" && (shippingPartner === "ghn" || shippingPartner === "ahamove")) {
-      setShippingFee((prev) => (Number(prev || 0) > 0 ? prev : "30000"));
+      // ✅ Chỉ set mặc định khi ô phí ship đang trống.
+      // Không ép 0 thành 30.000 vì 0 là free ship do nhân viên nhập.
+      setShippingFee((prev) => {
+        const current = String(prev ?? "").trim();
+        return current === "" ? "30000" : current;
+      });
     }
   }, [shippingUiMode, shippingPartner]);
 
@@ -3102,7 +3623,7 @@ export default function CreateOrderPageClient() {
           sortedQuotes[0];
 
         applyShippingRef.current?.({
-          shippingFee: getFeeNumber(selected) || 30000,
+          shippingFee: getFeeNumber(selected),
           applyFeeToInput: Boolean((selected as any)._applyFeeToInput),
           shippingPartner: getQuoteCarrier(selected),
           shippingMode: "partner",
@@ -3117,7 +3638,7 @@ export default function CreateOrderPageClient() {
         });
 
         setShippingHint(
-          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)}. Phí đối tác: ${currency(getFeeNumber(selected))} | Khách đang trả: ${currency(parseNumber(shippingFee) || 30000)}.`
+          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)}. Phí đối tác: ${currency(getFeeNumber(selected))} | Khách đang trả: ${currency(parseNumber(shippingFee))}.`
         );
         setShippingError(errors.length ? errors.join(" | ") : "");
       } catch (err) {
@@ -3290,6 +3811,11 @@ export default function CreateOrderPageClient() {
         submitGhnWardCode ? `GHN WardCode: ${submitGhnWardCode}` : "",
       ].filter(Boolean);
 
+      const shouldCreateCarrierShipmentManually =
+        !isPickupOrder &&
+        finalCreateMode === "ship" &&
+        shippingUiMode === "carrier";
+
       const payload = {
         ...(customerId ? ({ customerId } as any) : {}),
         salesChannel: (isPickupOrder ? "POS" : salesChannel) as any,
@@ -3298,6 +3824,7 @@ export default function CreateOrderPageClient() {
         customerPhone: customerPhone.trim(),
         note: extraNoteParts.join(" | "),
         mode: finalCreateMode,
+        skipAutoShipment: shouldCreateCarrierShipmentManually,
 
         // Pickup phải được gửi rõ xuống backend để backend set COMPLETED + FULFILLED như POS.
         deliveryMethod: isPickupOrder ? "PICKUP" : "DELIVERY",
@@ -3321,6 +3848,7 @@ export default function CreateOrderPageClient() {
         finalAmount: customerMustPay,
 
         shippingSnapshot: {
+          skipAutoShipment: shouldCreateCarrierShipmentManually,
           shippingFee: isPickupOrder ? 0 : Number(fee || 0),
           shipFee: isPickupOrder ? 0 : Number(fee || 0),
           fee: isPickupOrder ? 0 : Number(fee || 0),
@@ -3354,6 +3882,32 @@ export default function CreateOrderPageClient() {
           selectedServiceTypeId: isPickupOrder
             ? undefined
             : selectedShippingServiceTypeId,
+          shippingQuoteKey: isPickupOrder ? undefined : selectedQuote ? getQuoteKey(selectedQuote) : undefined,
+          carrier: isPickupOrder ? "pickup" : shippingPartner,
+          viettelServiceCode:
+            !isPickupOrder && shippingPartner === "viettelpost"
+              ? ((selectedQuote as any)?._viettelServiceCode ||
+                  (selectedQuote as any)?._serviceName ||
+                  undefined)
+              : undefined,
+          viettelSenderGroupAddressId:
+            !isPickupOrder && shippingPartner === "viettelpost"
+              ? ((selectedQuote as any)?._viettelSenderGroupAddressId ||
+                  selectedViettelInventory?.groupAddressId ||
+                  undefined)
+              : undefined,
+          viettelReceiverProvinceId:
+            !isPickupOrder && shippingPartner === "viettelpost"
+              ? ((selectedQuote as any)?._viettelReceiverProvinceId || undefined)
+              : undefined,
+          viettelReceiverDistrictId:
+            !isPickupOrder && shippingPartner === "viettelpost"
+              ? ((selectedQuote as any)?._viettelReceiverDistrictId || undefined)
+              : undefined,
+          viettelReceiverWardId:
+            !isPickupOrder && shippingPartner === "viettelpost"
+              ? ((selectedQuote as any)?._viettelReceiverWardId || undefined)
+              : undefined,
           weight: shippingWeight,
           length: shippingLength,
           width: shippingWidth,
@@ -3579,7 +4133,7 @@ export default function CreateOrderPageClient() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Tạo đơn</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            Sapo-style UI: tìm nhanh địa chỉ, quét mã vạch, quote GHN.
+            
           </p>
         </div>
 
@@ -4313,7 +4867,7 @@ export default function CreateOrderPageClient() {
                   const feeValue = getFeeNumber(quote);
 
                   applyShippingRef.current?.({
-                    shippingFee: feeValue || 30000,
+                    shippingFee: feeValue,
                     applyFeeToInput: Boolean((quote as any)._applyFeeToInput),
                     shippingPartner: carrier,
                     shippingMode: "partner",
@@ -4645,9 +5199,9 @@ export default function CreateOrderPageClient() {
                 <Button
                   className="w-full py-3"
                   onClick={() => setModePickerOpen(true)}
-                  disabled={saving || !lines.length}
+                  disabled={saving || copyingOrder || !lines.length}
                 >
-                  {saving ? "Đang tạo..." : "Tạo đơn"}
+                  {copyingOrder ? "Đang sao chép..." : saving ? "Đang tạo..." : "Tạo đơn"}
                 </Button>
 
                 <Button variant="secondary" className="w-full" onClick={resetForm} disabled={saving}>

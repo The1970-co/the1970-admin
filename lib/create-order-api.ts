@@ -1,4 +1,22 @@
 import { apiFetch } from "@/lib/api";
+export type ViettelPostInventory = {
+  group_address_id?: number;
+  groupAddressId?: number;
+  cus_id?: number;
+  cusId?: number;
+  name?: string;
+  phone?: string;
+  address?: string;
+  province_id?: number;
+  provinceId?: number;
+  district_id?: number;
+  districtId?: number;
+  wards_id?: number;
+  wardsId?: number;
+  ward_id?: number;
+  wardId?: number;
+};
+
 export type CreateOrderMode = "draft" | "approve" | "ship";
 
 export type OrderProductVariant = {
@@ -72,8 +90,6 @@ export type CreateOrderPayload = {
 export type CreatedOrder = {
   id: string;
   orderCode: string;
-  negativeStockWarnings?: string[];
-  hasNegativeStockWarning?: boolean;
 };
 
 export type CustomerLookupResult = {
@@ -206,8 +222,7 @@ export type AhamoveQuotePayload = {
   toAddress: string;
   codAmount?: number;
   serviceId?: string;
-  services?: string | string[];
-  serviceIds?: string | string[];
+  services?: string;
   weight?: number;
   length?: number;
   width?: number;
@@ -225,18 +240,6 @@ export type CreateAhamoveShipmentPayload = AhamoveQuotePayload & {
   orderCode?: string;
 };
 
-export type ViettelPostInventory = {
-  groupAddressId: number;
-  cusId?: number;
-  name: string;
-  phone: string;
-  address: string;
-  provinceId: number;
-  districtId: number;
-  wardId?: number;
-  raw?: any;
-};
-
 export type ViettelPostQuotePayload = {
   toName?: string;
   toPhone?: string;
@@ -244,9 +247,20 @@ export type ViettelPostQuotePayload = {
   toProvince?: string;
   toDistrict?: string;
   toWard?: string;
+
+  fromName?: string;
+  fromPhone?: string;
+  fromAddress?: string;
+
+  senderGroupAddressId?: number;
+  senderProvinceId?: number;
+  senderDistrictId?: number;
+  senderWardId?: number;
+
   province?: string;
   district?: string;
   ward?: string;
+
   codAmount?: number;
   productPrice?: number;
   insuranceValue?: number;
@@ -255,16 +269,7 @@ export type ViettelPostQuotePayload = {
   width?: number;
   height?: number;
   services?: string;
-  senderGroupAddressId?: number;
-  groupAddressId?: number;
-  senderProvinceId?: number;
-  senderDistrictId?: number;
-  senderWardId?: number;
-  fromName?: string;
-  fromPhone?: string;
-  fromAddress?: string;
 };
-
 export type CreateViettelPostShipmentPayload = ViettelPostQuotePayload & {
   clientOrderCode?: string;
   orderCode?: string;
@@ -567,10 +572,6 @@ export async function createOrder(
   return {
     id: String(data.id),
     orderCode: String(data.orderCode || ""),
-    negativeStockWarnings: Array.isArray(data.negativeStockWarnings)
-      ? data.negativeStockWarnings.map((item: any) => String(item))
-      : [],
-    hasNegativeStockWarning: Boolean(data.hasNegativeStockWarning),
   };
 }
 
@@ -610,26 +611,6 @@ export async function quoteAhamoveShipment(
     method: "POST",
     body: JSON.stringify(payload),
   });
-}
-
-export async function getViettelPostInventories(): Promise<ViettelPostInventory[]> {
-  const data = await request<any>("/shipments/viettelpost/inventories", {
-    method: "GET",
-  });
-
-  const rows = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
-
-  return rows.map((item: any) => ({
-    groupAddressId: Number(item.groupAddressId || item.group_address_id || 0),
-    cusId: Number(item.cusId || item.cus_id || 0) || undefined,
-    name: String(item.name || ""),
-    phone: String(item.phone || ""),
-    address: String(item.address || ""),
-    provinceId: Number(item.provinceId || item.province_id || 0),
-    districtId: Number(item.districtId || item.district_id || 0),
-    wardId: Number(item.wardId || item.wards_id || item.ward_id || 0) || undefined,
-    raw: item.raw || item,
-  })).filter((item: ViettelPostInventory) => item.groupAddressId && item.provinceId && item.districtId);
 }
 
 export async function quoteViettelPostShipment(
@@ -750,4 +731,129 @@ export async function searchCustomers(query = ""): Promise<SearchCustomerItem[]>
   }
 
   return [];
+}
+function normalizeViettelPostInventory(row: ViettelPostInventory): ViettelPostInventory {
+  return {
+    ...row,
+    groupAddressId: row.groupAddressId ?? row.group_address_id,
+    cusId: row.cusId ?? row.cus_id,
+    provinceId: row.provinceId ?? row.province_id,
+    districtId: row.districtId ?? row.district_id,
+    wardId: row.wardId ?? row.ward_id ?? row.wards_id,
+  };
+}
+
+
+export async function getViettelPostInventories(): Promise<ViettelPostInventory[]> {
+  const data = await request<any>("/shipments/viettelpost/inventories");
+
+  const rows =
+    Array.isArray(data)
+      ? data
+      : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.vtp_inventories)
+          ? data.vtp_inventories
+          : Array.isArray(data?.inventories)
+            ? data.inventories
+            : [];
+
+  return rows.map((row: ViettelPostInventory) => normalizeViettelPostInventory(row));
+}
+
+export async function getOrderForCopy(orderIdOrCode: string): Promise<any> {
+  const rawKey = String(orderIdOrCode || "").trim();
+  const key = encodeURIComponent(rawKey);
+
+  const unwrapOrder = (data: any): any => {
+    if (!data) return null;
+    if (data?.id || data?.orderCode) return data;
+    if (data?.data?.id || data?.data?.orderCode) return data.data;
+    if (data?.order?.id || data?.order?.orderCode) return data.order;
+    if (data?.item?.id || data?.item?.orderCode) return data.item;
+    return data;
+  };
+
+  const normalizeList = (data: any): any[] => {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.items)) return data.items;
+    if (Array.isArray(data?.data)) return data.data;
+    if (Array.isArray(data?.orders)) return data.orders;
+    return [];
+  };
+
+  const findExactOrder = (rows: any[]) => {
+    const upperKey = rawKey.toUpperCase();
+    return rows.find((row) => {
+      return (
+        String(row?.id || "").toUpperCase() === upperKey ||
+        String(row?.orderCode || "").toUpperCase() === upperKey ||
+        String(row?.code || "").toUpperCase() === upperKey
+      );
+    });
+  };
+
+  const fetchDetailById = async (order: any) => {
+    const unwrapped = unwrapOrder(order);
+    const id = unwrapped?.id ? String(unwrapped.id) : "";
+
+    if (!id) return unwrapped;
+
+    try {
+      const detail = await request<any>(`/orders/${encodeURIComponent(id)}`);
+      const detailOrder = unwrapOrder(detail);
+      if (detailOrder?.id || detailOrder?.orderCode) return detailOrder;
+    } catch {
+      // Nếu detail lỗi thì vẫn trả dữ liệu tìm được.
+    }
+
+    return unwrapped;
+  };
+
+  const directCandidates = [
+    `/orders/${key}`,
+    `/orders/by-code/${key}`,
+    `/orders/code/${key}`,
+  ];
+
+  for (const path of directCandidates) {
+    try {
+      const data = await request<any>(path);
+      const directOrder = unwrapOrder(data);
+
+      if (directOrder?.id || directOrder?.orderCode) {
+        return await fetchDetailById(directOrder);
+      }
+
+      const rows = normalizeList(data);
+      const found = findExactOrder(rows);
+      if (found) return await fetchDetailById(found);
+    } catch {
+      continue;
+    }
+  }
+
+  const listCandidates = [
+    `/orders?page=1&pageSize=1000`,
+    `/orders?page=1&limit=1000`,
+    `/orders?search=${key}`,
+    `/orders?q=${key}`,
+    `/orders?orderCode=${key}`,
+  ];
+
+  for (const path of listCandidates) {
+    try {
+      const data = await request<any>(path);
+      const rows = normalizeList(data);
+      const found = findExactOrder(rows);
+
+      if (found) {
+        return await fetchDetailById(found);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error("Không tìm thấy đơn hàng để sao chép.");
 }

@@ -683,11 +683,19 @@ export default function ShipmentDetailPageClient({
   const driverInfo = getDriverInfo(tracking);
   const ahamoveTrackingUrl = getAhamoveTrackingUrl(detail, tracking);
   const isAhamove = isAhamoveCarrier(detail.carrier);
+  const isViettelPost = String(detail.carrier || "")
+    .toUpperCase()
+    .includes("VIETTEL");
+
   const externalTrackingUrl = isAhamove
     ? ahamoveTrackingUrl
-    : detail.trackingCode
-      ? `https://donhang.ghn.vn/?order_code=${detail.trackingCode}`
-      : "";
+    : isViettelPost
+      ? detail.trackingCode
+        ? `https://viettelpost.com.vn/tra-cuu-hanh-trinh-don/?q=${detail.trackingCode}`
+        : ""
+      : detail.trackingCode
+        ? `https://donhang.ghn.vn/?order_code=${detail.trackingCode}`
+        : "";
   const canCallDriver = Boolean(driverInfo.phone);
   const shouldShowDriverPanel = isAhamove || Boolean(driverInfo.phone || driverInfo.plate);
 
@@ -751,7 +759,11 @@ export default function ShipmentDetailPageClient({
                 rel="noreferrer"
                 className="rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
               >
-                {isAhamove ? "Mở AhaMove" : "Mở GHN"}
+                {isAhamove
+                  ? "Mở AhaMove"
+                  : isViettelPost
+                    ? "Mở ViettelPost"
+                    : "Mở GHN"}
               </a>
             ) : null}
           </div>
@@ -1034,7 +1046,11 @@ export default function ShipmentDetailPageClient({
                         : "pointer-events-none border-neutral-200 bg-neutral-100 text-neutral-400"
                     }`}
                   >
-                    Mở app
+                    {isAhamove
+                      ? "Mở AhaMove"
+                      : isViettelPost
+                        ? "Mở ViettelPost"
+                        : "Mở GHN"}
                   </a>
                 </div>
               </div>

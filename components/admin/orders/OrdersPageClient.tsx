@@ -5,7 +5,6 @@ import { getBranches, type BranchItem } from "@/lib/products-api";
 import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
 import {
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -364,11 +363,11 @@ function getOrderItemCount(order: AdminOrder) {
 
   const explicit = Number(
     anyOrder.itemCount ??
-      anyOrder.itemsCount ??
-      anyOrder.totalItems ??
-      anyOrder.totalQuantity ??
-      anyOrder.quantity ??
-      0,
+    anyOrder.itemsCount ??
+    anyOrder.totalItems ??
+    anyOrder.totalQuantity ??
+    anyOrder.quantity ??
+    0,
   );
 
   if (explicit > 0) return explicit;
@@ -379,10 +378,10 @@ function getOrderItemCount(order: AdminOrder) {
         sum +
         Number(
           item.qty ??
-            item.quantity ??
-            item.quantityOrdered ??
-            item.orderedQty ??
-            1,
+          item.quantity ??
+          item.quantityOrdered ??
+          item.orderedQty ??
+          1,
         )
       );
     }, 0);
@@ -505,11 +504,11 @@ function Button({
 
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 border font-semibold transition ${tones} ${sizes} ${
-        disabled ? "cursor-not-allowed opacity-50" : ""
-      }`}
+      className={`inline-flex items-center justify-center gap-2 border font-semibold transition ${tones} ${sizes} ${disabled ? "cursor-not-allowed opacity-50" : ""
+        }`}
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
       <span>{children}</span>
@@ -528,12 +527,12 @@ function SmallChip({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-        active
+      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${active
           ? "border-neutral-900 bg-neutral-900 text-white"
           : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
-      }`}
+        }`}
     >
       {children}
     </button>
@@ -549,11 +548,10 @@ function SummaryIcon({
 }) {
   return (
     <div
-      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${
-        active
+      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${active
           ? "border-neutral-900 bg-neutral-900 text-white"
           : "border-neutral-200 bg-neutral-50 text-neutral-700"
-      }`}
+        }`}
     >
       {children}
     </div>
@@ -575,12 +573,12 @@ function SummaryCard({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`rounded-[24px] border px-4 py-4 text-left transition ${
-        active
+      className={`rounded-[24px] border px-4 py-4 text-left transition ${active
           ? "border-neutral-900 bg-neutral-50 shadow-sm"
           : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm"
-      }`}
+        }`}
     >
       <div className="flex items-center gap-4">
         <SummaryIcon active={active}>{icon}</SummaryIcon>
@@ -1283,8 +1281,8 @@ function defaultVisibleColumns(canSeeMoney: boolean) {
 function normalizeShipmentStatus(order: AdminOrder) {
   const status = String(
     order.shipment?.shippingStatus ||
-      (order.shipment as any)?.partnerStatus ||
-      "",
+    (order.shipment as any)?.partnerStatus ||
+    "",
   ).toUpperCase();
 
   if (status) return status;
@@ -1448,7 +1446,16 @@ function getOrderExportRows(
     const row: Record<string, any> = {};
 
     if (columns.orderCode) row["Mã đơn"] = order.orderCode || "";
-    if (columns.createdAt) row["Ngày tạo"] = order.createdAt || "";
+    if (columns.createdAt)
+      row["Ngày tạo"] = new Intl.DateTimeFormat("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      }).format(new Date(order.createdAt));
     if (columns.customerName) row["Khách hàng"] = order.customerName || "";
     if (columns.customerPhone) row["SĐT"] = order.customerPhone || "";
     if (columns.orderStatus)
@@ -1601,7 +1608,15 @@ function exportOrdersExcel({
         const anyItem = item as any;
         itemRows.push({
           "Mã đơn": order.orderCode,
-          "Ngày tạo": order.createdAt,
+          "Ngày tạo": new Intl.DateTimeFormat("vi-VN", {
+            timeZone: "Asia/Ho_Chi_Minh",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+          }).format(new Date(order.createdAt)),
           "Khách hàng": order.customerName,
           "Chi nhánh":
             branches.find((b) => b.id === order.branchId)?.name ||
@@ -1616,9 +1631,9 @@ function exportOrdersExcel({
           "Đơn giá": Number(anyItem.price || anyItem.unitPrice || 0),
           "Thành tiền": Number(
             anyItem.total ||
-              anyItem.lineTotal ||
-              Number(anyItem.quantity || anyItem.qty || 0) *
-                Number(anyItem.price || anyItem.unitPrice || 0),
+            anyItem.lineTotal ||
+            Number(anyItem.quantity || anyItem.qty || 0) *
+            Number(anyItem.price || anyItem.unitPrice || 0),
           ),
         });
       }
@@ -1670,7 +1685,7 @@ export default function OrdersPageClient() {
     null | (() => Promise<void>)
   >(null);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [staffList, setStaffList] = useState<StaffLite[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -1785,14 +1800,12 @@ export default function OrdersPageClient() {
       currentUser?.role ||
       "guest";
 
-    return `${String(userKey).replace(/[^a-zA-Z0-9_-]/g, "_")}.${
-      currentUser?.branchId || "all"
-    }`;
+    return `${String(userKey).replace(/[^a-zA-Z0-9_-]/g, "_")}.${currentUser?.branchId || "all"
+      }`;
   }, [currentUser]);
 
-  const columnStorageKey = `orders.visibleColumns.${
-    canSeeMoney ? "admin" : "staff"
-  }.${userStorageSuffix}`;
+  const columnStorageKey = `orders.visibleColumns.${canSeeMoney ? "admin" : "staff"
+    }.${userStorageSuffix}`;
 
   const scrollStorageKey = `${TABLE_SCROLL_STORAGE_KEY}.${userStorageSuffix}`;
 
@@ -1840,7 +1853,8 @@ export default function OrdersPageClient() {
   };
 
   const copyOrderToNewTab = (order: AdminOrder) => {
-    const href = `/orders/create?copyFrom=${encodeURIComponent(order.id)}`;
+    const copyKey = order.orderCode || order.id;
+    const href = `/create-order?copyFrom=${encodeURIComponent(copyKey)}`;
 
     addWorkspaceTab({
       id: `${order.id}-copy`,
@@ -2137,9 +2151,10 @@ export default function OrdersPageClient() {
 
       const params = new URLSearchParams();
       params.set("page", String(page));
-      params.set("pageSize", String(pageSize));
+      params.set("pageSize", submittedQuery.trim() ? "500" : String(pageSize));
 
-      if (deferredQuery.trim()) params.set("q", deferredQuery.trim());
+      // Không gửi q lên backend để tránh Internal server error.
+      // Enter xong mới cập nhật submittedQuery, sau đó lọc phía client.
 
       if (!canViewAllOrders && canViewOwnOrders) {
         params.set("viewScope", "own");
@@ -2184,8 +2199,8 @@ export default function OrdersPageClient() {
       const scopedData =
         !canViewAllOrders && canViewOwnOrders
           ? data.filter((order: any) =>
-              isOrderCreatedByCurrentUser(order, currentUser),
-            )
+            isOrderCreatedByCurrentUser(order, currentUser),
+          )
           : data;
 
       setOrders(scopedData as AdminOrder[]);
@@ -2212,7 +2227,7 @@ export default function OrdersPageClient() {
 
     return () => clearTimeout(t);
   }, [
-    deferredQuery,
+    submittedQuery,
     branchFilter,
     orderFilter,
     paymentFilter,
@@ -2226,7 +2241,7 @@ export default function OrdersPageClient() {
   useEffect(() => {
     setPage(1);
   }, [
-    deferredQuery,
+    submittedQuery,
     branchFilter,
     orderFilter,
     paymentFilter,
@@ -2250,10 +2265,10 @@ export default function OrdersPageClient() {
         _createdByName: getCreatedByName(order),
         _assignedStaffName: String(
           (order as any).assignedStaffName ||
-            (order as any).assignedStaff?.name ||
-            (order as any).assignedToStaffName ||
-            getCreatedByName(order) ||
-            "",
+          (order as any).assignedStaff?.name ||
+          (order as any).assignedToStaffName ||
+          getCreatedByName(order) ||
+          "",
         ).trim(),
         _shippingFee: Number(order.shippingFee || 0),
         _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
@@ -2330,6 +2345,19 @@ export default function OrdersPageClient() {
     setFreeTextFilter("");
   };
 
+
+  const submitOrderSearch = () => {
+    const nextQuery = query.trim();
+    setSubmittedQuery(nextQuery);
+    setPage(1);
+  };
+
+  const clearOrderSearch = () => {
+    setQuery("");
+    setSubmittedQuery("");
+    setPage(1);
+  };
+
   const filteredOrders = useMemo(() => {
     let result = normalizedOrders;
 
@@ -2399,7 +2427,10 @@ export default function OrdersPageClient() {
       });
     }
 
-    const keyword = freeTextFilter.trim().toLowerCase();
+    const keyword = [submittedQuery, freeTextFilter]
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+      .join(" ");
     if (keyword) {
       result = result.filter((o) => {
         const haystack = [
@@ -2433,6 +2464,7 @@ export default function OrdersPageClient() {
   }, [
     normalizedOrders,
     quickStatus,
+    submittedQuery,
     createdByFilter,
     fulfillmentFilter,
     salesChannelFilter,
@@ -2748,8 +2780,7 @@ export default function OrdersPageClient() {
             successCount += 1;
           } catch (err) {
             failed.push(
-              `${order.orderCode}: ${
-                err instanceof Error ? err.message : "Lỗi không rõ"
+              `${order.orderCode}: ${err instanceof Error ? err.message : "Lỗi không rõ"
               }`,
             );
           }
@@ -2802,8 +2833,7 @@ export default function OrdersPageClient() {
             successCount += 1;
           } catch (err) {
             failed.push(
-              `${order.orderCode}: ${
-                err instanceof Error ? err.message : "Lỗi không rõ"
+              `${order.orderCode}: ${err instanceof Error ? err.message : "Lỗi không rõ"
               }`,
             );
           }
@@ -2901,8 +2931,7 @@ export default function OrdersPageClient() {
             successCount += 1;
           } catch (err) {
             failed.push(
-              `${order.orderCode}: ${
-                err instanceof Error ? err.message : "Lỗi không rõ"
+              `${order.orderCode}: ${err instanceof Error ? err.message : "Lỗi không rõ"
               }`,
             );
           }
@@ -3758,34 +3787,30 @@ export default function OrdersPageClient() {
                       prev === item.key ? "ALL" : item.key,
                     )
                   }
-                  className={`rounded-[22px] border p-3 text-left transition ${
-                    active
+                  className={`rounded-[22px] border p-3 text-left transition ${active
                       ? "border-neutral-900 bg-neutral-950 text-white shadow-sm"
                       : "border-neutral-200 bg-white text-neutral-900"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-2xl border text-sm ${
-                        active
+                      className={`flex h-9 w-9 items-center justify-center rounded-2xl border text-sm ${active
                           ? "border-white/20 bg-white/10 text-white"
                           : "border-neutral-200 bg-neutral-50 text-neutral-700"
-                      }`}
+                        }`}
                     >
                       {item.icon}
                     </span>
                     <span
-                      className={`text-[11px] font-semibold ${
-                        active ? "text-white/70" : "text-neutral-500"
-                      }`}
+                      className={`text-[11px] font-semibold ${active ? "text-white/70" : "text-neutral-500"
+                        }`}
                     >
                       Xem
                     </span>
                   </div>
                   <p
-                    className={`mt-3 text-[12px] font-medium ${
-                      active ? "text-white/75" : "text-neutral-600"
-                    }`}
+                    className={`mt-3 text-[12px] font-medium ${active ? "text-white/75" : "text-neutral-600"
+                      }`}
                   >
                     {item.title}
                   </p>
@@ -3822,11 +3847,10 @@ export default function OrdersPageClient() {
                 key={item.key}
                 type="button"
                 onClick={() => applyQuickDate(item.key)}
-                className={`shrink-0 rounded-full border px-3.5 py-2 text-xs font-semibold ${
-                  quickDate === item.key
+                className={`shrink-0 rounded-full border px-3.5 py-2 text-xs font-semibold ${quickDate === item.key
                     ? "border-neutral-900 bg-neutral-900 text-white"
                     : "border-neutral-300 bg-white text-neutral-700"
-                }`}
+                  }`}
               >
                 {item.label}
               </button>
@@ -4203,6 +4227,14 @@ export default function OrdersPageClient() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
+              <Button onClick={submitOrderSearch} variant="primary">
+                Tìm
+              </Button>
+              {submittedQuery ? (
+                <Button onClick={clearOrderSearch}>
+                  Xóa tìm
+                </Button>
+              ) : null}
 
               <select
                 className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
@@ -4306,11 +4338,10 @@ export default function OrdersPageClient() {
                               onDragStart={() => handleColumnDragStart(col.key)}
                               onDragOver={(e) => e.preventDefault()}
                               onDrop={() => handleColumnDrop(col.key)}
-                              className={`grid grid-cols-[18px_18px_minmax(0,1fr)_44px] items-center gap-1.5 rounded-2xl border px-2 py-2 text-[11px] transition ${
-                                visible
+                              className={`grid grid-cols-[18px_18px_minmax(0,1fr)_44px] items-center gap-1.5 rounded-2xl border px-2 py-2 text-[11px] transition ${visible
                                   ? "border-neutral-200 bg-white hover:bg-neutral-50"
                                   : "border-neutral-100 bg-white/70 text-neutral-400"
-                              }`}
+                                }`}
                             >
                               <button
                                 type="button"
@@ -4639,11 +4670,10 @@ export default function OrdersPageClient() {
               </Button>
 
               <span
-                className={`ml-2 rounded-full px-3 py-1 text-sm font-semibold ${
-                  checkedIds.length
+                className={`ml-2 rounded-full px-3 py-1 text-sm font-semibold ${checkedIds.length
                     ? "bg-neutral-900 text-white"
                     : "bg-neutral-100 text-neutral-500"
-                }`}
+                  }`}
               >
                 {checkedIds.length
                   ? `Đã chọn ${checkedIds.length} kết quả`
@@ -4717,9 +4747,8 @@ export default function OrdersPageClient() {
               onScroll={updateTableScrollState}
               onMouseDown={handleTableMouseDown}
               onDoubleClick={() => scrollTableTo(0)}
-              className={`orders-table-scroll-hidden w-full overflow-auto scroll-smooth ${
-                isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"
-              }`}
+              className={`orders-table-scroll-hidden w-full overflow-auto scroll-smooth ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"
+                }`}
               style={{ maxHeight: "calc(100vh - 430px)", minHeight: 360 }}
             >
               <table
@@ -4974,11 +5003,10 @@ export default function OrdersPageClient() {
                 </span>
 
                 <span
-                  className={`rounded-full px-3 py-1 font-medium ${
-                    checkedIds.length
+                  className={`rounded-full px-3 py-1 font-medium ${checkedIds.length
                       ? "bg-neutral-900 text-white"
                       : "bg-neutral-100 text-neutral-700"
-                  }`}
+                    }`}
                 >
                   {checkedIds.length
                     ? `Đã chọn ${checkedIds.length} kết quả`
@@ -5029,11 +5057,10 @@ export default function OrdersPageClient() {
                       type="button"
                       onClick={() => setPage(pageNumber)}
                       disabled={loading}
-                      className={`h-9 min-w-9 rounded-xl border px-3 text-xs font-semibold transition ${
-                        pageNumber === page
+                      className={`h-9 min-w-9 rounded-xl border px-3 text-xs font-semibold transition ${pageNumber === page
                           ? "border-neutral-900 bg-neutral-900 text-white"
                           : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
-                      }`}
+                        }`}
                     >
                       {pageNumber}
                     </button>
@@ -5213,8 +5240,8 @@ export default function OrdersPageClient() {
                                   setExportBranchIds((prev) =>
                                     e.target.checked
                                       ? Array.from(
-                                          new Set([...prev, branch.id]),
-                                        )
+                                        new Set([...prev, branch.id]),
+                                      )
                                       : prev.filter((id) => id !== branch.id),
                                   );
                                 }}
@@ -5528,13 +5555,13 @@ export default function OrdersPageClient() {
                                     {currency(
                                       Number(
                                         item.lineTotal ||
-                                          item.total ||
-                                          Number(
-                                            item.qty || item.quantity || 0,
-                                          ) *
-                                            Number(
-                                              item.unitPrice || item.price || 0,
-                                            ),
+                                        item.total ||
+                                        Number(
+                                          item.qty || item.quantity || 0,
+                                        ) *
+                                        Number(
+                                          item.unitPrice || item.price || 0,
+                                        ),
                                       ),
                                     )}
                                   </td>

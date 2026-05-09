@@ -525,9 +525,8 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={() => void onClick?.()}
-      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${
-        disabled ? "cursor-not-allowed opacity-45" : ""
-      }`}
+      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${disabled ? "cursor-not-allowed opacity-45" : ""
+        }`}
     >
       {children}
     </button>
@@ -799,11 +798,10 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
           <div key={step.key} className="flex items-start">
             <div className="flex min-w-[54px] flex-col items-center text-center">
               <div
-                className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${
-                  active
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${active
                     ? "bg-blue-600 text-white"
                     : "bg-neutral-200 text-neutral-500"
-                }`}
+                  }`}
               >
                 {step.key}
               </div>
@@ -817,9 +815,8 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
 
             {!last ? (
               <div
-                className={`mx-1.5 mt-3 h-[2px] w-7 md:w-9 ${
-                  current > step.key ? "bg-blue-600" : "bg-neutral-200"
-                }`}
+                className={`mx-1.5 mt-3 h-[2px] w-7 md:w-9 ${current > step.key ? "bg-blue-600" : "bg-neutral-200"
+                  }`}
               />
             ) : null}
           </div>
@@ -913,14 +910,14 @@ function buildShipmentEditDraft(order?: OrderDetail | null): ShipmentEditDraft {
     shippingNote: parseStructuredNote(order?.note).shippingNote || "",
     codAmountInput: formatVndInput(
       order?.shipment?.codAmount ??
-        Math.max(
+      Math.max(
+        0,
+        Number(order?.finalAmount || 0) -
+        (order?.payments || []).reduce(
+          (sum, payment) => sum + Number(payment.amount || 0),
           0,
-          Number(order?.finalAmount || 0) -
-            (order?.payments || []).reduce(
-              (sum, payment) => sum + Number(payment.amount || 0),
-              0,
-            ),
         ),
+      ),
     ),
     ghnDistrictId: order?.shippingGhnDistrictId
       ? String(order.shippingGhnDistrictId)
@@ -1664,13 +1661,13 @@ export default function OrderDetailPageClient({
     setDraftOrder((prev) =>
       prev
         ? {
-            ...prev,
-            shippingProvince: province?.name || "",
-            shippingDistrict: "",
-            shippingWard: "",
-            shippingGhnDistrictId: null,
-            shippingGhnWardCode: null,
-          }
+          ...prev,
+          shippingProvince: province?.name || "",
+          shippingDistrict: "",
+          shippingWard: "",
+          shippingGhnDistrictId: null,
+          shippingGhnWardCode: null,
+        }
         : prev,
     );
 
@@ -1687,12 +1684,12 @@ export default function OrderDetailPageClient({
     setDraftOrder((prev) =>
       prev
         ? {
-            ...prev,
-            shippingDistrict: district?.name || "",
-            shippingWard: "",
-            shippingGhnDistrictId: districtId ? Number(districtId) : null,
-            shippingGhnWardCode: null,
-          }
+          ...prev,
+          shippingDistrict: district?.name || "",
+          shippingWard: "",
+          shippingGhnDistrictId: districtId ? Number(districtId) : null,
+          shippingGhnWardCode: null,
+        }
         : prev,
     );
 
@@ -1707,10 +1704,10 @@ export default function OrderDetailPageClient({
     setDraftOrder((prev) =>
       prev
         ? {
-            ...prev,
-            shippingWard: ward?.name || "",
-            shippingGhnWardCode: wardCode || null,
-          }
+          ...prev,
+          shippingWard: ward?.name || "",
+          shippingGhnWardCode: wardCode || null,
+        }
         : prev,
     );
   };
@@ -1828,24 +1825,24 @@ export default function OrderDetailPageClient({
         setOrder((prev) =>
           prev
             ? {
-                ...prev,
-                shipment: {
-                  ...(prev.shipment || {}),
-                  ...(json.shipment || {}),
-                },
-              }
+              ...prev,
+              shipment: {
+                ...(prev.shipment || {}),
+                ...(json.shipment || {}),
+              },
+            }
             : prev,
         );
 
         setDraftOrder((prev) =>
           prev
             ? {
-                ...prev,
-                shipment: {
-                  ...(prev.shipment || {}),
-                  ...(json.shipment || {}),
-                },
-              }
+              ...prev,
+              shipment: {
+                ...(prev.shipment || {}),
+                ...(json.shipment || {}),
+              },
+            }
             : prev,
         );
       }
@@ -2034,8 +2031,8 @@ export default function OrderDetailPageClient({
   const computedFinalAmount = Math.max(
     0,
     itemsSubtotal -
-      Number(viewOrder?.discountAmount || 0) +
-      Number(viewOrder?.shippingFee || 0),
+    Number(viewOrder?.discountAmount || 0) +
+    Number(viewOrder?.shippingFee || 0),
   );
 
   const shipmentCodAmount = Number(viewOrder?.shipment?.codAmount || 0);
@@ -2064,9 +2061,9 @@ export default function OrderDetailPageClient({
   const driverInfo = driverInfoFromTimeline(shipmentTimeline);
   const currentShipmentLabel = shipmentStatusText(
     latestShipmentEvent?.status ||
-      latestShipmentEvent?.partnerStatus ||
-      viewOrder?.shipment?.shippingStatus ||
-      viewOrder?.shipment?.partnerStatus,
+    latestShipmentEvent?.partnerStatus ||
+    viewOrder?.shipment?.shippingStatus ||
+    viewOrder?.shipment?.partnerStatus,
     viewOrder?.shipment?.carrier || meta.shippingPartner,
   );
   const openTrackingUrl = trackingLinkForShipment(viewOrder?.shipment);
@@ -2405,12 +2402,12 @@ export default function OrderDetailPageClient({
       items: prev.items.map((item) =>
         item.orderItemId === orderItemId
           ? {
-              ...item,
-              deliveredQty: Math.max(
-                0,
-                Math.min(Number(deliveredQty || 0), item.orderedQty),
-              ),
-            }
+            ...item,
+            deliveredQty: Math.max(
+              0,
+              Math.min(Number(deliveredQty || 0), item.orderedQty),
+            ),
+          }
           : item,
       ),
     }));
@@ -2640,7 +2637,9 @@ export default function OrderDetailPageClient({
       setMessage("");
       const cancelPath = carrierCode.includes("AHAMOVE")
         ? `/shipments/${order.id}/ahamove/cancel`
-        : `/shipments/${order.id}/cancel`;
+        : carrierCode.includes("VIETTEL")
+          ? `/shipments/${order.id}/viettelpost/cancel`
+          : `/shipments/${order.id}/cancel`;
 
       const res = await apiFetch(cancelPath, {
         method: "POST",
@@ -2937,13 +2936,12 @@ export default function OrderDetailPageClient({
         {message ? (
           <Panel className="px-4 py-3">
             <p
-              className={`text-sm ${
-                message.includes("Đã lưu") ||
-                message.includes("Đã cập nhật") ||
-                message.includes("Đã xác thực")
+              className={`text-sm ${message.includes("Đã lưu") ||
+                  message.includes("Đã cập nhật") ||
+                  message.includes("Đã xác thực")
                   ? "text-emerald-600"
                   : "text-red-600"
-              }`}
+                }`}
             >
               {message}
             </p>
@@ -3758,11 +3756,11 @@ export default function OrderDetailPageClient({
                       value={
                         paymentLines.length
                           ? paymentLines
-                              .map(
-                                (p) =>
-                                  `${paymentSourceLabel(p)}: ${currency(p.amount)}`,
-                              )
-                              .join(" · ")
+                            .map(
+                              (p) =>
+                                `${paymentSourceLabel(p)}: ${currency(p.amount)}`,
+                            )
+                            .join(" · ")
                           : "—"
                       }
                     />
@@ -3793,13 +3791,12 @@ export default function OrderDetailPageClient({
                           </p>
                         </div>
                         <span
-                          className={`rounded-full px-2 py-1 text-[10px] font-medium ${
-                            entry.tone === "success"
+                          className={`rounded-full px-2 py-1 text-[10px] font-medium ${entry.tone === "success"
                               ? "bg-emerald-100 text-emerald-700"
                               : entry.tone === "warning"
                                 ? "bg-amber-100 text-amber-700"
                                 : "bg-neutral-200 text-neutral-700"
-                          }`}
+                            }`}
                         >
                           {entry.tone === "success"
                             ? "Đã lưu"
@@ -3999,7 +3996,7 @@ export default function OrderDetailPageClient({
                       <p className="mt-2 text-xl font-semibold">
                         {currency(
                           partialDraft.originalCod -
-                            Number(order?.shippingFee || 0),
+                          Number(order?.shippingFee || 0),
                         )}
                       </p>
                     </div>
