@@ -1,6 +1,5 @@
 "use client";
-import { apiJson } from "@/lib/api";
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch, apiJson } from "@/lib/api";
 import * as XLSX from "xlsx";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
@@ -43,7 +42,8 @@ type QuickStatusKey =
   | "DELIVERING"
   | "SOON_DELIVERY"
   | "FAIL"
-  | "REDELIVERY";
+  | "REDELIVERY"
+  | "LOCAL_DELIVERY";
 
 type ColumnKey =
   | "orderCode"
@@ -257,6 +257,46 @@ function shippingModeLabel(value?: string | null) {
     default:
       return raw || "—";
   }
+}
+
+function carrierLabel(value?: string | null) {
+  const raw = String(value || "").trim();
+  const upper = raw.toUpperCase();
+
+  if (upper.includes("AHAMOVE")) return "AhaMove";
+  if (upper.includes("GHN")) return "GHN";
+  if (upper.includes("GHTK")) return "GHTK";
+  if (upper.includes("VIETTEL")) return "Viettel Post";
+  if (upper.includes("GRAB")) return "Grab Express";
+  if (upper.includes("SHIPPER")) return "Shipper riêng";
+
+  return raw || "—";
+}
+
+function isLocalDeliveryCarrier(value?: string | null) {
+  const upper = String(value || "").toUpperCase();
+  return (
+    upper.includes("AHAMOVE") ||
+    upper.includes("GRAB") ||
+    upper.includes("SHIPPER") ||
+    upper.includes("INTERNAL")
+  );
+}
+
+function shipmentExternalTrackingUrl(order: AdminOrder) {
+  const carrier = String(order.shipment?.carrier || "").toUpperCase();
+  const trackingCode = String(order.shipment?.trackingCode || "").trim();
+  const anyShipment: any = order.shipment || {};
+
+  if (carrier.includes("AHAMOVE")) {
+    return anyShipment.ahamoveTrackingUrl || anyShipment.trackingUrl || "";
+  }
+
+  if (carrier.includes("GHN") && trackingCode) {
+    return `https://donhang.ghn.vn/?order_code=${encodeURIComponent(trackingCode)}`;
+  }
+
+  return "";
 }
 
 type DotState = "empty" | "partial" | "filled";
@@ -629,6 +669,10 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
 
   switch (value) {
+    case "ASSIGNING":
+    case "IDLE":
+      return "Đang tìm tài xế";
+
     case "READY_TO_PICK":
     case "READY_TO_PICKING":
     case "WAITING_PICK":
@@ -640,6 +684,7 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
     case "PICKING":
     case "PICK":
     case "PICKED":
+    case "ACCEPTED":
       return "Đang lấy hàng";
 
     case "STORING":
@@ -648,6 +693,8 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
     case "SORTING":
     case "DELIVERING":
     case "DELIVERY":
+    case "IN_PROCESS":
+    case "IN PROCESS":
       return "Đang giao hàng";
 
     case "DELIVERED":
@@ -738,6 +785,8 @@ function shipmentDisplayStatusTone(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
 
   switch (value) {
+    case "ASSIGNING":
+    case "IDLE":
     case "READY_TO_PICK":
     case "READY_TO_PICKING":
     case "WAITING_PICK":
@@ -755,6 +804,8 @@ function shipmentDisplayStatusTone(order: AdminOrder) {
     case "SORTING":
     case "DELIVERING":
     case "DELIVERY":
+    case "IN_PROCESS":
+    case "IN PROCESS":
       return "bg-blue-50 text-blue-700 border-blue-200";
 
     case "DELIVERED":
@@ -1214,7 +1265,12 @@ function defaultVisibleColumns(canSeeMoney: boolean) {
 }
 
 function normalizeShipmentStatus(order: AdminOrder) {
-  const status = String(order.shipment?.shippingStatus || "").toUpperCase();
+  const status = String(
+    order.shipment?.shippingStatus ||
+      (order.shipment as any)?.partnerStatus ||
+      "",
+  ).toUpperCase();
+
   if (status) return status;
   if (order.shipment?.trackingCode) return "READY_TO_PICK";
   return "";
@@ -1633,13 +1689,7 @@ export default function OrdersPageClient() {
 
   const loadStaffList = async () => {
     try {
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      const res = await fetch(`${API_BASE}/staff`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        cache: "no-store",
-      });
-      const json = await res.json().catch(() => null);
+      const json = await apiJson<any>("/staff");
       const data = Array.isArray(json)
         ? json
         : Array.isArray(json?.data)
@@ -1795,13 +1845,12 @@ export default function OrdersPageClient() {
 
     if (hasFullItems) return order;
 
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(
-      `${API_BASE}/orders/${encodeURIComponent(order.id)}`,
+    const res = await apiFetch(
+      `/orders/${encodeURIComponent(order.id)}`,
       {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: {
+          Accept: "application/json",
+        },
       },
     );
 
@@ -2059,15 +2108,6 @@ export default function OrdersPageClient() {
       setLoading(true);
       setError(null);
 
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-      if (!token) {
-        setError("Không tìm thấy token trong localStorage.");
-        setOrders([]);
-        return;
-      }
-
       if (!currentUser) {
         setOrders([]);
         return;
@@ -2103,11 +2143,10 @@ export default function OrdersPageClient() {
       if (dateFrom) params.set("dateFrom", dateFrom);
       if (dateTo) params.set("dateTo", dateTo);
 
-      const res = await fetch(`${API_BASE}/orders?${params.toString()}`, {
+      const res = await apiFetch(`/orders?${params.toString()}`, {
         method: "GET",
         headers: {
           Accept: "application/json",
-          Authorization: `Bearer ${token}`,
         },
         cache: "no-store",
       });
@@ -2410,6 +2449,7 @@ export default function OrdersPageClient() {
     let soonDelivery = 0;
     let failed = 0;
     let redelivery = 0;
+    let localDelivery = 0;
 
     for (const o of normalizedOrders) {
       if (o.status === "NEW") waitingApprove++;
@@ -2422,6 +2462,9 @@ export default function OrdersPageClient() {
       if (isSoonDeliveryOrder(o)) soonDelivery++;
       if (isFailedOrder(o)) failed++;
       if (isRedeliveryOrder(o)) redelivery++;
+      if (isLocalDeliveryCarrier(o.shipment?.carrier || o._meta.shippingPartner)) {
+        localDelivery++;
+      }
     }
 
     return {
@@ -2433,6 +2476,7 @@ export default function OrdersPageClient() {
       soonDelivery,
       failed,
       redelivery,
+      localDelivery,
     };
   }, [normalizedOrders]);
 
@@ -2539,14 +2583,10 @@ export default function OrdersPageClient() {
   };
 
   const sendOneOrderToCarrier = async (id: string) => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(`${API_BASE}/shipments/${id}/create`, {
+    const res = await apiFetch(`/shipments/${id}/create`, {
       method: "POST",
       headers: {
         Accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -2565,14 +2605,10 @@ export default function OrdersPageClient() {
   };
 
   const cancelOneOrderOnCarrier = async (id: string) => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(`${API_BASE}/shipments/${id}/cancel`, {
+    const res = await apiFetch(`/shipments/${id}/cancel`, {
       method: "POST",
       headers: {
         Accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -2591,14 +2627,10 @@ export default function OrdersPageClient() {
   };
 
   const deleteOneOrder = async (id: string) => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(`${API_BASE}/orders/${id}`, {
+    const res = await apiFetch(`/orders/${id}`, {
       method: "DELETE",
       headers: {
         Accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -3427,7 +3459,14 @@ export default function OrdersPageClient() {
               className={filterButtonClass}
               title="Lọc theo đơn vị vận chuyển này"
             >
-              {order.shipment?.carrier || meta.shippingPartner || "—"}
+              <span className="inline-flex items-center gap-1">
+                <span>{carrierLabel(order.shipment?.carrier || meta.shippingPartner)}</span>
+                {isLocalDeliveryCarrier(order.shipment?.carrier || meta.shippingPartner) ? (
+                  <span className="rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold text-blue-700">
+                    Nội thành
+                  </span>
+                ) : null}
+              </span>
             </button>
           </td>
         );
@@ -3439,13 +3478,26 @@ export default function OrdersPageClient() {
           >
             {order.shipment?.trackingCode ? (
               order.shipment?.id ? (
-                <Link
-                  href={`/control/shipments/${order.shipment.id}`}
-                  className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
-                  title="Mở phiếu giao hàng"
-                >
-                  {order.shipment.trackingCode}
-                </Link>
+                <span className="inline-flex items-center gap-1">
+                  <Link
+                    href={`/control/shipments/${order.shipment.id}`}
+                    className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                    title="Mở phiếu giao hàng"
+                  >
+                    {order.shipment.trackingCode}
+                  </Link>
+                  {shipmentExternalTrackingUrl(order) ? (
+                    <a
+                      href={shipmentExternalTrackingUrl(order)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex rounded-full border border-neutral-200 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                      title={`Mở ${carrierLabel(order.shipment?.carrier)} realtime`}
+                    >
+                      Mở
+                    </a>
+                  ) : null}
+                </span>
               ) : (
                 <span
                   className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700"
@@ -3580,18 +3632,14 @@ export default function OrdersPageClient() {
 
     try {
       setAssigningOrders(true);
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
       await Promise.all(
         checkedIds.map(async (orderId) => {
-          const res = await fetch(
-            `${API_BASE}/orders/${encodeURIComponent(orderId)}/assign-staff`,
+          const res = await apiFetch(
+            `/orders/${encodeURIComponent(orderId)}/assign-staff`,
             {
               method: "PATCH",
               headers: {
                 "Content-Type": "application/json",
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
               },
               body: JSON.stringify({ assignedStaffId: assignStaffId }),
             },
@@ -3901,6 +3949,11 @@ export default function OrdersPageClient() {
                           label={shipmentDisplayStatusLabel(order)}
                           tone={shipmentDisplayStatusTone(order)}
                         />
+                        {order.shipment?.trackingCode ? (
+                          <span className="inline-flex rounded-xl border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">
+                            {carrierLabel(order.shipment?.carrier)} · {order.shipment.trackingCode}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
 
@@ -3978,7 +4031,7 @@ export default function OrdersPageClient() {
       <div className="hidden lg:block">
         <div className="space-y-4">
           <Panel className="p-5">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-9">
               <SummaryCard
                 title="Chờ duyệt"
                 value={counts.waitingApprove}
@@ -4062,6 +4115,17 @@ export default function OrdersPageClient() {
                 onClick={() =>
                   setQuickStatus((prev) =>
                     prev === "REDELIVERY" ? "ALL" : "REDELIVERY",
+                  )
+                }
+              />
+              <SummaryCard
+                title="Nội thành"
+                value={counts.localDelivery}
+                active={quickStatus === "LOCAL_DELIVERY"}
+                icon="⚡"
+                onClick={() =>
+                  setQuickStatus((prev) =>
+                    prev === "LOCAL_DELIVERY" ? "ALL" : "LOCAL_DELIVERY",
                   )
                 }
               />

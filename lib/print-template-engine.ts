@@ -66,6 +66,28 @@ function replaceAllTokens(template: string, data: Record<string, string>) {
   return html;
 }
 
+
+function getCleanPrintItemName(item: any) {
+  const productName =
+    item?.productName ||
+    item?.product?.name ||
+    item?.variant?.product?.name ||
+    item?.name ||
+    item?.variantName ||
+    "Sản phẩm";
+
+  const size = getItemSize(item);
+  const color = getItemColor(item);
+
+  return [
+    productName,
+    size ? `Size ${size}` : "",
+    color ? `Màu ${color}` : "",
+  ]
+    .filter(Boolean)
+    .join(" - ");
+}
+
 function buildItemsRows(order: any, type: string) {
   const items = Array.isArray(order?.items) ? order.items : [];
 
@@ -99,15 +121,12 @@ function buildItemsRows(order: any, type: string) {
     .map(
       (item: any) => `
 <tr>
-  <td style="padding:3px 0; border-bottom:1px dashed #ddd;">
-    ${escapeHtml(getItemName(item))}
-    <div style="font-size:10px; color:#666;">
-      ${escapeHtml(getItemSku(item))}
-      ${getItemColor(item) ? ` · ${escapeHtml(getItemColor(item))}` : ""}
-      ${getItemSize(item) ? ` / ${escapeHtml(getItemSize(item))}` : ""}
+  <td style="padding:2px 0; border-bottom:1px dashed #ddd;">
+    <div style="font-size:11px;font-weight:600;line-height:1.2;">
+      ${escapeHtml(getCleanPrintItemName(item))}
     </div>
   </td>
-  <td style="padding:3px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>
+  <td style="padding:2px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>
 </tr>
       `.trim()
     )
@@ -362,7 +381,7 @@ function buildShippingTemplateHtml(params: {
 
   ${data.financialBlock || ""}
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;top:37mm;bottom:17mm;overflow:hidden;">
+  <div style="position:absolute;left:2.5mm;right:2.5mm;top:33mm;bottom:17mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
       <thead>
         <tr>
@@ -374,11 +393,11 @@ function buildShippingTemplateHtml(params: {
     </table>
   </div>
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:5.5mm;height:11mm;border-top:1px solid #111;padding-top:2mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
+ <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:8mm;height:13mm;border-top:1px solid #111;padding-top:1mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
     <div style="text-align:center;">
       ${
         hasTracking && template.showBarcode
-          ? `<img src="${barcodeUrl(trackingCode)}" style="width:25mm;height:7.5mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
           : ""
       }
     </div>
@@ -391,9 +410,6 @@ function buildShippingTemplateHtml(params: {
     </div>
   </div>
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:1.7mm;text-align:center;font-size:8.3px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    ${data.footerNote || "Cảm ơn quý khách. Hẹn gặp lại!"}
-  </div>
 </div>
     `.trim();
   }
@@ -615,7 +631,7 @@ export function renderOrderTemplateHtml(params: {
       ...data,
       barcodeBlock:
         trackingCode && template.showBarcode
-          ? `<img src="${barcodeUrl(trackingCode)}" style="width:25mm;height:7.5mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
           : "",
       qrBlock:
         trackingCode && template.showQr

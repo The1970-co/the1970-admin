@@ -140,6 +140,7 @@ export type ShipmentQuoteResult = {
   shortName?: string;
   fee?: any;
   leadtime?: any;
+  [key: string]: any;
 };
 
 export type ResolveGhnAddressPayload = {
@@ -203,6 +204,10 @@ export type AhamoveQuotePayload = {
   toAddress: string;
   codAmount?: number;
   serviceId?: string;
+  payment_method?: string;
+  paymentMethod?: string;
+  order_time?: number;
+  orderTime?: number;
   note?: string;
   items?: AhamoveQuoteItem[];
 };
@@ -212,16 +217,58 @@ export type CreateAhamoveShipmentPayload = AhamoveQuotePayload & {
   orderCode?: string;
 };
 
-export type AhamoveQuoteResult = {
-  serviceId?: string;
-  service_id?: string;
-  fee?: number;
-  totalFee?: number;
-  total_fee?: number;
-  distance?: number;
-  duration?: number;
-  raw?: any;
+export type ViettelPostQuotePayload = {
+  toName?: string;
+  toPhone?: string;
+  toAddress?: string;
+  toProvince?: string;
+  toDistrict?: string;
+  toWard?: string;
+  province?: string;
+  district?: string;
+  ward?: string;
+  codAmount?: number;
+  productPrice?: number;
+  insuranceValue?: number;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  services?: string;
 };
+
+export type CreateViettelPostShipmentPayload = ViettelPostQuotePayload & {
+  clientOrderCode?: string;
+  orderCode?: string;
+  serviceCode?: string;
+  note?: string;
+  content?: string;
+  items?: Array<{
+    name: string;
+    quantity?: number;
+    qty?: number;
+    num?: number;
+    price?: number;
+    weight?: number;
+  }>;
+};
+
+
+export type AhamoveQuoteResult =
+  | {
+      serviceId?: string;
+      service_id?: string;
+      fee?: number;
+      totalFee?: number;
+      total_fee?: number;
+      totalPrice?: number;
+      total_price?: number;
+      distance?: number;
+      duration?: number;
+      raw?: any;
+      data?: any;
+    }
+  | Array<any>;
 
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -532,6 +579,33 @@ export async function quoteAhamoveShipment(
     body: JSON.stringify(payload),
   });
 }
+
+export async function quoteViettelPostShipment(
+  payload: ViettelPostQuotePayload
+): Promise<ShipmentQuoteResult[]> {
+  const data = await request<any>("/shipments/viettelpost/quote", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+}
+
+export async function createViettelPostShipment(
+  orderId: string,
+  payload: CreateViettelPostShipmentPayload
+) {
+  return request<any>(`/shipments/${orderId}/viettelpost/create`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cancelViettelPostShipment(orderId: string) {
+  return request<any>(`/shipments/${orderId}/viettelpost/cancel`, {
+    method: "POST",
+  });
+}
+
 
 export async function createAhamoveShipment(
   orderId: string,

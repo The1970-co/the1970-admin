@@ -530,7 +530,7 @@ export default function AdminShell({
   const passwordMatch = newPassword && newPassword === confirmPassword;
 
   const visibleMenu = useMemo(() => {
-    if (!currentUser?.role) return [];
+    if (!userRoles(currentUser).length) return [];
 
     return MENU.map((item) => {
       if (item.children?.length) {
@@ -684,9 +684,9 @@ export default function AdminShell({
                   </div>
                 ) : null}
 
-                {currentUser?.role ? (
+                {userRoles(currentUser).length ? (
                   <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-700">
-                    {getRoleLabel(currentUser.role)}
+                    {getRoleLabel(userRoles(currentUser)[0])}
                   </div>
                 ) : null}
 
@@ -713,7 +713,7 @@ export default function AdminShell({
                     {getHeaderStaffName(currentUser)}
                   </div>
                   <div className="mt-0.5 text-[11px] text-neutral-500">
-                    {currentUser?.role ? getRoleLabel(currentUser.role) : "Tài khoản"}
+                    {userRoles(currentUser).length ? getRoleLabel(userRoles(currentUser)[0]) : "Tài khoản"}
                   </div>
                 </div>
               ) : null}

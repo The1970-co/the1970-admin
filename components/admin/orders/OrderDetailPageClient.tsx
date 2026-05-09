@@ -1,6 +1,6 @@
 "use client";
 
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch } from "@/lib/api";
 import { updateOrderStatus } from "@/lib/orders-api";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -250,10 +250,55 @@ function shipmentStatusText(status?: string | null, carrier?: string | null) {
 function trackingLinkForShipment(shipment?: ShipmentItem | null) {
   if (!shipment) return "";
   const carrier = String(shipment.carrier || "").toUpperCase();
+
   if (carrier.includes("AHAMOVE")) {
     return shipment.ahamoveTrackingUrl || "";
   }
-  return "";
+
+  if (carrier.includes("GHN") && shipment.trackingCode) {
+    return `https://donhang.ghn.vn/?order_code=${encodeURIComponent(
+      shipment.trackingCode,
+    )}`;
+  }
+
+  return shipment.trackingCode ? "" : "";
+}
+
+function carrierBadgeTone(carrier?: string | null): "gray" | "green" | "amber" | "red" | "blue" {
+  const c = String(carrier || "").toUpperCase();
+  if (c.includes("AHAMOVE")) return "blue";
+  if (c.includes("GHN")) return "green";
+  return "gray";
+}
+
+function latestShipmentTimelineEntry(timeline: ShipmentTimelineEntry[]) {
+  return Array.isArray(timeline) && timeline.length ? timeline[0] : null;
+}
+
+function driverInfoFromTimeline(timeline: ShipmentTimelineEntry[]) {
+  const found = timeline.find(
+    (entry) => entry.driverName || entry.driverPhone || entry.driverPlate || entry.eta || entry.locationText,
+  );
+
+  return {
+    name: found?.driverName || "Chưa có tài xế",
+    phone: found?.driverPhone || "",
+    plate: found?.driverPlate || "",
+    eta: found?.eta || "",
+    location: found?.locationText || "",
+  };
+}
+
+function isFinalShipmentStatus(status?: string | null) {
+  const s = String(status || "").toUpperCase();
+  return (
+    s.includes("DELIVERED") ||
+    s.includes("COMPLETED") ||
+    s.includes("SUCCESS") ||
+    s.includes("CANCEL") ||
+    s.includes("FAILED") ||
+    s.includes("RETURN")
+  );
 }
 
 function formatDateTime(value?: string | null) {
@@ -1358,7 +1403,7 @@ function ShipmentRealtimeTimeline({
     <Panel>
       <SectionHeader
         title="Tracking realtime"
-        subtitle="Tự cập nhật mỗi 30 giây khi đơn có mã vận đơn."
+        subtitle="Tự cập nhật realtime, hiển thị tài xế/ETA khi hãng trả dữ liệu."
         action={
           <ActionButton disabled={refreshing} onClick={onRefresh}>
             {refreshing ? "Đang refresh..." : "Refresh"}
@@ -1427,7 +1472,7 @@ function ShipmentRealtimeTimeline({
           </div>
         ) : (
           <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center text-sm text-neutral-500">
-            Chưa có timeline tracking. Bấm Refresh để đồng bộ từ hãng vận chuyển.
+            Chưa có timeline tracking từ hãng. Hệ thống vẫn đang theo dõi, bấm Refresh để đồng bộ ngay.
           </div>
         )}
       </div>
@@ -1470,13 +1515,9 @@ export default function OrderDetailPageClient({
   const [showCreatedToast, setShowCreatedToast] = useState(false);
   const createdToastShownRef = useRef(false);
   const loadProvinces = async () => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(`${API_BASE}/shipping-addresses/provinces`, {
+    const res = await apiFetch("/shipping-addresses/provinces", {
       headers: {
         Accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -1490,15 +1531,11 @@ export default function OrderDetailPageClient({
       return;
     }
 
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(
-      `${API_BASE}/shipping-addresses/districts?provinceId=${provinceId}`,
+    const res = await apiFetch(
+      `/shipping-addresses/districts?provinceId=${provinceId}`,
       {
         headers: {
           Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       },
     );
@@ -1513,15 +1550,11 @@ export default function OrderDetailPageClient({
       return;
     }
 
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const res = await fetch(
-      `${API_BASE}/shipping-addresses/wards?districtId=${districtId}`,
+    const res = await apiFetch(
+      `/shipping-addresses/wards?districtId=${districtId}`,
       {
         headers: {
           Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       },
     );
@@ -1532,15 +1565,11 @@ export default function OrderDetailPageClient({
   const resolveProvinceIdByDistrictId = async (districtId: string) => {
     if (!districtId) return "";
 
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-    const provinceRes = await fetch(
-      `${API_BASE}/shipping-addresses/provinces`,
+    const provinceRes = await apiFetch(
+      "/shipping-addresses/provinces",
       {
         headers: {
           Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       },
     );
@@ -1550,12 +1579,11 @@ export default function OrderDetailPageClient({
     setProvinceOptions(provinceList);
 
     for (const province of provinceList) {
-      const districtRes = await fetch(
-        `${API_BASE}/shipping-addresses/districts?provinceId=${province.id}`,
+      const districtRes = await apiFetch(
+        `/shipping-addresses/districts?provinceId=${province.id}`,
         {
           headers: {
             Accept: "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         },
       );
@@ -1721,17 +1749,13 @@ export default function OrderDetailPageClient({
         setLoading(true);
         setError("");
 
-        const token =
-          typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
         let success = false;
         let lastMessage = "Không tải được chi tiết đơn hàng.";
 
         for (let attempt = 0; attempt < (created ? 4 : 1); attempt += 1) {
-          const res = await fetch(`${API_BASE}/orders/${orderId}`, {
+          const res = await apiFetch(`/orders/${orderId}`, {
             headers: {
               Accept: "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
             cache: "no-store",
           });
@@ -1779,18 +1803,14 @@ export default function OrderDetailPageClient({
         setTrackingMessage("");
       }
 
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
       const endpoint = force
-        ? `${API_BASE}/shipments/order/${orderId}/tracking/refresh`
-        : `${API_BASE}/shipments/order/${orderId}/tracking`;
+        ? `/shipments/order/${orderId}/tracking/refresh`
+        : `/shipments/order/${orderId}/tracking`;
 
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         method: force ? "POST" : "GET",
         headers: {
           Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         cache: "no-store",
       });
@@ -1853,14 +1873,31 @@ export default function OrderDetailPageClient({
   useEffect(() => {
     if (!order?.shipment?.trackingCode) return;
 
+    const status =
+      order.shipment.shippingStatus ||
+      order.shipment.partnerStatus ||
+      latestShipmentTimelineEntry(shipmentTimeline)?.status ||
+      latestShipmentTimelineEntry(shipmentTimeline)?.partnerStatus;
+
+    if (isFinalShipmentStatus(status)) return;
+
     void refreshShipmentTracking(false);
+
+    const intervalMs =
+      typeof document !== "undefined" && document.hidden ? 60000 : 15000;
 
     const timer = window.setInterval(() => {
       void refreshShipmentTracking(false);
-    }, 30000);
+    }, intervalMs);
 
     return () => window.clearInterval(timer);
-  }, [orderId, order?.shipment?.trackingCode]);
+  }, [
+    orderId,
+    order?.shipment?.trackingCode,
+    order?.shipment?.shippingStatus,
+    order?.shipment?.partnerStatus,
+    shipmentTimeline,
+  ]);
 
   useEffect(() => {
     if (!order) return;
@@ -2022,6 +2059,17 @@ export default function OrderDetailPageClient({
     () => isPartialDelivery(viewOrder),
     [viewOrder],
   );
+
+  const latestShipmentEvent = latestShipmentTimelineEntry(shipmentTimeline);
+  const driverInfo = driverInfoFromTimeline(shipmentTimeline);
+  const currentShipmentLabel = shipmentStatusText(
+    latestShipmentEvent?.status ||
+      latestShipmentEvent?.partnerStatus ||
+      viewOrder?.shipment?.shippingStatus ||
+      viewOrder?.shipment?.partnerStatus,
+    viewOrder?.shipment?.carrier || meta.shippingPartner,
+  );
+  const openTrackingUrl = trackingLinkForShipment(viewOrder?.shipment);
 
   const canEdit =
     canEditOrderPermission &&
@@ -2261,20 +2309,16 @@ export default function OrderDetailPageClient({
       setAuthVerifying(true);
       setMessage("");
 
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
       const oldCod = Number(order?.shipment?.codAmount || 0);
       const nextCod = parseVndInput(shipmentDraft.codAmountInput);
 
-      const res = await fetch(
-        `${API_BASE}/shipments/${order.id}/cod/verify-and-update`,
+      const res = await apiFetch(
+        `/shipments/${order.id}/cod/verify-and-update`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
             codAmount: nextCod,
@@ -2378,9 +2422,6 @@ export default function OrderDetailPageClient({
     try {
       setPartialSaving(true);
 
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
       const partialPayload = {
         orderId: order.id,
         orderCode: order.orderCode,
@@ -2403,12 +2444,11 @@ export default function OrderDetailPageClient({
       let savedRecord: any = null;
 
       try {
-        const res = await fetch(`${API_BASE}/partial-delivery`, {
+        const res = await apiFetch("/partial-delivery", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify(partialPayload),
         });
@@ -2483,9 +2523,6 @@ export default function OrderDetailPageClient({
       setSaving(true);
       setMessage("");
 
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
       const sanitizedItems = (draftOrder.items || []).map((item) => {
         const qty = Number(item.qty || 0);
         const unitPrice = Number(item.unitPrice || 0);
@@ -2533,12 +2570,11 @@ export default function OrderDetailPageClient({
         items: sanitizedItems,
       };
 
-      const res = await fetch(`${API_BASE}/orders/${order.id}`, {
+      const res = await apiFetch(`/orders/${order.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(payload),
       });
@@ -2602,18 +2638,14 @@ export default function OrderDetailPageClient({
     try {
       setSaving(true);
       setMessage("");
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
       const cancelPath = carrierCode.includes("AHAMOVE")
         ? `/shipments/${order.id}/ahamove/cancel`
         : `/shipments/${order.id}/cancel`;
 
-      const res = await fetch(`${API_BASE}${cancelPath}`, {
+      const res = await apiFetch(cancelPath, {
         method: "POST",
         headers: {
           Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
 
@@ -2830,6 +2862,16 @@ export default function OrderDetailPageClient({
               >
                 Huỷ nội bộ
               </ActionButton>
+              {viewOrder.shipment?.trackingCode && openTrackingUrl ? (
+                <a
+                  href={openTrackingUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                >
+                  {`Mở ${getCarrierLabel(viewOrder, meta)}`}
+                </a>
+              ) : null}
               {viewOrder.shipment?.trackingCode && canPackShipOrderPermission ? (
                 <ActionButton disabled={saving} onClick={handleCancelShipment}>
                   {`Huỷ ${getCarrierLabel(viewOrder, meta)}`}
@@ -2906,6 +2948,54 @@ export default function OrderDetailPageClient({
               {message}
             </p>
           </Panel>
+        ) : null}
+
+        {viewOrder.shipment?.trackingCode ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <Panel className="px-4 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-400">
+                Đơn vị
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge tone={carrierBadgeTone(viewOrder.shipment?.carrier)}>
+                  {getCarrierLabel(viewOrder, meta)}
+                </Badge>
+                <span className="truncate text-xs font-semibold text-neutral-900">
+                  {viewOrder.shipment?.trackingCode || "—"}
+                </span>
+              </div>
+            </Panel>
+            <Panel className="px-4 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-400">
+                Trạng thái realtime
+              </p>
+              <p className="mt-2 text-sm font-semibold text-neutral-950">
+                {currentShipmentLabel}
+              </p>
+            </Panel>
+            <Panel className="px-4 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-400">
+                Tài xế
+              </p>
+              <p className="mt-2 truncate text-sm font-semibold text-neutral-950">
+                {driverInfo.name}
+              </p>
+              <p className="mt-1 text-[11px] text-neutral-500">
+                {driverInfo.plate || driverInfo.phone || "Đang chờ phân tài xế"}
+              </p>
+            </Panel>
+            <Panel className="px-4 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-neutral-400">
+                ETA / vị trí
+              </p>
+              <p className="mt-2 truncate text-sm font-semibold text-neutral-950">
+                {driverInfo.eta || "—"}
+              </p>
+              <p className="mt-1 truncate text-[11px] text-neutral-500">
+                {driverInfo.location || "Chưa có vị trí"}
+              </p>
+            </Panel>
+          </div>
         ) : null}
 
         {viewOrder.shipment?.trackingCode ? (

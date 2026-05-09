@@ -61,3 +61,29 @@ export const trackAhamove = (shipmentId: string) =>
   request(`/shipments/${shipmentId}/ahamove/tracking`, {
     method: "GET",
   });
+
+
+export const getShipmentTrackingByOrder = (orderId: string, force = false) =>
+  request(`/shipments/order/${orderId}/tracking${force ? "?force=1" : ""}`, {
+    method: "GET",
+  });
+
+export const refreshShipmentTrackingByOrder = (orderId: string) =>
+  request(`/shipments/order/${orderId}/tracking/refresh`, {
+    method: "POST",
+  });
+
+export const getShipmentTimelineByOrder = (orderId: string) =>
+  request(`/shipments/order/${orderId}/timeline`, {
+    method: "GET",
+  });
+
+export const getShipmentTracking = (shipmentId: string, force = false) =>
+  request(`/shipments/${shipmentId}/tracking${force ? "?force=1" : ""}`, {
+    method: "GET",
+  });
+
+export const refreshShipmentTracking = (shipmentId: string) =>
+  request(`/shipments/${shipmentId}/tracking/refresh`, {
+    method: "POST",
+  });

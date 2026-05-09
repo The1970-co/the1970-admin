@@ -11,6 +11,11 @@ type TimelineItem = {
   description: string;
   location: string;
   time: string;
+  driverName?: string | null;
+  driverPhone?: string | null;
+  driverPlate?: string | null;
+  eta?: string | null;
+  locationText?: string | null;
 };
 
 type ShipmentDetailResponse = {
@@ -56,6 +61,15 @@ type TrackingResponse = {
     partnerStatus: string;
     codAmount: number;
     shippingFee: number;
+    trackingUrl?: string | null;
+    ahamoveTrackingUrl?: string | null;
+    driver?: {
+      driverName?: string | null;
+      driverPhone?: string | null;
+      driverPlate?: string | null;
+      eta?: string | null;
+      locationText?: string | null;
+    } | null;
     updatedAt?: string | null;
     from: {
       name: string;
@@ -104,25 +118,189 @@ function toneForStatus(
 ): "gray" | "green" | "amber" | "red" | "blue" {
   const s = String(status || "").toUpperCase();
 
-  if (s.includes("SUCCESS") || s.includes("DELIVERED")) return "green";
-  if (s.includes("DELIVERING") || s.includes("PICKING") || s.includes("READY"))
+  if (
+    s.includes("SUCCESS") ||
+    s.includes("DELIVERED") ||
+    s.includes("COMPLETED")
+  )
+    return "green";
+  if (
+    s.includes("DELIVERING") ||
+    s.includes("PICKING") ||
+    s.includes("READY") ||
+    s.includes("ASSIGNING") ||
+    s.includes("ACCEPTED") ||
+    s.includes("IN PROCESS") ||
+    s.includes("IN_PROCESS")
+  )
     return "amber";
   if (s.includes("FAILED") || s.includes("CANCEL") || s.includes("RETURN"))
     return "red";
-  if (s.includes("TRANSIT") || s.includes("CREATED")) return "blue";
+  if (s.includes("TRANSIT") || s.includes("CREATED") || s.includes("IDLE"))
+    return "blue";
   return "gray";
 }
 
 function getShipmentStage(status?: string | null) {
   const s = String(status || "").toUpperCase();
 
-  if (s.includes("SUCCESS") || s.includes("DELIVERED")) return 5;
-  if (s.includes("DELIVERING")) return 4;
-  if (s.includes("TRANSIT")) return 3;
-  if (s.includes("PICKING") || s.includes("READY")) return 2;
-  if (s.includes("CREATED") || s.includes("NOT_CREATED")) return 1;
+  if (
+    s.includes("SUCCESS") ||
+    s.includes("DELIVERED") ||
+    s.includes("COMPLETED")
+  )
+    return 5;
+  if (
+    s.includes("DELIVERING") ||
+    s.includes("IN PROCESS") ||
+    s.includes("IN_PROCESS")
+  )
+    return 4;
+  if (s.includes("TRANSIT") || s.includes("SORT")) return 3;
+  if (
+    s.includes("PICKING") ||
+    s.includes("READY") ||
+    s.includes("ACCEPTED")
+  )
+    return 2;
+  if (
+    s.includes("CREATED") ||
+    s.includes("NOT_CREATED") ||
+    s.includes("ASSIGNING") ||
+    s.includes("IDLE")
+  )
+    return 1;
 
   return 1;
+}
+
+function isAhamoveCarrier(carrier?: string | null) {
+  return String(carrier || "").toUpperCase().includes("AHAMOVE");
+}
+
+function normalizeStatusLabel(status?: string | null, partnerStatus?: string | null) {
+  const s = String(status || partnerStatus || "").toUpperCase();
+
+  if (s.includes("ASSIGNING") || s.includes("IDLE")) return "Đang tìm tài xế";
+  if (s.includes("ACCEPTED")) return "Tài xế đã nhận đơn";
+  if (s.includes("PICKING") || s.includes("READY")) return "Tài xế đang lấy hàng";
+  if (s.includes("IN PROCESS") || s.includes("IN_PROCESS") || s.includes("DELIVERING")) {
+    return "Đang giao hàng";
+  }
+  if (s.includes("TRANSIT") || s.includes("SORT")) return "Đang trung chuyển";
+  if (s.includes("COMPLETED") || s.includes("DELIVERED") || s.includes("SUCCESS")) {
+    return "Giao hàng thành công";
+  }
+  if (s.includes("CANCEL")) return "Đã huỷ vận đơn";
+  if (s.includes("RETURN")) return "Đang hoàn hàng";
+  if (s.includes("FAILED")) return "Giao thất bại";
+  if (s.includes("CREATED")) return "Đã tạo vận đơn";
+
+  return status || partnerStatus || "Đang cập nhật";
+}
+
+function isFinalShipmentStatus(status?: string | null) {
+  const s = String(status || "").toUpperCase();
+
+  return (
+    s.includes("COMPLETED") ||
+    s.includes("DELIVERED") ||
+    s.includes("SUCCESS") ||
+    s.includes("CANCEL") ||
+    s.includes("FAILED") ||
+    s.includes("RETURN")
+  );
+}
+
+function getAhamoveTrackingUrl(detail?: ShipmentDetailResponse | null, tracking?: TrackingResponse | null) {
+  const rawTracking: any = tracking?.tracking || {};
+  const rawDetail: any = detail || {};
+
+  return (
+    rawTracking.trackingUrl ||
+    rawTracking.ahamoveTrackingUrl ||
+    rawTracking.raw?.tracking_url ||
+    rawTracking.raw?.shared_link ||
+    rawTracking.raw?.data?.tracking_url ||
+    rawTracking.raw?.data?.shared_link ||
+    rawDetail.ahamoveTrackingUrl ||
+    rawDetail.trackingUrl ||
+    ""
+  );
+}
+
+function getDriverInfo(tracking?: TrackingResponse | null) {
+  const raw: any = tracking?.tracking || {};
+  const driver = raw.driver || {};
+  const newestEvent = Array.isArray(raw.timeline) ? raw.timeline[0] || {} : {};
+
+  return {
+    name:
+      driver.driverName ||
+      raw.driverName ||
+      newestEvent.driverName ||
+      "Chưa có tài xế",
+    phone:
+      driver.driverPhone ||
+      raw.driverPhone ||
+      newestEvent.driverPhone ||
+      "",
+    plate:
+      driver.driverPlate ||
+      raw.driverPlate ||
+      newestEvent.driverPlate ||
+      "",
+    eta:
+      driver.eta ||
+      raw.eta ||
+      newestEvent.eta ||
+      "",
+    location:
+      driver.locationText ||
+      raw.locationText ||
+      newestEvent.locationText ||
+      newestEvent.location ||
+      "",
+  };
+}
+
+function buildFallbackTimeline(
+  detail: ShipmentDetailResponse,
+  tracking?: TrackingResponse | null
+): TimelineItem[] {
+  const rawTimeline = tracking?.tracking?.timeline || [];
+
+  if (rawTimeline.length) {
+    return rawTimeline;
+  }
+
+  const status =
+    tracking?.tracking?.shippingStatus ||
+    tracking?.tracking?.partnerStatus ||
+    detail.shippingStatus ||
+    detail.partnerStatus ||
+    "CREATED";
+
+  return [
+    {
+      id: "current-status",
+      status,
+      title: normalizeStatusLabel(status, detail.partnerStatus),
+      description: isAhamoveCarrier(detail.carrier)
+        ? "AhaMove đã nhận đơn. Hệ thống đang tự động cập nhật trạng thái realtime."
+        : "Đơn đã được tạo trên hãng vận chuyển. Hệ thống đang cập nhật hành trình.",
+      location: "",
+      time: tracking?.fetchedAt || new Date().toISOString(),
+    },
+    {
+      id: "created",
+      status: "CREATED",
+      title: "Đã tạo vận đơn",
+      description: `Mã vận đơn ${detail.trackingCode || "—"} đã được ghi nhận trong hệ thống.`,
+      location: "",
+      time: "",
+    },
+  ];
 }
 
 function ShipmentProgress({
@@ -403,13 +581,29 @@ export default function ShipmentDetailPageClient({
         );
       }
 
+      setDetail(detailJson);
+
       if (!trackingRes.ok) {
-        throw new Error(
-          trackingJson?.message || "Không tải được hành trình đơn."
-        );
+        setTracking({
+          tracking: {
+            shipmentId,
+            carrier: detailJson?.carrier || "AHAMOVE",
+            trackingCode: detailJson?.trackingCode || "",
+            shippingStatus: detailJson?.shippingStatus || "CREATED",
+            partnerStatus: detailJson?.partnerStatus || "",
+            codAmount: Number(detailJson?.codAmount || 0),
+            shippingFee: Number(detailJson?.shippingFee || 0),
+            timeline: [],
+          },
+          cached: false,
+          fetchedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 30000).toISOString(),
+        } as any);
+
+        setError("");
+        return;
       }
 
-      setDetail(detailJson);
       setTracking(trackingJson);
     } catch (err) {
       if (!silent) {
@@ -429,16 +623,42 @@ export default function ShipmentDetailPageClient({
   useEffect(() => {
     if (!shipmentId) return;
 
-    autoRefreshRef.current = setInterval(() => {
+    const tick = () => {
+      const status =
+        tracking?.tracking.shippingStatus ||
+        tracking?.tracking.partnerStatus ||
+        detail?.shippingStatus ||
+        detail?.partnerStatus;
+
+      if (isFinalShipmentStatus(status)) {
+        if (autoRefreshRef.current) {
+          clearInterval(autoRefreshRef.current);
+          autoRefreshRef.current = null;
+        }
+        return;
+      }
+
       void loadAll(false, true);
-    }, 45000);
+    };
+
+    const intervalMs =
+      typeof document !== "undefined" && document.hidden ? 60000 : 15000;
+
+    autoRefreshRef.current = setInterval(tick, intervalMs);
 
     return () => {
       if (autoRefreshRef.current) {
         clearInterval(autoRefreshRef.current);
+        autoRefreshRef.current = null;
       }
     };
-  }, [shipmentId]);
+  }, [
+    shipmentId,
+    detail?.shippingStatus,
+    detail?.partnerStatus,
+    tracking?.tracking.shippingStatus,
+    tracking?.tracking.partnerStatus,
+  ]);
 
   if (loading) {
     return <ShipmentDetailSkeleton />;
@@ -451,6 +671,25 @@ export default function ShipmentDetailPageClient({
       </div>
     );
   }
+
+  const currentStatus =
+    tracking?.tracking.shippingStatus ||
+    tracking?.tracking.partnerStatus ||
+    detail.shippingStatus ||
+    detail.partnerStatus;
+
+  const currentLabel = normalizeStatusLabel(currentStatus, detail.partnerStatus);
+  const timelineItems = buildFallbackTimeline(detail, tracking);
+  const driverInfo = getDriverInfo(tracking);
+  const ahamoveTrackingUrl = getAhamoveTrackingUrl(detail, tracking);
+  const isAhamove = isAhamoveCarrier(detail.carrier);
+  const externalTrackingUrl = isAhamove
+    ? ahamoveTrackingUrl
+    : detail.trackingCode
+      ? `https://donhang.ghn.vn/?order_code=${detail.trackingCode}`
+      : "";
+  const canCallDriver = Boolean(driverInfo.phone);
+  const shouldShowDriverPanel = isAhamove || Boolean(driverInfo.phone || driverInfo.plate);
 
   return (
     <div className="space-y-4">
@@ -473,10 +712,7 @@ export default function ShipmentDetailPageClient({
                   tracking?.tracking.shippingStatus || detail.shippingStatus
                 )}
               >
-                {tracking?.tracking.timeline?.[0]?.title ||
-                  tracking?.tracking.partnerStatus ||
-                  detail.partnerStatus ||
-                  detail.shippingStatus}
+                {currentLabel}
               </Badge>
 
               {softRefreshing ? (
@@ -508,28 +744,73 @@ export default function ShipmentDetailPageClient({
               {refreshing ? "Đang làm mới..." : "Làm mới trạng thái"}
             </button>
 
-            {detail.trackingCode ? (
+            {externalTrackingUrl ? (
               <a
-                href={`https://donhang.ghn.vn/?order_code=${detail.trackingCode}`}
+                href={externalTrackingUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
               >
-                Mở GHN
+                {isAhamove ? "Mở AhaMove" : "Mở GHN"}
               </a>
             ) : null}
           </div>
         </div>
       </div>
 
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+          <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+            Trạng thái
+          </div>
+          <div className="mt-2 text-lg font-semibold text-neutral-950">
+            {currentLabel}
+          </div>
+          <div className="mt-1 text-xs text-neutral-500">
+            {tracking?.tracking.partnerStatus || detail.partnerStatus || "Đang cập nhật"}
+          </div>
+        </div>
+
+        <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+          <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+            COD phải thu
+          </div>
+          <div className="mt-2 text-lg font-semibold text-neutral-950">
+            {currency(tracking?.tracking.codAmount ?? detail.codAmount)}
+          </div>
+          <div className="mt-1 text-xs text-neutral-500">
+            {detail.carrier}
+          </div>
+        </div>
+
+        <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+          <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+            Phí vận chuyển
+          </div>
+          <div className="mt-2 text-lg font-semibold text-neutral-950">
+            {currency(tracking?.tracking.shippingFee ?? detail.shippingFee)}
+          </div>
+          <div className="mt-1 text-xs text-neutral-500">
+            Mã vận đơn {detail.trackingCode || "—"}
+          </div>
+        </div>
+
+        <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+          <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+            Tài xế
+          </div>
+          <div className="mt-2 text-lg font-semibold text-neutral-950">
+            {driverInfo.name}
+          </div>
+          <div className="mt-1 text-xs text-neutral-500">
+            {driverInfo.plate || driverInfo.phone || "Đang chờ phân tài xế"}
+          </div>
+        </div>
+      </div>
+
       <ShipmentProgress
-        status={tracking?.tracking.shippingStatus || detail.shippingStatus}
-        dangerLabel={
-          tracking?.tracking.timeline?.[0]?.title ||
-          tracking?.tracking.partnerStatus ||
-          detail.partnerStatus ||
-          null
-        }
+        status={currentStatus}
+        dangerLabel={currentLabel}
       />
 
       <div className="grid gap-4 xl:grid-cols-[1.8fr_0.8fr]">
@@ -540,8 +821,8 @@ export default function ShipmentDetailPageClient({
             </h2>
 
             <div className="mt-4 space-y-4">
-              {(tracking?.tracking.timeline || []).length ? (
-                tracking!.tracking.timeline.map((item, index) => {
+              {timelineItems.length ? (
+                timelineItems.map((item, index) => {
                   const isLatest = index === 0;
                   const dotTone = toneForStatus(item.status);
 
@@ -607,8 +888,8 @@ export default function ShipmentDetailPageClient({
                   );
                 })
               ) : (
-                <div className="text-sm text-neutral-500">
-                  Chưa có dữ liệu hành trình.
+                <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-5 text-sm text-neutral-500">
+                  Chưa có dữ liệu hành trình từ hãng. Hệ thống vẫn đang theo dõi và sẽ tự cập nhật.
                 </div>
               )}
             </div>
@@ -648,10 +929,7 @@ export default function ShipmentDetailPageClient({
               <div className="flex justify-between gap-4">
                 <span className="text-neutral-500">Trạng thái hiện tại</span>
                 <span>
-                  {tracking?.tracking.timeline?.[0]?.title ||
-                    tracking?.tracking.partnerStatus ||
-                    detail.partnerStatus ||
-                    detail.shippingStatus}
+                  {currentLabel}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
@@ -688,6 +966,80 @@ export default function ShipmentDetailPageClient({
               </div>
             </div>
           </div>
+
+          {shouldShowDriverPanel ? (
+            <div className="rounded-[22px] border border-neutral-200 bg-white p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-[15px] font-semibold text-neutral-900">
+                    Tài xế / realtime
+                  </h2>
+                  <p className="mt-1 text-xs text-neutral-500">
+                    Thông tin lấy từ hãng vận chuyển khi tài xế đã nhận đơn.
+                  </p>
+                </div>
+                <Badge tone="blue">{isAhamove ? "AhaMove" : detail.carrier}</Badge>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
+                    {driverInfo.name && driverInfo.name !== "Chưa có tài xế"
+                      ? driverInfo.name.slice(0, 1).toUpperCase()
+                      : "TX"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-neutral-950">
+                      {driverInfo.name}
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-500">
+                      {driverInfo.location || "Đang chờ hãng cập nhật vị trí"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-2 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-neutral-500">SĐT</span>
+                    <span>{driverInfo.phone || "—"}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-neutral-500">Biển số</span>
+                    <span>{driverInfo.plate || "—"}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-neutral-500">ETA</span>
+                    <span>{driverInfo.eta || "—"}</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <a
+                    href={canCallDriver ? `tel:${driverInfo.phone}` : undefined}
+                    className={`rounded-xl border px-3 py-2 text-center text-sm ${
+                      canCallDriver
+                        ? "border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800"
+                        : "pointer-events-none border-neutral-200 bg-neutral-100 text-neutral-400"
+                    }`}
+                  >
+                    Gọi tài xế
+                  </a>
+                  <a
+                    href={externalTrackingUrl || undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`rounded-xl border px-3 py-2 text-center text-sm ${
+                      externalTrackingUrl
+                        ? "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50"
+                        : "pointer-events-none border-neutral-200 bg-neutral-100 text-neutral-400"
+                    }`}
+                  >
+                    Mở app
+                  </a>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <div className="rounded-[22px] border border-neutral-200 bg-white p-5">
             <h2 className="text-[15px] font-semibold text-neutral-900">

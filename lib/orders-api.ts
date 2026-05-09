@@ -190,13 +190,7 @@ function toNumber(value: unknown) {
 
 function normalizeDate(value: unknown) {
   if (!value) return "";
-  try {
-    const d = new Date(String(value));
-    if (Number.isNaN(d.getTime())) return String(value);
-    return d.toLocaleString("vi-VN");
-  } catch {
-    return String(value);
-  }
+  return String(value);
 }
 
 function normalizeOrderItem(item: any): AdminOrderItem {
@@ -377,15 +371,20 @@ export async function createShipment(
   });
 }
 
-
 export type LocalDeliveryOrder = AdminOrder & {
-  carrier?: string | null;
-  localDeliveryCarrier?: string | null;
-  localDeliveryStatus?: string | null;
+  shipmentId?: string | null;
+  carrierName?: string | null;
+  trackingCode?: string | null;
+  localStatus?: string | null;
+  localStatusLabel?: string | null;
+  shippingStatus?: string | null;
+  partnerStatus?: string | null;
+  ahamoveStatus?: string | null;
   codAmount?: number | null;
-  codReceivedAmount?: number | null;
-  codReceivedAt?: string | null;
-  reconciliationNote?: string | null;
+  paidAmount?: number | null;
+  needCollectAmount?: number | null;
+  address?: string | null;
+  note?: string | null;
 };
 
 export type GetLocalDeliveryOrdersParams = {
@@ -404,37 +403,63 @@ export type MarkLocalDeliveryCodReceivedPayload = {
   note?: string;
 };
 
-function normalizeLocalDeliveryOrder(order: any): LocalDeliveryOrder {
-  const normalized = normalizeOrder(order) as LocalDeliveryOrder;
+function normalizeLocalDeliveryOrder(row: any): LocalDeliveryOrder {
+  const baseSource = row?.order || row;
+  const normalized = normalizeOrder(baseSource) as LocalDeliveryOrder;
 
   return {
     ...normalized,
-    carrier:
-      order?.carrier ||
-      order?.localDeliveryCarrier ||
-      order?.shipment?.carrier ||
+    id: String(row?.orderId || normalized.id || ""),
+    orderCode: String(row?.orderCode || normalized.orderCode || ""),
+    shipmentId: row?.shipmentId || row?.shipment?.id || null,
+    carrierName:
+      row?.carrierName ||
+      row?.carrier ||
+      row?.shipment?.carrier ||
       null,
-    localDeliveryCarrier:
-      order?.localDeliveryCarrier ||
-      order?.shipment?.carrier ||
-      order?.carrier ||
+    trackingCode:
+      row?.trackingCode ||
+      row?.shipment?.trackingCode ||
       null,
-    localDeliveryStatus:
-      order?.localDeliveryStatus ||
-      order?.shipment?.shippingStatus ||
+    localStatus:
+      row?.localStatus ||
+      row?.localDeliveryStatus ||
+      row?.shipment?.shippingStatus ||
+      null,
+    localStatusLabel:
+      row?.localStatusLabel ||
+      row?.localDeliveryStatusLabel ||
+      null,
+    shippingStatus:
+      row?.shippingStatus ||
+      row?.shipment?.shippingStatus ||
+      null,
+    partnerStatus:
+      row?.partnerStatus ||
+      row?.shipment?.partnerStatus ||
+      null,
+    ahamoveStatus:
+      row?.ahamoveStatus ||
+      row?.shipment?.ahamoveStatus ||
       null,
     codAmount:
-      order?.codAmount === null || order?.codAmount === undefined
+      row?.codAmount === null || row?.codAmount === undefined
         ? normalized.shipment?.codAmount ?? null
-        : toNumber(order.codAmount),
-    codReceivedAmount:
-      order?.codReceivedAmount === null || order?.codReceivedAmount === undefined
+        : toNumber(row.codAmount),
+    paidAmount:
+      row?.paidAmount === null || row?.paidAmount === undefined
         ? null
-        : toNumber(order.codReceivedAmount),
-    codReceivedAt: order?.codReceivedAt
-      ? normalizeDate(order.codReceivedAt)
-      : null,
-    reconciliationNote: order?.reconciliationNote || null,
+        : toNumber(row.paidAmount),
+    needCollectAmount:
+      row?.needCollectAmount === null || row?.needCollectAmount === undefined
+        ? null
+        : toNumber(row.needCollectAmount),
+    address:
+      row?.address ||
+      row?.shippingAddressLine1 ||
+      normalized.shippingAddressLine1 ||
+      null,
+    note: row?.note || normalized.note || null,
   };
 }
 
@@ -453,16 +478,18 @@ export async function getLocalDeliveryOrders(
 
   const query = search.toString();
   const data = await request<any>(
-    `/finance/local-delivery/orders${query ? `?${query}` : ""}`
+    `/finance/local-delivery-reconciliation${query ? `?${query}` : ""}`
   );
 
   const rawOrders = Array.isArray(data)
     ? data
-    : Array.isArray(data?.items)
-      ? data.items
-      : Array.isArray(data?.data)
-        ? data.data
-        : [];
+    : Array.isArray(data?.rows)
+      ? data.rows
+      : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.data)
+          ? data.data
+          : [];
 
   return rawOrders.map(normalizeLocalDeliveryOrder);
 }
@@ -471,9 +498,10 @@ export async function markLocalDeliveryDelivered(
   orderId: string
 ): Promise<LocalDeliveryOrder> {
   const data = await request<any>(
-    `/finance/local-delivery/${encodeURIComponent(orderId)}/delivered`,
+    `/finance/local-delivery-reconciliation/${encodeURIComponent(orderId)}/delivered`,
     {
       method: "PATCH",
+      body: JSON.stringify({ collectCod: false }),
     }
   );
 
@@ -503,7 +531,7 @@ export async function markLocalDeliveryCodReceived(
         };
 
   const data = await request<any>(
-    `/finance/local-delivery/${encodeURIComponent(orderId)}/cod-received`,
+    `/finance/local-delivery-reconciliation/${encodeURIComponent(orderId)}/cod-received`,
     {
       method: "PATCH",
       body: JSON.stringify(payload),

@@ -1,6 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { apiJson } from "@/lib/api";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -85,6 +86,144 @@ function toAbsoluteFileUrl(url?: string | null) {
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   return `${API_BASE}${url}`;
 }
+
+
+type CurrentUserPermissionProfile = {
+  id?: string;
+  code?: string;
+  email?: string;
+  role?: string;
+  roles?: string[];
+  branchId?: string | null;
+  permissions?: string[];
+  permissionKeys?: string[];
+  branchPermissions?: Array<{
+    branchId?: string | null;
+    permissionKeys?: string[];
+    canView?: boolean;
+    canViewStock?: boolean;
+    canManageStock?: boolean;
+    canViewMoney?: boolean;
+    canExportProductExcel?: boolean;
+    canImportProductExcel?: boolean;
+  }>;
+};
+
+function normalizeRoleCode(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getUserRoles(user?: CurrentUserPermissionProfile | null) {
+  return Array.from(
+    new Set(
+      [
+        ...(Array.isArray(user?.roles) ? user?.roles || [] : []),
+        user?.role,
+      ]
+        .map(normalizeRoleCode)
+        .filter(Boolean),
+    ),
+  );
+}
+
+function getPrimaryAppRole(
+  user?: CurrentUserPermissionProfile | null,
+): AppRole {
+  const roles = getUserRoles(user);
+  return (
+    roles.find((role) =>
+      [
+        "owner",
+        "admin",
+        "branch-manager",
+        "fulltime",
+        "retail-staff",
+        "stock-auditor",
+        "stock-staff",
+      ].includes(role),
+    ) || "retail-staff"
+  ) as AppRole;
+}
+
+function isOwnerOrAdminUser(user?: CurrentUserPermissionProfile | null) {
+  const roles = getUserRoles(user);
+  return roles.includes("owner") || roles.includes("admin");
+}
+
+function normalizeId(value: any) {
+  return String(value || "").trim();
+}
+
+function getScopedBranchPermissionRows(
+  user?: CurrentUserPermissionProfile | null,
+) {
+  const rows = Array.isArray(user?.branchPermissions)
+    ? user?.branchPermissions || []
+    : [];
+  const branchId = normalizeId(user?.branchId);
+
+  if (!branchId) return rows;
+
+  const scoped = rows.filter((row) => normalizeId(row?.branchId) === branchId);
+  return scoped.length ? scoped : rows;
+}
+
+function getCurrentUserPermissionKeys(
+  user?: CurrentUserPermissionProfile | null,
+) {
+  const keys = new Set<string>();
+
+  if (Array.isArray(user?.permissions)) {
+    user?.permissions.forEach((permission) => {
+      if (permission) keys.add(String(permission));
+    });
+  }
+
+  if (Array.isArray(user?.permissionKeys)) {
+    user?.permissionKeys.forEach((permission) => {
+      if (permission) keys.add(String(permission));
+    });
+  }
+
+  getScopedBranchPermissionRows(user).forEach((row) => {
+    if (Array.isArray(row?.permissionKeys)) {
+      row.permissionKeys.forEach((permission) => {
+        if (permission) keys.add(String(permission));
+      });
+    }
+  });
+
+  return keys;
+}
+
+function hasLegacyProductInventoryPermission(
+  user: CurrentUserPermissionProfile | null,
+  permission: string,
+) {
+  return getScopedBranchPermissionRows(user).some((row) => {
+    if (permission === "products.view") return Boolean(row.canView);
+    if (permission === "inventory.view") return Boolean(row.canViewStock);
+    if (permission === "inventory.manage") return Boolean(row.canManageStock);
+    if (permission === "inventory.value.view") return Boolean(row.canViewMoney);
+    if (permission === "products.excel.export") return Boolean(row.canExportProductExcel);
+    if (permission === "products.excel.import") return Boolean(row.canImportProductExcel);
+    return false;
+  });
+}
+
+function hasProductInventoryPermission(
+  user: CurrentUserPermissionProfile | null,
+  role: AppRole,
+  permission: string,
+) {
+  if (isOwnerOrAdminUser(user)) return true;
+  return (
+    getCurrentUserPermissionKeys(user).has(permission) ||
+    hasLegacyProductInventoryPermission(user, permission) ||
+    hasPermission(role, permission as any)
+  );
+}
+
 
 function Panel({
   children,
@@ -918,7 +1057,8 @@ export default function ProductsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
 
-  const [role, setRole] = useState<AppRole>("admin");
+  const [role, setRole] = useState<AppRole>("retail-staff");
+  const [currentUser, setCurrentUser] = useState<CurrentUserPermissionProfile | null>(null);
   const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
@@ -1011,11 +1151,32 @@ export default function ProductsPageClient() {
   const [importErrors, setImportErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    const currentUser = getCurrentUserFromStorage();
-    if (currentUser?.role) {
-      setRole(currentUser.role as AppRole);
+    const storedUser = getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
+    if (storedUser) {
+      setCurrentUser(storedUser);
+      setRole(getPrimaryAppRole(storedUser));
+      setCurrentBranchId(storedUser.branchId || null);
     }
-    setCurrentBranchId(currentUser?.branchId || null);
+
+    apiJson("/auth/me")
+      .then((data) => {
+        const freshUser = (data?.user || data) as CurrentUserPermissionProfile | null;
+        if (!freshUser) return;
+
+        setCurrentUser(freshUser);
+        setRole(getPrimaryAppRole(freshUser));
+        setCurrentBranchId(freshUser.branchId || null);
+
+        try {
+          localStorage.setItem("currentUser", JSON.stringify(freshUser));
+          localStorage.setItem("the1970_current_user", JSON.stringify(freshUser));
+        } catch {
+          // ignore storage sync error
+        }
+      })
+      .catch(() => {
+        // giữ user local nếu auth/me lỗi
+      });
   }, []);
 
   useEffect(() => {
@@ -1024,13 +1185,20 @@ export default function ProductsPageClient() {
     setPage(1);
   }, [searchParams]);
 
-  const isOwner = role === "admin" || role === "owner";
+  const isOwner = isOwnerOrAdminUser(currentUser);
   const isStaffView = !isOwner;
+  const canViewInventory = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.view",
+  );
 
   const visibleBranches = useMemo(() => {
-    if (isOwner) return branches;
+    // Đã có quyền xem tồn kho thì được thấy số tồn của tất cả chi nhánh để tư vấn/chốt đơn.
+    // Giá vốn/giá trị tồn vẫn khóa riêng bằng inventory.value.view.
+    if (isOwner || canViewInventory) return branches;
     return branches.filter((branch) => branch.id === currentBranchId);
-  }, [branches, isOwner, currentBranchId]);
+  }, [branches, isOwner, canViewInventory, currentBranchId]);
 
   const productGroups = useMemo(() => {
     if (categoryOptions.length) return categoryOptions;
@@ -1049,16 +1217,61 @@ export default function ProductsPageClient() {
   // - products.price.edit: được sửa giá bán.
   // - products.excel.export/import: được xuất/nhập Excel.
   // Không hardcode role tại đây để tránh lệch với file authz.
-  const canCreateProduct = hasPermission(role, "products.create");
-  const canEditProduct = hasPermission(role, "products.edit");
-  const canEditProductPrice = hasPermission(role, "products.price.edit");
-  const canToggleProductStatus = hasPermission(role, "products.status.edit");
-  const canDeleteProduct = hasPermission(role, "products.delete");
-  const canManageProductMasterData = hasPermission(role, "system.manage");
-  const canImportProducts = hasPermission(role, "products.excel.import");
-  const canExportProducts = hasPermission(role, "products.excel.export");
-  const canViewCost = hasPermission(role, "products.cost.view");
-  const canViewInventoryValue = hasPermission(role, "inventory.value.view");
+  const canViewProduct = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.view",
+  );
+  const canCreateProduct = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.create",
+  );
+  const canEditProduct = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.edit",
+  );
+  const canEditProductPrice = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.price.edit",
+  );
+  const canToggleProductStatus = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.status.edit",
+  );
+  const canDeleteProduct = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.delete",
+  );
+  const canManageProductMasterData = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "system.manage",
+  );
+  const canImportProducts = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.excel.import",
+  );
+  const canExportProducts = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.excel.export",
+  );
+  const canViewCost = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.cost.view",
+  );
+  const canViewInventoryValue = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.value.view",
+  );
   const loadBranches = async () => {
     try {
       setLoadingBranches(true);
@@ -1108,7 +1321,7 @@ export default function ProductsPageClient() {
       if (query.trim()) params.set("q", query.trim());
       if (groupFilter !== "ALL") params.set("category", groupFilter);
       if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (!isOwner && currentBranchId) params.set("branchId", currentBranchId);
+      if (!isOwner && !canViewInventory && currentBranchId) params.set("branchId", currentBranchId);
 
       const res = await fetch(`${API_BASE}/products/summary?${params.toString()}`);
 
@@ -1131,7 +1344,7 @@ export default function ProductsPageClient() {
         q: query.trim(),
         category: groupFilter,
         status: statusFilter,
-        branchId: !isOwner && currentBranchId ? currentBranchId : undefined,
+        branchId: !isOwner && !canViewInventory && currentBranchId ? currentBranchId : undefined,
       });
 
       const nextProducts = Array.isArray(result) ? result : result?.data || [];
@@ -1182,7 +1395,7 @@ export default function ProductsPageClient() {
   const getProductTotalStockForSort = (product: ProductItem) => {
     return (product.variants || []).reduce((sum, variant) => {
       const branchStocks = variant.branchStocks || {};
-      if (isOwner) {
+      if (isOwner || canViewInventory) {
         return (
           sum +
           Object.values(branchStocks).reduce(
@@ -1280,7 +1493,7 @@ export default function ProductsPageClient() {
 
       return sortDirection === "asc" ? result : -result;
     });
-  }, [products, sortKey, sortDirection, visibleBranches, currentBranchId, isOwner]);
+  }, [products, sortKey, sortDirection, visibleBranches, currentBranchId, isOwner, canViewInventory]);
 
   const getVariantScopedStock = (variant: ProductItem["variants"][number]) => {
     if (isOwner) {
@@ -2012,7 +2225,7 @@ export default function ProductsPageClient() {
         q: exportScope === "all" ? "" : query.trim(),
         category: exportScope === "all" ? "ALL" : groupFilter,
         status: exportScope === "all" ? "ALL" : statusFilter,
-        branchId: !isOwner && currentBranchId ? currentBranchId : undefined,
+        branchId: !isOwner && !canViewInventory && currentBranchId ? currentBranchId : undefined,
       });
 
       const exportSource = Array.isArray(result) ? result : result?.data || [];
@@ -2193,6 +2406,14 @@ export default function ProductsPageClient() {
     exportOnlyMissingCost ? "thiếu giá nhập" : "",
     exportOnlyLowStock ? "tồn thấp" : "",
   ].filter(Boolean);
+
+  if (!canViewProduct) {
+    return (
+      <Panel className="p-5">
+        <p className="text-sm text-red-600">Không có quyền xem sản phẩm.</p>
+      </Panel>
+    );
+  }
 
   return (
     <div className="space-y-4 p-3 pb-24 md:space-y-6 md:p-6">

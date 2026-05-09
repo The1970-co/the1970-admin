@@ -27,7 +27,7 @@ export type PrintTemplateConfig = {
 
 // Đổi key lên v21 để xoá cache template cũ đang lưu trong localStorage.
 // Nếu không đổi key, trình duyệt vẫn dùng HTML cũ nên sửa engine/config không ăn.
-const STORAGE_KEY = "the1970.printTemplates.v21";
+const STORAGE_KEY = "the1970.printTemplates.v22";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -115,7 +115,7 @@ function defaultShipping80TemplateHtml() {
 
   {{financialBlock}}
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;top:37mm;bottom:17mm;overflow:hidden;">
+  <div style="position:absolute;left:2.5mm;right:2.5mm;top:33mm;bottom:17mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
       <thead>
         <tr>

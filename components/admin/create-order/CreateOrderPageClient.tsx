@@ -8,10 +8,12 @@ import {
   createOrder,
   createGhnShipment,
   createAhamoveShipment,
+  createViettelPostShipment,
   findCustomerByPhone,
   getProductsForOrder,
   quoteShipment,
   quoteAhamoveShipment,
+  quoteViettelPostShipment,
   resolveGhnAddress,
   type CreateOrderMode,
   type CreateOrderPayload,
@@ -309,6 +311,130 @@ function normalizeWardName(value?: string | null) {
     .trim();
 }
 
+function normalizeCarrierAddressPart(value?: string | null) {
+  return normalizeSpaces(value)
+    .replace(/\b(TP|Tp|tp)\.?\s+/g, "Thành phố ")
+    .replace(/\bTT\.?\s+/gi, "Thị trấn ")
+    .replace(/\bH\.?\s+/gi, "Huyện ")
+    .replace(/\bQ\.?\s+/gi, "Quận ")
+    .replace(/\bP\.?\s+/gi, "Phường ")
+    .replace(/\bX\.?\s+/gi, "Xã ")
+    .replace(/Đăk/gi, "Đắk")
+    .replace(/Dak/gi, "Đắk")
+    .replace(/Đắk R\s*Lấp/gi, "Đắk R'Lấp")
+    .replace(/Đăk R\s*Lấp/gi, "Đắk R'Lấp")
+    .replace(/Đắk Rlấp/gi, "Đắk R'Lấp")
+    .replace(/Đắk R Lấp/gi, "Đắk R'Lấp")
+    .trim();
+}
+
+function normalizeCarrierProvince(value?: string | null) {
+  const cleaned = normalizeCarrierAddressPart(value);
+  const token = normalizeAddressToken(cleaned);
+
+  if (token === "hcm" || token === "ho chi minh" || token === "sai gon") {
+    return "Hồ Chí Minh";
+  }
+
+  if (token === "ha noi") return "Hà Nội";
+  if (token === "dak nong" || token === "dac nong") return "Đắk Nông";
+  if (token === "dak lak" || token === "dac lak") return "Đắk Lắk";
+
+  return cleaned;
+}
+
+function normalizeCarrierDistrict(value?: string | null) {
+  const cleaned = normalizeCarrierAddressPart(value);
+  const token = normalizeAddressToken(cleaned);
+
+  if (token === "dak r lap" || token === "dak rlap" || token === "dak r lấp") {
+    return "Đắk R'Lấp";
+  }
+
+  if (token === "tan binh") return "Tân Bình";
+  if (token === "quoc oai") return "Quốc Oai";
+
+  return cleaned;
+}
+
+function normalizeCarrierWard(value?: string | null) {
+  const cleaned = normalizeCarrierAddressPart(value);
+  const token = normalizeAddressToken(cleaned);
+
+  if (token === "kien duc" || token === "tt kien duc" || token === "thi tran kien duc") {
+    return "Kiến Đức";
+  }
+
+  if (token === "sai son") return "Sài Sơn";
+
+  return cleaned;
+}
+
+function getViettelOldCarrierAddressOverride(input: {
+  province?: string | null;
+  district?: string | null;
+  ward?: string | null;
+  address?: string | null;
+}) {
+  const rawText = [
+    input.address,
+    input.ward,
+    input.district,
+    input.province,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const token = normalizeAddressToken(rawText);
+
+  if (
+    token.includes("quoc oai") &&
+    (token.includes("sai son") || token.includes("cho thay") || token.includes("chợ thầy"))
+  ) {
+    return {
+      province: "Hà Nội",
+      district: "Quốc Oai",
+      ward: "Sài Sơn",
+    };
+  }
+
+  if (
+    (token.includes("dak r") || token.includes("dac r")) &&
+    token.includes("kien duc")
+  ) {
+    return {
+      province: "Đắk Nông",
+      district: "Đắk R'Lấp",
+      ward: "Kiến Đức",
+    };
+  }
+
+  return {
+    province: input.province || "",
+    district: input.district || "",
+    ward: input.ward || "",
+  };
+}
+
+function buildCarrierToAddress(input: {
+  addressLine?: string | null;
+  ward?: string | null;
+  district?: string | null;
+  province?: string | null;
+}) {
+  const detail = normalizeCarrierAddressPart(input.addressLine || "");
+  const ward = normalizeCarrierWard(input.ward || "");
+  const district = normalizeCarrierDistrict(input.district || "");
+  const province = normalizeCarrierProvince(input.province || "");
+
+  return [detail, ward, district, province]
+    .filter(Boolean)
+    .filter((item, index, arr) => {
+      const current = normalizeAddressToken(item);
+      return arr.findIndex((other) => normalizeAddressToken(other) === current) === index;
+    })
+    .join(", ");
+}
+
 function removeVietnameseTones(value: string) {
   return value
     .normalize("NFD")
@@ -352,6 +478,171 @@ function getFeeNumber(row: ShipmentQuoteResult) {
     (row as any)?.fee ||
     0
   );
+}
+
+function getQuoteCarrier(row: ShipmentQuoteResult) {
+  return String((row as any)?._carrier || "ghn").toLowerCase();
+}
+
+function getQuoteKey(row: ShipmentQuoteResult) {
+  return String(
+    (row as any)?._quoteKey ||
+      `${getQuoteCarrier(row)}-${row.serviceId || 0}-${row.serviceTypeId || 0}`
+  );
+}
+
+function getQuoteDisplayName(row: ShipmentQuoteResult) {
+  const carrier = getQuoteCarrier(row);
+  const rawName =
+    (row as any).shortName ||
+    (row as any).serviceName ||
+    (row as any)._serviceName ||
+    `Dịch vụ ${row.serviceId}`;
+
+  if (carrier === "ahamove") {
+    return `AhaMove - ${rawName}`;
+  }
+
+  if (carrier === "viettelpost") {
+    return `Viettel Post - ${rawName}`;
+  }
+
+  if (carrier === "ghn") {
+    return `GHN - ${rawName}`;
+  }
+
+  return rawName;
+}
+
+function getQuoteLeadtimeLabel(row: ShipmentQuoteResult) {
+  const leadtime = (row as any)?.leadtime;
+  const direct = (row as any)?._leadtimeLabel || leadtime?.label;
+  if (direct) return String(direct);
+
+  const from = leadtime?.from_estimate_date || leadtime?.fromEstimateDate;
+  const to = leadtime?.to_estimate_date || leadtime?.toEstimateDate;
+  if (from || to) return [from, to].filter(Boolean).join(" → ");
+
+  const durationMinutes = Number((row as any)?._durationMinutes || 0);
+  if (durationMinutes) {
+    if (durationMinutes < 60) return `${durationMinutes} phút`;
+    const hours = Math.round((durationMinutes / 60) * 10) / 10;
+    return `${hours} giờ`;
+  }
+
+  return "Đang cập nhật";
+}
+
+function getQuoteBadges(row: ShipmentQuoteResult) {
+  return Array.isArray((row as any)?._badges) ? (row as any)._badges : [];
+}
+
+function normalizeAhamoveQuoteItems(rawQuote: any) {
+  if (Array.isArray(rawQuote)) return rawQuote;
+  if (Array.isArray(rawQuote?.data)) return rawQuote.data;
+  if (Array.isArray(rawQuote?.estimates)) return rawQuote.estimates;
+  if (Array.isArray(rawQuote?.data?.estimates)) return rawQuote.data.estimates;
+  if (Array.isArray(rawQuote?.services)) return rawQuote.services;
+  if (Array.isArray(rawQuote?.data?.services)) return rawQuote.data.services;
+  return rawQuote ? [rawQuote] : [];
+}
+
+function shouldShowAhamoveService(serviceLabel: string, shippingWeight: number) {
+  const label = String(serviceLabel || "").toUpperCase();
+  const weight = Number(shippingWeight || 0);
+
+  // Đơn thời trang nhẹ không nên hiện xe tải.
+  // Khi sau này có đơn hàng nặng > 20kg thì mới mở xe tải.
+  if (label.includes("TRUCK") && weight < 20000) return false;
+
+  return true;
+}
+
+function getAhamoveServiceDisplayName(serviceLabel: string) {
+  const label = String(serviceLabel || "").toUpperCase();
+
+  if (label.includes("BIKE")) return "Xe máy";
+  if (label.includes("EXPRESS")) return "Siêu tốc";
+  if (label.includes("2H")) return "Giao 2 giờ";
+  if (label.includes("TRUCK-1000")) return "Xe tải 1000kg";
+  if (label.includes("TRUCK-2000")) return "Xe tải 2000kg";
+  if (label.includes("TRUCK-5000")) return "Xe tải 5000kg";
+
+  return serviceLabel || "AhaMove";
+}
+
+function parseAhamoveQuoteFee(rawQuote: any) {
+  const quoteData = rawQuote?.data || rawQuote || {};
+  const quoteFee = Number(
+    quoteData?.total_fee ||
+      quoteData?.totalFee ||
+      quoteData?.total_price ||
+      quoteData?.totalPrice ||
+      quoteData?.subtotal_price ||
+      quoteData?.subtotalPrice ||
+      quoteData?.service_fee ||
+      quoteData?.serviceFee ||
+      quoteData?.distance_fee ||
+      quoteData?.distanceFee ||
+      rawQuote?.fee ||
+      rawQuote?.totalFee ||
+      rawQuote?.total_fee ||
+      0
+  );
+
+  const serviceLabel =
+    rawQuote?.service_id ||
+    rawQuote?.serviceId ||
+    quoteData?.service_id ||
+    quoteData?.serviceId ||
+    "HAN-BIKE";
+
+  const distanceKm = Number(quoteData?.distance || 0);
+  const durationSeconds = Number(quoteData?.duration || 0);
+  const durationMinutes = durationSeconds
+    ? Math.max(1, Math.round(durationSeconds / 60))
+    : 0;
+
+  return {
+    quoteFee,
+    serviceLabel: String(serviceLabel),
+    distanceKm,
+    durationMinutes,
+    raw: rawQuote,
+  };
+}
+
+function withQuoteBadges(rows: ShipmentQuoteResult[]) {
+  const valid = rows.filter((row) => getFeeNumber(row) > 0);
+  if (!valid.length) return rows;
+
+  const cheapestFee = Math.min(...valid.map(getFeeNumber));
+  const fastestMinutes = Math.min(
+    ...valid
+      .map((row) => Number((row as any)?._durationMinutes || 0))
+      .filter((value) => value > 0)
+  );
+
+  const hasFastest = Number.isFinite(fastestMinutes);
+  const recommendedKey =
+    valid.find((row) => getQuoteCarrier(row) === "ghn" && getFeeNumber(row) === cheapestFee) ||
+    valid.find((row) => getFeeNumber(row) === cheapestFee) ||
+    valid[0];
+
+  return rows.map((row) => {
+    const badges: string[] = [];
+    const fee = getFeeNumber(row);
+    const minutes = Number((row as any)?._durationMinutes || 0);
+
+    if (fee > 0 && fee === cheapestFee) badges.push("Rẻ nhất");
+    if (hasFastest && minutes > 0 && minutes === fastestMinutes) badges.push("Nhanh nhất");
+    if (getQuoteKey(row) === getQuoteKey(recommendedKey)) badges.push("Khuyên dùng");
+
+    return {
+      ...(row as any),
+      _badges: Array.from(new Set(badges)),
+    } as ShipmentQuoteResult;
+  });
 }
 
 function formatAddress(address?: CustomerAddressItem | null) {
@@ -759,7 +1050,7 @@ const shippingUiModeOptions: Array<{
 const shippingPartnerOptions = [
   { value: "ghn", label: "GHN", enabled: true },
   { value: "ghtk", label: "GHTK", enabled: false },
-  { value: "viettelpost", label: "Viettel Post", enabled: false },
+  { value: "viettelpost", label: "Viettel Post", enabled: true },
   { value: "grab", label: "Grab Express", enabled: false },
   { value: "ahamove", label: "AhaMove", enabled: true },
   { value: "outside", label: "Vận chuyển ngoài", enabled: false },
@@ -1447,6 +1738,29 @@ export default function CreateOrderPageClient() {
   const quoteDistrict = normalizeDistrictName(currentDistrictRaw || "");
   const quoteWard = normalizeWardName(currentWardRaw || "");
 
+  const carrierQuoteProvince = normalizeCarrierProvince(quoteProvince);
+  const carrierQuoteDistrict = normalizeCarrierDistrict(quoteDistrict);
+  const carrierQuoteWard = normalizeCarrierWard(quoteWard);
+  const carrierToAddress = buildCarrierToAddress({
+    addressLine:
+      selectedAddress?.addressLine1 ||
+      addressLine1.trim() ||
+      shippingAddress.trim(),
+    ward: carrierQuoteWard,
+    district: carrierQuoteDistrict,
+    province: carrierQuoteProvince,
+  });
+
+  const viettelOldCarrierAddress = getViettelOldCarrierAddressOverride({
+    address:
+      selectedAddress?.addressLine1 ||
+      addressLine1.trim() ||
+      shippingAddress.trim(),
+    province: quoteProvince,
+    district: quoteDistrict,
+    ward: quoteWard,
+  });
+
   const quoteItems = useMemo(() => {
     return lines
       .filter((item) => Number(item.qty || 0) > 0)
@@ -1464,7 +1778,12 @@ export default function CreateOrderPageClient() {
   }, [lines, shippingLength, shippingWidth, shippingHeight, shippingWeight]);
 
   const selectedQuote =
-    shippingQuotes.find((q) => q.serviceId === selectedShippingServiceId) || null;
+    shippingQuotes.find(
+      (q) =>
+        q.serviceId === selectedShippingServiceId &&
+        q.serviceTypeId === selectedShippingServiceTypeId &&
+        !((q as any)?._disabled)
+    ) || null;
 
   const resetAddressForm = () => {
     setAddressError("");
@@ -2267,9 +2586,10 @@ export default function CreateOrderPageClient() {
   useEffect(() => {
     applyShippingRef.current = (payload: ShippingQuoteApplyPayload) => {
       setShippingFee((prev) => {
-        // The 1970 mặc định thu khách 30.000đ tiền ship.
-        // Báo giá GHN chỉ dùng để chọn dịch vụ/đẩy vận đơn, không tự đổi phí thu khách.
         if (payload.shippingMode === "pickup") return "0";
+        if (payload.applyFeeToInput && Number(payload.shippingFee || 0) > 0) {
+          return String(Number(payload.shippingFee || 0));
+        }
         return Number(prev || 0) > 0 ? prev : "30000";
       });
       setShippingMode(payload.shippingMode === "pickup" ? "pickup" : "partner");
@@ -2292,7 +2612,10 @@ export default function CreateOrderPageClient() {
   }, [shippingUiMode, shippingPartner]);
 
   useEffect(() => {
-    const isPickupShipping = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
+    const isPickupShipping =
+      shippingUiMode === "pickup" ||
+      shippingMode === "pickup" ||
+      shippingPartner === "pickup";
 
     if (isPickupShipping) {
       setShippingFee("0");
@@ -2309,7 +2632,9 @@ export default function CreateOrderPageClient() {
       setError((prev) => {
         if (!prev) return prev;
         const text = prev.toLowerCase();
-        return text.includes("ghn") || text.includes("giao hàng") || text.includes("địa chỉ")
+        return text.includes("ghn") ||
+          text.includes("giao hàng") ||
+          text.includes("địa chỉ")
           ? null
           : prev;
       });
@@ -2336,9 +2661,7 @@ export default function CreateOrderPageClient() {
       return;
     }
 
-    if (shippingPartner !== "ghn" && shippingPartner !== "ahamove") {
-      setShippingHint("Hãng vận chuyển này chưa bật quote tự động.");
-      setShippingError("");
+    if (shippingUiMode !== "carrier") {
       setShippingQuotes([]);
       return;
     }
@@ -2353,234 +2676,251 @@ export default function CreateOrderPageClient() {
         return;
       }
 
-      if (shippingPartner === "ahamove") {
-        const toAddress =
-          selectedAddress?.addressLine1 ||
-          addressLine1.trim() ||
-          shippingAddress.trim();
+      const toAddress = carrierToAddress || (
+        selectedAddress?.addressLine1 ||
+        addressLine1.trim() ||
+        shippingAddress.trim()
+      );
 
-        if (!toAddress) {
-          setShippingQuotes([]);
-          setSelectedShippingServiceId(undefined);
-          setSelectedShippingServiceTypeId(undefined);
-          setShippingError("");
-          setShippingHint("Thiếu địa chỉ giao hàng để lấy phí AhaMove.");
-          return;
-        }
-
-        try {
-          setShippingLoading(true);
-          setShippingError("");
-          setShippingHint("Đang lấy báo giá AhaMove...");
-
-          const quote = await quoteAhamoveShipment({
-            toName: selectedAddress?.recipientName || customerName.trim() || "Khách hàng",
-            toPhone: selectedAddress?.phone || customerPhone.trim(),
-            toAddress,
-            codAmount: remaining > 0 ? remaining : 0,
-            serviceId: "HAN-BIKE",
-            note: note.trim() || "",
-            items: quoteItems.map((item) => ({
-              name: item.name,
-              quantity: item.quantity,
-              num: item.quantity,
-              price: 0,
-              weight: item.weight,
-            })),
-          });
-
-          const currentShippingStateAfterQuote = shippingStateRef.current;
-          if (
-            currentShippingStateAfterQuote.shippingUiMode !== "carrier" ||
-            currentShippingStateAfterQuote.shippingMode === "pickup" ||
-            currentShippingStateAfterQuote.shippingPartner !== "ahamove"
-          ) {
-            return;
-          }
-
-          const rawQuote: any = quote as any;
-
-          const firstQuote =
-            Array.isArray(rawQuote)
-              ? rawQuote[0]
-              : Array.isArray(rawQuote?.data)
-                ? rawQuote.data[0]
-                : rawQuote?.estimates?.[0] ||
-                  rawQuote?.data?.estimates?.[0] ||
-                  rawQuote?.services?.[0] ||
-                  rawQuote?.data?.services?.[0] ||
-                  rawQuote;
-
-          const quoteData = firstQuote?.data || firstQuote || {};
-
-          const quoteFee = Number(
-            quoteData?.total_fee ||
-              quoteData?.totalFee ||
-              quoteData?.total_price ||
-              quoteData?.totalPrice ||
-              quoteData?.subtotal_price ||
-              quoteData?.subtotalPrice ||
-              quoteData?.service_fee ||
-              quoteData?.serviceFee ||
-              quoteData?.distance_fee ||
-              quoteData?.distanceFee ||
-              rawQuote?.fee ||
-              rawQuote?.totalFee ||
-              rawQuote?.total_fee ||
-              0
-          );
-
-          const serviceLabel =
-            firstQuote?.service_id ||
-            firstQuote?.serviceId ||
-            quoteData?.service_id ||
-            quoteData?.serviceId ||
-            "AhaMove";
-
-          const distanceKm = Number(quoteData?.distance || 0);
-          const durationSeconds = Number(quoteData?.duration || 0);
-          const durationMinutes = durationSeconds
-            ? Math.max(1, Math.round(durationSeconds / 60))
-            : 0;
-
-          const fakeQuote: ShipmentQuoteResult = {
-            serviceId: 0,
-            serviceTypeId: 0,
-            shortName: String(serviceLabel),
-            fee: {
-              total: quoteFee,
-              total_fee: quoteFee,
-              service_fee: quoteFee,
-            },
-            leadtime: {
-              label:
-                distanceKm || durationMinutes
-                  ? `${distanceKm ? `${distanceKm}km` : ""}${
-                      distanceKm && durationMinutes ? " · " : ""
-                    }${durationMinutes ? `${durationMinutes} phút` : ""}`
-                  : "Nội thành",
-            },
-          };
-
-          setShippingQuotes([fakeQuote]);
-          setSelectedShippingServiceId(0);
-          setSelectedShippingServiceTypeId(0);
-          setShippingHint(
-            quoteFee > 0
-              ? `Đã lấy báo giá AhaMove: ${currency(quoteFee)}.`
-              : "AhaMove đã trả báo giá, nhưng chưa có phí rõ ràng."
-          );
-
-          applyShippingRef.current?.({
-            shippingFee: quoteFee > 0 ? quoteFee : 30000,
-            applyFeeToInput: quoteFee > 0,
-            shippingPartner: "ahamove",
-            shippingMode: "partner",
-            selectedServiceId: 0,
-            selectedServiceTypeId: 0,
-            weight: Number(shippingWeight || 200),
-            length: Number(shippingLength || 10),
-            width: Number(shippingWidth || 10),
-            height: Number(shippingHeight || 10),
-          });
-        } catch (err) {
-          setShippingQuotes([]);
-          setSelectedShippingServiceId(undefined);
-          setSelectedShippingServiceTypeId(undefined);
-          setShippingHint("");
-          setShippingError(
-            err instanceof Error ? err.message : "Không lấy được phí AhaMove."
-          );
-        } finally {
-          setShippingLoading(false);
-        }
-
-        return;
-      }
-
-      if (!quoteProvince || !quoteDistrict || !quoteWard) {
-        setShippingQuotes([]);
-        setSelectedShippingServiceId(undefined);
-        setSelectedShippingServiceTypeId(undefined);
-        setShippingError("");
-        setShippingHint("Thiếu tỉnh/thành, quận/huyện hoặc xã/phường để tính phí ship.");
-        return;
-      }
+      const errors: string[] = [];
+      const resultQuotes: ShipmentQuoteResult[] = [];
 
       try {
         setShippingLoading(true);
         setShippingError("");
-        setShippingHint("Đang resolve địa chỉ GHN...");
+        setShippingHint("Đang so sánh phí GHN, ViettelPost và AhaMove...");
 
-        const resolved = await resolveGhnAddress({
-          province: quoteProvince,
-          district: quoteDistrict,
-          ward: quoteWard,
+        let resolved: any = null;
+
+        if (quoteProvince && quoteDistrict && quoteWard) {
+          try {
+            resolved = await resolveGhnAddress({
+              province: quoteProvince,
+              district: quoteDistrict,
+              ward: quoteWard,
+            });
+
+            if (!resolved?.districtId || !resolved?.wardCode) {
+              throw new Error("Không map được địa chỉ GHN.");
+            }
+
+            const ghnRows = await quoteShipment({
+              toDistrictId: Number(resolved.districtId),
+              toWardCode: String(resolved.wardCode),
+              insuranceValue: orderValueForInsurance,
+              length: Number(shippingLength || 10),
+              width: Number(shippingWidth || 10),
+              height: Number(shippingHeight || 10),
+              weight: Number(shippingWeight || 200),
+              items: quoteItems,
+            });
+
+            const mappedGhn = (Array.isArray(ghnRows) ? ghnRows : []).map((row) => ({
+              ...(row as any),
+              _carrier: "ghn",
+              _quoteKey: `ghn-${row.serviceId || 0}-${row.serviceTypeId || 0}`,
+              _serviceName:
+                (row as any).shortName ||
+                (row as any).serviceName ||
+                `GHN ${row.serviceId}`,
+              _leadtimeLabel: getQuoteLeadtimeLabel(row),
+              _ghnDistrictId: Number(resolved.districtId),
+              _ghnWardCode: String(resolved.wardCode),
+              _applyFeeToInput: true,
+            })) as ShipmentQuoteResult[];
+
+            resultQuotes.push(...mappedGhn);
+            setGhnDistrictId(Number(resolved.districtId));
+            setGhnWardCode(String(resolved.wardCode));
+          } catch (err) {
+            errors.push(
+              err instanceof Error ? `GHN: ${err.message}` : "GHN: Không lấy được báo giá."
+            );
+          }
+        } else {
+          errors.push("GHN: Thiếu tỉnh/thành, quận/huyện hoặc xã/phường.");
+        }
+
+        if (toAddress) {
+          try {
+            const rawAhamoveQuote = await quoteAhamoveShipment({
+              toName:
+                selectedAddress?.recipientName ||
+                customerName.trim() ||
+                "Khách hàng",
+              toPhone: selectedAddress?.phone || customerPhone.trim(),
+              toAddress,
+              codAmount: remaining > 0 ? remaining : 0,
+              serviceId: "HAN-BIKE",
+              payment_method: "BALANCE",
+              paymentMethod: "BALANCE",
+              note: note.trim() || "",
+              items: quoteItems.map((item) => ({
+                name: item.name,
+                quantity: item.quantity,
+                num: item.quantity,
+                price: 0,
+                weight: item.weight,
+              })),
+            });
+
+            const ahamoveRows = normalizeAhamoveQuoteItems(rawAhamoveQuote)
+              .map((item: any) => parseAhamoveQuoteFee(item))
+              .filter((parsed: any) => parsed.quoteFee > 0)
+              .filter((parsed: any) =>
+                shouldShowAhamoveService(
+                  parsed.serviceLabel,
+                  Number(shippingWeight || 200)
+                )
+              );
+
+            for (const parsed of ahamoveRows) {
+              const ahamoveQuote: ShipmentQuoteResult = {
+                serviceId: 0,
+                serviceTypeId: 0,
+                shortName: getAhamoveServiceDisplayName(parsed.serviceLabel),
+                fee: {
+                  total: parsed.quoteFee,
+                  total_fee: parsed.quoteFee,
+                  service_fee: parsed.quoteFee,
+                },
+                leadtime: {
+                  label:
+                    parsed.distanceKm || parsed.durationMinutes
+                      ? `${parsed.distanceKm ? `${parsed.distanceKm}km` : ""}${
+                          parsed.distanceKm && parsed.durationMinutes ? " · " : ""
+                        }${parsed.durationMinutes ? `${parsed.durationMinutes} phút` : ""}`
+                      : "Nội thành",
+                },
+                ...( {
+                  _carrier: "ahamove",
+                  _quoteKey: `ahamove-${parsed.serviceLabel}`,
+                  _serviceName: parsed.serviceLabel,
+                  _durationMinutes: parsed.durationMinutes,
+                  _distanceKm: parsed.distanceKm,
+                  _raw: parsed.raw,
+                  _applyFeeToInput: true,
+                } as any),
+              };
+
+              resultQuotes.push(ahamoveQuote);
+            }
+          } catch (err) {
+            errors.push(
+              err instanceof Error
+                ? `AhaMove: ${err.message}`
+                : "AhaMove: Không lấy được báo giá."
+            );
+          }
+        } else {
+          errors.push("AhaMove: Thiếu địa chỉ giao hàng.");
+        }
+
+
+        if (quoteProvince && quoteDistrict) {
+          try {
+            const viettelRows = await quoteViettelPostShipment({
+              toName:
+                selectedAddress?.recipientName ||
+                customerName.trim() ||
+                "Khách hàng",
+              toPhone: selectedAddress?.phone || customerPhone.trim(),
+              toAddress,
+              province: viettelOldCarrierAddress.province,
+              district: viettelOldCarrierAddress.district,
+              ward: viettelOldCarrierAddress.ward,
+              toProvince: viettelOldCarrierAddress.province,
+              toDistrict: viettelOldCarrierAddress.district,
+              toWard: viettelOldCarrierAddress.ward,
+              codAmount: remaining > 0 ? remaining : 0,
+              productPrice: orderValueForInsurance,
+              insuranceValue: orderValueForInsurance,
+              weight: Number(shippingWeight || 200),
+              length: Number(shippingLength || 10),
+              width: Number(shippingWidth || 10),
+              height: Number(shippingHeight || 10),
+            });
+
+            const mappedViettel = (Array.isArray(viettelRows) ? viettelRows : []).map(
+              (row: any, index: number) =>
+                ({
+                  ...row,
+                  _carrier: "viettelpost",
+                  _quoteKey:
+                    row._quoteKey ||
+                    `viettelpost-${row._viettelServiceCode || row.shortName || index}`,
+                  _serviceName:
+                    row._serviceName ||
+                    row.shortName ||
+                    row.serviceName ||
+                    row._viettelServiceCode ||
+                    "Viettel Post",
+                  _applyFeeToInput: true,
+                }) as ShipmentQuoteResult
+            );
+
+            resultQuotes.push(...mappedViettel);
+          } catch (err) {
+            errors.push(
+              err instanceof Error
+                ? `ViettelPost: ${err.message}`
+                : "ViettelPost: Không lấy được báo giá."
+            );
+          }
+        } else {
+          errors.push("ViettelPost: Thiếu tỉnh/thành hoặc quận/huyện.");
+        }
+
+        const sortedQuotes = withQuoteBadges(resultQuotes).sort((a, b) => {
+          const carrierA = getQuoteCarrier(a);
+          const carrierB = getQuoteCarrier(b);
+          if (carrierA !== carrierB) {
+            const order = ["ghn", "viettelpost", "ahamove"];
+            return order.indexOf(carrierA) - order.indexOf(carrierB);
+          }
+          return getFeeNumber(a) - getFeeNumber(b);
         });
 
-        if (!resolved?.districtId || !resolved?.wardCode) {
-          throw new Error(
-            `Không map được địa chỉ GHN. Province="${quoteProvince}", District="${quoteDistrict}", Ward="${quoteWard}".`
-          );
-        }
+        setShippingQuotes(sortedQuotes);
 
-        const currentShippingStateAfterResolve = shippingStateRef.current;
-        if (
-          currentShippingStateAfterResolve.shippingUiMode !== "carrier" ||
-          currentShippingStateAfterResolve.shippingMode === "pickup" ||
-          currentShippingStateAfterResolve.shippingPartner !== "ghn"
-        ) {
+        if (!sortedQuotes.length) {
+          setShippingHint("");
+          setShippingError(errors.join(" | ") || "Không lấy được phí vận chuyển.");
+          setSelectedShippingServiceId(undefined);
+          setSelectedShippingServiceTypeId(undefined);
           return;
         }
 
-        setShippingHint("Đang lấy báo giá GHN...");
+        const currentCarrierQuotes = sortedQuotes.filter(
+          (row) => getQuoteCarrier(row) === shippingPartner
+        );
+        const recommended =
+          sortedQuotes.find((row) => getQuoteBadges(row).includes("Khuyên dùng")) ||
+          sortedQuotes[0];
+        const selected =
+          currentCarrierQuotes[0] ||
+          recommended ||
+          sortedQuotes[0];
 
-        const rows = await quoteShipment({
-          toDistrictId: Number(resolved.districtId),
-          toWardCode: String(resolved.wardCode),
-          insuranceValue: orderValueForInsurance,
-          length: Number(shippingLength || 10),
-          width: Number(shippingWidth || 10),
-          height: Number(shippingHeight || 10),
-          weight: Number(shippingWeight || 200),
-          items: quoteItems,
-        });
-
-        const currentShippingStateAfterQuote = shippingStateRef.current;
-        if (
-          currentShippingStateAfterQuote.shippingUiMode !== "carrier" ||
-          currentShippingStateAfterQuote.shippingMode === "pickup" ||
-          currentShippingStateAfterQuote.shippingPartner !== "ghn"
-        ) {
-          return;
-        }
-
-        const data = Array.isArray(rows) ? rows : [];
-        setShippingQuotes(data);
-
-        if (!data.length) {
-          setShippingHint("GHN không trả về dịch vụ phù hợp cho địa chỉ này.");
-          return;
-        }
-
-        const best = [...data].sort((a, b) => getFeeNumber(a) - getFeeNumber(b))[0];
-        setSelectedShippingServiceId(best.serviceId);
-        setSelectedShippingServiceTypeId(best.serviceTypeId);
-        setShippingHint("Đã tự chọn dịch vụ GHN rẻ nhất.");
         applyShippingRef.current?.({
-          shippingFee: 30000,
-          applyFeeToInput: false,
-          shippingPartner: "ghn",
+          shippingFee: getFeeNumber(selected) || 30000,
+          applyFeeToInput: Boolean((selected as any)._applyFeeToInput),
+          shippingPartner: getQuoteCarrier(selected),
           shippingMode: "partner",
-          selectedServiceId: best.serviceId,
-          selectedServiceTypeId: best.serviceTypeId,
+          selectedServiceId: selected.serviceId,
+          selectedServiceTypeId: selected.serviceTypeId,
           weight: Number(shippingWeight || 200),
           length: Number(shippingLength || 10),
           width: Number(shippingWidth || 10),
           height: Number(shippingHeight || 10),
-          ghnDistrictId: resolved.districtId,
-          ghnWardCode: resolved.wardCode,
+          ghnDistrictId: (selected as any)._ghnDistrictId || resolved?.districtId,
+          ghnWardCode: (selected as any)._ghnWardCode || resolved?.wardCode,
         });
+
+        setShippingHint(
+          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)} · ${currency(getFeeNumber(selected))}.`
+        );
+        setShippingError(errors.length ? errors.join(" | ") : "");
       } catch (err) {
         setShippingQuotes([]);
         setSelectedShippingServiceId(undefined);
@@ -2887,7 +3227,15 @@ export default function CreateOrderPageClient() {
           toPhone: selectedAddress?.phone || customerPhone.trim(),
           toAddress,
           codAmount: remaining > 0 ? remaining : 0,
-          serviceId: "HAN-BIKE",
+          serviceId:
+            (shippingQuotes.find(
+              (quote) =>
+                getQuoteCarrier(quote) === "ahamove" &&
+                quote.serviceId === selectedShippingServiceId &&
+                quote.serviceTypeId === selectedShippingServiceTypeId
+            ) as any)?._serviceName || "HAN-BIKE",
+          payment_method: "BALANCE",
+          paymentMethod: "BALANCE",
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
           note: note.trim() || "",
@@ -2911,6 +3259,72 @@ export default function CreateOrderPageClient() {
           ahamoveCreated?.ahamoveOrderId ||
           ahamoveCreated?.order_id ||
           ahamoveCreated?.id ||
+          "";
+      }
+
+
+      if (
+        !isPickupOrder &&
+        finalCreateMode === "ship" &&
+        shippingUiMode === "carrier" &&
+        shippingPartner === "viettelpost"
+      ) {
+        const toAddress =
+          selectedAddress?.addressLine1 ||
+          addressLine1.trim() ||
+          shippingAddress.trim();
+
+        const selectedViettelQuote = shippingQuotes.find(
+          (quote) =>
+            getQuoteCarrier(quote) === "viettelpost" &&
+            quote.serviceId === selectedShippingServiceId &&
+            quote.serviceTypeId === selectedShippingServiceTypeId
+        );
+
+        const viettelCreated = await createViettelPostShipment(created.id, {
+          toName: selectedAddress?.recipientName || customerName.trim(),
+          toPhone: selectedAddress?.phone || customerPhone.trim(),
+          toAddress,
+          toProvince: quoteProvince,
+          toDistrict: quoteDistrict,
+          toWard: quoteWard,
+          province: quoteProvince,
+          district: quoteDistrict,
+          ward: quoteWard,
+          codAmount: remaining > 0 ? remaining : 0,
+          insuranceValue: customerMustPay,
+          productPrice: customerMustPay,
+          serviceCode:
+            (selectedViettelQuote as any)?._viettelServiceCode ||
+            (selectedViettelQuote as any)?._serviceName ||
+            "VCN",
+          clientOrderCode: created.orderCode,
+          orderCode: created.orderCode,
+          content: `Đơn hàng ${created.orderCode}`,
+          note: note.trim() || "",
+          weight: shippingWeight,
+          length: shippingLength,
+          width: shippingWidth,
+          height: shippingHeight,
+          items: lines.map((line) => ({
+            name: line.productName || line.sku || "Sản phẩm",
+            quantity: Number(line.qty || 0),
+            price: Number(line.price || 0),
+            weight: Math.max(
+              1,
+              Math.floor(
+                Number(shippingWeight || 200) / Math.max(lines.length, 1)
+              )
+            ),
+          })),
+        });
+
+        carrierTrackingCode =
+          viettelCreated?.shipment?.trackingCode ||
+          viettelCreated?.trackingCode ||
+          viettelCreated?.viettelpost?.ORDER_NUMBER ||
+          viettelCreated?.viettelpost?.order_number ||
+          viettelCreated?.viettelpost?.data?.ORDER_NUMBER ||
           "";
       }
 
@@ -3581,47 +3995,109 @@ export default function CreateOrderPageClient() {
               ) : null}
 
               {shippingQuotes.length > 0 ? (
-                <div className="mt-4 space-y-3">
-                  {shippingQuotes.map((quote) => {
-                    const active = quote.serviceId === selectedShippingServiceId;
-                    return (
-                      <button
-                        key={`${quote.serviceId}-${quote.serviceTypeId}`}
-                        type="button"
-                        onClick={() =>
-                          applyShippingRef.current?.({
-                            shippingFee: 30000,
-                            applyFeeToInput: false,
-                            shippingPartner: "ghn",
-                            shippingMode: "partner",
-                            selectedServiceId: quote.serviceId,
-                            selectedServiceTypeId: quote.serviceTypeId,
-                            weight: Number(shippingWeight || 200),
-                            length: Number(shippingLength || 10),
-                            width: Number(shippingWidth || 10),
-                            height: Number(shippingHeight || 10),
-                            ghnDistrictId,
-                            ghnWardCode,
-                          })
-                        }
-                        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left ${active ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
+                <div className="mt-4 overflow-hidden rounded-2xl border border-neutral-200">
+                  <div className="grid grid-cols-[1.15fr_1.35fr_0.9fr_0.8fr] bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    <span>Đối tác</span>
+                    <span>Dịch vụ</span>
+                    <span>Thời gian dự kiến</span>
+                    <span className="text-right">Phí dự kiến</span>
+                  </div>
+
+                  <div className="divide-y divide-neutral-100 bg-white">
+                    {shippingQuotes.map((quote) => {
+                      const carrier = getQuoteCarrier(quote);
+                      const active =
+                        carrier === shippingPartner &&
+                        quote.serviceId === selectedShippingServiceId &&
+                        quote.serviceTypeId === selectedShippingServiceTypeId;
+                      const badges = getQuoteBadges(quote);
+                      const feeValue = getFeeNumber(quote);
+
+                      return (
+                        <button
+                          key={getQuoteKey(quote)}
+                          type="button"
+                          onClick={() =>
+                            applyShippingRef.current?.({
+                              shippingFee: feeValue || 30000,
+                              applyFeeToInput: Boolean((quote as any)._applyFeeToInput),
+                              shippingPartner: carrier,
+                              shippingMode: "partner",
+                              selectedServiceId: quote.serviceId,
+                              selectedServiceTypeId: quote.serviceTypeId,
+                              weight: Number(shippingWeight || 200),
+                              length: Number(shippingLength || 10),
+                              width: Number(shippingWidth || 10),
+                              height: Number(shippingHeight || 10),
+                              ghnDistrictId: (quote as any)._ghnDistrictId || ghnDistrictId,
+                              ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
+                            })
+                          }
+                          className={`grid w-full grid-cols-[1.15fr_1.35fr_0.9fr_0.8fr] items-center gap-3 px-4 py-3 text-left transition ${
+                            active ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900" : "hover:bg-neutral-50"
                           }`}
-                      >
-                        <div>
-                          <div className="text-sm font-semibold text-neutral-900">
-                            {(quote as any).shortName ||
-                              (quote as any).serviceName ||
-                              `Dịch vụ ${quote.serviceId}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`h-4 w-4 rounded-full border ${
+                                active ? "border-neutral-900 bg-neutral-900" : "border-neutral-300"
+                              }`}
+                            />
+                            <div>
+                              <div className="text-sm font-semibold text-neutral-900">
+                                {carrier === "ahamove"
+                                  ? "AhaMove"
+                                  : carrier === "viettelpost"
+                                    ? "Viettel Post"
+                                    : "GHN"}
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-neutral-500">
+                                {carrier === "ahamove"
+                                  ? "Nội thành realtime"
+                                  : carrier === "viettelpost"
+                                    ? "Liên tỉnh / COD"
+                                    : "Giao hàng nhanh"}
+                              </div>
+                            </div>
                           </div>
-                          <div className="mt-1 text-xs text-neutral-500">
-                            ServiceId: {quote.serviceId}
-                            {quote.serviceTypeId ? ` · TypeId: ${quote.serviceTypeId}` : ""}
+
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium text-neutral-900">
+                                {getQuoteDisplayName(quote)}
+                              </span>
+                              {badges.map((badge) => (
+                                <span
+                                  key={badge}
+                                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                    badge === "Rẻ nhất"
+                                      ? "bg-orange-50 text-orange-600"
+                                      : badge === "Nhanh nhất"
+                                        ? "bg-blue-50 text-blue-600"
+                                        : "bg-emerald-50 text-emerald-700"
+                                  }`}
+                                >
+                                  {badge}
+                                </span>
+                              ))}
+                            </div>
+                            <div className="mt-1 text-xs text-neutral-500">
+                              ServiceId: {quote.serviceId}
+                              {quote.serviceTypeId ? ` · TypeId: ${quote.serviceTypeId}` : ""}
+                            </div>
                           </div>
-                        </div>
-                        <div className="text-sm font-semibold">{currency(getFeeNumber(quote))}</div>
-                      </button>
-                    );
-                  })}
+
+                          <div className="text-sm text-neutral-700">
+                            {getQuoteLeadtimeLabel(quote)}
+                          </div>
+
+                          <div className="text-right text-sm font-semibold text-neutral-950">
+                            {currency(feeValue)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : null}
             </Panel>
@@ -3652,7 +4128,15 @@ export default function CreateOrderPageClient() {
                     <span>{previewBranch}</span>
 
                     <span className="text-neutral-500">Vận chuyển</span>
-                    <span>{shippingPartner}</span>
+                    <span>
+                      {shippingPartner === "ahamove"
+                        ? "AhaMove"
+                        : shippingPartner === "viettelpost"
+                          ? "Viettel Post"
+                          : shippingPartner === "ghn"
+                            ? "GHN"
+                            : shippingPartner}
+                    </span>
                   </div>
                 </div>
 

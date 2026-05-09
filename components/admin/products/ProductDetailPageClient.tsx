@@ -1,6 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { apiJson } from "@/lib/api";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -65,6 +66,144 @@ function toAbsoluteFileUrl(url?: string | null) {
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   return `${API_BASE}${url}`;
 }
+
+
+type CurrentUserPermissionProfile = {
+  id?: string;
+  code?: string;
+  email?: string;
+  role?: string;
+  roles?: string[];
+  branchId?: string | null;
+  permissions?: string[];
+  permissionKeys?: string[];
+  branchPermissions?: Array<{
+    branchId?: string | null;
+    permissionKeys?: string[];
+    canView?: boolean;
+    canViewStock?: boolean;
+    canManageStock?: boolean;
+    canViewMoney?: boolean;
+    canExportProductExcel?: boolean;
+    canImportProductExcel?: boolean;
+  }>;
+};
+
+function normalizeRoleCode(value: any) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getUserRoles(user?: CurrentUserPermissionProfile | null) {
+  return Array.from(
+    new Set(
+      [
+        ...(Array.isArray(user?.roles) ? user?.roles || [] : []),
+        user?.role,
+      ]
+        .map(normalizeRoleCode)
+        .filter(Boolean),
+    ),
+  );
+}
+
+function getPrimaryAppRole(
+  user?: CurrentUserPermissionProfile | null,
+): AppRole {
+  const roles = getUserRoles(user);
+  return (
+    roles.find((role) =>
+      [
+        "owner",
+        "admin",
+        "branch-manager",
+        "fulltime",
+        "retail-staff",
+        "stock-auditor",
+        "stock-staff",
+      ].includes(role),
+    ) || "retail-staff"
+  ) as AppRole;
+}
+
+function isOwnerOrAdminUser(user?: CurrentUserPermissionProfile | null) {
+  const roles = getUserRoles(user);
+  return roles.includes("owner") || roles.includes("admin");
+}
+
+function normalizeId(value: any) {
+  return String(value || "").trim();
+}
+
+function getScopedBranchPermissionRows(
+  user?: CurrentUserPermissionProfile | null,
+) {
+  const rows = Array.isArray(user?.branchPermissions)
+    ? user?.branchPermissions || []
+    : [];
+  const branchId = normalizeId(user?.branchId);
+
+  if (!branchId) return rows;
+
+  const scoped = rows.filter((row) => normalizeId(row?.branchId) === branchId);
+  return scoped.length ? scoped : rows;
+}
+
+function getCurrentUserPermissionKeys(
+  user?: CurrentUserPermissionProfile | null,
+) {
+  const keys = new Set<string>();
+
+  if (Array.isArray(user?.permissions)) {
+    user?.permissions.forEach((permission) => {
+      if (permission) keys.add(String(permission));
+    });
+  }
+
+  if (Array.isArray(user?.permissionKeys)) {
+    user?.permissionKeys.forEach((permission) => {
+      if (permission) keys.add(String(permission));
+    });
+  }
+
+  getScopedBranchPermissionRows(user).forEach((row) => {
+    if (Array.isArray(row?.permissionKeys)) {
+      row.permissionKeys.forEach((permission) => {
+        if (permission) keys.add(String(permission));
+      });
+    }
+  });
+
+  return keys;
+}
+
+function hasLegacyProductInventoryPermission(
+  user: CurrentUserPermissionProfile | null,
+  permission: string,
+) {
+  return getScopedBranchPermissionRows(user).some((row) => {
+    if (permission === "products.view") return Boolean(row.canView);
+    if (permission === "inventory.view") return Boolean(row.canViewStock);
+    if (permission === "inventory.manage") return Boolean(row.canManageStock);
+    if (permission === "inventory.value.view") return Boolean(row.canViewMoney);
+    if (permission === "products.excel.export") return Boolean(row.canExportProductExcel);
+    if (permission === "products.excel.import") return Boolean(row.canImportProductExcel);
+    return false;
+  });
+}
+
+function hasProductInventoryPermission(
+  user: CurrentUserPermissionProfile | null,
+  role: AppRole,
+  permission: string,
+) {
+  if (isOwnerOrAdminUser(user)) return true;
+  return (
+    getCurrentUserPermissionKeys(user).has(permission) ||
+    hasLegacyProductInventoryPermission(user, permission) ||
+    hasPermission(role, permission as any)
+  );
+}
+
 
 function createEmptyBranchStocks(branches: BranchItem[]) {
   return Object.fromEntries(branches.map((branch) => [branch.id, "0"]));
@@ -393,7 +532,8 @@ export default function ProductDetailPageClient({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [role, setRole] = useState<AppRole>("admin");
+  const [role, setRole] = useState<AppRole>("retail-staff");
+  const [currentUser, setCurrentUser] = useState<CurrentUserPermissionProfile | null>(null);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [categories, setCategories] = useState<ProductCategoryItem[]>([]);
   const [product, setProduct] = useState<ProductItem | null>(null);
@@ -431,25 +571,77 @@ export default function ProductDetailPageClient({
   const [uploading, setUploading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
 
-  const isOwner = role === "admin" || role === "owner";
-  const canViewProduct = hasPermission(role, "products.view");
-  const canEditProduct = hasPermission(role, "products.edit");
-  const canEditProductPrice = hasPermission(role, "products.price.edit");
-  const canCreateProductVariant = hasPermission(
+  const isOwner = isOwnerOrAdminUser(currentUser);
+  const canViewProduct = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.view",
+  );
+  const canEditProduct = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.edit",
+  );
+  const canEditProductPrice = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.price.edit",
+  );
+  const canCreateProductVariant = hasProductInventoryPermission(
+    currentUser,
     role,
     "products.variant.create",
   );
-  const canToggleProductStatus = hasPermission(role, "products.status.edit");
-  const canViewCost = isOwner || hasPermission(role, "products.cost.view");
+  const canToggleProductStatus = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.status.edit",
+  );
+  const canViewInventory = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.view",
+  );
+  const canViewCost = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.cost.view",
+  );
+  const canViewInventoryValue = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.value.view",
+  );
 
-  const getAvailableQty = (variantId?: string, branchId?: string) => {
-    if (!variantId || !branchId) return 0;
-    return Number(
-      inventoryRows.find(
-        (row) => row.variantId === variantId && row.branchId === branchId,
-      )?.availableQty || 0,
-    );
-  };
+const getAvailableQty = (variantId?: string, branchId?: string) => {
+  if (!variantId || !branchId) return 0;
+
+  const inventoryMatch = inventoryRows.find(
+    (row) =>
+      String(row.variantId) === String(variantId) &&
+      String(row.branchId) === String(branchId),
+  );
+
+  if (inventoryMatch) {
+    return Number(inventoryMatch.availableQty || 0);
+  }
+
+  const variant = (product?.variants || []).find(
+    (v: any) => String(v.id) === String(variantId),
+  );
+
+  if (!variant) return 0;
+
+const vAny = variant as any;
+
+const branchStocks =
+  vAny.branchStocks ||
+  vAny.inventoryByBranch ||
+  vAny.stockByBranch ||
+  {};
+
+  return Number(branchStocks?.[branchId] || 0);
+};
 
   const getVariantTotalQty = (variantId?: string) => {
     if (!variantId) return 0;
@@ -551,30 +743,56 @@ export default function ProductDetailPageClient({
   };
 
   useEffect(() => {
-    const currentUser = getCurrentUserFromStorage();
-    if (currentUser?.role) setRole(currentUser.role as AppRole);
+    const storedUser = getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
+    if (storedUser) {
+      setCurrentUser(storedUser);
+      setRole(getPrimaryAppRole(storedUser));
+    }
+
+    apiJson("/auth/me")
+      .then((data) => {
+        const freshUser = (data?.user || data) as CurrentUserPermissionProfile | null;
+        if (!freshUser) return;
+
+        setCurrentUser(freshUser);
+        setRole(getPrimaryAppRole(freshUser));
+
+        try {
+          localStorage.setItem("currentUser", JSON.stringify(freshUser));
+          localStorage.setItem("the1970_current_user", JSON.stringify(freshUser));
+        } catch {
+          // ignore storage sync error
+        }
+      })
+      .catch(() => {
+        // giữ user local nếu auth/me lỗi
+      });
+
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
 
   const totalStock = useMemo(() => {
+    if (!canViewInventory) return 0;
     return inventoryRows.reduce(
       (sum, row) => sum + Number(row.availableQty || 0),
       0,
     );
-  }, [inventoryRows]);
+  }, [inventoryRows, canViewInventory]);
 
   const variantCount = product?.variants?.length || 0;
 
   const catalogValue = useMemo(() => {
+    if (!canViewInventoryValue) return 0;
     return (product?.variants || []).reduce((sum, variant) => {
       return (
         sum + getVariantTotalQty(variant.id) * Number(variant.costPrice || 0)
       );
     }, 0);
-  }, [product, inventoryRows]);
+  }, [product, inventoryRows, canViewInventoryValue]);
 
   const branchStockAlerts = useMemo(() => {
+    if (!canViewInventory) return [];
     return branches.map((branch) => {
       const qty = Number(branchStocks[branch.id] || 0);
       const tone =
@@ -595,7 +813,7 @@ export default function ProductDetailPageClient({
         label,
       };
     });
-  }, [branches, branchStocks]);
+  }, [branches, branchStocks, canViewInventory]);
 
   const criticalBranchCount = branchStockAlerts.filter(
     (item) => item.tone === "red",
