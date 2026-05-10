@@ -104,6 +104,45 @@ type EmployeeItem = {
 };
 
 const ROLE_STORAGE_KEY = "the1970.permission.enterprise.roleTemplates.v1";
+const CUSTOM_ROLE_STORAGE_KEY = "the1970.permission.enterprise.customRoleTemplates.v1";
+
+function normalizeRoleCodeForStorage(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
+function readCustomRoleTemplates(): RoleItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CUSTOM_ROLE_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCustomRoleTemplates(items: RoleItem[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CUSTOM_ROLE_STORAGE_KEY, JSON.stringify(items));
+}
+
+function getAllRoleTemplates() {
+  const merged = [...ROLE_TEMPLATES, ...readCustomRoleTemplates()];
+  const seen = new Set<string>();
+  return merged.filter((role) => {
+    if (!role.id || seen.has(role.id)) return false;
+    seen.add(role.id);
+    return true;
+  });
+}
 
 const AUDIT_STORAGE_KEY = "the1970.permission.audit.timeline.v1";
 
@@ -156,6 +195,7 @@ const MODULE_HEALTH = [
   { module: "Kiểm kho", backend: "stocktake.*", status: "ready", note: "Session/scan/apply/export đã chặn backend." },
   { module: "Nhập kho", backend: "purchase_receipt.*", status: "ready", note: "Pay/import stock/cancel đã có guard." },
   { module: "Inventory", backend: "inventory.*", status: "ready", note: "Adjust/transfer/import/audit đã có guard." },
+  { module: "Phiếu thu / chi", backend: "cash_voucher.*", status: "watch", note: "Đã có permission catalog; cần gắn controller guard khi triển khai API phiếu thu/chi." },
   { module: "Tài chính", backend: "finance.*", status: "watch", note: "Nên audit tiếp các endpoint reconciliation chuyên sâu." },
 ];
 
@@ -275,7 +315,7 @@ const PERMISSION_MODULES: PermissionModule[] = [
     icon: "📥",
     tone: "green",
     actions: [
-      { key: "menu.purchase_receipts", label: "Mở menu Phiếu nhập", risk: "low" },
+      { key: "menu.purchase_receipt", label: "Mở menu Phiếu nhập", risk: "low" },
       { key: "purchase_receipt.view", label: "Xem phiếu nhập", risk: "low" },
       { key: "purchase_receipt.create", label: "Tạo phiếu nhập", risk: "high" },
       { key: "purchase_receipt.edit", label: "Sửa phiếu nhập", risk: "high" },
@@ -286,6 +326,30 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "purchase_receipt.cancel", label: "Hủy phiếu nhập", risk: "critical" },
       { key: "purchase_receipt.cost.view", label: "Xem giá nhập", risk: "critical" },
       { key: "purchase_receipt.cost.edit", label: "Sửa giá nhập", risk: "critical" },
+    ],
+  },
+  {
+    id: "cash_voucher",
+    title: "Phiếu thu / Phiếu chi",
+    subtitle: "Quản lý phiếu thu tiền, phiếu chi tiền, xác nhận quỹ, huỷ chứng từ và audit tài chính.",
+    icon: "💰",
+    tone: "rose",
+    actions: [
+      { key: "menu.cash_voucher", label: "Mở menu Phiếu thu / chi", risk: "low" },
+      { key: "cash_voucher.view", label: "Xem phiếu thu / chi", risk: "low" },
+
+      { key: "cash_voucher.create_receipt", label: "Tạo phiếu thu", risk: "high" },
+      { key: "cash_voucher.edit_receipt", label: "Sửa phiếu thu", risk: "high" },
+      { key: "cash_voucher.confirm_receipt", label: "Xác nhận phiếu thu", risk: "critical" },
+      { key: "cash_voucher.cancel_receipt", label: "Huỷ phiếu thu", risk: "critical" },
+
+      { key: "cash_voucher.create_payment", label: "Tạo phiếu chi", risk: "high" },
+      { key: "cash_voucher.edit_payment", label: "Sửa phiếu chi", risk: "high" },
+      { key: "cash_voucher.confirm_payment", label: "Xác nhận phiếu chi", risk: "critical" },
+      { key: "cash_voucher.cancel_payment", label: "Huỷ phiếu chi", risk: "critical" },
+
+      { key: "cash_voucher.export", label: "Xuất Excel/PDF phiếu", risk: "medium" },
+      { key: "cash_voucher.audit", label: "Xem audit phiếu thu / chi", risk: "critical" },
     ],
   },
   {
@@ -378,6 +442,40 @@ const ROLE_TEMPLATES: RoleItem[] = [
     ],
   },
   {
+    id: "accountant",
+    name: "Kế toán",
+    scope: "ALL_BRANCHES",
+    description: "Quản lý phiếu thu/chi, đối soát, nguồn tiền và nghiệp vụ tài chính.",
+    badge: "Finance",
+    tone: "rose",
+    defaultPermissionKeys: [
+      "menu.finance",
+      "menu.finance_local_delivery",
+      "menu.finance_ghn_reconciliation",
+      "menu.cash_voucher",
+      "finance.view",
+      "finance.local_delivery.view",
+      "finance.local_delivery.confirm",
+      "finance.ghn.view",
+      "finance.ghn.import",
+      "finance.payment_source.manage",
+      "cash_voucher.view",
+      "cash_voucher.create_receipt",
+      "cash_voucher.edit_receipt",
+      "cash_voucher.confirm_receipt",
+      "cash_voucher.cancel_receipt",
+      "cash_voucher.create_payment",
+      "cash_voucher.edit_payment",
+      "cash_voucher.confirm_payment",
+      "cash_voucher.cancel_payment",
+      "cash_voucher.export",
+      "cash_voucher.audit",
+      "orders.view",
+      "purchase_receipt.view",
+      "inventory.value.view",
+    ],
+  },
+  {
     id: "branch-manager",
     name: "Quản lý chi nhánh",
     scope: "ONE_BRANCH",
@@ -417,6 +515,10 @@ const ROLE_TEMPLATES: RoleItem[] = [
       "customers.view",
       "customers.create",
       "customers.edit",
+      "menu.cash_voucher",
+      "cash_voucher.view",
+      "cash_voucher.create_receipt",
+      "cash_voucher.create_payment",
     ],
   },
   {
@@ -566,7 +668,7 @@ function normalizeRole(value?: any) {
 }
 
 function getRoleTemplate(roleCode?: string | null) {
-  return ROLE_TEMPLATES.find((role) => role.id === normalizeRole(roleCode));
+  return getAllRoleTemplates().find((role) => role.id === normalizeRole(roleCode));
 }
 
 function getRoleName(roleCode?: string | null) {
@@ -767,7 +869,7 @@ function mapApiStaffToEmployee(item: any): EmployeeItem {
 }
 
 function buildEmployeeTree(employees: EmployeeItem[], branches: BranchItem[]) {
-  return ROLE_TEMPLATES.map((role) => {
+  return getAllRoleTemplates().map((role) => {
     const roleEmployees = employees.filter((employee) => employee.roles.includes(role.id) || employee.roleId === role.id);
     const branchGroups = branches
       .map((branch) => ({
@@ -963,6 +1065,14 @@ export default function PermissionsPageClient() {
   const [secondPasswordForId, setSecondPasswordForId] = useState<string | null>(null);
   const [securitySavingForId, setSecuritySavingForId] = useState<string | null>(null);
 
+  const [customRoleTemplates, setCustomRoleTemplates] = useState<RoleItem[]>([]);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleCode, setNewRoleCode] = useState("");
+  const [newRoleDescription, setNewRoleDescription] = useState("");
+  const [newRoleScope, setNewRoleScope] = useState<RoleScope>("ONE_BRANCH");
+  const [newRoleBase, setNewRoleBase] = useState("retail-staff");
+  const [deletingEmployeeId, setDeletingEmployeeId] = useState<string | null>(null);
+
   const [auditTimeline, setAuditTimeline] = useState<PermissionAuditEvent[]>([]);
   const [lastDiff, setLastDiff] = useState<{ added: string[]; removed: string[] }>({ added: [], removed: [] });
   const [showPreview, setShowPreview] = useState(true);
@@ -998,6 +1108,7 @@ export default function PermissionsPageClient() {
 
   useEffect(() => {
     setAuditTimeline(readAuditTimeline());
+    setCustomRoleTemplates(readCustomRoleTemplates());
   }, []);
 
 
@@ -1335,9 +1446,88 @@ export default function PermissionsPageClient() {
     }
   };
 
+  const createCustomRoleTemplate = () => {
+    const cleanName = newRoleName.trim();
+    const cleanCode = normalizeRoleCodeForStorage(newRoleCode || cleanName);
+
+    if (!cleanName || !cleanCode) {
+      setMessage("Thiếu tên hoặc mã vai trò.");
+      return;
+    }
+
+    if (getAllRoleTemplates().some((role) => role.id === cleanCode)) {
+      setMessage("Mã vai trò đã tồn tại. Hãy chọn mã khác.");
+      return;
+    }
+
+    const baseRole = getRoleTemplate(newRoleBase) || getRoleTemplate("retail-staff");
+    const nextRole: RoleItem = {
+      id: cleanCode,
+      name: cleanName,
+      scope: newRoleScope,
+      description: newRoleDescription.trim() || `Vai trò tuỳ chỉnh: ${cleanName}`,
+      badge: "Custom Role",
+      tone: "cyan",
+      defaultPermissionKeys: [...(baseRole?.defaultPermissionKeys || [])],
+    };
+
+    const next = [...customRoleTemplates, nextRole];
+    setCustomRoleTemplates(next);
+    writeCustomRoleTemplates(next);
+
+    setNewRoleName("");
+    setNewRoleCode("");
+    setNewRoleDescription("");
+    setNewRoleBase("retail-staff");
+    setNewRoleScope("ONE_BRANCH");
+    setMessage("Đã tạo vai trò mới. Chọn nhân viên/chi nhánh rồi áp vai trò này để lưu vào quyền thực tế.");
+  };
+
+  const deleteCustomRoleTemplate = (roleId: string) => {
+    const role = customRoleTemplates.find((item) => item.id === roleId);
+    if (!role) return;
+
+    const usedBy = employees.filter((employee) => employee.roles.includes(roleId) || employee.roleId === roleId);
+    if (usedBy.length > 0) {
+      setMessage(`Không thể xoá vai trò "${role.name}" vì đang có ${usedBy.length} nhân viên sử dụng.`);
+      return;
+    }
+
+    const next = customRoleTemplates.filter((item) => item.id !== roleId);
+    setCustomRoleTemplates(next);
+    writeCustomRoleTemplates(next);
+    setMessage("Đã xoá vai trò tuỳ chỉnh.");
+  };
+
+  const deleteEmployee = async () => {
+    if (!selectedEmployee) return;
+
+    const ok = window.confirm(
+      `Xoá nhân viên ${selectedEmployee.name} (${selectedEmployee.code})?\n\nKhuyến nghị: chỉ xoá khi tạo nhầm. Nếu nhân viên đã có lịch sử đơn/kho, nên dùng Khoá tài khoản.`,
+    );
+    if (!ok) return;
+
+    try {
+      setDeletingEmployeeId(selectedEmployee.id);
+      await apiJson(`/staff/${selectedEmployee.id}`, { method: "DELETE" });
+      setMessage("Đã xoá nhân viên.");
+      setSelectedEmployeeId(null);
+      await loadEmployees();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Xoá nhân viên thất bại. Nếu backend chưa có DELETE /staff/:id, dùng Khoá tài khoản trước.",
+      );
+    } finally {
+      setDeletingEmployeeId(null);
+    }
+  };
+
   const saveRoleTemplates = () => {
     try {
-      localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(ROLE_TEMPLATES));
+      localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(getAllRoleTemplates()));
+      writeCustomRoleTemplates(customRoleTemplates);
       setMessage("Đã ghi nhận role template local. Quyền thực tế vẫn lưu theo từng nhân viên/chi nhánh.");
     } catch {
       setMessage("Không lưu được template local.");
@@ -1526,6 +1716,31 @@ export default function PermissionsPageClient() {
                 <input value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Địa chỉ" />
               </div>
             ) : null}
+
+            {selectedEmployee ? (
+              <div className="mt-4 grid gap-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 md:grid-cols-[1fr_auto_1fr_auto]">
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="h-11 rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none"
+                  placeholder="Mật khẩu mới"
+                />
+                <Button variant="secondary" onClick={changePassword} loading={securitySavingForId === selectedEmployee.id}>
+                  Lưu mật khẩu
+                </Button>
+                <input
+                  inputMode="numeric"
+                  value={secondPassword}
+                  onChange={(e) => setSecondPassword(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  className="h-11 rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none"
+                  placeholder="PIN bảo mật 6 số"
+                />
+                <Button variant="secondary" onClick={changeSecondPassword} loading={securitySavingForId === selectedEmployee.id}>
+                  Lưu PIN
+                </Button>
+              </div>
+            ) : null}
           </Panel>
 
           <div className="grid gap-5 lg:grid-cols-[250px_1fr]">
@@ -1588,7 +1803,7 @@ export default function PermissionsPageClient() {
                     ))}
                   </select>
                   <div className="flex flex-wrap gap-2">
-                    {ROLE_TEMPLATES.filter((role) => role.scope === "ONE_BRANCH").map((role) => (
+                    {getAllRoleTemplates().filter((role) => role.scope === "ONE_BRANCH").map((role) => (
                       <button
                         key={role.id}
                         type="button"
@@ -1682,7 +1897,7 @@ export default function PermissionsPageClient() {
                         onChange={(e) => changeBranchRole(branch.id, e.target.value)}
                         className="mt-3 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm outline-none"
                       >
-                        {ROLE_TEMPLATES.filter((role) => role.scope === "ONE_BRANCH" || role.id === "admin").map((role) => (
+                        {getAllRoleTemplates().filter((role) => role.scope === "ONE_BRANCH" || role.id === "admin").map((role) => (
                           <option key={role.id} value={role.id}>{role.name}</option>
                         ))}
                       </select>
@@ -1690,6 +1905,94 @@ export default function PermissionsPageClient() {
                   </div>
                 );
               })}
+            </div>
+          </Panel>
+
+          <Panel className="p-5">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Role Template Studio</p>
+            <h3 className="mt-1 text-xl font-black">Tạo vai trò mới</h3>
+            <p className="mt-1 text-xs text-neutral-500">
+              Tạo role tuỳ chỉnh từ mẫu có sẵn, sau đó áp vào từng chi nhánh của nhân viên.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <input
+                value={newRoleName}
+                onChange={(e) => {
+                  setNewRoleName(e.target.value);
+                  if (!newRoleCode) setNewRoleCode(normalizeRoleCodeForStorage(e.target.value));
+                }}
+                className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
+                placeholder="Tên vai trò mới, ví dụ: Thu ngân Quốc Oai"
+              />
+              <input
+                value={newRoleCode}
+                onChange={(e) => setNewRoleCode(normalizeRoleCodeForStorage(e.target.value))}
+                className="h-11 w-full rounded-2xl border border-neutral-200 px-3 font-mono text-sm outline-none"
+                placeholder="ma-vai-tro"
+              />
+              <textarea
+                value={newRoleDescription}
+                onChange={(e) => setNewRoleDescription(e.target.value)}
+                className="min-h-20 w-full rounded-2xl border border-neutral-200 px-3 py-3 text-sm outline-none"
+                placeholder="Mô tả vai trò"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={newRoleBase}
+                  onChange={(e) => setNewRoleBase(e.target.value)}
+                  className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
+                >
+                  {getAllRoleTemplates().map((role) => (
+                    <option key={role.id} value={role.id}>Copy từ {role.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={newRoleScope}
+                  onChange={(e) => setNewRoleScope(e.target.value as RoleScope)}
+                  className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
+                >
+                  <option value="ONE_BRANCH">Theo chi nhánh</option>
+                  <option value="ALL_BRANCHES">Toàn hệ thống</option>
+                </select>
+              </div>
+              <Button onClick={createCustomRoleTemplate} className="w-full">
+                Tạo vai trò mới
+              </Button>
+            </div>
+
+            {customRoleTemplates.length ? (
+              <div className="mt-4 space-y-2">
+                {customRoleTemplates.map((role) => (
+                  <div key={role.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-black">{role.name}</p>
+                        <p className="font-mono text-[11px] text-neutral-400">{role.id}</p>
+                      </div>
+                      <Button variant="danger" onClick={() => deleteCustomRoleTemplate(role.id)}>
+                        Xoá
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </Panel>
+
+          <Panel className="border-red-200 bg-red-50 p-5">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-red-500">Danger Zone</p>
+            <h3 className="mt-1 text-xl font-black text-red-950">Khoá / xoá nhân viên</h3>
+            <p className="mt-1 text-xs text-red-700">
+              Khoá tài khoản là lựa chọn an toàn. Chỉ xoá nhân viên nếu tạo nhầm và chưa có dữ liệu vận hành.
+            </p>
+            <div className="mt-4 grid gap-2">
+              <Button variant="danger" disabled={!selectedEmployee} onClick={toggleEmployeeStatus} loading={savingEmployeeId === selectedEmployee?.id}>
+                {selectedEmployee?.status === "ACTIVE" ? "Khoá tài khoản nhân viên" : "Mở khoá tài khoản nhân viên"}
+              </Button>
+              <Button variant="danger" disabled={!selectedEmployee} onClick={deleteEmployee} loading={deletingEmployeeId === selectedEmployee?.id}>
+                Xoá nhân viên
+              </Button>
             </div>
           </Panel>
 

@@ -56,6 +56,8 @@ const MENU: MenuItem[] = [
     permission: PERMISSIONS.MENU_FINANCE,
     children: [
       { href: "/finance/daily", label: "Tổng quan dòng tiền", permission: PERMISSIONS.MENU_FINANCE },
+      { href: "/finance/cash-receipts", label: "Phiếu thu", permission: "menu.cash_voucher" },
+      { href: "/finance/cash-payments", label: "Phiếu chi", permission: "menu.cash_voucher" },
       { href: "/finance/ghn-reconciliation", label: "Đối soát COD GHN", permission: PERMISSIONS.MENU_SHIPPING_RECONCILE },
       { href: "/finance/local-delivery", label: "Đối soát nội thành", permission: PERMISSIONS.MENU_SHIPPING_RECONCILE },
       { href: "/finance/revenue", label: "Báo cáo doanh thu", permission: PERMISSIONS.MENU_REPORTS },
