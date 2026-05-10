@@ -47,14 +47,16 @@ function parseStructuredNote(note?: string) {
 }
 
 function barcodeUrl(data: string) {
+  // showhrt/hidehrt dùng để tắt dòng chữ nhỏ tự sinh dưới barcode.
+  // Một số trình sinh barcode có thể bỏ qua tham số này, nên phía render còn crop phần đáy ảnh thêm 1 lớp.
   return `https://barcode.tec-it.com/barcode.ashx?data=${encodeURIComponent(
-    data || "EMPTY"
-  )}&code=Code128&dpi=96`;
+    data || "EMPTY",
+  )}&code=Code128&dpi=96&showhrt=false&hidehrt=true`;
 }
 
 function qrUrl(data: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(
-    data || "EMPTY"
+    data || "EMPTY",
   )}`;
 }
 
@@ -65,7 +67,6 @@ function replaceAllTokens(template: string, data: Record<string, string>) {
   });
   return html;
 }
-
 
 function getCleanPrintItemName(item: any) {
   const productName =
@@ -79,11 +80,7 @@ function getCleanPrintItemName(item: any) {
   const size = getItemSize(item);
   const color = getItemColor(item);
 
-  return [
-    productName,
-    size ? `Size ${size}` : "",
-    color ? `Màu ${color}` : "",
-  ]
+  return [productName, size ? `Size ${size}` : "", color ? `Màu ${color}` : ""]
     .filter(Boolean)
     .join(" - ");
 }
@@ -97,8 +94,8 @@ function buildItemsRows(order: any, type: string) {
 
   if (type === "sales") {
     return items
-      .map(
-        (item: any) => `
+      .map((item: any) =>
+        `
 <tr>
   <td style="padding:4px 0; border-bottom:1px dashed #ddd;">
     ${escapeHtml(getItemName(item))}
@@ -112,14 +109,14 @@ function buildItemsRows(order: any, type: string) {
   <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(getItemUnitPrice(item))}</td>
   <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(getItemLineTotal(item))}</td>
 </tr>
-        `.trim()
+        `.trim(),
       )
       .join("");
   }
 
   return items
-    .map(
-      (item: any) => `
+    .map((item: any) =>
+      `
 <tr>
   <td style="padding:2px 0; border-bottom:1px dashed #ddd;">
     <div style="font-size:11px;font-weight:600;line-height:1.2;">
@@ -128,11 +125,73 @@ function buildItemsRows(order: any, type: string) {
   </td>
   <td style="padding:2px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>
 </tr>
-      `.trim()
+      `.trim(),
     )
     .join("");
 }
 
+function templateFieldVisible(
+  template: PrintTemplateConfig,
+  key:
+    | "showOrderCode"
+    | "showCreatedAt"
+    | "showCustomerName"
+    | "showCustomerPhone"
+    | "showShippingAddress"
+    | "showItems"
+    | "showItemQty"
+    | "showFooter",
+) {
+  return (template as any)?.[key] !== false;
+}
+
+function buildItemsRowsForPrint(order: any, type: string, showQty = true) {
+  const items = Array.isArray(order?.items) ? order.items : [];
+
+  if (!items.length) {
+    return `<tr><td colspan="${showQty ? 2 : 1}" style="padding:4px 0;color:#777;">Chưa có dữ liệu sản phẩm</td></tr>`;
+  }
+
+  if (type === "sales") {
+    return items
+      .map((item: any) => {
+        const name = escapeHtml(getItemName(item));
+        const sku = escapeHtml(getItemSku(item));
+        const color = getItemColor(item)
+          ? ` · ${escapeHtml(getItemColor(item))}`
+          : "";
+        const size = getItemSize(item)
+          ? ` / ${escapeHtml(getItemSize(item))}`
+          : "";
+        return `
+<tr>
+  <td style="padding:4px 0; border-bottom:1px dashed #ddd;">
+    ${name}
+    <div style="font-size:10px; color:#666;">${sku}${color}${size}</div>
+  </td>
+  ${showQty ? `<td style="padding:4px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>` : ""}
+  <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(getItemUnitPrice(item))}</td>
+  <td style="padding:4px 0; text-align:right; border-bottom:1px dashed #ddd;">${money(getItemLineTotal(item))}</td>
+</tr>`.trim();
+      })
+      .join("");
+  }
+
+  return items
+    .map((item: any) =>
+      `
+<tr>
+  <td style="padding:2px 0; border-bottom:1px dashed #ddd;">
+    <div style="font-size:11px;font-weight:600;line-height:1.2;">
+      ${escapeHtml(getCleanPrintItemName(item))}
+    </div>
+  </td>
+  ${showQty ? `<td style="padding:2px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>` : ""}
+</tr>
+      `.trim(),
+    )
+    .join("");
+}
 
 function normalizeTextForCompare(value: any) {
   return String(value || "")
@@ -142,13 +201,12 @@ function normalizeTextForCompare(value: any) {
     .trim();
 }
 
-
 function stripPhoneNoiseFromAddress(value: any) {
   let text = String(value || "");
 
   text = text.replace(
     /([,;.\s]|^)(đt|dt|sđt|sdt|phone|tel|điện thoại)\s*[:.]?\s*0\d{8,11}.*$/gi,
-    ""
+    "",
   );
 
   text = text.replace(/[,\s]*0\d{8,11}.*$/g, "");
@@ -198,7 +256,6 @@ function cleanAddressText(value: any) {
   return unique.join(", ");
 }
 
-
 function pickPureShippingAddress(order: any) {
   // Chỉ lấy trường địa chỉ giao hàng thuần.
   // Không lấy note/ghi chú/formatted address từ hãng vận chuyển.
@@ -223,10 +280,7 @@ function pickPureShippingAddress(order: any) {
 
 function buildShippingNote(order: any) {
   const raw =
-    order?.shippingNote ||
-    order?.deliveryNote ||
-    order?.noteForCarrier ||
-    "";
+    order?.shippingNote || order?.deliveryNote || order?.noteForCarrier || "";
 
   const note = String(raw || "").trim();
   if (!note) return "";
@@ -297,12 +351,38 @@ function getItemSku(item: any) {
   return item?.sku || item?.variant?.sku || "";
 }
 
+function looksLikeSize(value: any) {
+  const text = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!text) return false;
+
+  return (
+    /^(XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|5XL)$/.test(text) ||
+    /^(2[6-9]|3[0-9]|4[0-8])$/.test(text) ||
+    /^(28|29|30|31|32|33|34|35|36|38|40|42)$/.test(text)
+  );
+}
+
+function resolveItemSizeColor(item: any) {
+  let size = String(item?.size || item?.variant?.size || "").trim();
+  let color = String(item?.color || item?.variant?.color || "").trim();
+
+  // Một số order/variant cũ bị map ngược attribute: size=THAN, color=M.
+  // Nếu màu đang là size thật còn size không giống size, tự đảo lại trước khi in.
+  if (color && size && looksLikeSize(color) && !looksLikeSize(size)) {
+    return { size: color, color: size };
+  }
+
+  return { size, color };
+}
+
 function getItemColor(item: any) {
-  return item?.color || item?.variant?.color || "";
+  return resolveItemSizeColor(item).color;
 }
 
 function getItemSize(item: any) {
-  return item?.size || item?.variant?.size || "";
+  return resolveItemSizeColor(item).size;
 }
 
 function getItemQty(item: any) {
@@ -315,10 +395,9 @@ function getItemUnitPrice(item: any) {
 
 function getItemLineTotal(item: any) {
   return Number(
-    item?.lineTotal ?? item?.total ?? getItemQty(item) * getItemUnitPrice(item)
+    item?.lineTotal ?? item?.total ?? getItemQty(item) * getItemUnitPrice(item),
   );
 }
-
 
 function shortenNote(value?: string, max = 140) {
   const text = String(value || "").trim();
@@ -326,7 +405,10 @@ function shortenNote(value?: string, max = 140) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-function buildCleanNote(order: any, meta: ReturnType<typeof parseStructuredNote>) {
+function buildCleanNote(
+  order: any,
+  meta: ReturnType<typeof parseStructuredNote>,
+) {
   const preferred = meta.shippingNote || meta.noteText || "";
   if (preferred) return shortenNote(preferred, 140);
 
@@ -395,15 +477,17 @@ function buildShippingTemplateHtml(params: {
 
  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:8mm;height:13mm;border-top:1px solid #111;padding-top:1mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
     <div style="text-align:center;">
-      ${hasTracking && template.showBarcode
-        ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
-        : ""
+      ${
+        hasTracking && template.showBarcode
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
+          : ""
       }
     </div>
     <div style="text-align:center;">
-      ${hasTracking && template.showQr
-        ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
-        : ""
+      ${
+        hasTracking && template.showQr
+          ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
+          : ""
       }
     </div>
   </div>
@@ -446,15 +530,17 @@ function buildShippingTemplateHtml(params: {
     </table>
   </div>
 
-  ${hasTracking && template.showBarcode
+  ${
+    hasTracking && template.showBarcode
       ? `<div style="text-align:center;margin:10px 0 6px;"><img src="${barcodeUrl(trackingCode)}" style="max-width:100%;height:72px;object-fit:contain;" /></div>`
       : ""
-    }
+  }
 
-  ${hasTracking && template.showQr
+  ${
+    hasTracking && template.showQr
       ? `<div style="text-align:center;margin-top:6px;"><img src="${qrUrl(trackingCode)}" style="width:96px;height:96px;object-fit:contain;" /></div>`
       : ""
-    }
+  }
 
 </div>
   `.trim();
@@ -472,9 +558,10 @@ function buildSalesTemplateHtml(params: {
     <div style="font-size:18px;font-weight:700;letter-spacing:.4px;">
       ${data.storeName}
     </div>
-    ${data.storeAddress
-      ? `<div style="font-size:11px;margin-top:2px;">${data.storeAddress}</div>`
-      : ""
+    ${
+      data.storeAddress
+        ? `<div style="font-size:11px;margin-top:2px;">${data.storeAddress}</div>`
+        : ""
     }
   </div>
 
@@ -520,19 +607,19 @@ function buildSalesTemplateHtml(params: {
     </tr>
   </table>
 
-  ${data.note
+  ${
+    data.note
       ? `
     <div style="margin-top:8px;border-top:1px dashed #999;padding-top:6px;">
       <div><strong>Ghi chú:</strong> ${data.note}</div>
     </div>
   `
       : ""
-    }
+  }
 
 </div>
   `.trim();
 }
-
 
 export type ProductLabelPrintItem = {
   productName?: string;
@@ -560,6 +647,62 @@ export type ProductLabelPrintItem = {
   product?: { name?: string };
 };
 
+export type ProductLabelPrintOptions = {
+  gapMm?: number;
+  scale?: number;
+  paperWidthMm?: number;
+  paperHeightMm?: number;
+  showProductName?: boolean;
+  showBarcode?: boolean;
+  showSku?: boolean;
+  showSize?: boolean;
+  showColor?: boolean;
+  showPrice?: boolean;
+  showQr?: boolean;
+  showWebsite?: boolean;
+  showRecycle?: boolean;
+  showMadeInVietnam?: boolean;
+  barcodeWidthMm?: number;
+  barcodeHeightMm?: number;
+  qrSizeMm?: number;
+};
+
+function normalizeLabelOptions(options?: ProductLabelPrintOptions) {
+  return {
+    gapMm: Number.isFinite(Number(options?.gapMm))
+      ? Number(options?.gapMm)
+      : 0.4,
+    scale: Number.isFinite(Number(options?.scale))
+      ? Number(options?.scale)
+      : 100,
+    paperWidthMm: Number.isFinite(Number(options?.paperWidthMm))
+      ? Number(options?.paperWidthMm)
+      : 50,
+    paperHeightMm: Number.isFinite(Number(options?.paperHeightMm))
+      ? Number(options?.paperHeightMm)
+      : 50,
+    showProductName: options?.showProductName !== false,
+    showBarcode: options?.showBarcode !== false,
+    showSku: options?.showSku !== false,
+    showSize: options?.showSize !== false,
+    showColor: options?.showColor !== false,
+    showPrice: options?.showPrice !== false,
+    showQr: options?.showQr !== false,
+    showWebsite: options?.showWebsite !== false,
+    showRecycle: options?.showRecycle !== false,
+    showMadeInVietnam: options?.showMadeInVietnam !== false,
+    barcodeWidthMm: Number.isFinite(Number(options?.barcodeWidthMm))
+      ? Number(options?.barcodeWidthMm)
+      : 47,
+    barcodeHeightMm: Number.isFinite(Number(options?.barcodeHeightMm))
+      ? Number(options?.barcodeHeightMm)
+      : 10.2,
+    qrSizeMm: Number.isFinite(Number(options?.qrSizeMm))
+      ? Number(options?.qrSizeMm)
+      : 13,
+  };
+}
+
 function formatLabelPrice(value: any) {
   const amount = Number(value || 0);
   if (!amount) return "";
@@ -577,7 +720,9 @@ function getProductLabelName(item: ProductLabelPrintItem) {
 }
 
 function getProductLabelSku(item: ProductLabelPrintItem) {
-  return item?.sku || item?.variantSku || item?.variant?.sku || item?.barcode || "";
+  return (
+    item?.sku || item?.variantSku || item?.variant?.sku || item?.barcode || ""
+  );
 }
 
 function getProductLabelSize(item: ProductLabelPrintItem) {
@@ -622,21 +767,23 @@ function buildProductLabelData(item: ProductLabelPrintItem) {
 export function renderProductLabelTemplateHtml(params: {
   item: ProductLabelPrintItem;
   template?: PrintTemplateConfig | null;
+  options?: ProductLabelPrintOptions;
 }) {
-  const { item, template } = params;
+  const { item, template, options } = params;
+  const labelOptions = normalizeLabelOptions(options);
   const data = buildProductLabelData(item);
 
   const defaultHtml = `
 <div style="width:50mm;height:50mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#111;font-family:Arial,sans-serif;border:1px solid #777;border-radius:1.4mm;overflow:hidden;position:relative;padding:1.2mm;">
   <div style="display:grid;grid-template-columns:1fr 5mm 1fr;align-items:center;font-size:5px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;height:4.6mm;border-bottom:1px solid #999;">
-    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">THE 1970.VN®</div>
-    <div style="text-align:center;font-size:10px;line-height:1;">♻</div>
-    <div style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MADE IN VIETNAM</div>
+    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{websiteText}}</div>
+    <div style="text-align:center;font-size:10px;line-height:1;">{{recycleText}}</div>
+    <div style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{madeInText}}</div>
   </div>
 
   <div style="position:absolute;left:1.2mm;right:1.2mm;top:6mm;height:17mm;text-align:center;border-left:1px solid #999;border-right:1px solid #999;">
     <div style="font-size:8px;font-weight:900;line-height:1.1;height:4.2mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 .8mm;">{{productName}}</div>
-    <div style="height:9mm;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{barcodeBlock}}</div>
+    <div style="height:9.8mm;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{barcodeBlock}}</div>
     <div style="font-size:10px;font-weight:900;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{sku}}</div>
   </div>
 
@@ -655,38 +802,47 @@ export function renderProductLabelTemplateHtml(params: {
 </div>
 `.trim();
 
-  const html = template?.templateHtml || defaultHtml;
+  const html = (template?.templateHtml || defaultHtml).replace(
+    /width:50mm;height:50mm;/,
+    `width:${labelOptions.paperWidthMm}mm;height:${labelOptions.paperHeightMm}mm;`,
+  );
 
   return replaceAllTokens(html, {
-    productName: data.productName,
-    sku: data.sku,
-    size: data.size,
-    color: data.color,
-    price: data.price,
+    websiteText: labelOptions.showWebsite ? "THE 1970.VN®" : "",
+    recycleText: labelOptions.showRecycle ? "♻" : "",
+    madeInText: labelOptions.showMadeInVietnam ? "MADE IN VIETNAM" : "",
+    productName: labelOptions.showProductName ? data.productName : "",
+    sku: labelOptions.showSku ? data.sku : "",
+    size: labelOptions.showSize ? data.size : "",
+    color: labelOptions.showColor ? data.color : "",
+    price: labelOptions.showPrice ? data.price : "",
     barcodeValue: escapeHtml(data.barcodeValue),
     qrValue: escapeHtml(data.qrValue),
     barcodeBlock:
-      template?.showBarcode === false
+      template?.showBarcode === false || !labelOptions.showBarcode
         ? ""
-        : `<img src="${barcodeUrl(data.barcodeValue)}" style="width:38mm;height:8.5mm;object-fit:contain;display:block;margin:0 auto;" />`,
+        : `<div style="width:${labelOptions.barcodeWidthMm}mm;height:${labelOptions.barcodeHeightMm}mm;overflow:hidden;display:flex;align-items:flex-start;justify-content:center;margin:0 auto;"><img src="${barcodeUrl(data.barcodeValue)}" style="width:${labelOptions.barcodeWidthMm}mm;height:${labelOptions.barcodeHeightMm + 6}mm;object-fit:fill;display:block;margin:0 auto;transform:translateY(-1.6mm);" /></div>`,
     qrBlock:
-      template?.showQr === false
+      template?.showQr === false || !labelOptions.showQr
         ? ""
-        : `<img src="${qrUrl(data.qrValue)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`,
+        : `<img src="${qrUrl(data.qrValue)}" style="width:${labelOptions.qrSizeMm}mm;height:${labelOptions.qrSizeMm}mm;object-fit:contain;display:block;margin:0 auto;" />`,
   });
 }
 
 export function renderProductLabelsHtml(params: {
   items: ProductLabelPrintItem[];
   template?: PrintTemplateConfig | null;
+  options?: ProductLabelPrintOptions;
 }) {
-  const { items, template } = params;
+  const { items, template, options } = params;
   const pages: string[] = [];
 
   items.forEach((item) => {
     const qty = getProductLabelQty(item);
     for (let index = 0; index < qty; index += 1) {
-      pages.push(`<div class="print-page">${renderProductLabelTemplateHtml({ item, template })}</div>`);
+      pages.push(
+        `<div class="print-page"><div class="print-page-inner">${renderProductLabelTemplateHtml({ item, template, options })}</div></div>`,
+      );
     }
   });
 
@@ -697,14 +853,24 @@ export function openProductLabelPrintDocument(params: {
   title?: string;
   items: ProductLabelPrintItem[];
   template?: PrintTemplateConfig | null;
+  options?: ProductLabelPrintOptions;
 }) {
-  const { title = "In tem sản phẩm", items, template } = params;
-  const bodyHtml = renderProductLabelsHtml({ items, template });
+  const { title = "In tem sản phẩm", items, template, options } = params;
+  const labelOptions = normalizeLabelOptions(options);
+  const bodyHtml = renderProductLabelsHtml({
+    items,
+    template,
+    options: labelOptions,
+  });
 
   openPrintDocument({
     title,
     paperSize: "50mm",
     bodyHtml,
+    labelGapMm: labelOptions.gapMm,
+    labelScale: labelOptions.scale,
+    customPageWidthMm: labelOptions.paperWidthMm,
+    customPageHeightMm: labelOptions.paperHeightMm,
   });
 }
 
@@ -719,7 +885,7 @@ export function renderOrderTemplateHtml(params: {
 
   const codAmount = Number(order?.shipment?.codAmount || 0);
   const shippingFee = Number(
-    order?.shipment?.shippingFee || order?.shippingFee || 0
+    order?.shipment?.shippingFee || order?.shippingFee || 0,
   );
   const finalAmount = Number(order?.finalAmount || 0);
   const subtotal = Number(order?.totalAmount || finalAmount);
@@ -731,34 +897,134 @@ export function renderOrderTemplateHtml(params: {
         ? codAmount
         : finalAmount;
 
-  const itemCount = Array.isArray(order?.items) ? order.items.reduce((sum: number, item: any) => sum + getItemQty(item), 0) : 0;
-  const itemsRows = buildItemsRows(order, template.templateType);
+  const itemCount = Array.isArray(order?.items)
+    ? order.items.reduce((sum: number, item: any) => sum + getItemQty(item), 0)
+    : 0;
+
+  const showOrderCode = templateFieldVisible(template, "showOrderCode");
+  const showCreatedAt = templateFieldVisible(template, "showCreatedAt");
+  const showCustomerName = templateFieldVisible(template, "showCustomerName");
+  const showCustomerPhone = templateFieldVisible(template, "showCustomerPhone");
+  const showShippingAddress = templateFieldVisible(
+    template,
+    "showShippingAddress",
+  );
+  const showItems = templateFieldVisible(template, "showItems");
+  const showItemQty = templateFieldVisible(template, "showItemQty");
+  const showFooter = templateFieldVisible(template, "showFooter");
+
+  const itemsRows = showItems
+    ? buildItemsRowsForPrint(order, template.templateType, showItemQty)
+    : "";
   const shippingAddress = buildShippingAddress(order, meta.address || "");
   const noteValue = template.showNote ? buildCleanNote(order, meta) : "";
 
+  const orderMetaCells = [
+    showOrderCode
+      ? `<div><b>Mã đơn:</b> ${escapeHtml(displayPrintOrderCode(order))}</div>`
+      : "",
+    showCreatedAt
+      ? `<div style="text-align:right;"><b>Ngày tạo:</b> ${escapeHtml(order?.createdAt || "")}</div>`
+      : "",
+  ].filter(Boolean);
+
+  const orderMetaBlock = orderMetaCells.length
+    ? `<div style="display:grid;grid-template-columns:repeat(${orderMetaCells.length},1fr);gap:4px;align-items:start;margin-bottom:2px;font-size:8.8px;border-bottom:1px dashed #999;padding-bottom:2px;">${orderMetaCells.join("")}</div>`
+    : "";
+
+  const customerLines = [
+    showCustomerName
+      ? `<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Người nhận:</b> ${escapeHtml(order?.shippingRecipientName || order?.customerName || "")}</div>`
+      : "",
+    showCustomerPhone
+      ? `<div><b>SĐT:</b> ${escapeHtml(order?.shippingPhone || order?.customerPhone || "")}</div>`
+      : "",
+    showShippingAddress
+      ? `<div style="height:22px;overflow:hidden;"><b>Đ/C:</b> ${escapeHtml(shippingAddress)}</div>`
+      : "",
+  ].filter(Boolean);
+
+  const customerBlock = customerLines.length
+    ? `<div style="font-size:9.5px;margin-bottom:2px;">${customerLines.join("")}</div>`
+    : "";
+
+  const itemsBlock = showItems
+    ? `<div style="position:absolute;left:2.5mm;right:2.5mm;top:33mm;bottom:17mm;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
+      <thead>
+        <tr>
+          <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;font-size:9.6px;">Sản phẩm</th>
+          ${showItemQty ? `<th style="text-align:center;width:17px;border-bottom:1px solid #999;padding:1px 0;font-size:9.6px;">SL</th>` : ""}
+        </tr>
+      </thead>
+      <tbody>${itemsRows}</tbody>
+    </table>
+  </div>`
+    : "";
+
+  const longItemsBlock = showItems
+    ? `<div style="font-size:12px; font-weight:700; margin-bottom:6px;">Nội dung hàng (${itemCount} sản phẩm)</div>
+  <table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #ddd; padding:4px 0;">Tên sản phẩm</th>
+        ${showItemQty ? `<th style="text-align:center; border-bottom:1px solid #ddd; padding:4px 0;">SL</th>` : ""}
+      </tr>
+    </thead>
+    <tbody>${itemsRows}</tbody>
+  </table>`
+    : "";
+
+  const salesItemsBlock = showItems
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #ddd; padding:4px 0;">Sản phẩm</th>
+        ${showItemQty ? `<th style="text-align:center; border-bottom:1px solid #ddd; padding:4px 0;">SL</th>` : ""}
+        <th style="text-align:right; border-bottom:1px solid #ddd; padding:4px 0;">Đơn giá</th>
+        <th style="text-align:right; border-bottom:1px solid #ddd; padding:4px 0;">Thành tiền</th>
+      </tr>
+    </thead>
+    <tbody>${itemsRows}</tbody>
+  </table>`
+    : "";
+
+  const footerBlock =
+    showFooter && template.footerNote
+      ? `<div style="margin-top:12px;text-align:center;font-size:11px;color:#444;">${escapeHtml(template.footerNote)}</div>`
+      : "";
+
   const data: Record<string, string> = {
     title: escapeHtml(template.title),
-    storeName: escapeHtml(order?.warehouseName || template.storeName || "THE 1970"),
+    storeName: escapeHtml(
+      order?.warehouseName || template.storeName || "THE 1970",
+    ),
     storePhone: escapeHtml(order?.warehousePhone || template.storePhone || ""),
-    storeAddress: escapeHtml(order?.warehouseAddress || template.storeAddress || ""),
-    footerNote: "",
+    storeAddress: escapeHtml(
+      order?.warehouseAddress || template.storeAddress || "",
+    ),
+    footerNote: showFooter ? escapeHtml(template.footerNote || "") : "",
 
     orderCode: escapeHtml(displayPrintOrderCode(order)),
     createdAt: escapeHtml(order?.createdAt || ""),
     customerName: escapeHtml(
-      order?.shippingRecipientName || order?.customerName || ""
+      order?.shippingRecipientName || order?.customerName || "",
     ),
-    customerPhone: escapeHtml(order?.shippingPhone || order?.customerPhone || ""),
+    customerPhone: escapeHtml(
+      order?.shippingPhone || order?.customerPhone || "",
+    ),
     branchName: escapeHtml(order?.branchName || template.branchName || ""),
 
     shippingAddress: escapeHtml(shippingAddress),
     shippingMode: escapeHtml(meta.shippingMode || ""),
     shippingPartner: escapeHtml(
-      order?.shipment?.carrier || meta.shippingPartner || ""
+      order?.shipment?.carrier || meta.shippingPartner || "",
     ),
     note: escapeHtml(noteValue),
 
-    shippingFee: template.showShippingFee ? money(shippingFee) : money(shippingFee),
+    shippingFee: template.showShippingFee
+      ? money(shippingFee)
+      : money(shippingFee),
     codAmount: template.showCod ? money(codAmount) : money(codAmount),
     amountDue: money(amountDue),
     subtotal: money(subtotal),
@@ -769,7 +1035,7 @@ export function renderOrderTemplateHtml(params: {
     barcodeBlock: "",
     qrBlock: "",
     financialBlock:
-      template.templateType === "shipping"
+      template.templateType === "shipping" && template.showCod
         ? `<div style="margin:2px 0 2px;">
               <table style="width:100%;border-collapse:collapse;text-align:center;">
                 <tr>
@@ -781,17 +1047,31 @@ export function renderOrderTemplateHtml(params: {
               </table>
             </div>`
         : "",
-    noteBlock: "",
+    noteBlock:
+      template.showNote && noteValue
+        ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>`
+        : "",
+    orderMetaBlock,
+    customerBlock,
+    itemsBlock: template.paperSize === "80mm" ? itemsBlock : longItemsBlock,
+    salesItemsBlock,
+    footerBlock,
   };
 
   if (template.templateType === "sales") {
-    if (template.templateHtml && template.templateHtml.includes("{{itemsRows}}")) {
+    if (
+      template.templateHtml &&
+      template.templateHtml.includes("{{itemsRows}}")
+    ) {
       return replaceAllTokens(template.templateHtml, data);
     }
     return buildSalesTemplateHtml({ template, data });
   }
 
-  if (template.templateHtml && template.templateHtml.includes("{{itemsRows}}")) {
+  if (
+    template.templateHtml &&
+    template.templateHtml.includes("{{itemsRows}}")
+  ) {
     const html = replaceAllTokens(template.templateHtml, {
       ...data,
       barcodeBlock:
@@ -806,7 +1086,7 @@ export function renderOrderTemplateHtml(params: {
 
     return html
       .replaceAll("NO-GHN-CODE", "")
-      .replaceAll("<div style=\"font-size:12px; margin-top:4px;\"></div>", "");
+      .replaceAll('<div style="font-size:12px; margin-top:4px;"></div>', "");
   }
 
   return buildShippingTemplateHtml({
@@ -864,14 +1144,26 @@ export function openPrintDocument(params: {
   title: string;
   paperSize: PrintPaperSize;
   bodyHtml: string;
+  labelGapMm?: number;
+  labelScale?: number;
+  customPageWidthMm?: number;
+  customPageHeightMm?: number;
 }) {
-  const { title, paperSize, bodyHtml } = params;
+  const {
+    title,
+    paperSize,
+    bodyHtml,
+    labelGapMm = 0.4,
+    labelScale = 100,
+    customPageWidthMm,
+    customPageHeightMm,
+  } = params;
   const win = window.open("", "_blank", "width=1100,height=900");
   if (!win) return;
 
   const pageSize =
     paperSize === "50mm"
-      ? "50mm 50mm"
+      ? `${customPageWidthMm || 50}mm ${customPageHeightMm || 50}mm`
       : paperSize === "80mm"
         ? "80mm 80mm"
         : paperSize === "A5"
@@ -880,7 +1172,7 @@ export function openPrintDocument(params: {
 
   const pageWidth =
     paperSize === "50mm"
-      ? "50mm"
+      ? `${customPageWidthMm || 50}mm`
       : paperSize === "80mm"
         ? "80mm"
         : paperSize === "A5"
@@ -905,9 +1197,17 @@ export function openPrintDocument(params: {
           }
           .print-page {
             width: ${pageWidth};
-            min-height: ${paperSize === "50mm" ? "50mm" : paperSize === "80mm" ? "80mm" : "auto"};
-            margin: ${paperSize === "50mm" ? "0 auto 0.4mm auto" : paperSize === "80mm" ? "0 auto" : "0 auto 8mm auto"};
+            min-height: ${paperSize === "50mm" ? `${customPageHeightMm || 50}mm` : paperSize === "80mm" ? "80mm" : "auto"};
+            margin: ${paperSize === "50mm" ? `0 auto ${labelGapMm}mm auto` : paperSize === "80mm" ? "0 auto" : "0 auto 8mm auto"};
             page-break-after: always;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            overflow: hidden;
+          }
+          .print-page-inner {
+            transform: scale(${Math.max(0.5, Math.min(1.5, Number(labelScale || 100) / 100))});
+            transform-origin: top center;
           }
         </style>
       </head>

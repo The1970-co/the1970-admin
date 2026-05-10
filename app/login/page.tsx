@@ -4,7 +4,6 @@ import { API_BASE } from "@/lib/api-base";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  setCurrentUserToStorage,
   setTokenToStorage,
   clearCurrentUserFromStorage,
 } from "@/lib/current-user";
@@ -57,22 +56,57 @@ export default function LoginPage() {
     if (!user) throw new Error("Backend không trả về user.");
 
     setTokenToStorage(token);
-    setCurrentUserToStorage(user);
 
-    router.replace("/control");
-    const role = String(user?.role || user?.appRole || user?.type || "").toLowerCase();
-    if (role === "retail-staff") {
-      router.replace("/pos");
+    // Fix kẹt /login sau khi đăng nhập:
+    // AuthProvider và các màn nghiệp vụ đang đọc user từ storage/cache,
+    // nên login phải lưu cả token lẫn user local trước khi redirect.
+    if (typeof window !== "undefined") {
+      localStorage.setItem("token", token);
+      localStorage.setItem("accessToken", token);
+      localStorage.setItem("currentUser", JSON.stringify(user));
+      localStorage.setItem("the1970_current_user", JSON.stringify(user));
+      window.dispatchEvent(new Event("the1970:auth-changed"));
+    }
+
+    const permissions = new Set<string>([
+      ...(Array.isArray(user?.permissions) ? user.permissions : []),
+      ...(Array.isArray(user?.permissionKeys) ? user.permissionKeys : []),
+    ]);
+
+    const roles = [
+      ...(Array.isArray(user?.roles) ? user.roles : []),
+      user?.role,
+    ]
+      .map((role: any) => String(role || "").toLowerCase())
+      .filter(Boolean);
+
+    if (roles.includes("owner") || roles.includes("admin")) {
+      router.replace("/control");
       return;
     }
 
-    if (role === "fulltime") {
+    if (permissions.has("menu.create_order")) {
       router.replace("/create-order");
       return;
     }
 
-    if (role === "owner" || role === "admin") {
-      router.replace("/control");
+    if (permissions.has("menu.pos")) {
+      router.replace("/pos");
+      return;
+    }
+
+    if (permissions.has("menu.orders")) {
+      router.replace("/orders");
+      return;
+    }
+
+    if (permissions.has("menu.products")) {
+      router.replace("/products");
+      return;
+    }
+
+    if (permissions.has("menu.inventory")) {
+      router.replace("/inventory");
       return;
     }
 

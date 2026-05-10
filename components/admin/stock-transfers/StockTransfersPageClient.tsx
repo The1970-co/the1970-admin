@@ -1,6 +1,6 @@
 "use client";
 
-import { apiFetch, apiJson } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { useEffect, useMemo, useState } from "react";
 import {
   getBranches,
@@ -261,34 +261,76 @@ export default function StockTransfersPageClient() {
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-const userBranchId =
-  currentUser?.branchId ||
-  currentUser?.branch?.id ||
-  currentUser?.branches?.[0]?.id ||
-  currentUser?.assignedBranches?.[0]?.id;
+  const userBranchId =
+    currentUser?.branchId ||
+    currentUser?.branch?.id ||
+    currentUser?.branches?.[0]?.id ||
+    currentUser?.assignedBranches?.[0]?.id;
 
-const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
+  const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
 
-const canManageAutoTransfer =
-  userRoleText.includes("owner") || userRoleText.includes("admin");
+  const canManageAutoTransfer =
+    userRoleText.includes("owner") || userRoleText.includes("admin");
 
-const isQOWarehouseUser = userBranchId === "QO";
-const currentBranchId = userBranchId || "";
+  const isQOWarehouseUser = userBranchId === "QO";
+  const currentBranchId = userBranchId || "";
 
-const lockedSourceBranchId = useMemo(() => {
-  if (canManageAutoTransfer) {
-    return branches.find((branch) => branch.id === "QO")?.id || "QO";
+  const lockedSourceBranchId = useMemo(() => {
+    if (canManageAutoTransfer) {
+      return branches.find((branch) => branch.id === "QO")?.id || "QO";
+    }
+
+    return currentBranchId || branches[0]?.id || "QO";
+  }, [branches, canManageAutoTransfer, currentBranchId]);
+
+  const lockedSourceBranchName = useMemo(() => {
+    const branch = branches.find((item) => item.id === lockedSourceBranchId);
+    return branch?.name || lockedSourceBranchId || "—";
+  }, [branches, lockedSourceBranchId]);
+
+  function collectPermissionKeys(user: any) {
+    const keys = new Set<string>();
+
+    if (Array.isArray(user?.permissions)) {
+      user.permissions.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray(user?.permissionKeys)) {
+      user.permissionKeys.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray(user?.branchPermissions)) {
+      user.branchPermissions.forEach((row: any) => {
+        if (Array.isArray(row?.permissionKeys)) {
+          row.permissionKeys.forEach((key: any) => {
+            if (key) keys.add(String(key));
+          });
+        }
+      });
+    }
+
+    return keys;
   }
 
-  return currentBranchId || branches[0]?.id || "QO";
-}, [branches, canManageAutoTransfer, currentBranchId]);
+  function hasStockTransferPermission(permission: string) {
+    if (canManageAutoTransfer) return true;
+    const keys = collectPermissionKeys(currentUser);
+    return keys.has("*") || keys.has(permission);
+  }
 
-const lockedSourceBranchName = useMemo(() => {
-  const branch = branches.find((item) => item.id === lockedSourceBranchId);
-  return branch?.name || lockedSourceBranchId || "—";
-}, [branches, lockedSourceBranchId]);
+  const canCreateStockTransfer = hasStockTransferPermission("stock_transfer.create");
+  const canEditStockTransfer = hasStockTransferPermission("stock_transfer.edit");
+  const canConfirmStockTransfer = hasStockTransferPermission("stock_transfer.confirm");
+  const canReceiveStockTransfer = hasStockTransferPermission("stock_transfer.receive");
+  const canCancelStockTransfer = hasStockTransferPermission("stock_transfer.cancel");
+  const canDeleteStockTransfer = canManageAutoTransfer;
+  const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransfer;
 
 
   const allVariants = useMemo(() => {
@@ -491,16 +533,19 @@ const lockedSourceBranchName = useMemo(() => {
     return statusBadge(transfer.status);
   }
 
-async function loadCurrentUser() {
-  try {
-    const data = await apiJson("/auth/me");
+  function loadCurrentUser() {
+    if (typeof window === "undefined") return;
 
-    console.log("USER FROM API:", data);
-    setCurrentUser(data);
-  } catch (err) {
-    console.error("loadCurrentUser error", err);
+    try {
+      const raw =
+        localStorage.getItem("the1970_current_user") ||
+        localStorage.getItem("currentUser");
+      const parsed = raw ? JSON.parse(raw) : null;
+      setCurrentUser(parsed?.user || parsed || null);
+    } catch {
+      setCurrentUser(null);
+    }
   }
-}
 
   async function loadAll() {
     try {
@@ -524,7 +569,7 @@ async function loadCurrentUser() {
   }
 
   async function loadAutoConfig() {
-    if (!canManageAutoTransfer) return;
+    if (!canDeleteStockTransfer) return;
 
     try {
       const res = await apiFetch("/stock-transfers/auto-rebalance/config");
@@ -556,33 +601,33 @@ async function loadCurrentUser() {
       if (data.branchMinTargets) {
         setBranchTargets(data.branchMinTargets);
       }
-    } catch {}
+    } catch { }
   }
 
 
-useEffect(() => {
-  void loadCurrentUser();
-  void loadAll();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+  useEffect(() => {
+    loadCurrentUser();
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-useEffect(() => {
-  if (canManageAutoTransfer) {
-    void loadAutoConfig();
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [canManageAutoTransfer]);
+  useEffect(() => {
+    if (canManageAutoTransfer) {
+      void loadAutoConfig();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageAutoTransfer]);
 
 
-useEffect(() => {
-  if (!lockedSourceBranchId) return;
+  useEffect(() => {
+    if (!lockedSourceBranchId) return;
 
-  setFromBranchId(lockedSourceBranchId);
-  setToBranchId((prev) => {
-    if (prev && prev !== lockedSourceBranchId) return prev;
-    return branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || "";
-  });
-}, [branches, lockedSourceBranchId]);
+    setFromBranchId(lockedSourceBranchId);
+    setToBranchId((prev) => {
+      if (prev && prev !== lockedSourceBranchId) return prev;
+      return branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || "";
+    });
+  }, [branches, lockedSourceBranchId]);
 
   function resetForm() {
     const sourceId = lockedSourceBranchId || "QO";
@@ -594,6 +639,10 @@ useEffect(() => {
   }
 
   function openCreate() {
+    if (!canCreateStockTransfer) {
+      setError("Bạn không có quyền tạo phiếu chuyển kho.");
+      return;
+    }
     resetForm();
     setCreateOpen(true);
     setError(null);
@@ -638,6 +687,11 @@ useEffect(() => {
   );
 
   async function handleCreateTransfer() {
+    if (!canCreateStockTransfer) {
+      setError("Bạn không có quyền tạo phiếu chuyển kho.");
+      return;
+    }
+
     if (!fromBranchId) {
       setError("Chưa chọn chi nhánh xuất.");
       return;
@@ -684,6 +738,11 @@ useEffect(() => {
   }
 
   async function handleConfirm(id: string) {
+    if (!canConfirmStockTransfer) {
+      setError("Bạn không có quyền xác nhận chuyển kho.");
+      return;
+    }
+
     try {
       setConfirmingId(id);
       setError(null);
@@ -704,6 +763,11 @@ useEffect(() => {
   }
 
   async function handleComplete(id: string) {
+    if (!canReceiveStockTransfer) {
+      setError("Bạn không có quyền nhận hàng chuyển kho.");
+      return;
+    }
+
     const ok = window.confirm(
       "Xác nhận bên nhận đã nhận đủ hàng? Sau bước này hệ thống mới trừ kho chuyển và cộng kho nhận."
     );
@@ -729,6 +793,11 @@ useEffect(() => {
   }
 
   async function handleCancel(id: string) {
+    if (!canCancelStockTransfer) {
+      setError("Bạn không có quyền hủy phiếu chuyển kho.");
+      return;
+    }
+
     try {
       setCancellingId(id);
       setError(null);
@@ -1012,7 +1081,7 @@ useEffect(() => {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {canManageAutoTransfer ? (
+          {canManageStockTransferAuto ? (
             <button
               onClick={() => void handlePreviewSuggestions()}
               disabled={suggestionLoading}
@@ -1022,12 +1091,14 @@ useEffect(() => {
             </button>
           ) : null}
 
-          <button
-            onClick={openCreate}
-            className="rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
-          >
-            + Tạo phiếu chuyển
-          </button>
+          {canCreateStockTransfer ? (
+            <button
+              onClick={openCreate}
+              className="rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
+            >
+              + Tạo phiếu chuyển
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -1040,7 +1111,7 @@ useEffect(() => {
         />
       </Panel>
 
-      {canManageAutoTransfer ? (
+      {canDeleteStockTransfer ? (
         <Panel className="p-4">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
@@ -1145,11 +1216,10 @@ useEffect(() => {
                             : [...prev, branch.id]
                         )
                       }
-                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
-                        checked
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${checked
                           ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
                           : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
-                      }`}
+                        }`}
                     >
                       {branch.name}
                     </button>
@@ -1351,35 +1421,34 @@ useEffect(() => {
                                 return a.localeCompare(b);
                               })
                               .map((name) => {
-                              const checked = groupSelected.includes(name);
+                                const checked = groupSelected.includes(name);
 
-                              return (
-                                <label
-                                  key={`${group.key}-${name}`}
-                                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                                    checked
-                                      ? "border-blue-300 bg-blue-50 text-blue-700"
-                                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    disabled={!groupEnabled}
-                                    onChange={() =>
-                                      setGroupCategories(
-                                        group.key,
-                                        checked
-                                          ? groupSelected.filter((x) => x !== name)
-                                          : [...groupSelected, name]
-                                      )
-                                    }
-                                    className="h-3.5 w-3.5 accent-blue-600"
-                                  />
-                                  <span className="truncate">{name}</span>
-                                </label>
-                              );
-                            })}
+                                return (
+                                  <label
+                                    key={`${group.key}-${name}`}
+                                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${checked
+                                        ? "border-blue-300 bg-blue-50 text-blue-700"
+                                        : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
+                                      }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={!groupEnabled}
+                                      onChange={() =>
+                                        setGroupCategories(
+                                          group.key,
+                                          checked
+                                            ? groupSelected.filter((x) => x !== name)
+                                            : [...groupSelected, name]
+                                        )
+                                      }
+                                      className="h-3.5 w-3.5 accent-blue-600"
+                                    />
+                                    <span className="truncate">{name}</span>
+                                  </label>
+                                );
+                              })}
                           </div>
                         </div>
                       </div>
@@ -1466,14 +1535,17 @@ useEffect(() => {
               transfer.totalQty ??
               (transfer.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
             const canConfirmSending =
+              canConfirmStockTransfer &&
               (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
               (canManageAutoTransfer || transfer.fromBranchId === currentBranchId);
 
             const canCancelTransfer =
+              canCancelStockTransfer &&
               (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
               (canManageAutoTransfer || transfer.fromBranchId === currentBranchId);
 
             const canCompleteReceiving =
+              canReceiveStockTransfer &&
               transfer.status === "CONFIRMED" &&
               (canManageAutoTransfer || transfer.toBranchId === currentBranchId);
 
@@ -1482,7 +1554,7 @@ useEffect(() => {
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 p-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      {canManageAutoTransfer ? (
+                      {canDeleteStockTransfer ? (
                         <input
                           type="checkbox"
                           className="h-4 w-4 accent-neutral-900"
@@ -1525,8 +1597,19 @@ useEffect(() => {
                     >
                       Xem phiếu
                     </button>
-
-                    {canManageAutoTransfer ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.open(
+                          `/print-center?type=transfer&id=${transfer.id}&paperSize=80mm`,
+                          "_blank"
+                        );
+                      }}
+                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                    >
+                      In phiếu
+                    </button>
+                    {canDeleteStockTransfer ? (
                       <button
                         onClick={() => void handleDeleteTransfer(transfer.id, transfer.transferCode)}
                         disabled={deletingId === transfer.id}
@@ -1632,12 +1715,11 @@ useEffect(() => {
 
               <button
                 onClick={() => void handleCreateAutoTransfers()}
-                disabled={suggestionCreating || selectedSuggestionIds.length === 0}
-                className={`rounded-xl px-4 py-2 text-sm font-medium text-white ${
-                  suggestionCreating || selectedSuggestionIds.length === 0
+                disabled={suggestionCreating || selectedSuggestionIds.length === 0 || !canCreateStockTransfer}
+                className={`rounded-xl px-4 py-2 text-sm font-medium text-white ${suggestionCreating || selectedSuggestionIds.length === 0
                     ? "bg-neutral-400"
                     : "bg-neutral-900 hover:bg-neutral-800"
-                }`}
+                  }`}
               >
                 {suggestionCreating ? "Đang tạo phiếu..." : "Tạo phiếu tự động"}
               </button>
@@ -1705,13 +1787,12 @@ useEffect(() => {
                           <td className="px-3 py-2.5">{item.qoAvailableQty ?? "—"}</td>
                           <td className="px-3 py-2.5">
                             <span
-                              className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${
-                                Number((item as any).aiScore || 0) >= 80
+                              className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${Number((item as any).aiScore || 0) >= 80
                                   ? "bg-red-50 text-red-700 ring-1 ring-red-200"
                                   : Number((item as any).aiScore || 0) >= 60
                                     ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
                                     : "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
-                              }`}
+                                }`}
                             >
                               {(item as any).aiScore ?? "—"}
                             </span>
@@ -1781,7 +1862,7 @@ useEffect(() => {
                     Chỉ khi xác nhận đủ, hệ thống mới trừ kho chuyển và cộng kho nhận.
                   </p>
                 </div>
-                {(canManageAutoTransfer || selectedTransfer.toBranchId === currentBranchId) ? (
+                {(canReceiveStockTransfer && (canManageAutoTransfer || selectedTransfer.toBranchId === currentBranchId)) ? (
                   <button
                     type="button"
                     onClick={() => void handleComplete(selectedTransfer.id)}
@@ -1954,9 +2035,8 @@ useEffect(() => {
               <button
                 onClick={() => void handleCreateTransfer()}
                 disabled={saving}
-                className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
-                  saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
-                }`}
+                className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+                  }`}
               >
                 {saving ? "Đang lưu..." : "Lưu nháp"}
               </button>

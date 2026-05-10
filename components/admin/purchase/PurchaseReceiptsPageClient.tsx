@@ -190,6 +190,14 @@ export default function PurchaseReceiptsPageClient() {
     return keys.some((key) => granted.has(key));
   }
 
+  const canViewCost = hasAnyPermission([
+    "purchase_receipt.cost.view",
+    "products.cost.view",
+  ]);
+  const canEditCost = hasAnyPermission([
+    "purchase_receipt.cost.edit",
+    "products.cost.edit",
+  ]);
   const canCreateReceipt = hasAnyPermission([
     "purchase_receipt.create",
     "purchaseReceipts.tao_don_nhap",
@@ -202,12 +210,25 @@ export default function PurchaseReceiptsPageClient() {
     "purchaseReceipts.sua_don_dat_hang_nhap",
     "purchaseOrders.sua_don_dat_hang_nhap",
   ]);
-  const canConfirmReceipt = hasAnyPermission([
+  const canRequestPaymentReceipt = hasAnyPermission([
+    "purchase_receipt.request_payment",
+    "purchase_receipt.receive",
+    "purchaseReceipts.nhan_hang_vao_kho",
+  ]);
+  const canPayReceipt = hasAnyPermission([
+    "purchase_receipt.pay",
+  ]);
+  const canImportStockReceipt = hasAnyPermission([
+    "purchase_receipt.import_stock",
     "purchase_receipt.receive",
     "purchase_receipt.close",
-    "purchaseReceipts.nhan_hang_vao_kho",
     "purchaseReceipts.ket_thuc_don_nhap",
-    "purchaseOrders.ket_thuc_don_dat_hang_nhap",
+  ]);
+  const canCompleteReceipt = hasAnyPermission([
+    "purchase_receipt.complete",
+    "purchase_receipt.receive",
+    "purchase_receipt.close",
+    "purchaseReceipts.ket_thuc_don_nhap",
   ]);
   const canCancelReceipt = hasAnyPermission([
     "purchase_receipt.cancel",
@@ -215,6 +236,7 @@ export default function PurchaseReceiptsPageClient() {
     "purchaseReceipts.huy_don_dat_hang_nhap",
     "purchaseOrders.huy_don_dat_hang_nhap",
   ]);
+  const canConfirmReceipt = canRequestPaymentReceipt || canImportStockReceipt || canCompleteReceipt;
 
   function getReceiptItems(receipt: PurchaseReceipt) {
     return Array.isArray(receipt.items) ? receipt.items : [];
@@ -245,15 +267,34 @@ export default function PurchaseReceiptsPageClient() {
     return total > 0 && getPaidAmount(receipt) >= total;
   }
 
+  function pickUnitCost(product: any, variant: any) {
+    const rawValue =
+      variant?.unitCost ??
+      variant?.costPrice ??
+      variant?.importPrice ??
+      variant?.purchasePrice ??
+      variant?.cost ??
+      product?.unitCost ??
+      product?.costPrice ??
+      product?.importPrice ??
+      product?.purchasePrice ??
+      product?.cost ??
+      0;
+
+    const value = Number(rawValue || 0);
+    return Number.isFinite(value) ? value : 0;
+  }
+
   const allVariants = useMemo(() => {
-    return products.flatMap((product) =>
-      (product.variants || []).map((variant) => ({
+    return products.flatMap((product: any) =>
+      (product.variants || []).map((variant: any) => ({
         rowId: variant.id,
         variantId: variant.id,
         sku: variant.sku,
         productName: product.name,
         color: variant.color || "",
         size: variant.size || "",
+        unitCost: pickUnitCost(product, variant),
       }))
     );
   }, [products]);
@@ -478,6 +519,7 @@ export default function PurchaseReceiptsPageClient() {
     productName: string;
     color?: string;
     size?: string;
+    unitCost?: number;
   }) {
     const exists = items.find((item) => item.variantId === option.variantId);
     if (exists) return;
@@ -492,7 +534,7 @@ export default function PurchaseReceiptsPageClient() {
         color: option.color || "",
         size: option.size || "",
         qty: "1",
-        unitCost: "0",
+        unitCost: isAdmin ? String(Number(option.unitCost || 0)) : "0",
       },
     ]);
     // Giữ nguyên mã đang tìm để có thể chọn tiếp nhiều SKU con cùng mã cha.
@@ -511,7 +553,7 @@ export default function PurchaseReceiptsPageClient() {
         color: option.color || "",
         size: option.size || "",
         qty: "1",
-        unitCost: "0",
+        unitCost: isAdmin ? String(Number(option.unitCost || 0)) : "0",
       }));
 
     if (!nextItems.length) return;
@@ -576,7 +618,7 @@ export default function PurchaseReceiptsPageClient() {
         items: items.map((item) => ({
           variantId: item.variantId,
           qty: Number(item.qty || 0),
-          unitCost: isAdmin ? Number(item.unitCost || 0) : 0,
+          ...(canEditCost ? { unitCost: Number(item.unitCost || 0) } : {}),
         })),
       };
 
@@ -805,7 +847,7 @@ export default function PurchaseReceiptsPageClient() {
 
                     <div className="mt-2 space-y-1 text-xs text-neutral-500">
                       <p>Kho nhập: {receipt.branch?.name || "—"}</p>
-                      {isAdmin ? <p>Nhà cung cấp: {receipt.supplier?.name || "—"}</p> : null}
+                      {canViewCost ? <p>Nhà cung cấp: {receipt.supplier?.name || "—"}</p> : null}
                       <p>Tổng số lượng: {receiptQty}</p>
                       <p>
                         Số dòng SKU: {receiptItems.length}
@@ -816,9 +858,9 @@ export default function PurchaseReceiptsPageClient() {
                           </span>
                         ) : null}
                       </p>
-                      {isAdmin ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
-                      {isAdmin ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
-                      {(isAdmin || canConfirmReceipt) && receipt.status === "PAID" ? (
+                      {canViewCost ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
+                      {canViewCost ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
+                      {canImportStockReceipt && receipt.status === "PAID" ? (
                         <p className="font-medium text-green-700">Đã thanh toán đủ · chờ nhập kho</p>
                       ) : null}
                       {receipt.note ? <p>Ghi chú: {receipt.note}</p> : null}
@@ -835,7 +877,7 @@ export default function PurchaseReceiptsPageClient() {
                       </button>
 
                       {receipt.status === "DRAFT" &&
-                      (canEditReceipt || canConfirmReceipt || canCancelReceipt) ? (
+                      (canEditReceipt || canRequestPaymentReceipt || canCancelReceipt) ? (
                         <>
                           {canEditReceipt ? (
                             <button
@@ -847,7 +889,7 @@ export default function PurchaseReceiptsPageClient() {
                             </button>
                           ) : null}
 
-                          {canConfirmReceipt ? (
+                          {canRequestPaymentReceipt ? (
                             <button
                               type="button"
                               onClick={() => void handleRequestPayment(receipt.id)}
@@ -875,7 +917,7 @@ export default function PurchaseReceiptsPageClient() {
                         </>
                       ) : null}
 
-                      {isAdmin &&
+                      {canPayReceipt &&
                       (receipt.status === "PAYMENT_REQUESTED" ||
                         receipt.status === "PARTIALLY_PAID") ? (
                         <a
@@ -887,7 +929,7 @@ export default function PurchaseReceiptsPageClient() {
                         </a>
                       ) : null}
 
-                      {(isAdmin || canConfirmReceipt) && receipt.status === "PAID" ? (
+                      {canImportStockReceipt && receipt.status === "PAID" ? (
                         <button
                           onClick={() => void handleImportStock(receipt.id)}
                           disabled={importingId === receipt.id}
@@ -899,7 +941,7 @@ export default function PurchaseReceiptsPageClient() {
                         </button>
                       ) : null}
 
-                      {(isAdmin || canConfirmReceipt) && receipt.status === "STOCK_IMPORTED" ? (
+                      {canCompleteReceipt && receipt.status === "STOCK_IMPORTED" ? (
                         <button
                           onClick={() => void handleComplete(receipt.id)}
                           disabled={completingId === receipt.id}
@@ -1129,7 +1171,7 @@ export default function PurchaseReceiptsPageClient() {
           <div className="sticky bottom-0 z-20 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 bg-white px-4 py-3 shadow-[0_-8px_20px_rgba(0,0,0,0.04)]">
             <div className="text-xs text-neutral-500">
               Tổng số lượng: <span className="font-medium text-neutral-900">{totalQty}</span>
-              {isAdmin ? (
+              {canViewCost ? (
                 <>
                   {" "}
                   · Tổng tiền:{" "}
@@ -1230,7 +1272,7 @@ export default function PurchaseReceiptsPageClient() {
             </button>
             <button
               onClick={() => void handlePayReceipt()}
-              disabled={paying}
+              disabled={paying || !canPayReceipt}
               className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
                 paying ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
               }`}

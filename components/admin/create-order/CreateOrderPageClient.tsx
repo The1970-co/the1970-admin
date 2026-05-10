@@ -277,6 +277,44 @@ function formatVndInput(value: string | number) {
   return Number(digits).toLocaleString("vi-VN");
 }
 
+function getCurrentUserPermissionKeysFromStorage() {
+  const user = getCurrentUserFromStorage() as any;
+  const keys = new Set<string>();
+
+  if (isOwnerUser(user)) keys.add("*");
+
+  if (Array.isArray(user?.permissions)) {
+    user.permissions.forEach((key: any) => {
+      const value = String(key || "").trim();
+      if (value) keys.add(value);
+    });
+  }
+
+  if (Array.isArray(user?.permissionKeys)) {
+    user.permissionKeys.forEach((key: any) => {
+      const value = String(key || "").trim();
+      if (value) keys.add(value);
+    });
+  }
+
+  if (Array.isArray(user?.branchPermissions)) {
+    user.branchPermissions.forEach((row: any) => {
+      if (!Array.isArray(row?.permissionKeys)) return;
+      row.permissionKeys.forEach((key: any) => {
+        const value = String(key || "").trim();
+        if (value) keys.add(value);
+      });
+    });
+  }
+
+  return keys;
+}
+
+function hasCurrentUserPermission(permission: string) {
+  const keys = getCurrentUserPermissionKeysFromStorage();
+  return keys.has("*") || keys.has(permission);
+}
+
 function normalizeSpaces(value?: string | null) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -1184,11 +1222,17 @@ function CreateModePicker({
   onClose,
   onSelect,
   saving = false,
+  canCreateDraft = true,
+  canCreateApprove = true,
+  canCreateShip = true,
 }: {
   open: boolean;
   onClose: () => void;
   onSelect: (mode: CreateOrderMode) => void | Promise<void>;
   saving?: boolean;
+  canCreateDraft?: boolean;
+  canCreateApprove?: boolean;
+  canCreateShip?: boolean;
 }) {
   if (!open) return null;
 
@@ -1197,16 +1241,22 @@ function CreateModePicker({
       value: "draft" as const,
       title: "Tạo nháp",
       description: "Lưu đơn ở bước đặt hàng.",
+      allowed: canCreateDraft,
+      lockedText: "Thiếu quyền orders.create",
     },
     {
       value: "approve" as const,
       title: "Tạo và duyệt",
       description: "Chuyển đơn sang bước duyệt để kho xử lý.",
+      allowed: canCreateApprove,
+      lockedText: "Thiếu quyền orders.approve",
     },
     {
       value: "ship" as const,
       title: "Tạo và xuất kho",
       description: "Đi thẳng tới xuất kho và gửi vận chuyển.",
+      allowed: canCreateShip,
+      lockedText: "Thiếu quyền orders.pack_ship",
     },
   ];
 
@@ -1237,21 +1287,24 @@ function CreateModePicker({
               key={item.value}
               type="button"
               onClick={() => {
-                if (saving) return;
+                if (saving || !item.allowed) return;
                 void onSelect(item.value);
               }}
-              disabled={saving}
-              className={`flex w-full items-start justify-between rounded-2xl border border-neutral-200 p-4 text-left transition hover:border-black hover:bg-neutral-50 ${saving ? "pointer-events-none opacity-50" : ""}`}
+              disabled={saving || !item.allowed}
+              className={`flex w-full items-start justify-between rounded-2xl border border-neutral-200 p-4 text-left transition hover:border-black hover:bg-neutral-50 ${saving || !item.allowed ? "pointer-events-none opacity-50" : ""}`}
             >
               <div>
                 <div className="text-base font-semibold">{item.title}</div>
                 <div className="mt-1 text-sm text-neutral-500">
                   {item.description}
                 </div>
+                {!item.allowed ? (
+                  <div className="mt-2 text-xs font-semibold text-red-600">{item.lockedText}</div>
+                ) : null}
               </div>
 
-              <div className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white">
-                {saving ? "Đang xử lý..." : "Chọn"}
+              <div className={`rounded-xl px-3 py-2 text-sm font-medium ${item.allowed ? "bg-black text-white" : "bg-neutral-200 text-neutral-500"}`}>
+                {saving ? "Đang xử lý..." : item.allowed ? "Chọn" : "Bị khóa"}
               </div>
             </button>
           ))}
@@ -3681,10 +3734,31 @@ useEffect(() => {
     note,
   ]);
 
+  const canCreateOrder = hasCurrentUserPermission("orders.create");
+  const canApproveOrder = hasCurrentUserPermission("orders.approve");
+  const canPackShipOrder = hasCurrentUserPermission("orders.pack_ship");
+
+  const canCreateDraftOrder = canCreateOrder;
+  const canCreateApproveOrder = canCreateOrder && canApproveOrder;
+  const canCreateShipOrder = canCreateOrder && canPackShipOrder;
+
+  function getCreateModePermissionError(mode: CreateOrderMode) {
+    if (!canCreateOrder) return "Bạn không có quyền tạo đơn hàng.";
+    if (mode === "approve" && !canApproveOrder) return "Bạn không có quyền tạo và duyệt đơn.";
+    if (mode === "ship" && !canPackShipOrder) return "Bạn không có quyền tạo và xuất kho đơn.";
+    return "";
+  }
+
   const handleSubmit = async (mode: CreateOrderMode) => {
     if (saving) return;
 
     const currentUser = getCurrentUserFromStorage();
+    const permissionError = getCreateModePermissionError(mode);
+
+    if (permissionError) {
+      setError(permissionError);
+      return;
+    }
 
     if (!isOwnerUser(currentUser) && !userBranchIds.includes(branchId)) {
       setError("Không thể tạo đơn ngoài chi nhánh được gán.");
@@ -5199,9 +5273,9 @@ useEffect(() => {
                 <Button
                   className="w-full py-3"
                   onClick={() => setModePickerOpen(true)}
-                  disabled={saving || copyingOrder || !lines.length}
+                  disabled={saving || copyingOrder || !lines.length || !canCreateOrder}
                 >
-                  {copyingOrder ? "Đang sao chép..." : saving ? "Đang tạo..." : "Tạo đơn"}
+                  {copyingOrder ? "Đang sao chép..." : saving ? "Đang tạo..." : canCreateOrder ? "Tạo đơn" : "Bạn không có quyền tạo đơn"}
                 </Button>
 
                 <Button variant="secondary" className="w-full" onClick={resetForm} disabled={saving}>
@@ -5216,6 +5290,9 @@ useEffect(() => {
       <CreateModePicker
         open={modePickerOpen}
         saving={saving}
+        canCreateDraft={canCreateDraftOrder}
+        canCreateApprove={canCreateApproveOrder}
+        canCreateShip={canCreateShipOrder}
         onClose={() => {
           if (!saving) setModePickerOpen(false);
         }}

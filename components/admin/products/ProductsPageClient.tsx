@@ -1,7 +1,6 @@
 "use client";
-
+import { useAuth } from "@/components/admin/auth/AuthProvider";
 import { API_BASE } from "@/lib/api-base";
-import { apiJson } from "@/lib/api";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -553,9 +552,12 @@ type ProductSortKey =
   | "branchStock"
   | "stock"
   | "status"
-  | "description";
+  | "description"
+  | "createdAt"
+  | "sales";
 
 type SortDirection = "asc" | "desc";
+type ProductDisplayPreset = "default" | "newest" | "bestSelling" | "priceHigh";
 
 function normalizeNumber(value: any) {
   if (value === null || value === undefined || value === "") return 0;
@@ -802,6 +804,8 @@ const labelPaperOptions = [
   { value: "50x50_gap04", label: "Tem cuộn 50 × 50mm · hở 0,4mm" },
   { value: "50x50", label: "Tem cuộn 50 × 50mm" },
 ];
+
+const PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY = "the1970.print-center.product-labels.draft";
 
 const defaultExportColumns: ExportColumnState = {
   productName: true,
@@ -1113,6 +1117,8 @@ export default function ProductsPageClient() {
   const [exportSortMode, setExportSortMode] = useState<ExportSortMode>("product_asc");
   const [exportingProducts, setExportingProducts] = useState(false);
   const [categoryNormalizerOpen, setCategoryNormalizerOpen] = useState(false);
+  const [displayOptionsOpen, setDisplayOptionsOpen] = useState(false);
+  const [displayPreset, setDisplayPreset] = useState<ProductDisplayPreset>("default");
   const [sortKey, setSortKey] = useState<ProductSortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
@@ -1189,31 +1195,9 @@ export default function ProductsPageClient() {
 
   useEffect(() => {
     const storedUser = getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
-    if (storedUser) {
-      setCurrentUser(storedUser);
-      setRole(getPrimaryAppRole(storedUser));
-      setCurrentBranchId(storedUser.branchId || null);
-    }
-
-    apiJson("/auth/me")
-      .then((data) => {
-        const freshUser = (data?.user || data) as CurrentUserPermissionProfile | null;
-        if (!freshUser) return;
-
-        setCurrentUser(freshUser);
-        setRole(getPrimaryAppRole(freshUser));
-        setCurrentBranchId(freshUser.branchId || null);
-
-        try {
-          localStorage.setItem("currentUser", JSON.stringify(freshUser));
-          localStorage.setItem("the1970_current_user", JSON.stringify(freshUser));
-        } catch {
-          // ignore storage sync error
-        }
-      })
-      .catch(() => {
-        // giữ user local nếu auth/me lỗi
-      });
+    setCurrentUser(storedUser);
+    setRole(getPrimaryAppRole(storedUser));
+    setCurrentBranchId(storedUser?.branchId || null);
   }, []);
 
   useEffect(() => {
@@ -1237,16 +1221,25 @@ export default function ProductsPageClient() {
     return branches.filter((branch) => branch.id === currentBranchId);
   }, [branches, isOwner, canViewInventory, currentBranchId]);
 
+  const syncedCategoryItems = useMemo(() => {
+    const activeCategories = categories.filter((item) => item.isActive);
+
+    if (activeCategories.length) return activeCategories;
+
+    return categoryOptions.map((name) => ({
+      id: name,
+      name,
+      code: toCode(name),
+      slug: slugify(name),
+      description: "",
+      isActive: true,
+    })) as ProductCategoryItem[];
+  }, [categories, categoryOptions]);
+
   const productGroups = useMemo(() => {
-    if (categoryOptions.length) return categoryOptions;
-
-    const activeCategories = categories
-      .filter((item) => item.isActive)
-      .map((item) => item.name)
-      .filter(Boolean);
-
-    return activeCategories.length ? activeCategories : fallbackProductGroups;
-  }, [categoryOptions, categories]);
+    const names = uniqueValues(syncedCategoryItems.map((item) => item.name));
+    return names.length ? names : fallbackProductGroups;
+  }, [syncedCategoryItems]);
 
   // UI permission lock theo authz.ts.
   // - products.view: được vào xem catalog.
@@ -1274,6 +1267,31 @@ export default function ProductsPageClient() {
     role,
     "products.price.edit",
   );
+  const canViewCost = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.cost.view",
+  );
+  const canEditProductCost = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.cost.edit",
+  );
+  const canCreateProductVariant = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.variant.create",
+  );
+  const canUploadProductImage = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.image.upload",
+  );
+  const canManageInventory = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.manage",
+  );
   const canToggleProductStatus = hasProductInventoryPermission(
     currentUser,
     role,
@@ -1284,11 +1302,9 @@ export default function ProductsPageClient() {
     role,
     "products.delete",
   );
-  const canManageProductMasterData = hasProductInventoryPermission(
-    currentUser,
-    role,
-    "system.manage",
-  );
+  const canManageProductMasterData =
+    hasProductInventoryPermission(currentUser, role, "products.master_data.manage") ||
+    hasProductInventoryPermission(currentUser, role, "system.manage");
   const canImportProducts = hasProductInventoryPermission(
     currentUser,
     role,
@@ -1298,11 +1314,6 @@ export default function ProductsPageClient() {
     currentUser,
     role,
     "products.excel.export",
-  );
-  const canViewCost = hasProductInventoryPermission(
-    currentUser,
-    role,
-    "products.cost.view",
   );
   const canViewInventoryValue = hasProductInventoryPermission(
     currentUser,
@@ -1420,14 +1431,14 @@ export default function ProductsPageClient() {
   useEffect(() => {
     if (!createOpen) return;
 
-    const first = categories.find((c) => c.isActive) || categories[0];
+    const first = syncedCategoryItems[0];
     if (!first) return;
 
     if (!categoryId) {
       setCategoryId(first.id);
       setCategory(first.name);
     }
-  }, [createOpen, categories, categoryId]);
+  }, [createOpen, syncedCategoryItems, categoryId]);
 
   const getProductTotalStockForSort = (product: ProductItem) => {
     return (product.variants || []).reduce((sum, variant) => {
@@ -1497,12 +1508,25 @@ export default function ProductsPageClient() {
         return product.status || "";
       case "description":
         return product.description || "";
+      case "createdAt":
+        return new Date((product as any).createdAt || (product as any).updatedAt || 0).getTime() || 0;
+      case "sales":
+        return Number(
+          (product as any).soldQty ??
+            (product as any).soldCount ??
+            (product as any).totalSold ??
+            (product as any).orderItemsCount ??
+            (product as any).salesCount ??
+            0
+        );
       default:
         return product.name || "";
     }
   };
 
   const handleSort = (key: ProductSortKey) => {
+    setDisplayPreset("default");
+
     if (sortKey === key) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
       return;
@@ -1510,6 +1534,31 @@ export default function ProductsPageClient() {
 
     setSortKey(key);
     setSortDirection(key === "stock" || key === "branchStock" ? "desc" : "asc");
+  };
+
+  const applyDisplayPreset = (preset: ProductDisplayPreset) => {
+    setDisplayPreset(preset);
+
+    if (preset === "newest") {
+      setSortKey("createdAt");
+      setSortDirection("desc");
+      return;
+    }
+
+    if (preset === "bestSelling") {
+      setSortKey("sales");
+      setSortDirection("desc");
+      return;
+    }
+
+    if (preset === "priceHigh") {
+      setSortKey("price");
+      setSortDirection("desc");
+      return;
+    }
+
+    setSortKey("name");
+    setSortDirection("asc");
   };
 
   const filteredProducts = useMemo(() => {
@@ -1531,6 +1580,10 @@ export default function ProductsPageClient() {
       return sortDirection === "asc" ? result : -result;
     });
   }, [products, sortKey, sortDirection, visibleBranches, currentBranchId, isOwner, canViewInventory]);
+
+  const totalProductPages = Math.max(1, Math.ceil(totalProducts / limit));
+  const currentPageStart = totalProducts === 0 ? 0 : (page - 1) * limit + 1;
+  const currentPageEnd = Math.min(page * limit, totalProducts || filteredProducts.length);
 
 
   const selectedProducts = useMemo(() => {
@@ -1574,16 +1627,15 @@ export default function ProductsPageClient() {
       return;
     }
 
-    if (selectedProducts.length > 1) {
-      setActionMessage("Đang chọn nhiều sản phẩm. Chọn 1 sản phẩm để mở popup cấu hình in tem chi tiết.");
-      return;
-    }
-
-    // Giữ nguyên flow in tem cũ: mở popup setting để chọn SKU, số lượng, khổ tem, giá...
-    openLabelPrintModal(selectedProducts[0]);
+    openProductsInPrintCenter(selectedProducts);
   };
 
   const handleBulkExportSelected = () => {
+    if (!canExportProducts) {
+      setActionMessage("Role hiện tại không có quyền xuất Excel sản phẩm.");
+      return;
+    }
+
     if (!selectedProducts.length) {
       setActionMessage("Chưa chọn sản phẩm để xuất Excel.");
       return;
@@ -1648,7 +1700,7 @@ export default function ProductsPageClient() {
   const catalogValue = summary?.totalInventoryValue ?? 0;
 
   const resetCreateForm = () => {
-    const first = categories.find((c) => c.isActive) || categories[0];
+    const first = syncedCategoryItems[0];
     setName("");
     setSkuCode("");
     setCategory(first?.name || productGroups[0] || "T-Shirt");
@@ -1750,13 +1802,15 @@ export default function ProductsPageClient() {
         weight: Number(weight || 0),
         imageUrl: imageUrl.trim(),
         description: description.trim(),
-        defaultPrice: Number(defaultPrice || 0),
-        defaultCostPrice: Number(defaultCostPrice || 0),
+        defaultPrice: canEditProductPrice ? Number(defaultPrice || 0) : 0,
+        defaultCostPrice: canEditProductCost ? Number(defaultCostPrice || 0) : 0,
         colorOptions: parseCommaTokens(colors),
         sizeOptions: parseCommaTokens(sizes),
-        defaultBranchStocks: Object.fromEntries(
-          branches.map((branch) => [branch.id, Number(branchStocks[branch.id] || 0)])
-        ),
+        defaultBranchStocks: canManageInventory
+          ? Object.fromEntries(
+              branches.map((branch) => [branch.id, Number(branchStocks[branch.id] || 0)])
+            )
+          : {},
       };
 
       await createProduct(payload);
@@ -1826,6 +1880,51 @@ export default function ProductsPageClient() {
     });
   };
 
+  const openProductsInPrintCenter = (targetProducts: ProductItem[]) => {
+    const safeProducts = Array.isArray(targetProducts) ? targetProducts.filter(Boolean) : [];
+
+    if (!safeProducts.length) {
+      setActionMessage("Chưa chọn sản phẩm để in tem.");
+      return;
+    }
+
+    const rows = safeProducts.flatMap((product) =>
+      getLabelPrintRows(product).map((row) => ({
+        key: `${product.id || product.slug || row.productName}:${row.key}`,
+        productName: row.productName,
+        sku: row.sku,
+        size: row.size,
+        color: row.color,
+        price: row.price,
+        stock: row.stock,
+      })),
+    );
+
+    if (!rows.length) {
+      setActionMessage("Sản phẩm chưa có SKU để in tem.");
+      return;
+    }
+
+    const draft = {
+      productId: safeProducts.length === 1 ? safeProducts[0]?.id : undefined,
+      productName:
+        safeProducts.length === 1
+          ? safeProducts[0]?.name || safeProducts[0]?.slug || "Sản phẩm"
+          : `${safeProducts.length} sản phẩm đã chọn`,
+      branchId: currentBranchId || "__default__",
+      rows,
+    };
+
+    try {
+      sessionStorage.setItem(PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      setActionMessage("Không lưu được dữ liệu in tem trên trình duyệt.");
+      return;
+    }
+
+    window.open("/print-center/product-labels", "_blank", "noopener,noreferrer");
+  };
+
   const openLabelPrintModal = (product: ProductItem) => {
     const rows = getLabelPrintRows(product);
 
@@ -1875,7 +1974,7 @@ export default function ProductsPageClient() {
     : `<div style="font-family:Arial,sans-serif;padding:16px;color:#666;">Chưa chọn SKU để in tem.</div>`;
 
   const handlePrintProductLabels = (product: ProductItem) => {
-    openLabelPrintModal(product);
+    openProductsInPrintCenter([product]);
   };
 
   const handleConfirmPrintProductLabels = () => {
@@ -1970,17 +2069,21 @@ export default function ProductsPageClient() {
         ...(canEditProductPrice
           ? { defaultPrice: Number(editDefaultPrice || 0) }
           : {}),
-        ...(canViewCost && canEditProductPrice
+        ...(canEditProductCost
           ? { defaultCostPrice: Number(editDefaultCostPrice || 0) }
           : {}),
         colors: parseCommaTokens(editColors),
         sizes: parseCommaTokens(editSizes),
-        branchStocks: Object.fromEntries(
-          branches.map((branch) => [
-            branch.id,
-            Number(editBranchStocks[branch.id] || 0),
-          ])
-        ),
+        ...(canManageInventory
+          ? {
+              branchStocks: Object.fromEntries(
+                branches.map((branch) => [
+                  branch.id,
+                  Number(editBranchStocks[branch.id] || 0),
+                ])
+              ),
+            }
+          : {}),
         applyPriceToAllVariants,
       });
 
@@ -2006,6 +2109,11 @@ export default function ProductsPageClient() {
   };
 
   const handleDeleteProduct = async (product: ProductItem) => {
+    if (!canDeleteProduct) {
+      setActionMessage("Role hiện tại không có quyền xóa sản phẩm.");
+      return;
+    }
+
     const ok = window.confirm(
       `Xóa sản phẩm "${product.name}"? Thao tác này sẽ xóa cả variant và tồn kho liên quan.`
     );
@@ -2028,6 +2136,11 @@ export default function ProductsPageClient() {
   };
 
   const handleQuickCreateCategory = async () => {
+    if (!canManageProductMasterData) {
+      setActionMessage("Role hiện tại không có quyền quản trị danh mục sản phẩm.");
+      return;
+    }
+
     if (!quickCategoryName.trim()) {
       setActionMessage("Chưa nhập tên danh mục mới.");
       return;
@@ -2045,6 +2158,7 @@ export default function ProductsPageClient() {
       });
 
       await loadCategories();
+      await loadProductCategoryOptions();
 
       if (createOpen) {
         setCategory(created.name);
@@ -2067,7 +2181,7 @@ export default function ProductsPageClient() {
   };
 
   const handleAddVariant = async () => {
-    if (!canEditProduct) {
+    if (!canCreateProductVariant) {
       setActionMessage("Role hiện tại không có quyền thêm variant.");
       return;
     }
@@ -2087,13 +2201,15 @@ export default function ProductsPageClient() {
         color: variantColor.trim(),
         size: variantSize.trim(),
         price: canEditProductPrice ? Number(variantPrice || 0) : 0,
-        costPrice: canViewCost && canEditProductPrice ? Number(variantCostPrice || 0) : 0,
-        branchStocks: Object.fromEntries(
-          Object.entries(variantBranchStocks).map(([key, value]) => [
-            key,
-            Number(value || 0),
-          ])
-        ),
+        costPrice: canEditProductCost ? Number(variantCostPrice || 0) : 0,
+        branchStocks: canManageInventory
+          ? Object.fromEntries(
+              Object.entries(variantBranchStocks).map(([key, value]) => [
+                key,
+                Number(value || 0),
+              ])
+            )
+          : {},
       };
 
       await addVariant(activeProductId, payload);
@@ -2130,6 +2246,11 @@ export default function ProductsPageClient() {
   };
 
   const handleCreateImageUpload = async (file: File | null) => {
+    if (!canUploadProductImage) {
+      setActionMessage("Role hiện tại không có quyền upload ảnh sản phẩm.");
+      return;
+    }
+
     if (!file) return;
 
     try {
@@ -2147,8 +2268,8 @@ export default function ProductsPageClient() {
   };
 
   const handleEditImageUpload = async (file: File | null) => {
-    if (!canEditProduct) {
-      setActionMessage("Role hiện tại chỉ có quyền xem sản phẩm, không được upload/sửa ảnh.");
+    if (!canUploadProductImage) {
+      setActionMessage("Role hiện tại không có quyền upload ảnh sản phẩm.");
       return;
     }
 
@@ -2740,7 +2861,7 @@ export default function ProductsPageClient() {
       </div>
 
       <Panel className="p-4">
-        <div className="grid gap-3 md:grid-cols-[1.7fr_0.7fr_0.7fr_auto]">
+        <div className="grid gap-3 md:grid-cols-[1.7fr_0.7fr_0.7fr_auto_auto]">
           <input
             className="rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
             value={query}
@@ -2784,7 +2905,44 @@ export default function ProductsPageClient() {
           <div className="flex items-center justify-end text-sm text-neutral-500">
             {totalProducts} sản phẩm
           </div>
+
+          <Button
+            variant="secondary"
+            onClick={() => setDisplayOptionsOpen((prev) => !prev)}
+            className="rounded-2xl whitespace-nowrap"
+          >
+            Tuỳ chọn hiển thị
+          </Button>
         </div>
+
+        {displayOptionsOpen ? (
+          <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Sắp xếp nhanh
+            </div>
+            <div className="grid gap-2 md:grid-cols-4">
+              {[
+                { value: "default", label: "Mặc định A-Z" },
+                { value: "newest", label: "Mới tạo lên đầu" },
+                { value: "bestSelling", label: "Bán chạy lên đầu" },
+                { value: "priceHigh", label: "Giá cao lên đầu" },
+              ].map((option) => (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800"
+                >
+                  <input
+                    type="checkbox"
+                    checked={displayPreset === option.value}
+                    onChange={() => applyDisplayPreset(option.value as ProductDisplayPreset)}
+                    className="h-4 w-4 accent-neutral-900"
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </Panel>
 
       {error ? (
@@ -2799,92 +2957,38 @@ export default function ProductsPageClient() {
         </Panel>
       ) : null}
 
-      <Panel className="sticky top-0 z-20 overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-800">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={toggleSelectAllVisibleProducts}
-                  className="h-4 w-4 accent-neutral-900"
-                />
-                Chọn tất cả trang này
-              </label>
-
-              <span className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white">
+      {selectedProductIds.length ? (
+        <Panel className="p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-neutral-900">
                 Đã chọn {selectedProductIds.length} sản phẩm
-              </span>
-
-              {selectedProductIds.length ? (
-                <button
-                  type="button"
-                  onClick={clearSelectedProducts}
-                  className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
-                >
-                  Bỏ chọn
-                </button>
-              ) : null}
+              </div>
+              <div className="mt-1 text-xs text-neutral-500">
+                Có thể đưa sản phẩm đã chọn sang Trung tâm in ấn để cấu hình tem và preview trước khi in.
+              </div>
             </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                onClick={handleBulkPrintLabels}
-                disabled={!selectedProductIds.length}
-                variant="secondary"
-                className="px-3 py-2 text-xs"
-              >
-                {selectedProductIds.length > 1 ? "In tem (chọn 1)" : "In tem"}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={clearSelectedProducts}>
+                Bỏ chọn
               </Button>
-
               {canExportProducts ? (
-                <Button
-                  onClick={handleBulkExportSelected}
-                  disabled={!selectedProductIds.length}
-                  variant="secondary"
-                  className="px-3 py-2 text-xs"
-                >
-                  Xuất Excel
+                <Button variant="secondary" onClick={handleBulkExportSelected}>
+                  Xuất Excel đã chọn
                 </Button>
               ) : null}
-
+              <Button onClick={handleBulkPrintLabels}>
+                In tem đã chọn
+              </Button>
               {canToggleProductStatus ? (
-                <Button
-                  onClick={handleBulkToggleInactive}
-                  disabled={!selectedProductIds.length}
-                  variant="secondary"
-                  className="px-3 py-2 text-xs"
-                >
-                  Ngừng bán
-                </Button>
-              ) : null}
-
-              {canEditProduct && selectedProducts.length === 1 ? (
-                <Button
-                  onClick={() => handleOpenEdit(selectedProducts[0])}
-                  variant="secondary"
-                  className="px-3 py-2 text-xs"
-                >
-                  Sửa nhanh
-                </Button>
-              ) : null}
-
-              {canEditProduct && selectedProducts.length === 1 ? (
-                <Button
-                  onClick={() => {
-                    setActiveProductId(selectedProducts[0].id);
-                    resetVariantForm();
-                    setVariantOpen(true);
-                  }}
-                  variant="secondary"
-                  className="px-3 py-2 text-xs"
-                >
-                  + Variant
+                <Button variant="danger" onClick={handleBulkToggleInactive}>
+                  Ngừng bán đã chọn
                 </Button>
               ) : null}
             </div>
           </div>
         </Panel>
+      ) : null}
 
       {canManageProductMasterData ? (
         <Panel className="overflow-hidden">
@@ -2996,8 +3100,12 @@ export default function ProductsPageClient() {
               })}
 
               <div className="bg-white p-3">
-                <div className="text-sm text-neutral-500">
-                  Trang {page} / {Math.max(1, Math.ceil(totalProducts / limit))} · {totalProducts} sản phẩm
+                <div className="flex flex-wrap gap-2 text-sm text-neutral-500">
+                  <span>Trang {page} / {totalProductPages}</span>
+                  <span>· {totalProducts} sản phẩm</span>
+                  <span className="rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-white">
+                    Đã chọn {selectedProductIds.length} sản phẩm
+                  </span>
                 </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-2">
@@ -3216,6 +3324,14 @@ export default function ProductsPageClient() {
 
                           <button
                             type="button"
+                            onClick={() => handlePrintProductLabels(product)}
+                            className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                          >
+                            In tem
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => toggleSelectProduct(product.id)}
                             className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
                           >
@@ -3230,8 +3346,12 @@ export default function ProductsPageClient() {
             </table>
 
             <div className="flex flex-col gap-3 border-t border-neutral-200 px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
-              <div className="text-neutral-500">
-                Trang {page} / {Math.max(1, Math.ceil(totalProducts / limit))} · {totalProducts} sản phẩm
+              <div className="flex flex-wrap items-center gap-2 text-neutral-500">
+                <span>Trang {page} / {totalProductPages}</span>
+                <span>· {totalProducts} sản phẩm</span>
+                <span className="rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-white">
+                  Đã chọn {selectedProductIds.length} sản phẩm
+                </span>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -3609,13 +3729,13 @@ export default function ProductsPageClient() {
                 value={categoryId}
                 onChange={(e) => {
                   const nextId = e.target.value;
-                  const found = categories.find((item) => item.id === nextId);
+                  const found = syncedCategoryItems.find((item) => item.id === nextId);
                   setCategoryId(nextId);
                   setCategory(found?.name || "");
                 }}
               >
                 <option value="">Chọn danh mục</option>
-                {categories.map((item) => (
+                {syncedCategoryItems.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
@@ -3736,6 +3856,7 @@ export default function ProductsPageClient() {
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={defaultCostPrice}
                 onChange={(e) => setDefaultCostPrice(e.target.value)}
+                disabled={!canEditProductCost}
                 placeholder="240000"
               />
             </div>
@@ -3797,6 +3918,7 @@ export default function ProductsPageClient() {
                     type="number"
                     className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                     value={branchStocks[branch.id] || "0"}
+                    disabled={!canManageInventory}
                     onChange={(e) =>
                       setBranchStocks((prev) => ({
                         ...prev,
@@ -3814,8 +3936,8 @@ export default function ProductsPageClient() {
           <Button variant="secondary" onClick={() => setCreateOpen(false)}>
             Đóng
           </Button>
-          <Button onClick={() => void handleCreateProduct()} disabled={savingProduct}>
-            {savingProduct ? "Đang tạo..." : "Tạo sản phẩm"}
+          <Button onClick={() => void handleCreateProduct()} disabled={savingProduct || !canCreateProduct}>
+            {savingProduct ? "Đang tạo..." : canCreateProduct ? "Tạo sản phẩm" : "Không có quyền tạo"}
           </Button>
         </div>
       </Modal>
@@ -3863,13 +3985,13 @@ export default function ProductsPageClient() {
                 disabled={!canEditProduct}
                 onChange={(e) => {
                   const nextId = e.target.value;
-                  const found = categories.find((item) => item.id === nextId);
+                  const found = syncedCategoryItems.find((item) => item.id === nextId);
                   setEditCategoryId(nextId);
                   setEditCategory(found?.name || "");
                 }}
               >
                 <option value="">Chọn danh mục</option>
-                {categories.map((item) => (
+                {syncedCategoryItems.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
@@ -4003,7 +4125,7 @@ export default function ProductsPageClient() {
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={editDefaultCostPrice}
                 onChange={(e) => setEditDefaultCostPrice(e.target.value)}
-                disabled={!canEditProductPrice}
+                disabled={!canEditProductCost}
                 placeholder="240000"
               />
             </div>
@@ -4225,8 +4347,8 @@ export default function ProductsPageClient() {
           <Button variant="secondary" onClick={() => setVariantOpen(false)}>
             Đóng
           </Button>
-          <Button onClick={() => void handleAddVariant()} disabled={savingVariant}>
-            {savingVariant ? "Đang thêm..." : "Thêm variant"}
+          <Button onClick={() => void handleAddVariant()} disabled={savingVariant || !canCreateProductVariant}>
+            {savingVariant ? "Đang thêm..." : canCreateProductVariant ? "Thêm variant" : "Không có quyền thêm"}
           </Button>
         </div>
       </Modal>
@@ -4238,7 +4360,7 @@ export default function ProductsPageClient() {
         maxWidthClass="max-w-6xl"
       >
         <div className="space-y-5">
-          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-neutral-500">
               Import thông minh theo file Excel. Hiện ảnh sản phẩm dùng cột
               <strong> Image URL </strong>
@@ -4514,7 +4636,7 @@ export default function ProductsPageClient() {
                   </div>
                 </div>
                 <Button variant="success" onClick={handleConfirmPrintProductLabels}>
-                  {selectedProductIds.length > 1 ? "In tem (chọn 1)" : "In tem"}
+                  In tem
                 </Button>
               </div>
 

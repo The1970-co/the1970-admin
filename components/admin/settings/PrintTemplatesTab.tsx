@@ -20,7 +20,9 @@ function Panel({
   className?: string;
 }) {
   return (
-    <div className={`rounded-[28px] border border-neutral-200 bg-white shadow-sm ${className}`}>
+    <div
+      className={`rounded-[28px] border border-neutral-200 bg-white shadow-sm ${className}`}
+    >
       {children}
     </div>
   );
@@ -46,6 +48,7 @@ function Button({
     <button
       onClick={onClick}
       className={`inline-flex items-center justify-center rounded-2xl border px-4 py-2.5 text-sm font-medium ${tones}`}
+      type="button"
     >
       {children}
     </button>
@@ -57,21 +60,71 @@ const typeOptions: { value: PrintTemplateType | "ALL"; label: string }[] = [
   { value: "shipping", label: "Phiếu giao hàng" },
   { value: "sales", label: "Phiếu bán hàng" },
   { value: "transfer", label: "Phiếu nhập / chuyển kho" },
+  { value: "product_label", label: "Tem sản phẩm" },
 ];
 
-const paperOptions: PrintPaperSize[] = ["80mm", "A4", "A5"];
+const paperOptions: PrintPaperSize[] = ["50mm", "80mm", "A4", "A5"];
 
 function typeLabel(type: PrintTemplateType) {
   if (type === "shipping") return "Phiếu giao hàng";
   if (type === "sales") return "Phiếu bán hàng";
+  if (type === "product_label") return "Tem sản phẩm";
   return "Phiếu nhập / chuyển kho";
 }
 
+function fieldVisible(
+  selected: PrintTemplateConfig,
+  key: keyof PrintTemplateConfig,
+) {
+  const value = selected[key];
+  return typeof value === "boolean" ? value : true;
+}
+
+const printFieldGroups: Array<{
+  title: string;
+  items: Array<{ key: keyof PrintTemplateConfig; label: string }>;
+}> = [
+  {
+    title: "Thông tin đơn / khách",
+    items: [
+      { key: "showOrderCode", label: "Hiện mã đơn" },
+      { key: "showCreatedAt", label: "Hiện ngày tạo" },
+      { key: "showCustomerName", label: "Hiện người nhận / khách" },
+      { key: "showCustomerPhone", label: "Hiện SĐT" },
+      { key: "showShippingAddress", label: "Hiện địa chỉ" },
+    ],
+  },
+  {
+    title: "Hàng hoá / thanh toán",
+    items: [
+      { key: "showItems", label: "Hiện bảng sản phẩm" },
+      { key: "showItemQty", label: "Hiện cột SL" },
+      { key: "showCod", label: "Hiện COD" },
+      { key: "showShippingFee", label: "Hiện phí ship" },
+      { key: "showNote", label: "Hiện ghi chú" },
+    ],
+  },
+  {
+    title: "Mã quét / cuối phiếu",
+    items: [
+      { key: "showBarcode", label: "Hiện mã vạch" },
+      { key: "showQr", label: "Hiện QR" },
+      { key: "showFooter", label: "Hiện ghi chú cuối phiếu" },
+    ],
+  },
+];
+
 export default function PrintTemplatesTab() {
-  const [rows, setRows] = useState<PrintTemplateConfig[]>(() => loadPrintTemplates());
-  const [selectedId, setSelectedId] = useState<string>(() => loadPrintTemplates()[0]?.id || "");
+  const [rows, setRows] = useState<PrintTemplateConfig[]>(() =>
+    loadPrintTemplates(),
+  );
+  const [selectedId, setSelectedId] = useState<string>(
+    () => loadPrintTemplates()[0]?.id || "",
+  );
   const [filterBranch, setFilterBranch] = useState("ALL");
-  const [filterType, setFilterType] = useState<"ALL" | PrintTemplateType>("ALL");
+  const [filterType, setFilterType] = useState<"ALL" | PrintTemplateType>(
+    "ALL",
+  );
   const [savedMsg, setSavedMsg] = useState("");
 
   const selected = rows.find((r) => r.id === selectedId) || null;
@@ -93,7 +146,7 @@ export default function PrintTemplatesTab() {
   const updateSelected = (patch: Partial<PrintTemplateConfig>) => {
     if (!selected) return;
     setRows((prev) =>
-      prev.map((row) => (row.id === selected.id ? { ...row, ...patch } : row))
+      prev.map((row) => (row.id === selected.id ? { ...row, ...patch } : row)),
     );
   };
 
@@ -114,7 +167,6 @@ export default function PrintTemplatesTab() {
     setTimeout(() => setSavedMsg(""), 2000);
   };
 
-
   const resetSelectedTemplate = () => {
     if (!selected) return;
 
@@ -123,7 +175,7 @@ export default function PrintTemplatesTab() {
       (row) =>
         row.branchId === selected.branchId &&
         row.templateType === selected.templateType &&
-        row.paperSize === selected.paperSize
+        row.paperSize === selected.paperSize,
     );
 
     if (!replacement) return;
@@ -135,7 +187,7 @@ export default function PrintTemplatesTab() {
     };
 
     setRows((prev) =>
-      prev.map((row) => (row.id === selected.id ? updated : row))
+      prev.map((row) => (row.id === selected.id ? updated : row)),
     );
     setSelectedId(selected.id);
     setSavedMsg("Đã reset riêng mẫu đang chọn. Bấm Lưu cấu hình để áp dụng.");
@@ -157,7 +209,7 @@ export default function PrintTemplatesTab() {
           };
         }
         return row;
-      })
+      }),
     );
   };
 
@@ -170,7 +222,8 @@ export default function PrintTemplatesTab() {
               Mẫu in
             </h3>
             <p className="mt-1 text-sm text-neutral-500">
-              Cấu hình template in mặc định theo chi nhánh. Preview bên phải render thật.
+              Cấu hình template in mặc định theo chi nhánh. Các checkbox sẽ ăn
+              vào preview và bản in thật.
             </p>
           </div>
 
@@ -207,7 +260,9 @@ export default function PrintTemplatesTab() {
           <select
             className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
             value={filterType}
-            onChange={(e) => setFilterType(e.target.value as "ALL" | PrintTemplateType)}
+            onChange={(e) =>
+              setFilterType(e.target.value as "ALL" | PrintTemplateType)
+            }
           >
             {typeOptions.map((t) => (
               <option key={t.value} value={t.value}>
@@ -218,10 +273,12 @@ export default function PrintTemplatesTab() {
         </div>
       </Panel>
 
-      <div className="grid gap-6 xl:grid-cols-[0.7fr_0.7fr_1fr]">
+      <div className="grid gap-6 xl:grid-cols-[0.7fr_0.75fr_1fr]">
         <Panel className="overflow-hidden">
           <div className="border-b border-neutral-200 px-5 py-4">
-            <h4 className="text-lg font-semibold text-neutral-900">Danh sách mẫu</h4>
+            <h4 className="text-lg font-semibold text-neutral-900">
+              Danh sách mẫu
+            </h4>
           </div>
 
           <div className="max-h-[72vh] overflow-auto">
@@ -232,12 +289,16 @@ export default function PrintTemplatesTab() {
                 className={`block w-full border-b border-neutral-100 px-5 py-4 text-left hover:bg-neutral-50 ${
                   selectedId === row.id ? "bg-neutral-50" : "bg-white"
                 }`}
+                type="button"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-neutral-900">{row.name}</p>
+                    <p className="text-sm font-medium text-neutral-900">
+                      {row.name}
+                    </p>
                     <p className="mt-1 text-xs text-neutral-500">
-                      {row.branchName} · {typeLabel(row.templateType)} · {row.paperSize}
+                      {row.branchName} · {typeLabel(row.templateType)} ·{" "}
+                      {row.paperSize}
                     </p>
                   </div>
 
@@ -254,14 +315,19 @@ export default function PrintTemplatesTab() {
 
         <Panel className="p-5">
           {!selected ? (
-            <p className="text-sm text-neutral-500">Chọn một mẫu để chỉnh sửa.</p>
+            <p className="text-sm text-neutral-500">
+              Chọn một mẫu để chỉnh sửa.
+            </p>
           ) : (
             <div className="space-y-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h4 className="text-xl font-semibold text-neutral-900">{selected.name}</h4>
+                  <h4 className="text-xl font-semibold text-neutral-900">
+                    {selected.name}
+                  </h4>
                   <p className="mt-1 text-sm text-neutral-500">
-                    {selected.branchName} · {typeLabel(selected.templateType)} · {selected.paperSize}
+                    {selected.branchName} · {typeLabel(selected.templateType)} ·{" "}
+                    {selected.paperSize}
                   </p>
                 </div>
 
@@ -291,7 +357,9 @@ export default function PrintTemplatesTab() {
                     <input
                       className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
                       value={selected.title}
-                      onChange={(e) => updateSelected({ title: e.target.value })}
+                      onChange={(e) =>
+                        updateSelected({ title: e.target.value })
+                      }
                     />
                   </div>
 
@@ -303,7 +371,9 @@ export default function PrintTemplatesTab() {
                       className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
                       value={selected.paperSize}
                       onChange={(e) =>
-                        updateSelected({ paperSize: e.target.value as PrintPaperSize })
+                        updateSelected({
+                          paperSize: e.target.value as PrintPaperSize,
+                        })
                       }
                     >
                       {paperOptions.map((size) => (
@@ -322,89 +392,79 @@ export default function PrintTemplatesTab() {
                   <input
                     className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
                     value={selected.storeName}
-                    onChange={(e) => updateSelected({ storeName: e.target.value })}
+                    onChange={(e) =>
+                      updateSelected({ storeName: e.target.value })
+                    }
                   />
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+                      SĐT cửa hàng
+                    </label>
+                    <input
+                      className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                      value={selected.storePhone}
+                      onChange={(e) =>
+                        updateSelected({ storePhone: e.target.value })
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+                      Ghi chú cuối phiếu
+                    </label>
+                    <input
+                      className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                      value={selected.footerNote}
+                      onChange={(e) =>
+                        updateSelected({ footerNote: e.target.value })
+                      }
+                    />
+                  </div>
                 </div>
 
                 <div>
                   <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    SĐT
-                  </label>
-                  <input
-                    className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                    value={selected.storePhone}
-                    onChange={(e) => updateSelected({ storePhone: e.target.value })}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    Địa chỉ
+                    Địa chỉ cửa hàng
                   </label>
                   <input
                     className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
                     value={selected.storeAddress}
-                    onChange={(e) => updateSelected({ storeAddress: e.target.value })}
+                    onChange={(e) =>
+                      updateSelected({ storeAddress: e.target.value })
+                    }
                   />
                 </div>
 
-                <div>
-                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    Ghi chú cuối phiếu
-                  </label>
-                  <input
-                    className="h-12 w-full rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
-                    value={selected.footerNote}
-                    onChange={(e) => updateSelected({ footerNote: e.target.value })}
-                  />
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="flex items-center gap-3 rounded-2xl border border-neutral-200 px-4 py-3 text-sm text-neutral-700">
-                    <input
-                      type="checkbox"
-                      checked={selected.showBarcode}
-                      onChange={(e) => updateSelected({ showBarcode: e.target.checked })}
-                    />
-                    Hiện mã vạch
-                  </label>
-
-                  <label className="flex items-center gap-3 rounded-2xl border border-neutral-200 px-4 py-3 text-sm text-neutral-700">
-                    <input
-                      type="checkbox"
-                      checked={selected.showQr}
-                      onChange={(e) => updateSelected({ showQr: e.target.checked })}
-                    />
-                    Hiện QR
-                  </label>
-
-                  <label className="flex items-center gap-3 rounded-2xl border border-neutral-200 px-4 py-3 text-sm text-neutral-700">
-                    <input
-                      type="checkbox"
-                      checked={selected.showCod}
-                      onChange={(e) => updateSelected({ showCod: e.target.checked })}
-                    />
-                    Hiện COD
-                  </label>
-
-                  <label className="flex items-center gap-3 rounded-2xl border border-neutral-200 px-4 py-3 text-sm text-neutral-700">
-                    <input
-                      type="checkbox"
-                      checked={selected.showShippingFee}
-                      onChange={(e) => updateSelected({ showShippingFee: e.target.checked })}
-                    />
-                    Hiện phí ship
-                  </label>
-
-                  <label className="flex items-center gap-3 rounded-2xl border border-neutral-200 px-4 py-3 text-sm text-neutral-700">
-                    <input
-                      type="checkbox"
-                      checked={selected.showNote}
-                      onChange={(e) => updateSelected({ showNote: e.target.checked })}
-                    />
-                    Hiện ghi chú
-                  </label>
-                </div>
+                {printFieldGroups.map((group) => (
+                  <div key={group.title}>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      {group.title}
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {group.items.map((item) => (
+                        <label
+                          key={String(item.key)}
+                          className="flex items-center gap-3 rounded-2xl border border-neutral-200 px-4 py-3 text-sm text-neutral-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={fieldVisible(selected, item.key)}
+                            onChange={(e) =>
+                              updateSelected({
+                                [item.key]: e.target.checked,
+                              } as Partial<PrintTemplateConfig>)
+                            }
+                          />
+                          {item.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
 
                 <div>
                   <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-neutral-500">
@@ -412,9 +472,16 @@ export default function PrintTemplatesTab() {
                   </label>
                   <textarea
                     value={selected.templateHtml}
-                    onChange={(e) => updateSelected({ templateHtml: e.target.value })}
+                    onChange={(e) =>
+                      updateSelected({ templateHtml: e.target.value })
+                    }
                     className="min-h-[420px] w-full rounded-2xl border border-neutral-300 px-4 py-3 text-xs outline-none"
                   />
+                  <p className="mt-2 text-xs text-neutral-500">
+                    Muốn checkbox ăn chuẩn nhất thì dùng template mặc định mới
+                    có token block: orderMetaBlock, customerBlock, itemsBlock,
+                    financialBlock, barcodeBlock, qrBlock, footerBlock.
+                  </p>
                 </div>
               </div>
             </div>
@@ -423,7 +490,9 @@ export default function PrintTemplatesTab() {
 
         <Panel className="p-5">
           <div className="mb-3">
-            <h4 className="text-lg font-semibold text-neutral-900">Xem trước</h4>
+            <h4 className="text-lg font-semibold text-neutral-900">
+              Xem trước
+            </h4>
             <p className="mt-1 text-sm text-neutral-500">
               Preview đang render bằng dữ liệu demo thật, có barcode + QR.
             </p>

@@ -75,7 +75,64 @@ export default function InventoryActionCenter({
   const [uploadResult, setUploadResult] = useState<any>(null);
 
   const role = String(currentUser?.role || "").toLowerCase();
-  const isAdmin = role === "owner" || role === "admin";
+  const roles = Array.isArray(currentUser?.roles)
+    ? currentUser.roles.map((item: any) => String(item || "").toLowerCase())
+    : [];
+  const isAdmin = role === "owner" || role === "admin" || roles.includes("owner") || roles.includes("admin");
+
+  function getPermissionKeys() {
+    const keys = new Set<string>();
+
+    if (Array.isArray(currentUser?.permissions)) {
+      currentUser.permissions.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray(currentUser?.permissionKeys)) {
+      currentUser.permissionKeys.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray(currentUser?.branchPermissions)) {
+      currentUser.branchPermissions.forEach((row: any) => {
+        if (Array.isArray(row?.permissionKeys)) {
+          row.permissionKeys.forEach((key: any) => {
+            if (key) keys.add(String(key));
+          });
+        }
+      });
+    }
+
+    return keys;
+  }
+
+  function can(permission: string) {
+    if (isAdmin) return true;
+    const keys = getPermissionKeys();
+    return keys.has("*") || keys.has(permission);
+  }
+
+  const canViewInventory = can("inventory.view");
+  const canViewLogs = can("inventory.logs.view");
+  const canViewCost = can("inventory.value.view") || can("products.cost.view");
+  const canEditCost = can("products.cost.edit") || can("purchase_receipt.cost.edit");
+  const canImportStockReport = can("inventory.excel.import");
+  const canAuditExcel = can("inventory.excel.audit");
+  const canAdjustInventory = can("inventory.adjust") || can("inventory.manage");
+  const canTransferInventory = can("inventory.transfer") || can("inventory.manage");
+
+  const tabPermissions: Record<TabKey, boolean> = {
+    "missing-cost": canViewCost || canEditCost,
+    "lock-cost": canViewCost || canEditCost,
+    "ledger": canViewLogs,
+    "inventory-layers": canViewInventory,
+    "upload-stock": canImportStockReport || canAuditExcel,
+    "adjust": canAdjustInventory,
+    "transfer": canTransferInventory,
+  };
+
   const adminOnlyTabs: TabKey[] = [
     "missing-cost",
     "lock-cost",
@@ -140,15 +197,15 @@ export default function InventoryActionCenter({
   }, [defaultBranchId]);
 
   useEffect(() => {
-    if (!isAdmin && adminOnlyTabs.includes(activeTab)) {
-      setActiveTab("ledger");
+    if (!tabPermissions[activeTab]) {
+      setActiveTab(canViewLogs ? "ledger" : "inventory-layers");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, activeTab]);
+  }, [activeTab, canViewLogs, tabPermissions]);
 
   async function saveMissingCosts() {
-    if (!isAdmin) {
-      setError("Chỉ admin/owner được cập nhật giá vốn.");
+    if (!canEditCost) {
+      setError("Bạn không có quyền cập nhật giá vốn.");
       return;
     }
 
@@ -181,8 +238,8 @@ export default function InventoryActionCenter({
   }
 
   async function submitAdjust() {
-    if (!isAdmin) {
-      setError("Chỉ admin/owner được điều chỉnh kho.");
+    if (!canAdjustInventory) {
+      setError("Bạn không có quyền điều chỉnh kho.");
       return;
     }
 
@@ -208,8 +265,8 @@ export default function InventoryActionCenter({
   }
 
   async function submitTransfer() {
-    if (!isAdmin) {
-      setError("Chỉ admin/owner được chuyển kho.");
+    if (!canTransferInventory) {
+      setError("Bạn không có quyền chuyển kho.");
       return;
     }
 
@@ -235,8 +292,8 @@ export default function InventoryActionCenter({
   }
 
   async function submitImportStock() {
-    if (!isAdmin) {
-      setError("Chỉ admin/owner được import tồn kho.");
+    if (!canImportStockReport) {
+      setError("Bạn không có quyền import tồn kho.");
       return;
     }
 
@@ -263,8 +320,8 @@ export default function InventoryActionCenter({
   }
 
   async function submitAuditOneFile() {
-    if (!isAdmin) {
-      setError("Chỉ admin/owner được đối chiếu SAPO.");
+    if (!canAuditExcel) {
+      setError("Bạn không có quyền đối chiếu SAPO.");
       return;
     }
 
@@ -290,8 +347,8 @@ export default function InventoryActionCenter({
   }
 
   async function submitAuditTwoFiles() {
-    if (!isAdmin) {
-      setError("Chỉ admin/owner được đối chiếu SAPO.");
+    if (!canAuditExcel) {
+      setError("Bạn không có quyền đối chiếu SAPO.");
       return;
     }
 
@@ -365,8 +422,8 @@ export default function InventoryActionCenter({
   );
 
   const visibleCards = useMemo(
-    () => cards.filter((card) => isAdmin || !adminOnlyTabs.includes(card.key)),
-    [cards, isAdmin],
+    () => cards.filter((card) => tabPermissions[card.key]),
+    [cards, tabPermissions],
   );
 
   return (
@@ -412,7 +469,7 @@ export default function InventoryActionCenter({
           <button
             type="button"
             onClick={reloadAll}
-            disabled={loading}
+            disabled={loading || !canEditCost}
             className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-50 disabled:opacity-50"
           >
             {loading ? "Đang tải..." : "Tải lại"}
@@ -431,14 +488,14 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {isAdmin && (activeTab === "missing-cost" || activeTab === "lock-cost") ? (
+        {(canViewCost || canEditCost) && (activeTab === "missing-cost" || activeTab === "lock-cost") ? (
           <div className="mt-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-neutral-900">
                 Tổng SKU thiếu giá vốn: {missingCostRows.length}
               </div>
 
-              {isAdmin ? (
+              {canEditCost ? (
                 <button
                   type="button"
                   onClick={saveMissingCosts}
@@ -562,7 +619,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {isAdmin && activeTab === "upload-stock" ? (
+        {(canImportStockReport || canAuditExcel) && activeTab === "upload-stock" ? (
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
             <div className="rounded-xl border border-neutral-200 p-4">
               <div className="font-bold">Import báo cáo tồn kho</div>
@@ -578,7 +635,7 @@ export default function InventoryActionCenter({
               <button
                 type="button"
                 onClick={submitImportStock}
-                disabled={loading || !isAdmin}
+                disabled={loading || !canImportStockReport}
                 className="mt-4 rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
               >
                 Import vào DB
@@ -599,7 +656,7 @@ export default function InventoryActionCenter({
               <button
                 type="button"
                 onClick={submitAuditOneFile}
-                disabled={loading}
+                disabled={loading || !canAuditExcel}
                 className="mt-4 rounded-xl border border-neutral-200 px-4 py-2 text-sm font-bold hover:bg-neutral-50 disabled:opacity-50"
               >
                 Đối chiếu
@@ -626,7 +683,7 @@ export default function InventoryActionCenter({
               <button
                 type="button"
                 onClick={submitAuditTwoFiles}
-                disabled={loading}
+                disabled={loading || !canAuditExcel}
                 className="mt-4 rounded-xl border border-neutral-200 px-4 py-2 text-sm font-bold hover:bg-neutral-50 disabled:opacity-50"
               >
                 Đối chiếu 2 file
@@ -641,7 +698,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {isAdmin && activeTab === "adjust" ? (
+        {canAdjustInventory && activeTab === "adjust" ? (
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <input
               value={adjustForm.variantId}
@@ -681,7 +738,7 @@ export default function InventoryActionCenter({
             <button
               type="button"
               onClick={submitAdjust}
-              disabled={loading || !isAdmin}
+              disabled={loading || !canImportStockReport}
               className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
             >
               Ghi điều chỉnh kho
@@ -689,7 +746,7 @@ export default function InventoryActionCenter({
           </div>
         ) : null}
 
-        {isAdmin && activeTab === "transfer" ? (
+        {canTransferInventory && activeTab === "transfer" ? (
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <input
               value={transferForm.variantId}
@@ -724,7 +781,7 @@ export default function InventoryActionCenter({
             <button
               type="button"
               onClick={submitTransfer}
-              disabled={loading || !isAdmin}
+              disabled={loading || !canImportStockReport}
               className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
             >
               Ghi chuyển kho

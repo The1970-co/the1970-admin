@@ -928,6 +928,7 @@ function hasLegacyOrderPermission(
     if (permission === "orders.cancel") return !!row.canCancelOrder;
     if (permission === "orders.pay") return false;
     if (permission === "orders.pack_ship") return false;
+    if (permission === "orders.delete") return false;
     if (permission === "pos.access") return !!row.canSell;
     return false;
   });
@@ -1778,6 +1779,7 @@ export default function OrdersPageClient() {
 
   const canViewAllOrders = hasOrderPermission(currentUser, "orders.view");
   const canViewOwnOrders = hasOrderPermission(currentUser, "orders.view_own");
+  const canCreateOrder = hasOrderPermission(currentUser, "orders.create");
   const canApproveOrder = hasOrderPermission(currentUser, "orders.approve");
   const canCancelOrder = hasOrderPermission(currentUser, "orders.cancel");
   const canPayOrder = hasOrderPermission(currentUser, "orders.pay");
@@ -1788,7 +1790,7 @@ export default function OrdersPageClient() {
   );
 
   const canSeeMoney = isOwnerOrAdminUser(currentUser);
-  const canDeleteOrder = isOwnerOrAdminUser(currentUser);
+  const canDeleteOrder = hasOrderPermission(currentUser, "orders.delete");
 
   const userStorageSuffix = useMemo(() => {
     const userKey =
@@ -2018,28 +2020,6 @@ export default function OrdersPageClient() {
     ) {
       setBranchFilter(storedUser.branchId);
     }
-
-    // Lấy lại auth/me để chắc chắn permissions mới nhất đã sync sau khi đổi role.
-    // Nếu chỉ đọc localStorage cũ, orders.view_own có thể đã tick nhưng trang đơn vẫn báo không có quyền.
-    apiJson("/auth/me")
-      .then((data) => {
-        const freshUser = data?.user || data;
-        if (!freshUser) return;
-
-        setCurrentUser(freshUser);
-        saveCurrentUserLite(freshUser);
-
-        if (
-          freshUser?.role !== "admin" &&
-          freshUser?.role !== "owner" &&
-          freshUser?.branchId
-        ) {
-          setBranchFilter(freshUser.branchId);
-        }
-      })
-      .catch(() => {
-        // giữ user local nếu auth/me lỗi
-      });
 
     void loadBranches();
     void loadStaffList();
@@ -4605,7 +4585,7 @@ export default function OrdersPageClient() {
                 </Button>
               ) : null}
 
-              {singleCheckedOrder ? (
+              {canCreateOrder && singleCheckedOrder ? (
                 <Button
                   variant="secondary"
                   size="md"

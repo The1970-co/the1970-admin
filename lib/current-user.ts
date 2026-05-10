@@ -1,87 +1,133 @@
-const USER_KEY = "user";
 const TOKEN_KEY = "token";
+const ACCESS_TOKEN_KEY = "accessToken";
+const USER_KEYS = ["currentUser", "the1970_current_user", "user"];
 
-export function getCurrentUserFromStorage() {
-  if (typeof window === "undefined") return null;
-
+function safeJsonParse(value: string | null) {
+  if (!value) return null;
   try {
-    const raw = localStorage.getItem(USER_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
+    return JSON.parse(value);
   } catch {
     return null;
   }
 }
+
+export function getCurrentUserFromStorage() {
+  if (typeof window === "undefined") return null;
+
+  for (const key of USER_KEYS) {
+    const parsed = safeJsonParse(localStorage.getItem(key));
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+export function setCurrentUserToStorage(user: any) {
+  if (typeof window === "undefined") return;
+  if (!user) return;
+
+  const raw = JSON.stringify(user);
+  localStorage.setItem("currentUser", raw);
+  localStorage.setItem("the1970_current_user", raw);
+  localStorage.setItem("user", raw);
+}
+
+export function getTokenFromStorage() {
+  if (typeof window === "undefined") return null;
+  return (
+    localStorage.getItem(TOKEN_KEY) ||
+    localStorage.getItem(ACCESS_TOKEN_KEY) ||
+    null
+  );
+}
+
+export function setTokenToStorage(token: string) {
+  if (typeof window === "undefined") return;
+  if (!token) return;
+
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(ACCESS_TOKEN_KEY, token);
+}
+
+export function clearCurrentUserFromStorage() {
+  if (typeof window === "undefined") return;
+
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem("user");
+  localStorage.removeItem("currentUser");
+  localStorage.removeItem("the1970_current_user");
+}
+
 export function normalizeBranchId(value?: string | null) {
-  if (!value) return "b1";
-
-  const v = String(value).trim().toLowerCase();
-
-  if (v === "b1") return "b1";
-  if (v === "b2") return "b2";
-  if (v === "b3") return "b3";
-
-  if (v === "hoàn kiếm" || v === "hoan kiem") return "b1";
-  if (v === "hai bà trưng" || v === "hai ba trung") return "b2";
-  if (v === "online warehouse" || v === "kho online") return "b3";
-
-  return String(value);
+  if (!value) return "";
+  return String(value).trim();
 }
 
 export function getUserBranchIds(user?: any): string[] {
   if (!user) return [];
 
-  if (Array.isArray(user.branchIds) && user.branchIds.length > 0) {
-    return user.branchIds;
+  const ids = new Set<string>();
+
+  if (Array.isArray(user.branchIds)) {
+    user.branchIds.forEach((id: any) => {
+      const value = normalizeBranchId(id);
+      if (value) ids.add(value);
+    });
   }
 
-  const single = user.branchId || user.branchName;
-  if (!single) return [];
+  if (user.branchId) {
+    const value = normalizeBranchId(user.branchId);
+    if (value) ids.add(value);
+  }
 
-  return [normalizeBranchId(single)];
-}
+  if (Array.isArray(user.branchRoles)) {
+    user.branchRoles.forEach((row: any) => {
+      const value = normalizeBranchId(row?.branchId || row?.branch?.id);
+      if (value) ids.add(value);
+    });
+  }
 
-export function setCurrentUserToStorage(user: any) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-}
+  if (Array.isArray(user.branchPermissions)) {
+    user.branchPermissions.forEach((row: any) => {
+      const value = normalizeBranchId(row?.branchId || row?.branch?.id);
+      if (value) ids.add(value);
+    });
+  }
 
-export function getTokenFromStorage() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setTokenToStorage(token: string) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearCurrentUserFromStorage() {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(USER_KEY);
-  localStorage.removeItem(TOKEN_KEY);
+  return Array.from(ids);
 }
 
 export function isOwnerUser(user?: any) {
-  return user?.role === "owner" || user?.role === "admin";
+  const roles = [
+    ...(Array.isArray(user?.roles) ? user.roles : []),
+    user?.role,
+  ]
+    .map((role) => String(role || "").toLowerCase())
+    .filter(Boolean);
+
+  return roles.includes("owner") || roles.includes("admin");
 }
 
 export function getCurrentUserPermissions(user?: any): string[] {
-  const source = user || getCurrentUserFromStorage();
-  if (!source) return [];
+  if (!user) return [];
+
+  if (isOwnerUser(user)) return ["*"];
 
   const keys: string[] = [];
 
-  if (Array.isArray(source.permissions)) keys.push(...source.permissions);
-  if (Array.isArray(source.permissionKeys)) keys.push(...source.permissionKeys);
+  if (Array.isArray(user.permissions)) keys.push(...user.permissions);
+  if (Array.isArray(user.permissionKeys)) keys.push(...user.permissionKeys);
 
-  const branchPermissions = Array.isArray(source.branchPermissions)
-    ? source.branchPermissions
+  const branchPermissions = Array.isArray(user.branchPermissions)
+    ? user.branchPermissions
     : [];
 
   for (const row of branchPermissions) {
     if (Array.isArray(row?.permissionKeys)) keys.push(...row.permissionKeys);
   }
 
-  return Array.from(new Set(keys.map((key) => String(key || "").trim()).filter(Boolean)));
+  return Array.from(
+    new Set(keys.map((key) => String(key || "").trim()).filter(Boolean)),
+  );
 }

@@ -80,7 +80,44 @@ export default function InventoryLogsPageClient() {
   }, []);
 
   const isOwner = role === "admin" || role === "owner";
-  const canViewLogs = hasPermission(role, "inventory.logs.view");
+
+  const currentUser = getCurrentUserFromStorage();
+
+  function getPermissionKeys() {
+    const keys = new Set<string>();
+
+    if (Array.isArray((currentUser as any)?.permissions)) {
+      (currentUser as any).permissions.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray((currentUser as any)?.permissionKeys)) {
+      (currentUser as any).permissionKeys.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray((currentUser as any)?.branchPermissions)) {
+      (currentUser as any).branchPermissions.forEach((row: any) => {
+        if (Array.isArray(row?.permissionKeys)) {
+          row.permissionKeys.forEach((key: any) => {
+            if (key) keys.add(String(key));
+          });
+        }
+      });
+    }
+
+    return keys;
+  }
+
+  function can(permission: string) {
+    if (isOwner) return true;
+    const keys = getPermissionKeys();
+    return keys.has("*") || keys.has(permission) || hasPermission(role, permission as any);
+  }
+
+  const canViewLogs = can("inventory.logs.view");
 
   useEffect(() => {
     const loadBranches = async () => {

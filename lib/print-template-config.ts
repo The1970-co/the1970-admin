@@ -22,6 +22,15 @@ export type PrintTemplateConfig = {
   showShippingFee: boolean;
   showNote: boolean;
 
+  showOrderCode?: boolean;
+  showCreatedAt?: boolean;
+  showCustomerName?: boolean;
+  showCustomerPhone?: boolean;
+  showShippingAddress?: boolean;
+  showItems?: boolean;
+  showItemQty?: boolean;
+  showFooter?: boolean;
+
   templateHtml: string;
 };
 

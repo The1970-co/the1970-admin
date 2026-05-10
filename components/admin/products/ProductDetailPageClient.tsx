@@ -1,7 +1,6 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
-import { apiJson } from "@/lib/api";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -607,6 +606,21 @@ export default function ProductDetailPageClient({
     role,
     "products.cost.view",
   );
+  const canEditProductCost = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.cost.edit",
+  );
+  const canUploadProductImage = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.image.upload",
+  );
+  const canManageInventory = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.manage",
+  );
   const canViewInventoryValue = hasProductInventoryPermission(
     currentUser,
     role,
@@ -744,29 +758,8 @@ const branchStocks =
 
   useEffect(() => {
     const storedUser = getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
-    if (storedUser) {
-      setCurrentUser(storedUser);
-      setRole(getPrimaryAppRole(storedUser));
-    }
-
-    apiJson("/auth/me")
-      .then((data) => {
-        const freshUser = (data?.user || data) as CurrentUserPermissionProfile | null;
-        if (!freshUser) return;
-
-        setCurrentUser(freshUser);
-        setRole(getPrimaryAppRole(freshUser));
-
-        try {
-          localStorage.setItem("currentUser", JSON.stringify(freshUser));
-          localStorage.setItem("the1970_current_user", JSON.stringify(freshUser));
-        } catch {
-          // ignore storage sync error
-        }
-      })
-      .catch(() => {
-        // giữ user local nếu auth/me lỗi
-      });
+    setCurrentUser(storedUser);
+    setRole(getPrimaryAppRole(storedUser));
 
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -929,7 +922,7 @@ const branchStocks =
         ...(canEditProductPrice
           ? { defaultPrice: Number(defaultPrice || 0) }
           : {}),
-        ...(canViewCost && canEditProductPrice
+        ...(canEditProductCost
           ? { defaultCostPrice: Number(defaultCostPrice || 0) }
           : {}),
         colors: parseCommaTokens(colors),
@@ -965,10 +958,8 @@ const branchStocks =
   };
 
   const handleUpload = async (file: File | null) => {
-    if (!canEditProduct) {
-      setMessage(
-        "Role hiện tại chỉ có quyền xem sản phẩm, không được upload/sửa ảnh.",
-      );
+    if (!canUploadProductImage) {
+      setMessage("Role hiện tại không có quyền upload ảnh sản phẩm.");
       return;
     }
     if (!file) return;
@@ -998,14 +989,16 @@ const branchStocks =
       const payload: AddVariantPayload = {
         color: variantColor.trim(),
         size: variantSize.trim(),
-        price: Number(variantPrice || 0),
-        costPrice: Number(variantCostPrice || 0),
-        branchStocks: Object.fromEntries(
-          Object.entries(variantBranchStocks).map(([key, value]) => [
-            key,
-            Number(value || 0),
-          ]),
-        ),
+        price: canEditProductPrice ? Number(variantPrice || 0) : 0,
+        costPrice: canEditProductCost ? Number(variantCostPrice || 0) : 0,
+        branchStocks: canManageInventory
+          ? Object.fromEntries(
+              Object.entries(variantBranchStocks).map(([key, value]) => [
+                key,
+                Number(value || 0),
+              ]),
+            )
+          : {},
       };
 
       await addVariant(product.id, payload);
@@ -1254,7 +1247,7 @@ const branchStocks =
             </Field>
             {canViewCost ? (
               <Field label="Giá vốn">
-                <Input type="number" value={defaultCostPrice} onChange={(e) => setDefaultCostPrice(e.target.value)} disabled={!canEditProductPrice} />
+                <Input type="number" value={defaultCostPrice} onChange={(e) => setDefaultCostPrice(e.target.value)} disabled={!canEditProductCost} />
               </Field>
             ) : null}
             <Field label="Mô tả">
@@ -1428,7 +1421,7 @@ const branchStocks =
                     type="number"
                     value={defaultCostPrice}
                     onChange={(e) => setDefaultCostPrice(e.target.value)}
-                    disabled={!canEditProductPrice}
+                    disabled={!canEditProductCost}
                   />
                 </Field>
               ) : null}
@@ -1567,7 +1560,7 @@ const branchStocks =
                     onChange={(e) => setVariantCostPrice(e.target.value)}
                     placeholder="Giá vốn"
                     className="py-2"
-                    disabled={!canEditProductPrice}
+                    disabled={!canEditProductCost}
                   />
                 ) : null}
               </div>
@@ -1740,7 +1733,7 @@ const branchStocks =
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  disabled={!canEditProduct || uploading}
+                  disabled={!canUploadProductImage || uploading}
                   onChange={async (e) => {
                     const input = e.currentTarget;
                     const file = input.files?.[0] || null;

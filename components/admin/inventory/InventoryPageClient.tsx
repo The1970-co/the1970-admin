@@ -494,12 +494,51 @@ export default function InventoryPageClient() {
   }, []);
 
   const isOwner = role === "admin" || role === "owner";
-  const canViewMoney = isOwner;
-  const canViewCostTools = isOwner;
 
-  const canViewInventory = hasPermission(role as AppRole, "inventory.view");
-  const canViewLogs = hasPermission(role as AppRole, "inventory.logs.view");
-  const canUseStocktake = hasPermission(role as AppRole, "stocktake.view");
+  const currentUser = getCurrentUserFromStorage();
+
+  function getPermissionKeys() {
+    const keys = new Set<string>();
+
+    if (Array.isArray((currentUser as any)?.permissions)) {
+      (currentUser as any).permissions.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray((currentUser as any)?.permissionKeys)) {
+      (currentUser as any).permissionKeys.forEach((key: any) => {
+        if (key) keys.add(String(key));
+      });
+    }
+
+    if (Array.isArray((currentUser as any)?.branchPermissions)) {
+      (currentUser as any).branchPermissions.forEach((row: any) => {
+        if (Array.isArray(row?.permissionKeys)) {
+          row.permissionKeys.forEach((key: any) => {
+            if (key) keys.add(String(key));
+          });
+        }
+      });
+    }
+
+    return keys;
+  }
+
+  function can(permission: string) {
+    if (isOwner) return true;
+    const keys = getPermissionKeys();
+    return keys.has("*") || keys.has(permission) || hasPermission(role as AppRole, permission as any);
+  }
+
+  const canViewInventory = can("inventory.view");
+  const canViewLogs = can("inventory.logs.view");
+  const canUseStocktake = can("stocktake.view");
+  const canViewMoney = can("inventory.value.view") || can("products.cost.view");
+  const canViewCostTools = canViewMoney || can("products.cost.edit");
+  const canEditCost = can("products.cost.edit");
+  const canImportStockReport = can("inventory.excel.import");
+  const canAuditExcel = can("inventory.excel.audit");
 
   const visibleBranches = useMemo(() => {
     if (isOwner) return branches;
@@ -544,8 +583,8 @@ export default function InventoryPageClient() {
   };
 
   const handleAuditFile = async (file: File) => {
-    if (!canViewCostTools) {
-      setActionMessage("Role hiện tại không có quyền đối chiếu SAPO.");
+    if (!canAuditExcel) {
+      setActionMessage("Bạn không có quyền đối chiếu SAPO.");
       return;
     }
 
@@ -972,7 +1011,7 @@ export default function InventoryPageClient() {
   );
 
   const fillAllSuggestedCosts = () => {
-    if (!canViewCostTools) return;
+    if (!canEditCost) return;
 
     const source = currentMissingCostRows.length > 0 ? currentMissingCostRows : missingCostRows;
     const next: Record<string, number> = {};
@@ -987,8 +1026,8 @@ export default function InventoryPageClient() {
   };
 
   const handleUploadStockReport = async (file: File | null) => {
-    if (!canViewCostTools) {
-      setActionMessage("Role hiện tại không có quyền import báo cáo tồn kho.");
+    if (!canImportStockReport) {
+      setActionMessage("Bạn không có quyền import báo cáo tồn kho.");
       return;
     }
 
@@ -1026,8 +1065,8 @@ export default function InventoryPageClient() {
   };
 
   const saveMissingCosts = async () => {
-    if (!canViewCostTools) {
-      setActionMessage("Role hiện tại không có quyền cập nhật giá vốn.");
+    if (!canEditCost) {
+      setActionMessage("Bạn không có quyền cập nhật giá vốn.");
       return;
     }
 
@@ -1086,8 +1125,8 @@ export default function InventoryPageClient() {
     a.click();
   };
   const handleAuditSapoFile = async (file: File | null) => {
-    if (!canViewCostTools) {
-      setActionMessage("Role hiện tại không có quyền đối chiếu SAPO.");
+    if (!canAuditExcel) {
+      setActionMessage("Bạn không có quyền đối chiếu SAPO.");
       return;
     }
 
@@ -1115,8 +1154,8 @@ export default function InventoryPageClient() {
 
 
   const handleAuditTwoSapoFiles = async () => {
-    if (!canViewCostTools) {
-      setActionMessage("Role hiện tại không có quyền đối chiếu SAPO.");
+    if (!canAuditExcel) {
+      setActionMessage("Bạn không có quyền đối chiếu SAPO.");
       return;
     }
 
@@ -1248,7 +1287,7 @@ export default function InventoryPageClient() {
                 type="file"
                 accept=".xlsx,.xls"
                 className="hidden"
-                disabled={importingStockReport}
+                disabled={importingStockReport || !canImportStockReport}
                 onChange={async (e) => {
                   const input = e.currentTarget;
                   const file = input.files?.[0] || null;
@@ -1726,7 +1765,7 @@ export default function InventoryPageClient() {
                     type="file"
                     accept=".xlsx,.xls"
                     className="hidden"
-                    disabled={auditingSapo}
+                    disabled={auditingSapo || !canAuditExcel}
                     onChange={async (e) => {
                       const input = e.currentTarget;
                       const file = input.files?.[0] || null;
@@ -1893,7 +1932,7 @@ export default function InventoryPageClient() {
                     type="file"
                     accept=".xlsx,.xls"
                     className="hidden"
-                    disabled={auditingSapo}
+                    disabled={auditingSapo || !canAuditExcel}
                     onChange={async (e) => {
                       const input = e.currentTarget;
                       const file = input.files?.[0] || null;
@@ -2064,7 +2103,7 @@ export default function InventoryPageClient() {
               <button
                 type="button"
                 onClick={handleAuditTwoSapoFiles}
-                disabled={auditingTwoFiles || !stockReportAuditFile || !productListAuditFile}
+                disabled={auditingTwoFiles || !canAuditExcel || !stockReportAuditFile || !productListAuditFile}
                 className="rounded-2xl bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {auditingTwoFiles ? "Đang đối chiếu..." : "Đối chiếu 2 file"}
@@ -2545,7 +2584,7 @@ export default function InventoryPageClient() {
                   <button
                     type="button"
                     onClick={handleAuditTwoSapoFiles}
-                    disabled={auditingTwoFiles || !stockReportAuditFile || !productListAuditFile}
+                    disabled={auditingTwoFiles || !canAuditExcel || !stockReportAuditFile || !productListAuditFile}
                     className="rounded-2xl bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {auditingTwoFiles ? "Đang đối chiếu..." : "Đối chiếu 2 file"}
