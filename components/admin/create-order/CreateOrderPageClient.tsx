@@ -517,6 +517,155 @@ function normalizeAddressToken(value?: string | null) {
     .trim();
 }
 
+
+function normalizeAddressCompact(value?: string | null) {
+  return normalizeAddressToken(value).replace(/[^a-z0-9]/g, "");
+}
+
+function addressCandidateScore(raw: string, candidate: string) {
+  const rawToken = normalizeAddressToken(raw);
+  const rawCompact = normalizeAddressCompact(raw);
+  const candidateToken = normalizeAddressToken(candidate);
+  const candidateCompact = normalizeAddressCompact(candidate);
+
+  if (!candidateToken || !candidateCompact) return 0;
+  if (rawToken.includes(candidateToken)) return 100;
+  if (rawCompact.includes(candidateCompact)) return 95;
+
+  const strippedCandidate = candidateToken
+    .replace(/^(tinh|thanh pho|tp|quan|huyen|thi xa|xa|phuong|thi tran)\s+/, "")
+    .trim();
+  const strippedCompact = strippedCandidate.replace(/[^a-z0-9]/g, "");
+
+  if (strippedCandidate && rawToken.includes(strippedCandidate)) return 90;
+  if (strippedCompact && rawCompact.includes(strippedCompact)) return 88;
+
+  const words = strippedCandidate.split(/\s+/).filter(Boolean);
+  if (words.length && words.every((word) => rawToken.includes(word))) return 75;
+
+  return 0;
+}
+
+type SearchableSelectOption = { value: string; label: string };
+
+function SearchableSelect({
+  value,
+  onChange,
+  options,
+  placeholder = "Tìm hoặc chọn",
+  searchPlaceholder = "Gõ để tìm...",
+  disabled = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: SearchableSelectOption[];
+  placeholder?: string;
+  searchPlaceholder?: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      if (!boxRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const selectedLabel = options.find((item) => item.value === value)?.label || "";
+  const normalizedKeyword = normalizeSearchText(keyword);
+  const filteredOptions = useMemo(() => {
+    if (!normalizedKeyword) return options;
+    const compactKeyword = normalizedKeyword.replace(/[^a-z0-9]/g, "");
+    return options
+      .map((item) => {
+        const labelText = normalizeSearchText(item.label);
+        const labelCompact = labelText.replace(/[^a-z0-9]/g, "");
+        const score = labelText.includes(normalizedKeyword)
+          ? 100
+          : labelCompact.includes(compactKeyword)
+            ? 90
+            : normalizedKeyword
+                .split(/\s+/)
+                .filter(Boolean)
+                .every((term) => labelText.includes(term))
+              ? 70
+              : 0;
+        return { item, score };
+      })
+      .filter((row) => row.score > 0)
+      .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label, "vi"))
+      .map((row) => row.item);
+  }, [options, normalizedKeyword]);
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((prev) => !prev);
+          setKeyword("");
+        }}
+        className={`flex w-full items-center justify-between rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-left text-sm outline-none ${disabled ? "cursor-not-allowed opacity-60" : "hover:border-neutral-400"}`}
+      >
+        <span className={selectedLabel ? "text-neutral-900" : "text-neutral-500"}>
+          {selectedLabel || placeholder}
+        </span>
+        <span className="text-neutral-400">⌄</span>
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+6px)] z-50 w-full overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
+          <div className="border-b border-neutral-100 p-2">
+            <input
+              autoFocus
+              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-900"
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder={searchPlaceholder}
+            />
+          </div>
+          <div className="max-h-64 overflow-auto py-1">
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-neutral-500 hover:bg-neutral-50"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+            >
+              {placeholder}
+            </button>
+            {filteredOptions.length ? (
+              filteredOptions.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={`block w-full px-3 py-2 text-left text-sm hover:bg-neutral-50 ${item.value === value ? "bg-neutral-100 font-semibold text-neutral-900" : "text-neutral-700"}`}
+                  onClick={() => {
+                    onChange(item.value);
+                    setOpen(false);
+                    setKeyword("");
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-3 text-sm text-neutral-500">Không tìm thấy địa điểm phù hợp</div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function stripProvincePrefix(value?: string | null) {
   return normalizeAddressToken(value)
     .replace(/^(tinh|thanh pho|tp)\s+/, "")
@@ -1048,16 +1197,10 @@ function findBestProvinceName(
   raw: string,
   provinceOptions: ProvinceItem[],
 ): string | null {
-  const normalized = normalizeAddressToken(raw);
-  const candidates = provinceOptions.map((item) => ({
-    original: item.name,
-    key1: stripProvincePrefix(item.name),
-    key2: normalizeAddressToken(item.name),
-  }));
-
-  const hit =
-    candidates.find((item) => normalized.includes(item.key2)) ||
-    candidates.find((item) => normalized.includes(item.key1));
+  const hit = provinceOptions
+    .map((item) => ({ original: item.name, score: addressCandidateScore(raw, item.name) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || b.original.length - a.original.length)[0];
 
   return hit?.original || null;
 }
@@ -1066,16 +1209,10 @@ function findBestDistrictName(
   raw: string,
   districtOptions: DistrictItem[],
 ): string | null {
-  const normalized = normalizeAddressToken(raw);
-  const candidates = districtOptions.map((item) => ({
-    original: item.name,
-    key1: stripDistrictPrefix(item.name),
-    key2: normalizeAddressToken(item.name),
-  }));
-
-  const hit =
-    candidates.find((item) => normalized.includes(item.key2)) ||
-    candidates.find((item) => normalized.includes(item.key1));
+  const hit = districtOptions
+    .map((item) => ({ original: item.name, score: addressCandidateScore(raw, item.name) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || b.original.length - a.original.length)[0];
 
   return hit?.original || null;
 }
@@ -1089,17 +1226,13 @@ function findBestWardName(raw: string, wardOptions: WardItem[]): string | null {
     normalizedRaw,
   );
 
-  const candidates = wardOptions.map((item) => ({
-    original: item.name,
-    key1: stripWardPrefix(item.name),
-    key2: normalizeAddressToken(item.name),
-  }));
-
-  const hit =
-    candidates.find((item) => replaced.includes(item.key2)) ||
-    candidates.find((item) => replaced.includes(item.key1)) ||
-    candidates.find((item) => normalizedRaw.includes(item.key2)) ||
-    candidates.find((item) => normalizedRaw.includes(item.key1));
+  const hit = wardOptions
+    .map((item) => ({
+      original: item.name,
+      score: Math.max(addressCandidateScore(raw, item.name), addressCandidateScore(replaced, item.name)),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || b.original.length - a.original.length)[0];
 
   return hit?.original || null;
 }
@@ -5949,53 +6082,41 @@ export default function CreateOrderPageClient() {
               <p className="mb-2 text-sm font-medium text-neutral-700">
                 Tỉnh / Thành
               </p>
-              <select
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+              <SearchableSelect
                 value={newCustomerProvince}
-                onChange={(e) => setNewCustomerProvince(e.target.value)}
-              >
-                {provinceSelectOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setNewCustomerProvince}
+                options={provinceSelectOptions}
+                placeholder="Chọn tỉnh / thành"
+                searchPlaceholder="Gõ tỉnh / thành, ví dụ: dak lak"
+              />
             </div>
 
             <div>
               <p className="mb-2 text-sm font-medium text-neutral-700">
                 Quận / Huyện
               </p>
-              <select
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+              <SearchableSelect
                 value={newCustomerDistrict}
-                onChange={(e) => setNewCustomerDistrict(e.target.value)}
-              >
-                <option value="">Chọn quận / huyện</option>
-                {newCustomerDistrictSelectOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setNewCustomerDistrict}
+                options={newCustomerDistrictSelectOptions}
+                placeholder="Chọn quận / huyện"
+                searchPlaceholder="Gõ quận / huyện, ví dụ: krong bong"
+                disabled={!newCustomerProvince}
+              />
             </div>
 
             <div>
               <p className="mb-2 text-sm font-medium text-neutral-700">
                 Xã / Phường
               </p>
-              <select
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+              <SearchableSelect
                 value={newCustomerWard}
-                onChange={(e) => setNewCustomerWard(e.target.value)}
-              >
-                <option value="">Chọn xã / phường</option>
-                {newCustomerWardSelectOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setNewCustomerWard}
+                options={newCustomerWardSelectOptions}
+                placeholder="Chọn xã / phường"
+                searchPlaceholder="Gõ xã / phường, ví dụ: hoa phong"
+                disabled={!newCustomerDistrict}
+              />
             </div>
           </div>
 
@@ -6236,53 +6357,41 @@ export default function CreateOrderPageClient() {
               <p className="mb-2 text-sm font-medium text-neutral-700">
                 Tỉnh / Thành
               </p>
-              <select
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+              <SearchableSelect
                 value={addressProvince}
-                onChange={(e) => setAddressProvince(e.target.value)}
-              >
-                {provinceSelectOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setAddressProvince}
+                options={provinceSelectOptions}
+                placeholder="Chọn tỉnh / thành"
+                searchPlaceholder="Gõ tỉnh / thành, ví dụ: dak lak"
+              />
             </div>
 
             <div>
               <p className="mb-2 text-sm font-medium text-neutral-700">
                 Quận / Huyện
               </p>
-              <select
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+              <SearchableSelect
                 value={addressDistrict}
-                onChange={(e) => setAddressDistrict(e.target.value)}
-              >
-                <option value="">Chọn quận / huyện</option>
-                {addressDistrictSelectOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setAddressDistrict}
+                options={addressDistrictSelectOptions}
+                placeholder="Chọn quận / huyện"
+                searchPlaceholder="Gõ quận / huyện, ví dụ: krong bong"
+                disabled={!addressProvince}
+              />
             </div>
 
             <div>
               <p className="mb-2 text-sm font-medium text-neutral-700">
                 Xã / Phường
               </p>
-              <select
-                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+              <SearchableSelect
                 value={addressWard}
-                onChange={(e) => setAddressWard(e.target.value)}
-              >
-                <option value="">Chọn xã / phường</option>
-                {addressWardSelectOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setAddressWard}
+                options={addressWardSelectOptions}
+                placeholder="Chọn xã / phường"
+                searchPlaceholder="Gõ xã / phường, ví dụ: hoa phong"
+                disabled={!addressDistrict}
+              />
             </div>
           </div>
 

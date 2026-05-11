@@ -663,6 +663,152 @@ function EditSelect({
   );
 }
 
+
+function normalizeOptionSearch(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function SearchableEditSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  searchPlaceholder,
+  disabled = false,
+}: {
+  value?: string | null;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  placeholder?: string;
+  searchPlaceholder?: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  const selected = options.find((item) => String(item.value) === String(value || ""));
+  const normalizedKeyword = normalizeOptionSearch(keyword);
+
+  const filteredOptions = useMemo(() => {
+    if (!normalizedKeyword) return options.slice(0, 80);
+
+    return options
+      .map((item) => {
+        const labelKey = normalizeOptionSearch(item.label);
+        const valueKey = normalizeOptionSearch(item.value);
+        const score =
+          labelKey === normalizedKeyword
+            ? 0
+            : labelKey.startsWith(normalizedKeyword)
+              ? 1
+              : labelKey.includes(normalizedKeyword)
+                ? 2
+                : valueKey.includes(normalizedKeyword)
+                  ? 3
+                  : 99;
+        return { ...item, score };
+      })
+      .filter((item) => item.score < 99)
+      .sort((a, b) => a.score - b.score || a.label.localeCompare(b.label, "vi"))
+      .slice(0, 80);
+  }, [options, normalizedKeyword]);
+
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (!boxRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((prev) => !prev);
+          setKeyword("");
+        }}
+        className={`flex h-9 w-full items-center justify-between gap-2 rounded-xl border border-neutral-300 bg-white px-3 text-left text-[12px] outline-none transition focus:border-neutral-500 ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-neutral-400"}`}
+      >
+        <span className={selected ? "truncate text-neutral-900" : "truncate text-neutral-400"}>
+          {selected?.label || placeholder || "Chọn"}
+        </span>
+        <span className="text-[10px] text-neutral-400">⌄</span>
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 right-0 top-[42px] z-[90] overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl">
+          <div className="border-b border-neutral-100 p-2">
+            <input
+              autoFocus
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder={searchPlaceholder || placeholder || "Tìm kiếm"}
+              className="h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px] outline-none focus:border-neutral-500"
+            />
+          </div>
+
+          <div className="max-h-[260px] overflow-auto py-1">
+            {filteredOptions.length ? (
+              filteredOptions.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(item.value);
+                    setOpen(false);
+                    setKeyword("");
+                  }}
+                  className={`block w-full px-3 py-2 text-left text-[12px] hover:bg-neutral-50 ${String(item.value) === String(value || "") ? "bg-neutral-100 font-semibold text-neutral-950" : "text-neutral-700"}`}
+                >
+                  {item.label}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-4 text-center text-[12px] text-neutral-500">
+                Không tìm thấy kết quả phù hợp.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function normalizeCarrierRequiredNote(value?: string | null) {
+  const raw = normalizeOptionSearch(value);
+  if (raw.includes("cho xem hang") && raw.includes("cho thu") && !raw.includes("khong cho thu")) {
+    return "CHOXEMHANG";
+  }
+  if (raw.includes("cho xem hang") && raw.includes("khong cho thu")) {
+    return "CHOXEMHANGKHONGTHU";
+  }
+  return "KHONGCHOXEMHANG";
+}
+
+function carrierRequiredNoteLabel(value?: string | null) {
+  const code = normalizeCarrierRequiredNote(value);
+  if (code === "CHOXEMHANG") return "Cho xem hàng, cho thử";
+  if (code === "CHOXEMHANGKHONGTHU") return "Cho xem hàng, không cho thử";
+  return "Không cho xem hàng";
+}
+
 function parseStructuredNote(note?: string | null) {
   if (!note) {
     return {
@@ -998,6 +1144,8 @@ type MobileOrderDetailViewProps = {
   onCancelShipment: () => void | Promise<void>;
   onOpenShipmentEdit: () => void | Promise<void>;
   onOpenCodEdit: () => void;
+  canCreateShipment: boolean;
+  onCreateShipment: (carrier: "ghn" | "ahamove" | "viettelpost") => void | Promise<void>;
 };
 
 function MobileInfoLine({ label, value }: { label: string; value: ReactNode }) {
@@ -1057,6 +1205,8 @@ function MobileOrderDetailView({
   onCancelShipment,
   onOpenShipmentEdit,
   onOpenCodEdit,
+  canCreateShipment,
+  onCreateShipment,
 }: MobileOrderDetailViewProps) {
   return (
     <div className="lg:hidden">
@@ -1121,6 +1271,15 @@ function MobileOrderDetailView({
           >
             Sao chép
           </button>
+          {canCreateShipment ? (
+            <button
+              type="button"
+              onClick={() => void onCreateShipment("ghn")}
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-[12px] font-semibold text-emerald-700 shadow-sm"
+            >
+              Đẩy GHN
+            </button>
+          ) : null}
           <Link
             href={`/returns/create?orderId=${viewOrder.id}`}
             className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-center text-[12px] font-semibold text-blue-700 shadow-sm"
@@ -2074,6 +2233,14 @@ export default function OrderDetailPageClient({
     order.status !== "CANCELLED" &&
     order.status !== "COMPLETED";
 
+  const canCreateShipment =
+    canPackShipOrderPermission &&
+    !!viewOrder &&
+    !isPOSOrder &&
+    !viewOrder.shipment?.trackingCode &&
+    String(viewOrder.status || "").toUpperCase() !== "CANCELLED" &&
+    String(viewOrder.status || "").toUpperCase() !== "COMPLETED";
+
   const updateDraft = <K extends keyof OrderDetail>(
     key: K,
     value: OrderDetail[K],
@@ -2667,6 +2834,142 @@ export default function OrderDetailPageClient({
     }
   };
 
+
+  const handleCreateShipmentFromOrder = async (carrier: "ghn" | "ahamove" | "viettelpost") => {
+    if (!order) return;
+
+    const carrierLabel =
+      carrier === "ahamove"
+        ? "AhaMove"
+        : carrier === "viettelpost"
+          ? "Viettel Post"
+          : "GHN";
+
+    if (!order.shippingPhone && !order.customerPhone) {
+      setMessage("Thiếu số điện thoại người nhận, chưa thể đẩy vận chuyển.");
+      return;
+    }
+
+    const address = buildAddress(order, parseStructuredNote(order.note));
+    if (!address || address === "—") {
+      setMessage("Thiếu địa chỉ giao hàng, chưa thể đẩy vận chuyển.");
+      return;
+    }
+
+    const requiredNoteLabel = carrierRequiredNoteLabel(parseStructuredNote(order.note).shippingNote);
+    const requiredNote = normalizeCarrierRequiredNote(parseStructuredNote(order.note).shippingNote);
+    const customerFacingShippingNote = [
+      requiredNoteLabel,
+      parseStructuredNote(order.note).shippingNote,
+    ]
+      .filter(Boolean)
+      .filter((value, index, arr) => arr.indexOf(value) === index)
+      .join(" | ");
+
+    if (carrier === "ghn" && (!order.shippingGhnDistrictId || !order.shippingGhnWardCode)) {
+      setMessage("GHN cần đủ Quận/Huyện và Phường/Xã. Bấm Sửa đơn hàng hoặc Sửa giao hàng để chọn lại địa chỉ trước.");
+      return;
+    }
+
+    const ok = window.confirm(`Đẩy đơn ${order.orderCode} qua ${carrierLabel}?`);
+    if (!ok) return;
+
+    try {
+      setSaving(true);
+      setMessage("");
+
+      const items = (order.items || []).map((item) => ({
+        name: item.productName || item.sku || "Sản phẩm",
+        quantity: Number(item.qty || 1),
+        qty: Number(item.qty || 1),
+        num: Number(item.qty || 1),
+        price: Number(item.unitPrice || 0),
+        length: 10,
+        width: 10,
+        height: 10,
+        weight: 200,
+      }));
+
+      const basePayload = {
+        toName: order.shippingRecipientName || order.customerName || "Khách hàng",
+        toPhone: order.shippingPhone || order.customerPhone || "",
+        toAddress: address,
+        codAmount: amountDue,
+        clientOrderCode: order.orderCode,
+        orderCode: order.orderCode,
+        note: customerFacingShippingNote,
+        shippingNote: customerFacingShippingNote,
+        deliveryRequirement: requiredNote,
+        requiredNote,
+        required_note: requiredNote,
+        requiredNoteLabel,
+        content: order.orderCode,
+        productPrice: shownFinalAmount,
+        insuranceValue: shownFinalAmount,
+        weight: 200,
+        length: 10,
+        width: 10,
+        height: 10,
+        items,
+      };
+
+      const path =
+        carrier === "ahamove"
+          ? `/shipments/${order.id}/ahamove/create`
+          : carrier === "viettelpost"
+            ? `/shipments/${order.id}/viettelpost/create`
+            : `/shipments/${order.id}/ghn/create`;
+
+      const payload =
+        carrier === "ghn"
+          ? {
+              ...basePayload,
+              toDistrictId: Number(order.shippingGhnDistrictId),
+              toWardCode: String(order.shippingGhnWardCode || ""),
+            }
+          : carrier === "viettelpost"
+            ? {
+                ...basePayload,
+                province: order.shippingProvince || "",
+                district: order.shippingDistrict || "",
+                ward: order.shippingWard || "",
+                toProvince: order.shippingProvince || "",
+                toDistrict: order.shippingDistrict || "",
+                toWard: order.shippingWard || "",
+              }
+            : basePayload;
+
+      const res = await apiFetch(path, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.message || json?.error || `Đẩy ${carrierLabel} thất bại.`);
+      }
+
+      const nextOrder = {
+        ...order,
+        ...(json?.order || {}),
+        shipment: json?.shipment || json?.data?.shipment || json?.order?.shipment || json?.data || json || order.shipment,
+      } as OrderDetail;
+
+      setOrder(nextOrder);
+      setDraftOrder(nextOrder);
+      setMessage(`Đã đẩy đơn qua ${carrierLabel}.`);
+      void refreshShipmentTracking(true);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `Đẩy ${carrierLabel} thất bại.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handlePrint = () => {
     if (!viewOrder) return;
 
@@ -2812,6 +3115,8 @@ export default function OrderDetailPageClient({
         onCancelShipment={handleCancelShipment}
         onOpenShipmentEdit={handleOpenShipmentEdit}
         onOpenCodEdit={handleOpenCodEdit}
+        canCreateShipment={canCreateShipment}
+        onCreateShipment={handleCreateShipmentFromOrder}
       />
 
       <div className="hidden lg:block">
@@ -2875,6 +3180,29 @@ export default function OrderDetailPageClient({
                 <ActionButton disabled={saving} onClick={handleCancelShipment}>
                   {`Huỷ ${getCarrierLabel(viewOrder, meta)}`}
                 </ActionButton>
+              ) : null}
+              {canCreateShipment ? (
+                <>
+                  <ActionButton
+                    tone="dark"
+                    disabled={saving}
+                    onClick={() => void handleCreateShipmentFromOrder("ghn")}
+                  >
+                    Đẩy GHN
+                  </ActionButton>
+                  <ActionButton
+                    disabled={saving}
+                    onClick={() => void handleCreateShipmentFromOrder("viettelpost")}
+                  >
+                    Đẩy Viettel
+                  </ActionButton>
+                  <ActionButton
+                    disabled={saving}
+                    onClick={() => void handleCreateShipmentFromOrder("ahamove")}
+                  >
+                    Đẩy Aha
+                  </ActionButton>
+                </>
               ) : null}
 
               <Link
@@ -3064,7 +3392,7 @@ export default function OrderDetailPageClient({
                         <p className="mb-1 text-[11px] text-neutral-500">
                           Tỉnh / thành
                         </p>
-                        <EditSelect
+                        <SearchableEditSelect
                           value={selectedProvinceId}
                           onChange={handleEditProvinceChange}
                           options={provinceOptions.map((item) => ({
@@ -3072,6 +3400,7 @@ export default function OrderDetailPageClient({
                             label: item.name,
                           }))}
                           placeholder="Chọn tỉnh / thành"
+                          searchPlaceholder="Gõ tỉnh/thành, ví dụ: dak lak"
                         />
                       </div>
 
@@ -3079,7 +3408,7 @@ export default function OrderDetailPageClient({
                         <p className="mb-1 text-[11px] text-neutral-500">
                           Quận / huyện
                         </p>
-                        <EditSelect
+                        <SearchableEditSelect
                           value={selectedDistrictId}
                           onChange={handleEditDistrictChange}
                           options={districtOptions.map((item) => ({
@@ -3087,6 +3416,7 @@ export default function OrderDetailPageClient({
                             label: item.name,
                           }))}
                           placeholder="Chọn quận / huyện"
+                          searchPlaceholder="Gõ quận/huyện, ví dụ: krong bong"
                         />
                       </div>
 
@@ -3094,7 +3424,7 @@ export default function OrderDetailPageClient({
                         <p className="mb-1 text-[11px] text-neutral-500">
                           Phường / xã
                         </p>
-                        <EditSelect
+                        <SearchableEditSelect
                           value={selectedWardCode}
                           onChange={handleEditWardChange}
                           options={wardOptions.map((item) => ({
@@ -3102,6 +3432,7 @@ export default function OrderDetailPageClient({
                             label: item.name,
                           }))}
                           placeholder="Chọn phường / xã"
+                          searchPlaceholder="Gõ phường/xã, ví dụ: hoa phong"
                         />
                       </div>
                       <div>
@@ -3306,6 +3637,29 @@ export default function OrderDetailPageClient({
                   subtitle="Mã vận đơn, đối tác, phí ship."
                   action={
                     <div className="flex flex-wrap gap-2">
+                      {canCreateShipment ? (
+                        <>
+                          <ActionButton
+                            tone="dark"
+                            disabled={saving}
+                            onClick={() => void handleCreateShipmentFromOrder("ghn")}
+                          >
+                            Đẩy GHN
+                          </ActionButton>
+                          <ActionButton
+                            disabled={saving}
+                            onClick={() => void handleCreateShipmentFromOrder("viettelpost")}
+                          >
+                            Đẩy Viettel
+                          </ActionButton>
+                          <ActionButton
+                            disabled={saving}
+                            onClick={() => void handleCreateShipmentFromOrder("ahamove")}
+                          >
+                            Đẩy Aha
+                          </ActionButton>
+                        </>
+                      ) : null}
                       {shipmentEditable ? (
                         <ActionButton onClick={handleOpenShipmentEdit}>
                           Sửa giao hàng
@@ -3333,7 +3687,12 @@ export default function OrderDetailPageClient({
                 />
 
                 <div className="space-y-3 px-4 py-3">
-                  <div className="grid gap-2 md:grid-cols-3">
+                  <div className="grid gap-2 md:grid-cols-4">
+                    <MiniStat
+                      label="Cho đẩy hãng"
+                      value={canCreateShipment ? "Có" : "Không"}
+                      tone={canCreateShipment ? "success" : "default"}
+                    />
                     <MiniStat
                       label="Cho sửa giao hàng"
                       value={shipmentEditable ? "Có" : "Không"}
@@ -4222,7 +4581,7 @@ export default function OrderDetailPageClient({
                   <p className="mb-1 text-[11px] text-neutral-500">
                     Tỉnh / thành
                   </p>
-                  <EditSelect
+                  <SearchableEditSelect
                     value={selectedProvinceId}
                     onChange={handleProvinceChange}
                     options={provinceOptions.map((item) => ({
@@ -4230,6 +4589,7 @@ export default function OrderDetailPageClient({
                       label: item.name,
                     }))}
                     placeholder="Chọn tỉnh / thành"
+                    searchPlaceholder="Gõ tỉnh/thành, ví dụ: dak lak"
                   />
                 </div>
 
@@ -4237,7 +4597,7 @@ export default function OrderDetailPageClient({
                   <p className="mb-1 text-[11px] text-neutral-500">
                     Quận / huyện
                   </p>
-                  <EditSelect
+                  <SearchableEditSelect
                     value={selectedDistrictId}
                     onChange={handleDistrictChange}
                     options={districtOptions.map((item) => ({
@@ -4245,6 +4605,7 @@ export default function OrderDetailPageClient({
                       label: item.name,
                     }))}
                     placeholder="Chọn quận / huyện"
+                    searchPlaceholder="Gõ quận/huyện, ví dụ: krong bong"
                   />
                 </div>
 
@@ -4252,7 +4613,7 @@ export default function OrderDetailPageClient({
                   <p className="mb-1 text-[11px] text-neutral-500">
                     Phường / xã
                   </p>
-                  <EditSelect
+                  <SearchableEditSelect
                     value={selectedWardCode}
                     onChange={handleWardChange}
                     options={wardOptions.map((item) => ({
@@ -4260,6 +4621,7 @@ export default function OrderDetailPageClient({
                       label: item.name,
                     }))}
                     placeholder="Chọn phường / xã"
+                    searchPlaceholder="Gõ phường/xã, ví dụ: hoa phong"
                   />
                 </div>
 

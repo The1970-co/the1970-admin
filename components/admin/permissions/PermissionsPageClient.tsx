@@ -136,6 +136,21 @@ function normalizeRoleCodeForStorage(value: string) {
     .replace(/-+/g, "-");
 }
 
+function readStoredRoleTemplates(): RoleItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ROLE_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredRoleTemplates(items: RoleItem[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(items));
+}
+
 function readCustomRoleTemplates(): RoleItem[] {
   if (typeof window === "undefined") return [];
   try {
@@ -152,13 +167,15 @@ function writeCustomRoleTemplates(items: RoleItem[]) {
 }
 
 function getAllRoleTemplates() {
-  const merged = [...ROLE_TEMPLATES, ...readCustomRoleTemplates()];
-  const seen = new Set<string>();
-  return merged.filter((role) => {
-    if (!role.id || seen.has(role.id)) return false;
-    seen.add(role.id);
-    return true;
+  // ROLE_TEMPLATES là default hardcode. ROLE_STORAGE_KEY là bản đã chỉnh và phải được ưu tiên.
+  // Nếu không ưu tiên bản đã chỉnh, role mặc định như "Quản lý chi nhánh" sẽ bị bật lại quyền cũ sau khi đổi tab/reload.
+  const merged = [...ROLE_TEMPLATES, ...readStoredRoleTemplates(), ...readCustomRoleTemplates()];
+  const map = new Map<string, RoleItem>();
+  merged.forEach((role) => {
+    if (!role?.id) return;
+    map.set(role.id, role);
   });
+  return Array.from(map.values());
 }
 
 const AUDIT_STORAGE_KEY = "the1970.permission.audit.timeline.v1";
@@ -1799,11 +1816,19 @@ export default function PermissionsPageClient() {
       setSavingRole(true);
       setMessage("Đang lưu bộ quyền vai trò...");
 
-      // Update local custom roles
+      // Update local role templates for BOTH builtin roles and custom roles.
+      // Builtin roles must also be persisted, otherwise UI reloads ROLE_TEMPLATES hardcode and turns old permissions back on.
+      const nextAllRoles = getAllRoleTemplates().map((role) =>
+        role.id === editingRoleId
+          ? { ...role, defaultPermissionKeys: unique(roleEditorKeys) }
+          : role,
+      );
+      writeStoredRoleTemplates(nextAllRoles);
+
       const custom = readCustomRoleTemplates();
       const idx = custom.findIndex((r) => r.id === editingRoleId);
       if (idx !== -1) {
-        custom[idx] = { ...custom[idx], defaultPermissionKeys: roleEditorKeys };
+        custom[idx] = { ...custom[idx], defaultPermissionKeys: unique(roleEditorKeys) };
         writeCustomRoleTemplates(custom);
         setCustomRoleTemplates([...custom]);
       }
