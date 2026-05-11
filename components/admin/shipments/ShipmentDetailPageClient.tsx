@@ -379,42 +379,238 @@ function getTimelineIcon(status?: string | null) {
   return "•";
 }
 
-function normalizeTimelineItem(item: TimelineItem): TimelineItem {
-  const raw: any = item.raw || {};
-  const title =
-    item.title ||
-    raw.status_name ||
-    raw.action_name ||
-    raw.action ||
-    normalizeStatusLabel(item.status, item.partnerStatus);
+function normalizeCarrierText(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  const description =
-    item.description ||
-    raw.description ||
-    raw.detail ||
-    raw.reason ||
-    raw.message ||
-    "";
+function normalizeCarrierKey(value?: string | null) {
+  return normalizeCarrierText(value)
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
 
-  const location =
+function pickRawText(raw: any, keys: string[]) {
+  for (const key of keys) {
+    const value = raw?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
+function mapCarrierTimelineStatusLabel(value?: string | null) {
+  const key = normalizeCarrierKey(value);
+  const labels: Record<string, string> = {
+    ready_to_pick: "Sẵn sàng lấy hàng",
+    picking: "Đang lấy hàng",
+    money_collect_picking: "Đang lấy hàng COD",
+    picked: "Lấy hàng thành công",
+    storing: "Nhập hàng vào kho/bưu cục",
+    storing_order: "Nhập hàng vào kho/bưu cục",
+    sorting: "Đang phân loại hàng",
+    transporting: "Đang trung chuyển hàng",
+    transport: "Đang trung chuyển hàng",
+    ready_to_deliver: "Sẵn sàng giao hàng",
+    waiting_to_deliver: "Sẵn sàng giao hàng",
+    delivering: "Đang giao hàng",
+    money_collect_delivering: "Đang giao hàng COD",
+    delivered: "Giao hàng thành công",
+    delivery_success: "Giao hàng thành công",
+    completed: "Giao hàng thành công",
+    delivery_fail: "Giao thất bại",
+    deliver_fail: "Giao thất bại",
+    waiting_to_return: "Chờ hoàn hàng",
+    return: "Đang hoàn hàng",
+    returning: "Đang hoàn hàng",
+    returned: "Đã hoàn hàng",
+    cancel: "Đã huỷ vận đơn",
+    cancelled: "Đã huỷ vận đơn",
+    lost: "Thất lạc hàng",
+    damage: "Hàng hư hỏng",
+  };
+
+  if (labels[key]) return labels[key];
+
+  const text = normalizeCarrierText(value);
+  if (!text) return "Cập nhật vận đơn";
+  if (text.includes("giao hang thanh cong") || text.includes("delivered") || text.includes("success")) return "Giao hàng thành công";
+  if (text.includes("dang giao") || text.includes("delivering")) return "Đang giao hàng";
+  if (text.includes("trung chuyen") || text.includes("transport")) return "Đang trung chuyển hàng";
+  if (text.includes("phan loai") || text.includes("sort")) return "Đang phân loại hàng";
+  if (text.includes("nhap") || text.includes("luu") || text.includes("storing")) return "Nhập hàng vào kho/bưu cục";
+  if (text.includes("lay hang") || text.includes("pick")) return "Đang lấy hàng";
+  if (text.includes("hoan") || text.includes("return")) return "Đang hoàn hàng";
+  if (text.includes("that bai") || text.includes("fail")) return "Giao thất bại";
+  if (text.includes("huy") || text.includes("cancel")) return "Đã huỷ vận đơn";
+
+  return String(value || "Cập nhật vận đơn").trim();
+}
+
+function pickTimelineLocation(item: TimelineItem, raw: any) {
+  return (
     item.location ||
     item.locationText ||
-    raw.location ||
-    raw.hub_name ||
-    raw.area ||
-    raw.address ||
-    raw.warehouse ||
-    "";
+    pickRawText(raw, [
+      "location",
+      "location_text",
+      "locationText",
+      "hub_name",
+      "hubName",
+      "hub",
+      "warehouse",
+      "warehouse_name",
+      "warehouseName",
+      "current_warehouse",
+      "currentWarehouse",
+      "current_location",
+      "currentLocation",
+      "area",
+      "station_name",
+      "stationName",
+      "post_office",
+      "postOffice",
+      "from_location",
+      "to_location",
+      "address",
+    ])
+  ).trim();
+}
+
+function pickTimelinePartialNote(item: TimelineItem, raw: any) {
+  const values = [
+    item.note,
+    item.eventCode,
+    item.rawStatus,
+    item.partnerStatus,
+    raw?.code,
+    raw?.action,
+    raw?.status,
+    raw?.sub_status,
+    raw?.order_code,
+    raw?.client_order_code,
+    raw?.description,
+    raw?.reason,
+    raw?.note,
+    raw?.message,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  const partial = values.find((value) => /_PR|partial|giao\s*1\s*phần|giao\s*một\s*phần/i.test(value));
+  if (!partial) return "";
+
+  const code = values.find((value) => /_PR/i.test(value)) || partial;
+  if (/Đơn giao 1 phần|giao một phần|giao 1 phần/i.test(partial)) return partial;
+  return `${code} - Đơn giao 1 phần`;
+}
+
+function buildCarrierTimelineDescription(input: {
+  rawStatus?: string | null;
+  title?: string | null;
+  explicitDescription?: string | null;
+  location?: string | null;
+  partialNote?: string | null;
+}) {
+  const key = normalizeCarrierKey(input.rawStatus || input.title || "");
+  const title = mapCarrierTimelineStatusLabel(input.title || input.rawStatus);
+  const explicit = String(input.explicitDescription || "").trim();
+  const location = String(input.location || "").trim();
+  const partialNote = String(input.partialNote || "").trim();
+
+  const isRawLike = explicit && normalizeCarrierKey(explicit) === key;
+  if (explicit && !isRawLike && !/^delivered|delivering|storing|transporting|picking|picked|sorting|money_collect/i.test(explicit)) {
+    return [explicit, partialNote].filter(Boolean).join("\n");
+  }
+
+  let detail = "";
+  if (["delivered", "delivery_success", "completed"].includes(key)) {
+    detail = `Đơn hàng được giao thành công${location ? ` tại ${location}` : ""}.`;
+  } else if (["delivering", "money_collect_delivering"].includes(key)) {
+    detail = `Đơn hàng đang giao${location ? ` đến ${location}` : ""}.`;
+  } else if (["ready_to_deliver", "waiting_to_deliver"].includes(key)) {
+    detail = `Đơn hàng sẵn sàng được giao${location ? ` tại ${location}` : ""}.`;
+  } else if (["storing", "storing_order"].includes(key)) {
+    detail = `Đơn hàng lưu tại ${location || "bưu cục/kho"}.`;
+  } else if (key === "sorting") {
+    detail = `Đơn hàng đang phân loại${location ? ` tại ${location}` : ""}.`;
+  } else if (["transporting", "transport"].includes(key)) {
+    detail = `Đơn hàng đang trung chuyển${location ? ` đến ${location}` : ""}.`;
+  } else if (key === "picked") {
+    detail = `Đơn hàng lấy thành công${location ? ` tại ${location}` : ""}.`;
+  } else if (["picking", "money_collect_picking"].includes(key)) {
+    detail = `Nhân viên đang lấy hàng${location ? ` tại ${location}` : ""}.`;
+  } else if (key === "ready_to_pick") {
+    detail = `Đơn hàng chờ lấy${location ? ` tại ${location}` : ""}.`;
+  } else if (["delivery_fail", "deliver_fail"].includes(key)) {
+    detail = `Đơn hàng giao thất bại${location ? ` tại ${location}` : ""}.`;
+  } else if (["return", "returning", "waiting_to_return"].includes(key)) {
+    detail = `Đơn hàng đang hoàn${location ? ` tại ${location}` : ""}.`;
+  } else if (key === "returned") {
+    detail = `Đơn hàng đã hoàn${location ? ` về ${location}` : ""}.`;
+  } else if (["cancel", "cancelled"].includes(key)) {
+    detail = "Vận đơn đã huỷ.";
+  } else {
+    detail = `${title}${location ? ` tại ${location}` : ""}.`;
+  }
+
+  return [detail, partialNote].filter(Boolean).join("\n");
+}
+
+function normalizeTimelineItem(item: TimelineItem): TimelineItem {
+  const raw: any = item.raw || {};
+  const rawStatus =
+    item.rawStatus ||
+    item.partnerStatus ||
+    pickRawText(raw, ["status", "current_status", "log_status", "order_status", "action", "action_name", "status_name"]);
+
+  const rawTitle =
+    item.title ||
+    pickRawText(raw, ["status_name", "action_name", "title", "name", "action"]) ||
+    rawStatus ||
+    item.status;
+
+  const title = mapCarrierTimelineStatusLabel(rawTitle || rawStatus || item.status);
+
+  const explicitDescription =
+    item.description ||
+    pickRawText(raw, ["description", "desc", "detail", "message", "reason", "note", "content"]);
+
+  const location = pickTimelineLocation(item, raw);
+  const partialNote = pickTimelinePartialNote(item, raw);
+  const description = buildCarrierTimelineDescription({
+    rawStatus,
+    title: rawTitle,
+    explicitDescription,
+    location,
+    partialNote,
+  });
 
   return {
     ...item,
     title,
     description,
     location,
-    time: item.time || item.eventTime || raw.updated_date || raw.action_at || raw.created_date || "",
-    partnerStatus: item.partnerStatus || raw.status_name || raw.status || null,
-    rawStatus: item.rawStatus || raw.status || raw.action || null,
-    eventCode: item.eventCode || raw.code || raw.action_code || null,
+    locationText: item.locationText || location,
+    time:
+      item.time ||
+      item.eventTime ||
+      pickRawText(raw, ["updated_date", "action_at", "created_date", "event_time", "time", "created_at", "updated_at"]) ||
+      "",
+    partnerStatus: item.partnerStatus || pickRawText(raw, ["status_name", "status", "action"]) || null,
+    rawStatus: rawStatus || null,
+    eventCode: item.eventCode || pickRawText(raw, ["code", "action_code", "status_code", "event_code", "log_code"]) || null,
+    note: item.note || partialNote || null,
   };
 }
 
