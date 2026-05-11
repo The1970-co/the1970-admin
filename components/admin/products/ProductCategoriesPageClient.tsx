@@ -5,6 +5,7 @@ import {
   createCategory,
   deleteCategory,
   getCategories,
+  normalizeCategories,
   toggleCategory,
   updateCategory,
   type ProductCategoryItem,
@@ -85,6 +86,10 @@ export default function ProductCategoriesPageClient() {
   const [rows, setRows] = useState<ProductCategoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [normalizing, setNormalizing] = useState(false);
+  const [autoCapitalizeName, setAutoCapitalizeName] = useState(true);
+  const [autoSortAbc, setAutoSortAbc] = useState(true);
+  const [hideInactiveFromPickers, setHideInactiveFromPickers] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -118,17 +123,26 @@ export default function ProductCategoriesPageClient() {
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
 
-    return rows.filter((item) => {
-      const matchActive = showInactive ? true : item.isActive;
-      const matchQuery =
-        !q ||
-        item.name.toLowerCase().includes(q) ||
-        item.code.toLowerCase().includes(q) ||
-        item.slug.toLowerCase().includes(q) ||
-        (item.description || "").toLowerCase().includes(q);
+    return rows
+      .filter((item) => {
+        const matchActive = showInactive ? true : item.isActive;
+        const matchQuery =
+          !q ||
+          item.name.toLowerCase().includes(q) ||
+          item.code.toLowerCase().includes(q) ||
+          item.slug.toLowerCase().includes(q) ||
+          (item.description || "").toLowerCase().includes(q);
 
-      return matchActive && matchQuery;
-    });
+        return matchActive && matchQuery;
+      })
+      .sort((a, b) => {
+        const orderDiff = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+        if (orderDiff !== 0) return orderDiff;
+        return String(a.name || "").localeCompare(String(b.name || ""), "vi", {
+          sensitivity: "base",
+          numeric: true,
+        });
+      });
   }, [rows, query, showInactive]);
 
   const activeCount = useMemo(
@@ -244,6 +258,27 @@ export default function ProductCategoriesPageClient() {
     }
   }
 
+  async function handleNormalizeCategories() {
+    try {
+      setNormalizing(true);
+      setError(null);
+      setNotice(null);
+
+      const result = await normalizeCategories({
+        capitalizeNames: autoCapitalizeName,
+        sortAlphabetically: autoSortAbc,
+        hideInactiveFromPickers,
+      });
+
+      setRows(Array.isArray(result.rows) ? result.rows : []);
+      setNotice(`Đã chuẩn hoá ${result.updated || 0} danh mục. Thứ tự này sẽ dùng chung ở danh sách sản phẩm, tạo sản phẩm và popup chọn sản phẩm.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không chuẩn hoá được danh mục.");
+    } finally {
+      setNormalizing(false);
+    }
+  }
+
   return (
     <div className="space-y-5 p-6">
       <div>
@@ -277,6 +312,61 @@ export default function ProductCategoriesPageClient() {
           </div>
         </Panel>
       </div>
+
+      <Panel className="p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-neutral-900">Cấu hình hiển thị danh mục toàn hệ thống</h3>
+            <p className="mt-1 text-sm text-neutral-500">
+              Áp dụng cho danh sách sản phẩm, form tạo sản phẩm, import Excel và popup chọn sản phẩm khi nhập hàng.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={autoCapitalizeName}
+                onChange={(e) => setAutoCapitalizeName(e.target.checked)}
+                className="h-4 w-4 accent-neutral-900"
+              />
+              Viết hoa chữ cái đầu
+            </label>
+
+            <label className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={autoSortAbc}
+                onChange={(e) => setAutoSortAbc(e.target.checked)}
+                className="h-4 w-4 accent-neutral-900"
+              />
+              Sắp xếp ABC
+            </label>
+
+            <label className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={hideInactiveFromPickers}
+                onChange={(e) => setHideInactiveFromPickers(e.target.checked)}
+                className="h-4 w-4 accent-neutral-900"
+              />
+              Ẩn danh mục ngưng dùng khỏi form chọn
+            </label>
+
+            <button
+              type="button"
+              onClick={() => void handleNormalizeCategories()}
+              disabled={normalizing}
+              className={`rounded-2xl px-4 py-2.5 text-sm font-medium text-white transition ${
+                normalizing ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+              }`}
+            >
+              {normalizing ? "Đang chuẩn hoá..." : "Lưu cấu hình / chuẩn hoá"}
+            </button>
+          </div>
+        </div>
+      </Panel>
+
 
       <Panel className="p-4">
         <div className="mb-3 flex items-center justify-between gap-3">

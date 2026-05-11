@@ -1076,9 +1076,22 @@ export function renderOrderTemplateHtml(params: {
   const showItemQty = templateFieldVisible(template, "showItemQty");
   const showFooter = templateFieldVisible(template, "showFooter");
 
-  const itemsRows = showItems
+  const baseItemsRows = showItems
     ? buildItemsRowsForPrint(order, template.templateType, showItemQty)
     : "";
+
+  const totalQty = Number(order?.totalQty ?? itemCount ?? 0);
+
+  const transferTotalQtyRow =
+    template.templateType === "transfer" && showItems
+      ? `<tr>
+  <td colspan="${showItemQty ? 2 : 1}" style="padding:4px 0 2px;border-top:1px dashed #999;text-align:right;font-size:11px;font-weight:900;">
+    Tổng SL: ${totalQty}
+  </td>
+</tr>`
+      : "";
+
+  const itemsRows = `${baseItemsRows}${transferTotalQtyRow}`;
   const shippingAddress = buildShippingAddress(order, meta.address || "");
   const noteValue = template.showNote ? buildCleanNote(order, meta) : "";
 
@@ -1200,6 +1213,11 @@ export function renderOrderTemplateHtml(params: {
     finalAmount: money(finalAmount),
 
     itemCount: String(itemCount),
+    totalQty: String(totalQty),
+    totalQtyBlock:
+      template.templateType === "transfer" && showItems
+        ? `<div style="margin-top:4px;padding-top:4px;border-top:1px dashed #999;text-align:right;font-size:11px;font-weight:900;">Tổng SL: ${totalQty}</div>`
+        : "",
     itemsRows,
     barcodeBlock: "",
     qrBlock: "",

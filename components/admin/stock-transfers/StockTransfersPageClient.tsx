@@ -552,42 +552,54 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     return date.toLocaleString("vi-VN");
   }
 
-  function buildTransferPrintOrder(transfer: StockTransfer) {
-    const fromName =
-      transfer.fromBranch?.name ||
-      transfer.fromBranchName ||
-      transfer.fromBranchId ||
-      "—";
+function buildTransferPrintOrder(transfer: StockTransfer) {
+  const fromName =
+    transfer.fromBranch?.name ||
+    transfer.fromBranchName ||
+    transfer.fromBranchId ||
+    "—";
 
-    const toName =
-      transfer.toBranch?.name ||
-      transfer.toBranchName ||
-      transfer.toBranchId ||
-      "—";
+  const toName =
+    transfer.toBranch?.name ||
+    transfer.toBranchName ||
+    transfer.toBranchId ||
+    "—";
 
-    return {
-      ...transfer,
-      referenceCode: transfer.transferCode || transfer.id,
-      orderCode: transfer.transferCode || transfer.id,
-      createdAt: formatTransferPrintDate((transfer as any).createdAt || (transfer as any).updatedAt),
-      branchName: `${fromName} → ${toName}`,
-      warehouseName: "THE 1970",
-      warehousePhone: "",
-      warehouseAddress: "",
-      customerName: toName,
-      shippingRecipientName: toName,
-      customerPhone: "",
-      shippingPhone: "",
-      note: transfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
-      items: (transfer.items || []).map((item: any) => ({
-        productName: item.productName || item.name || "Sản phẩm",
-        sku: item.sku || item.variant?.sku || "",
-        color: item.color || item.variant?.color || "",
-        size: item.size || item.variant?.size || "",
-        qty: Number(item.qty ?? item.quantity ?? 0),
-      })),
-    };
-  }
+  const mappedItems = (transfer.items || []).map((item: any) => ({
+    productName: item.productName || item.name || "Sản phẩm",
+    sku: item.sku || item.variant?.sku || "",
+    color: item.color || item.variant?.color || "",
+    size: item.size || item.variant?.size || "",
+    qty: Number(item.qty ?? item.quantity ?? 0),
+  }));
+
+  const totalQty = mappedItems.reduce(
+    (sum: number, item: any) => sum + Number(item.qty || 0),
+    0
+  );
+
+  return {
+    ...transfer,
+    referenceCode: transfer.transferCode || transfer.id,
+    orderCode: transfer.transferCode || transfer.id,
+    createdAt: formatTransferPrintDate(
+      (transfer as any).createdAt || (transfer as any).updatedAt
+    ),
+    branchName: `${fromName} → ${toName}`,
+    warehouseName: "THE 1970",
+    warehousePhone: "",
+    warehouseAddress: "",
+    customerName: toName,
+    shippingRecipientName: toName,
+    customerPhone: "",
+    shippingPhone: "",
+    note: transfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
+
+    items: mappedItems,
+
+    totalQty,
+  };
+}
 
   function getTransferPrintTemplates(paperSize: PrintPaperSize = transferPrintPaperSize) {
     return loadPrintTemplates().filter(

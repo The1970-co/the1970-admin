@@ -87,3 +87,17 @@ export async function toggleCategory(id: string) {
     method: "PATCH",
   });
 }
+export async function normalizeCategories(payload: {
+  capitalizeNames?: boolean;
+  sortAlphabetically?: boolean;
+  hideInactiveFromPickers?: boolean;
+}) {
+  return request<{ updated: number; rows: ProductCategoryItem[] }>("/categories/normalize", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function reorderCategoriesAlphabetically() {
+  return normalizeCategories({ sortAlphabetically: true });
+}

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
 import { getBranches, type BranchItem } from "@/lib/products-api";
-
+import RbacSnapshotPanel from "@/components/admin/permissions/RbacSnapshotPanel";
 type Tone =
   | "slate"
   | "blue"
@@ -2147,6 +2147,8 @@ export default function PermissionsPageClient() {
           </div>
         </div>
       </section>
+
+      <RbacSnapshotPanel />
 
       {message ? (
         <div className={`flex items-center justify-between gap-4 rounded-3xl border px-5 py-4 text-sm font-semibold shadow-sm ${

@@ -23,6 +23,20 @@ import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
 
+
+function sortCategoriesForDisplay<T extends { name?: string; sortOrder?: number; isActive?: boolean }>(rows: T[]) {
+  return [...rows]
+    .filter((item) => item.isActive !== false)
+    .sort((a, b) => {
+      const orderDiff = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+      if (orderDiff !== 0) return orderDiff;
+      return String(a.name || "").localeCompare(String(b.name || ""), "vi", {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+}
+
 function currency(n?: number | null) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
 }
@@ -677,7 +691,7 @@ const branchStocks =
         ]);
 
       const nextBranches = Array.isArray(branchData) ? branchData : [];
-      const nextCategories = Array.isArray(categoryData) ? categoryData : [];
+      const nextCategories = sortCategoriesForDisplay(Array.isArray(categoryData) ? categoryData : []);
       const nextInventoryRows = getProductInventoryRows(
         productData,
         inventoryData,

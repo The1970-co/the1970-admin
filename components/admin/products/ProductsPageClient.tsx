@@ -39,6 +39,20 @@ import {
 } from "@/lib/print-template-engine";
 
 
+
+function sortCategoriesForDisplay<T extends { name?: string; sortOrder?: number; isActive?: boolean }>(rows: T[]) {
+  return [...rows]
+    .filter((item) => item.isActive !== false)
+    .sort((a, b) => {
+      const orderDiff = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+      if (orderDiff !== 0) return orderDiff;
+      return String(a.name || "").localeCompare(String(b.name || ""), "vi", {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+}
+
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
 }
@@ -1277,7 +1291,7 @@ export default function ProductsPageClient() {
   }, [branches, isOwner, canViewInventory, currentBranchId]);
 
   const syncedCategoryItems = useMemo(() => {
-    const activeCategories = categories.filter((item) => item.isActive);
+    const activeCategories = sortCategoriesForDisplay(categories);
 
     if (activeCategories.length) return activeCategories;
 
@@ -1295,6 +1309,30 @@ export default function ProductsPageClient() {
     const names = uniqueValues(syncedCategoryItems.map((item) => item.name));
     return names.length ? names : fallbackProductGroups;
   }, [syncedCategoryItems]);
+
+  const normalizeCategoryNameForImport = (value: string) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+
+    const normalizedRaw = normalizeHeader(raw);
+    const found = syncedCategoryItems.find(
+      (item) => normalizeHeader(item.name) === normalizedRaw || normalizeHeader(item.slug) === normalizedRaw || normalizeHeader(item.code) === normalizedRaw,
+    );
+
+    if (found?.name) return found.name;
+
+    return raw
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .map((word, index) => {
+        const lower = word.toLocaleLowerCase("vi-VN");
+        if (index > 0 && ["và", "hoặc", "của", "cho"].includes(lower)) return lower;
+        return lower.charAt(0).toLocaleUpperCase("vi-VN") + lower.slice(1);
+      })
+      .join(" ");
+  };
+
 
   // UI permission lock theo authz.ts.
   // - products.view: được vào xem catalog.
@@ -2381,7 +2419,7 @@ export default function ProductsPageClient() {
       const brand = findValue(row, ["Nhãn hiệu", "nhan hieu", "brand"]);
 
       if (productName) currentProductName = productName;
-      if (category) currentCategory = category;
+      if (category) currentCategory = normalizeCategoryNameForImport(category);
       if (brand) currentBrand = brand;
 
       const color = findValue(row, [
@@ -2461,7 +2499,7 @@ export default function ProductsPageClient() {
 
       previewRows.push({
         productName: currentProductName,
-        category: currentCategory,
+        category: normalizeCategoryNameForImport(currentCategory),
         brand: currentBrand || "The 1970",
         color,
         size,

@@ -109,6 +109,65 @@ function makeRowId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeFilterText(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function getProductCategoryName(product: any) {
+  const raw =
+    product?.categoryName ||
+    product?.category?.name ||
+    product?.category?.title ||
+    product?.category ||
+    product?.productType ||
+    product?.type ||
+    "";
+
+  return String(raw || "").trim();
+}
+
+function getProductBrandName(product: any) {
+  const raw =
+    product?.brandName ||
+    product?.brand?.name ||
+    product?.brand ||
+    product?.supplierName ||
+    product?.supplier?.name ||
+    product?.vendor ||
+    product?.vendorName ||
+    "";
+
+  return String(raw || "").trim();
+}
+
+function getVariantStockQty(variant: any) {
+  const raw =
+    variant?.stock ??
+    variant?.totalStock ??
+    variant?.availableQty ??
+    variant?.inventoryQty ??
+    variant?.inventory?.availableQty ??
+    variant?.inventoryItem?.availableQty ??
+    variant?.inventories?.reduce?.((sum: number, row: any) => sum + Number(row?.availableQty || row?.stock || 0), 0) ??
+    0;
+
+  const value = Number(raw || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortSizeValue(value: any) {
+  const text = String(value || "").trim().toUpperCase();
+  const order = ["XS", "S", "M", "L", "XL", "XXL", "2XL", "3XL", "4XL", "5XL"];
+  const index = order.indexOf(text);
+  if (index >= 0) return index;
+  const number = Number(text);
+  return Number.isFinite(number) ? 100 + number : 999;
+}
+
 export default function PurchaseReceiptsPageClient() {
   const [rows, setRows] = useState<PurchaseReceipt[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierItem[]>([]);
@@ -137,6 +196,15 @@ export default function PurchaseReceiptsPageClient() {
 
   const [searchVariant, setSearchVariant] = useState("");
   const [variantSearching, setVariantSearching] = useState(false);
+  const [variantCategoryFilter, setVariantCategoryFilter] = useState("ALL");
+  const [variantBrandFilter, setVariantBrandFilter] = useState("ALL");
+  const [variantColorFilter, setVariantColorFilter] = useState("ALL");
+  const [variantSizeFilter, setVariantSizeFilter] = useState("ALL");
+  const [variantStockFilter, setVariantStockFilter] = useState("ALL");
+  const [variantSortBy, setVariantSortBy] = useState("recent");
+  const [draftSortBy, setDraftSortBy] = useState("added_desc");
+  const [bulkQty, setBulkQty] = useState("1");
+  const [bulkUnitCost, setBulkUnitCost] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
@@ -286,8 +354,8 @@ export default function PurchaseReceiptsPageClient() {
   }
 
   const allVariants = useMemo(() => {
-    return products.flatMap((product: any) =>
-      (product.variants || []).map((variant: any) => ({
+    return products.flatMap((product: any, productIndex: number) =>
+      (product.variants || []).map((variant: any, variantIndex: number) => ({
         rowId: variant.id,
         variantId: variant.id,
         sku: variant.sku,
@@ -295,21 +363,91 @@ export default function PurchaseReceiptsPageClient() {
         color: variant.color || "",
         size: variant.size || "",
         unitCost: pickUnitCost(product, variant),
+        stockQty: getVariantStockQty(variant),
+        categoryName: getProductCategoryName(product),
+        brandName: getProductBrandName(product),
+        createdAt: variant?.createdAt || product?.createdAt || "",
+        sourceIndex: productIndex * 10000 + variantIndex,
       }))
     );
   }, [products]);
 
+  const variantFilterOptions = useMemo(() => {
+    const categories = new Set<string>();
+    const brands = new Set<string>();
+    const colors = new Set<string>();
+    const sizes = new Set<string>();
+
+    allVariants.forEach((item) => {
+      if (item.categoryName) categories.add(item.categoryName);
+      if (item.brandName) brands.add(item.brandName);
+      if (item.color) colors.add(item.color);
+      if (item.size) sizes.add(item.size);
+    });
+
+    return {
+      categories: Array.from(categories).sort((a, b) => a.localeCompare(b, "vi")),
+      brands: Array.from(brands).sort((a, b) => a.localeCompare(b, "vi")),
+      colors: Array.from(colors).sort((a, b) => a.localeCompare(b, "vi")),
+      sizes: Array.from(sizes).sort((a, b) => sortSizeValue(a) - sortSizeValue(b)),
+    };
+  }, [allVariants]);
+
   const variantOptions = useMemo(() => {
-    const q = searchVariant.trim().toLowerCase();
-    if (!q) return allVariants.slice(0, 20);
+    const q = normalizeFilterText(searchVariant);
 
     return allVariants
       .filter((item) => {
-        const label = `${item.productName} ${item.sku} ${item.color} ${item.size}`.toLowerCase();
-        return label.includes(q);
+        const label = normalizeFilterText(
+          `${item.productName} ${item.sku} ${item.color} ${item.size} ${item.categoryName} ${item.brandName}`,
+        );
+
+        if (q && !label.includes(q)) return false;
+        if (variantCategoryFilter !== "ALL" && item.categoryName !== variantCategoryFilter) return false;
+        if (variantBrandFilter !== "ALL" && item.brandName !== variantBrandFilter) return false;
+        if (variantColorFilter !== "ALL" && item.color !== variantColorFilter) return false;
+        if (variantSizeFilter !== "ALL" && item.size !== variantSizeFilter) return false;
+        if (variantStockFilter === "IN_STOCK" && item.stockQty <= 0) return false;
+        if (variantStockFilter === "OUT_OF_STOCK" && item.stockQty > 0) return false;
+        if (variantStockFilter === "LOW_STOCK" && !(item.stockQty > 0 && item.stockQty <= 3)) return false;
+
+        return true;
       })
-      .slice(0, 20);
-  }, [allVariants, searchVariant]);
+      .sort((a, b) => {
+        if (variantSortBy === "price_desc") return Number(b.unitCost || 0) - Number(a.unitCost || 0);
+        if (variantSortBy === "price_asc") return Number(a.unitCost || 0) - Number(b.unitCost || 0);
+        if (variantSortBy === "size_asc") return sortSizeValue(a.size) - sortSizeValue(b.size);
+        if (variantSortBy === "color_asc") return String(a.color || "").localeCompare(String(b.color || ""), "vi");
+        if (variantSortBy === "stock_desc") return Number(b.stockQty || 0) - Number(a.stockQty || 0);
+        if (variantSortBy === "name_asc") return String(a.productName || "").localeCompare(String(b.productName || ""), "vi");
+        return Number(b.sourceIndex || 0) - Number(a.sourceIndex || 0);
+      })
+      .slice(0, 80);
+  }, [
+    allVariants,
+    searchVariant,
+    variantCategoryFilter,
+    variantBrandFilter,
+    variantColorFilter,
+    variantSizeFilter,
+    variantStockFilter,
+    variantSortBy,
+  ]);
+
+  const sortedDraftItems = useMemo(() => {
+    const list = [...items];
+
+    return list.sort((a, b) => {
+      if (draftSortBy === "price_desc") return Number(b.unitCost || 0) - Number(a.unitCost || 0);
+      if (draftSortBy === "price_asc") return Number(a.unitCost || 0) - Number(b.unitCost || 0);
+      if (draftSortBy === "qty_desc") return Number(b.qty || 0) - Number(a.qty || 0);
+      if (draftSortBy === "qty_asc") return Number(a.qty || 0) - Number(b.qty || 0);
+      if (draftSortBy === "size_asc") return sortSizeValue(a.size) - sortSizeValue(b.size);
+      if (draftSortBy === "color_asc") return String(a.color || "").localeCompare(String(b.color || ""), "vi");
+      if (draftSortBy === "sku_asc") return String(a.sku || "").localeCompare(String(b.sku || ""), "vi");
+      return 0;
+    });
+  }, [items, draftSortBy]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -347,7 +485,7 @@ export default function PurchaseReceiptsPageClient() {
       }
 
       try {
-        const productsData = await getProducts({ page: 1, limit: 50 });
+        const productsData = await getProducts({ page: 1, limit: 10000 } as any);
         setProducts(
           Array.isArray((productsData as any)?.data)
             ? (productsData as any).data
@@ -395,7 +533,7 @@ export default function PurchaseReceiptsPageClient() {
 
         const productsData = await getProducts({
           page: 1,
-          limit: keyword ? 200 : 100,
+          limit: keyword ? 500 : 500,
           q: keyword || undefined,
         });
 
@@ -434,6 +572,15 @@ export default function PurchaseReceiptsPageClient() {
     setNote("");
     setItems([]);
     setSearchVariant("");
+    setVariantCategoryFilter("ALL");
+    setVariantBrandFilter("ALL");
+    setVariantColorFilter("ALL");
+    setVariantSizeFilter("ALL");
+    setVariantStockFilter("ALL");
+    setVariantSortBy("recent");
+    setDraftSortBy("added_desc");
+    setBulkQty("1");
+    setBulkUnitCost("");
   }
 
   function openCreate() {
@@ -525,7 +672,6 @@ export default function PurchaseReceiptsPageClient() {
     if (exists) return;
 
     setItems((prev) => [
-      ...prev,
       {
         rowId: makeRowId(),
         variantId: option.variantId,
@@ -533,11 +679,12 @@ export default function PurchaseReceiptsPageClient() {
         productName: option.productName,
         color: option.color || "",
         size: option.size || "",
-        qty: "1",
-        unitCost: isAdmin ? String(Number(option.unitCost || 0)) : "0",
+        qty: bulkQty && Number(bulkQty) > 0 ? bulkQty : "1",
+        unitCost: isAdmin ? String(Number(bulkUnitCost || option.unitCost || 0)) : "0",
       },
+      ...prev,
     ]);
-    // Giữ nguyên mã đang tìm để có thể chọn tiếp nhiều SKU con cùng mã cha.
+    // Hàng vừa thêm đẩy lên đầu list để nhập số lượng/giá không phải kéo xuống.
   }
 
 
@@ -552,13 +699,43 @@ export default function PurchaseReceiptsPageClient() {
         productName: option.productName,
         color: option.color || "",
         size: option.size || "",
-        qty: "1",
-        unitCost: isAdmin ? String(Number(option.unitCost || 0)) : "0",
+        qty: bulkQty && Number(bulkQty) > 0 ? bulkQty : "1",
+        unitCost: isAdmin ? String(Number(bulkUnitCost || option.unitCost || 0)) : "0",
       }));
 
     if (!nextItems.length) return;
 
-    setItems((prev) => [...prev, ...nextItems]);
+    setItems((prev) => [...nextItems, ...prev]);
+  }
+
+  function applyBulkQtyToDraft() {
+    const value = Number(bulkQty || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("Số lượng hàng loạt phải lớn hơn 0.");
+      return;
+    }
+
+    setItems((prev) => prev.map((item) => ({ ...item, qty: String(value) })));
+  }
+
+  function applyBulkUnitCostToDraft() {
+    const value = Number(bulkUnitCost || 0);
+    if (!Number.isFinite(value) || value < 0) {
+      setError("Giá nhập hàng loạt không hợp lệ.");
+      return;
+    }
+
+    setItems((prev) => prev.map((item) => ({ ...item, unitCost: String(value) })));
+  }
+
+  function resetVariantPickFilters() {
+    setSearchVariant("");
+    setVariantCategoryFilter("ALL");
+    setVariantBrandFilter("ALL");
+    setVariantColorFilter("ALL");
+    setVariantSizeFilter("ALL");
+    setVariantStockFilter("ALL");
+    setVariantSortBy("recent");
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -1045,18 +1222,140 @@ export default function PurchaseReceiptsPageClient() {
           />
 
           <Panel className="p-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-              Thêm sản phẩm / variant
-            </p>
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                  Thêm sản phẩm / variant
+                </p>
+                <p className="mt-1 text-xs text-neutral-400">
+                  Lọc theo danh mục, nhãn hiệu, màu, size, tồn kho. Hàng vừa thêm sẽ lên đầu bảng nhập.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={addVisibleVariantsToDraft}
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                >
+                  Thêm tất cả đang lọc ({variantOptions.filter((option) => !items.some((line) => line.variantId === option.variantId)).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={resetVariantPickFilters}
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-500 hover:bg-neutral-50"
+                >
+                  Xóa lọc
+                </button>
+              </div>
+            </div>
 
-            <input
-              className="mb-3 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-              value={searchVariant}
-              onChange={(e) => setSearchVariant(e.target.value)}
-              placeholder="Tìm theo tên sản phẩm, SKU, màu, size..."
-            />
+            <div className="grid gap-2 lg:grid-cols-[1.4fr_0.8fr_0.8fr_0.7fr_0.7fr]">
+              <input
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={searchVariant}
+                onChange={(e) => setSearchVariant(e.target.value)}
+                placeholder="Tìm theo tên sản phẩm, SKU, barcode, màu, size..."
+              />
 
-            <div className="max-h-40 overflow-auto rounded-xl border border-neutral-200">
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={variantCategoryFilter}
+                onChange={(e) => setVariantCategoryFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả danh mục</option>
+                {variantFilterOptions.categories.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={variantBrandFilter}
+                onChange={(e) => setVariantBrandFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả nhãn hiệu</option>
+                {variantFilterOptions.brands.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={variantColorFilter}
+                onChange={(e) => setVariantColorFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả màu</option>
+                {variantFilterOptions.colors.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={variantSizeFilter}
+                onChange={(e) => setVariantSizeFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả size</option>
+                {variantFilterOptions.sizes.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-2 grid gap-2 md:grid-cols-5">
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={variantStockFilter}
+                onChange={(e) => setVariantStockFilter(e.target.value)}
+              >
+                <option value="ALL">Tất cả tồn kho</option>
+                <option value="IN_STOCK">Còn hàng</option>
+                <option value="LOW_STOCK">Tồn thấp ≤ 3</option>
+                <option value="OUT_OF_STOCK">Hết hàng</option>
+              </select>
+
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={variantSortBy}
+                onChange={(e) => setVariantSortBy(e.target.value)}
+              >
+                <option value="recent">Mới thêm lên đầu</option>
+                <option value="name_asc">Tên A-Z</option>
+                <option value="size_asc">Theo size</option>
+                <option value="color_asc">Theo màu</option>
+                <option value="stock_desc">Tồn cao trước</option>
+                <option value="price_desc">Giá nhập cao trước</option>
+                <option value="price_asc">Giá nhập thấp trước</option>
+              </select>
+
+              <input
+                type="number"
+                min={1}
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={bulkQty}
+                onChange={(e) => setBulkQty(e.target.value)}
+                placeholder="SL mặc định"
+              />
+
+              {isAdmin ? (
+                <input
+                  type="number"
+                  min={0}
+                  className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                  value={bulkUnitCost}
+                  onChange={(e) => setBulkUnitCost(e.target.value)}
+                  placeholder="Giá nhập mặc định"
+                />
+              ) : (
+                <div />
+              )}
+
+              <div className="flex items-center justify-end text-xs font-medium text-neutral-500">
+                Hiện {variantOptions.length} SKU phù hợp
+              </div>
+            </div>
+
+            <div className="mt-3 max-h-56 overflow-auto rounded-xl border border-neutral-200">
               {variantSearching ? (
                 <div className="p-4 text-sm text-neutral-500">Đang tìm sản phẩm...</div>
               ) : variantOptions.length === 0 ? (
@@ -1072,25 +1371,27 @@ export default function PurchaseReceiptsPageClient() {
                         type="button"
                         onClick={() => addVariantToDraft(item)}
                         disabled={added}
-                        className={`flex w-full items-center justify-between px-3 py-2.5 text-left transition ${
+                        className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition ${
                           added
                             ? "cursor-not-allowed bg-emerald-50"
                             : "hover:bg-neutral-50"
                         }`}
                       >
-                        <div>
-                          <p className="text-sm font-medium text-neutral-900">{item.productName}</p>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-neutral-900">{item.productName}</p>
                           <p className="mt-1 text-xs text-neutral-500">
                             {item.sku} · {item.color || "—"} / {item.size || "—"}
+                            {item.categoryName ? ` · ${item.categoryName}` : ""}
+                            {item.brandName ? ` · ${item.brandName}` : ""}
                           </p>
                         </div>
-                        <span
-                          className={`text-xs font-medium ${
-                            added ? "text-emerald-700" : "text-neutral-500"
-                          }`}
-                        >
-                          {added ? "Đã thêm" : "Thêm"}
-                        </span>
+                        <div className="shrink-0 text-right text-xs">
+                          {isAdmin ? <p className="font-semibold text-neutral-700">{currency(Number(item.unitCost || 0))}</p> : null}
+                          <p className="mt-0.5 text-neutral-500">Tồn: {item.stockQty}</p>
+                          <p className={`mt-1 font-medium ${added ? "text-emerald-700" : "text-neutral-500"}`}>
+                            {added ? "Đã thêm" : "Thêm"}
+                          </p>
+                        </div>
                       </button>
                     );
                   })}
@@ -1100,6 +1401,65 @@ export default function PurchaseReceiptsPageClient() {
           </Panel>
 
           <Panel className="min-h-0 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium outline-none"
+                  value={draftSortBy}
+                  onChange={(e) => setDraftSortBy(e.target.value)}
+                >
+                  <option value="added_desc">Mới nhập lên đầu</option>
+                  <option value="sku_asc">Theo SKU</option>
+                  <option value="size_asc">Theo size</option>
+                  <option value="color_asc">Theo màu</option>
+                  <option value="qty_desc">SL cao trước</option>
+                  <option value="qty_asc">SL thấp trước</option>
+                  <option value="price_desc">Giá cao trước</option>
+                  <option value="price_asc">Giá thấp trước</option>
+                </select>
+
+                <input
+                  type="number"
+                  min={1}
+                  className="w-24 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium outline-none"
+                  value={bulkQty}
+                  onChange={(e) => setBulkQty(e.target.value)}
+                  placeholder="SL"
+                />
+                <button
+                  type="button"
+                  onClick={applyBulkQtyToDraft}
+                  disabled={!items.length}
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Áp dụng SL
+                </button>
+
+                {isAdmin ? (
+                  <>
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-32 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium outline-none"
+                      value={bulkUnitCost}
+                      onChange={(e) => setBulkUnitCost(e.target.value)}
+                      placeholder="Giá nhập"
+                    />
+                    <button
+                      type="button"
+                      onClick={applyBulkUnitCostToDraft}
+                      disabled={!items.length}
+                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Áp dụng giá
+                    </button>
+                  </>
+                ) : null}
+              </div>
+              <div className="text-xs font-medium text-neutral-500">
+                {items.length} SKU · Tổng SL {totalQty}
+              </div>
+            </div>
             <div className="max-h-[42vh] overflow-auto">
               {items.length === 0 ? (
                 <div className="p-4 text-sm text-neutral-500">Chưa có dòng hàng nào.</div>
@@ -1118,7 +1478,7 @@ export default function PurchaseReceiptsPageClient() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => {
+                    {sortedDraftItems.map((item) => {
                       const lineTotal = Number(item.qty || 0) * Number(item.unitCost || 0);
 
                       return (
