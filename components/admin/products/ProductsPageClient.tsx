@@ -559,6 +559,8 @@ type ProductSortKey =
 type SortDirection = "asc" | "desc";
 type ProductDisplayPreset = "default" | "newest" | "bestSelling" | "priceHigh";
 
+const PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY = "the1970.products.displayOptions";
+
 function normalizeNumber(value: any) {
   if (value === null || value === undefined || value === "") return 0;
   const raw = String(value).replace(/[^\d.-]/g, "");
@@ -1119,6 +1121,7 @@ export default function ProductsPageClient() {
   const [categoryNormalizerOpen, setCategoryNormalizerOpen] = useState(false);
   const [displayOptionsOpen, setDisplayOptionsOpen] = useState(false);
   const [displayPreset, setDisplayPreset] = useState<ProductDisplayPreset>("default");
+  const [draftDisplayPreset, setDraftDisplayPreset] = useState<ProductDisplayPreset>("default");
   const [sortKey, setSortKey] = useState<ProductSortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
@@ -1145,6 +1148,58 @@ export default function ProductsPageClient() {
   const [importProgressLabel, setImportProgressLabel] = useState("");
   const [uploadingCreateImage, setUploadingCreateImage] = useState(false);
   const [uploadingEditImage, setUploadingEditImage] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as {
+        preset?: ProductDisplayPreset;
+        sortKey?: ProductSortKey;
+        sortDirection?: SortDirection;
+      };
+
+      if (parsed.preset) {
+        setDisplayPreset(parsed.preset);
+        setDraftDisplayPreset(parsed.preset);
+      }
+      if (parsed.sortKey) setSortKey(parsed.sortKey);
+      if (parsed.sortDirection) setSortDirection(parsed.sortDirection);
+    } catch {
+      // ignore saved display option errors
+    }
+  }, []);
+
+  const saveDisplayOptions = () => {
+    const next = {
+      preset: draftDisplayPreset,
+      sortKey,
+      sortDirection,
+    };
+
+    try {
+      localStorage.setItem(PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore localStorage error
+    }
+
+    setActionMessage("Đã lưu tuỳ chọn hiển thị sản phẩm.");
+    setDisplayOptionsOpen(false);
+  };
+
+  const resetDisplayOptions = () => {
+    setDraftDisplayPreset("default");
+    applyDisplayPreset("default");
+
+    try {
+      localStorage.removeItem(PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY);
+    } catch {
+      // ignore localStorage error
+    }
+
+    setActionMessage("Đã đưa tuỳ chọn hiển thị về mặc định.");
+  };
 
   const [name, setName] = useState("");
   const [skuCode, setSkuCode] = useState("");
@@ -2908,7 +2963,10 @@ export default function ProductsPageClient() {
 
           <Button
             variant="secondary"
-            onClick={() => setDisplayOptionsOpen((prev) => !prev)}
+            onClick={() => {
+              setDraftDisplayPreset(displayPreset);
+              setDisplayOptionsOpen((prev) => !prev);
+            }}
             className="rounded-2xl whitespace-nowrap"
           >
             Tuỳ chọn hiển thị
@@ -2933,13 +2991,31 @@ export default function ProductsPageClient() {
                 >
                   <input
                     type="checkbox"
-                    checked={displayPreset === option.value}
-                    onChange={() => applyDisplayPreset(option.value as ProductDisplayPreset)}
+                    checked={draftDisplayPreset === option.value}
+                    onChange={() => {
+                      const nextPreset = option.value as ProductDisplayPreset;
+                      setDraftDisplayPreset(nextPreset);
+                      applyDisplayPreset(nextPreset);
+                    }}
                     className="h-4 w-4 accent-neutral-900"
                   />
                   <span>{option.label}</span>
                 </label>
               ))}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-3">
+              <p className="text-xs text-neutral-500">
+                Lưu để giữ cách sắp xếp này cho lần mở sau.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={resetDisplayOptions} className="rounded-xl px-3 py-2 text-xs">
+                  Về mặc định
+                </Button>
+                <Button onClick={saveDisplayOptions} className="rounded-xl px-3 py-2 text-xs">
+                  Lưu tuỳ chọn
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}

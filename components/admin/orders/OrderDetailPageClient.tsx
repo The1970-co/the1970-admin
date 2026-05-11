@@ -1898,6 +1898,7 @@ export default function OrderDetailPageClient({
   const [shipmentTimeline, setShipmentTimeline] = useState<ShipmentTimelineEntry[]>([]);
   const [trackingRefreshing, setTrackingRefreshing] = useState(false);
   const [trackingMessage, setTrackingMessage] = useState("");
+  const forcedTrackingRefreshRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     const run = async () => {
@@ -2037,7 +2038,13 @@ export default function OrderDetailPageClient({
 
     if (isFinalShipmentStatus(status)) return;
 
-    void refreshShipmentTracking(false);
+    const forceKey = `${orderId}:${order.shipment.trackingCode}`;
+    const shouldForceRefresh = !forcedTrackingRefreshRef.current[forceKey];
+    forcedTrackingRefreshRef.current[forceKey] = true;
+
+    // Lần đầu mở chi tiết đơn phải gọi force=true để bỏ qua cache cũ,
+    // vì nhiều đơn GHN đã giao thành công trên web GHN nhưng cache nội bộ vẫn là DELIVERING.
+    void refreshShipmentTracking(shouldForceRefresh);
 
     const intervalMs =
       typeof document !== "undefined" && document.hidden ? 60000 : 15000;
@@ -4488,11 +4495,13 @@ export default function OrderDetailPageClient({
                   <p className="mb-1 text-[11px] text-neutral-500">COD mới</p>
 
                   <EditInput
-                    value={shipmentDraft.codAmountInput}
+                    value={String(shipmentDraft.codAmountInput || "").replace(/\D/g, "")}
                     onChange={(v) =>
                       setShipmentDraft((prev) => ({
                         ...prev,
-                        codAmountInput: formatVndInput(v),
+                        // Giữ raw digits trong ô nhập để không bị nhảy con trỏ khi đang gõ.
+                        // Khi hiển thị/xác nhận mới format lại thành 486.000đ.
+                        codAmountInput: v.replace(/\D/g, "").slice(0, 12),
                       }))
                     }
                     placeholder="Nhập COD mới"
@@ -4500,7 +4509,7 @@ export default function OrderDetailPageClient({
                   />
                   <p className="mt-1 text-[11px] text-neutral-500">
                     {shipmentDraft.codAmountInput
-                      ? `${shipmentDraft.codAmountInput}đ`
+                      ? `${formatVndInput(shipmentDraft.codAmountInput)}đ`
                       : "Chưa nhập COD"}
                   </p>
                 </div>
@@ -4694,7 +4703,7 @@ export default function OrderDetailPageClient({
               <p className="text-[11px] text-neutral-500">COD mới</p>
               <p className="mt-1 text-[16px] font-semibold text-neutral-900">
                 {shipmentDraft.codAmountInput
-                  ? `${shipmentDraft.codAmountInput}đ`
+                  ? `${formatVndInput(shipmentDraft.codAmountInput)}đ`
                   : "0đ"}
               </p>
             </div>
