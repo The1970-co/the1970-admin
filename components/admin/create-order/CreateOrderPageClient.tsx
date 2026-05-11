@@ -75,6 +75,8 @@ type SearchCustomerLite = {
   fullName?: string;
   phone?: string;
   email?: string;
+  customerNote?: string;
+  note?: string;
   pricePolicyName?: string;
   defaultDiscountPercent?: number;
   addresses?: CustomerAddressItem[];
@@ -832,6 +834,18 @@ function mapRequiredNoteForGhn(value: DeliveryRequirement) {
   if (value === "CHOXEMHANG_KHONGTHU") return "CHOXEMHANGKHONGTHU";
   if (value === "CHOXEMHANG_CHOTHU") return "CHOXEMHANG";
   return "KHONGCHOXEMHANG";
+}
+
+function buildCustomerFacingShippingNote(input: {
+  orderNote?: string;
+  deliveryRequirement: DeliveryRequirement;
+}) {
+  const parts = [
+    requiredNoteLabel(input.deliveryRequirement),
+    String(input.orderNote || "").trim(),
+  ].filter(Boolean);
+
+  return Array.from(new Set(parts)).join(" | ");
 }
 
 function branchLabelFromAny(row: any) {
@@ -2531,6 +2545,18 @@ useEffect(() => {
         !((q as any)?._disabled)
     ) || null;
 
+  const appendCustomerFacingNote = (value?: string | null) => {
+    const next = String(value || "").trim();
+    if (!next) return;
+
+    setNote((prev) => {
+      const current = String(prev || "").trim();
+      if (!current) return next;
+      if (current.toLowerCase().includes(next.toLowerCase())) return current;
+      return `${current}\n${next}`;
+    });
+  };
+
   const resetAddressForm = () => {
     setAddressError("");
     setEditingAddressId(null);
@@ -2575,6 +2601,14 @@ useEffect(() => {
 
     setGhnDistrictId((address as any).ghnDistrictId ?? undefined);
     setGhnWardCode((address as any).ghnWardCode || undefined);
+
+    appendCustomerFacingNote(
+      (address as any).shippingNote ||
+        (address as any).deliveryNote ||
+        (address as any).note ||
+        (address as any).customerNote ||
+        ""
+    );
   };
 
   const loadCustomerAddressBook = async (nextCustomerId: string) => {
@@ -2599,6 +2633,13 @@ useEffect(() => {
     setCustomerHint(`Khách cũ: ${customer.fullName || ""}`);
     setCustomerPolicyLabel(String(customer.pricePolicyName || ""));
     setCustomerDiscountPercent(Number(customer.defaultDiscountPercent || 0));
+    appendCustomerFacingNote(
+      (customer as any).customerNote ||
+        (customer as any).note ||
+        (customer as any).defaultAddress?.note ||
+        (customer as any).defaultAddress?.shippingNote ||
+        ""
+    );
 
     if (customer.id) {
       try {
@@ -2635,6 +2676,12 @@ useEffect(() => {
       fullName,
       phone,
       email,
+      customerNote:
+        customer?.customerNote ||
+        customer?.note ||
+        customer?.defaultAddress?.note ||
+        customer?.defaultAddress?.shippingNote ||
+        "",
       label: `${fullName}${phone ? ` · ${phone}` : ""}`,
       subLabel: [email, address].filter(Boolean).join(" · "),
     };
@@ -3852,8 +3899,14 @@ useEffect(() => {
         ? customerMustPay
         : parseNumber(customerPaid);
 
+      const customerFacingShippingNote = buildCustomerFacingShippingNote({
+        orderNote: note,
+        deliveryRequirement,
+      });
+
       const extraNoteParts = [
-        note.trim() ? `Ghi chú: ${note.trim()}` : "",
+        customerFacingShippingNote ? `Ghi chú giao hàng: ${customerFacingShippingNote}` : "",
+        note.trim() ? `Ghi chú đơn hàng: ${note.trim()}` : "",
         shippingAddress.trim() ? `Địa chỉ: ${shippingAddress.trim()}` : "",
         tags.trim() ? `Ghi chú nội bộ: ${tags.trim()}` : "",
         couponCode.trim() ? `Mã giảm giá: ${couponCode.trim()}` : "",
@@ -3951,7 +4004,11 @@ useEffect(() => {
           ghnWardCode: isPickupOrder ? undefined : submitGhnWardCode || undefined,
           shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
           shippingPayer,
+          note: isPickupOrder ? undefined : customerFacingShippingNote,
+          shippingNote: isPickupOrder ? undefined : customerFacingShippingNote,
+          deliveryRequirement: isPickupOrder ? undefined : deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
           selectedServiceId: isPickupOrder ? undefined : selectedShippingServiceId,
           selectedServiceTypeId: isPickupOrder
             ? undefined
@@ -4010,8 +4067,9 @@ useEffect(() => {
           toWardCode: String(submitGhnWardCode),
           codAmount: remaining > 0 ? remaining : 0,
           insuranceValue: customerMustPay,
-          note: note.trim() || "",
+          note: customerFacingShippingNote,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
           clientOrderCode: created.orderCode,
           content: `Đơn hàng ${created.orderCode}`,
           weight: shippingWeight,
@@ -4895,6 +4953,25 @@ useEffect(() => {
               {shippingError && shippingUiMode !== "pickup" ? (
                 <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {shippingError}
+                </div>
+              ) : null}
+
+              {shippingLoading && shippingUiMode === "carrier" && !shippingQuotes.length ? (
+                <div className="mt-4 overflow-hidden rounded-3xl border border-dashed border-neutral-300 bg-white shadow-sm">
+                  <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
+                    <div className="text-sm font-semibold text-neutral-950">Đang chuẩn bị bảng phí vận chuyển</div>
+                    <div className="mt-0.5 text-xs text-neutral-500">Tự động lấy tối đa khoảng 11 gói GHN / ViettelPost / AhaMove khi đủ địa chỉ.</div>
+                  </div>
+                  <div className="grid gap-3 p-4 md:grid-cols-3">
+                    {["GHN", "Viettel Post", "AhaMove"].map((carrier) => (
+                      <div key={carrier} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                        <div className="h-4 w-24 rounded bg-neutral-200" />
+                        <div className="mt-3 h-6 w-32 rounded bg-neutral-200" />
+                        <div className="mt-3 h-3 w-full rounded bg-neutral-200" />
+                        <div className="mt-2 h-3 w-2/3 rounded bg-neutral-200" />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 

@@ -40,7 +40,15 @@ function isPublicPath(pathname: string) {
 }
 
 function extractToken(data: any) {
-  return data?.token || data?.accessToken || data?.access_token || "";
+  return (
+    data?.token ||
+    data?.accessToken ||
+    data?.access_token ||
+    data?.data?.token ||
+    data?.data?.accessToken ||
+    data?.data?.access_token ||
+    ""
+  );
 }
 
 function extractUser(data: any) {
@@ -138,9 +146,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (nextToken) setTokenToStorage(nextToken);
       setCurrentUserToStorage(nextUser);
       setUser(nextUser);
+      setChecked(true);
+      setLoading(false);
+      setError("");
 
       return nextUser;
     } catch (err) {
+      /**
+       * Khi tab bị background rồi quay lại, Chrome/Safari có thể bắn focus +
+       * visibilitychange liên tục. Nếu access token vừa hết hạn, một request khác
+       * có thể đã refresh token thành công trong lúc request /auth/me hiện tại lỗi.
+       * Không xoá storage ngay để tránh đá người dùng về login sau ~15 phút.
+       */
+      const latestToken = getTokenFromStorage();
+      const latestUser = getCurrentUserFromStorage();
+
+      if (latestToken && latestUser) {
+        setUser(latestUser);
+        setChecked(true);
+        setLoading(false);
+        setError("");
+        return latestUser;
+      }
+
       setUser(null);
       setError(
         err instanceof Error
@@ -179,7 +207,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }
 
-      void reloadAuth();
+      if (!reloadingRef.current) {
+        void reloadAuth();
+      }
     };
 
     window.addEventListener("the1970:auth-changed", handleAuthChanged);
@@ -195,6 +225,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isPublicPath(pathname)) return;
 
     const reloadIfStale = () => {
+      if (reloadingRef.current) return;
+
       const token = getTokenFromStorage();
       if (!token) return;
 
@@ -262,7 +294,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
-  return ctx;
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
+
+  return context;
 }

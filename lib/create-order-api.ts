@@ -192,6 +192,7 @@ export type CreateGhnShipmentPayload = {
   width: number;
   height: number;
   insuranceValue?: number;
+  requiredNoteLabel?: string;
   items: Array<{
     name: string;
     quantity: number;

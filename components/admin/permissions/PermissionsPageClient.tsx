@@ -13,7 +13,8 @@ type Tone =
   | "purple"
   | "cyan"
   | "rose"
-  | "emerald";
+  | "emerald"
+  | "indigo";
 
 type PermissionRisk = "low" | "medium" | "high" | "critical";
 
@@ -101,7 +102,21 @@ type EmployeeItem = {
   status: "ACTIVE" | "INACTIVE";
   isActive?: boolean;
   lastLoginAt?: string | null;
+  createdAt?: string | null;
+  departments?: { staffId: string; isHead: boolean }[];
 };
+
+type DepartmentItem = {
+  id: string;
+  name: string;
+  code: string;
+  description: string;
+  color: string;
+  isActive: boolean;
+  members: { staff: { id: string; name: string; code: string; isActive: boolean }; isHead: boolean }[];
+};
+
+type PageTab = "permissions" | "roles" | "employees" | "departments";
 
 const ROLE_STORAGE_KEY = "the1970.permission.enterprise.roleTemplates.v1";
 const CUSTOM_ROLE_STORAGE_KEY = "the1970.permission.enterprise.customRoleTemplates.v1";
@@ -196,6 +211,7 @@ const MODULE_HEALTH = [
   { module: "Nhập kho", backend: "purchase_receipt.*", status: "ready", note: "Pay/import stock/cancel đã có guard." },
   { module: "Inventory", backend: "inventory.*", status: "ready", note: "Adjust/transfer/import/audit đã có guard." },
   { module: "Phiếu thu / chi", backend: "cash_voucher.*", status: "watch", note: "Đã có permission catalog; cần gắn controller guard khi triển khai API phiếu thu/chi." },
+  { module: "Khuyến mại", backend: "promotions.*", status: "watch", note: "Permission keys đã định nghĩa; cần gắn guard vào promotion.controller." },
   { module: "Tài chính", backend: "finance.*", status: "watch", note: "Nên audit tiếp các endpoint reconciliation chuyên sâu." },
 ];
 
@@ -277,7 +293,7 @@ const PERMISSION_MODULES: PermissionModule[] = [
     icon: "🔁",
     tone: "cyan",
     actions: [
-      { key: "menu.stock_transfers", label: "Mở menu Chuyển kho", risk: "low" },
+      { key: "menu.stock_transfer", label: "Mở menu Chuyển kho", risk: "low" },
       { key: "stock_transfer.view", label: "Xem phiếu chuyển", risk: "low" },
       { key: "stock_transfer.create", label: "Tạo phiếu chuyển", risk: "high" },
       { key: "stock_transfer.edit", label: "Sửa phiếu chuyển", risk: "high" },
@@ -389,6 +405,31 @@ const PERMISSION_MODULES: PermissionModule[] = [
     ],
   },
   {
+    id: "promotions",
+    title: "Khuyến mại",
+    subtitle: "Tạo, duyệt, kích hoạt, tạm dừng KM và kiểm soát chính sách giá theo kênh bán.",
+    icon: "🎁",
+    tone: "indigo",
+    actions: [
+      { key: "menu.promotions", label: "Mở menu Khuyến mại", risk: "low" },
+      { key: "promotions.view", label: "Xem chương trình KM", risk: "low" },
+      { key: "promotions.create", label: "Tạo chương trình KM", risk: "high" },
+      { key: "promotions.edit", label: "Sửa chương trình KM", risk: "high" },
+      { key: "promotions.confirm", label: "Xác nhận / duyệt KM", risk: "critical" },
+      { key: "promotions.activate", label: "Kích hoạt KM", risk: "critical" },
+      { key: "promotions.pause", label: "Tạm dừng KM", risk: "high" },
+      { key: "promotions.cancel", label: "Huỷ chương trình KM", risk: "critical" },
+      { key: "promotions.delete", label: "Xóa chương trình KM", risk: "critical" },
+      { key: "promotions.price_policy.none", label: "Không cho phép sửa giá / chiết khấu toàn kênh", risk: "low", desc: "Khóa toàn bộ thao tác sửa giá và chiết khấu." },
+      { key: "promotions.price_policy.online_discount_only", label: "Bán online — Chỉ sửa chiết khấu", risk: "medium", desc: "Áp dụng đơn online, không cho sửa giá sản phẩm." },
+      { key: "promotions.price_policy.online_discount_price", label: "Bán online — Sửa giá và chiết khấu", risk: "high", desc: "Áp dụng đơn online, cho sửa cả giá và chiết khấu." },
+      { key: "promotions.price_policy.pos_discount_only", label: "Tại quầy POS — Chỉ sửa chiết khấu", risk: "medium", desc: "Áp dụng POS, không cho sửa giá sản phẩm." },
+      { key: "promotions.price_policy.pos_discount_price", label: "Tại quầy POS — Sửa giá và chiết khấu", risk: "high", desc: "Áp dụng POS, cho sửa cả giá và chiết khấu." },
+      { key: "promotions.price_policy.all_channels_discount_only", label: "Toàn kênh — Chỉ sửa chiết khấu", risk: "critical", desc: "Áp dụng cả online và POS, chỉ sửa chiết khấu." },
+      { key: "promotions.price_policy.all_channels_discount_price", label: "Toàn kênh — Sửa giá và chiết khấu", risk: "critical", desc: "Mức quyền cao nhất, cho sửa giá và chiết khấu trên mọi kênh." },
+    ],
+  },
+  {
     id: "system",
     title: "Hệ thống",
     subtitle: "Phân quyền, cấu hình, chi nhánh, audit, tích hợp và autopilot.",
@@ -488,7 +529,7 @@ const ROLE_TEMPLATES: RoleItem[] = [
       "menu.pos",
       "menu.products",
       "menu.inventory",
-      "menu.stock_transfers",
+      "menu.stock_transfer",
       "menu.stocktake",
       "orders.view",
       "orders.view_own",
@@ -580,7 +621,7 @@ const ROLE_TEMPLATES: RoleItem[] = [
     tone: "amber",
     defaultPermissionKeys: [
       "menu.inventory",
-      "menu.stock_transfers",
+      "menu.stock_transfer",
       "menu.stocktake",
       "menu.products",
       "products.view",
@@ -636,7 +677,7 @@ const LEGACY_PERMISSION_MAP: Record<keyof BranchPermission, string[]> = {
   canViewStock: ["inventory.view", "menu.inventory"],
   canManageStock: ["inventory.adjust", "inventory.transfer"],
   canStocktake: ["stocktake.view", "stocktake.scan", "menu.stocktake"],
-  canTransferStock: ["stock_transfer.view", "stock_transfer.create", "menu.stock_transfers"],
+  canTransferStock: ["stock_transfer.view", "stock_transfer.create", "menu.stock_transfer"],
   canReceiveStock: ["stock_transfer.receive", "purchase_receipt.import_stock"],
   canViewCustomer: ["customers.view_own"],
   canEditCustomer: ["customers.edit"],
@@ -657,6 +698,7 @@ const toneClasses: Record<Tone, string> = {
   cyan: "border-cyan-200 bg-cyan-50 text-cyan-700",
   rose: "border-rose-200 bg-rose-50 text-rose-700",
   emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  indigo: "border-indigo-200 bg-indigo-50 text-indigo-700",
 };
 
 function cx(...values: Array<string | false | null | undefined>) {
@@ -747,6 +789,13 @@ function formatDateTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Chưa đăng nhập";
   return date.toLocaleString("vi-VN");
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("vi-VN");
 }
 
 function defaultBranchPermission(branchId: string): BranchPermission {
@@ -865,6 +914,10 @@ function mapApiStaffToEmployee(item: any): EmployeeItem {
     status: item.status === "INACTIVE" || item.isActive === false ? "INACTIVE" : "ACTIVE",
     isActive: item.isActive !== false,
     lastLoginAt: item.lastLoginAt || null,
+    createdAt: item.createdAt || null,
+    departments: Array.isArray(item?.departments)
+      ? item.departments.map((d: any) => ({ staffId: d.staffId, isHead: d.isHead }))
+      : [],
   };
 }
 
@@ -1041,6 +1094,15 @@ export default function PermissionsPageClient() {
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"info" | "error" | "success">("info");
+
+  const showMessage = (text: string, type: "info" | "error" | "success" = "info") => {
+    setMessage(text);
+    setMessageType(type);
+    if (type !== "info") {
+      setTimeout(() => setMessage(""), 6000);
+    }
+  };
   const [query, setQuery] = useState("");
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [selectedModuleId, setSelectedModuleId] = useState(PERMISSION_MODULES[0].id);
@@ -1073,10 +1135,60 @@ export default function PermissionsPageClient() {
   const [newRoleBase, setNewRoleBase] = useState("retail-staff");
   const [deletingEmployeeId, setDeletingEmployeeId] = useState<string | null>(null);
 
+  // Employee tab - edit/create panel
+  const [selectedEmpEditId, setSelectedEmpEditId] = useState<string | null>(null);
+  const [newEmpPassword, setNewEmpPassword] = useState("");
+  const [creatingEmployee, setCreatingEmployee] = useState(false);
+
   const [auditTimeline, setAuditTimeline] = useState<PermissionAuditEvent[]>([]);
   const [lastDiff, setLastDiff] = useState<{ added: string[]; removed: string[] }>({ added: [], removed: [] });
   const [showPreview, setShowPreview] = useState(true);
 
+  // Tab navigation
+  const [activeTab, setActiveTab] = useState<PageTab>("permissions");
+
+  // Role Template Editor state
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [roleEditorKeys, setRoleEditorKeys] = useState<string[]>([]);
+  const [roleEditorModuleId, setRoleEditorModuleId] = useState(PERMISSION_MODULES[0].id);
+  const [savingRole, setSavingRole] = useState(false);
+
+  // Sync confirmation modal after saving role
+  const [syncModal, setSyncModal] = useState<{ roleId: string; roleName: string; count: number } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  // Bulk assign apply mode: replace or merge
+  const [bulkApplyMode, setBulkApplyMode] = useState<"replace" | "merge">("replace");
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+
+  // Create custom role in roles tab
+  const [showCreateRole, setShowCreateRole] = useState(false);
+  const [newRoleNameRT, setNewRoleNameRT] = useState("");
+  const [newRoleCodeRT, setNewRoleCodeRT] = useState("");
+  const [newRoleDescRT, setNewRoleDescRT] = useState("");
+  const [newRoleScopeRT, setNewRoleScopeRT] = useState<RoleScope>("ONE_BRANCH");
+  const [newRoleBaseRT, setNewRoleBaseRT] = useState("retail-staff");
+
+  // Bulk assign state
+  const [bulkRoleId, setBulkRoleId] = useState("fulltime");
+  const [bulkBranchId, setBulkBranchId] = useState("");
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+
+  // Department state
+  const [departments, setDepartments] = useState<DepartmentItem[]>([]);
+  const [newDeptName, setNewDeptName] = useState("");
+  const [newDeptColor, setNewDeptColor] = useState("#6366f1");
+  const [newDeptDescription, setNewDeptDescription] = useState("");
+  const [savingDept, setSavingDept] = useState(false);
+  const [employeeDeptMap, setEmployeeDeptMap] = useState<Record<string, string[]>>({});
+  const [savingDeptAssign, setSavingDeptAssign] = useState<string | null>(null);
+
+  // Employee table filter state
+  const [empTableQuery, setEmpTableQuery] = useState("");
+  const [empTableRole, setEmpTableRole] = useState("");
+  const [empTableBranch, setEmpTableBranch] = useState("");
+  const [empTableStatus, setEmpTableStatus] = useState<"" | "ACTIVE" | "INACTIVE">("");
 
   const loadEmployees = async () => {
     try {
@@ -1086,7 +1198,7 @@ export default function PermissionsPageClient() {
       setEmployees(mapped);
       setSelectedEmployeeId((prev) => prev || mapped[0]?.id || null);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không tải được danh sách nhân viên.");
+      showMessage(err instanceof Error ? err.message : "Không tải được danh sách nhân viên.", "error");
     } finally {
       setLoadingEmployees(false);
     }
@@ -1101,9 +1213,19 @@ export default function PermissionsPageClient() {
     }
   };
 
+  const loadDepartments = async () => {
+    try {
+      const data = await apiJson<DepartmentItem[]>("/staff/departments", { method: "GET" });
+      setDepartments(Array.isArray(data) ? data : []);
+    } catch {
+      setDepartments([]);
+    }
+  };
+
   useEffect(() => {
     void loadBranches();
     void loadEmployees();
+    void loadDepartments();
   }, []);
 
   useEffect(() => {
@@ -1184,6 +1306,21 @@ export default function PermissionsPageClient() {
   }, [employeeTree, query]);
 
   const selectedModule = PERMISSION_MODULES.find((module) => module.id === selectedModuleId) || PERMISSION_MODULES[0];
+
+  // Filtered list for employee table tab
+  const filteredEmployees = useMemo(() => {
+    const q = empTableQuery.trim().toLowerCase();
+    return employees.filter((e) => {
+      if (q && !`${e.name} ${e.code} ${e.username || ""} ${e.email || ""} ${e.phone || ""}`.toLowerCase().includes(q)) return false;
+      if (empTableRole && !e.roles.includes(empTableRole) && e.roleId !== empTableRole) return false;
+      if (empTableBranch) {
+        const ids = unique([e.branchId || "", ...e.branchRoles.map((r) => r.branchId)]);
+        if (!ids.includes(empTableBranch)) return false;
+      }
+      if (empTableStatus && e.status !== empTableStatus) return false;
+      return true;
+    });
+  }, [employees, empTableQuery, empTableRole, empTableBranch, empTableStatus]);
 
   const selectedBranchKeys = useMemo(() => {
     if (!selectedEmployee) return [];
@@ -1266,16 +1403,15 @@ export default function PermissionsPageClient() {
   };
 
   const saveEmployeeProfile = async () => {
-    if (!selectedEmployee) return;
+    const targetId = selectedEmpEditId || selectedEmployee?.id;
+    if (!targetId) return;
     if (!editName.trim() || !editCode.trim()) {
-      setMessage("Thiếu tên hoặc mã nhân viên.");
-      return;
+      showMessage("Thiếu tên hoặc mã nhân viên.", "error"); return;
     }
-
     try {
-      setSavingEmployeeId(selectedEmployee.id);
+      setSavingEmployeeId(targetId);
       setMessage("Đang lưu hồ sơ nhân viên...");
-      await apiJson(`/staff/${selectedEmployee.id}`, {
+      await apiJson(`/staff/${targetId}`, {
         method: "PATCH",
         body: JSON.stringify({
           name: editName.trim(),
@@ -1290,10 +1426,10 @@ export default function PermissionsPageClient() {
         }),
       });
       await loadEmployees();
-      setSavedEmployeeId(selectedEmployee.id);
-      setMessage("Đã lưu hồ sơ nhân viên.");
+      setSavedEmployeeId(targetId);
+      showMessage("✓ Đã lưu hồ sơ nhân viên.", "success");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Lưu hồ sơ thất bại.");
+      showMessage(err instanceof Error ? err.message : "Lưu hồ sơ thất bại.", "error");
     } finally {
       setSavingEmployeeId(null);
     }
@@ -1367,39 +1503,39 @@ export default function PermissionsPageClient() {
 
       await loadEmployees();
       setSavedEmployeeId(selectedEmployee.id);
-      setMessage("Đã lưu quyền. Session cũ của nhân viên sẽ bị invalid và cần login lại để nhận quyền mới.");
+      showMessage("Đã lưu quyền. Session cũ của nhân viên sẽ bị invalid và cần login lại để nhận quyền mới.", "success");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Lưu phân quyền thất bại.");
+      showMessage(err instanceof Error ? err.message : "Lưu phân quyền thất bại.", "error");
     } finally {
       setSavingEmployeeId(null);
     }
   };
 
   const changePassword = async () => {
-    if (!selectedEmployee) return;
+    const targetId = selectedEmpEditId || selectedEmployee?.id;
+    if (!targetId) return;
     if (!newPassword.trim() || newPassword.trim().length < 4) {
-      setMessage("Mật khẩu mới tối thiểu 4 ký tự.");
-      return;
+      showMessage("Mật khẩu mới tối thiểu 4 ký tự.", "error"); return;
     }
-
     try {
-      setSecuritySavingForId(selectedEmployee.id);
-      await apiJson(`/staff/${selectedEmployee.id}/password`, {
+      setSecuritySavingForId(targetId);
+      await apiJson(`/staff/${targetId}/password`, {
         method: "PATCH",
         body: JSON.stringify({ password: newPassword.trim() }),
       });
       setNewPassword("");
       setResetPasswordForId(null);
-      setMessage("Đã đổi mật khẩu nhân viên.");
+      showMessage("✓ Đã đổi mật khẩu nhân viên.", "success");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Đổi mật khẩu thất bại.");
+      showMessage(err instanceof Error ? err.message : "Đổi mật khẩu thất bại.", "error");
     } finally {
       setSecuritySavingForId(null);
     }
   };
 
   const changeSecondPassword = async () => {
-    if (!selectedEmployee) return;
+    const targetId = selectedEmpEditId || selectedEmployee?.id;
+    if (!targetId) return;
     if (!/^\d{6}$/.test(secondPassword)) {
       setMessage("PIN bảo mật phải gồm đúng 6 số.");
       return;
@@ -1410,27 +1546,29 @@ export default function PermissionsPageClient() {
     }
 
     try {
-      setSecuritySavingForId(selectedEmployee.id);
-      await apiJson(`/staff/${selectedEmployee.id}/second-password`, {
+      setSecuritySavingForId(targetId);
+      await apiJson(`/staff/${targetId}/second-password`, {
         method: "PATCH",
         body: JSON.stringify({ secondPassword }),
       });
       setSecondPassword("");
       setSecondPasswordForId(null);
-      setMessage("Đã set PIN bảo mật cho nhân viên.");
+      showMessage("Đã set PIN bảo mật cho nhân viên.", "success");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Set PIN thất bại.");
+      showMessage(err instanceof Error ? err.message : "Set PIN thất bại.", "error");
     } finally {
       setSecuritySavingForId(null);
     }
   };
 
   const toggleEmployeeStatus = async () => {
-    if (!selectedEmployee) return;
-    const nextStatus = selectedEmployee.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    const targetId = selectedEmpEditId || selectedEmployee?.id;
+    const emp = targetId ? employees.find((e) => e.id === targetId) || selectedEmployee : selectedEmployee;
+    if (!targetId || !emp) return;
+    const nextStatus = emp.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
     try {
-      setSavingEmployeeId(selectedEmployee.id);
-      await apiJson(`/staff/${selectedEmployee.id}`, {
+      setSavingEmployeeId(targetId);
+      await apiJson(`/staff/${targetId}`, {
         method: "PATCH",
         body: JSON.stringify({
           isActive: nextStatus === "ACTIVE",
@@ -1440,7 +1578,7 @@ export default function PermissionsPageClient() {
       await loadEmployees();
       setMessage(nextStatus === "ACTIVE" ? "Đã kích hoạt nhân viên." : "Đã khóa tài khoản nhân viên.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Cập nhật trạng thái thất bại.");
+      showMessage(err instanceof Error ? err.message : "Cập nhật trạng thái thất bại.", "error");
     } finally {
       setSavingEmployeeId(null);
     }
@@ -1496,22 +1634,21 @@ export default function PermissionsPageClient() {
     const next = customRoleTemplates.filter((item) => item.id !== roleId);
     setCustomRoleTemplates(next);
     writeCustomRoleTemplates(next);
-    setMessage("Đã xoá vai trò tuỳ chỉnh.");
+    showMessage("Đã xoá vai trò tuỳ chỉnh.", "success");
   };
 
   const deleteEmployee = async () => {
-    if (!selectedEmployee) return;
-
-    const ok = window.confirm(
-      `Xoá nhân viên ${selectedEmployee.name} (${selectedEmployee.code})?\n\nKhuyến nghị: chỉ xoá khi tạo nhầm. Nếu nhân viên đã có lịch sử đơn/kho, nên dùng Khoá tài khoản.`,
-    );
+    const targetId = selectedEmpEditId || selectedEmployee?.id;
+    const emp = targetId ? employees.find((e) => e.id === targetId) || selectedEmployee : selectedEmployee;
+    if (!targetId || !emp) return;
+    const ok = window.confirm(`Xoá nhân viên ${emp.name} (${emp.code})?\n\nKhuyến nghị: chỉ xoá khi tạo nhầm.`);
     if (!ok) return;
-
     try {
-      setDeletingEmployeeId(selectedEmployee.id);
-      await apiJson(`/staff/${selectedEmployee.id}`, { method: "DELETE" });
-      setMessage("Đã xoá nhân viên.");
+      setDeletingEmployeeId(targetId);
+      await apiJson(`/staff/${targetId}`, { method: "DELETE" });
+      showMessage("✓ Đã xoá nhân viên.", "success");
       setSelectedEmployeeId(null);
+      setSelectedEmpEditId(null);
       await loadEmployees();
     } catch (err) {
       setMessage(
@@ -1522,6 +1659,266 @@ export default function PermissionsPageClient() {
     } finally {
       setDeletingEmployeeId(null);
     }
+  };
+
+  // ── Role Template Editor actions ────────────────────────────────────────────
+  const startEditRole = (roleId: string) => {
+    const role = getAllRoleTemplates().find((r) => r.id === roleId);
+    setEditingRoleId(roleId);
+    setRoleEditorKeys(role?.defaultPermissionKeys.includes("*") ? ["*"] : [...(role?.defaultPermissionKeys || [])]);
+    setRoleEditorModuleId(PERMISSION_MODULES[0].id);
+  };
+
+  const toggleRoleKey = (key: string, enabled: boolean) => {
+    setRoleEditorKeys((prev) => {
+      const s = new Set(prev);
+      if (enabled) s.add(key); else s.delete(key);
+      return Array.from(s);
+    });
+  };
+
+  const setRoleModuleAll = (module: PermissionModule, enabled: boolean) => {
+    setRoleEditorKeys((prev) => {
+      const s = new Set(prev);
+      module.actions.forEach((a) => { if (enabled) s.add(a.key); else s.delete(a.key); });
+      return Array.from(s);
+    });
+  };
+
+  const saveRoleTemplate = async () => {
+    if (!editingRoleId) return;
+    const roleMeta = getAllRoleTemplates().find((r) => r.id === editingRoleId);
+    if (!roleMeta) return;
+    try {
+      setSavingRole(true);
+      setMessage("Đang lưu bộ quyền vai trò...");
+
+      // Update local custom roles
+      const custom = readCustomRoleTemplates();
+      const idx = custom.findIndex((r) => r.id === editingRoleId);
+      if (idx !== -1) {
+        custom[idx] = { ...custom[idx], defaultPermissionKeys: roleEditorKeys };
+        writeCustomRoleTemplates(custom);
+        setCustomRoleTemplates([...custom]);
+      }
+
+      await apiJson("/staff/role-templates", {
+        method: "PATCH",
+        body: JSON.stringify({
+          roles: [{
+            id: editingRoleId,
+            roleCode: editingRoleId,
+            name: roleMeta.name,
+            scope: roleMeta.scope || "ONE_BRANCH",
+            description: roleMeta.description || "",
+            permissions: { permissionKeys: roleEditorKeys },
+          }],
+        }),
+      });
+
+      await loadEmployees();
+      const staffCount = employees.filter((e) => e.roles.includes(editingRoleId) || e.roleId === editingRoleId).length;
+      setMessage("");
+      // Show sync confirmation modal
+      setSyncModal({ roleId: editingRoleId, roleName: roleMeta.name, count: staffCount });
+    } catch (err) {
+      showMessage(err instanceof Error ? err.message : "Lưu bộ quyền thất bại.", "error");
+    } finally {
+      setSavingRole(false);
+    }
+  };
+
+  const syncRoleNow = async (force: boolean) => {
+    if (!syncModal) return;
+    try {
+      setSyncing(true);
+      await apiJson("/staff/sync-permissions", {
+        method: "POST",
+        body: JSON.stringify({ force }),
+      });
+      setSyncModal(null);
+      await loadEmployees();
+      showMessage(`✓ Đã sync quyền "${syncModal.roleName}" xuống ${syncModal.count} nhân viên. Họ cần đăng nhập lại để nhận quyền mới.`, "success");
+    } catch (err) {
+      showMessage(err instanceof Error ? err.message : "Sync thất bại.", "error");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const createCustomRoleInRolesTab = () => {
+    const name = newRoleNameRT.trim();
+    const code = normalizeRoleCodeForStorage(newRoleCodeRT || name);
+    if (!name || !code) { showMessage("Thiếu tên hoặc mã vai trò.", "error"); return; }
+    if (getAllRoleTemplates().some((r) => r.id === code)) { showMessage("Mã vai trò đã tồn tại.", "error"); return; }
+    const base = getRoleTemplate(newRoleBaseRT) || getRoleTemplate("retail-staff");
+    const newRole: RoleItem = {
+      id: code, name, scope: newRoleScopeRT,
+      description: newRoleDescRT.trim() || `Vai trò tuỳ chỉnh: ${name}`,
+      badge: "Custom", tone: "cyan",
+      defaultPermissionKeys: [...(base?.defaultPermissionKeys || [])],
+    };
+    const next = [...customRoleTemplates, newRole];
+    setCustomRoleTemplates(next);
+    writeCustomRoleTemplates(next);
+    setNewRoleNameRT(""); setNewRoleCodeRT(""); setNewRoleDescRT("");
+    setNewRoleScopeRT("ONE_BRANCH"); setNewRoleBaseRT("retail-staff");
+    setShowCreateRole(false);
+    // Auto-select the new role for editing
+    startEditRole(code);
+    showMessage(`✓ Đã tạo vai trò "${name}". Tick quyền ở bên phải rồi lưu.`, "success");
+  };
+
+  // ── Bulk assign role ─────────────────────────────────────────────────────────
+  const bulkAssignRole = async () => {
+    if (!bulkRoleId || !bulkBranchId || bulkSelectedIds.size === 0) {
+      showMessage("Chọn vai trò, chi nhánh và ít nhất 1 nhân viên.", "error");
+      return;
+    }
+    setShowBulkConfirm(false);
+    try {
+      setBulkAssigning(true);
+      setMessage(`Đang gán vai trò cho ${bulkSelectedIds.size} nhân viên...`);
+      const ids = Array.from(bulkSelectedIds);
+
+      const results = await Promise.allSettled(ids.map(async (staffId) => {
+        // Replace: gán branch-roles mới (backend sẽ xoá cũ và tạo mới)
+        // Merge: patch thêm branch-role mà không xoá override cũ
+        if (bulkApplyMode === "replace") {
+          // Replace: gán branch-roles → backend xoá StaffBranchPermission cũ, tạo mới theo role
+          return apiJson(`/staff/${staffId}/branch-roles`, {
+            method: "PATCH",
+            body: JSON.stringify({ branchRoles: [{ branchId: bulkBranchId, roleCode: bulkRoleId }] }),
+          });
+        } else {
+          // Merge: sync permissions mà không xoá override
+          await apiJson(`/staff/${staffId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ role: bulkRoleId, branchId: bulkBranchId }),
+          });
+          return apiJson(`/staff/${staffId}/sync-permissions`, {
+            method: "POST",
+            body: JSON.stringify({ force: false }),
+          });
+        }
+      }));
+
+      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.filter((r) => r.status === "rejected").length;
+      setBulkSelectedIds(new Set());
+      await loadEmployees();
+      if (failed === 0) {
+        showMessage(
+          `✓ ${bulkApplyMode === "replace" ? "Replace" : "Merge"} — Gán "${getRoleName(bulkRoleId)}" tại ${getBranchName(branches, bulkBranchId)} cho ${succeeded} nhân viên thành công.`,
+          "success"
+        );
+      } else {
+        showMessage(`Gán xong ${succeeded}/${ids.length} nhân viên. ${failed} thất bại.`, "error");
+      }
+    } catch (err) {
+      showMessage(err instanceof Error ? err.message : "Gán vai trò thất bại.", "error");
+    } finally {
+      setBulkAssigning(false);
+    }
+  };
+
+  // ── Employee tab: open edit panel ───────────────────────────────────────────
+  const openEmpEdit = (e: EmployeeItem) => {
+    setSelectedEmpEditId(e.id);
+    // Sync fields dùng chung với permissions tab
+    setEditName(e.name || "");
+    setEditCode(e.code || "");
+    setEditUsername(e.username || "");
+    setEditEmail(e.email || "");
+    setEditPhone(e.phone || "");
+    setEditAddress(e.address || "");
+    setEditNote(e.note || "");
+    setEditMainBranchId(employeePrimaryBranch(e));
+    setResetPasswordForId(null);
+    setSecondPasswordForId(null);
+    setNewPassword("");
+    setSecondPassword("");
+  };
+
+  // ── Employee tab: create new employee ────────────────────────────────────────
+  const createNewEmployee = async () => {
+    if (!editName.trim() || !editCode.trim()) {
+      showMessage("Thiếu họ tên và mã nhân viên.", "error"); return;
+    }
+    if (!newEmpPassword || newEmpPassword.length < 4) {
+      showMessage("Mật khẩu ban đầu tối thiểu 4 ký tự.", "error"); return;
+    }
+    try {
+      setCreatingEmployee(true);
+      await apiJson("/staff", {
+        method: "POST",
+        body: JSON.stringify({
+          name: editName.trim(),
+          code: editCode.trim(),
+          username: editUsername.trim() || undefined,
+          email: editEmail.trim() || undefined,
+          phone: editPhone.trim() || undefined,
+          address: editAddress.trim() || undefined,
+          branchId: editMainBranchId || undefined,
+          password: newEmpPassword,
+          role: "retail-staff",
+        }),
+      });
+      showMessage(`✓ Đã tạo nhân viên "${editName.trim()}". Vào tab Vai trò để gán vai trò và chi nhánh.`, "success");
+      setEditName(""); setEditCode(""); setEditUsername(""); setEditEmail("");
+      setEditPhone(""); setEditAddress(""); setEditNote(""); setEditMainBranchId("");
+      setNewEmpPassword("");
+      await loadEmployees();
+    } catch (err) {
+      showMessage(err instanceof Error ? err.message : "Tạo nhân viên thất bại.", "error");
+    } finally {
+      setCreatingEmployee(false);
+    }
+  };
+
+  const createDepartment = async () => {
+    if (!newDeptName.trim()) { setMessage("Thiếu tên phòng ban."); return; }
+    try {
+      setSavingDept(true);
+      await apiJson("/staff/departments", {
+        method: "POST",
+        body: JSON.stringify({ name: newDeptName.trim(), color: newDeptColor, description: newDeptDescription.trim() }),
+      });
+      setNewDeptName(""); setNewDeptColor("#6366f1"); setNewDeptDescription("");
+      await loadDepartments();
+      showMessage("Đã tạo phòng ban.", "success");
+    } catch (err) { showMessage(err instanceof Error ? err.message : "Tạo phòng ban thất bại.", "error"); }
+    finally { setSavingDept(false); }
+  };
+
+  const deleteDepartment = async (id: string) => {
+    if (!window.confirm("Xoá phòng ban? Toàn bộ nhân viên sẽ rời phòng ban này.")) return;
+    try {
+      await apiJson(`/staff/departments/${id}`, { method: "DELETE" });
+      await loadDepartments();
+      showMessage("Đã xoá phòng ban.", "success");
+    } catch (err) { showMessage(err instanceof Error ? err.message : "Xoá phòng ban thất bại.", "error"); }
+  };
+
+  const saveEmployeeDepartments = async (staffId: string) => {
+    try {
+      setSavingDeptAssign(staffId);
+      await apiJson(`/staff/${staffId}/departments`, {
+        method: "PATCH",
+        body: JSON.stringify({ departmentIds: employeeDeptMap[staffId] || [] }),
+      });
+      await loadEmployees(); await loadDepartments();
+      showMessage("Đã cập nhật phòng ban nhân viên.", "success");
+    } catch (err) { showMessage(err instanceof Error ? err.message : "Cập nhật phòng ban thất bại.", "error"); }
+    finally { setSavingDeptAssign(null); }
+  };
+
+  const toggleEmployeeDept = (staffId: string, deptId: string, checked: boolean) => {
+    setEmployeeDeptMap((prev) => {
+      const current = new Set(prev[staffId] || employees.find((e) => e.id === staffId)?.departments?.map((d) => d.staffId) || []);
+      if (checked) current.add(deptId); else current.delete(deptId);
+      return { ...prev, [staffId]: Array.from(current) };
+    });
   };
 
   const saveRoleTemplates = () => {
@@ -1579,11 +1976,34 @@ export default function PermissionsPageClient() {
       </section>
 
       {message ? (
-        <div className="rounded-3xl border border-neutral-200 bg-white px-5 py-4 text-sm font-semibold text-neutral-800 shadow-sm">
-          {message}
+        <div className={`flex items-center justify-between gap-4 rounded-3xl border px-5 py-4 text-sm font-semibold shadow-sm ${
+          messageType === "error" ? "border-red-200 bg-red-50 text-red-800" :
+          messageType === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" :
+          "border-neutral-200 bg-white text-neutral-800"
+        }`}>
+          <span>{message}</span>
+          <button type="button" onClick={() => setMessage("")}
+            className="shrink-0 rounded-full p-1 opacity-50 hover:opacity-100 transition">✕</button>
         </div>
       ) : null}
 
+      {/* Tab navigation */}
+      <div className="grid grid-cols-4 gap-2 rounded-3xl border border-neutral-200 bg-white p-2 shadow-sm">
+        {([
+          ["permissions", "⚡ Advanced Override", "Ngoại lệ riêng từng nhân viên"],
+          ["roles",       "🎭 Vai trò",           "Bộ quyền chuẩn & gán hàng loạt"],
+          ["employees",  "👤 Nhân viên",          "Tạo, sửa hồ sơ & bảo mật"],
+          ["departments","🏢 Phòng ban",           "Nhóm nhân viên theo bộ phận"],
+        ] as [PageTab, string, string][]).map(([tab, label, sub]) => (
+          <button key={tab} type="button" onClick={() => { setActiveTab(tab); setMessage(""); }}
+            className={`flex flex-col items-center rounded-2xl px-3 py-3 text-center transition ${activeTab === tab ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-100"}`}>
+            <span className="text-sm font-black">{label}</span>
+            <span className={`mt-0.5 text-[11px] font-normal ${activeTab === tab ? "text-white/60" : "text-neutral-400"}`}>{sub}</span>
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "permissions" && (
       <div className="grid gap-5 xl:grid-cols-[360px_1fr_360px]">
         <Panel className="overflow-hidden">
           <div className="border-b border-neutral-200 p-4">
@@ -1691,56 +2111,16 @@ export default function PermissionsPageClient() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={saveEmployeeProfile} loading={savingEmployeeId === selectedEmployee?.id}>
-                  Lưu hồ sơ
-                </Button>
+                <button type="button"
+                  onClick={() => { setActiveTab("employees"); setMessage(""); }}
+                  className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50 transition">
+                  ✏️ Sửa hồ sơ / mật khẩu
+                </button>
                 <Button onClick={saveEmployeePermissions} loading={savingEmployeeId === selectedEmployee?.id}>
                   Lưu phân quyền
                 </Button>
               </div>
             </div>
-
-            {selectedEmployee ? (
-              <div className="mt-5 grid gap-3 md:grid-cols-4">
-                <input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Tên nhân viên" />
-                <input value={editCode} onChange={(e) => setEditCode(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Mã NV" />
-                <input value={editUsername} onChange={(e) => setEditUsername(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Username" />
-                <select value={editMainBranchId} onChange={(e) => setEditMainBranchId(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none">
-                  <option value="">Chi nhánh chính</option>
-                  {branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>{branch.name}</option>
-                  ))}
-                </select>
-                <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none md:col-span-2" placeholder="Email" />
-                <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Số điện thoại" />
-                <input value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Địa chỉ" />
-              </div>
-            ) : null}
-
-            {selectedEmployee ? (
-              <div className="mt-4 grid gap-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 md:grid-cols-[1fr_auto_1fr_auto]">
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="h-11 rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none"
-                  placeholder="Mật khẩu mới"
-                />
-                <Button variant="secondary" onClick={changePassword} loading={securitySavingForId === selectedEmployee.id}>
-                  Lưu mật khẩu
-                </Button>
-                <input
-                  inputMode="numeric"
-                  value={secondPassword}
-                  onChange={(e) => setSecondPassword(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  className="h-11 rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none"
-                  placeholder="PIN bảo mật 6 số"
-                />
-                <Button variant="secondary" onClick={changeSecondPassword} loading={securitySavingForId === selectedEmployee.id}>
-                  Lưu PIN
-                </Button>
-              </div>
-            ) : null}
           </Panel>
 
           <div className="grid gap-5 lg:grid-cols-[250px_1fr]">
@@ -1909,78 +2289,28 @@ export default function PermissionsPageClient() {
           </Panel>
 
           <Panel className="p-5">
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Role Template Studio</p>
-            <h3 className="mt-1 text-xl font-black">Tạo vai trò mới</h3>
-            <p className="mt-1 text-xs text-neutral-500">
-              Tạo role tuỳ chỉnh từ mẫu có sẵn, sau đó áp vào từng chi nhánh của nhân viên.
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <input
-                value={newRoleName}
-                onChange={(e) => {
-                  setNewRoleName(e.target.value);
-                  if (!newRoleCode) setNewRoleCode(normalizeRoleCodeForStorage(e.target.value));
-                }}
-                className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
-                placeholder="Tên vai trò mới, ví dụ: Thu ngân Quốc Oai"
-              />
-              <input
-                value={newRoleCode}
-                onChange={(e) => setNewRoleCode(normalizeRoleCodeForStorage(e.target.value))}
-                className="h-11 w-full rounded-2xl border border-neutral-200 px-3 font-mono text-sm outline-none"
-                placeholder="ma-vai-tro"
-              />
-              <textarea
-                value={newRoleDescription}
-                onChange={(e) => setNewRoleDescription(e.target.value)}
-                className="min-h-20 w-full rounded-2xl border border-neutral-200 px-3 py-3 text-sm outline-none"
-                placeholder="Mô tả vai trò"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={newRoleBase}
-                  onChange={(e) => setNewRoleBase(e.target.value)}
-                  className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
-                >
-                  {getAllRoleTemplates().map((role) => (
-                    <option key={role.id} value={role.id}>Copy từ {role.name}</option>
-                  ))}
-                </select>
-                <select
-                  value={newRoleScope}
-                  onChange={(e) => setNewRoleScope(e.target.value as RoleScope)}
-                  className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
-                >
-                  <option value="ONE_BRANCH">Theo chi nhánh</option>
-                  <option value="ALL_BRANCHES">Toàn hệ thống</option>
-                </select>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Hướng dẫn</p>
+            <h3 className="mt-1 text-xl font-black">Tab này dùng để làm gì?</h3>
+            <div className="mt-4 space-y-3 text-sm text-neutral-600">
+              <div className="rounded-2xl bg-neutral-50 p-4">
+                <p className="font-black text-neutral-900">🔐 Tab này — Phân quyền cá nhân</p>
+                <p className="mt-1 text-neutral-500">Chọn nhân viên ở cột trái → xem quyền hiệu lực thực tế → override từng quyền riêng lẻ nếu cần. Dùng khi 1 nhân viên cần quyền đặc biệt khác vai trò mặc định.</p>
               </div>
-              <Button onClick={createCustomRoleTemplate} className="w-full">
-                Tạo vai trò mới
-              </Button>
+              <div className="rounded-2xl bg-blue-50 p-4">
+                <p className="font-black text-blue-900">🎭 Tab Vai trò — Quản lý bộ quyền</p>
+                <p className="mt-1 text-blue-700">Sửa bộ quyền mặc định của cả vai trò (Fulltime, Quản lý...) → gán vai trò hàng loạt cho nhiều nhân viên cùng lúc. Dùng khi onboard nhân viên mới hoặc thay đổi chính sách quyền.</p>
+              </div>
             </div>
-
-            {customRoleTemplates.length ? (
-              <div className="mt-4 space-y-2">
-                {customRoleTemplates.map((role) => (
-                  <div key={role.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-black">{role.name}</p>
-                        <p className="font-mono text-[11px] text-neutral-400">{role.id}</p>
-                      </div>
-                      <Button variant="danger" onClick={() => deleteCustomRoleTemplate(role.id)}>
-                        Xoá
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => { setActiveTab("roles"); setMessage(""); }}
+              className="mt-4 w-full rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 hover:bg-blue-100 transition"
+            >
+              → Chuyển sang tab Vai trò & Gán hàng loạt
+            </button>
           </Panel>
 
-          <Panel className="border-red-200 bg-red-50 p-5">
+                    <Panel className="border-red-200 bg-red-50 p-5">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-red-500">Danger Zone</p>
             <h3 className="mt-1 text-xl font-black text-red-950">Khoá / xoá nhân viên</h3>
             <p className="mt-1 text-xs text-red-700">
@@ -2133,6 +2463,708 @@ export default function PermissionsPageClient() {
           </Panel>
         </div>
       </div>
+      )} {/* end permissions tab */}
+
+      {/* ── Tab: Quản lý nhân viên ─────────────────────────────────────────── */}
+      {/* ── Tab: Vai trò & Gán hàng loạt ─────────────────────────────────── */}
+      {activeTab === "roles" && (
+        <div className="space-y-5">
+
+          {/* ── Sync Confirmation Modal ───────────────────────────────────── */}
+          {syncModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Đã lưu bộ quyền</p>
+                <h3 className="mt-2 text-2xl font-black">Sync xuống nhân viên?</h3>
+                <div className="mt-4 rounded-2xl bg-neutral-50 p-4">
+                  <p className="text-sm font-bold text-neutral-700">
+                    Vai trò: <span className="text-neutral-950">{syncModal.roleName}</span>
+                  </p>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    {syncModal.count} nhân viên đang dùng vai trò này.
+                  </p>
+                  <div className="mt-3 space-y-2 text-sm text-neutral-600">
+                    <p>Nếu sync ngay:</p>
+                    <p className="ml-3">• Quyền mới áp dụng cho tất cả {syncModal.count} nhân viên</p>
+                    <p className="ml-3">• Override riêng lẻ vẫn được giữ (force=false)</p>
+                    <p className="ml-3">• Nhân viên cần login lại để nhận quyền mới</p>
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-2">
+                  <Button onClick={() => syncRoleNow(false)} loading={syncing} className="w-full">
+                    ⚡ Sync ngay {syncModal.count} nhân viên
+                  </Button>
+                  <Button variant="secondary" onClick={() => { setSyncModal(null); showMessage("✓ Đã lưu bộ quyền. Sync sau khi cần.", "success"); }} className="w-full">
+                    Để sau (nhân viên nhận quyền mới khi đăng nhập lại)
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Bulk Confirm Modal ────────────────────────────────────────── */}
+          {showBulkConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Xác nhận gán vai trò</p>
+                <h3 className="mt-2 text-2xl font-black">Áp dụng cho {bulkSelectedIds.size} nhân viên</h3>
+                <div className="mt-4 rounded-2xl bg-neutral-50 p-4 space-y-2 text-sm">
+                  <p><span className="font-bold">Vai trò:</span> {getRoleName(bulkRoleId)}</p>
+                  <p><span className="font-bold">Chi nhánh:</span> {getBranchName(branches, bulkBranchId)}</p>
+                  <p><span className="font-bold">Chế độ:</span> {bulkApplyMode === "replace" ? "Replace — Xoá quyền cũ, áp quyền role mới" : "Merge — Giữ override cũ, thêm quyền role mới"}</p>
+                  {bulkApplyMode === "replace" && (
+                    <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-amber-800 text-xs">
+                      ⚠ Chế độ Replace sẽ xoá toàn bộ override riêng lẻ của {bulkSelectedIds.size} nhân viên này và đặt lại theo role chuẩn.
+                    </div>
+                  )}
+                </div>
+                <div className="mt-5 grid gap-2">
+                  <Button onClick={bulkAssignRole} loading={bulkAssigning} className="w-full">
+                    Xác nhận — Áp dụng
+                  </Button>
+                  <Button variant="secondary" onClick={() => setShowBulkConfirm(false)} className="w-full">
+                    Huỷ
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Header ──────────────────────────────────────────────────────── */}
+          <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
+
+            {/* Cột trái — danh sách vai trò */}
+            <div className="space-y-2">
+              <Panel className="p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Role Templates</p>
+                    <h2 className="mt-0.5 text-lg font-black">Vai trò</h2>
+                  </div>
+                  <button type="button" onClick={() => setShowCreateRole(!showCreateRole)}
+                    className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-bold hover:bg-neutral-50 transition">
+                    {showCreateRole ? "✕ Đóng" : "＋ Tạo vai trò"}
+                  </button>
+                </div>
+                {showCreateRole && (
+                  <div className="mt-4 space-y-3 border-t border-neutral-200 pt-4">
+                    <input value={newRoleNameRT} onChange={(e) => { setNewRoleNameRT(e.target.value); if (!newRoleCodeRT) setNewRoleCodeRT(normalizeRoleCodeForStorage(e.target.value)); }}
+                      className="h-10 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Tên vai trò *" />
+                    <input value={newRoleCodeRT} onChange={(e) => setNewRoleCodeRT(normalizeRoleCodeForStorage(e.target.value))}
+                      className="h-10 w-full rounded-xl border border-neutral-200 px-3 font-mono text-sm outline-none focus:border-neutral-500" placeholder="ma-vai-tro" />
+                    <textarea value={newRoleDescRT} onChange={(e) => setNewRoleDescRT(e.target.value)}
+                      className="min-h-14 w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none" placeholder="Mô tả ngắn" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={newRoleBaseRT} onChange={(e) => setNewRoleBaseRT(e.target.value)} className="h-9 rounded-xl border border-neutral-200 px-2 text-xs outline-none">
+                        {getAllRoleTemplates().map((r) => <option key={r.id} value={r.id}>Copy từ {r.name}</option>)}
+                      </select>
+                      <select value={newRoleScopeRT} onChange={(e) => setNewRoleScopeRT(e.target.value as RoleScope)} className="h-9 rounded-xl border border-neutral-200 px-2 text-xs outline-none">
+                        <option value="ONE_BRANCH">Theo chi nhánh</option>
+                        <option value="ALL_BRANCHES">Toàn hệ thống</option>
+                      </select>
+                    </div>
+                    <Button onClick={createCustomRoleInRolesTab} className="w-full">Tạo vai trò mới</Button>
+                  </div>
+                )}
+              </Panel>
+              {getAllRoleTemplates().map((role) => {
+                const count = employees.filter((e) => e.roles.includes(role.id) || e.roleId === role.id).length;
+                const isEditing = editingRoleId === role.id;
+                const isCustom = readCustomRoleTemplates().some((r) => r.id === role.id);
+                return (
+                  <button key={role.id} type="button" onClick={() => startEditRole(role.id)}
+                    className={`w-full rounded-3xl border p-4 text-left transition hover:shadow-md ${isEditing ? "border-neutral-950 bg-neutral-950 text-white shadow-lg" : "border-neutral-200 bg-white"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${isEditing ? "border-white/20 bg-white/10 text-white" : toneClasses[role.tone]}`}>
+                            {role.badge}
+                          </span>
+                          {isCustom && <span className={`text-[10px] font-bold ${isEditing ? "text-white/50" : "text-neutral-400"}`}>Custom</span>}
+                        </div>
+                        <p className="mt-1.5 text-sm font-black">{role.name}</p>
+                        <p className={`text-[11px] ${isEditing ? "text-white/60" : "text-neutral-400"}`}>
+                          {count > 0 ? `${count} nhân viên đang dùng` : "Chưa có nhân viên"}
+                        </p>
+                      </div>
+                      {isEditing && (
+                        <div className="shrink-0 rounded-2xl bg-white/15 px-2 py-1 text-center">
+                          <p className="text-lg font-black">{roleEditorKeys.includes("*") ? "∞" : roleEditorKeys.length}</p>
+                          <p className="text-[9px] text-white/70">quyền</p>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Cột phải — editor */}
+            <div className="space-y-4">
+              {editingRoleId ? (
+                <>
+                  {/* Sticky save bar */}
+                  <div className="sticky top-2 z-10">
+                    <Panel className="flex items-center justify-between gap-4 p-4 shadow-md">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-[0.15em] text-neutral-400">Đang sửa bộ quyền</p>
+                        <p className="mt-0.5 text-lg font-black">{getAllRoleTemplates().find((r) => r.id === editingRoleId)?.name}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="rounded-2xl bg-neutral-100 px-3 py-1.5 text-sm font-bold text-neutral-600">
+                          {roleEditorKeys.includes("*") ? "Toàn quyền" : `${roleEditorKeys.length} quyền bật`}
+                        </span>
+                        <Button onClick={saveRoleTemplate} loading={savingRole}>
+                          💾 Lưu bộ quyền
+                        </Button>
+                      </div>
+                    </Panel>
+                  </div>
+
+                  {/* Module tabs */}
+                  <div className="flex flex-wrap gap-2">
+                    {PERMISSION_MODULES.map((module) => {
+                      const granted = module.actions.filter((a) => permissionGranted(roleEditorKeys, a.key)).length;
+                      const isActive = roleEditorModuleId === module.id;
+                      return (
+                        <button key={module.id} type="button" onClick={() => setRoleEditorModuleId(module.id)}
+                          className={`flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-bold transition ${isActive ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-white hover:bg-neutral-50"}`}>
+                          <span>{module.icon}</span>
+                          <span className="hidden sm:inline">{module.title}</span>
+                          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${isActive ? "bg-white/20 text-white" : granted === module.actions.length ? "bg-emerald-100 text-emerald-700" : "bg-neutral-100 text-neutral-500"}`}>
+                            {granted}/{module.actions.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Permission grid */}
+                  {(() => {
+                    const mod = PERMISSION_MODULES.find((m) => m.id === roleEditorModuleId) || PERMISSION_MODULES[0];
+                    return (
+                      <Panel className="overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-neutral-200 p-4">
+                          <div className="flex items-center gap-3">
+                            <span className="text-xl">{mod.icon}</span>
+                            <div>
+                              <p className="font-black">{mod.title}</p>
+                              <p className="text-xs text-neutral-500">{mod.subtitle}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button variant="secondary" onClick={() => setRoleModuleAll(mod, true)}>Bật tất cả</Button>
+                            <Button variant="secondary" onClick={() => setRoleModuleAll(mod, false)}>Tắt tất cả</Button>
+                          </div>
+                        </div>
+                        <div className="grid gap-3 p-4 md:grid-cols-2">
+                          {mod.actions.map((action) => (
+                            <PermissionCheck key={action.key} action={action}
+                              checked={permissionGranted(roleEditorKeys, action.key)}
+                              onChange={(checked) => toggleRoleKey(action.key, checked)} />
+                          ))}
+                        </div>
+                      </Panel>
+                    );
+                  })()}
+                </>
+              ) : (
+                <Panel className="flex min-h-64 items-center justify-center p-12">
+                  <div className="text-center">
+                    <p className="text-5xl">👈</p>
+                    <p className="mt-4 text-base font-bold text-neutral-700">Chọn vai trò ở cột trái</p>
+                    <p className="mt-1 text-sm text-neutral-400">để xem và chỉnh sửa bộ quyền mặc định</p>
+                  </div>
+                </Panel>
+              )}
+            </div>
+          </div>
+
+          {/* ── Bulk Assign ──────────────────────────────────────────────────── */}
+          <Panel className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Bulk Assign</p>
+                <h3 className="mt-1 text-xl font-black">Gán vai trò hàng loạt</h3>
+                <p className="mt-1 text-sm text-neutral-500">Chọn vai trò + chi nhánh → tick nhân viên → Áp dụng.</p>
+              </div>
+              {/* Replace / Merge toggle */}
+              <div className="flex overflow-hidden rounded-2xl border border-neutral-200">
+                <button type="button" onClick={() => setBulkApplyMode("replace")}
+                  className={`px-4 py-2 text-xs font-bold transition ${bulkApplyMode === "replace" ? "bg-neutral-950 text-white" : "bg-white text-neutral-600 hover:bg-neutral-50"}`}>
+                  Replace
+                </button>
+                <button type="button" onClick={() => setBulkApplyMode("merge")}
+                  className={`px-4 py-2 text-xs font-bold transition border-l border-neutral-200 ${bulkApplyMode === "merge" ? "bg-neutral-950 text-white" : "bg-white text-neutral-600 hover:bg-neutral-50"}`}>
+                  Merge
+                </button>
+              </div>
+            </div>
+            <p className="mt-1 text-xs text-neutral-500">
+              {bulkApplyMode === "replace"
+                ? "⚠ Replace: Xoá toàn bộ override cũ, áp sạch theo role mới. Dùng khi onboard nhân viên mới hoặc reset quyền."
+                : "✓ Merge: Giữ override cũ, chỉ thêm quyền từ role mới. Dùng khi nâng cấp role mà không muốn mất cài đặt riêng."}
+            </p>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <select value={bulkRoleId} onChange={(e) => setBulkRoleId(e.target.value)}
+                className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500">
+                {getAllRoleTemplates().filter((r) => r.scope === "ONE_BRANCH" || r.id === "admin").map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <select value={bulkBranchId} onChange={(e) => setBulkBranchId(e.target.value)}
+                className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500">
+                <option value="">Chọn chi nhánh làm việc</option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+
+            {/* Employee list */}
+            <div className="mt-4 overflow-hidden rounded-2xl border border-neutral-200">
+              <div className="flex items-center justify-between bg-neutral-50 px-4 py-3 border-b border-neutral-200">
+                <p className="text-sm font-black text-neutral-700">
+                  {bulkSelectedIds.size > 0
+                    ? <span className="text-neutral-950">{bulkSelectedIds.size} đã chọn</span>
+                    : "Chưa chọn nhân viên nào"
+                  }
+                  <span className="ml-2 font-normal text-neutral-400">/ {employees.filter((e) => e.status === "ACTIVE").length} nhân viên active</span>
+                </p>
+                <div className="flex gap-3">
+                  <button type="button" className="text-xs font-bold text-blue-600 hover:text-blue-800"
+                    onClick={() => setBulkSelectedIds(new Set(employees.filter((e) => e.status === "ACTIVE").map((e) => e.id)))}>
+                    Chọn tất cả
+                  </button>
+                  <button type="button" className="text-xs font-bold text-neutral-500 hover:text-neutral-800"
+                    onClick={() => setBulkSelectedIds(new Set())}>
+                    Bỏ chọn
+                  </button>
+                </div>
+              </div>
+
+              <div className="max-h-72 divide-y divide-neutral-100 overflow-auto">
+                {employees.filter((e) => e.status === "ACTIVE").map((e) => {
+                  const checked = bulkSelectedIds.has(e.id);
+                  // Vai trò + chi nhánh hiện tại của nhân viên này
+                  const currentRoleBranches = e.branchRoles.map((br) => ({
+                    roleName: getRoleName(br.roleCode),
+                    branchName: getBranchName(branches, br.branchId),
+                    roleId: br.roleCode,
+                  }));
+                  const hasTargetRoleAtBranch = e.branchRoles.some(
+                    (br) => br.roleCode === bulkRoleId && br.branchId === bulkBranchId
+                  );
+                  return (
+                    <label key={e.id}
+                      className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-neutral-50 ${checked ? "bg-blue-50/60" : ""}`}>
+                      <input type="checkbox" checked={checked}
+                        onChange={(ev) => {
+                          const next = new Set(bulkSelectedIds);
+                          if (ev.target.checked) next.add(e.id); else next.delete(e.id);
+                          setBulkSelectedIds(next);
+                        }}
+                        className="h-4 w-4 shrink-0 cursor-pointer accent-neutral-950" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-neutral-900">{e.name}</p>
+                        <p className="font-mono text-[11px] text-neutral-400">{e.code}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        {hasTargetRoleAtBranch ? (
+                          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                            ✓ Đã có vai trò này
+                          </span>
+                        ) : currentRoleBranches.length > 0 ? (
+                          currentRoleBranches.slice(0, 2).map((rb, i) => {
+                            const role = getRoleTemplate(rb.roleId);
+                            return (
+                              <div key={i} className="flex items-center justify-end gap-1.5">
+                                <span className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${role ? toneClasses[role.tone] : "border-neutral-200 bg-neutral-50 text-neutral-500"}`}>
+                                  {rb.roleName}
+                                </span>
+                                <span className="text-[10px] text-neutral-400">{rb.branchName}</span>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <span className="text-[11px] text-neutral-400 italic">Chưa gán vai trò</span>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Apply button */}
+            <div className="mt-4 space-y-2">
+              <Button
+                onClick={() => {
+                  if (bulkSelectedIds.size === 0 || !bulkBranchId) return;
+                  setShowBulkConfirm(true);
+                }}
+                loading={bulkAssigning}
+                disabled={bulkSelectedIds.size === 0 || !bulkBranchId}
+                className="w-full">
+                Xem trước & Áp dụng —
+                <strong className="mx-1">{getRoleName(bulkRoleId)}</strong>
+                <span className="opacity-70">({bulkApplyMode})</span>
+                {bulkSelectedIds.size > 0 && bulkBranchId
+                  ? <> · <strong>{bulkSelectedIds.size}</strong> nhân viên tại {getBranchName(branches, bulkBranchId)}</>
+                  : null}
+              </Button>
+              {(!bulkBranchId || bulkSelectedIds.size === 0) && (
+                <p className="text-center text-xs text-neutral-400">
+                  {!bulkBranchId ? "↑ Chọn chi nhánh trước" : "↑ Tick ít nhất 1 nhân viên"}
+                </p>
+              )}
+            </div>
+          </Panel>
+        </div>
+      )}
+
+      {activeTab === "employees" && (
+        <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+
+          {/* ── Danh sách + filter ────────────────────────────────────────── */}
+          <div className="space-y-4">
+            <Panel className="p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Employee Directory</p>
+                  <h2 className="mt-1 text-2xl font-black">Danh sách nhân viên</h2>
+                </div>
+                <span className="rounded-2xl bg-neutral-100 px-3 py-1.5 text-sm font-bold">
+                  {filteredEmployees.length}/{employees.length} nhân viên
+                </span>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-4">
+                <input value={empTableQuery} onChange={(e) => setEmpTableQuery(e.target.value)} placeholder="Tìm tên, mã, email, SĐT..."
+                  className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" />
+                <select value={empTableRole} onChange={(e) => setEmpTableRole(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none">
+                  <option value="">Tất cả vai trò</option>
+                  {getAllRoleTemplates().map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+                <select value={empTableBranch} onChange={(e) => setEmpTableBranch(e.target.value)} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none">
+                  <option value="">Tất cả chi nhánh</option>
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+                <select value={empTableStatus} onChange={(e) => setEmpTableStatus(e.target.value as "" | "ACTIVE" | "INACTIVE")} className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none">
+                  <option value="">Tất cả trạng thái</option>
+                  <option value="ACTIVE">Đang hoạt động</option>
+                  <option value="INACTIVE">Đã khóa</option>
+                </select>
+              </div>
+            </Panel>
+
+            <Panel className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-neutral-200 bg-neutral-50">
+                    <tr>
+                      {["Nhân viên", "Vai trò / Chi nhánh", "Quyền", "Đăng nhập", "Ngày tạo", "Trạng thái", ""].map((h) => (
+                        <th key={h} className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-neutral-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {filteredEmployees.length === 0 ? (
+                      <tr><td colSpan={7} className="px-5 py-10 text-center text-sm text-neutral-400">{loadingEmployees ? "Đang tải..." : "Không có nhân viên nào."}</td></tr>
+                    ) : filteredEmployees.map((e) => {
+                      const keys = getEmployeeEffectiveKeys(e);
+                      const dangerous = keys.filter((k) => k === "*" || DANGEROUS_KEYS.has(k)).length;
+                      const isSelected = selectedEmpEditId === e.id;
+                      return (
+                        <tr key={e.id} className={`transition hover:bg-neutral-50 ${isSelected ? "bg-blue-50" : ""}`}>
+                          <td className="px-4 py-3">
+                            <p className="font-black text-neutral-900">{e.name}</p>
+                            <p className="font-mono text-[11px] text-neutral-400">{e.code}</p>
+                            {e.phone ? <p className="text-[11px] text-neutral-400">{e.phone}</p> : null}
+                          </td>
+                          <td className="px-4 py-3">
+                            {e.branchRoles.length ? e.branchRoles.slice(0, 2).map((br) => {
+                              const role = getRoleTemplate(br.roleCode);
+                              return (
+                                <div key={br.branchId} className="flex items-center gap-1.5 mb-1">
+                                  <span className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${role ? toneClasses[role.tone] : "border-neutral-200 bg-neutral-50 text-neutral-500"}`}>
+                                    {role?.name || br.roleCode}
+                                  </span>
+                                  <span className="text-[11px] text-neutral-400">{getBranchName(branches, br.branchId)}</span>
+                                </div>
+                              );
+                            }) : <span className="text-xs text-neutral-400 italic">Chưa gán</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-sm font-bold">{keys.includes("*") ? "∞" : keys.length}</span>
+                            {dangerous > 0 ? <span className="ml-1.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{dangerous}⚠</span> : null}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-neutral-500">{formatDateTime(e.lastLoginAt)}</td>
+                          <td className="px-4 py-3 text-xs text-neutral-500">{formatDate(e.createdAt)}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${e.status === "ACTIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+                              {e.status === "ACTIVE" ? "Hoạt động" : "Đã khóa"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <button type="button" onClick={() => openEmpEdit(e)}
+                              className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${isSelected ? "border-blue-500 bg-blue-500 text-white" : "border-neutral-300 hover:bg-neutral-50"}`}>
+                              {isSelected ? "Đang sửa" : "Sửa"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          </div>
+
+          {/* ── Panel sửa/tạo nhân viên ───────────────────────────────────── */}
+          <div className="space-y-4">
+            <Panel className="overflow-hidden">
+              <div className="border-b border-neutral-200 bg-neutral-50 px-5 py-4">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">
+                  {selectedEmpEditId ? "Sửa nhân viên" : "Tạo nhân viên mới"}
+                </p>
+                <h3 className="mt-0.5 text-xl font-black">
+                  {selectedEmpEditId ? employees.find((e) => e.id === selectedEmpEditId)?.name || "..." : "Thêm nhân viên"}
+                </h3>
+              </div>
+
+              <div className="space-y-3 p-5">
+                <div className="grid grid-cols-2 gap-3">
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Họ tên *" />
+                  <input value={editCode} onChange={(e) => setEditCode(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Mã NV *" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <input value={editUsername} onChange={(e) => setEditUsername(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Username (đăng nhập)" />
+                  <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Số điện thoại" />
+                </div>
+                <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Email" />
+                <select value={editMainBranchId} onChange={(e) => setEditMainBranchId(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500">
+                  <option value="">Chi nhánh chính</option>
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+
+                {!selectedEmpEditId && (
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-neutral-500">Mật khẩu ban đầu *</p>
+                    <input type="password" value={newEmpPassword} onChange={(e) => setNewEmpPassword(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Tối thiểu 4 ký tự" />
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  {selectedEmpEditId ? (
+                    <>
+                      <Button onClick={saveEmployeeProfile} loading={savingEmployeeId === selectedEmpEditId} className="flex-1">
+                        Lưu hồ sơ
+                      </Button>
+                      <button type="button" onClick={() => { setSelectedEmpEditId(null); }}
+                        className="rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50 transition">
+                        Huỷ
+                      </button>
+                    </>
+                  ) : (
+                    <Button onClick={createNewEmployee} loading={creatingEmployee} className="w-full">
+                      ＋ Tạo nhân viên mới
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            {/* Mật khẩu & PIN — chỉ hiện khi đang sửa */}
+            {selectedEmpEditId && (
+              <Panel className="p-5">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Bảo mật</p>
+                <h3 className="mt-1 text-lg font-black">Mật khẩu & PIN</h3>
+                <div className="mt-4 space-y-3">
+                  {resetPasswordForId === selectedEmpEditId ? (
+                    <div className="space-y-2">
+                      <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Mật khẩu mới (tối thiểu 4 ký tự)"
+                        className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none" />
+                      <div className="flex gap-2">
+                        <Button onClick={changePassword} loading={securitySavingForId === selectedEmpEditId} className="flex-1">Lưu mật khẩu</Button>
+                        <button type="button" onClick={() => { setResetPasswordForId(null); setNewPassword(""); }}
+                          className="rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50">Huỷ</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button variant="secondary" className="w-full"
+                      onClick={() => setResetPasswordForId(selectedEmpEditId)}>
+                      🔑 Đổi mật khẩu
+                    </Button>
+                  )}
+                  {secondPasswordForId === selectedEmpEditId ? (
+                    <div className="space-y-2">
+                      <input type="text" inputMode="numeric" value={secondPassword}
+                        onChange={(e) => setSecondPassword(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="PIN 6 số (không dùng 000000, 123456...)"
+                        className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none" />
+                      <div className="flex gap-2">
+                        <Button onClick={changeSecondPassword} loading={securitySavingForId === selectedEmpEditId} className="flex-1">Lưu PIN</Button>
+                        <button type="button" onClick={() => { setSecondPasswordForId(null); setSecondPassword(""); }}
+                          className="rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50">Huỷ</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button variant="secondary" className="w-full"
+                      onClick={() => setSecondPasswordForId(selectedEmpEditId)}>
+                      🔐 Đặt PIN bảo mật
+                    </Button>
+                  )}
+                </div>
+              </Panel>
+            )}
+
+            {/* Khoá / Xoá — chỉ hiện khi đang sửa */}
+            {selectedEmpEditId && (() => {
+              const emp = employees.find((e) => e.id === selectedEmpEditId);
+              return (
+                <Panel className="border-red-200 bg-red-50 p-5">
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-red-500">Danger Zone</p>
+                  <h3 className="mt-1 text-lg font-black text-red-950">Khoá / xoá tài khoản</h3>
+                  <p className="mt-1 text-xs text-red-700">Khoá an toàn hơn xoá. Chỉ xoá khi tạo nhầm và chưa có dữ liệu vận hành.</p>
+                  <div className="mt-4 grid gap-2">
+                    <Button variant="danger" onClick={toggleEmployeeStatus} loading={savingEmployeeId === selectedEmpEditId}>
+                      {emp?.status === "ACTIVE" ? "🔒 Khoá tài khoản" : "🔓 Mở khoá tài khoản"}
+                    </Button>
+                    <Button variant="danger" onClick={deleteEmployee} loading={deletingEmployeeId === selectedEmpEditId}>
+                      🗑 Xoá nhân viên
+                    </Button>
+                  </div>
+                </Panel>
+              );
+            })()}
+
+            {/* Link sang phân quyền */}
+            {selectedEmpEditId && (
+              <button type="button"
+                onClick={() => {
+                  setSelectedEmployeeId(selectedEmpEditId);
+                  setActiveTab("permissions");
+                  setMessage("");
+                }}
+                className="w-full rounded-3xl border border-neutral-200 bg-white p-4 text-sm font-bold text-neutral-700 hover:bg-neutral-50 transition shadow-sm">
+                🔐 Vào tab Phân quyền để chỉnh quyền cho nhân viên này →
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+            {/* ── Tab: Phòng ban ─────────────────────────────────────────────────── */}
+      {activeTab === "departments" && (
+        <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+          <Panel className="p-5">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Department Studio</p>
+            <h2 className="mt-1 text-xl font-black">Tạo phòng ban mới</h2>
+            <div className="mt-4 space-y-3">
+              <input value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)}
+                className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none" placeholder="Tên phòng ban, vd: Kho Quốc Oai" />
+              <textarea value={newDeptDescription} onChange={(e) => setNewDeptDescription(e.target.value)}
+                className="min-h-16 w-full rounded-2xl border border-neutral-200 px-3 py-3 text-sm outline-none" placeholder="Mô tả phòng ban" />
+              <div>
+                <p className="mb-2 text-xs font-bold text-neutral-500">Màu nhận diện</p>
+                <div className="flex flex-wrap gap-2">
+                  {["#6366f1","#0ea5e9","#10b981","#f59e0b","#ef4444","#ec4899","#8b5cf6","#14b8a6"].map((c) => (
+                    <button key={c} type="button" onClick={() => setNewDeptColor(c)}
+                      className={`h-8 w-8 rounded-full border-2 transition ${newDeptColor === c ? "border-neutral-950 scale-110" : "border-transparent"}`}
+                      style={{ backgroundColor: c }} />
+                  ))}
+                </div>
+              </div>
+              <Button onClick={createDepartment} loading={savingDept} className="w-full">Tạo phòng ban</Button>
+            </div>
+            {departments.length ? (
+              <div className="mt-6 space-y-2">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-neutral-400">Phòng ban hiện tại</p>
+                {departments.map((dept) => (
+                  <div key={dept.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="h-4 w-4 rounded-full" style={{ backgroundColor: dept.color }} />
+                        <div>
+                          <p className="text-sm font-black">{dept.name}</p>
+                          <p className="text-[11px] text-neutral-400">{dept.members.length} thành viên</p>
+                        </div>
+                      </div>
+                      <Button variant="danger" onClick={() => deleteDepartment(dept.id)}>Xoá</Button>
+                    </div>
+                    {dept.description ? <p className="mt-2 text-xs text-neutral-500">{dept.description}</p> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </Panel>
+          <div className="space-y-5">
+            <Panel className="p-5">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Staff Assignment</p>
+              <h2 className="mt-1 text-xl font-black">Gán nhân viên vào phòng ban</h2>
+              <p className="mt-1 text-sm text-neutral-500">Tick phòng ban cho từng nhân viên rồi bấm Lưu.</p>
+            </Panel>
+            {departments.length === 0 ? (
+              <Panel className="p-8 text-center">
+                <p className="text-neutral-400">Chưa có phòng ban nào. Tạo phòng ban ở cột trái trước.</p>
+              </Panel>
+            ) : (
+              <Panel className="overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b border-neutral-200 bg-neutral-50">
+                      <tr>
+                        <th className="px-5 py-3.5 text-left text-xs font-black uppercase tracking-wider text-neutral-500">Nhân viên</th>
+                        {departments.map((dept) => (
+                          <th key={dept.id} className="px-4 py-3.5 text-center text-xs font-black uppercase tracking-wider text-neutral-500">
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: dept.color }} />
+                              <span>{dept.name}</span>
+                            </div>
+                          </th>
+                        ))}
+                        <th className="px-4 py-3.5 text-center text-xs font-black uppercase tracking-wider text-neutral-500">Lưu</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {employees.filter((e) => e.status === "ACTIVE").map((e) => {
+                        const currentDepts = employeeDeptMap[e.id] || e.departments?.map((d) => d.staffId) || [];
+                        return (
+                          <tr key={e.id} className="hover:bg-neutral-50">
+                            <td className="px-5 py-3">
+                              <p className="font-bold">{e.name}</p>
+                              <p className="font-mono text-[11px] text-neutral-400">{e.code}</p>
+                            </td>
+                            {departments.map((dept) => (
+                              <td key={dept.id} className="px-4 py-3 text-center">
+                                <input type="checkbox" checked={currentDepts.includes(dept.id)}
+                                  onChange={(ev) => toggleEmployeeDept(e.id, dept.id, ev.target.checked)}
+                                  className="h-4 w-4 cursor-pointer accent-neutral-950" />
+                              </td>
+                            ))}
+                            <td className="px-4 py-3 text-center">
+                              <Button variant="secondary" loading={savingDeptAssign === e.id} onClick={() => saveEmployeeDepartments(e.id)}>
+                                Lưu
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

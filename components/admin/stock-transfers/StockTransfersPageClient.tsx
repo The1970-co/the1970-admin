@@ -21,6 +21,16 @@ import {
   type OutboundSuggestion,
   type StockTransfer,
 } from "@/lib/stock-transfers-api";
+import {
+  findPrintTemplate,
+  loadPrintTemplates,
+  type PrintPaperSize,
+  type PrintTemplateConfig,
+} from "@/lib/print-template-config";
+import {
+  openPrintDocument,
+  renderOrderTemplateHtml,
+} from "@/lib/print-template-engine";
 
 
 function Panel({
@@ -217,10 +227,33 @@ export default function StockTransfersPageClient() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [searchVariant, setSearchVariant] = useState("");
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [fromBranchFilter, setFromBranchFilter] = useState("ALL");
+  const [toBranchFilter, setToBranchFilter] = useState("ALL");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState("ALL");
+  const [dateFromFilter, setDateFromFilter] = useState("");
+  const [dateToFilter, setDateToFilter] = useState("");
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedTransfer, setSelectedTransfer] = useState<StockTransfer | null>(null);
+
+  const [transferPrintOpen, setTransferPrintOpen] = useState(false);
+  const [transferPrintLoading, setTransferPrintLoading] = useState(false);
+  const [transferPrintTransfer, setTransferPrintTransfer] = useState<StockTransfer | null>(null);
+  const [transferPrintPaperSize, setTransferPrintPaperSize] = useState<PrintPaperSize>("80mm");
+  const [transferPrintTemplateId, setTransferPrintTemplateId] = useState("");
+  const [transferPrintShowOrderCode, setTransferPrintShowOrderCode] = useState(true);
+  const [transferPrintShowCreatedAt, setTransferPrintShowCreatedAt] = useState(true);
+  const [transferPrintShowCustomerName, setTransferPrintShowCustomerName] = useState(true);
+  const [transferPrintShowCustomerPhone, setTransferPrintShowCustomerPhone] = useState(false);
+  const [transferPrintShowShippingAddress, setTransferPrintShowShippingAddress] = useState(false);
+  const [transferPrintShowItems, setTransferPrintShowItems] = useState(true);
+  const [transferPrintShowItemQty, setTransferPrintShowItemQty] = useState(true);
+  const [transferPrintShowBarcode, setTransferPrintShowBarcode] = useState(true);
+  const [transferPrintShowQr, setTransferPrintShowQr] = useState(true);
+  const [transferPrintShowNote, setTransferPrintShowNote] = useState(true);
+  const [transferPrintShowFooter, setTransferPrintShowFooter] = useState(false);
 
 
   const [suggestionOpen, setSuggestionOpen] = useState(false);
@@ -261,76 +294,76 @@ export default function StockTransfersPageClient() {
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+const [currentUser, setCurrentUser] = useState<any>(null);
 
-  const userBranchId =
-    currentUser?.branchId ||
-    currentUser?.branch?.id ||
-    currentUser?.branches?.[0]?.id ||
-    currentUser?.assignedBranches?.[0]?.id;
+const userBranchId =
+  currentUser?.branchId ||
+  currentUser?.branch?.id ||
+  currentUser?.branches?.[0]?.id ||
+  currentUser?.assignedBranches?.[0]?.id;
 
-  const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
+const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
 
-  const canManageAutoTransfer =
-    userRoleText.includes("owner") || userRoleText.includes("admin");
+const canManageAutoTransfer =
+  userRoleText.includes("owner") || userRoleText.includes("admin");
 
-  const isQOWarehouseUser = userBranchId === "QO";
-  const currentBranchId = userBranchId || "";
+const isQOWarehouseUser = userBranchId === "QO";
+const currentBranchId = userBranchId || "";
 
-  const lockedSourceBranchId = useMemo(() => {
-    if (canManageAutoTransfer) {
-      return branches.find((branch) => branch.id === "QO")?.id || "QO";
-    }
-
-    return currentBranchId || branches[0]?.id || "QO";
-  }, [branches, canManageAutoTransfer, currentBranchId]);
-
-  const lockedSourceBranchName = useMemo(() => {
-    const branch = branches.find((item) => item.id === lockedSourceBranchId);
-    return branch?.name || lockedSourceBranchId || "—";
-  }, [branches, lockedSourceBranchId]);
-
-  function collectPermissionKeys(user: any) {
-    const keys = new Set<string>();
-
-    if (Array.isArray(user?.permissions)) {
-      user.permissions.forEach((key: any) => {
-        if (key) keys.add(String(key));
-      });
-    }
-
-    if (Array.isArray(user?.permissionKeys)) {
-      user.permissionKeys.forEach((key: any) => {
-        if (key) keys.add(String(key));
-      });
-    }
-
-    if (Array.isArray(user?.branchPermissions)) {
-      user.branchPermissions.forEach((row: any) => {
-        if (Array.isArray(row?.permissionKeys)) {
-          row.permissionKeys.forEach((key: any) => {
-            if (key) keys.add(String(key));
-          });
-        }
-      });
-    }
-
-    return keys;
+const lockedSourceBranchId = useMemo(() => {
+  if (canManageAutoTransfer) {
+    return branches.find((branch) => branch.id === "QO")?.id || "QO";
   }
 
-  function hasStockTransferPermission(permission: string) {
-    if (canManageAutoTransfer) return true;
-    const keys = collectPermissionKeys(currentUser);
-    return keys.has("*") || keys.has(permission);
+  return currentBranchId || branches[0]?.id || "QO";
+}, [branches, canManageAutoTransfer, currentBranchId]);
+
+const lockedSourceBranchName = useMemo(() => {
+  const branch = branches.find((item) => item.id === lockedSourceBranchId);
+  return branch?.name || lockedSourceBranchId || "—";
+}, [branches, lockedSourceBranchId]);
+
+function collectPermissionKeys(user: any) {
+  const keys = new Set<string>();
+
+  if (Array.isArray(user?.permissions)) {
+    user.permissions.forEach((key: any) => {
+      if (key) keys.add(String(key));
+    });
   }
 
-  const canCreateStockTransfer = hasStockTransferPermission("stock_transfer.create");
-  const canEditStockTransfer = hasStockTransferPermission("stock_transfer.edit");
-  const canConfirmStockTransfer = hasStockTransferPermission("stock_transfer.confirm");
-  const canReceiveStockTransfer = hasStockTransferPermission("stock_transfer.receive");
-  const canCancelStockTransfer = hasStockTransferPermission("stock_transfer.cancel");
-  const canDeleteStockTransfer = canManageAutoTransfer;
-  const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransfer;
+  if (Array.isArray(user?.permissionKeys)) {
+    user.permissionKeys.forEach((key: any) => {
+      if (key) keys.add(String(key));
+    });
+  }
+
+  if (Array.isArray(user?.branchPermissions)) {
+    user.branchPermissions.forEach((row: any) => {
+      if (Array.isArray(row?.permissionKeys)) {
+        row.permissionKeys.forEach((key: any) => {
+          if (key) keys.add(String(key));
+        });
+      }
+    });
+  }
+
+  return keys;
+}
+
+function hasStockTransferPermission(permission: string) {
+  if (canManageAutoTransfer) return true;
+  const keys = collectPermissionKeys(currentUser);
+  return keys.has("*") || keys.has(permission);
+}
+
+const canCreateStockTransfer = hasStockTransferPermission("stock_transfer.create");
+const canEditStockTransfer = hasStockTransferPermission("stock_transfer.edit");
+const canConfirmStockTransfer = hasStockTransferPermission("stock_transfer.confirm");
+const canReceiveStockTransfer = hasStockTransferPermission("stock_transfer.receive");
+const canCancelStockTransfer = hasStockTransferPermission("stock_transfer.cancel");
+const canDeleteStockTransfer = canManageAutoTransfer;
+const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransfer;
 
 
   const allVariants = useMemo(() => {
@@ -474,21 +507,210 @@ export default function StockTransfersPageClient() {
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const fromDate = dateFromFilter ? new Date(`${dateFromFilter}T00:00:00`).getTime() : 0;
+    const toDate = dateToFilter ? new Date(`${dateToFilter}T23:59:59`).getTime() : 0;
 
     return visibleRows.filter((item) => {
-      if (!q) return true;
-
-      return (
+      const searchable =
         item.transferCode.toLowerCase().includes(q) ||
-        String(item.fromBranch?.name || item.fromBranchName || "").toLowerCase().includes(q) ||
-        String(item.toBranch?.name || item.toBranchName || "").toLowerCase().includes(q) ||
+        String(item.fromBranch?.name || item.fromBranchName || item.fromBranchId || "").toLowerCase().includes(q) ||
+        String(item.toBranch?.name || item.toBranchName || item.toBranchId || "").toLowerCase().includes(q) ||
         ((item.items || []).some((line) => {
           const label = `${line.productName || ""} ${line.sku || ""} ${line.color || ""} ${line.size || ""}`.toLowerCase();
           return label.includes(q);
-        }) ?? false)
-      );
+        }) ?? false);
+
+      if (q && !searchable) return false;
+      if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+      if (fromBranchFilter !== "ALL" && item.fromBranchId !== fromBranchFilter) return false;
+      if (toBranchFilter !== "ALL" && item.toBranchId !== toBranchFilter) return false;
+      if (sourceTypeFilter !== "ALL" && String(item.sourceType || "MANUAL") !== sourceTypeFilter) return false;
+
+      const rawDate = (item as any).createdAt || (item as any).createdAtText || (item as any).updatedAt || "";
+      const createdTime = rawDate ? new Date(rawDate).getTime() : 0;
+      if (fromDate && createdTime && createdTime < fromDate) return false;
+      if (toDate && createdTime && createdTime > toDate) return false;
+
+      return true;
     });
-  }, [visibleRows, query]);
+  }, [visibleRows, query, statusFilter, fromBranchFilter, toBranchFilter, sourceTypeFilter, dateFromFilter, dateToFilter]);
+
+  function resetTransferFilters() {
+    setQuery("");
+    setStatusFilter("ALL");
+    setFromBranchFilter("ALL");
+    setToBranchFilter("ALL");
+    setSourceTypeFilter("ALL");
+    setDateFromFilter("");
+    setDateToFilter("");
+  }
+
+  function formatTransferPrintDate(value: any) {
+    if (!value) return new Date().toLocaleString("vi-VN");
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("vi-VN");
+  }
+
+  function buildTransferPrintOrder(transfer: StockTransfer) {
+    const fromName =
+      transfer.fromBranch?.name ||
+      transfer.fromBranchName ||
+      transfer.fromBranchId ||
+      "—";
+
+    const toName =
+      transfer.toBranch?.name ||
+      transfer.toBranchName ||
+      transfer.toBranchId ||
+      "—";
+
+    return {
+      ...transfer,
+      referenceCode: transfer.transferCode || transfer.id,
+      orderCode: transfer.transferCode || transfer.id,
+      createdAt: formatTransferPrintDate((transfer as any).createdAt || (transfer as any).updatedAt),
+      branchName: `${fromName} → ${toName}`,
+      warehouseName: "THE 1970",
+      warehousePhone: "",
+      warehouseAddress: "",
+      customerName: toName,
+      shippingRecipientName: toName,
+      customerPhone: "",
+      shippingPhone: "",
+      note: transfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
+      items: (transfer.items || []).map((item: any) => ({
+        productName: item.productName || item.name || "Sản phẩm",
+        sku: item.sku || item.variant?.sku || "",
+        color: item.color || item.variant?.color || "",
+        size: item.size || item.variant?.size || "",
+        qty: Number(item.qty ?? item.quantity ?? 0),
+      })),
+    };
+  }
+
+  function getTransferPrintTemplates(paperSize: PrintPaperSize = transferPrintPaperSize) {
+    return loadPrintTemplates().filter(
+      (template) =>
+        template.templateType === "transfer" && template.paperSize === paperSize,
+    );
+  }
+
+  function applyTemplateToggleDefaults(template?: PrintTemplateConfig | null) {
+    const t = template as any;
+    setTransferPrintShowOrderCode(t?.showOrderCode !== false);
+    setTransferPrintShowCreatedAt(t?.showCreatedAt !== false);
+    setTransferPrintShowCustomerName(t?.showCustomerName !== false);
+    setTransferPrintShowCustomerPhone(t?.showCustomerPhone === true);
+    setTransferPrintShowShippingAddress(t?.showShippingAddress === true);
+    setTransferPrintShowItems(t?.showItems !== false);
+    setTransferPrintShowItemQty(t?.showItemQty !== false);
+    setTransferPrintShowBarcode(template?.showBarcode !== false);
+    setTransferPrintShowQr(template?.showQr !== false);
+    setTransferPrintShowNote(template?.showNote !== false);
+    setTransferPrintShowFooter(t?.showFooter === true);
+  }
+
+  function buildTransferPrintTemplate() {
+    const templates = getTransferPrintTemplates(transferPrintPaperSize);
+    const selected =
+      templates.find((template) => template.id === transferPrintTemplateId) ||
+      findPrintTemplate({
+        templates: loadPrintTemplates(),
+        branchId: "__default__",
+        templateType: "transfer",
+        paperSize: transferPrintPaperSize,
+      });
+
+    if (!selected) return null;
+
+    return {
+      ...selected,
+      showBarcode: transferPrintShowBarcode,
+      showQr: transferPrintShowQr,
+      showNote: transferPrintShowNote,
+      showOrderCode: transferPrintShowOrderCode,
+      showCreatedAt: transferPrintShowCreatedAt,
+      showCustomerName: transferPrintShowCustomerName,
+      showCustomerPhone: transferPrintShowCustomerPhone,
+      showShippingAddress: transferPrintShowShippingAddress,
+      showItems: transferPrintShowItems,
+      showItemQty: transferPrintShowItemQty,
+      showFooter: transferPrintShowFooter,
+      footerNote: transferPrintShowFooter ? selected.footerNote : "",
+    } as PrintTemplateConfig;
+  }
+
+  function buildTransferPrintBodyHtml() {
+    const template = buildTransferPrintTemplate();
+    if (!transferPrintTransfer || !template) return "";
+
+    return `<div class="print-page"><div class="print-page-inner">${renderOrderTemplateHtml({
+      order: buildTransferPrintOrder(transferPrintTransfer),
+      template,
+    })}</div></div>`;
+  }
+
+  async function openTransferPrintSetup(transfer: StockTransfer, paperSize: PrintPaperSize = "80mm") {
+    try {
+      setTransferPrintLoading(true);
+      setTransferPrintOpen(true);
+      setTransferPrintPaperSize(paperSize);
+      setError(null);
+
+      const detail = await getStockTransferDetail(transfer.id);
+      const templates = loadPrintTemplates();
+      const template = findPrintTemplate({
+        templates,
+        branchId: "__default__",
+        templateType: "transfer",
+        paperSize,
+      });
+
+      setTransferPrintTransfer(detail || transfer);
+      setTransferPrintTemplateId(template?.id || "");
+      applyTemplateToggleDefaults(template);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không mở được cấu hình in phiếu kho.");
+      setTransferPrintOpen(false);
+    } finally {
+      setTransferPrintLoading(false);
+    }
+  }
+
+  function handleTransferPrintPaperSizeChange(nextPaperSize: PrintPaperSize) {
+    setTransferPrintPaperSize(nextPaperSize);
+    const templates = getTransferPrintTemplates(nextPaperSize);
+    const nextTemplate =
+      templates.find((template) => template.isDefault) || templates[0] || null;
+    setTransferPrintTemplateId(nextTemplate?.id || "");
+    applyTemplateToggleDefaults(nextTemplate);
+  }
+
+  function handleTransferPrintTemplateChange(templateId: string) {
+    setTransferPrintTemplateId(templateId);
+    const template = loadPrintTemplates().find((item) => item.id === templateId) || null;
+    applyTemplateToggleDefaults(template);
+  }
+
+  function handleConfirmTransferPrint() {
+    if (!transferPrintTransfer) {
+      setError("Chưa có phiếu chuyển kho để in.");
+      return;
+    }
+
+    const bodyHtml = buildTransferPrintBodyHtml();
+    if (!bodyHtml) {
+      setError("Chưa có mẫu in phiếu chuyển kho cho khổ này.");
+      return;
+    }
+
+    openPrintDocument({
+      title: `In phiếu kho ${transferPrintTransfer.transferCode || transferPrintTransfer.id}`,
+      paperSize: transferPrintPaperSize,
+      bodyHtml,
+    });
+  }
 
   function renderTransferStatusBadge(transfer: StockTransfer) {
     const fromName =
@@ -533,19 +755,19 @@ export default function StockTransfersPageClient() {
     return statusBadge(transfer.status);
   }
 
-  function loadCurrentUser() {
-    if (typeof window === "undefined") return;
+function loadCurrentUser() {
+  if (typeof window === "undefined") return;
 
-    try {
-      const raw =
-        localStorage.getItem("the1970_current_user") ||
-        localStorage.getItem("currentUser");
-      const parsed = raw ? JSON.parse(raw) : null;
-      setCurrentUser(parsed?.user || parsed || null);
-    } catch {
-      setCurrentUser(null);
-    }
+  try {
+    const raw =
+      localStorage.getItem("the1970_current_user") ||
+      localStorage.getItem("currentUser");
+    const parsed = raw ? JSON.parse(raw) : null;
+    setCurrentUser(parsed?.user || parsed || null);
+  } catch {
+    setCurrentUser(null);
   }
+}
 
   async function loadAll() {
     try {
@@ -601,33 +823,33 @@ export default function StockTransfersPageClient() {
       if (data.branchMinTargets) {
         setBranchTargets(data.branchMinTargets);
       }
-    } catch { }
+    } catch {}
   }
 
 
-  useEffect(() => {
-    loadCurrentUser();
-    void loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+useEffect(() => {
+  loadCurrentUser();
+  void loadAll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
-  useEffect(() => {
-    if (canManageAutoTransfer) {
-      void loadAutoConfig();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canManageAutoTransfer]);
+useEffect(() => {
+  if (canManageAutoTransfer) {
+    void loadAutoConfig();
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [canManageAutoTransfer]);
 
 
-  useEffect(() => {
-    if (!lockedSourceBranchId) return;
+useEffect(() => {
+  if (!lockedSourceBranchId) return;
 
-    setFromBranchId(lockedSourceBranchId);
-    setToBranchId((prev) => {
-      if (prev && prev !== lockedSourceBranchId) return prev;
-      return branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || "";
-    });
-  }, [branches, lockedSourceBranchId]);
+  setFromBranchId(lockedSourceBranchId);
+  setToBranchId((prev) => {
+    if (prev && prev !== lockedSourceBranchId) return prev;
+    return branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || "";
+  });
+}, [branches, lockedSourceBranchId]);
 
   function resetForm() {
     const sourceId = lockedSourceBranchId || "QO";
@@ -1103,12 +1325,91 @@ export default function StockTransfersPageClient() {
       </div>
 
       <Panel className="p-3">
-        <input
-          className="w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-          placeholder="Tìm theo mã phiếu, chi nhánh, SKU..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <div className="grid gap-3 md:grid-cols-6">
+          <input
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none md:col-span-2"
+            placeholder="Tìm theo mã phiếu, chi nhánh, SKU..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả trạng thái</option>
+            <option value="DRAFT">Nháp</option>
+            <option value="PENDING">Chờ xác nhận</option>
+            <option value="CONFIRMED">Chờ nhận hàng</option>
+            <option value="IN_TRANSIT">Đang chuyển</option>
+            <option value="COMPLETED">Hoàn tất</option>
+            <option value="CANCELLED">Đã hủy</option>
+          </select>
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={sourceTypeFilter}
+            onChange={(e) => setSourceTypeFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả nguồn</option>
+            <option value="MANUAL">Thủ công</option>
+            <option value="AUTO">Tự động</option>
+            <option value="REQUEST">Yêu cầu</option>
+          </select>
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={fromBranchFilter}
+            onChange={(e) => setFromBranchFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả kho xuất</option>
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>{branch.name}</option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={toBranchFilter}
+            onChange={(e) => setToBranchFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả kho nhận</option>
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>{branch.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+          <label className="text-xs font-medium text-neutral-500">
+            Từ ngày
+            <input
+              type="date"
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={dateFromFilter}
+              onChange={(e) => setDateFromFilter(e.target.value)}
+            />
+          </label>
+
+          <label className="text-xs font-medium text-neutral-500">
+            Đến ngày
+            <input
+              type="date"
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={dateToFilter}
+              onChange={(e) => setDateToFilter(e.target.value)}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={resetTransferFilters}
+            className="self-end rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            Xóa lọc
+          </button>
+        </div>
       </Panel>
 
       {canDeleteStockTransfer ? (
@@ -1216,10 +1517,11 @@ export default function StockTransfersPageClient() {
                             : [...prev, branch.id]
                         )
                       }
-                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${checked
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                        checked
                           ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
                           : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
-                        }`}
+                      }`}
                     >
                       {branch.name}
                     </button>
@@ -1421,34 +1723,35 @@ export default function StockTransfersPageClient() {
                                 return a.localeCompare(b);
                               })
                               .map((name) => {
-                                const checked = groupSelected.includes(name);
+                              const checked = groupSelected.includes(name);
 
-                                return (
-                                  <label
-                                    key={`${group.key}-${name}`}
-                                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${checked
-                                        ? "border-blue-300 bg-blue-50 text-blue-700"
-                                        : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
-                                      }`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      disabled={!groupEnabled}
-                                      onChange={() =>
-                                        setGroupCategories(
-                                          group.key,
-                                          checked
-                                            ? groupSelected.filter((x) => x !== name)
-                                            : [...groupSelected, name]
-                                        )
-                                      }
-                                      className="h-3.5 w-3.5 accent-blue-600"
-                                    />
-                                    <span className="truncate">{name}</span>
-                                  </label>
-                                );
-                              })}
+                              return (
+                                <label
+                                  key={`${group.key}-${name}`}
+                                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                                    checked
+                                      ? "border-blue-300 bg-blue-50 text-blue-700"
+                                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={!groupEnabled}
+                                    onChange={() =>
+                                      setGroupCategories(
+                                        group.key,
+                                        checked
+                                          ? groupSelected.filter((x) => x !== name)
+                                          : [...groupSelected, name]
+                                      )
+                                    }
+                                    className="h-3.5 w-3.5 accent-blue-600"
+                                  />
+                                  <span className="truncate">{name}</span>
+                                </label>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>
@@ -1597,18 +1900,23 @@ export default function StockTransfersPageClient() {
                     >
                       Xem phiếu
                     </button>
+
                     <button
                       type="button"
-                      onClick={() => {
-                        window.open(
-                          `/print-center?type=transfer&id=${transfer.id}&paperSize=80mm`,
-                          "_blank"
-                        );
-                      }}
+                      onClick={() => void openTransferPrintSetup(transfer, "80mm")}
                       className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
                     >
-                      In phiếu
+                      In phiếu kho
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void openTransferPrintSetup(transfer, "A4")}
+                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                    >
+                      In A4
+                    </button>
+
                     {canDeleteStockTransfer ? (
                       <button
                         onClick={() => void handleDeleteTransfer(transfer.id, transfer.transferCode)}
@@ -1716,10 +2024,11 @@ export default function StockTransfersPageClient() {
               <button
                 onClick={() => void handleCreateAutoTransfers()}
                 disabled={suggestionCreating || selectedSuggestionIds.length === 0 || !canCreateStockTransfer}
-                className={`rounded-xl px-4 py-2 text-sm font-medium text-white ${suggestionCreating || selectedSuggestionIds.length === 0
+                className={`rounded-xl px-4 py-2 text-sm font-medium text-white ${
+                  suggestionCreating || selectedSuggestionIds.length === 0
                     ? "bg-neutral-400"
                     : "bg-neutral-900 hover:bg-neutral-800"
-                  }`}
+                }`}
               >
                 {suggestionCreating ? "Đang tạo phiếu..." : "Tạo phiếu tự động"}
               </button>
@@ -1787,12 +2096,13 @@ export default function StockTransfersPageClient() {
                           <td className="px-3 py-2.5">{item.qoAvailableQty ?? "—"}</td>
                           <td className="px-3 py-2.5">
                             <span
-                              className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${Number((item as any).aiScore || 0) >= 80
+                              className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${
+                                Number((item as any).aiScore || 0) >= 80
                                   ? "bg-red-50 text-red-700 ring-1 ring-red-200"
                                   : Number((item as any).aiScore || 0) >= 60
                                     ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
                                     : "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
-                                }`}
+                              }`}
                             >
                               {(item as any).aiScore ?? "—"}
                             </span>
@@ -1854,6 +2164,30 @@ export default function StockTransfersPageClient() {
               </Panel>
             </div>
 
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void openTransferPrintSetup(selectedTransfer, "80mm")}
+                className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                In phiếu kho 80mm
+              </button>
+              <button
+                type="button"
+                onClick={() => void openTransferPrintSetup(selectedTransfer, "A4")}
+                className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                In A4
+              </button>
+              <button
+                type="button"
+                onClick={() => void openTransferPrintSetup(selectedTransfer, "A5")}
+                className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                In A5
+              </button>
+            </div>
+
             {selectedTransfer.status === "CONFIRMED" ? (
               <Panel className="flex flex-wrap items-center justify-between gap-3 border-blue-200 bg-blue-50 p-3">
                 <div>
@@ -1898,6 +2232,129 @@ export default function StockTransfersPageClient() {
                   ))}
                 </tbody>
               </table>
+            </Panel>
+          </div>
+        )}
+      </Modal>
+
+
+      <Modal open={transferPrintOpen} onClose={() => setTransferPrintOpen(false)} title="Cấu hình in phiếu chuyển kho">
+        {transferPrintLoading || !transferPrintTransfer ? (
+          <div className="p-4 text-sm text-neutral-500">Đang tải phiếu in...</div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
+            <div className="space-y-4">
+              <Panel className="p-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="text-sm font-medium text-neutral-700">
+                    Mẫu phiếu
+                    <select
+                      value={transferPrintTemplateId}
+                      onChange={(event) => handleTransferPrintTemplateChange(event.target.value)}
+                      className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none"
+                    >
+                      {getTransferPrintTemplates(transferPrintPaperSize).map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-sm font-medium text-neutral-700">
+                    Khổ giấy / khổ cuộn
+                    <select
+                      value={transferPrintPaperSize}
+                      onChange={(event) =>
+                        handleTransferPrintPaperSizeChange(event.target.value as PrintPaperSize)
+                      }
+                      className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none"
+                    >
+                      <option value="80mm">Phiếu cuộn 80mm</option>
+                      <option value="A5">Phiếu A5</option>
+                      <option value="A4">Phiếu A4</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">
+                  Khi hộp thoại máy in hiện lên, chọn đúng khổ giấy trong driver: 80mm/cuộn hoặc A5/A4. Trình duyệt không ép được máy in nếu driver đang để sai khổ.
+                </div>
+              </Panel>
+
+              <Panel className="p-4">
+                <p className="mb-3 text-sm font-semibold text-neutral-900">Thông tin hiển thị trên phiếu</p>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {[
+                    [transferPrintShowOrderCode, setTransferPrintShowOrderCode, "Mã phiếu"],
+                    [transferPrintShowCreatedAt, setTransferPrintShowCreatedAt, "Ngày tạo"],
+                    [transferPrintShowCustomerName, setTransferPrintShowCustomerName, "Chi nhánh nhận"],
+                    [transferPrintShowCustomerPhone, setTransferPrintShowCustomerPhone, "SĐT"],
+                    [transferPrintShowShippingAddress, setTransferPrintShowShippingAddress, "Địa chỉ"],
+                    [transferPrintShowItems, setTransferPrintShowItems, "Danh sách sản phẩm"],
+                    [transferPrintShowItemQty, setTransferPrintShowItemQty, "Số lượng"],
+                    [transferPrintShowBarcode, setTransferPrintShowBarcode, "Mã vạch"],
+                    [transferPrintShowQr, setTransferPrintShowQr, "QR"],
+                    [transferPrintShowNote, setTransferPrintShowNote, "Ghi chú"],
+                    [transferPrintShowFooter, setTransferPrintShowFooter, "Footer cuối phiếu"],
+                  ].map(([checked, setter, label]) => (
+                    <label
+                      key={String(label)}
+                      className="flex items-center gap-2 rounded-xl border border-neutral-200 px-3 py-2 text-sm text-neutral-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(checked)}
+                        onChange={(event) => (setter as (value: boolean) => void)(event.target.checked)}
+                        className="h-4 w-4 accent-neutral-900"
+                      />
+                      {String(label)}
+                    </label>
+                  ))}
+                </div>
+              </Panel>
+
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTransferPrintOpen(false)}
+                  className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmTransferPrint}
+                  className="rounded-xl bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800"
+                >
+                  In phiếu
+                </button>
+              </div>
+            </div>
+
+            <Panel className="overflow-hidden p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-neutral-900">Preview trước khi in</p>
+                  <p className="text-xs text-neutral-500">
+                    {transferPrintTransfer.transferCode || transferPrintTransfer.id}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleConfirmTransferPrint}
+                  className="rounded-xl bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-500"
+                >
+                  In
+                </button>
+              </div>
+
+              <div className="max-h-[620px] overflow-auto rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <div
+                  className="mx-auto origin-top scale-[0.9] bg-white p-3 shadow-sm"
+                  dangerouslySetInnerHTML={{ __html: buildTransferPrintBodyHtml() }}
+                />
+              </div>
             </Panel>
           </div>
         )}
@@ -2035,8 +2492,9 @@ export default function StockTransfersPageClient() {
               <button
                 onClick={() => void handleCreateTransfer()}
                 disabled={saving}
-                className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
-                  }`}
+                className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
+                  saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+                }`}
               >
                 {saving ? "Đang lưu..." : "Lưu nháp"}
               </button>

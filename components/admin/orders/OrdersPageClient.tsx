@@ -950,6 +950,130 @@ function normalizeComparableText(value?: string | null) {
     .toLowerCase();
 }
 
+
+function normalizeSearchText(value?: string | number | null) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeSearchDigits(value?: string | number | null) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function pushSearchValue(values: string[], value: any) {
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => pushSearchValue(values, item));
+    return;
+  }
+
+  if (typeof value === "object") return;
+
+  const text = String(value).trim();
+  if (text) values.push(text);
+}
+
+function getOrderSearchValues(order: NormalizedOrder) {
+  const anyOrder = order as any;
+  const values: string[] = [];
+
+  [
+    order.id,
+    order.orderCode,
+    anyOrder.code,
+    anyOrder.orderId,
+    anyOrder.displayId,
+    anyOrder.clientOrderCode,
+    anyOrder.customerId,
+    anyOrder.customer?.id,
+    order.customerName,
+    order.customerPhone,
+    anyOrder.phone,
+    anyOrder.receiverPhone,
+    anyOrder.toPhone,
+    anyOrder.customer?.phone,
+    anyOrder.customer?.name,
+    anyOrder.customer?.fullName,
+    anyOrder.customer?.email,
+    order.status,
+    order.paymentStatus,
+    order.fulfillmentStatus,
+    order.branchId,
+    order._createdByName,
+    order._assignedStaffName,
+    order.salesChannel,
+    order._meta.address,
+    order._meta.noteText,
+    order._meta.shippingNote,
+    order._meta.shippingMode,
+    order._meta.shippingPartner,
+    order.shipment?.carrier,
+    order.shipment?.trackingCode,
+    (order.shipment as any)?.orderCode,
+    (order.shipment as any)?.clientOrderCode,
+    (order.shipment as any)?.partnerOrderCode,
+    (order.shipment as any)?.trackingUrl,
+    order.note,
+  ].forEach((value) => pushSearchValue(values, value));
+
+  if (Array.isArray(order.items)) {
+    order.items.forEach((item: any) => {
+      [
+        item?.sku,
+        item?.productName,
+        item?.name,
+        item?.variant?.sku,
+        item?.variant?.color,
+        item?.variant?.size,
+        item?.product?.name,
+      ].forEach((value) => pushSearchValue(values, value));
+    });
+  }
+
+  return values;
+}
+
+function orderMatchesKeyword(order: NormalizedOrder, keyword: string, branchName?: string) {
+  const rawKeyword = String(keyword || "").trim();
+  if (!rawKeyword) return true;
+
+  const values = getOrderSearchValues(order);
+  if (branchName) values.push(branchName);
+
+  const haystackText = values.map(normalizeSearchText).filter(Boolean).join(" ");
+  const haystackDigits = values.map(normalizeSearchDigits).filter(Boolean).join(" ");
+  const fullTextNeedle = normalizeSearchText(rawKeyword);
+  const fullDigitNeedle = normalizeSearchDigits(rawKeyword);
+
+  if (fullTextNeedle && haystackText.includes(fullTextNeedle)) return true;
+  if (fullDigitNeedle && haystackDigits.includes(fullDigitNeedle)) return true;
+
+  const terms = rawKeyword
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+
+  if (!terms.length) return true;
+
+  return terms.every((term) => {
+    const textNeedle = normalizeSearchText(term);
+    const digitNeedle = normalizeSearchDigits(term);
+
+    return (
+      Boolean(textNeedle && haystackText.includes(textNeedle)) ||
+      Boolean(digitNeedle && haystackDigits.includes(digitNeedle))
+    );
+  });
+}
+
 function isOrderCreatedByCurrentUser(order: any, user: CurrentUserLite | null) {
   if (!user) return false;
 
@@ -2131,7 +2255,7 @@ export default function OrdersPageClient() {
 
       const params = new URLSearchParams();
       params.set("page", String(page));
-      params.set("pageSize", submittedQuery.trim() ? "500" : String(pageSize));
+      params.set("pageSize", submittedQuery.trim() ? "2000" : String(pageSize));
 
       // Không gửi q lên backend để tránh Internal server error.
       // Enter xong mới cập nhật submittedQuery, sau đó lọc phía client.
@@ -2407,36 +2531,16 @@ export default function OrdersPageClient() {
       });
     }
 
-    const keyword = [submittedQuery, freeTextFilter]
-      .map((item) => String(item || "").trim().toLowerCase())
-      .filter(Boolean)
-      .join(" ");
-    if (keyword) {
-      result = result.filter((o) => {
-        const haystack = [
-          o.orderCode,
-          o.customerName,
-          o.customerPhone,
-          o.status,
-          o.paymentStatus,
-          o.fulfillmentStatus,
-          o.branchId,
-          branchLabel(o.branchId),
-          o._createdByName,
-          o.salesChannel,
-          o._meta.address,
-          o._meta.noteText,
-          o._meta.shippingNote,
-          o._meta.shippingMode,
-          o._meta.shippingPartner,
-          o.shipment?.carrier,
-          o.shipment?.trackingCode,
-          o.note,
-        ]
-          .join(" ")
-          .toLowerCase();
+    const keywords = [submittedQuery, freeTextFilter]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
 
-        return haystack.includes(keyword);
+    if (keywords.length) {
+      result = result.filter((o) => {
+        const branchName = branchLabel(o.branchId);
+        return keywords.every((keyword) =>
+          orderMatchesKeyword(o, keyword, branchName),
+        );
       });
     }
 

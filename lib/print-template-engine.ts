@@ -317,6 +317,161 @@ function normalizeTrackingCode(order: any) {
   return code;
 }
 
+
+function parseMaybeJson(value: any) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  if (typeof value !== "string") return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyGhnSortCode(value: any) {
+  const text = String(value || "").trim().toUpperCase();
+  if (!text) return false;
+  if (text.length < 4 || text.length > 40) return false;
+
+  // Ví dụ GHN: HY-200-K-02-A3, C-100-Q-04-B4.
+  // Không lấy mã vận đơn/tracking vì mã vận đơn đã in ở barcode riêng.
+  return /^[A-Z0-9]+(?:-[A-Z0-9]+){1,6}$/.test(text);
+}
+
+function findGhnSortCodeInObject(input: any, depth = 0): string {
+  if (!input || depth > 5) return "";
+
+  const obj = parseMaybeJson(input) || input;
+  if (!obj || typeof obj !== "object") return "";
+
+  const directKeys = [
+    "sort_code",
+    "sorting_code",
+    "sortCode",
+    "sortingCode",
+    "route_code",
+    "routing_code",
+    "routeCode",
+    "routingCode",
+    "warehouse_code",
+    "warehouseCode",
+    "hub_code",
+    "hubCode",
+    "delivery_sort_code",
+    "deliverySortCode",
+    "ward_encode",
+    "wardEncode",
+    "area_code",
+    "areaCode",
+  ];
+
+  for (const key of directKeys) {
+    const value = obj?.[key];
+    if (isLikelyGhnSortCode(value)) return String(value).trim().toUpperCase();
+  }
+
+  for (const [key, value] of Object.entries(obj)) {
+    const lowerKey = key.toLowerCase();
+    const shouldScanValue =
+      lowerKey.includes("sort") ||
+      lowerKey.includes("route") ||
+      lowerKey.includes("routing") ||
+      lowerKey.includes("warehouse") ||
+      lowerKey.includes("hub") ||
+      lowerKey.includes("ward_encode") ||
+      lowerKey.includes("area");
+
+    if (shouldScanValue && isLikelyGhnSortCode(value)) {
+      return String(value).trim().toUpperCase();
+    }
+  }
+
+  for (const value of Object.values(obj)) {
+    if (value && typeof value === "object") {
+      const found = findGhnSortCodeInObject(value, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return "";
+}
+
+function getGhnSortCode(order: any) {
+  const shipment = order?.shipment || {};
+  const metadata = parseMaybeJson(shipment?.metadata) || shipment?.metadata || {};
+  const shipmentRaw = parseMaybeJson(shipment?.raw) || shipment?.raw || {};
+  const orderMetadata = parseMaybeJson(order?.metadata) || order?.metadata || {};
+
+  const sources = [
+    shipment?.ghnSortCode,
+    shipment?.sortCode,
+    shipment?.sortingCode,
+    shipment?.routingCode,
+    shipment?.routeCode,
+    shipment?.wardEncode,
+    metadata,
+    shipmentRaw,
+    shipment,
+    order?.ghn,
+    order?.ghnRaw,
+    orderMetadata,
+  ];
+
+  for (const source of sources) {
+    if (isLikelyGhnSortCode(source)) return String(source).trim().toUpperCase();
+    const found = findGhnSortCodeInObject(source);
+    if (found) return found;
+  }
+
+  return "";
+}
+
+
+function getGhnRequiredNoteLabel(order: any) {
+  const shipment = order?.shipment || {};
+  const metadata = parseMaybeJson(shipment?.metadata) || shipment?.metadata || {};
+  const rawValue =
+    shipment?.requiredNote ||
+    shipment?.required_note ||
+    metadata?.required_note ||
+    metadata?.requiredNote ||
+    metadata?.requestPayload?.required_note ||
+    metadata?.requestPayload?.requiredNote ||
+    metadata?.payload?.required_note ||
+    metadata?.rawPayload?.required_note ||
+    order?.requiredNote ||
+    order?.required_note ||
+    "";
+
+  const value = String(rawValue || "").trim().toUpperCase();
+  if (!value) return "";
+
+  if (value.includes("CHOXEMHANGKHONGTHU") || value.includes("CHO_XEM_HANG_KHONG_THU")) {
+    return "CHO XEM HÀNG, KHÔNG CHO THỬ";
+  }
+
+  if (value.includes("CHOTHUHANG") || value.includes("CHO_THU_HANG")) {
+    return "CHO THỬ HÀNG";
+  }
+
+  if (value.includes("KHONGCHOXEMHANG") || value.includes("KHONG_CHO_XEM_HANG")) {
+    return "KHÔNG CHO XEM HÀNG";
+  }
+
+  return value.replaceAll("_", " ");
+}
+
+function buildGhnSortCodeBlock(sortCode: string, compact = true) {
+  const code = String(sortCode || "").trim().toUpperCase();
+  if (!code) return "";
+
+  return compact
+    ? `<div data-ghn-sort-code="1" style="margin:1.2mm 0 1.4mm;border-top:1px dashed #111;border-bottom:1px dashed #111;text-align:center;font-size:16px;font-weight:900;letter-spacing:.7px;line-height:1.05;padding:1mm 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(code)}</div>`
+    : `<div data-ghn-sort-code="1" style="margin:8px 0;border-top:1px dashed #111;border-bottom:1px dashed #111;text-align:center;font-size:28px;font-weight:900;letter-spacing:1px;line-height:1.1;padding:4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(code)}</div>`;
+}
+
 function displayPrintOrderCode(order: any) {
   const trackingCode = normalizeTrackingCode(order);
 
@@ -437,10 +592,13 @@ function buildShippingTemplateHtml(params: {
   trackingCode: string;
   noteValue: string;
   itemCount: number;
+  ghnSortCode?: string;
 }) {
-  const { template, data, trackingCode, noteValue, itemCount } = params;
+  const { template, data, trackingCode, noteValue, itemCount, ghnSortCode = "" } = params;
   const hasTracking = Boolean(trackingCode);
   const isSquare80 = template.paperSize === "80mm";
+  const ghnSortCodeBlock = buildGhnSortCodeBlock(ghnSortCode, isSquare80);
+  const squareItemsTop = ghnSortCodeBlock ? "40mm" : "33mm";
 
   if (isSquare80) {
     return `
@@ -462,8 +620,9 @@ function buildShippingTemplateHtml(params: {
   </div>
 
   ${data.financialBlock || ""}
+  ${ghnSortCodeBlock}
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;top:33mm;bottom:17mm;overflow:hidden;">
+  <div style="position:absolute;left:2.5mm;right:2.5mm;top:${squareItemsTop};bottom:17mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
       <thead>
         <tr>
@@ -521,6 +680,7 @@ function buildShippingTemplateHtml(params: {
   ${noteValue ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>` : ""}
 
   ${data.financialBlock || ""}
+  ${ghnSortCodeBlock}
 
   <div style="border-top:1px dashed #999;border-bottom:1px dashed #999;padding:6px 0;margin-bottom:8px;">
     <div style="font-weight:700;margin-bottom:4px;">Sản phẩm</div>
@@ -882,6 +1042,9 @@ export function renderOrderTemplateHtml(params: {
   const meta = parseStructuredNote(order?.note);
 
   const trackingCode = normalizeTrackingCode(order);
+  const ghnSortCode = getGhnSortCode(order);
+  const ghnSortCodeBlock = buildGhnSortCodeBlock(ghnSortCode, template.paperSize === "80mm");
+  const ghnRequiredNoteLabel = getGhnRequiredNoteLabel(order);
 
   const codAmount = Number(order?.shipment?.codAmount || 0);
   const shippingFee = Number(
@@ -948,8 +1111,10 @@ export function renderOrderTemplateHtml(params: {
     ? `<div style="font-size:9.5px;margin-bottom:2px;">${customerLines.join("")}</div>`
     : "";
 
+  const itemsTopMm = ghnSortCodeBlock ? "40mm" : "33mm";
+
   const itemsBlock = showItems
-    ? `<div style="position:absolute;left:2.5mm;right:2.5mm;top:33mm;bottom:17mm;overflow:hidden;">
+    ? `<div style="position:absolute;left:2.5mm;right:2.5mm;top:${itemsTopMm};bottom:17mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
       <thead>
         <tr>
@@ -994,6 +1159,8 @@ export function renderOrderTemplateHtml(params: {
       ? `<div style="margin-top:12px;text-align:center;font-size:11px;color:#444;">${escapeHtml(template.footerNote)}</div>`
       : "";
 
+  const templateHasGhnSortToken = String(template.templateHtml || "").includes("{{ghnSortCodeBlock}}");
+
   const data: Record<string, string> = {
     title: escapeHtml(template.title),
     storeName: escapeHtml(
@@ -1021,6 +1188,8 @@ export function renderOrderTemplateHtml(params: {
       order?.shipment?.carrier || meta.shippingPartner || "",
     ),
     note: escapeHtml(noteValue),
+    ghnSortCode: escapeHtml(ghnSortCode),
+    ghnSortCodeBlock,
 
     shippingFee: template.showShippingFee
       ? money(shippingFee)
@@ -1035,7 +1204,7 @@ export function renderOrderTemplateHtml(params: {
     barcodeBlock: "",
     qrBlock: "",
     financialBlock:
-      template.templateType === "shipping" && template.showCod
+      template.templateType === "shipping" && (template.showCod !== false || codAmount > 0 || amountDue > 0)
         ? `<div style="margin:2px 0 2px;">
               <table style="width:100%;border-collapse:collapse;text-align:center;">
                 <tr>
@@ -1056,7 +1225,61 @@ export function renderOrderTemplateHtml(params: {
     itemsBlock: template.paperSize === "80mm" ? itemsBlock : longItemsBlock,
     salesItemsBlock,
     footerBlock,
+    ghnRequiredNote: escapeHtml(ghnRequiredNoteLabel),
+    ghnRequiredNoteBlock: ghnRequiredNoteLabel
+      ? `<div style="margin:1mm 0 1.4mm;text-align:center;font-size:8.5px;font-weight:900;letter-spacing:.2px;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ghnRequiredNoteLabel)}</div>`
+      : "",
   };
+
+  if (template.templateType === "shipping" && template.paperSize === "80mm") {
+    const codBlock = template.showCod && Number(codAmount || amountDue || 0) > 0
+      ? `<div style="margin:1mm 0 1.2mm;"><table style="width:100%;border-collapse:collapse;text-align:center;"><tr><td style="border:1px solid #111;padding:1.4mm 2mm;"><span style="font-size:8.8px;">THU HỘ (COD): </span><span style="font-size:12.5px;font-weight:900;">${money(codAmount || amountDue || 0)}</span></td></tr></table></div>`
+      : "";
+
+    const requiredNoteBlock = ghnRequiredNoteLabel
+      ? `<div style="margin:.8mm 0 1.2mm;text-align:center;font-size:8.2px;font-weight:900;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ghnRequiredNoteLabel)}</div>`
+      : "";
+
+    const barcodeBlock = trackingCode && template.showBarcode
+      ? `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;"><img src="${barcodeUrl(trackingCode)}" style="width:36mm;height:12mm;object-fit:fill;display:block;margin:0 auto;" /><div style="margin-top:.2mm;font-size:6.8px;font-weight:800;line-height:1;white-space:nowrap;max-width:38mm;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(trackingCode)}</div></div>`
+      : "";
+
+    const qrBlock = trackingCode && template.showQr
+      ? `<img src="${qrUrl(trackingCode)}" style="width:14mm;height:14mm;object-fit:contain;display:block;margin:0 auto;" />`
+      : "";
+
+    return `
+<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.4px;line-height:1.08;padding:2mm 2.5mm;border:1px solid #111;overflow:hidden;position:relative;">
+  <div style="text-align:center;margin:0 0 1.4mm 0;">
+    <div style="font-size:13.5px;font-weight:900;letter-spacing:.5px;line-height:1;">${data.storeName}</div>
+    <div style="font-size:10.5px;font-weight:900;letter-spacing:.1px;margin-top:.5mm;">${data.title || "PHIẾU GIAO HÀNG"}</div>
+  </div>
+
+  ${orderMetaBlock}
+  ${customerBlock}
+  ${codBlock}
+  ${ghnSortCodeBlock}
+  ${requiredNoteBlock}
+
+  ${showItems ? `<div style="position:absolute;left:2.5mm;right:2.5mm;top:${ghnSortCodeBlock || requiredNoteBlock ? "45mm" : codBlock ? "36mm" : "31mm"};bottom:18mm;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:9.1px;line-height:1.05;">
+      <thead>
+        <tr>
+          <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;font-size:9.4px;">Sản phẩm</th>
+          ${showItemQty ? `<th style="text-align:center;width:17px;border-bottom:1px solid #999;padding:1px 0;font-size:9.4px;">SL</th>` : ""}
+        </tr>
+      </thead>
+      <tbody>${itemsRows}</tbody>
+    </table>
+  </div>` : ""}
+
+  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:3mm;height:14mm;border-top:1px solid #111;padding-top:1mm;display:grid;grid-template-columns:1fr 16mm;gap:4mm;align-items:center;">
+    <div style="text-align:center;">${barcodeBlock}</div>
+    <div style="text-align:center;">${qrBlock}</div>
+  </div>
+</div>
+    `.trim();
+  }
 
   if (template.templateType === "sales") {
     if (
@@ -1072,7 +1295,15 @@ export function renderOrderTemplateHtml(params: {
     template.templateHtml &&
     template.templateHtml.includes("{{itemsRows}}")
   ) {
-    const html = replaceAllTokens(template.templateHtml, {
+    const templateHtmlForRender =
+      template.templateType === "shipping" && !templateHasGhnSortToken && ghnSortCodeBlock
+        ? String(template.templateHtml || "").replace(
+            "{{financialBlock}}",
+            "{{financialBlock}}\n{{ghnSortCodeBlock}}",
+          )
+        : template.templateHtml;
+
+    let html = replaceAllTokens(templateHtmlForRender, {
       ...data,
       barcodeBlock:
         trackingCode && template.showBarcode
@@ -1084,8 +1315,18 @@ export function renderOrderTemplateHtml(params: {
           : "",
     });
 
+    if (template.templateType === "shipping" && ghnSortCodeBlock) {
+      const nextItemsTop = template.showCod ? "43mm" : "40mm";
+      html = html
+        .replaceAll("top:33mm;bottom:17mm", `top:${nextItemsTop};bottom:17mm`)
+        .replaceAll("top:33mm; bottom:17mm", `top:${nextItemsTop}; bottom:17mm`);
+    }
+
     return html
       .replaceAll("NO-GHN-CODE", "")
+      .replaceAll("Cảm ơn quý khách. Hẹn gặp lại!", "")
+      .replaceAll("Cảm ơn quý khách", "")
+      .replaceAll("Hẹn gặp lại!", "")
       .replaceAll('<div style="font-size:12px; margin-top:4px;"></div>', "");
   }
 
@@ -1095,6 +1336,7 @@ export function renderOrderTemplateHtml(params: {
     trackingCode,
     noteValue,
     itemCount,
+    ghnSortCode,
   });
 }
 
@@ -1131,6 +1373,9 @@ export function renderTemplatePreviewHtml(template: PrintTemplateConfig) {
       trackingCode: "FJ0001",
       codAmount: 0,
       shippingFee: 30000,
+      metadata: {
+        sort_code: "HY-200-K-02-A3",
+      },
     },
   };
 
