@@ -19,6 +19,26 @@ export type ViettelPostInventory = {
 
 export type CreateOrderMode = "draft" | "approve" | "ship";
 
+export type DeliveryRequirementKey =
+  | "CHOXEMHANG_KHONGTHU"
+  | "CHOXEMHANG_CHOTHU"
+  | "KHONGCHOXEMHANG";
+
+export type CarrierDeliveryNoteFields = {
+  /** Ghi chú gửi sang hãng vận chuyển / hiển thị trên phiếu in. */
+  note?: string;
+  /** Alias cho một số backend/mẫu in cũ đang đọc shippingNote. */
+  shippingNote?: string;
+  /** Giá trị UI nội bộ để giữ đúng lựa chọn gốc. */
+  deliveryRequirement?: DeliveryRequirementKey | string;
+  /** Mã GHN: CHOXEMHANGKHONGTHU / CHOXEMHANG / KHONGCHOXEMHANG. */
+  requiredNote?: string;
+  /** Alias snake_case cho backend/hãng dùng required_note. */
+  required_note?: string;
+  /** Nhãn tiếng Việt: Cho xem hàng, không cho thử... */
+  requiredNoteLabel?: string;
+};
+
 export type OrderProductVariant = {
   id: string;
   sku: string;
@@ -28,7 +48,6 @@ export type OrderProductVariant = {
   stock: number;
   productCode?: string;
   branchStocks?: Record<string, number>;
-
 };
 
 export type OrderProduct = {
@@ -56,7 +75,13 @@ export type CreateOrderShippingSnapshot = {
   shippingGhnWardCode?: string;
   shippingPartner?: string;
   shippingPayer?: string;
+  skipAutoShipment?: boolean;
+  note?: string;
+  shippingNote?: string;
+  deliveryRequirement?: DeliveryRequirementKey | string;
   requiredNote?: string;
+  required_note?: string;
+  requiredNoteLabel?: string;
   selectedServiceId?: number;
   selectedServiceTypeId?: number;
   weight?: number;
@@ -80,6 +105,16 @@ export type CreateOrderPayload = {
   paidAmount?: number;
   paymentSourceId?: string | null;
   paymentNote?: string;
+  skipAutoShipment?: boolean;
+  deliveryMethod?: string;
+  shippingMethod?: string;
+  fulfillmentType?: string;
+  shippingNote?: string;
+  deliveryRequirement?: DeliveryRequirementKey | string;
+  requiredNote?: string;
+  required_note?: string;
+  requiredNoteLabel?: string;
+  finalAmount?: number;
   items: Array<{
     variantId: string;
     qty: number;
@@ -176,7 +211,7 @@ export type ResolveGhnAddressResult = {
   wardName?: string;
 };
 
-export type CreateGhnShipmentPayload = {
+export type CreateGhnShipmentPayload = CarrierDeliveryNoteFields & {
   toName: string;
   toPhone: string;
   toAddress: string;
@@ -184,15 +219,12 @@ export type CreateGhnShipmentPayload = {
   toWardCode: string;
   codAmount: number;
   clientOrderCode: string;
-  note?: string;
   content?: string;
-  requiredNote?: string;
   weight: number;
   length: number;
   width: number;
   height: number;
   insuranceValue?: number;
-  requiredNoteLabel?: string;
   items: Array<{
     name: string;
     quantity: number;
@@ -204,7 +236,6 @@ export type CreateGhnShipmentPayload = {
     category?: string;
   }>;
 };
-
 
 export type AhamoveQuoteItem = {
   name: string;
@@ -236,10 +267,11 @@ export type AhamoveQuotePayload = {
   items?: AhamoveQuoteItem[];
 };
 
-export type CreateAhamoveShipmentPayload = AhamoveQuotePayload & {
-  clientOrderCode?: string;
-  orderCode?: string;
-};
+export type CreateAhamoveShipmentPayload = AhamoveQuotePayload &
+  CarrierDeliveryNoteFields & {
+    clientOrderCode?: string;
+    orderCode?: string;
+  };
 
 export type ViettelPostQuotePayload = {
   toName?: string;
@@ -271,22 +303,21 @@ export type ViettelPostQuotePayload = {
   height?: number;
   services?: string;
 };
-export type CreateViettelPostShipmentPayload = ViettelPostQuotePayload & {
-  clientOrderCode?: string;
-  orderCode?: string;
-  serviceCode?: string;
-  note?: string;
-  content?: string;
-  items?: Array<{
-    name: string;
-    quantity?: number;
-    qty?: number;
-    num?: number;
-    price?: number;
-    weight?: number;
-  }>;
-};
-
+export type CreateViettelPostShipmentPayload = ViettelPostQuotePayload &
+  CarrierDeliveryNoteFields & {
+    clientOrderCode?: string;
+    orderCode?: string;
+    serviceCode?: string;
+    content?: string;
+    items?: Array<{
+      name: string;
+      quantity?: number;
+      qty?: number;
+      num?: number;
+      price?: number;
+      weight?: number;
+    }>;
+  };
 
 export type AhamoveQuoteResult =
   | {
@@ -303,7 +334,6 @@ export type AhamoveQuoteResult =
       data?: any;
     }
   | Array<any>;
-
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(path, {
@@ -327,7 +357,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await res.text();
 
   if (!text) {
-    return ([] as unknown) as T;
+    return [] as unknown as T;
   }
 
   return JSON.parse(text) as T;
@@ -344,7 +374,7 @@ function normalizeBranchStocks(input: unknown): Record<string, number> {
     Object.entries(input as Record<string, unknown>).map(([key, value]) => [
       key,
       toNumber(value),
-    ])
+    ]),
   );
 }
 
@@ -357,7 +387,7 @@ function normalizeSalesChannel(input: string) {
 }
 
 export async function getProductsForOrder(): Promise<OrderProduct[]> {
-const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
+  const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
 
   const products = Array.isArray(raw)
     ? raw
@@ -374,7 +404,7 @@ const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
         product.productCode ||
         product.mainSku ||
         product.slug ||
-        ""
+        "",
     );
 
     return {
@@ -385,20 +415,20 @@ const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
       variants: Array.isArray(product.variants)
         ? product.variants.map((variant: any) => {
             const branchStocks = normalizeBranchStocks(
-              variant.inventoryByBranch || variant.branchStocks
+              variant.inventoryByBranch || variant.branchStocks,
             );
 
             const stock =
               Object.keys(branchStocks).length > 0
                 ? Object.values(branchStocks).reduce(
                     (sum, qty) => sum + toNumber(qty),
-                    0
+                    0,
                   )
                 : Array.isArray(variant.inventoryItems)
                   ? variant.inventoryItems.reduce(
                       (sum: number, item: any) =>
                         sum + toNumber(item.availableQty),
-                      0
+                      0,
                     )
                   : toNumber(variant.stock ?? variant.availableQty ?? 0);
 
@@ -418,7 +448,7 @@ const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
                         variant.inventoryItems.map((item: any) => [
                           String(item.branchId),
                           toNumber(item.availableQty),
-                        ])
+                        ]),
                       )
                     : {},
             };
@@ -428,23 +458,17 @@ const raw = await request<any>("/products?page=1&pageSize=1000&limit=1000");
   });
 }
 
-export async function findCustomerByPhone(
-  phone: string
-): Promise<any[]> {
+export async function findCustomerByPhone(phone: string): Promise<any[]> {
   const cleaned = String(phone || "").replace(/\D/g, "");
 
   const candidates = cleaned
     ? [
-      `/customers/search?phone=${cleaned}`,
-      `/customers/search?q=${cleaned}`,
-      `/customers?search=${cleaned}`,
-      `/customers?phone=${cleaned}`,
-    ]
-    : [
-      `/customers/search`,
-      `/customers/search?phone=`,
-      `/customers`,
-    ];
+        `/customers/search?phone=${cleaned}`,
+        `/customers/search?q=${cleaned}`,
+        `/customers?search=${cleaned}`,
+        `/customers?phone=${cleaned}`,
+      ]
+    : [`/customers/search`, `/customers/search?phone=`, `/customers`];
 
   for (const path of candidates) {
     try {
@@ -463,7 +487,7 @@ export async function findCustomerByPhone(
 }
 
 export async function createCustomer(
-  payload: CreateCustomerPayload
+  payload: CreateCustomerPayload,
 ): Promise<CustomerLookupResult> {
   const body = {
     legacyCode: payload.legacyCode?.trim() || undefined,
@@ -502,7 +526,7 @@ export async function createCustomer(
 }
 
 export async function createOrder(
-  payload: CreateOrderPayload
+  payload: CreateOrderPayload,
 ): Promise<CreatedOrder> {
   const customerShippingFee = toNumber(
     payload.shippingFee ??
@@ -510,7 +534,7 @@ export async function createOrder(
       payload.deliveryFee ??
       payload.shippingSnapshot?.shippingFee ??
       payload.shippingSnapshot?.customerShippingFee ??
-      0
+      0,
   );
 
   const body = {
@@ -525,39 +549,57 @@ export async function createOrder(
     shippingFee: customerShippingFee,
     shipFee: customerShippingFee,
     deliveryFee: customerShippingFee,
-    paidAmount: payload.paidAmount !== undefined ? toNumber(payload.paidAmount) : undefined,
+    paidAmount:
+      payload.paidAmount !== undefined
+        ? toNumber(payload.paidAmount)
+        : undefined,
     paymentSourceId: payload.paymentSourceId || undefined,
     paymentNote: payload.paymentNote || payload.note || "",
+    skipAutoShipment: payload.skipAutoShipment,
+    deliveryMethod: payload.deliveryMethod,
+    shippingMethod: payload.shippingMethod,
+    fulfillmentType: payload.fulfillmentType,
+    shippingNote: payload.shippingNote,
+    deliveryRequirement: payload.deliveryRequirement,
+    requiredNote: payload.requiredNote,
+    required_note: payload.required_note,
+    requiredNoteLabel: payload.requiredNoteLabel,
+    finalAmount:
+      payload.finalAmount !== undefined
+        ? toNumber(payload.finalAmount)
+        : undefined,
     shippingSnapshot: payload.shippingSnapshot
       ? {
-        shippingAddressId: payload.shippingSnapshot.shippingAddressId,
-        shippingFee: customerShippingFee,
-        customerShippingFee,
-        ghnActualFee: toNumber(payload.shippingSnapshot.ghnActualFee || 0),
-        shippingRecipientName:
-          payload.shippingSnapshot.shippingRecipientName,
-        shippingPhone: payload.shippingSnapshot.shippingPhone,
-        shippingAddressLine1:
-          payload.shippingSnapshot.shippingAddressLine1,
-        shippingAddressLine2:
-          payload.shippingSnapshot.shippingAddressLine2,
-        shippingWard: payload.shippingSnapshot.shippingWard,
-        shippingDistrict: payload.shippingSnapshot.shippingDistrict,
-        shippingProvince: payload.shippingSnapshot.shippingProvince,
-        shippingPostalCode: payload.shippingSnapshot.shippingPostalCode,
-        ghnDistrictId: payload.shippingSnapshot.shippingGhnDistrictId,
-        ghnWardCode: payload.shippingSnapshot.shippingGhnWardCode,
-        shippingPartner: payload.shippingSnapshot.shippingPartner,
-        shippingPayer: payload.shippingSnapshot.shippingPayer,
-        requiredNote: payload.shippingSnapshot.requiredNote,
-        selectedServiceId: payload.shippingSnapshot.selectedServiceId,
-        selectedServiceTypeId:
-          payload.shippingSnapshot.selectedServiceTypeId,
-        weight: payload.shippingSnapshot.weight,
-        length: payload.shippingSnapshot.length,
-        width: payload.shippingSnapshot.width,
-        height: payload.shippingSnapshot.height,
-      }
+          skipAutoShipment: payload.shippingSnapshot.skipAutoShipment,
+          note: payload.shippingSnapshot.note,
+          shippingNote: payload.shippingSnapshot.shippingNote,
+          deliveryRequirement: payload.shippingSnapshot.deliveryRequirement,
+          requiredNote: payload.shippingSnapshot.requiredNote,
+          required_note: payload.shippingSnapshot.required_note,
+          requiredNoteLabel: payload.shippingSnapshot.requiredNoteLabel,
+          shippingAddressId: payload.shippingSnapshot.shippingAddressId,
+          shippingFee: customerShippingFee,
+          customerShippingFee,
+          ghnActualFee: toNumber(payload.shippingSnapshot.ghnActualFee || 0),
+          shippingRecipientName: payload.shippingSnapshot.shippingRecipientName,
+          shippingPhone: payload.shippingSnapshot.shippingPhone,
+          shippingAddressLine1: payload.shippingSnapshot.shippingAddressLine1,
+          shippingAddressLine2: payload.shippingSnapshot.shippingAddressLine2,
+          shippingWard: payload.shippingSnapshot.shippingWard,
+          shippingDistrict: payload.shippingSnapshot.shippingDistrict,
+          shippingProvince: payload.shippingSnapshot.shippingProvince,
+          shippingPostalCode: payload.shippingSnapshot.shippingPostalCode,
+          ghnDistrictId: payload.shippingSnapshot.shippingGhnDistrictId,
+          ghnWardCode: payload.shippingSnapshot.shippingGhnWardCode,
+          shippingPartner: payload.shippingSnapshot.shippingPartner,
+          shippingPayer: payload.shippingSnapshot.shippingPayer,
+          selectedServiceId: payload.shippingSnapshot.selectedServiceId,
+          selectedServiceTypeId: payload.shippingSnapshot.selectedServiceTypeId,
+          weight: payload.shippingSnapshot.weight,
+          length: payload.shippingSnapshot.length,
+          width: payload.shippingSnapshot.width,
+          height: payload.shippingSnapshot.height,
+        }
       : undefined,
     items: payload.items.map((item) => ({
       variantId: item.variantId,
@@ -577,7 +619,7 @@ export async function createOrder(
 }
 
 export async function resolveGhnAddress(
-  payload: ResolveGhnAddressPayload
+  payload: ResolveGhnAddressPayload,
 ): Promise<ResolveGhnAddressResult> {
   return request<ResolveGhnAddressResult>("/shipments/ghn/resolve-address", {
     method: "POST",
@@ -586,7 +628,7 @@ export async function resolveGhnAddress(
 }
 
 export async function quoteShipment(
-  payload: ShipmentQuotePayload
+  payload: ShipmentQuotePayload,
 ): Promise<ShipmentQuoteResult[]> {
   const data = await request<any[]>("/shipments/ghn/quote", {
     method: "POST",
@@ -597,7 +639,7 @@ export async function quoteShipment(
 
 export async function createGhnShipment(
   orderId: string,
-  payload: CreateGhnShipmentPayload
+  payload: CreateGhnShipmentPayload,
 ) {
   return request<any>(`/shipments/${orderId}/ghn/create`, {
     method: "POST",
@@ -606,7 +648,7 @@ export async function createGhnShipment(
 }
 
 export async function quoteAhamoveShipment(
-  payload: AhamoveQuotePayload
+  payload: AhamoveQuotePayload,
 ): Promise<AhamoveQuoteResult> {
   return request<AhamoveQuoteResult>("/shipments/ahamove/quote", {
     method: "POST",
@@ -615,18 +657,22 @@ export async function quoteAhamoveShipment(
 }
 
 export async function quoteViettelPostShipment(
-  payload: ViettelPostQuotePayload
+  payload: ViettelPostQuotePayload,
 ): Promise<ShipmentQuoteResult[]> {
   const data = await request<any>("/shipments/viettelpost/quote", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  return Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+  return Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : [];
 }
 
 export async function createViettelPostShipment(
   orderId: string,
-  payload: CreateViettelPostShipmentPayload
+  payload: CreateViettelPostShipmentPayload,
 ) {
   return request<any>(`/shipments/${orderId}/viettelpost/create`, {
     method: "POST",
@@ -640,10 +686,9 @@ export async function cancelViettelPostShipment(orderId: string) {
   });
 }
 
-
 export async function createAhamoveShipment(
   orderId: string,
-  payload: CreateAhamoveShipmentPayload
+  payload: CreateAhamoveShipmentPayload,
 ) {
   return request<any>(`/shipments/${orderId}/ahamove/create`, {
     method: "POST",
@@ -695,29 +740,31 @@ export async function getGhnProvinces(): Promise<GhnProvince[]> {
 }
 
 export async function getGhnDistricts(
-  provinceId: number
+  provinceId: number,
 ): Promise<GhnDistrict[]> {
   const data = await request<any>(
-    `/addresses/ghn/districts?provinceId=${provinceId}`
+    `/addresses/ghn/districts?provinceId=${provinceId}`,
   );
   return Array.isArray(data) ? data : data?.data || [];
 }
 
 export async function getGhnWards(districtId: number): Promise<GhnWard[]> {
   const data = await request<any>(
-    `/addresses/ghn/wards?districtId=${districtId}`
+    `/addresses/ghn/wards?districtId=${districtId}`,
   );
   return Array.isArray(data) ? data : data?.data || [];
 }
-export async function searchCustomers(query = ""): Promise<SearchCustomerItem[]> {
+export async function searchCustomers(
+  query = "",
+): Promise<SearchCustomerItem[]> {
   const cleaned = String(query || "").trim();
 
   const candidates = cleaned
     ? [
-      `/customers/search?q=${encodeURIComponent(cleaned)}`,
-      `/customers/search?phone=${encodeURIComponent(cleaned)}`,
-      `/customers?search=${encodeURIComponent(cleaned)}`,
-    ]
+        `/customers/search?q=${encodeURIComponent(cleaned)}`,
+        `/customers/search?phone=${encodeURIComponent(cleaned)}`,
+        `/customers?search=${encodeURIComponent(cleaned)}`,
+      ]
     : ["/customers/search", "/customers"];
 
   for (const path of candidates) {
@@ -733,7 +780,9 @@ export async function searchCustomers(query = ""): Promise<SearchCustomerItem[]>
 
   return [];
 }
-function normalizeViettelPostInventory(row: ViettelPostInventory): ViettelPostInventory {
+function normalizeViettelPostInventory(
+  row: ViettelPostInventory,
+): ViettelPostInventory {
   return {
     ...row,
     groupAddressId: row.groupAddressId ?? row.group_address_id,
@@ -744,22 +793,24 @@ function normalizeViettelPostInventory(row: ViettelPostInventory): ViettelPostIn
   };
 }
 
-
-export async function getViettelPostInventories(): Promise<ViettelPostInventory[]> {
+export async function getViettelPostInventories(): Promise<
+  ViettelPostInventory[]
+> {
   const data = await request<any>("/shipments/viettelpost/inventories");
 
-  const rows =
-    Array.isArray(data)
-      ? data
-      : Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.vtp_inventories)
-          ? data.vtp_inventories
-          : Array.isArray(data?.inventories)
-            ? data.inventories
-            : [];
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.vtp_inventories)
+        ? data.vtp_inventories
+        : Array.isArray(data?.inventories)
+          ? data.inventories
+          : [];
 
-  return rows.map((row: ViettelPostInventory) => normalizeViettelPostInventory(row));
+  return rows.map((row: ViettelPostInventory) =>
+    normalizeViettelPostInventory(row),
+  );
 }
 
 export async function getOrderForCopy(orderIdOrCode: string): Promise<any> {

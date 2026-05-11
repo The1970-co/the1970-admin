@@ -100,7 +100,6 @@ type BranchOption = {
   isActive?: boolean;
 };
 
-
 type PromotionRow = {
   id: string;
   name: string;
@@ -113,27 +112,38 @@ type PromotionRow = {
   salesChannel?: string | null;
   startAt?: string | null;
   endAt?: string | null;
-  products?: Array<{ productId?: string | null; product?: { id?: string | null } | null }>;
+  products?: Array<{
+    productId?: string | null;
+    product?: { id?: string | null } | null;
+  }>;
   priority?: number | string | null;
 };
 
 function isPromotionActiveForContext(
   promotion: PromotionRow,
-  input: { branchId?: string | null; salesChannel?: string | null }
+  input: { branchId?: string | null; salesChannel?: string | null },
 ) {
   if (promotion.status !== "ACTIVE") return false;
 
   const now = Date.now();
-  if (promotion.startAt && new Date(promotion.startAt).getTime() > now) return false;
-  if (promotion.endAt && new Date(promotion.endAt).getTime() < now) return false;
+  if (promotion.startAt && new Date(promotion.startAt).getTime() > now)
+    return false;
+  if (promotion.endAt && new Date(promotion.endAt).getTime() < now)
+    return false;
 
-  if (promotion.branchId && input.branchId && String(promotion.branchId) !== String(input.branchId)) return false;
+  if (
+    promotion.branchId &&
+    input.branchId &&
+    String(promotion.branchId) !== String(input.branchId)
+  )
+    return false;
   if (promotion.branchId && !input.branchId) return false;
 
   if (
     promotion.salesChannel &&
     input.salesChannel &&
-    String(promotion.salesChannel).toUpperCase() !== String(input.salesChannel).toUpperCase()
+    String(promotion.salesChannel).toUpperCase() !==
+      String(input.salesChannel).toUpperCase()
   ) {
     return false;
   }
@@ -150,7 +160,7 @@ function calculatePromotionDiscount(input: {
 }) {
   const subtotal = input.lines.reduce(
     (sum, line) => sum + Number(line.price || 0) * Number(line.qty || 0),
-    0
+    0,
   );
 
   const workingLines = input.lines.map((line) => ({
@@ -178,17 +188,21 @@ function calculatePromotionDiscount(input: {
       const productIds = new Set(
         (promotion.products || [])
           .map((row) => String(row.productId || row.product?.id || ""))
-          .filter(Boolean)
+          .filter(Boolean),
       );
 
       let discountForPromotion = 0;
 
       for (const line of workingLines) {
-        if (!line.productId || !productIds.has(String(line.productId))) continue;
+        if (!line.productId || !productIds.has(String(line.productId)))
+          continue;
 
         const qty = Math.max(1, Number(line.qty || 0));
         const alreadyDiscountedPerUnit = Number(line.discountAmount || 0) / qty;
-        const base = Math.max(0, Number(line.price || 0) - alreadyDiscountedPerUnit);
+        const base = Math.max(
+          0,
+          Number(line.price || 0) - alreadyDiscountedPerUnit,
+        );
         const discountPerUnit =
           promotion.discountType === "PERCENT"
             ? (base * Number(promotion.discountValue || 0)) / 100
@@ -318,7 +332,9 @@ function hasCurrentUserPermission(permission: string) {
 }
 
 function normalizeSpaces(value?: string | null) {
-  return String(value || "").replace(/\s+/g, " ").trim();
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizePhone(value?: string | null) {
@@ -407,7 +423,11 @@ function normalizeCarrierWard(value?: string | null) {
   const cleaned = normalizeCarrierAddressPart(value);
   const token = normalizeAddressToken(cleaned);
 
-  if (token === "kien duc" || token === "tt kien duc" || token === "thi tran kien duc") {
+  if (
+    token === "kien duc" ||
+    token === "tt kien duc" ||
+    token === "thi tran kien duc"
+  ) {
     return "Kiến Đức";
   }
 
@@ -422,19 +442,16 @@ function getViettelOldCarrierAddressOverride(input: {
   ward?: string | null;
   address?: string | null;
 }) {
-  const rawText = [
-    input.address,
-    input.ward,
-    input.district,
-    input.province,
-  ]
+  const rawText = [input.address, input.ward, input.district, input.province]
     .filter(Boolean)
     .join(" ");
   const token = normalizeAddressToken(rawText);
 
   if (
     token.includes("quoc oai") &&
-    (token.includes("sai son") || token.includes("cho thay") || token.includes("chợ thầy"))
+    (token.includes("sai son") ||
+      token.includes("cho thay") ||
+      token.includes("chợ thầy"))
   ) {
     return {
       province: "Hà Nội",
@@ -476,7 +493,10 @@ function buildCarrierToAddress(input: {
     .filter(Boolean)
     .filter((item, index, arr) => {
       const current = normalizeAddressToken(item);
-      return arr.findIndex((other) => normalizeAddressToken(other) === current) === index;
+      return (
+        arr.findIndex((other) => normalizeAddressToken(other) === current) ===
+        index
+      );
     })
     .join(", ");
 }
@@ -498,18 +518,21 @@ function normalizeAddressToken(value?: string | null) {
 }
 
 function stripProvincePrefix(value?: string | null) {
-  return normalizeAddressToken(value).replace(/^(tinh|thanh pho|tp)\s+/, "").trim();
+  return normalizeAddressToken(value)
+    .replace(/^(tinh|thanh pho|tp)\s+/, "")
+    .trim();
 }
 
 function stripDistrictPrefix(value?: string | null) {
-  return normalizeAddressToken(value).replace(
-    /^(quan|huyen|thi xa|thanh pho|tp)\s+/,
-    ""
-  ).trim();
+  return normalizeAddressToken(value)
+    .replace(/^(quan|huyen|thi xa|thanh pho|tp)\s+/, "")
+    .trim();
 }
 
 function stripWardPrefix(value?: string | null) {
-  return normalizeAddressToken(value).replace(/^(xa|phuong|thi tran)\s+/, "").trim();
+  return normalizeAddressToken(value)
+    .replace(/^(xa|phuong|thi tran)\s+/, "")
+    .trim();
 }
 
 const ADMIN_MERGE_ALIASES: Record<string, string> = {
@@ -519,10 +542,10 @@ const ADMIN_MERGE_ALIASES: Record<string, string> = {
 function getFeeNumber(row: ShipmentQuoteResult) {
   return Number(
     (row as any)?.fee?.total ||
-    (row as any)?.fee?.total_fee ||
-    (row as any)?.fee?.service_fee ||
-    (row as any)?.fee ||
-    0
+      (row as any)?.fee?.total_fee ||
+      (row as any)?.fee?.service_fee ||
+      (row as any)?.fee ||
+      0,
   );
 }
 
@@ -533,7 +556,7 @@ function getQuoteCarrier(row: ShipmentQuoteResult) {
 function getQuoteKey(row: ShipmentQuoteResult) {
   return String(
     (row as any)?._quoteKey ||
-      `${getQuoteCarrier(row)}-${row.serviceId || 0}-${row.serviceTypeId || 0}`
+      `${getQuoteCarrier(row)}-${row.serviceId || 0}-${row.serviceTypeId || 0}`,
   );
 }
 
@@ -593,7 +616,10 @@ function normalizeAhamoveQuoteItems(rawQuote: any) {
   return rawQuote ? [rawQuote] : [];
 }
 
-function shouldShowAhamoveService(serviceLabel: string, shippingWeight: number) {
+function shouldShowAhamoveService(
+  serviceLabel: string,
+  shippingWeight: number,
+) {
   return true;
 }
 
@@ -603,7 +629,11 @@ function getAhamoveServiceDisplayName(serviceLabel: string) {
   if (label.includes("TRUCK-1000")) return "Xe tải 1000kg";
   if (label.includes("TRUCK-2000")) return "Xe tải 2000kg";
   if (label.includes("TRUCK-5000")) return "Xe tải 5000kg";
-  if (label.includes("2H") || label.includes("SAVING") || label.includes("ECONOMY")) {
+  if (
+    label.includes("2H") ||
+    label.includes("SAVING") ||
+    label.includes("ECONOMY")
+  ) {
     return "Siêu Tốc - Tiết Kiệm";
   }
   if (label.includes("BIKE") || label.includes("EXPRESS")) return "Siêu Tốc";
@@ -627,7 +657,7 @@ function parseAhamoveQuoteFee(rawQuote: any) {
       rawQuote?.fee ||
       rawQuote?.totalFee ||
       rawQuote?.total_fee ||
-      0
+      0,
   );
 
   const serviceLabel =
@@ -662,12 +692,15 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
   const fastestMinutes = Math.min(
     ...valid
       .map((row) => Number((row as any)?._durationMinutes || 0))
-      .filter((value) => value > 0)
+      .filter((value) => value > 0),
   );
 
   const hasFastest = Number.isFinite(fastestMinutes);
   const recommendedKey =
-    valid.find((row) => getQuoteCarrier(row) === "ghn" && getFeeNumber(row) === cheapestFee) ||
+    valid.find(
+      (row) =>
+        getQuoteCarrier(row) === "ghn" && getFeeNumber(row) === cheapestFee,
+    ) ||
     valid.find((row) => getFeeNumber(row) === cheapestFee) ||
     valid[0];
 
@@ -677,8 +710,10 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
     const minutes = Number((row as any)?._durationMinutes || 0);
 
     if (fee > 0 && fee === cheapestFee) badges.push("Rẻ nhất");
-    if (hasFastest && minutes > 0 && minutes === fastestMinutes) badges.push("Nhanh nhất");
-    if (getQuoteKey(row) === getQuoteKey(recommendedKey)) badges.push("Khuyên dùng");
+    if (hasFastest && minutes > 0 && minutes === fastestMinutes)
+      badges.push("Nhanh nhất");
+    if (getQuoteKey(row) === getQuoteKey(recommendedKey))
+      badges.push("Khuyên dùng");
 
     return {
       ...(row as any),
@@ -686,7 +721,6 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
     } as ShipmentQuoteResult;
   });
 }
-
 
 function getCarrierMeta(carrier: string) {
   const normalized = String(carrier || "").toLowerCase();
@@ -728,11 +762,14 @@ function getSmartQuoteNote(row: ShipmentQuoteResult) {
   const name = getQuoteDisplayName(row).toLowerCase();
   const badges = getQuoteBadges(row);
 
-  if (badges.includes("Khuyên dùng")) return "Cân bằng tốt giữa phí và độ ổn định";
+  if (badges.includes("Khuyên dùng"))
+    return "Cân bằng tốt giữa phí và độ ổn định";
   if (badges.includes("Rẻ nhất")) return "Tối ưu chi phí cho đơn này";
   if (badges.includes("Nhanh nhất")) return "Ưu tiên tốc độ giao hàng";
-  if (carrier === "viettelpost" && name.includes("tiêu chuẩn")) return "Gói VTP tiết kiệm, hợp đơn COD liên tỉnh";
-  if (carrier === "viettelpost" && name.includes("nhanh")) return "Gói VTP cân bằng tốc độ và chi phí";
+  if (carrier === "viettelpost" && name.includes("tiêu chuẩn"))
+    return "Gói VTP tiết kiệm, hợp đơn COD liên tỉnh";
+  if (carrier === "viettelpost" && name.includes("nhanh"))
+    return "Gói VTP cân bằng tốc độ và chi phí";
   if (carrier === "ahamove") return "Phù hợp nội thành cần realtime";
   if (carrier === "ghn") return "Gói phổ thông, dễ vận hành";
   return "Có thể chọn cho đơn này";
@@ -774,7 +811,10 @@ function groupQuotesByCarrier(rows: ShipmentQuoteResult[]) {
     }));
 }
 
-function getShippingInsight(row: ShipmentQuoteResult | null, customerFee: number) {
+function getShippingInsight(
+  row: ShipmentQuoteResult | null,
+  customerFee: number,
+) {
   if (!row) {
     return {
       label: "Chưa chọn gói",
@@ -804,7 +844,6 @@ function getShippingInsight(row: ShipmentQuoteResult | null, customerFee: number
     className: "border-blue-200 bg-blue-50 text-blue-700",
   };
 }
-
 
 function formatAddress(address?: CustomerAddressItem | null) {
   if (!address) return "";
@@ -868,8 +907,10 @@ function getApiBaseUrl() {
   ).replace(/\/$/, "");
 }
 
-
-function extractCopyOrderNoteValue(note: string | undefined | null, labels: string[]) {
+function extractCopyOrderNoteValue(
+  note: string | undefined | null,
+  labels: string[],
+) {
   const raw = String(note || "");
   if (!raw.trim()) return "";
 
@@ -880,7 +921,7 @@ function extractCopyOrderNoteValue(note: string | undefined | null, labels: stri
 
   for (const label of labels) {
     const found = parts.find((part) =>
-      part.toLowerCase().startsWith(label.toLowerCase())
+      part.toLowerCase().startsWith(label.toLowerCase()),
     );
     if (found) {
       return found.slice(label.length).trim();
@@ -909,7 +950,12 @@ function splitCopyOrderAddress(fullAddress: string) {
   }
 
   if (parts.length === 3) {
-    return { line1: parts[0], ward: "", district: parts[1], province: parts[2] };
+    return {
+      line1: parts[0],
+      ward: "",
+      district: parts[1],
+      province: parts[2],
+    };
   }
 
   return {
@@ -921,7 +967,9 @@ function splitCopyOrderAddress(fullAddress: string) {
 }
 
 function isCopyOrderSystemNoteSegment(value?: string | null) {
-  const lower = String(value || "").toLowerCase().trim();
+  const lower = String(value || "")
+    .toLowerCase()
+    .trim();
 
   return (
     lower.startsWith("địa chỉ:") ||
@@ -975,7 +1023,9 @@ function getCleanCopyOrderNote(note?: string | null) {
 
   const explicitNotes = parts
     .filter((part) =>
-      /^(Ghi chú nội bộ|Ghi chú đơn hàng|Ghi chú giao hàng|Ghi chú):/i.test(part)
+      /^(Ghi chú nội bộ|Ghi chú đơn hàng|Ghi chú giao hàng|Ghi chú):/i.test(
+        part,
+      ),
     )
     .map((part) =>
       part
@@ -983,7 +1033,7 @@ function getCleanCopyOrderNote(note?: string | null) {
         .replace(/^Ghi chú đơn hàng:\s*/i, "")
         .replace(/^Ghi chú giao hàng:\s*/i, "")
         .replace(/^Ghi chú:\s*/i, "")
-        .trim()
+        .trim(),
     )
     .filter((part) => part && !isCopyOrderSystemNoteSegment(part));
 
@@ -994,10 +1044,9 @@ function getCleanCopyOrderNote(note?: string | null) {
   return isCopyOrderSystemNoteSegment(raw) ? "" : raw;
 }
 
-
 function findBestProvinceName(
   raw: string,
-  provinceOptions: ProvinceItem[]
+  provinceOptions: ProvinceItem[],
 ): string | null {
   const normalized = normalizeAddressToken(raw);
   const candidates = provinceOptions.map((item) => ({
@@ -1015,7 +1064,7 @@ function findBestProvinceName(
 
 function findBestDistrictName(
   raw: string,
-  districtOptions: DistrictItem[]
+  districtOptions: DistrictItem[],
 ): string | null {
   const normalized = normalizeAddressToken(raw);
   const candidates = districtOptions.map((item) => ({
@@ -1033,9 +1082,12 @@ function findBestDistrictName(
 
 function findBestWardName(raw: string, wardOptions: WardItem[]): string | null {
   const normalizedRaw = normalizeAddressToken(raw);
-  const replaced = Object.entries(ADMIN_MERGE_ALIASES).reduce((acc, [from, to]) => {
-    return acc.includes(from) ? acc.replaceAll(from, to) : acc;
-  }, normalizedRaw);
+  const replaced = Object.entries(ADMIN_MERGE_ALIASES).reduce(
+    (acc, [from, to]) => {
+      return acc.includes(from) ? acc.replaceAll(from, to) : acc;
+    },
+    normalizedRaw,
+  );
 
   const candidates = wardOptions.map((item) => ({
     original: item.name,
@@ -1068,7 +1120,9 @@ function extractDetailAddress(raw: string, parts: string[]) {
 
 function cleanupParsedDetailAddress(raw: string, parts: string[]) {
   let result = cleanupDetailAddress(extractDetailAddress(raw, parts));
-  const normalizedParts = parts.map((part) => normalizeAddressToken(part)).filter(Boolean);
+  const normalizedParts = parts
+    .map((part) => normalizeAddressToken(part))
+    .filter(Boolean);
 
   result = result
     .split(/[,;]/)
@@ -1077,7 +1131,8 @@ function cleanupParsedDetailAddress(raw: string, parts: string[]) {
       const normalizedSegment = normalizeAddressToken(segment);
       if (!normalizedSegment) return false;
       return !normalizedParts.some(
-        (part) => normalizedSegment === part || normalizedSegment.includes(part)
+        (part) =>
+          normalizedSegment === part || normalizedSegment.includes(part),
       );
     })
     .join(", ");
@@ -1221,7 +1276,11 @@ function Modal({
       >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-[28px] font-semibold tracking-tight">{title}</h3>
-          <button type="button" onClick={onClose} className="text-xl text-neutral-500">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xl text-neutral-500"
+          >
             ×
           </button>
         </div>
@@ -1313,11 +1372,15 @@ function CreateModePicker({
                   {item.description}
                 </div>
                 {!item.allowed ? (
-                  <div className="mt-2 text-xs font-semibold text-red-600">{item.lockedText}</div>
+                  <div className="mt-2 text-xs font-semibold text-red-600">
+                    {item.lockedText}
+                  </div>
                 ) : null}
               </div>
 
-              <div className={`rounded-xl px-3 py-2 text-sm font-medium ${item.allowed ? "bg-black text-white" : "bg-neutral-200 text-neutral-500"}`}>
+              <div
+                className={`rounded-xl px-3 py-2 text-sm font-medium ${item.allowed ? "bg-black text-white" : "bg-neutral-200 text-neutral-500"}`}
+              >
                 {saving ? "Đang xử lý..." : item.allowed ? "Chọn" : "Bị khóa"}
               </div>
             </button>
@@ -1340,27 +1403,27 @@ const shippingUiModeOptions: Array<{
   label: string;
   description: string;
 }> = [
-    {
-      value: "carrier",
-      label: "Đẩy qua hãng vận chuyển",
-      description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
-    },
-    {
-      value: "external",
-      label: "Đẩy vận chuyển ngoài",
-      description: "Shipper ngoài / đối tác ngoài hệ thống.",
-    },
-    {
-      value: "pickup",
-      label: "Khách nhận tại cửa hàng",
-      description: "Không tính phí ship.",
-    },
-    {
-      value: "schedule",
-      label: "Giao hàng sau",
-      description: "Tạo đơn trước, xử lý ship sau.",
-    },
-  ];
+  {
+    value: "carrier",
+    label: "Đẩy qua hãng vận chuyển",
+    description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
+  },
+  {
+    value: "external",
+    label: "Đẩy vận chuyển ngoài",
+    description: "Shipper ngoài / đối tác ngoài hệ thống.",
+  },
+  {
+    value: "pickup",
+    label: "Khách nhận tại cửa hàng",
+    description: "Không tính phí ship.",
+  },
+  {
+    value: "schedule",
+    label: "Giao hàng sau",
+    description: "Tạo đơn trước, xử lý ship sau.",
+  },
+];
 
 const shippingPartnerOptions = [
   { value: "ghn", label: "GHN", enabled: true },
@@ -1375,19 +1438,23 @@ const deliveryRequirementOptions: Array<{
   value: DeliveryRequirement;
   label: string;
 }> = [
-    { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
-    { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
-    { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
-  ];
+  { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
+  { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
+  { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
+];
 
 export default function CreateOrderPageClient() {
-  const applyShippingRef = useRef<((payload: ShippingQuoteApplyPayload) => void) | null>(null);
+  const applyShippingRef = useRef<
+    ((payload: ShippingQuoteApplyPayload) => void) | null
+  >(null);
   const shippingStateRef = useRef({
     shippingUiMode: "carrier" as ShippingUiMode,
     shippingMode: "partner" as ShippingMode,
     shippingPartner: "ghn",
   });
-  const phoneLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const phoneLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const phoneLookupSeqRef = useRef(0);
   const suppressPhoneSuggestionRef = useRef(false);
   const phoneSuggestionRef = useRef<HTMLDivElement | null>(null);
@@ -1420,13 +1487,19 @@ export default function CreateOrderPageClient() {
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerPolicyLabel, setCustomerPolicyLabel] = useState("");
   const [customerDiscountPercent, setCustomerDiscountPercent] = useState(0);
-  const [customerSuggestions, setCustomerSuggestions] = useState<CustomerSuggestionItem[]>([]);
+  const [customerSuggestions, setCustomerSuggestions] = useState<
+    CustomerSuggestionItem[]
+  >([]);
   const [customerSuggestionOpen, setCustomerSuggestionOpen] = useState(false);
   const [customerDefaultSuggestions, setCustomerDefaultSuggestions] = useState<
     CustomerSuggestionItem[]
   >([]);
-  const [customerAddresses, setCustomerAddresses] = useState<CustomerAddressItem[]>([]);
-  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [customerAddresses, setCustomerAddresses] = useState<
+    CustomerAddressItem[]
+  >([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
+    null,
+  );
 
   const [addressSelectorOpen, setAddressSelectorOpen] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
@@ -1435,10 +1508,16 @@ export default function CreateOrderPageClient() {
   const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
 
   const [provinceOptions, setProvinceOptions] = useState<ProvinceItem[]>([]);
-  const [addressDistrictOptions, setAddressDistrictOptions] = useState<DistrictItem[]>([]);
+  const [addressDistrictOptions, setAddressDistrictOptions] = useState<
+    DistrictItem[]
+  >([]);
   const [addressWardOptions, setAddressWardOptions] = useState<WardItem[]>([]);
-  const [newCustomerDistrictOptions, setNewCustomerDistrictOptions] = useState<DistrictItem[]>([]);
-  const [newCustomerWardOptions, setNewCustomerWardOptions] = useState<WardItem[]>([]);
+  const [newCustomerDistrictOptions, setNewCustomerDistrictOptions] = useState<
+    DistrictItem[]
+  >([]);
+  const [newCustomerWardOptions, setNewCustomerWardOptions] = useState<
+    WardItem[]
+  >([]);
 
   const [addressLabel, setAddressLabel] = useState("Địa chỉ giao hàng");
   const [addressRecipientName, setAddressRecipientName] = useState("");
@@ -1471,7 +1550,8 @@ export default function CreateOrderPageClient() {
   const [paymentSourceId, setPaymentSourceId] = useState("");
   const [shippingMode, setShippingMode] = useState<ShippingMode>("partner");
   const [shippingPayer, setShippingPayer] = useState<ShippingPayer>("shop");
-  const [shippingUiMode, setShippingUiMode] = useState<ShippingUiMode>("carrier");
+  const [shippingUiMode, setShippingUiMode] =
+    useState<ShippingUiMode>("carrier");
   const [shippingPartner, setShippingPartner] = useState("ghn");
   const [deliveryRequirement, setDeliveryRequirement] =
     useState<DeliveryRequirement>("CHOXEMHANG_KHONGTHU");
@@ -1492,10 +1572,16 @@ export default function CreateOrderPageClient() {
   const [shippingLoading, setShippingLoading] = useState(false);
   const [shippingHint, setShippingHint] = useState("");
   const [shippingError, setShippingError] = useState("");
-  const [shippingQuotes, setShippingQuotes] = useState<ShipmentQuoteResult[]>([]);
-  const [viettelInventories, setViettelInventories] = useState<ViettelPostInventory[]>([]);
+  const [shippingQuotes, setShippingQuotes] = useState<ShipmentQuoteResult[]>(
+    [],
+  );
+  const [viettelInventories, setViettelInventories] = useState<
+    ViettelPostInventory[]
+  >([]);
   const [viettelInventoryLoading, setViettelInventoryLoading] = useState(false);
-  const [selectedViettelInventoryId, setSelectedViettelInventoryId] = useState<number | undefined>();
+  const [selectedViettelInventoryId, setSelectedViettelInventoryId] = useState<
+    number | undefined
+  >();
 
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [newCustomerSaving, setNewCustomerSaving] = useState(false);
@@ -1514,8 +1600,10 @@ export default function CreateOrderPageClient() {
   const [newCustomerTags, setNewCustomerTags] = useState("");
   const [newCustomerNote, setNewCustomerNote] = useState("");
 
-  const [newCustomerSmartAddressInput, setNewCustomerSmartAddressInput] = useState("");
-  const [newCustomerSmartAddressHint, setNewCustomerSmartAddressHint] = useState("");
+  const [newCustomerSmartAddressInput, setNewCustomerSmartAddressInput] =
+    useState("");
+  const [newCustomerSmartAddressHint, setNewCustomerSmartAddressHint] =
+    useState("");
   const [newCustomerSmartAddressLoading, setNewCustomerSmartAddressLoading] =
     useState(false);
 
@@ -1536,390 +1624,395 @@ export default function CreateOrderPageClient() {
     void loadProducts();
   }, []);
 
-
-useEffect(() => {
-  const copyFrom =
-    typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("copyFrom")
-      : "";
-
-  if (!copyFrom) return;
-
-  setCopyingOrder(true);
-  setSuccessMessage("Đang sao chép đơn hàng cũ...");
-}, []);
-
-
-
-useEffect(() => {
-  const run = async () => {
+  useEffect(() => {
     const copyFrom =
       typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("copyFrom")
         : "";
 
-    if (!copyFrom || !products.length) return;
+    if (!copyFrom) return;
 
-    try {
-      setCopyingOrder(true);
-      setError(null);
-      setSuccessMessage("Đang sao chép đơn hàng cũ...");
+    setCopyingOrder(true);
+    setSuccessMessage("Đang sao chép đơn hàng cũ...");
+  }, []);
 
-      const rawOrder = await getOrderForCopy(copyFrom);
-      const order =
-        rawOrder?.data?.id || rawOrder?.data?.orderCode
-          ? rawOrder.data
-          : rawOrder?.order?.id || rawOrder?.order?.orderCode
-            ? rawOrder.order
-            : rawOrder?.item?.id || rawOrder?.item?.orderCode
-              ? rawOrder.item
-              : rawOrder;
+  useEffect(() => {
+    const run = async () => {
+      const copyFrom =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("copyFrom")
+          : "";
 
-      const snap =
-        order?.shippingSnapshot ||
-        order?.shipment?.shippingSnapshot ||
-        order?.shipment ||
-        order?.shipping ||
-        {};
+      if (!copyFrom || !products.length) return;
 
-      const customer =
-        order?.customer ||
-        order?.customerInfo ||
-        order?.buyer ||
-        order?.recipient ||
-        {};
+      try {
+        setCopyingOrder(true);
+        setError(null);
+        setSuccessMessage("Đang sao chép đơn hàng cũ...");
 
-      const noteCustomerId = extractCopyOrderNoteValue(order?.note, [
-        "CustomerId:",
-        "Customer ID:",
-        "customer_id:",
-      ]);
+        const rawOrder = await getOrderForCopy(copyFrom);
+        const order =
+          rawOrder?.data?.id || rawOrder?.data?.orderCode
+            ? rawOrder.data
+            : rawOrder?.order?.id || rawOrder?.order?.orderCode
+              ? rawOrder.order
+              : rawOrder?.item?.id || rawOrder?.item?.orderCode
+                ? rawOrder.item
+                : rawOrder;
 
-      const noteCustomerAddressId = extractCopyOrderNoteValue(order?.note, [
-        "CustomerAddressId:",
-        "CustomerAddress ID:",
-        "customerAddressId:",
-      ]);
+        const snap =
+          order?.shippingSnapshot ||
+          order?.shipment?.shippingSnapshot ||
+          order?.shipment ||
+          order?.shipping ||
+          {};
 
-      const noteAddress = extractCopyOrderNoteValue(order?.note, [
-        "Địa chỉ:",
-        "Dia chi:",
-        "Address:",
-      ]);
+        const customer =
+          order?.customer ||
+          order?.customerInfo ||
+          order?.buyer ||
+          order?.recipient ||
+          {};
 
-      const nextCustomerId =
-        order?.customerId ||
-        customer?.id ||
-        noteCustomerId ||
-        null;
+        const noteCustomerId = extractCopyOrderNoteValue(order?.note, [
+          "CustomerId:",
+          "Customer ID:",
+          "customer_id:",
+        ]);
 
-      const nextCustomerName =
-        order?.customerName ||
-        order?.customerFullName ||
-        order?.receiverName ||
-        order?.recipientName ||
-        order?.toName ||
-        snap?.shippingRecipientName ||
-        snap?.toName ||
-        customer?.fullName ||
-        customer?.name ||
-        customer?.customerName ||
-        "";
+        const noteCustomerAddressId = extractCopyOrderNoteValue(order?.note, [
+          "CustomerAddressId:",
+          "CustomerAddress ID:",
+          "customerAddressId:",
+        ]);
 
-      const nextCustomerPhone =
-        order?.customerPhone ||
-        order?.phone ||
-        order?.receiverPhone ||
-        order?.recipientPhone ||
-        order?.toPhone ||
-        snap?.shippingPhone ||
-        snap?.toPhone ||
-        customer?.phone ||
-        "";
+        const noteAddress = extractCopyOrderNoteValue(order?.note, [
+          "Địa chỉ:",
+          "Dia chi:",
+          "Address:",
+        ]);
 
-      setCustomerId(nextCustomerId);
-      setCustomerName(nextCustomerName);
-      setCustomerPhone(nextCustomerPhone);
-      setCustomerHint(nextCustomerId ? `Khách cũ: ${nextCustomerName}` : "");
-      setSalesChannel(order?.salesChannel || "FACEBOOK");
+        const nextCustomerId =
+          order?.customerId || customer?.id || noteCustomerId || null;
 
-      if (order?.branchId) {
-        setBranchId(order.branchId);
-      }
+        const nextCustomerName =
+          order?.customerName ||
+          order?.customerFullName ||
+          order?.receiverName ||
+          order?.recipientName ||
+          order?.toName ||
+          snap?.shippingRecipientName ||
+          snap?.toName ||
+          customer?.fullName ||
+          customer?.name ||
+          customer?.customerName ||
+          "";
 
-      setNote(
-        getCleanCopyOrderNote(
-          order?.internalNote ||
-            order?.orderNote ||
-            order?.customerNote ||
-            order?.shippingNote ||
-            order?.note ||
-            ""
-        )
-      );
+        const nextCustomerPhone =
+          order?.customerPhone ||
+          order?.phone ||
+          order?.receiverPhone ||
+          order?.recipientPhone ||
+          order?.toPhone ||
+          snap?.shippingPhone ||
+          snap?.toPhone ||
+          customer?.phone ||
+          "";
 
-      const preferredAddressId =
-        snap?.shippingAddressId ||
-        order?.shippingAddressId ||
-        order?.customerAddressId ||
-        noteCustomerAddressId ||
-        customer?.defaultAddressId ||
-        "";
+        setCustomerId(nextCustomerId);
+        setCustomerName(nextCustomerName);
+        setCustomerPhone(nextCustomerPhone);
+        setCustomerHint(nextCustomerId ? `Khách cũ: ${nextCustomerName}` : "");
+        setSalesChannel(order?.salesChannel || "FACEBOOK");
 
-      let addressApplied = false;
+        if (order?.branchId) {
+          setBranchId(order.branchId);
+        }
 
-      if (nextCustomerId) {
-        try {
-          const rows = await getCustomerAddresses(String(nextCustomerId));
-          setCustomerAddresses(rows);
+        setNote(
+          getCleanCopyOrderNote(
+            order?.internalNote ||
+              order?.orderNote ||
+              order?.customerNote ||
+              order?.shippingNote ||
+              order?.note ||
+              "",
+          ),
+        );
 
-          const selected =
-            rows.find((item) => String(item.id) === String(preferredAddressId)) ||
-            rows.find((item) => item.isDefault) ||
-            rows[0] ||
-            null;
+        const preferredAddressId =
+          snap?.shippingAddressId ||
+          order?.shippingAddressId ||
+          order?.customerAddressId ||
+          noteCustomerAddressId ||
+          customer?.defaultAddressId ||
+          "";
 
-          if (selected) {
-            setSelectedAddressId(selected.id);
-            setAddressRecipientName(selected.recipientName || nextCustomerName || "");
-            setAddressPhone(selected.phone || nextCustomerPhone || "");
-            setAddressProvince(selected.province || "");
-            setAddressDistrict((selected as any).district || "");
-            setAddressWard(selected.ward || "");
-            setAddressLine1(selected.addressLine1 || "");
-            setAddressLine2(selected.addressLine2 || "");
-            setAddressPostalCode(selected.postalCode || "");
+        let addressApplied = false;
 
-            const full = formatAddress(selected);
-            setShippingAddress(full);
-            setSmartAddressInput(full);
-            addressApplied = true;
+        if (nextCustomerId) {
+          try {
+            const rows = await getCustomerAddresses(String(nextCustomerId));
+            setCustomerAddresses(rows);
+
+            const selected =
+              rows.find(
+                (item) => String(item.id) === String(preferredAddressId),
+              ) ||
+              rows.find((item) => item.isDefault) ||
+              rows[0] ||
+              null;
+
+            if (selected) {
+              setSelectedAddressId(selected.id);
+              setAddressRecipientName(
+                selected.recipientName || nextCustomerName || "",
+              );
+              setAddressPhone(selected.phone || nextCustomerPhone || "");
+              setAddressProvince(selected.province || "");
+              setAddressDistrict((selected as any).district || "");
+              setAddressWard(selected.ward || "");
+              setAddressLine1(selected.addressLine1 || "");
+              setAddressLine2(selected.addressLine2 || "");
+              setAddressPostalCode(selected.postalCode || "");
+
+              const full = formatAddress(selected);
+              setShippingAddress(full);
+              setSmartAddressInput(full);
+              addressApplied = true;
+            }
+          } catch {
+            setCustomerAddresses([]);
+            setSelectedAddressId(null);
           }
-        } catch {
-          setCustomerAddresses([]);
-          setSelectedAddressId(null);
-        }
-      }
-
-      if (!addressApplied) {
-        const rawAddress =
-          snap?.shippingAddress ||
-          snap?.toAddress ||
-          order?.shippingAddress ||
-          order?.fullAddress ||
-          order?.address ||
-          customer?.fullAddress ||
-          customer?.address ||
-          noteAddress ||
-          "";
-
-        const parsedAddress = splitCopyOrderAddress(rawAddress);
-
-        const fallbackAddressLine1 =
-          snap?.shippingAddressLine1 ||
-          snap?.addressLine1 ||
-          order?.shippingAddressLine1 ||
-          order?.addressLine1 ||
-          customer?.addressLine1 ||
-          parsedAddress.line1 ||
-          rawAddress ||
-          "";
-
-        const fallbackWard =
-          snap?.shippingWard ||
-          snap?.ward ||
-          order?.shippingWard ||
-          order?.ward ||
-          customer?.ward ||
-          parsedAddress.ward ||
-          "";
-
-        const fallbackDistrict =
-          snap?.shippingDistrict ||
-          snap?.district ||
-          order?.shippingDistrict ||
-          order?.district ||
-          customer?.district ||
-          parsedAddress.district ||
-          "";
-
-        const fallbackProvince =
-          snap?.shippingProvince ||
-          snap?.province ||
-          order?.shippingProvince ||
-          order?.province ||
-          customer?.province ||
-          parsedAddress.province ||
-          "";
-
-        const fallbackFull = [
-          fallbackAddressLine1,
-          fallbackWard,
-          fallbackDistrict,
-          fallbackProvince,
-        ]
-          .filter(Boolean)
-          .join(", ");
-
-        setAddressRecipientName(nextCustomerName);
-        setAddressPhone(nextCustomerPhone);
-        setAddressLine1(fallbackAddressLine1);
-        setAddressLine2(snap?.shippingAddressLine2 || order?.shippingAddressLine2 || "");
-        setAddressWard(fallbackWard);
-        setAddressDistrict(fallbackDistrict);
-        setAddressProvince(fallbackProvince);
-
-        if (fallbackFull) {
-          const copiedAddressId = String(preferredAddressId || "copied-order-address");
-
-          const copiedAddress = {
-            id: copiedAddressId,
-            label: "Địa chỉ sao chép",
-            recipientName: nextCustomerName,
-            phone: nextCustomerPhone,
-            addressLine1: fallbackAddressLine1,
-            addressLine2: snap?.shippingAddressLine2 || order?.shippingAddressLine2 || "",
-            ward: fallbackWard,
-            district: fallbackDistrict,
-            province: fallbackProvince,
-            isDefault: true,
-          } as CustomerAddressItem;
-
-          setCustomerAddresses([copiedAddress]);
-          setSelectedAddressId(copiedAddressId);
-        } else {
-          setSelectedAddressId(null);
         }
 
-        setShippingAddress(fallbackFull);
-        setSmartAddressInput(fallbackFull);
+        if (!addressApplied) {
+          const rawAddress =
+            snap?.shippingAddress ||
+            snap?.toAddress ||
+            order?.shippingAddress ||
+            order?.fullAddress ||
+            order?.address ||
+            customer?.fullAddress ||
+            customer?.address ||
+            noteAddress ||
+            "";
+
+          const parsedAddress = splitCopyOrderAddress(rawAddress);
+
+          const fallbackAddressLine1 =
+            snap?.shippingAddressLine1 ||
+            snap?.addressLine1 ||
+            order?.shippingAddressLine1 ||
+            order?.addressLine1 ||
+            customer?.addressLine1 ||
+            parsedAddress.line1 ||
+            rawAddress ||
+            "";
+
+          const fallbackWard =
+            snap?.shippingWard ||
+            snap?.ward ||
+            order?.shippingWard ||
+            order?.ward ||
+            customer?.ward ||
+            parsedAddress.ward ||
+            "";
+
+          const fallbackDistrict =
+            snap?.shippingDistrict ||
+            snap?.district ||
+            order?.shippingDistrict ||
+            order?.district ||
+            customer?.district ||
+            parsedAddress.district ||
+            "";
+
+          const fallbackProvince =
+            snap?.shippingProvince ||
+            snap?.province ||
+            order?.shippingProvince ||
+            order?.province ||
+            customer?.province ||
+            parsedAddress.province ||
+            "";
+
+          const fallbackFull = [
+            fallbackAddressLine1,
+            fallbackWard,
+            fallbackDistrict,
+            fallbackProvince,
+          ]
+            .filter(Boolean)
+            .join(", ");
+
+          setAddressRecipientName(nextCustomerName);
+          setAddressPhone(nextCustomerPhone);
+          setAddressLine1(fallbackAddressLine1);
+          setAddressLine2(
+            snap?.shippingAddressLine2 || order?.shippingAddressLine2 || "",
+          );
+          setAddressWard(fallbackWard);
+          setAddressDistrict(fallbackDistrict);
+          setAddressProvince(fallbackProvince);
+
+          if (fallbackFull) {
+            const copiedAddressId = String(
+              preferredAddressId || "copied-order-address",
+            );
+
+            const copiedAddress = {
+              id: copiedAddressId,
+              label: "Địa chỉ sao chép",
+              recipientName: nextCustomerName,
+              phone: nextCustomerPhone,
+              addressLine1: fallbackAddressLine1,
+              addressLine2:
+                snap?.shippingAddressLine2 || order?.shippingAddressLine2 || "",
+              ward: fallbackWard,
+              district: fallbackDistrict,
+              province: fallbackProvince,
+              isDefault: true,
+            } as CustomerAddressItem;
+
+            setCustomerAddresses([copiedAddress]);
+            setSelectedAddressId(copiedAddressId);
+          } else {
+            setSelectedAddressId(null);
+          }
+
+          setShippingAddress(fallbackFull);
+          setSmartAddressInput(fallbackFull);
+        }
+
+        setShippingFee(
+          String(order?.shippingFee ?? snap?.shippingFee ?? 30000),
+        );
+        setCustomerPaid("0");
+
+        setShippingMode("partner");
+        setShippingUiMode("carrier");
+        setShippingPartner("ghn");
+
+        setSelectedShippingServiceId(undefined);
+        setSelectedShippingServiceTypeId(undefined);
+        setShippingQuotes([]);
+
+        const orderItems = Array.isArray(order?.items)
+          ? order.items
+          : Array.isArray(order?.orderItems)
+            ? order.orderItems
+            : Array.isArray(order?.lines)
+              ? order.lines
+              : [];
+
+        const allProductVariants = products.flatMap((p) =>
+          p.variants.map((v) => ({
+            productId: p.id,
+            productName: p.name,
+            imageUrl: p.imageUrl,
+            ...v,
+          })),
+        );
+
+        const nextLines = orderItems
+          .map((item: any) => {
+            const variantId = String(
+              item.variantId ||
+                item.productVariantId ||
+                item.variant?.id ||
+                item.productVariant?.id ||
+                "",
+            );
+
+            const itemSku = String(
+              item.sku ||
+                item.variantSku ||
+                item.productVariant?.sku ||
+                item.variant?.sku ||
+                "",
+            );
+
+            const found = allProductVariants.find(
+              (v) => String(v.id) === variantId || String(v.sku) === itemSku,
+            );
+
+            const safeVariantId = found?.id || variantId;
+            const safeSku = found?.sku || itemSku;
+
+            if (!safeVariantId && !safeSku) return null;
+
+            return {
+              productId:
+                found?.productId ||
+                item.productId ||
+                item.product?.id ||
+                item.productVariant?.productId ||
+                null,
+              variantId: safeVariantId,
+              sku: safeSku,
+              productName:
+                found?.productName ||
+                item.productName ||
+                item.name ||
+                item.product?.name ||
+                item.productVariant?.product?.name ||
+                safeSku ||
+                "Sản phẩm",
+              color:
+                found?.color ||
+                item.color ||
+                item.variant?.color ||
+                item.productVariant?.color ||
+                "",
+              size:
+                found?.size ||
+                item.size ||
+                item.variant?.size ||
+                item.productVariant?.size ||
+                "",
+              price: Number(
+                item.price ??
+                  item.unitPrice ??
+                  item.salePrice ??
+                  item.productVariant?.price ??
+                  found?.price ??
+                  0,
+              ),
+              stock: Number(found?.stock || 0),
+              totalStock: Number(
+                (found as any)?.totalStock || found?.stock || 0,
+              ),
+              branchStock: Number(
+                (found as any)?.branchStock || found?.stock || 0,
+              ),
+              branchStocks: found?.branchStocks || {},
+              qty: Number(
+                item.qty ?? item.quantity ?? item.quantityOrdered ?? 1,
+              ),
+              discount: Number(item.discount ?? item.discountAmount ?? 0),
+              imageUrl: found?.imageUrl || item.imageUrl || "",
+            };
+          })
+          .filter(Boolean) as OrderLine[];
+
+        setLines(nextLines);
+
+        setSuccessMessage(
+          `Đã sao chép đơn ${order?.orderCode || copyFrom}. Chọn lại hãng vận chuyển rồi tạo đơn mới.`,
+        );
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Không sao chép được đơn hàng.",
+        );
+      } finally {
+        setCopyingOrder(false);
       }
+    };
 
-      setShippingFee(String(order?.shippingFee ?? snap?.shippingFee ?? 30000));
-      setCustomerPaid("0");
-
-      setShippingMode("partner");
-      setShippingUiMode("carrier");
-      setShippingPartner("ghn");
-
-      setSelectedShippingServiceId(undefined);
-      setSelectedShippingServiceTypeId(undefined);
-      setShippingQuotes([]);
-
-      const orderItems = Array.isArray(order?.items)
-        ? order.items
-        : Array.isArray(order?.orderItems)
-          ? order.orderItems
-          : Array.isArray(order?.lines)
-            ? order.lines
-            : [];
-
-      const allProductVariants = products.flatMap((p) =>
-        p.variants.map((v) => ({
-          productId: p.id,
-          productName: p.name,
-          imageUrl: p.imageUrl,
-          ...v,
-        }))
-      );
-
-      const nextLines = orderItems
-        .map((item: any) => {
-          const variantId = String(
-            item.variantId ||
-              item.productVariantId ||
-              item.variant?.id ||
-              item.productVariant?.id ||
-              ""
-          );
-
-          const itemSku = String(
-            item.sku ||
-              item.variantSku ||
-              item.productVariant?.sku ||
-              item.variant?.sku ||
-              ""
-          );
-
-          const found = allProductVariants.find(
-            (v) =>
-              String(v.id) === variantId ||
-              String(v.sku) === itemSku
-          );
-
-          const safeVariantId = found?.id || variantId;
-          const safeSku = found?.sku || itemSku;
-
-          if (!safeVariantId && !safeSku) return null;
-
-          return {
-            productId:
-              found?.productId ||
-              item.productId ||
-              item.product?.id ||
-              item.productVariant?.productId ||
-              null,
-            variantId: safeVariantId,
-            sku: safeSku,
-            productName:
-              found?.productName ||
-              item.productName ||
-              item.name ||
-              item.product?.name ||
-              item.productVariant?.product?.name ||
-              safeSku ||
-              "Sản phẩm",
-            color:
-              found?.color ||
-              item.color ||
-              item.variant?.color ||
-              item.productVariant?.color ||
-              "",
-            size:
-              found?.size ||
-              item.size ||
-              item.variant?.size ||
-              item.productVariant?.size ||
-              "",
-            price: Number(
-              item.price ??
-                item.unitPrice ??
-                item.salePrice ??
-                item.productVariant?.price ??
-                found?.price ??
-                0
-            ),
-            stock: Number(found?.stock || 0),
-            totalStock: Number((found as any)?.totalStock || found?.stock || 0),
-            branchStock: Number((found as any)?.branchStock || found?.stock || 0),
-            branchStocks: found?.branchStocks || {},
-            qty: Number(item.qty ?? item.quantity ?? item.quantityOrdered ?? 1),
-            discount: Number(item.discount ?? item.discountAmount ?? 0),
-            imageUrl: found?.imageUrl || item.imageUrl || "",
-          };
-        })
-        .filter(Boolean) as OrderLine[];
-
-      setLines(nextLines);
-
-      setSuccessMessage(
-        `Đã sao chép đơn ${order?.orderCode || copyFrom}. Chọn lại hãng vận chuyển rồi tạo đơn mới.`
-      );
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Không sao chép được đơn hàng."
-      );
-    } finally {
-      setCopyingOrder(false);
-    }
-  };
-
-  void run();
-}, [products]);
-
-
+    void run();
+  }, [products]);
 
   useEffect(() => {
     const run = async () => {
@@ -1928,10 +2021,13 @@ useEffect(() => {
         const rows = await getViettelPostInventories();
         setViettelInventories(rows);
         setSelectedViettelInventoryId((current) => {
-          if (current && rows.some((row) => row.groupAddressId === current)) return current;
+          if (current && rows.some((row) => row.groupAddressId === current))
+            return current;
           const preferred =
             rows.find((row) => row.phone === "0975615475") ||
-            rows.find((row) => normalizeAddressToken(row.address).includes("sai son")) ||
+            rows.find((row) =>
+              normalizeAddressToken(row.address).includes("sai son"),
+            ) ||
             rows[0];
           return preferred?.groupAddressId;
         });
@@ -1948,11 +2044,10 @@ useEffect(() => {
   const selectedViettelInventory = useMemo(
     () =>
       viettelInventories.find(
-        (item) => item.groupAddressId === selectedViettelInventoryId
+        (item) => item.groupAddressId === selectedViettelInventoryId,
       ) || null,
-    [viettelInventories, selectedViettelInventoryId]
+    [viettelInventories, selectedViettelInventoryId],
   );
-
 
   useEffect(() => {
     const run = async () => {
@@ -2012,7 +2107,7 @@ useEffect(() => {
             : [];
 
         setPaymentSources(rows);
-      } catch { }
+      } catch {}
     };
 
     void run();
@@ -2079,11 +2174,11 @@ useEffect(() => {
           .map((row: any) => ({
             value: String(
               row?.id ??
-              row?.branchId ??
-              row?.warehouseId ??
-              row?.code ??
-              row?.slug ??
-              ""
+                row?.branchId ??
+                row?.warehouseId ??
+                row?.code ??
+                row?.slug ??
+                "",
             ),
             label: branchLabelFromAny(row),
             code: row?.code ? String(row.code) : undefined,
@@ -2097,13 +2192,13 @@ useEffect(() => {
             ? canPickAll
               ? mapped
               : mapped.filter(
-                (item) =>
-                  userBranchIds.includes(item.value) ||
-                  (item.code && userBranchIds.includes(item.code))
-              )
+                  (item) =>
+                    userBranchIds.includes(item.value) ||
+                    (item.code && userBranchIds.includes(item.code)),
+                )
             : Object.entries(BRANCH_LABELS)
-              .filter(([id]) => canPickAll || userBranchIds.includes(id))
-              .map(([id, label]) => ({ value: id, label }));
+                .filter(([id]) => canPickAll || userBranchIds.includes(id))
+                .map(([id, label]) => ({ value: id, label }));
 
         setBranchOptions(filtered);
         setBranchId((prev) => {
@@ -2145,7 +2240,9 @@ useEffect(() => {
 
   useEffect(() => {
     const run = async () => {
-      const province = provinceOptions.find((item) => item.name === addressProvince);
+      const province = provinceOptions.find(
+        (item) => item.name === addressProvince,
+      );
       if (!province?.id) {
         setAddressDistrictOptions([]);
         setAddressDistrict("");
@@ -2166,7 +2263,9 @@ useEffect(() => {
 
   useEffect(() => {
     const run = async () => {
-      const district = addressDistrictOptions.find((item) => item.name === addressDistrict);
+      const district = addressDistrictOptions.find(
+        (item) => item.name === addressDistrict,
+      );
       if (!district?.id) {
         setAddressWardOptions([]);
         setAddressWard("");
@@ -2185,7 +2284,9 @@ useEffect(() => {
 
   useEffect(() => {
     const run = async () => {
-      const province = provinceOptions.find((item) => item.name === newCustomerProvince);
+      const province = provinceOptions.find(
+        (item) => item.name === newCustomerProvince,
+      );
       if (!province?.id) {
         setNewCustomerDistrictOptions([]);
         setNewCustomerDistrict("");
@@ -2207,7 +2308,7 @@ useEffect(() => {
   useEffect(() => {
     const run = async () => {
       const district = newCustomerDistrictOptions.find(
-        (item) => item.name === newCustomerDistrict
+        (item) => item.name === newCustomerDistrict,
       );
       if (!district?.id) {
         setNewCustomerWardOptions([]);
@@ -2246,8 +2347,9 @@ useEffect(() => {
   }, []);
 
   const provinceSelectOptions = useMemo(
-    () => provinceOptions.map((item) => ({ value: item.name, label: item.name })),
-    [provinceOptions]
+    () =>
+      provinceOptions.map((item) => ({ value: item.name, label: item.name })),
+    [provinceOptions],
   );
 
   const addressDistrictSelectOptions = useMemo(
@@ -2256,7 +2358,7 @@ useEffect(() => {
         value: item.name,
         label: item.name,
       })),
-    [addressDistrictOptions]
+    [addressDistrictOptions],
   );
 
   const addressWardSelectOptions = useMemo(
@@ -2265,7 +2367,7 @@ useEffect(() => {
         value: item.name,
         label: item.name,
       })),
-    [addressWardOptions]
+    [addressWardOptions],
   );
 
   const newCustomerDistrictSelectOptions = useMemo(
@@ -2274,7 +2376,7 @@ useEffect(() => {
         value: item.name,
         label: item.name,
       })),
-    [newCustomerDistrictOptions]
+    [newCustomerDistrictOptions],
   );
 
   const newCustomerWardSelectOptions = useMemo(
@@ -2283,7 +2385,7 @@ useEffect(() => {
         value: item.name,
         label: item.name,
       })),
-    [newCustomerWardOptions]
+    [newCustomerWardOptions],
   );
 
   const allVariants = useMemo(() => {
@@ -2297,7 +2399,7 @@ useEffect(() => {
 
         const totalStock = Object.keys(branchStocks).reduce(
           (sum, key) => sum + Number(branchStocks[key] || 0),
-          0
+          0,
         );
 
         // ✅ Không ẩn sản phẩm khi chi nhánh đang làm việc hết hàng.
@@ -2315,7 +2417,7 @@ useEffect(() => {
           branchStock,
           branchStocks,
         };
-      })
+      }),
     );
   }, [products, branchId]);
 
@@ -2350,7 +2452,9 @@ useEffect(() => {
 
     return allVariants.filter((variant) => {
       const sku = normalizeSkuSearch(variant.sku || "");
-      const productName = normalizeSearchText((variant as any).productName || "");
+      const productName = normalizeSearchText(
+        (variant as any).productName || "",
+      );
       const color = normalizeSearchText((variant as any).color || "");
       const size = normalizeSearchText((variant as any).size || "");
       const combinedText = [productName, color, size].filter(Boolean).join(" ");
@@ -2367,12 +2471,12 @@ useEffect(() => {
 
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + line.price * line.qty, 0),
-    [lines]
+    [lines],
   );
 
   const lineDiscountTotal = useMemo(
     () => lines.reduce((sum, line) => sum + Number(line.discount || 0), 0),
-    [lines]
+    [lines],
   );
 
   const manualDiscount = parseNumber(discountTotal);
@@ -2384,16 +2488,20 @@ useEffect(() => {
         promotions,
         lines,
         branchId,
-        salesChannel: shippingUiMode === "pickup" || shippingMode === "pickup" ? "POS" : salesChannel,
+        salesChannel:
+          shippingUiMode === "pickup" || shippingMode === "pickup"
+            ? "POS"
+            : salesChannel,
       }),
-    [promotions, lines, branchId, salesChannel, shippingUiMode, shippingMode]
+    [promotions, lines, branchId, salesChannel, shippingUiMode, shippingMode],
   );
   const autoPromotionDiscount = promotionPreview.totalDiscount;
   const discountedProductIdSet = useMemo(
     () => new Set(promotionPreview.discountedProductIds || []),
-    [promotionPreview.discountedProductIds]
+    [promotionPreview.discountedProductIds],
   );
-  const totalDiscount = lineDiscountTotal + manualDiscount + autoPromotionDiscount;
+  const totalDiscount =
+    lineDiscountTotal + manualDiscount + autoPromotionDiscount;
   const customerMustPay = Math.max(0, subtotal - totalDiscount + fee);
   const remaining = Math.max(0, customerMustPay - paid);
   const orderValueForInsurance = Math.max(0, subtotal - totalDiscount);
@@ -2411,7 +2519,9 @@ useEffect(() => {
 
   const visiblePaymentSources = useMemo(() => {
     const selectedBranch = branchOptions.find(
-      (item) => String(item.value) === String(branchId) || String(item.code || "") === String(branchId)
+      (item) =>
+        String(item.value) === String(branchId) ||
+        String(item.code || "") === String(branchId),
     );
 
     const selectedBranchTexts = [
@@ -2442,7 +2552,10 @@ useEffect(() => {
       if (source.isActive === false) return false;
 
       const sourceBranchId =
-        source.branchId || source.branch?.id || source.warehouseId || source.storeId;
+        source.branchId ||
+        source.branch?.id ||
+        source.warehouseId ||
+        source.storeId;
 
       if (sourceBranchId) {
         return (
@@ -2460,16 +2573,18 @@ useEffect(() => {
           source.branch?.code,
         ]
           .filter(Boolean)
-          .join(" ")
+          .join(" "),
       );
 
       const hasBranchMarker = knownBranchTokens.some((token) =>
-        sourceText.includes(token)
+        sourceText.includes(token),
       );
 
       if (!hasBranchMarker) return true;
 
-      return selectedBranchTexts.some((token) => token && sourceText.includes(token));
+      return selectedBranchTexts.some(
+        (token) => token && sourceText.includes(token),
+      );
     });
   }, [paymentSources, branchId, branchOptions]);
 
@@ -2477,21 +2592,23 @@ useEffect(() => {
     if (!paymentSourceId) return;
 
     const stillValid = visiblePaymentSources.some(
-      (s) => String(s.id) === String(paymentSourceId)
+      (s) => String(s.id) === String(paymentSourceId),
     );
 
     if (!stillValid) setPaymentSourceId("");
   }, [visiblePaymentSources, paymentSourceId]);
 
   const previewBranch =
-    branchOptions.find((item) => item.value === branchId)?.label || branchId || "—";
+    branchOptions.find((item) => item.value === branchId)?.label ||
+    branchId ||
+    "—";
 
   const selectedAddress =
     customerAddresses.find((item) => item.id === selectedAddressId) || null;
-  const customerAddressDisplay =
-    formatAddress(selectedAddress) || "";
+  const customerAddressDisplay = formatAddress(selectedAddress) || "";
   const currentProvinceRaw = selectedAddress?.province || addressProvince;
-  const currentDistrictRaw = (selectedAddress as any)?.district || addressDistrict;
+  const currentDistrictRaw =
+    (selectedAddress as any)?.district || addressDistrict;
   const currentWardRaw = selectedAddress?.ward || addressWard;
 
   const quoteProvince = normalizeProvinceName(currentProvinceRaw || "");
@@ -2532,7 +2649,7 @@ useEffect(() => {
         height: Number(shippingHeight || 10),
         weight: Math.max(
           1,
-          Math.floor(Number(shippingWeight || 200) / Math.max(lines.length, 1))
+          Math.floor(Number(shippingWeight || 200) / Math.max(lines.length, 1)),
         ),
       }));
   }, [lines, shippingLength, shippingWidth, shippingHeight, shippingWeight]);
@@ -2542,7 +2659,7 @@ useEffect(() => {
       (q) =>
         q.serviceId === selectedShippingServiceId &&
         q.serviceTypeId === selectedShippingServiceTypeId &&
-        !((q as any)?._disabled)
+        !(q as any)?._disabled,
     ) || null;
 
   const appendCustomerFacingNote = (value?: string | null) => {
@@ -2607,7 +2724,7 @@ useEffect(() => {
         (address as any).deliveryNote ||
         (address as any).note ||
         (address as any).customerNote ||
-        ""
+        "",
     );
   };
 
@@ -2615,7 +2732,8 @@ useEffect(() => {
     const rows = await getCustomerAddresses(nextCustomerId);
     setCustomerAddresses(rows);
 
-    const defaultAddress = rows.find((item) => item.isDefault) || rows[0] || null;
+    const defaultAddress =
+      rows.find((item) => item.isDefault) || rows[0] || null;
 
     if (defaultAddress) {
       applySelectedAddress(defaultAddress);
@@ -2638,13 +2756,13 @@ useEffect(() => {
         (customer as any).note ||
         (customer as any).defaultAddress?.note ||
         (customer as any).defaultAddress?.shippingNote ||
-        ""
+        "",
     );
 
     if (customer.id) {
       try {
         await loadCustomerAddressBook(customer.id);
-      } catch { }
+      } catch {}
     }
   };
 
@@ -2660,7 +2778,10 @@ useEffect(() => {
 
   const buildCustomerSuggestion = (customer: any): CustomerSuggestionItem => {
     const fullName = String(
-      customer?.fullName || customer?.name || customer?.customerName || "Khách hàng"
+      customer?.fullName ||
+        customer?.name ||
+        customer?.customerName ||
+        "Khách hàng",
     );
     const phone = String(customer?.phone || "");
     const email = String(customer?.email || "");
@@ -2753,7 +2874,10 @@ useEffect(() => {
                 ? [result]
                 : [];
 
-        if (lookupSeq !== phoneLookupSeqRef.current || suppressPhoneSuggestionRef.current) {
+        if (
+          lookupSeq !== phoneLookupSeqRef.current ||
+          suppressPhoneSuggestionRef.current
+        ) {
           return;
         }
 
@@ -2778,10 +2902,13 @@ useEffect(() => {
         setCustomerHint(
           normalizedRows.length
             ? `Tìm thấy ${normalizedRows.length} khách.`
-            : "Chưa có khách cũ cho từ khóa này."
+            : "Chưa có khách cũ cho từ khóa này.",
         );
       } catch {
-        if (lookupSeq !== phoneLookupSeqRef.current || suppressPhoneSuggestionRef.current) {
+        if (
+          lookupSeq !== phoneLookupSeqRef.current ||
+          suppressPhoneSuggestionRef.current
+        ) {
           return;
         }
 
@@ -2796,7 +2923,9 @@ useEffect(() => {
     }, 120);
   };
 
-  const handlePickSuggestedCustomer = async (customer: CustomerSuggestionItem) => {
+  const handlePickSuggestedCustomer = async (
+    customer: CustomerSuggestionItem,
+  ) => {
     suppressPhoneSuggestionRef.current = true;
     phoneLookupSeqRef.current += 1;
 
@@ -2848,7 +2977,9 @@ useEffect(() => {
       }
 
       setAddressProvince(provinceName);
-      const province = provinceOptions.find((item) => item.name === provinceName);
+      const province = provinceOptions.find(
+        (item) => item.name === provinceName,
+      );
       if (!province?.id) return;
 
       const districts = await getDistricts(province.id);
@@ -2859,7 +2990,9 @@ useEffect(() => {
         setAddressLine1(addressOnly);
         setAddressDistrict("");
         setAddressWard("");
-        setSmartAddressHint("Đã lấy tên/sđt và nhận diện tỉnh / thành, chưa chắc quận huyện.");
+        setSmartAddressHint(
+          "Đã lấy tên/sđt và nhận diện tỉnh / thành, chưa chắc quận huyện.",
+        );
         return;
       }
 
@@ -2883,11 +3016,17 @@ useEffect(() => {
         wardName || "",
       ]);
 
-      setAddressLine1(cleanupParsedDetailAddress(addressOnly, [provinceName, districtName, wardName || ""]) || cleanupDetailAddress(detail || addressOnly));
+      setAddressLine1(
+        cleanupParsedDetailAddress(addressOnly, [
+          provinceName,
+          districtName,
+          wardName || "",
+        ]) || cleanupDetailAddress(detail || addressOnly),
+      );
 
       const normalizedRaw = normalizeAddressToken(addressOnly);
       const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
-        normalizedRaw.includes(key)
+        normalizedRaw.includes(key),
       );
 
       setSmartAddressHint(
@@ -2895,10 +3034,12 @@ useEffect(() => {
           ? aliasMatched
             ? "Đã tự map tên người nhận, sđt và địa chỉ cũ sang địa chỉ sau sáp nhập."
             : "Đã tự nhận diện người nhận, sđt, tỉnh / huyện / xã."
-          : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã."
+          : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã.",
       );
     } catch {
-      setSmartAddressHint("Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết được.");
+      setSmartAddressHint(
+        "Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết được.",
+      );
     } finally {
       setSmartAddressLoading(false);
     }
@@ -2931,12 +3072,16 @@ useEffect(() => {
       const provinceName = findBestProvinceName(addressOnly, provinceOptions);
       if (!provinceName) {
         setNewCustomerAddressLine(addressOnly);
-        setNewCustomerSmartAddressHint("Đã lấy tên/sđt, nhưng chưa nhận ra tỉnh / thành.");
+        setNewCustomerSmartAddressHint(
+          "Đã lấy tên/sđt, nhưng chưa nhận ra tỉnh / thành.",
+        );
         return;
       }
 
       setNewCustomerProvince(provinceName);
-      const province = provinceOptions.find((item) => item.name === provinceName);
+      const province = provinceOptions.find(
+        (item) => item.name === provinceName,
+      );
       if (!province?.id) return;
 
       const districts = await getDistricts(province.id);
@@ -2948,7 +3093,7 @@ useEffect(() => {
         setNewCustomerDistrict("");
         setNewCustomerWard("");
         setNewCustomerSmartAddressHint(
-          "Đã lấy tên/sđt và nhận diện tỉnh / thành, cần kiểm tra thêm quận huyện."
+          "Đã lấy tên/sđt và nhận diện tỉnh / thành, cần kiểm tra thêm quận huyện.",
         );
         return;
       }
@@ -2973,11 +3118,17 @@ useEffect(() => {
         wardName || "",
       ]);
 
-      setNewCustomerAddressLine(cleanupParsedDetailAddress(addressOnly, [provinceName, districtName, wardName || ""]) || cleanupDetailAddress(detail || addressOnly));
+      setNewCustomerAddressLine(
+        cleanupParsedDetailAddress(addressOnly, [
+          provinceName,
+          districtName,
+          wardName || "",
+        ]) || cleanupDetailAddress(detail || addressOnly),
+      );
 
       const normalizedRaw = normalizeAddressToken(addressOnly);
       const aliasMatched = Object.keys(ADMIN_MERGE_ALIASES).some((key) =>
-        normalizedRaw.includes(key)
+        normalizedRaw.includes(key),
       );
 
       setNewCustomerSmartAddressHint(
@@ -2985,12 +3136,12 @@ useEffect(() => {
           ? aliasMatched
             ? "Đã tự map tên người nhận, sđt và địa chỉ cũ sang địa chỉ sau sáp nhập."
             : "Đã tự nhận diện người nhận, sđt, tỉnh / huyện / xã."
-          : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã."
+          : "Đã lấy tên/sđt và nhận diện tỉnh / huyện, chưa chắc xã.",
       );
     } catch {
       setNewCustomerAddressLine(raw);
       setNewCustomerSmartAddressHint(
-        "Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết."
+        "Đã thử tách người nhận / sđt / địa chỉ nhưng chưa map hết.",
       );
     } finally {
       setNewCustomerSmartAddressLoading(false);
@@ -2998,7 +3149,9 @@ useEffect(() => {
   };
   useEffect(() => {
     if (customerDiscountPercent > 0 && subtotal > 0) {
-      setDiscountTotal(String(Math.floor((subtotal * customerDiscountPercent) / 100)));
+      setDiscountTotal(
+        String(Math.floor((subtotal * customerDiscountPercent) / 100)),
+      );
     }
   }, [subtotal, customerDiscountPercent]);
 
@@ -3018,18 +3171,19 @@ useEffect(() => {
         return prev.map((line) =>
           line.variantId === variantId
             ? {
-              ...line,
-              // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
-              qty: line.qty + 1,
-            }
-            : line
+                ...line,
+                // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
+                qty: line.qty + 1,
+              }
+            : line,
         );
       }
 
       return [
         ...prev,
         {
-          productId: (found as any).productId || (found as any).product?.id || null,
+          productId:
+            (found as any).productId || (found as any).product?.id || null,
           variantId: found.id,
           sku: found.sku,
           productName: (found as any).productName,
@@ -3037,9 +3191,14 @@ useEffect(() => {
           size: (found as any).size,
           price: Number(found.price || 0),
           stock: Number((found as any).stock || 0),
-          totalStock: Number((found as any).totalStock ?? (found as any).stock ?? 0),
-          branchStock: Number((found as any).branchStock ?? (found as any).stock ?? 0),
-          branchStocks: ((found as any).branchStocks as Record<string, number>) || {},
+          totalStock: Number(
+            (found as any).totalStock ?? (found as any).stock ?? 0,
+          ),
+          branchStock: Number(
+            (found as any).branchStock ?? (found as any).stock ?? 0,
+          ),
+          branchStocks:
+            ((found as any).branchStocks as Record<string, number>) || {},
           qty: 1,
           discount: 0,
           imageUrl: (found as any).imageUrl,
@@ -3076,7 +3235,7 @@ useEffect(() => {
         // ✅ Cho phép bán âm, không tự ép số lượng về tồn kho.
         if (next.discount < 0) next.discount = 0;
         return next;
-      })
+      }),
     );
   };
 
@@ -3229,7 +3388,9 @@ useEffect(() => {
       if (newCustomerNote.trim()) {
         setNote((prev) => {
           const current = prev.trim();
-          return current ? `${current}\n${newCustomerNote.trim()}` : newCustomerNote.trim();
+          return current
+            ? `${current}\n${newCustomerNote.trim()}`
+            : newCustomerNote.trim();
         });
       }
 
@@ -3240,7 +3401,7 @@ useEffect(() => {
       resetNewCustomerForm();
     } catch (err) {
       setNewCustomerError(
-        err instanceof Error ? err.message : "Không tạo được khách hàng."
+        err instanceof Error ? err.message : "Không tạo được khách hàng.",
       );
     } finally {
       setNewCustomerSaving(false);
@@ -3312,7 +3473,7 @@ useEffect(() => {
       setAddressSelectorOpen(true);
     } catch (err) {
       setAddressError(
-        err instanceof Error ? err.message : "Không lưu được địa chỉ."
+        err instanceof Error ? err.message : "Không lưu được địa chỉ.",
       );
     } finally {
       setAddressSaving(false);
@@ -3331,7 +3492,7 @@ useEffect(() => {
       }
     } catch (err) {
       setAddressError(
-        err instanceof Error ? err.message : "Không đổi được địa chỉ mặc định."
+        err instanceof Error ? err.message : "Không đổi được địa chỉ mặc định.",
       );
     }
   };
@@ -3408,7 +3569,10 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
-    if (shippingUiMode === "carrier" && (shippingPartner === "ghn" || shippingPartner === "ahamove")) {
+    if (
+      shippingUiMode === "carrier" &&
+      (shippingPartner === "ghn" || shippingPartner === "ahamove")
+    ) {
       // ✅ Chỉ set mặc định khi ô phí ship đang trống.
       // Không ép 0 thành 30.000 vì 0 là free ship do nhân viên nhập.
       setShippingFee((prev) => {
@@ -3449,7 +3613,9 @@ useEffect(() => {
     }
 
     if (shippingUiMode === "external") {
-      setShippingHint("Đang dùng vận chuyển ngoài. Có thể nhập phí ship tay nếu cần.");
+      setShippingHint(
+        "Đang dùng vận chuyển ngoài. Có thể nhập phí ship tay nếu cần.",
+      );
       setShippingError("");
       setShippingQuotes([]);
       setSelectedShippingServiceId(undefined);
@@ -3479,15 +3645,17 @@ useEffect(() => {
         setSelectedShippingServiceId(undefined);
         setSelectedShippingServiceTypeId(undefined);
         setShippingError("");
-        setShippingHint("Cần có ít nhất 1 sản phẩm trong đơn để tính phí ship.");
+        setShippingHint(
+          "Cần có ít nhất 1 sản phẩm trong đơn để tính phí ship.",
+        );
         return;
       }
 
-      const toAddress = carrierToAddress || (
+      const toAddress =
+        carrierToAddress ||
         selectedAddress?.addressLine1 ||
         addressLine1.trim() ||
-        shippingAddress.trim()
-      );
+        shippingAddress.trim();
 
       const errors: string[] = [];
       const resultQuotes: ShipmentQuoteResult[] = [];
@@ -3522,26 +3690,30 @@ useEffect(() => {
               items: quoteItems,
             });
 
-            const mappedGhn = (Array.isArray(ghnRows) ? ghnRows : []).map((row) => ({
-              ...(row as any),
-              _carrier: "ghn",
-              _quoteKey: `ghn-${row.serviceId || 0}-${row.serviceTypeId || 0}`,
-              _serviceName:
-                (row as any).shortName ||
-                (row as any).serviceName ||
-                `GHN ${row.serviceId}`,
-              _leadtimeLabel: getQuoteLeadtimeLabel(row),
-              _ghnDistrictId: Number(resolved.districtId),
-              _ghnWardCode: String(resolved.wardCode),
-              _applyFeeToInput: true,
-            })) as ShipmentQuoteResult[];
+            const mappedGhn = (Array.isArray(ghnRows) ? ghnRows : []).map(
+              (row) => ({
+                ...(row as any),
+                _carrier: "ghn",
+                _quoteKey: `ghn-${row.serviceId || 0}-${row.serviceTypeId || 0}`,
+                _serviceName:
+                  (row as any).shortName ||
+                  (row as any).serviceName ||
+                  `GHN ${row.serviceId}`,
+                _leadtimeLabel: getQuoteLeadtimeLabel(row),
+                _ghnDistrictId: Number(resolved.districtId),
+                _ghnWardCode: String(resolved.wardCode),
+                _applyFeeToInput: true,
+              }),
+            ) as ShipmentQuoteResult[];
 
             resultQuotes.push(...mappedGhn);
             setGhnDistrictId(Number(resolved.districtId));
             setGhnWardCode(String(resolved.wardCode));
           } catch (err) {
             errors.push(
-              err instanceof Error ? `GHN: ${err.message}` : "GHN: Không lấy được báo giá."
+              err instanceof Error
+                ? `GHN: ${err.message}`
+                : "GHN: Không lấy được báo giá.",
             );
           }
         } else {
@@ -3558,7 +3730,8 @@ useEffect(() => {
               toPhone: selectedAddress?.phone || customerPhone.trim(),
               toAddress,
               codAmount: remaining > 0 ? remaining : 0,
-              services: "HAN-BIKE,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
+              services:
+                "HAN-BIKE,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
               serviceId: "HAN-BIKE",
               weight: Number(shippingWeight || 200),
               length: Number(shippingLength || 10),
@@ -3582,8 +3755,8 @@ useEffect(() => {
               .filter((parsed: any) =>
                 shouldShowAhamoveService(
                   parsed.serviceLabel,
-                  Number(shippingWeight || 200)
-                )
+                  Number(shippingWeight || 200),
+                ),
               );
 
             for (const parsed of ahamoveRows) {
@@ -3600,11 +3773,13 @@ useEffect(() => {
                   label:
                     parsed.distanceKm || parsed.durationMinutes
                       ? `${parsed.distanceKm ? `${parsed.distanceKm}km` : ""}${
-                          parsed.distanceKm && parsed.durationMinutes ? " · " : ""
+                          parsed.distanceKm && parsed.durationMinutes
+                            ? " · "
+                            : ""
                         }${parsed.durationMinutes ? `${parsed.durationMinutes} phút` : ""}`
                       : "Nội thành",
                 },
-                ...( {
+                ...({
                   _carrier: "ahamove",
                   _quoteKey: `ahamove-${parsed.serviceLabel}`,
                   _serviceName: parsed.serviceLabel,
@@ -3621,13 +3796,12 @@ useEffect(() => {
             errors.push(
               err instanceof Error
                 ? `AhaMove: ${err.message}`
-                : "AhaMove: Không lấy được báo giá."
+                : "AhaMove: Không lấy được báo giá.",
             );
           }
         } else {
           errors.push("AhaMove: Thiếu địa chỉ giao hàng.");
         }
-
 
         if (quoteProvince && quoteDistrict) {
           try {
@@ -3661,7 +3835,9 @@ useEffect(() => {
               height: Number(shippingHeight || 10),
             });
 
-            const mappedViettel = (Array.isArray(viettelRows) ? viettelRows : []).map(
+            const mappedViettel = (
+              Array.isArray(viettelRows) ? viettelRows : []
+            ).map(
               (row: any, index: number) =>
                 ({
                   ...row,
@@ -3675,8 +3851,8 @@ useEffect(() => {
                     row.serviceName ||
                     row._viettelServiceCode ||
                     "Viettel Post",
-                  _applyFeeToInput: !((row as any)?._disabled),
-                }) as ShipmentQuoteResult
+                  _applyFeeToInput: !(row as any)?._disabled,
+                }) as ShipmentQuoteResult,
             );
 
             resultQuotes.push(...mappedViettel);
@@ -3684,7 +3860,7 @@ useEffect(() => {
             errors.push(
               err instanceof Error
                 ? `ViettelPost: ${err.message}`
-                : "ViettelPost: Không lấy được báo giá."
+                : "ViettelPost: Không lấy được báo giá.",
             );
           }
         } else {
@@ -3705,22 +3881,23 @@ useEffect(() => {
 
         if (!sortedQuotes.length) {
           setShippingHint("");
-          setShippingError(errors.join(" | ") || "Không lấy được phí vận chuyển.");
+          setShippingError(
+            errors.join(" | ") || "Không lấy được phí vận chuyển.",
+          );
           setSelectedShippingServiceId(undefined);
           setSelectedShippingServiceTypeId(undefined);
           return;
         }
 
         const currentCarrierQuotes = sortedQuotes.filter(
-          (row) => getQuoteCarrier(row) === shippingPartner
+          (row) => getQuoteCarrier(row) === shippingPartner,
         );
         const recommended =
-          sortedQuotes.find((row) => getQuoteBadges(row).includes("Khuyên dùng")) ||
-          sortedQuotes[0];
+          sortedQuotes.find((row) =>
+            getQuoteBadges(row).includes("Khuyên dùng"),
+          ) || sortedQuotes[0];
         const selected =
-          currentCarrierQuotes[0] ||
-          recommended ||
-          sortedQuotes[0];
+          currentCarrierQuotes[0] || recommended || sortedQuotes[0];
 
         applyShippingRef.current?.({
           shippingFee: getFeeNumber(selected),
@@ -3733,12 +3910,13 @@ useEffect(() => {
           length: Number(shippingLength || 10),
           width: Number(shippingWidth || 10),
           height: Number(shippingHeight || 10),
-          ghnDistrictId: (selected as any)._ghnDistrictId || resolved?.districtId,
+          ghnDistrictId:
+            (selected as any)._ghnDistrictId || resolved?.districtId,
           ghnWardCode: (selected as any)._ghnWardCode || resolved?.wardCode,
         });
 
         setShippingHint(
-          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)}. Phí đối tác: ${currency(getFeeNumber(selected))} | Khách đang trả: ${currency(parseNumber(shippingFee))}.`
+          `Đã so sánh ${sortedQuotes.length} gói vận chuyển. Đang chọn ${getQuoteDisplayName(selected)}. Phí đối tác: ${currency(getFeeNumber(selected))} | Khách đang trả: ${currency(parseNumber(shippingFee))}.`,
         );
         setShippingError(errors.length ? errors.join(" | ") : "");
       } catch (err) {
@@ -3747,7 +3925,7 @@ useEffect(() => {
         setSelectedShippingServiceTypeId(undefined);
         setShippingHint("");
         setShippingError(
-          err instanceof Error ? err.message : "Không lấy được phí ship."
+          err instanceof Error ? err.message : "Không lấy được phí ship.",
         );
       } finally {
         setShippingLoading(false);
@@ -3792,8 +3970,10 @@ useEffect(() => {
 
   function getCreateModePermissionError(mode: CreateOrderMode) {
     if (!canCreateOrder) return "Bạn không có quyền tạo đơn hàng.";
-    if (mode === "approve" && !canApproveOrder) return "Bạn không có quyền tạo và duyệt đơn.";
-    if (mode === "ship" && !canPackShipOrder) return "Bạn không có quyền tạo và xuất kho đơn.";
+    if (mode === "approve" && !canApproveOrder)
+      return "Bạn không có quyền tạo và duyệt đơn.";
+    if (mode === "ship" && !canPackShipOrder)
+      return "Bạn không có quyền tạo và xuất kho đơn.";
     return "";
   }
 
@@ -3839,20 +4019,31 @@ useEffect(() => {
       .filter(Boolean);
     setStockWarningMessage(nextStockWarnings[0] || "");
 
-    const isPickupOrder = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
+    const isPickupOrder =
+      shippingUiMode === "pickup" ||
+      shippingMode === "pickup" ||
+      shippingPartner === "pickup";
     const finalCreateMode: CreateOrderMode =
       isPickupOrder && mode !== "draft" ? "ship" : mode;
 
     let submitGhnDistrictId = ghnDistrictId;
     let submitGhnWardCode = ghnWardCode;
 
-    if (!isPickupOrder && mode === "ship" && shippingUiMode === "carrier" && (shippingPartner === "ghn" || shippingPartner === "ahamove")) {
+    if (
+      !isPickupOrder &&
+      mode === "ship" &&
+      shippingUiMode === "carrier" &&
+      (shippingPartner === "ghn" || shippingPartner === "ahamove")
+    ) {
       if (!shippingAddress.trim()) {
         setError("Thiếu địa chỉ giao hàng.");
         return;
       }
 
-      if (shippingPartner === "ghn" && (!submitGhnDistrictId || !submitGhnWardCode)) {
+      if (
+        shippingPartner === "ghn" &&
+        (!submitGhnDistrictId || !submitGhnWardCode)
+      ) {
         if (!quoteProvince || !quoteDistrict || !quoteWard) {
           setError("Địa chỉ chưa map được GHN.");
           return;
@@ -3881,7 +4072,9 @@ useEffect(() => {
           setGhnDistrictId(submitGhnDistrictId);
           setGhnWardCode(submitGhnWardCode);
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Địa chỉ chưa map được GHN.");
+          setError(
+            err instanceof Error ? err.message : "Địa chỉ chưa map được GHN.",
+          );
           setSaving(false);
           return;
         }
@@ -3906,7 +4099,9 @@ useEffect(() => {
       });
 
       const extraNoteParts = [
-        customerFacingShippingNote ? `Ghi chú giao hàng: ${customerFacingShippingNote}` : "",
+        customerFacingShippingNote
+          ? `Ghi chú giao hàng: ${customerFacingShippingNote}`
+          : "",
         note.trim() ? `Ghi chú đơn hàng: ${note.trim()}` : "",
         shippingAddress.trim() ? `Địa chỉ: ${shippingAddress.trim()}` : "",
         tags.trim() ? `Ghi chú nội bộ: ${tags.trim()}` : "",
@@ -3919,7 +4114,9 @@ useEffect(() => {
           : "",
         `Giảm giá tay: ${manualDiscount}`,
         `Giảm giá dòng: ${lineDiscountTotal}`,
-        autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
+        autoPromotionDiscount
+          ? `Khuyến mại tự động: ${autoPromotionDiscount}`
+          : "",
         `Phí ship: ${fee}`,
         `Khách đã trả: ${effectivePaidAmount}`,
         `Còn phải trả: ${remaining}`,
@@ -3929,7 +4126,9 @@ useEffect(() => {
         isPickupOrder ? "Nhận tại cửa hàng: true" : "",
         `Người trả ship: ${shippingPayer}`,
         `Yêu cầu giao hàng: ${requiredNoteLabel(deliveryRequirement)}`,
-        selectedShippingServiceId ? `GHN ServiceId: ${selectedShippingServiceId}` : "",
+        selectedShippingServiceId
+          ? `GHN ServiceId: ${selectedShippingServiceId}`
+          : "",
         selectedShippingServiceTypeId
           ? `GHN ServiceTypeId: ${selectedShippingServiceTypeId}`
           : "",
@@ -3979,16 +4178,24 @@ useEffect(() => {
         // kể cả đơn chưa đẩy hãng vận chuyển.
         shippingNote: isPickupOrder ? undefined : customerFacingShippingNote,
         deliveryRequirement: isPickupOrder ? undefined : deliveryRequirement,
-        requiredNote: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
-        required_note: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
-        requiredNoteLabel: isPickupOrder ? undefined : requiredNoteLabel(deliveryRequirement),
+        requiredNote: isPickupOrder
+          ? undefined
+          : mapRequiredNoteForGhn(deliveryRequirement),
+        required_note: isPickupOrder
+          ? undefined
+          : mapRequiredNoteForGhn(deliveryRequirement),
+        requiredNoteLabel: isPickupOrder
+          ? undefined
+          : requiredNoteLabel(deliveryRequirement),
 
         shippingSnapshot: {
           skipAutoShipment: shouldCreateCarrierShipmentManually,
           shippingFee: isPickupOrder ? 0 : Number(fee || 0),
           shipFee: isPickupOrder ? 0 : Number(fee || 0),
           fee: isPickupOrder ? 0 : Number(fee || 0),
-          shippingAddressId: isPickupOrder ? undefined : selectedAddress?.id || undefined,
+          shippingAddressId: isPickupOrder
+            ? undefined
+            : selectedAddress?.id || undefined,
           shippingRecipientName:
             selectedAddress?.recipientName || customerName.trim(),
           shippingPhone: selectedAddress?.phone || customerPhone.trim(),
@@ -4002,52 +4209,76 @@ useEffect(() => {
             ? undefined
             : selectedAddress?.addressLine2 || addressLine2.trim() || undefined,
           shippingWard: isPickupOrder ? undefined : quoteWard || undefined,
-          shippingDistrict: isPickupOrder ? undefined : quoteDistrict || undefined,
-          shippingProvince: isPickupOrder ? undefined : quoteProvince || undefined,
+          shippingDistrict: isPickupOrder
+            ? undefined
+            : quoteDistrict || undefined,
+          shippingProvince: isPickupOrder
+            ? undefined
+            : quoteProvince || undefined,
           shippingPostalCode: isPickupOrder
             ? undefined
             : selectedAddress?.postalCode || addressPostalCode || undefined,
-          shippingGhnDistrictId: isPickupOrder ? undefined : submitGhnDistrictId ?? undefined,
-          shippingGhnWardCode: isPickupOrder ? undefined : submitGhnWardCode || undefined,
-          ghnDistrictId: isPickupOrder ? undefined : submitGhnDistrictId ?? undefined,
-          ghnWardCode: isPickupOrder ? undefined : submitGhnWardCode || undefined,
+          shippingGhnDistrictId: isPickupOrder
+            ? undefined
+            : (submitGhnDistrictId ?? undefined),
+          shippingGhnWardCode: isPickupOrder
+            ? undefined
+            : submitGhnWardCode || undefined,
+          ghnDistrictId: isPickupOrder
+            ? undefined
+            : (submitGhnDistrictId ?? undefined),
+          ghnWardCode: isPickupOrder
+            ? undefined
+            : submitGhnWardCode || undefined,
           shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
           shippingPayer,
           note: isPickupOrder ? undefined : customerFacingShippingNote,
           shippingNote: isPickupOrder ? undefined : customerFacingShippingNote,
           deliveryRequirement: isPickupOrder ? undefined : deliveryRequirement,
-          requiredNote: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
-          required_note: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
-          requiredNoteLabel: isPickupOrder ? undefined : requiredNoteLabel(deliveryRequirement),
-          selectedServiceId: isPickupOrder ? undefined : selectedShippingServiceId,
+          requiredNote: isPickupOrder
+            ? undefined
+            : mapRequiredNoteForGhn(deliveryRequirement),
+          required_note: isPickupOrder
+            ? undefined
+            : mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: isPickupOrder
+            ? undefined
+            : requiredNoteLabel(deliveryRequirement),
+          selectedServiceId: isPickupOrder
+            ? undefined
+            : selectedShippingServiceId,
           selectedServiceTypeId: isPickupOrder
             ? undefined
             : selectedShippingServiceTypeId,
-          shippingQuoteKey: isPickupOrder ? undefined : selectedQuote ? getQuoteKey(selectedQuote) : undefined,
+          shippingQuoteKey: isPickupOrder
+            ? undefined
+            : selectedQuote
+              ? getQuoteKey(selectedQuote)
+              : undefined,
           carrier: isPickupOrder ? "pickup" : shippingPartner,
           viettelServiceCode:
             !isPickupOrder && shippingPartner === "viettelpost"
-              ? ((selectedQuote as any)?._viettelServiceCode ||
-                  (selectedQuote as any)?._serviceName ||
-                  undefined)
+              ? (selectedQuote as any)?._viettelServiceCode ||
+                (selectedQuote as any)?._serviceName ||
+                undefined
               : undefined,
           viettelSenderGroupAddressId:
             !isPickupOrder && shippingPartner === "viettelpost"
-              ? ((selectedQuote as any)?._viettelSenderGroupAddressId ||
-                  selectedViettelInventory?.groupAddressId ||
-                  undefined)
+              ? (selectedQuote as any)?._viettelSenderGroupAddressId ||
+                selectedViettelInventory?.groupAddressId ||
+                undefined
               : undefined,
           viettelReceiverProvinceId:
             !isPickupOrder && shippingPartner === "viettelpost"
-              ? ((selectedQuote as any)?._viettelReceiverProvinceId || undefined)
+              ? (selectedQuote as any)?._viettelReceiverProvinceId || undefined
               : undefined,
           viettelReceiverDistrictId:
             !isPickupOrder && shippingPartner === "viettelpost"
-              ? ((selectedQuote as any)?._viettelReceiverDistrictId || undefined)
+              ? (selectedQuote as any)?._viettelReceiverDistrictId || undefined
               : undefined,
           viettelReceiverWardId:
             !isPickupOrder && shippingPartner === "viettelpost"
-              ? ((selectedQuote as any)?._viettelReceiverWardId || undefined)
+              ? (selectedQuote as any)?._viettelReceiverWardId || undefined
               : undefined,
           weight: shippingWeight,
           length: shippingLength,
@@ -4078,7 +4309,6 @@ useEffect(() => {
           codAmount: remaining > 0 ? remaining : 0,
           insuranceValue: customerMustPay,
           note: customerFacingShippingNote,
-          shippingNote: customerFacingShippingNote,
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
@@ -4099,8 +4329,8 @@ useEffect(() => {
             weight: Math.max(
               1,
               Math.floor(
-                Number(shippingWeight || 200) / Math.max(lines.length, 1)
-              )
+                Number(shippingWeight || 200) / Math.max(lines.length, 1),
+              ),
             ),
             category: "Hàng hóa",
           })),
@@ -4131,18 +4361,19 @@ useEffect(() => {
           toAddress,
           codAmount: remaining > 0 ? remaining : 0,
           serviceId:
-            (shippingQuotes.find(
-              (quote) =>
-                getQuoteCarrier(quote) === "ahamove" &&
-                quote.serviceId === selectedShippingServiceId &&
-                quote.serviceTypeId === selectedShippingServiceTypeId
-            ) as any)?._serviceName || "HAN-BIKE",
+            (
+              shippingQuotes.find(
+                (quote) =>
+                  getQuoteCarrier(quote) === "ahamove" &&
+                  quote.serviceId === selectedShippingServiceId &&
+                  quote.serviceTypeId === selectedShippingServiceTypeId,
+              ) as any
+            )?._serviceName || "HAN-BIKE",
           payment_method: "BALANCE",
           paymentMethod: "BALANCE",
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
           note: customerFacingShippingNote,
-          shippingNote: customerFacingShippingNote,
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
@@ -4155,8 +4386,8 @@ useEffect(() => {
             weight: Math.max(
               1,
               Math.floor(
-                Number(shippingWeight || 200) / Math.max(lines.length, 1)
-              )
+                Number(shippingWeight || 200) / Math.max(lines.length, 1),
+              ),
             ),
           })),
         });
@@ -4169,7 +4400,6 @@ useEffect(() => {
           ahamoveCreated?.id ||
           "";
       }
-
 
       if (
         !isPickupOrder &&
@@ -4185,9 +4415,9 @@ useEffect(() => {
         const selectedViettelQuote = shippingQuotes.find(
           (quote) =>
             getQuoteCarrier(quote) === "viettelpost" &&
-            !((quote as any)?._disabled) &&
+            !(quote as any)?._disabled &&
             quote.serviceId === selectedShippingServiceId &&
-            quote.serviceTypeId === selectedShippingServiceTypeId
+            quote.serviceTypeId === selectedShippingServiceTypeId,
         );
 
         const viettelCreated = await createViettelPostShipment(created.id, {
@@ -4217,7 +4447,12 @@ useEffect(() => {
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
           content: `Đơn hàng ${created.orderCode}`,
-          note: note.trim() || "",
+          note: customerFacingShippingNote,
+          shippingNote: customerFacingShippingNote,
+          deliveryRequirement,
+          requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          required_note: mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
           weight: shippingWeight,
           length: shippingLength,
           width: shippingWidth,
@@ -4229,8 +4464,8 @@ useEffect(() => {
             weight: Math.max(
               1,
               Math.floor(
-                Number(shippingWeight || 200) / Math.max(lines.length, 1)
-              )
+                Number(shippingWeight || 200) / Math.max(lines.length, 1),
+              ),
             ),
           })),
         });
@@ -4254,20 +4489,28 @@ useEffect(() => {
         nextSearch.set("tracking", carrierTrackingCode);
       }
 
-      router.push(`/orders/${encodeURIComponent(created.id)}?${nextSearch.toString()}`);
+      router.push(
+        `/orders/${encodeURIComponent(created.id)}?${nextSearch.toString()}`,
+      );
       return;
-
     } catch (err: any) {
       setError(err?.message || "Tạo đơn thất bại.");
       setSaving(false);
     }
   };
 
-  const compactCustomerSummary = [customerName || "Khách lẻ", customerPhone || "", customerPolicyLabel || ""]
+  const compactCustomerSummary = [
+    customerName || "Khách lẻ",
+    customerPhone || "",
+    customerPolicyLabel || "",
+  ]
     .filter(Boolean)
     .join(" · ");
 
-  const isPickupView = shippingUiMode === "pickup" || shippingMode === "pickup" || shippingPartner === "pickup";
+  const isPickupView =
+    shippingUiMode === "pickup" ||
+    shippingMode === "pickup" ||
+    shippingPartner === "pickup";
   const shouldShowGlobalError =
     Boolean(error) &&
     !(
@@ -4282,9 +4525,7 @@ useEffect(() => {
       <form onSubmit={(e) => e.preventDefault()} className="space-y-5 p-6">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Tạo đơn</h2>
-          <p className="mt-1 text-sm text-neutral-500">
-            
-          </p>
+          <p className="mt-1 text-sm text-neutral-500"></p>
         </div>
 
         {shouldShowGlobalError ? (
@@ -4314,7 +4555,9 @@ useEffect(() => {
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-lg font-semibold">Thông tin khách hàng</h3>
+                      <h3 className="text-lg font-semibold">
+                        Thông tin khách hàng
+                      </h3>
                       <p className="mt-1 text-sm text-neutral-500">
                         Nhập tên và tra khách cũ bằng số điện thoại.
                       </p>
@@ -4351,7 +4594,8 @@ useEffect(() => {
                           if (suppressPhoneSuggestionRef.current) return;
 
                           if (customerPhone.trim()) {
-                            if (customerSuggestions.length) setCustomerSuggestionOpen(true);
+                            if (customerSuggestions.length)
+                              setCustomerSuggestionOpen(true);
                             return;
                           }
 
@@ -4366,14 +4610,17 @@ useEffect(() => {
                         placeholder="Nhập sđt để tìm khách cũ"
                       />
 
-                      {customerSuggestionOpen && customerSuggestions.length > 0 ? (
+                      {customerSuggestionOpen &&
+                      customerSuggestions.length > 0 ? (
                         <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 max-h-[280px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
                           {customerSuggestions.map((item, index) => (
                             <button
                               key={`${item.id || item.phone || "customer"}-${index}`}
                               type="button"
                               onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => void handlePickSuggestedCustomer(item)}
+                              onClick={() =>
+                                void handlePickSuggestedCustomer(item)
+                              }
                               className="flex w-full flex-col rounded-xl px-3 py-3 text-left transition hover:bg-neutral-50"
                             >
                               <span className="text-sm font-semibold text-neutral-900">
@@ -4393,7 +4640,6 @@ useEffect(() => {
                   </div>
 
                   <div className="rounded-2xl border border-neutral-300 p-4">
-
                     <div className="flex gap-2">
                       <Button
                         variant="secondary"
@@ -4469,7 +4715,9 @@ useEffect(() => {
 
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">Kênh bán</p>
+                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                      Kênh bán
+                    </p>
                     <select
                       className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       value={salesChannel}
@@ -4484,12 +4732,15 @@ useEffect(() => {
                   </div>
 
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">Chi nhánh</p>
+                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                      Chi nhánh
+                    </p>
                     {branchLoading ? (
                       <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-500">
                         Đang tải kho hàng...
                       </div>
-                    ) : branchOptions.length <= 1 && !isOwnerUser(getCurrentUserFromStorage()) ? (
+                    ) : branchOptions.length <= 1 &&
+                      !isOwnerUser(getCurrentUserFromStorage()) ? (
                       <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700">
                         {branchOptions[0]?.label || "—"}
                       </div>
@@ -4515,7 +4766,9 @@ useEffect(() => {
                     <select
                       className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       value={shippingPayer}
-                      onChange={(e) => setShippingPayer(e.target.value as ShippingPayer)}
+                      onChange={(e) =>
+                        setShippingPayer(e.target.value as ShippingPayer)
+                      }
                     >
                       <option value="customer">Khách trả</option>
                       <option value="shop">Shop trả</option>
@@ -4523,12 +4776,16 @@ useEffect(() => {
                   </div>
 
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">Yêu cầu giao hàng</p>
+                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                      Yêu cầu giao hàng
+                    </p>
                     <select
                       className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       value={deliveryRequirement}
                       onChange={(e) =>
-                        setDeliveryRequirement(e.target.value as DeliveryRequirement)
+                        setDeliveryRequirement(
+                          e.target.value as DeliveryRequirement,
+                        )
                       }
                     >
                       {deliveryRequirementOptions.map((item) => (
@@ -4546,12 +4803,16 @@ useEffect(() => {
               <div className="border-b border-neutral-200 p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h3 className="text-lg font-semibold">Sản phẩm trong đơn</h3>
+                    <h3 className="text-lg font-semibold">
+                      Sản phẩm trong đơn
+                    </h3>
                     <p className="mt-1 text-sm text-neutral-500">
                       Tìm sản phẩm, quét mã vạch / SKU và thêm nhanh vào đơn.
                     </p>
                   </div>
-                  <div className="text-sm text-neutral-400">{lines.length} dòng sản phẩm</div>
+                  <div className="text-sm text-neutral-400">
+                    {lines.length} dòng sản phẩm
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-[1fr_300px]">
@@ -4582,41 +4843,68 @@ useEffect(() => {
                 {shouldShowProductResults ? (
                   <div className="mt-4 max-h-[260px] overflow-auto rounded-2xl border border-neutral-200">
                     {loadingProducts ? (
-                      <div className="p-4 text-sm text-neutral-500">Đang tải sản phẩm...</div>
+                      <div className="p-4 text-sm text-neutral-500">
+                        Đang tải sản phẩm...
+                      </div>
                     ) : filteredVariants.length === 0 ? (
-                      <div className="p-4 text-sm text-neutral-500">Không có variant phù hợp.</div>
+                      <div className="p-4 text-sm text-neutral-500">
+                        Không có variant phù hợp.
+                      </div>
                     ) : (
                       filteredVariants.map((variant) => (
-                      <button
-                        key={variant.id}
-                        type="button"
-                        onClick={() => addVariantToOrder(variant.id)}
-                        className="flex w-full items-start justify-between gap-4 border-b border-neutral-200 px-4 py-3 text-left transition hover:bg-neutral-50"
-                      >
-                        <div>
-                          <p className="font-semibold text-neutral-900">{variant.sku}</p>
-                          <p className="mt-1 text-sm text-neutral-700">
-                            {(variant as any).productName}
-                          </p>
-                          <p className="mt-1 text-xs text-neutral-500">
-                            {(variant as any).color || "—"} / {(variant as any).size || "—"}
-                          </p>
-                          {Number((variant as any).totalStock || 0) <= 0 ? (
-                            <p className="mt-1 text-xs font-semibold text-red-600">
-                              Hết hàng toàn hệ thống · vẫn cho phép tạo đơn âm kho
+                        <button
+                          key={variant.id}
+                          type="button"
+                          onClick={() => addVariantToOrder(variant.id)}
+                          className="flex w-full items-start justify-between gap-4 border-b border-neutral-200 px-4 py-3 text-left transition hover:bg-neutral-50"
+                        >
+                          <div>
+                            <p className="font-semibold text-neutral-900">
+                              {variant.sku}
                             </p>
-                          ) : Number((variant as any).branchStock || 0) <= 0 ? (
-                            <p className="mt-1 text-xs font-medium text-amber-700">
-                              Chi nhánh này hết hàng · còn {Number((variant as any).totalStock || 0)} ở chi nhánh khác
+                            <p className="mt-1 text-sm text-neutral-700">
+                              {(variant as any).productName}
                             </p>
-                          ) : null}
-                        </div>
-                        <div className="text-right">
-                          <p className="font-medium">{currency((variant as any).price)}</p>
-                          <p className="mt-1 text-xs text-neutral-500">Tồn CN: {Number((variant as any).branchStock ?? (variant as any).stock ?? 0)}</p>
-                          <p className="mt-1 text-xs text-neutral-400">Tổng tồn: {Number((variant as any).totalStock ?? (variant as any).stock ?? 0)}</p>
-                        </div>
-                      </button>
+                            <p className="mt-1 text-xs text-neutral-500">
+                              {(variant as any).color || "—"} /{" "}
+                              {(variant as any).size || "—"}
+                            </p>
+                            {Number((variant as any).totalStock || 0) <= 0 ? (
+                              <p className="mt-1 text-xs font-semibold text-red-600">
+                                Hết hàng toàn hệ thống · vẫn cho phép tạo đơn âm
+                                kho
+                              </p>
+                            ) : Number((variant as any).branchStock || 0) <=
+                              0 ? (
+                              <p className="mt-1 text-xs font-medium text-amber-700">
+                                Chi nhánh này hết hàng · còn{" "}
+                                {Number((variant as any).totalStock || 0)} ở chi
+                                nhánh khác
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium">
+                              {currency((variant as any).price)}
+                            </p>
+                            <p className="mt-1 text-xs text-neutral-500">
+                              Tồn CN:{" "}
+                              {Number(
+                                (variant as any).branchStock ??
+                                  (variant as any).stock ??
+                                  0,
+                              )}
+                            </p>
+                            <p className="mt-1 text-xs text-neutral-400">
+                              Tổng tồn:{" "}
+                              {Number(
+                                (variant as any).totalStock ??
+                                  (variant as any).stock ??
+                                  0,
+                              )}
+                            </p>
+                          </div>
+                        </button>
                       ))
                     )}
                   </div>
@@ -4642,13 +4930,18 @@ useEffect(() => {
                     </div>
                   ) : (
                     lines.map((line, index) => {
-                      const lineTotal = Math.max(0, line.price * line.qty - line.discount);
+                      const lineTotal = Math.max(
+                        0,
+                        line.price * line.qty - line.discount,
+                      );
                       return (
                         <div
                           key={line.variantId}
                           className="grid grid-cols-[64px_72px_minmax(220px,1.4fr)_100px_120px_120px_140px_84px] items-center border-b border-neutral-200 px-4 py-4"
                         >
-                          <div className="text-sm text-neutral-500">{index + 1}</div>
+                          <div className="text-sm text-neutral-500">
+                            {index + 1}
+                          </div>
 
                           <div>
                             <div className="h-12 w-12 overflow-hidden rounded-xl bg-neutral-100">
@@ -4665,23 +4958,40 @@ useEffect(() => {
                           <div className="pr-4">
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{line.productName}</p>
-                              {line.productId && discountedProductIdSet.has(String(line.productId)) ? (
+                              {line.productId &&
+                              discountedProductIdSet.has(
+                                String(line.productId),
+                              ) ? (
                                 <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                                   Đang KM
                                 </span>
                               ) : null}
                             </div>
-                            <p className="mt-1 text-sm text-neutral-500">{line.sku}</p>
-                            <p className="mt-1 text-xs text-neutral-400">
-                              {line.color || "—"} / {line.size || "—"} · Tồn CN {Number((line as any).branchStock ?? line.stock ?? 0)} · Tổng tồn {Number((line as any).totalStock ?? line.stock ?? 0)}
+                            <p className="mt-1 text-sm text-neutral-500">
+                              {line.sku}
                             </p>
-                            {Number((line as any).totalStock ?? line.stock ?? 0) <= 0 ? (
+                            <p className="mt-1 text-xs text-neutral-400">
+                              {line.color || "—"} / {line.size || "—"} · Tồn CN{" "}
+                              {Number(
+                                (line as any).branchStock ?? line.stock ?? 0,
+                              )}{" "}
+                              · Tổng tồn{" "}
+                              {Number(
+                                (line as any).totalStock ?? line.stock ?? 0,
+                              )}
+                            </p>
+                            {Number(
+                              (line as any).totalStock ?? line.stock ?? 0,
+                            ) <= 0 ? (
                               <p className="mt-1 text-xs font-semibold text-red-600">
                                 Hết hàng toàn hệ thống · đơn này sẽ xuất âm kho.
                               </p>
-                            ) : Number((line as any).branchStock ?? line.stock ?? 0) < Number(line.qty || 1) ? (
+                            ) : Number(
+                                (line as any).branchStock ?? line.stock ?? 0,
+                              ) < Number(line.qty || 1) ? (
                               <p className="mt-1 text-xs font-medium text-amber-700">
-                                Không đủ tồn ở chi nhánh này · vẫn cho phép bán âm.
+                                Không đủ tồn ở chi nhánh này · vẫn cho phép bán
+                                âm.
                               </p>
                             ) : null}
                           </div>
@@ -4724,10 +5034,15 @@ useEffect(() => {
                             />
                           </div>
 
-                          <div className="font-medium">{currency(lineTotal)}</div>
+                          <div className="font-medium">
+                            {currency(lineTotal)}
+                          </div>
 
                           <div className="text-right">
-                            <Button variant="secondary" onClick={() => removeLine(line.variantId)}>
+                            <Button
+                              variant="secondary"
+                              onClick={() => removeLine(line.variantId)}
+                            >
                               Xóa
                             </Button>
                           </div>
@@ -4744,7 +5059,9 @@ useEffect(() => {
                 <h3 className="text-base font-semibold">Ghi chú</h3>
                 <div className="mt-4 space-y-4">
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">Ghi chú nội bộ</p>
+                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                      Ghi chú nội bộ
+                    </p>
                     <textarea
                       className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       value={tags}
@@ -4768,11 +5085,15 @@ useEffect(() => {
               </Panel>
 
               <Panel className="p-4">
-                <h3 className="text-base font-semibold">Giao hàng & khuyến mãi</h3>
+                <h3 className="text-base font-semibold">
+                  Giao hàng & khuyến mãi
+                </h3>
                 <div className="mt-4 space-y-4">
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <p className="mb-2 text-sm font-medium text-neutral-700">Mã giảm giá</p>
+                      <p className="mb-2 text-sm font-medium text-neutral-700">
+                        Mã giảm giá
+                      </p>
                       <input
                         value={couponCode}
                         onChange={(e) => setCouponCode(e.target.value)}
@@ -4842,13 +5163,18 @@ useEffect(() => {
                     key={item.value}
                     type="button"
                     onClick={() => setShippingUiMode(item.value)}
-                    className={`rounded-2xl border p-3 text-left transition ${shippingUiMode === item.value
-                      ? "border-neutral-900 bg-neutral-50"
-                      : "border-neutral-200 hover:bg-neutral-50"
-                      }`}
+                    className={`rounded-2xl border p-3 text-left transition ${
+                      shippingUiMode === item.value
+                        ? "border-neutral-900 bg-neutral-50"
+                        : "border-neutral-200 hover:bg-neutral-50"
+                    }`}
                   >
-                    <div className="text-sm font-medium text-neutral-900">{item.label}</div>
-                    <div className="mt-1 text-xs text-neutral-500">{item.description}</div>
+                    <div className="text-sm font-medium text-neutral-900">
+                      {item.label}
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-500">
+                      {item.description}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -4859,11 +5185,14 @@ useEffect(() => {
                     key={item.value}
                     type="button"
                     disabled={!item.enabled}
-                    onClick={() => item.enabled && setShippingPartner(item.value)}
-                    className={`rounded-2xl border px-3 py-3 text-left transition ${shippingPartner === item.value
-                      ? "border-neutral-900 bg-neutral-50"
-                      : "border-neutral-200"
-                      } ${item.enabled ? "hover:bg-neutral-50" : "cursor-not-allowed opacity-50"}`}
+                    onClick={() =>
+                      item.enabled && setShippingPartner(item.value)
+                    }
+                    className={`rounded-2xl border px-3 py-3 text-left transition ${
+                      shippingPartner === item.value
+                        ? "border-neutral-900 bg-neutral-50"
+                        : "border-neutral-200"
+                    } ${item.enabled ? "hover:bg-neutral-50" : "cursor-not-allowed opacity-50"}`}
                   >
                     <div className="text-sm font-medium">{item.label}</div>
                     <div className="mt-1 text-xs text-neutral-500">
@@ -4875,38 +5204,54 @@ useEffect(() => {
 
               <div className="mt-4 grid gap-3 md:grid-cols-4">
                 <div>
-                  <p className="mb-2 text-sm font-medium text-neutral-700">Khối lượng (g)</p>
+                  <p className="mb-2 text-sm font-medium text-neutral-700">
+                    Khối lượng (g)
+                  </p>
                   <input
                     className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                     value={shippingWeight}
-                    onChange={(e) => setShippingWeight(parseNumber(e.target.value) || 0)}
+                    onChange={(e) =>
+                      setShippingWeight(parseNumber(e.target.value) || 0)
+                    }
                   />
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium text-neutral-700">Dài (cm)</p>
+                  <p className="mb-2 text-sm font-medium text-neutral-700">
+                    Dài (cm)
+                  </p>
                   <input
                     className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                     value={shippingLength}
-                    onChange={(e) => setShippingLength(parseNumber(e.target.value) || 0)}
+                    onChange={(e) =>
+                      setShippingLength(parseNumber(e.target.value) || 0)
+                    }
                   />
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium text-neutral-700">Rộng (cm)</p>
+                  <p className="mb-2 text-sm font-medium text-neutral-700">
+                    Rộng (cm)
+                  </p>
                   <input
                     className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                     value={shippingWidth}
-                    onChange={(e) => setShippingWidth(parseNumber(e.target.value) || 0)}
+                    onChange={(e) =>
+                      setShippingWidth(parseNumber(e.target.value) || 0)
+                    }
                   />
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium text-neutral-700">Cao (cm)</p>
+                  <p className="mb-2 text-sm font-medium text-neutral-700">
+                    Cao (cm)
+                  </p>
                   <input
                     className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                     value={shippingHeight}
-                    onChange={(e) => setShippingHeight(parseNumber(e.target.value) || 0)}
+                    onChange={(e) =>
+                      setShippingHeight(parseNumber(e.target.value) || 0)
+                    }
                   />
                 </div>
               </div>
@@ -4924,17 +5269,22 @@ useEffect(() => {
                 </div>
               </div>
 
-              {shippingUiMode === "carrier" && shippingPartner === "viettelpost" ? (
+              {shippingUiMode === "carrier" &&
+              shippingPartner === "viettelpost" ? (
                 <div className="mt-4 rounded-2xl border border-orange-100 bg-orange-50/60 p-4 text-sm">
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <div>
-                      <div className="font-semibold text-neutral-900">Kho gửi ViettelPost</div>
+                      <div className="font-semibold text-neutral-900">
+                        Kho gửi ViettelPost
+                      </div>
                       <div className="text-xs text-neutral-500">
                         Chọn kho lấy hàng giống Sapo để lấy đúng giá VTP.
                       </div>
                     </div>
                     {viettelInventoryLoading ? (
-                      <span className="text-xs text-orange-600">Đang tải kho...</span>
+                      <span className="text-xs text-orange-600">
+                        Đang tải kho...
+                      </span>
                     ) : null}
                   </div>
 
@@ -4942,21 +5292,29 @@ useEffect(() => {
                     className="w-full rounded-2xl border border-orange-200 bg-white px-3 py-3 text-sm outline-none focus:border-orange-400"
                     value={selectedViettelInventoryId || ""}
                     onChange={(event) =>
-                      setSelectedViettelInventoryId(Number(event.target.value || 0) || undefined)
+                      setSelectedViettelInventoryId(
+                        Number(event.target.value || 0) || undefined,
+                      )
                     }
                   >
                     <option value="">Dùng cấu hình mặc định</option>
                     {viettelInventories.map((inventory) => (
-                      <option key={inventory.groupAddressId} value={inventory.groupAddressId}>
-                        {inventory.name || "Kho Viettel"} · {inventory.phone || "—"} · {inventory.address || "—"}
+                      <option
+                        key={inventory.groupAddressId}
+                        value={inventory.groupAddressId}
+                      >
+                        {inventory.name || "Kho Viettel"} ·{" "}
+                        {inventory.phone || "—"} · {inventory.address || "—"}
                       </option>
                     ))}
                   </select>
 
                   {selectedViettelInventory ? (
                     <div className="mt-2 text-xs text-neutral-600">
-                      ID kho: {selectedViettelInventory.groupAddressId} · {selectedViettelInventory.provinceId}/
-                      {selectedViettelInventory.districtId}/{selectedViettelInventory.wardId || "—"}
+                      ID kho: {selectedViettelInventory.groupAddressId} ·{" "}
+                      {selectedViettelInventory.provinceId}/
+                      {selectedViettelInventory.districtId}/
+                      {selectedViettelInventory.wardId || "—"}
                     </div>
                   ) : null}
                 </div>
@@ -4974,15 +5332,25 @@ useEffect(() => {
                 </div>
               ) : null}
 
-              {shippingLoading && shippingUiMode === "carrier" && !shippingQuotes.length ? (
+              {shippingLoading &&
+              shippingUiMode === "carrier" &&
+              !shippingQuotes.length ? (
                 <div className="mt-4 overflow-hidden rounded-3xl border border-dashed border-neutral-300 bg-white shadow-sm">
                   <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
-                    <div className="text-sm font-semibold text-neutral-950">Đang chuẩn bị bảng phí vận chuyển</div>
-                    <div className="mt-0.5 text-xs text-neutral-500">Tự động lấy tối đa khoảng 11 gói GHN / ViettelPost / AhaMove khi đủ địa chỉ.</div>
+                    <div className="text-sm font-semibold text-neutral-950">
+                      Đang chuẩn bị bảng phí vận chuyển
+                    </div>
+                    <div className="mt-0.5 text-xs text-neutral-500">
+                      Tự động lấy tối đa khoảng 11 gói GHN / ViettelPost /
+                      AhaMove khi đủ địa chỉ.
+                    </div>
                   </div>
                   <div className="grid gap-3 p-4 md:grid-cols-3">
                     {["GHN", "Viettel Post", "AhaMove"].map((carrier) => (
-                      <div key={carrier} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                      <div
+                        key={carrier}
+                        className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4"
+                      >
                         <div className="h-4 w-24 rounded bg-neutral-200" />
                         <div className="mt-3 h-6 w-32 rounded bg-neutral-200" />
                         <div className="mt-3 h-3 w-full rounded bg-neutral-200" />
@@ -4993,249 +5361,304 @@ useEffect(() => {
                 </div>
               ) : null}
 
-              {shippingQuotes.length > 0 ? (() => {
-                const customerShippingFee = parseNumber(shippingFee) || 0;
-                const activeQuote =
-                  shippingQuotes.find(
-                    (q) =>
-                      getQuoteCarrier(q) === shippingPartner &&
-                      q.serviceId === selectedShippingServiceId &&
-                      q.serviceTypeId === selectedShippingServiceTypeId &&
-                      !((q as any)?._disabled)
-                  ) || selectedQuote;
+              {shippingQuotes.length > 0
+                ? (() => {
+                    const customerShippingFee = parseNumber(shippingFee) || 0;
+                    const activeQuote =
+                      shippingQuotes.find(
+                        (q) =>
+                          getQuoteCarrier(q) === shippingPartner &&
+                          q.serviceId === selectedShippingServiceId &&
+                          q.serviceTypeId === selectedShippingServiceTypeId &&
+                          !(q as any)?._disabled,
+                      ) || selectedQuote;
 
-                const validQuotes = shippingQuotes.filter(
-                  (quote) => getFeeNumber(quote) > 0 && !((quote as any)?._disabled)
-                );
-                const cheapestQuote = [...validQuotes].sort(
-                  (a, b) => getFeeNumber(a) - getFeeNumber(b)
-                )[0];
-                const fastestQuote = [...validQuotes]
-                  .filter((quote) => Number((quote as any)?._durationMinutes || 0) > 0)
-                  .sort(
-                    (a, b) =>
-                      Number((a as any)?._durationMinutes || 0) -
-                      Number((b as any)?._durationMinutes || 0)
-                  )[0];
-                const recommendedQuote =
-                  validQuotes.find((quote) => getQuoteBadges(quote).includes("Khuyên dùng")) ||
-                  cheapestQuote ||
-                  validQuotes[0];
+                    const validQuotes = shippingQuotes.filter(
+                      (quote) =>
+                        getFeeNumber(quote) > 0 && !(quote as any)?._disabled,
+                    );
+                    const cheapestQuote = [...validQuotes].sort(
+                      (a, b) => getFeeNumber(a) - getFeeNumber(b),
+                    )[0];
+                    const fastestQuote = [...validQuotes]
+                      .filter(
+                        (quote) =>
+                          Number((quote as any)?._durationMinutes || 0) > 0,
+                      )
+                      .sort(
+                        (a, b) =>
+                          Number((a as any)?._durationMinutes || 0) -
+                          Number((b as any)?._durationMinutes || 0),
+                      )[0];
+                    const recommendedQuote =
+                      validQuotes.find((quote) =>
+                        getQuoteBadges(quote).includes("Khuyên dùng"),
+                      ) ||
+                      cheapestQuote ||
+                      validQuotes[0];
 
-                const quickCards = [
-                  { key: "recommended", title: "Khuyên dùng", quote: recommendedQuote, tone: "emerald" },
-                  { key: "cheapest", title: "Rẻ nhất", quote: cheapestQuote, tone: "orange" },
-                  { key: "fastest", title: "Nhanh nhất", quote: fastestQuote, tone: "blue" },
-                ].filter((item) => item.quote);
+                    const quickCards = [
+                      {
+                        key: "recommended",
+                        title: "Khuyên dùng",
+                        quote: recommendedQuote,
+                        tone: "emerald",
+                      },
+                      {
+                        key: "cheapest",
+                        title: "Rẻ nhất",
+                        quote: cheapestQuote,
+                        tone: "orange",
+                      },
+                      {
+                        key: "fastest",
+                        title: "Nhanh nhất",
+                        quote: fastestQuote,
+                        tone: "blue",
+                      },
+                    ].filter((item) => item.quote);
 
-                const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
-                const insight = getShippingInsight(activeQuote, customerShippingFee);
+                    const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
+                    const insight = getShippingInsight(
+                      activeQuote,
+                      customerShippingFee,
+                    );
 
-                const applyQuote = (quote: ShipmentQuoteResult) => {
-                  const carrier = getQuoteCarrier(quote);
-                  const feeValue = getFeeNumber(quote);
+                    const applyQuote = (quote: ShipmentQuoteResult) => {
+                      const carrier = getQuoteCarrier(quote);
+                      const feeValue = getFeeNumber(quote);
 
-                  applyShippingRef.current?.({
-                    shippingFee: feeValue,
-                    applyFeeToInput: Boolean((quote as any)._applyFeeToInput),
-                    shippingPartner: carrier,
-                    shippingMode: "partner",
-                    selectedServiceId: quote.serviceId,
-                    selectedServiceTypeId: quote.serviceTypeId,
-                    weight: Number(shippingWeight || 200),
-                    length: Number(shippingLength || 10),
-                    width: Number(shippingWidth || 10),
-                    height: Number(shippingHeight || 10),
-                    ghnDistrictId: (quote as any)._ghnDistrictId || ghnDistrictId,
-                    ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
-                  });
-                };
+                      applyShippingRef.current?.({
+                        shippingFee: feeValue,
+                        applyFeeToInput: Boolean(
+                          (quote as any)._applyFeeToInput,
+                        ),
+                        shippingPartner: carrier,
+                        shippingMode: "partner",
+                        selectedServiceId: quote.serviceId,
+                        selectedServiceTypeId: quote.serviceTypeId,
+                        weight: Number(shippingWeight || 200),
+                        length: Number(shippingLength || 10),
+                        width: Number(shippingWidth || 10),
+                        height: Number(shippingHeight || 10),
+                        ghnDistrictId:
+                          (quote as any)._ghnDistrictId || ghnDistrictId,
+                        ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
+                      });
+                    };
 
-                return (
-                  <div className="mt-4 space-y-4">
-                    <div className="grid gap-3 md:grid-cols-3">
-                      {quickCards.map((item) => {
-                        const quote = item.quote as ShipmentQuoteResult;
-                        const carrier = getQuoteCarrier(quote);
-                        const meta = getCarrierMeta(carrier);
-                        const active =
-                          activeQuote &&
-                          getQuoteKey(activeQuote) === getQuoteKey(quote);
-                        const feeValue = getFeeNumber(quote);
+                    return (
+                      <div className="mt-4 space-y-4">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          {quickCards.map((item) => {
+                            const quote = item.quote as ShipmentQuoteResult;
+                            const carrier = getQuoteCarrier(quote);
+                            const meta = getCarrierMeta(carrier);
+                            const active =
+                              activeQuote &&
+                              getQuoteKey(activeQuote) === getQuoteKey(quote);
+                            const feeValue = getFeeNumber(quote);
 
-                        const tone =
-                          item.tone === "emerald"
-                            ? "border-emerald-200 bg-emerald-50"
-                            : item.tone === "blue"
-                              ? "border-blue-200 bg-blue-50"
-                              : "border-orange-200 bg-orange-50";
+                            const tone =
+                              item.tone === "emerald"
+                                ? "border-emerald-200 bg-emerald-50"
+                                : item.tone === "blue"
+                                  ? "border-blue-200 bg-blue-50"
+                                  : "border-orange-200 bg-orange-50";
 
-                        return (
-                          <button
-                            key={`${item.key}-${getQuoteKey(quote)}`}
-                            type="button"
-                            onClick={() => applyQuote(quote)}
-                            className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                              active ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10" : tone
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
-                                {item.title}
-                              </span>
-                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}>
-                                {meta.short}
-                              </span>
-                            </div>
+                            return (
+                              <button
+                                key={`${item.key}-${getQuoteKey(quote)}`}
+                                type="button"
+                                onClick={() => applyQuote(quote)}
+                                className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                                  active
+                                    ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10"
+                                    : tone
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
+                                    {item.title}
+                                  </span>
+                                  <span
+                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}
+                                  >
+                                    {meta.short}
+                                  </span>
+                                </div>
 
-                            <div className="mt-3 text-sm font-semibold text-neutral-950">
-                              {meta.name} · {getQuoteServiceCleanName(quote)}
-                            </div>
+                                <div className="mt-3 text-sm font-semibold text-neutral-950">
+                                  {meta.name} ·{" "}
+                                  {getQuoteServiceCleanName(quote)}
+                                </div>
 
-                            <div className="mt-2 flex items-end justify-between gap-3">
+                                <div className="mt-2 flex items-end justify-between gap-3">
+                                  <div>
+                                    <div className="text-2xl font-bold tracking-tight text-neutral-950">
+                                      {currency(feeValue)}
+                                    </div>
+                                    <div className="mt-1 text-xs text-neutral-600">
+                                      {getQuoteLeadtimeLabel(quote)}
+                                    </div>
+                                  </div>
+                                  <div className="text-right text-[11px] font-medium text-neutral-500">
+                                    {getSmartQuoteNote(quote)}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div
+                          className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span>{insight.label}</span>
+                            <span className="text-xs font-medium opacity-80">
+                              Phí khách đang trả:{" "}
+                              {currency(customerShippingFee)} · Gói đang chọn:{" "}
+                              {activeQuote
+                                ? currency(getFeeNumber(activeQuote))
+                                : "—"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
+                          <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
-                                <div className="text-2xl font-bold tracking-tight text-neutral-950">
-                                  {currency(feeValue)}
+                                <div className="text-sm font-semibold text-neutral-950">
+                                  So sánh gói vận chuyển
                                 </div>
-                                <div className="mt-1 text-xs text-neutral-600">
-                                  {getQuoteLeadtimeLabel(quote)}
+                                <div className="mt-0.5 text-xs text-neutral-500">
+                                  Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn
+                                  này.
                                 </div>
                               </div>
-                              <div className="text-right text-[11px] font-medium text-neutral-500">
-                                {getSmartQuoteNote(quote)}
+                              <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
+                                {shippingQuotes.length} gói
                               </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span>{insight.label}</span>
-                        <span className="text-xs font-medium opacity-80">
-                          Phí khách đang trả: {currency(customerShippingFee)} · Gói đang chọn:{" "}
-                          {activeQuote ? currency(getFeeNumber(activeQuote)) : "—"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
-                      <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <div className="text-sm font-semibold text-neutral-950">
-                              So sánh gói vận chuyển
-                            </div>
-                            <div className="mt-0.5 text-xs text-neutral-500">
-                              Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn này.
                             </div>
                           </div>
-                          <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
-                            {shippingQuotes.length} gói
+
+                          <div className="divide-y divide-neutral-100">
+                            {groupedQuotes.map((group) => (
+                              <div
+                                key={group.carrier}
+                                className="grid grid-cols-[148px_1fr]"
+                              >
+                                <div
+                                  className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}
+                                >
+                                  <div className="sticky top-3">
+                                    <div
+                                      className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}
+                                    >
+                                      {group.meta.name}
+                                    </div>
+                                    <div className="mt-2 text-xs text-neutral-500">
+                                      {group.meta.sub}
+                                    </div>
+                                    <div className="mt-3 text-[11px] font-semibold text-neutral-500">
+                                      {group.quotes.length} lựa chọn
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="divide-y divide-neutral-100">
+                                  {group.quotes.map((quote) => {
+                                    const carrier = getQuoteCarrier(quote);
+                                    const active =
+                                      carrier === shippingPartner &&
+                                      quote.serviceId ===
+                                        selectedShippingServiceId &&
+                                      quote.serviceTypeId ===
+                                        selectedShippingServiceTypeId;
+                                    const badges = getQuoteBadges(quote);
+                                    const feeValue = getFeeNumber(quote);
+                                    const disabled = Boolean(
+                                      (quote as any)?._disabled,
+                                    );
+
+                                    return (
+                                      <button
+                                        key={getQuoteKey(quote)}
+                                        type="button"
+                                        disabled={disabled}
+                                        onClick={() => applyQuote(quote)}
+                                        className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
+                                          active
+                                            ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
+                                            : "hover:bg-neutral-50"
+                                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                                      >
+                                        <div className="flex items-start gap-3">
+                                          <span
+                                            className={`mt-1 h-4 w-4 rounded-full border ${
+                                              active
+                                                ? "border-neutral-900 bg-neutral-900"
+                                                : "border-neutral-300 bg-white"
+                                            }`}
+                                          />
+                                          <div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="text-sm font-semibold text-neutral-950">
+                                                {getQuoteServiceCleanName(
+                                                  quote,
+                                                )}
+                                              </span>
+                                              {badges.map((badge) => (
+                                                <span
+                                                  key={badge}
+                                                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                                    badge === "Rẻ nhất"
+                                                      ? "bg-orange-50 text-orange-600"
+                                                      : badge === "Nhanh nhất"
+                                                        ? "bg-blue-50 text-blue-600"
+                                                        : "bg-emerald-50 text-emerald-700"
+                                                  }`}
+                                                >
+                                                  {badge}
+                                                </span>
+                                              ))}
+                                            </div>
+
+                                            <div className="mt-1 text-xs text-neutral-500">
+                                              {getSmartQuoteNote(quote)}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="text-sm text-neutral-700">
+                                          {getQuoteLeadtimeLabel(quote)}
+                                        </div>
+
+                                        <div className="text-right">
+                                          <div className="text-sm font-bold text-neutral-950">
+                                            {currency(feeValue)}
+                                          </div>
+                                          <div className="mt-0.5 text-[11px] text-neutral-400">
+                                            Service {quote.serviceId}
+                                            {quote.serviceTypeId
+                                              ? ` · Type ${quote.serviceTypeId}`
+                                              : ""}
+                                          </div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </div>
-
-                      <div className="divide-y divide-neutral-100">
-                        {groupedQuotes.map((group) => (
-                          <div key={group.carrier} className="grid grid-cols-[148px_1fr]">
-                            <div className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}>
-                              <div className="sticky top-3">
-                                <div className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}>
-                                  {group.meta.name}
-                                </div>
-                                <div className="mt-2 text-xs text-neutral-500">
-                                  {group.meta.sub}
-                                </div>
-                                <div className="mt-3 text-[11px] font-semibold text-neutral-500">
-                                  {group.quotes.length} lựa chọn
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="divide-y divide-neutral-100">
-                              {group.quotes.map((quote) => {
-                                const carrier = getQuoteCarrier(quote);
-                                const active =
-                                  carrier === shippingPartner &&
-                                  quote.serviceId === selectedShippingServiceId &&
-                                  quote.serviceTypeId === selectedShippingServiceTypeId;
-                                const badges = getQuoteBadges(quote);
-                                const feeValue = getFeeNumber(quote);
-                                const disabled = Boolean((quote as any)?._disabled);
-
-                                return (
-                                  <button
-                                    key={getQuoteKey(quote)}
-                                    type="button"
-                                    disabled={disabled}
-                                    onClick={() => applyQuote(quote)}
-                                    className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
-                                      active
-                                        ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
-                                        : "hover:bg-neutral-50"
-                                    } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                                  >
-                                    <div className="flex items-start gap-3">
-                                      <span
-                                        className={`mt-1 h-4 w-4 rounded-full border ${
-                                          active
-                                            ? "border-neutral-900 bg-neutral-900"
-                                            : "border-neutral-300 bg-white"
-                                        }`}
-                                      />
-                                      <div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-sm font-semibold text-neutral-950">
-                                            {getQuoteServiceCleanName(quote)}
-                                          </span>
-                                          {badges.map((badge) => (
-                                            <span
-                                              key={badge}
-                                              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                                                badge === "Rẻ nhất"
-                                                  ? "bg-orange-50 text-orange-600"
-                                                  : badge === "Nhanh nhất"
-                                                    ? "bg-blue-50 text-blue-600"
-                                                    : "bg-emerald-50 text-emerald-700"
-                                              }`}
-                                            >
-                                              {badge}
-                                            </span>
-                                          ))}
-                                        </div>
-
-                                        <div className="mt-1 text-xs text-neutral-500">
-                                          {getSmartQuoteNote(quote)}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    <div className="text-sm text-neutral-700">
-                                      {getQuoteLeadtimeLabel(quote)}
-                                    </div>
-
-                                    <div className="text-right">
-                                      <div className="text-sm font-bold text-neutral-950">
-                                        {currency(feeValue)}
-                                      </div>
-                                      <div className="mt-0.5 text-[11px] text-neutral-400">
-                                        Service {quote.serviceId}
-                                        {quote.serviceTypeId ? ` · Type ${quote.serviceTypeId}` : ""}
-                                      </div>
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })() : null}
+                    );
+                  })()
+                : null}
             </Panel>
           </div>
 
@@ -5278,7 +5701,9 @@ useEffect(() => {
 
                 <div className="space-y-2 rounded-2xl border border-neutral-200 p-4">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-neutral-500">Tổng tiền hàng ({lines.length} SP)</span>
+                    <span className="text-neutral-500">
+                      Tổng tiền hàng ({lines.length} SP)
+                    </span>
                     <span>{currency(subtotal)}</span>
                   </div>
 
@@ -5287,7 +5712,9 @@ useEffect(() => {
                     <input
                       className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
                       value={formatVndInput(discountTotal)}
-                      onChange={(e) => setDiscountTotal(String(parseNumber(e.target.value)))}
+                      onChange={(e) =>
+                        setDiscountTotal(String(parseNumber(e.target.value)))
+                      }
                       inputMode="numeric"
                     />
                   </div>
@@ -5301,7 +5728,10 @@ useEffect(() => {
                       {promotionPreview.breakdown.length ? (
                         <div className="mt-1 space-y-0.5 text-xs">
                           {promotionPreview.breakdown.map((item) => (
-                            <div key={item.id} className="flex justify-between gap-3">
+                            <div
+                              key={item.id}
+                              className="flex justify-between gap-3"
+                            >
                               <span>{item.name}</span>
                               <span>-{currency(item.discountAmount)}</span>
                             </div>
@@ -5317,7 +5747,9 @@ useEffect(() => {
                       <input
                         className="w-32 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none focus:border-neutral-900"
                         value={formatVndInput(shippingFee)}
-                        onChange={(e) => setShippingFee(String(parseNumber(e.target.value)))}
+                        onChange={(e) =>
+                          setShippingFee(String(parseNumber(e.target.value)))
+                        }
                         inputMode="numeric"
                         placeholder="30000"
                       />
@@ -5336,7 +5768,9 @@ useEffect(() => {
                     <input
                       className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
                       value={formatVndInput(customerPaid)}
-                      onChange={(e) => setCustomerPaid(String(parseNumber(e.target.value)))}
+                      onChange={(e) =>
+                        setCustomerPaid(String(parseNumber(e.target.value)))
+                      }
                     />
                     {/* 🔥 Nguồn tiền */}
                     <div className="mt-3">
@@ -5368,12 +5802,25 @@ useEffect(() => {
                 <Button
                   className="w-full py-3"
                   onClick={() => setModePickerOpen(true)}
-                  disabled={saving || copyingOrder || !lines.length || !canCreateOrder}
+                  disabled={
+                    saving || copyingOrder || !lines.length || !canCreateOrder
+                  }
                 >
-                  {copyingOrder ? "Đang sao chép..." : saving ? "Đang tạo..." : canCreateOrder ? "Tạo đơn" : "Bạn không có quyền tạo đơn"}
+                  {copyingOrder
+                    ? "Đang sao chép..."
+                    : saving
+                      ? "Đang tạo..."
+                      : canCreateOrder
+                        ? "Tạo đơn"
+                        : "Bạn không có quyền tạo đơn"}
                 </Button>
 
-                <Button variant="secondary" className="w-full" onClick={resetForm} disabled={saving}>
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={resetForm}
+                  disabled={saving}
+                >
                   Reset
                 </Button>
               </div>
@@ -5421,7 +5868,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Người nhận</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Người nhận
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerRecipientName}
@@ -5431,7 +5880,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Số điện thoại</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Số điện thoại
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerPhone}
@@ -5449,7 +5900,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Mã khách</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Mã khách
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerCode}
@@ -5458,7 +5911,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Postal code</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Postal code
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerPostalCode}
@@ -5468,12 +5923,16 @@ useEffect(() => {
           </div>
 
           <div>
-            <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ thông minh</p>
+            <p className="mb-2 text-sm font-medium text-neutral-700">
+              Địa chỉ thông minh
+            </p>
             <textarea
               className="min-h-[84px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={newCustomerSmartAddressInput}
               onChange={(e) => setNewCustomerSmartAddressInput(e.target.value)}
-              onBlur={(e) => void handleNewCustomerSmartAddressApply(e.target.value)}
+              onBlur={(e) =>
+                void handleNewCustomerSmartAddressApply(e.target.value)
+              }
               placeholder="Paste nguyên địa chỉ khách để tự điền Tỉnh / Huyện / Xã"
             />
             {newCustomerSmartAddressHint ? (
@@ -5487,7 +5946,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-3">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Tỉnh / Thành</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Tỉnh / Thành
+              </p>
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerProvince}
@@ -5502,7 +5963,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Quận / Huyện</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Quận / Huyện
+              </p>
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerDistrict}
@@ -5518,7 +5981,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Xã / Phường</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Xã / Phường
+              </p>
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerWard}
@@ -5536,7 +6001,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ cụ thể</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Địa chỉ cụ thể
+              </p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerAddressLine}
@@ -5545,7 +6012,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ dòng 2</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Địa chỉ dòng 2
+              </p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerAddressLine2}
@@ -5556,7 +6025,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Ghi chú nội bộ</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Ghi chú nội bộ
+              </p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerTags}
@@ -5565,7 +6036,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Ghi chú</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Ghi chú
+              </p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={newCustomerNote}
@@ -5575,10 +6048,16 @@ useEffect(() => {
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setNewCustomerOpen(false)}>
+            <Button
+              variant="secondary"
+              onClick={() => setNewCustomerOpen(false)}
+            >
               Đóng
             </Button>
-            <Button onClick={() => void createNewCustomerAndApply()} disabled={newCustomerSaving}>
+            <Button
+              onClick={() => void createNewCustomerAndApply()}
+              disabled={newCustomerSaving}
+            >
               {newCustomerSaving ? "Đang tạo..." : "Tạo và áp dụng"}
             </Button>
           </div>
@@ -5611,8 +6090,11 @@ useEffect(() => {
                 return (
                   <div
                     key={address.id}
-                    className={`rounded-2xl border p-4 ${isActive ? "border-neutral-900 bg-neutral-50" : "border-neutral-200"
-                      }`}
+                    className={`rounded-2xl border p-4 ${
+                      isActive
+                        ? "border-neutral-900 bg-neutral-50"
+                        : "border-neutral-200"
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-2">
@@ -5632,7 +6114,9 @@ useEffect(() => {
                           {address.phone ? ` · ${address.phone}` : ""}
                         </div>
 
-                        <div className="text-sm text-neutral-500">{formatAddress(address)}</div>
+                        <div className="text-sm text-neutral-500">
+                          {formatAddress(address)}
+                        </div>
                       </div>
 
                       <div className="flex flex-col gap-2">
@@ -5646,14 +6130,19 @@ useEffect(() => {
                           {isActive ? "Đang dùng" : "Chọn"}
                         </Button>
 
-                        <Button variant="ghost" onClick={() => openEditAddressModal(address)}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => openEditAddressModal(address)}
+                        >
                           Sửa
                         </Button>
 
                         {!address.isDefault ? (
                           <Button
                             variant="ghost"
-                            onClick={() => void handleSetDefaultAddress(address.id)}
+                            onClick={() =>
+                              void handleSetDefaultAddress(address.id)
+                            }
                           >
                             Đặt mặc định
                           </Button>
@@ -5681,7 +6170,9 @@ useEffect(() => {
           ) : null}
 
           <div>
-            <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ thông minh</p>
+            <p className="mb-2 text-sm font-medium text-neutral-700">
+              Địa chỉ thông minh
+            </p>
             <textarea
               className="min-h-[84px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
               value={smartAddressInput}
@@ -5698,7 +6189,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Nhãn địa chỉ</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Nhãn địa chỉ
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressLabel}
@@ -5707,7 +6200,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Người nhận</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Người nhận
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressRecipientName}
@@ -5716,7 +6211,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Số điện thoại</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Số điện thoại
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressPhone}
@@ -5736,7 +6233,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-3">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Tỉnh / Thành</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Tỉnh / Thành
+              </p>
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressProvince}
@@ -5751,7 +6250,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Quận / Huyện</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Quận / Huyện
+              </p>
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressDistrict}
@@ -5767,7 +6268,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Xã / Phường</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Xã / Phường
+              </p>
               <select
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressWard}
@@ -5785,7 +6288,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ cụ thể</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Địa chỉ cụ thể
+              </p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressLine1}
@@ -5794,7 +6299,9 @@ useEffect(() => {
             </div>
 
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Địa chỉ dòng 2</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Địa chỉ dòng 2
+              </p>
               <textarea
                 className="min-h-[88px] w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressLine2}
@@ -5805,7 +6312,9 @@ useEffect(() => {
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <p className="mb-2 text-sm font-medium text-neutral-700">Postal code</p>
+              <p className="mb-2 text-sm font-medium text-neutral-700">
+                Postal code
+              </p>
               <input
                 className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                 value={addressPostalCode}
@@ -5824,7 +6333,10 @@ useEffect(() => {
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setAddressEditorOpen(false)}>
+            <Button
+              variant="secondary"
+              onClick={() => setAddressEditorOpen(false)}
+            >
               Đóng
             </Button>
             <Button onClick={() => void saveAddress()} disabled={addressSaving}>
