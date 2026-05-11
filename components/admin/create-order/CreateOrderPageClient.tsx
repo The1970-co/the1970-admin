@@ -3779,6 +3779,7 @@ useEffect(() => {
     customerPhone,
     remaining,
     note,
+    deliveryRequirement,
   ]);
 
   const canCreateOrder = hasCurrentUserPermission("orders.create");
@@ -3974,6 +3975,14 @@ useEffect(() => {
         deliveryFee: isPickupOrder ? 0 : Number(fee || 0),
         finalAmount: customerMustPay,
 
+        // Lưu yêu cầu giao hàng ở cả tầng Order để trang chi tiết / mẫu in đọc được,
+        // kể cả đơn chưa đẩy hãng vận chuyển.
+        shippingNote: isPickupOrder ? undefined : customerFacingShippingNote,
+        deliveryRequirement: isPickupOrder ? undefined : deliveryRequirement,
+        requiredNote: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
+        required_note: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
+        requiredNoteLabel: isPickupOrder ? undefined : requiredNoteLabel(deliveryRequirement),
+
         shippingSnapshot: {
           skipAutoShipment: shouldCreateCarrierShipmentManually,
           shippingFee: isPickupOrder ? 0 : Number(fee || 0),
@@ -4007,8 +4016,9 @@ useEffect(() => {
           note: isPickupOrder ? undefined : customerFacingShippingNote,
           shippingNote: isPickupOrder ? undefined : customerFacingShippingNote,
           deliveryRequirement: isPickupOrder ? undefined : deliveryRequirement,
-          requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
-          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
+          requiredNote: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
+          required_note: isPickupOrder ? undefined : mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: isPickupOrder ? undefined : requiredNoteLabel(deliveryRequirement),
           selectedServiceId: isPickupOrder ? undefined : selectedShippingServiceId,
           selectedServiceTypeId: isPickupOrder
             ? undefined
@@ -4068,7 +4078,10 @@ useEffect(() => {
           codAmount: remaining > 0 ? remaining : 0,
           insuranceValue: customerMustPay,
           note: customerFacingShippingNote,
+          shippingNote: customerFacingShippingNote,
+          deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          required_note: mapRequiredNoteForGhn(deliveryRequirement),
           requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
           clientOrderCode: created.orderCode,
           content: `Đơn hàng ${created.orderCode}`,
@@ -4128,7 +4141,12 @@ useEffect(() => {
           paymentMethod: "BALANCE",
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
-          note: note.trim() || "",
+          note: customerFacingShippingNote,
+          shippingNote: customerFacingShippingNote,
+          deliveryRequirement,
+          requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          required_note: mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
           items: lines.map((line) => ({
             name: line.productName || line.sku || "Sản phẩm",
             quantity: Number(line.qty || 0),

@@ -52,6 +52,8 @@ type BranchPermission = {
   staffId?: string;
   branchId: string;
   permissionKeys?: string[];
+  extraPermissionKeys?: string[];
+  deniedPermissionKeys?: string[];
   canView?: boolean;
   canSell?: boolean;
   canViewOwnOrders?: boolean;
@@ -103,7 +105,7 @@ type EmployeeItem = {
   isActive?: boolean;
   lastLoginAt?: string | null;
   createdAt?: string | null;
-  departments?: { staffId: string; isHead: boolean }[];
+  departments?: { staffId: string; departmentId: string; isHead: boolean }[];
 };
 
 type DepartmentItem = {
@@ -666,6 +668,8 @@ const LEGACY_PERMISSION_MAP: Record<keyof BranchPermission, string[]> = {
   staffId: [],
   note: [],
   permissionKeys: [],
+  extraPermissionKeys: [],
+  deniedPermissionKeys: [],
   canView: ["products.view", "menu.products"],
   canSell: ["menu.pos"],
   canViewOwnOrders: ["orders.view_own", "menu.orders"],
@@ -743,25 +747,44 @@ function getEmployeeRoles(item: any): string[] {
 
 function getPermissionKeysFromBranchPermission(row: BranchPermission) {
   const keys = new Set<string>(safeArray<string>(row.permissionKeys));
+
   (Object.keys(LEGACY_PERMISSION_MAP) as Array<keyof BranchPermission>).forEach((legacyKey) => {
     if (Boolean(row[legacyKey])) {
       LEGACY_PERMISSION_MAP[legacyKey].forEach((key) => keys.add(key));
     }
   });
+
+  safeArray<string>(row.extraPermissionKeys).forEach((key) => keys.add(key));
+  safeArray<string>(row.deniedPermissionKeys).forEach((key) => keys.delete(key));
+
   return Array.from(keys);
 }
 
-function getEmployeeEffectiveKeys(employee?: EmployeeItem | null) {
+function getEmployeeEffectiveKeys(employee?: EmployeeItem | null, branchId?: string | null) {
   if (!employee) return [];
+
+  const scopedBranchId = branchId || employeePrimaryBranch(employee);
   const keys = new Set<string>();
-  safeArray<string>(employee.permissionKeys).forEach((key) => keys.add(key));
-  employee.roles.forEach((roleCode) => {
-    const role = getRoleTemplate(roleCode);
-    role?.defaultPermissionKeys.forEach((key) => keys.add(key));
-  });
-  employee.branchPermissions.forEach((row) => {
-    getPermissionKeysFromBranchPermission(row).forEach((key) => keys.add(key));
-  });
+
+  const roleCode =
+    employee.branchRoles.find((item) => item.branchId === scopedBranchId)?.roleCode ||
+    employee.roleId;
+
+  roleKeys(roleCode).forEach((key) => keys.add(key));
+
+  const branchPermission = employee.branchPermissions.find(
+    (row) => row.branchId === scopedBranchId,
+  );
+
+  if (branchPermission) {
+    getPermissionKeysFromBranchPermission(branchPermission).forEach((key) => keys.add(key));
+    safeArray<string>(branchPermission.deniedPermissionKeys).forEach((key) => keys.delete(key));
+  }
+
+  if (!scopedBranchId) {
+    safeArray<string>(employee.permissionKeys).forEach((key) => keys.add(key));
+  }
+
   if (employee.roles.includes("owner") || employee.roles.includes("admin") || keys.has("*")) return ["*"];
   return Array.from(keys);
 }
@@ -802,6 +825,8 @@ function defaultBranchPermission(branchId: string): BranchPermission {
   return {
     branchId,
     permissionKeys: [],
+    extraPermissionKeys: [],
+    deniedPermissionKeys: [],
     canView: false,
     canSell: false,
     canViewOwnOrders: false,
@@ -830,6 +855,8 @@ function buildLegacyFlags(keys: string[], branchId: string): BranchPermission {
   return {
     branchId,
     permissionKeys: keys.filter((key) => key !== "*"),
+    extraPermissionKeys: [],
+    deniedPermissionKeys: [],
     canView: has("products.view"),
     canSell: has("menu.pos"),
     canViewOwnOrders: has("orders.view_own"),
@@ -855,12 +882,17 @@ function buildLegacyFlags(keys: string[], branchId: string): BranchPermission {
 
 function sanitizeBranchPermission(row: BranchPermission): BranchPermission {
   const keys = unique(safeArray<string>(row.permissionKeys));
+  const extraPermissionKeys = unique(safeArray<string>(row.extraPermissionKeys));
+  const deniedPermissionKeys = unique(safeArray<string>(row.deniedPermissionKeys));
+
   return {
     ...buildLegacyFlags(keys, row.branchId),
     id: row.id,
     staffId: row.staffId,
     branchId: row.branchId,
     permissionKeys: keys,
+    extraPermissionKeys,
+    deniedPermissionKeys,
     note: row.note || null,
   };
 }
@@ -916,7 +948,11 @@ function mapApiStaffToEmployee(item: any): EmployeeItem {
     lastLoginAt: item.lastLoginAt || null,
     createdAt: item.createdAt || null,
     departments: Array.isArray(item?.departments)
-      ? item.departments.map((d: any) => ({ staffId: d.staffId, isHead: d.isHead }))
+      ? item.departments.map((d: any) => ({
+          staffId: d.staffId,
+          departmentId: d.departmentId || d.department?.id || d.id,
+          isHead: Boolean(d.isHead),
+        }))
       : [],
   };
 }
@@ -1120,6 +1156,8 @@ export default function PermissionsPageClient() {
   const [editMainBranchId, setEditMainBranchId] = useState("");
   const [editBranchRoleMap, setEditBranchRoleMap] = useState<Record<string, string>>({});
   const [editBranchPermissionMap, setEditBranchPermissionMap] = useState<Record<string, string[]>>({});
+  const [editBranchExtraPermissionMap, setEditBranchExtraPermissionMap] = useState<Record<string, string[]>>({});
+  const [editBranchDeniedPermissionMap, setEditBranchDeniedPermissionMap] = useState<Record<string, string[]>>({});
 
   const [newPassword, setNewPassword] = useState("");
   const [secondPassword, setSecondPassword] = useState("");
@@ -1183,6 +1221,7 @@ export default function PermissionsPageClient() {
   const [savingDept, setSavingDept] = useState(false);
   const [employeeDeptMap, setEmployeeDeptMap] = useState<Record<string, string[]>>({});
   const [savingDeptAssign, setSavingDeptAssign] = useState<string | null>(null);
+  const [savingAllDeptAssign, setSavingAllDeptAssign] = useState(false);
 
   // Employee table filter state
   const [empTableQuery, setEmpTableQuery] = useState("");
@@ -1261,8 +1300,13 @@ export default function PermissionsPageClient() {
     }
 
     const nextPermissionMap: Record<string, string[]> = {};
+    const nextExtraPermissionMap: Record<string, string[]> = {};
+    const nextDeniedPermissionMap: Record<string, string[]> = {};
+
     selectedEmployee.branchPermissions.forEach((row) => {
-      nextPermissionMap[row.branchId] = getPermissionKeysFromBranchPermission(row);
+      nextPermissionMap[row.branchId] = unique(safeArray<string>(row.permissionKeys));
+      nextExtraPermissionMap[row.branchId] = unique(safeArray<string>(row.extraPermissionKeys));
+      nextDeniedPermissionMap[row.branchId] = unique(safeArray<string>(row.deniedPermissionKeys));
     });
 
     Object.entries(nextRoleMap).forEach(([branchId, roleCode]) => {
@@ -1273,6 +1317,8 @@ export default function PermissionsPageClient() {
 
     setEditBranchRoleMap(nextRoleMap);
     setEditBranchPermissionMap(nextPermissionMap);
+    setEditBranchExtraPermissionMap(nextExtraPermissionMap);
+    setEditBranchDeniedPermissionMap(nextDeniedPermissionMap);
     setSelectedBranchId((prev) => prev && (nextRoleMap[prev] || nextPermissionMap[prev]) ? prev : Object.keys(nextRoleMap)[0] || selectedEmployee.branchId || "");
   }, [selectedEmployeeId, selectedEmployee]);
 
@@ -1322,15 +1368,32 @@ export default function PermissionsPageClient() {
     });
   }, [employees, empTableQuery, empTableRole, empTableBranch, empTableStatus]);
 
-  const selectedBranchKeys = useMemo(() => {
+  const selectedBranchBaseKeys = useMemo(() => {
     if (!selectedEmployee) return [];
-    if (!selectedBranchId) return getEmployeeEffectiveKeys(selectedEmployee);
-    return editBranchPermissionMap[selectedBranchId] || getEmployeeBranchKeys(selectedEmployee, selectedBranchId);
-  }, [selectedEmployee, selectedBranchId, editBranchPermissionMap]);
+    if (!selectedBranchId) return [];
+    return editBranchPermissionMap[selectedBranchId] || roleKeys(editBranchRoleMap[selectedBranchId] || selectedEmployee.roleId);
+  }, [selectedEmployee, selectedBranchId, editBranchPermissionMap, editBranchRoleMap]);
+
+  const selectedBranchExtraKeys = useMemo(
+    () => (selectedBranchId ? editBranchExtraPermissionMap[selectedBranchId] || [] : []),
+    [selectedBranchId, editBranchExtraPermissionMap],
+  );
+
+  const selectedBranchDeniedKeys = useMemo(
+    () => (selectedBranchId ? editBranchDeniedPermissionMap[selectedBranchId] || [] : []),
+    [selectedBranchId, editBranchDeniedPermissionMap],
+  );
+
+  const selectedBranchKeys = useMemo(() => {
+    const keys = new Set<string>(selectedBranchBaseKeys);
+    selectedBranchExtraKeys.forEach((key) => keys.add(key));
+    selectedBranchDeniedKeys.forEach((key) => keys.delete(key));
+    return Array.from(keys);
+  }, [selectedBranchBaseKeys, selectedBranchExtraKeys, selectedBranchDeniedKeys]);
 
   const effectiveKeys = useMemo(
-    () => (selectedEmployee ? getEmployeeEffectiveKeys(selectedEmployee) : []),
-    [selectedEmployee],
+    () => (selectedEmployee ? getEmployeeEffectiveKeys(selectedEmployee, selectedBranchId) : []),
+    [selectedEmployee, selectedBranchId],
   );
 
   const dangerousCount = useMemo(
@@ -1365,35 +1428,76 @@ export default function PermissionsPageClient() {
       }
       return next;
     });
+
+    setEditBranchExtraPermissionMap((prev) => {
+      const next = { ...prev };
+      if (!enabled) delete next[branchId];
+      return next;
+    });
+
+    setEditBranchDeniedPermissionMap((prev) => {
+      const next = { ...prev };
+      if (!enabled) delete next[branchId];
+      return next;
+    });
   };
 
   const changeBranchRole = (branchId: string, roleCode: string) => {
     setEditBranchRoleMap((prev) => ({ ...prev, [branchId]: roleCode }));
     setEditBranchPermissionMap((prev) => ({ ...prev, [branchId]: roleKeys(roleCode) }));
+    setEditBranchExtraPermissionMap((prev) => ({ ...prev, [branchId]: [] }));
+    setEditBranchDeniedPermissionMap((prev) => ({ ...prev, [branchId]: [] }));
   };
 
-  const setBranchPermission = (branchId: string, permissionKey: string, enabled: boolean) => {
+  const setBranchExtraPermission = (branchId: string, permissionKey: string, enabled: boolean) => {
     if (!branchId) {
-      setMessage("Chọn chi nhánh trước khi chỉnh quyền.");
+      setMessage("Chọn chi nhánh trước khi chỉnh quyền riêng.");
       return;
     }
-    setEditBranchPermissionMap((prev) => {
+
+    setEditBranchExtraPermissionMap((prev) => {
       const current = new Set(prev[branchId] || []);
       if (enabled) current.add(permissionKey);
       else current.delete(permissionKey);
       return { ...prev, [branchId]: Array.from(current) };
     });
+
+    if (enabled) {
+      setEditBranchDeniedPermissionMap((prev) => {
+        const current = new Set(prev[branchId] || []);
+        current.delete(permissionKey);
+        return { ...prev, [branchId]: Array.from(current) };
+      });
+    }
+  };
+
+  const setBranchDeniedPermission = (branchId: string, permissionKey: string, enabled: boolean) => {
+    if (!branchId) {
+      setMessage("Chọn chi nhánh trước khi chặn quyền riêng.");
+      return;
+    }
+
+    setEditBranchDeniedPermissionMap((prev) => {
+      const current = new Set(prev[branchId] || []);
+      if (enabled) current.add(permissionKey);
+      else current.delete(permissionKey);
+      return { ...prev, [branchId]: Array.from(current) };
+    });
+
+    if (enabled) {
+      setEditBranchExtraPermissionMap((prev) => {
+        const current = new Set(prev[branchId] || []);
+        current.delete(permissionKey);
+        return { ...prev, [branchId]: Array.from(current) };
+      });
+    }
   };
 
   const setModuleAll = (module: PermissionModule, enabled: boolean) => {
     if (!selectedBranchId) return;
-    setEditBranchPermissionMap((prev) => {
-      const current = new Set(prev[selectedBranchId] || []);
-      module.actions.forEach((action) => {
-        if (enabled) current.add(action.key);
-        else current.delete(action.key);
-      });
-      return { ...prev, [selectedBranchId]: Array.from(current) };
+    module.actions.forEach((action) => {
+      if (enabled) setBranchExtraPermission(selectedBranchId, action.key, true);
+      else setBranchDeniedPermission(selectedBranchId, action.key, true);
     });
   };
 
@@ -1447,11 +1551,13 @@ export default function PermissionsPageClient() {
       return;
     }
 
-    const branchPermissions = branchRoles.map(({ branchId }) =>
+    const branchPermissions = branchRoles.map(({ branchId, roleCode }) =>
       sanitizeBranchPermission({
         ...(selectedEmployee.branchPermissions.find((row) => row.branchId === branchId) || defaultBranchPermission(branchId)),
         branchId,
-        permissionKeys: editBranchPermissionMap[branchId] || [],
+        permissionKeys: editBranchPermissionMap[branchId] || roleKeys(roleCode),
+        extraPermissionKeys: editBranchExtraPermissionMap[branchId] || [],
+        deniedPermissionKeys: editBranchDeniedPermissionMap[branchId] || [],
       }),
     );
 
@@ -1462,7 +1568,7 @@ export default function PermissionsPageClient() {
 
       const primary = branchRoles[0];
       const beforeKeys = getEmployeeEffectiveKeys(selectedEmployee);
-      const afterKeys = unique(branchPermissions.flatMap((row) => row.permissionKeys || []));
+      const afterKeys = unique(branchPermissions.flatMap((row) => getPermissionKeysFromBranchPermission(row)));
       const diff = diffPermissionKeys(beforeKeys, afterKeys);
 
       await apiJson(`/staff/${selectedEmployee.id}`, {
@@ -1809,7 +1915,7 @@ export default function PermissionsPageClient() {
       await loadEmployees();
       if (failed === 0) {
         showMessage(
-          `✓ ${bulkApplyMode === "replace" ? "Replace" : "Merge"} — Gán "${getRoleName(bulkRoleId)}" tại ${getBranchName(branches, bulkBranchId)} cho ${succeeded} nhân viên thành công.`,
+          `✓ ${bulkApplyMode === "replace" ? "Đặt lại quyền chi nhánh" : "Giữ quyền + cộng thêm"} — Gán "${getRoleName(bulkRoleId)}" tại ${getBranchName(branches, bulkBranchId)} cho ${succeeded} nhân viên thành công.`,
           "success"
         );
       } else {
@@ -1913,9 +2019,37 @@ export default function PermissionsPageClient() {
     finally { setSavingDeptAssign(null); }
   };
 
+  const saveAllEmployeeDepartments = async () => {
+    const entries = Object.entries(employeeDeptMap);
+    if (!entries.length) {
+      showMessage("Chưa có thay đổi phòng ban để lưu.", "info");
+      return;
+    }
+
+    try {
+      setSavingAllDeptAssign(true);
+      let saved = 0;
+      for (const [staffId, departmentIds] of entries) {
+        await apiJson(`/staff/${staffId}/departments`, {
+          method: "PATCH",
+          body: JSON.stringify({ departmentIds }),
+        });
+        saved += 1;
+      }
+      setEmployeeDeptMap({});
+      await loadEmployees();
+      await loadDepartments();
+      showMessage(`✓ Đã lưu phân bổ phòng ban cho ${saved} nhân viên.`, "success");
+    } catch (err) {
+      showMessage(err instanceof Error ? err.message : "Lưu phân bổ phòng ban thất bại.", "error");
+    } finally {
+      setSavingAllDeptAssign(false);
+    }
+  };
+
   const toggleEmployeeDept = (staffId: string, deptId: string, checked: boolean) => {
     setEmployeeDeptMap((prev) => {
-      const current = new Set(prev[staffId] || employees.find((e) => e.id === staffId)?.departments?.map((d) => d.staffId) || []);
+      const current = new Set(prev[staffId] || employees.find((e) => e.id === staffId)?.departments?.map((d) => d.departmentId) || []);
       if (checked) current.add(deptId); else current.delete(deptId);
       return { ...prev, [staffId]: Array.from(current) };
     });
@@ -2102,12 +2236,12 @@ export default function PermissionsPageClient() {
           <Panel className="p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Permission Matrix</p>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Advanced Override</p>
                 <h2 className="mt-1 text-2xl font-black">
                   {selectedEmployee ? selectedEmployee.name : "Chọn nhân viên"}
                 </h2>
                 <p className="mt-1 text-sm text-neutral-500">
-                  Tick quyền theo từng module/action thực tế. Các quyền nguy hiểm được đánh dấu đỏ.
+                  Chỉ dùng cho ngoại lệ riêng: thêm quyền riêng hoặc chặn quyền riêng. Role chính quản lý ở tab Vai trò.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -2117,7 +2251,7 @@ export default function PermissionsPageClient() {
                   ✏️ Sửa hồ sơ / mật khẩu
                 </button>
                 <Button onClick={saveEmployeePermissions} loading={savingEmployeeId === selectedEmployee?.id}>
-                  Lưu phân quyền
+Lưu override
                 </Button>
               </div>
             </div>
@@ -2164,8 +2298,8 @@ export default function PermissionsPageClient() {
                     <p className="mt-1 text-sm text-neutral-500">{selectedModule.subtitle}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" disabled={!selectedBranchId} onClick={() => setModuleAll(selectedModule, true)}>Bật nhóm</Button>
-                    <Button variant="secondary" disabled={!selectedBranchId} onClick={() => setModuleAll(selectedModule, false)}>Tắt nhóm</Button>
+                    <Button variant="secondary" disabled={!selectedBranchId} onClick={() => setModuleAll(selectedModule, true)}>Thêm cả nhóm</Button>
+                    <Button variant="secondary" disabled={!selectedBranchId} onClick={() => setModuleAll(selectedModule, false)}>Chặn cả nhóm</Button>
                   </div>
                 </div>
 
@@ -2198,15 +2332,40 @@ export default function PermissionsPageClient() {
                 </div>
               </div>
 
-              <div className="grid gap-3 p-5 md:grid-cols-2">
-                {selectedModule.actions.map((action) => (
-                  <PermissionCheck
-                    key={action.key}
-                    action={action}
-                    checked={permissionGranted(selectedBranchKeys, action.key)}
-                    onChange={(checked) => setBranchPermission(selectedBranchId, action.key, checked)}
-                  />
-                ))}
+              <div className="grid gap-5 p-5 xl:grid-cols-2">
+                <div>
+                  <div className="mb-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <p className="text-sm font-black text-emerald-800">+ Thêm quyền riêng</p>
+                    <p className="mt-1 text-xs text-emerald-700">Chỉ cộng thêm quyền cho nhân viên này tại chi nhánh đang chọn.</p>
+                  </div>
+                  <div className="grid gap-3">
+                    {selectedModule.actions.map((action) => (
+                      <PermissionCheck
+                        key={`extra-${action.key}`}
+                        action={action}
+                        checked={selectedBranchExtraKeys.includes(action.key)}
+                        onChange={(checked) => setBranchExtraPermission(selectedBranchId, action.key, checked)}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+                    <p className="text-sm font-black text-red-800">− Chặn quyền riêng</p>
+                    <p className="mt-1 text-xs text-red-700">Chặn một quyền đang có từ vai trò mẫu. Role gốc vẫn được giữ nguyên.</p>
+                  </div>
+                  <div className="grid gap-3">
+                    {selectedModule.actions.map((action) => (
+                      <PermissionCheck
+                        key={`deny-${action.key}`}
+                        action={action}
+                        checked={selectedBranchDeniedKeys.includes(action.key)}
+                        onChange={(checked) => setBranchDeniedPermission(selectedBranchId, action.key, checked)}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             </Panel>
           </div>
@@ -2511,10 +2670,10 @@ export default function PermissionsPageClient() {
                 <div className="mt-4 rounded-2xl bg-neutral-50 p-4 space-y-2 text-sm">
                   <p><span className="font-bold">Vai trò:</span> {getRoleName(bulkRoleId)}</p>
                   <p><span className="font-bold">Chi nhánh:</span> {getBranchName(branches, bulkBranchId)}</p>
-                  <p><span className="font-bold">Chế độ:</span> {bulkApplyMode === "replace" ? "Replace — Xoá quyền cũ, áp quyền role mới" : "Merge — Giữ override cũ, thêm quyền role mới"}</p>
+                  <p><span className="font-bold">Chế độ:</span> {bulkApplyMode === "replace" ? "Đặt lại quyền chi nhánh này theo vai trò mới" : "Giữ quyền hiện tại + cộng thêm vai trò mới"}</p>
                   {bulkApplyMode === "replace" && (
                     <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-amber-800 text-xs">
-                      ⚠ Chế độ Replace sẽ xoá toàn bộ override riêng lẻ của {bulkSelectedIds.size} nhân viên này và đặt lại theo role chuẩn.
+                      ⚠ Chỉ cập nhật quyền tại chi nhánh đang chọn. Không ảnh hưởng quyền ở chi nhánh khác.
                     </div>
                   )}
                 </div>
@@ -2692,18 +2851,18 @@ export default function PermissionsPageClient() {
               <div className="flex overflow-hidden rounded-2xl border border-neutral-200">
                 <button type="button" onClick={() => setBulkApplyMode("replace")}
                   className={`px-4 py-2 text-xs font-bold transition ${bulkApplyMode === "replace" ? "bg-neutral-950 text-white" : "bg-white text-neutral-600 hover:bg-neutral-50"}`}>
-                  Replace
+                  Đặt lại quyền chi nhánh này
                 </button>
                 <button type="button" onClick={() => setBulkApplyMode("merge")}
                   className={`px-4 py-2 text-xs font-bold transition border-l border-neutral-200 ${bulkApplyMode === "merge" ? "bg-neutral-950 text-white" : "bg-white text-neutral-600 hover:bg-neutral-50"}`}>
-                  Merge
+                  Giữ quyền + cộng thêm
                 </button>
               </div>
             </div>
             <p className="mt-1 text-xs text-neutral-500">
               {bulkApplyMode === "replace"
-                ? "⚠ Replace: Xoá toàn bộ override cũ, áp sạch theo role mới. Dùng khi onboard nhân viên mới hoặc reset quyền."
-                : "✓ Merge: Giữ override cũ, chỉ thêm quyền từ role mới. Dùng khi nâng cấp role mà không muốn mất cài đặt riêng."}
+                ? "Đặt lại quyền tại chi nhánh đang chọn theo vai trò mới. Quyền ở chi nhánh khác không bị ảnh hưởng."
+                : "Giữ quyền hiện tại của chi nhánh đang chọn và cộng thêm quyền từ vai trò mới."}
             </p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -3109,7 +3268,22 @@ export default function PermissionsPageClient() {
             <Panel className="p-5">
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-400">Staff Assignment</p>
               <h2 className="mt-1 text-xl font-black">Gán nhân viên vào phòng ban</h2>
-              <p className="mt-1 text-sm text-neutral-500">Tick phòng ban cho từng nhân viên rồi bấm Lưu.</p>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-neutral-500">Tick phòng ban cho từng nhân viên rồi bấm Lưu tất cả. Hệ thống không tự lưu khi mới tích chọn.</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className={cx(
+                    "rounded-full px-3 py-1.5 text-xs font-bold",
+                    Object.keys(employeeDeptMap).length
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-neutral-100 text-neutral-500",
+                  )}>
+                    Đã thay đổi {Object.keys(employeeDeptMap).length} nhân viên
+                  </span>
+                  <Button onClick={saveAllEmployeeDepartments} loading={savingAllDeptAssign} disabled={!Object.keys(employeeDeptMap).length}>
+                    Lưu tất cả phân bổ phòng ban
+                  </Button>
+                </div>
+              </div>
             </Panel>
             {departments.length === 0 ? (
               <Panel className="p-8 text-center">
@@ -3130,12 +3304,11 @@ export default function PermissionsPageClient() {
                             </div>
                           </th>
                         ))}
-                        <th className="px-4 py-3.5 text-center text-xs font-black uppercase tracking-wider text-neutral-500">Lưu</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
                       {employees.filter((e) => e.status === "ACTIVE").map((e) => {
-                        const currentDepts = employeeDeptMap[e.id] || e.departments?.map((d) => d.staffId) || [];
+                        const currentDepts = employeeDeptMap[e.id] || e.departments?.map((d) => d.departmentId) || [];
                         return (
                           <tr key={e.id} className="hover:bg-neutral-50">
                             <td className="px-5 py-3">
@@ -3149,11 +3322,6 @@ export default function PermissionsPageClient() {
                                   className="h-4 w-4 cursor-pointer accent-neutral-950" />
                               </td>
                             ))}
-                            <td className="px-4 py-3 text-center">
-                              <Button variant="secondary" loading={savingDeptAssign === e.id} onClick={() => saveEmployeeDepartments(e.id)}>
-                                Lưu
-                              </Button>
-                            </td>
                           </tr>
                         );
                       })}
