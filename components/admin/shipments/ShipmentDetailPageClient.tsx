@@ -16,6 +16,12 @@ type TimelineItem = {
   driverPlate?: string | null;
   eta?: string | null;
   locationText?: string | null;
+  partnerStatus?: string | null;
+  rawStatus?: string | null;
+  eventCode?: string | null;
+  eventTime?: string | null;
+  note?: string | null;
+  raw?: any;
 };
 
 type ShipmentDetailResponse = {
@@ -302,6 +308,142 @@ function buildFallbackTimeline(
     },
   ];
 }
+
+function getTimelineDateValue(item: TimelineItem) {
+  return item.eventTime || item.time || "";
+}
+
+function safeDate(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTimelineDateHeader(value?: string | null) {
+  const date = safeDate(value);
+  if (!date) return "Không rõ ngày";
+  return new Intl.DateTimeFormat("vi-VN", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatTimelineTime(value?: string | null) {
+  const date = safeDate(value);
+  if (!date) return "—";
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function getTimelineGroupKey(item: TimelineItem) {
+  const date = safeDate(getTimelineDateValue(item));
+  if (!date) return "unknown";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getTimelineExtraNote(item: TimelineItem) {
+  const candidates = [
+    item.note,
+    item.eventCode,
+    item.rawStatus,
+    item.partnerStatus,
+    (item.raw as any)?.code,
+    (item.raw as any)?.action,
+    (item.raw as any)?.status,
+    (item.raw as any)?.sub_status,
+    (item.raw as any)?.order_code,
+    (item.raw as any)?.client_order_code,
+    (item.raw as any)?.description,
+    (item.raw as any)?.reason,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  const unique = Array.from(new Set(candidates));
+  return unique.find((value) =>
+    /_PR|giao\s*1\s*phần|giao\s*một\s*phần|partial|return|hoàn|fail|thất bại/i.test(value),
+  ) || "";
+}
+
+function getTimelineIcon(status?: string | null) {
+  const s = String(status || "").toUpperCase();
+  if (s.includes("DELIVERED") || s.includes("SUCCESS") || s.includes("COMPLETED")) return "✓";
+  if (s.includes("FAILED") || s.includes("CANCEL") || s.includes("RETURN")) return "!";
+  if (s.includes("DELIVERING") || s.includes("IN_PROCESS")) return "→";
+  if (s.includes("TRANSIT") || s.includes("SORT")) return "↔";
+  if (s.includes("PICK") || s.includes("READY")) return "↑";
+  return "•";
+}
+
+function normalizeTimelineItem(item: TimelineItem): TimelineItem {
+  const raw: any = item.raw || {};
+  const title =
+    item.title ||
+    raw.status_name ||
+    raw.action_name ||
+    raw.action ||
+    normalizeStatusLabel(item.status, item.partnerStatus);
+
+  const description =
+    item.description ||
+    raw.description ||
+    raw.detail ||
+    raw.reason ||
+    raw.message ||
+    "";
+
+  const location =
+    item.location ||
+    item.locationText ||
+    raw.location ||
+    raw.hub_name ||
+    raw.area ||
+    raw.address ||
+    raw.warehouse ||
+    "";
+
+  return {
+    ...item,
+    title,
+    description,
+    location,
+    time: item.time || item.eventTime || raw.updated_date || raw.action_at || raw.created_date || "",
+    partnerStatus: item.partnerStatus || raw.status_name || raw.status || null,
+    rawStatus: item.rawStatus || raw.status || raw.action || null,
+    eventCode: item.eventCode || raw.code || raw.action_code || null,
+  };
+}
+
+function groupTimelineItems(items: TimelineItem[]) {
+  const normalized = items.map(normalizeTimelineItem).sort((a, b) => {
+    const ta = safeDate(getTimelineDateValue(a))?.getTime() || 0;
+    const tb = safeDate(getTimelineDateValue(b))?.getTime() || 0;
+    return tb - ta;
+  });
+
+  const groups: Array<{ key: string; label: string; items: TimelineItem[] }> = [];
+
+  for (const item of normalized) {
+    const key = getTimelineGroupKey(item);
+    const found = groups.find((group) => group.key === key);
+    if (found) {
+      found.items.push(item);
+    } else {
+      groups.push({
+        key,
+        label: formatTimelineDateHeader(getTimelineDateValue(item)),
+        items: [item],
+      });
+    }
+  }
+
+  return groups;
+}
+
 
 function ShipmentProgress({
   status,
@@ -680,6 +822,7 @@ export default function ShipmentDetailPageClient({
 
   const currentLabel = normalizeStatusLabel(currentStatus, detail.partnerStatus);
   const timelineItems = buildFallbackTimeline(detail, tracking);
+  const timelineGroups = groupTimelineItems(timelineItems);
   const driverInfo = getDriverInfo(tracking);
   const ahamoveTrackingUrl = getAhamoveTrackingUrl(detail, tracking);
   const isAhamove = isAhamoveCarrier(detail.carrier);
@@ -827,78 +970,121 @@ export default function ShipmentDetailPageClient({
 
       <div className="grid gap-4 xl:grid-cols-[1.8fr_0.8fr]">
         <div className="space-y-4">
-          <div className="rounded-[22px] border border-neutral-200 bg-white p-5">
-            <h2 className="text-[15px] font-semibold text-neutral-900">
-              Hành trình đơn hàng
-            </h2>
+          <div className="overflow-hidden rounded-[22px] border border-neutral-200 bg-white">
+            <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-5 py-4">
+              <div>
+                <h2 className="text-[15px] font-semibold text-neutral-900">
+                  Lịch sử đơn hàng
+                </h2>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Đồng bộ chi tiết từ hãng vận chuyển: trạng thái, bưu cục/kho, ghi chú và thời gian từng chặng.
+                </p>
+              </div>
+              <Badge tone={toneForStatus(currentStatus)}>{detail.carrier}</Badge>
+            </div>
 
-            <div className="mt-4 space-y-4">
-              {timelineItems.length ? (
-                timelineItems.map((item, index) => {
-                  const isLatest = index === 0;
-                  const dotTone = toneForStatus(item.status);
+            <div className="p-5">
+              {timelineGroups.length ? (
+                <div className="overflow-hidden rounded-2xl border border-neutral-200">
+                  <div className="grid grid-cols-[230px_1fr_110px] bg-neutral-100 px-4 py-3 text-[12px] font-semibold text-neutral-700">
+                    <div>Ngày / trạng thái</div>
+                    <div>Chi tiết</div>
+                    <div className="text-right">Thời gian</div>
+                  </div>
 
-                  const dotClass =
-                    dotTone === "green"
-                      ? "bg-emerald-500"
-                      : dotTone === "amber"
-                      ? "bg-amber-500"
-                      : dotTone === "red"
-                      ? "bg-red-500"
-                      : dotTone === "blue"
-                      ? "bg-blue-500"
-                      : "bg-neutral-400";
+                  {timelineGroups.map((group) => (
+                    <div key={group.key}>
+                      <div className="grid grid-cols-[230px_1fr_110px] border-t border-neutral-200 bg-neutral-50 px-4 py-3 text-[12px] font-semibold text-neutral-900">
+                        <div>{group.label}</div>
+                        <div>Chi tiết</div>
+                        <div className="text-right">Thời gian</div>
+                      </div>
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`relative pl-6 ${!isLatest ? "opacity-90" : ""}`}
-                    >
-                      <div className="absolute left-0 top-1 h-full w-px bg-neutral-200" />
-                      <div
-                        className={`absolute left-[-5px] top-1.5 h-3 w-3 rounded-full border-2 border-white ${dotClass}`}
-                      />
+                      {group.items.map((item, index) => {
+                        const globalIndex = timelineItems.findIndex((row) => row.id === item.id);
+                        const isLatest = globalIndex === 0 || (group.key === timelineGroups[0]?.key && index === 0);
+                        const tone = toneForStatus(item.status || item.partnerStatus);
+                        const icon = getTimelineIcon(item.status || item.partnerStatus);
+                        const extraNote = getTimelineExtraNote(item);
+                        const rowTone =
+                          tone === "green"
+                            ? "text-blue-700"
+                            : tone === "red"
+                              ? "text-red-700"
+                              : tone === "amber"
+                                ? "text-amber-700"
+                                : "text-neutral-800";
 
-                      <div
-                        className={`grid grid-cols-[1fr_auto] gap-4 rounded-xl border px-4 py-3 ${
-                          isLatest
-                            ? "border-neutral-300 bg-neutral-50"
-                            : "border-neutral-200 bg-white"
-                        }`}
-                      >
-                        <div>
+                        return (
                           <div
-                            className={`text-sm ${
-                              isLatest
-                                ? "font-semibold text-neutral-900"
-                                : "font-medium text-neutral-800"
+                            key={item.id}
+                            className={`grid grid-cols-[230px_1fr_110px] gap-4 border-t border-neutral-100 px-4 py-3 text-sm ${
+                              isLatest ? "bg-blue-50/40" : "bg-white"
                             }`}
                           >
-                            {item.title}
+                            <div className="flex items-start gap-3">
+                              <span
+                                className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                                  tone === "green"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : tone === "red"
+                                      ? "bg-red-100 text-red-700"
+                                      : tone === "amber"
+                                        ? "bg-amber-100 text-amber-700"
+                                        : tone === "blue"
+                                          ? "bg-blue-100 text-blue-700"
+                                          : "bg-neutral-100 text-neutral-600"
+                                }`}
+                              >
+                                {icon}
+                              </span>
+                              <div className="min-w-0">
+                                <div className={`font-medium ${isLatest ? "font-semibold" : ""} ${rowTone}`}>
+                                  {item.title || normalizeStatusLabel(item.status, item.partnerStatus)}
+                                </div>
+                                {item.rawStatus || item.partnerStatus ? (
+                                  <div className="mt-1 text-[11px] text-neutral-400">
+                                    {item.rawStatus || item.partnerStatus}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className={`${isLatest ? "font-semibold text-blue-800" : "text-neutral-800"}`}>
+                                {item.description || item.title || "Cập nhật vận đơn"}
+                              </div>
+
+                              {extraNote ? (
+                                <div className="mt-1 font-semibold text-orange-600 underline decoration-orange-300 underline-offset-2">
+                                  {extraNote}
+                                </div>
+                              ) : null}
+
+                              {item.location ? (
+                                <div className="mt-1 text-xs text-neutral-500">
+                                  {item.location}
+                                </div>
+                              ) : null}
+
+                              {item.driverName || item.driverPhone || item.driverPlate ? (
+                                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-neutral-500">
+                                  {item.driverName ? <span>Tài xế: {item.driverName}</span> : null}
+                                  {item.driverPhone ? <span>SĐT: {item.driverPhone}</span> : null}
+                                  {item.driverPlate ? <span>Biển số: {item.driverPlate}</span> : null}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <div className={`text-right text-sm ${isLatest ? "font-semibold text-blue-700" : "text-neutral-700"}`}>
+                              {formatTimelineTime(getTimelineDateValue(item))}
+                            </div>
                           </div>
-
-                          {item.description ? (
-                            <div className="mt-1 text-sm text-neutral-600">
-                              {item.description}
-                            </div>
-                          ) : null}
-
-                          {item.location ? (
-                            <div className="mt-1 text-xs text-neutral-500">
-                              {item.location}
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <div className="text-right text-xs text-neutral-500">
-                          {item.time
-                            ? new Date(item.time).toLocaleString("vi-VN")
-                            : "—"}
-                        </div>
-                      </div>
+                        );
+                      })}
                     </div>
-                  );
-                })
+                  ))}
+                </div>
               ) : (
                 <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-5 text-sm text-neutral-500">
                   Chưa có dữ liệu hành trình từ hãng. Hệ thống vẫn đang theo dõi và sẽ tự cập nhật.

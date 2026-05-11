@@ -16,8 +16,11 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/control/purchase-receipts": PERMISSIONS.MENU_PURCHASE_RECEIPT,
   "/control/stock-transfers": PERMISSIONS.MENU_STOCK_TRANSFER,
   "/stocktake": PERMISSIONS.MENU_STOCKTAKE,
+  "/stocktake-sessions": PERMISSIONS.MENU_STOCKTAKE,
   "/control/warehouse-map": PERMISSIONS.MENU_WAREHOUSE_MAP,
   "/finance/daily": PERMISSIONS.MENU_FINANCE,
+  "/finance/cash-receipts": PERMISSIONS.MENU_CASH_VOUCHER,
+  "/finance/cash-payments": PERMISSIONS.MENU_CASH_VOUCHER,
   "/finance/ghn-reconciliation": PERMISSIONS.MENU_SHIPPING_RECONCILE,
   "/finance/local-delivery": PERMISSIONS.MENU_SHIPPING_RECONCILE,
   "/finance/revenue": PERMISSIONS.MENU_REPORTS,
@@ -26,7 +29,12 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/control/ai-content": PERMISSIONS.MENU_AI_CONTENT,
   "/permissions": PERMISSIONS.MENU_PERMISSIONS,
   "/settings": PERMISSIONS.MENU_SETTINGS,
+  "/settings/payment-sources": PERMISSIONS.MENU_SETTINGS,
+  "/settings/print-templates": PERMISSIONS.MENU_PRINT_CENTER,
+  "/control/security/google-auth": PERMISSIONS.MENU_SETTINGS,
   "/print-center": PERMISSIONS.MENU_PRINT_CENTER,
+  "/print-center/product-labels": PERMISSIONS.MENU_PRINT_CENTER,
+  "/print-center/templates": PERMISSIONS.MENU_PRINT_CENTER,
 };
 
 export function getRequiredPermissionForPath(pathname: string) {

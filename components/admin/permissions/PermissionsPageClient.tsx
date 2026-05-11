@@ -229,9 +229,9 @@ const MODULE_HEALTH = [
   { module: "Kiểm kho", backend: "stocktake.*", status: "ready", note: "Session/scan/apply/export đã chặn backend." },
   { module: "Nhập kho", backend: "purchase_receipt.*", status: "ready", note: "Pay/import stock/cancel đã có guard." },
   { module: "Inventory", backend: "inventory.*", status: "ready", note: "Adjust/transfer/import/audit đã có guard." },
-  { module: "Phiếu thu / chi", backend: "cash_voucher.*", status: "watch", note: "Đã có permission catalog; cần gắn controller guard khi triển khai API phiếu thu/chi." },
+  { module: "Phiếu thu / chi", backend: "cash_voucher.*", status: "ready", note: "Controller đã có PermissionGuard và action mapping." },
   { module: "Khuyến mại", backend: "promotions.*", status: "watch", note: "Permission keys đã định nghĩa; cần gắn guard vào promotion.controller." },
-  { module: "Tài chính", backend: "finance.*", status: "watch", note: "Nên audit tiếp các endpoint reconciliation chuyên sâu." },
+  { module: "Tài chính", backend: "finance.*", status: "ready", note: "Các endpoint tài chính chính đã có guard." },
 ];
 
 
@@ -247,6 +247,7 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "menu.orders", label: "Mở menu Đơn hàng", risk: "low" },
       { key: "menu.create_order", label: "Mở menu Tạo đơn", risk: "low" },
       { key: "menu.pos", label: "Mở menu POS", risk: "low" },
+      { key: "menu.returns", label: "Mở menu Đơn trả hàng", risk: "low" },
       { key: "orders.view_own", label: "Xem đơn của mình", risk: "low" },
       { key: "orders.view", label: "Xem toàn bộ đơn chi nhánh", risk: "medium" },
       { key: "orders.create", label: "Tạo đơn hàng", risk: "medium" },
@@ -273,6 +274,8 @@ const PERMISSION_MODULES: PermissionModule[] = [
     tone: "purple",
     actions: [
       { key: "menu.products", label: "Mở menu Sản phẩm", risk: "low" },
+      { key: "menu.product_categories", label: "Mở menu Danh mục sản phẩm", risk: "low" },
+      { key: "menu.suppliers", label: "Mở menu Nhà cung cấp", risk: "low" },
       { key: "products.view", label: "Xem sản phẩm", risk: "low" },
       { key: "products.create", label: "Tạo sản phẩm", risk: "high" },
       { key: "products.edit", label: "Sửa sản phẩm", risk: "high" },
@@ -296,6 +299,8 @@ const PERMISSION_MODULES: PermissionModule[] = [
     tone: "amber",
     actions: [
       { key: "menu.inventory", label: "Mở menu Kho", risk: "low" },
+      { key: "menu.inventory_logs", label: "Mở menu Lịch sử kho", risk: "low" },
+      { key: "menu.warehouse_map", label: "Mở menu Sơ đồ kho 3D", risk: "low" },
       { key: "inventory.view", label: "Xem tồn kho", risk: "low" },
       { key: "inventory.value.view", label: "Xem giá trị tồn / tiền vốn", risk: "critical" },
       { key: "inventory.logs.view", label: "Xem lịch sử kho / ledger", risk: "medium" },
@@ -395,6 +400,9 @@ const PERMISSION_MODULES: PermissionModule[] = [
     tone: "rose",
     actions: [
       { key: "menu.finance", label: "Mở menu Tài chính", risk: "low" },
+      { key: "menu.cash_voucher", label: "Mở menu Phiếu thu / chi", risk: "low" },
+      { key: "menu.supplier_payments", label: "Mở menu Thanh toán nhà cung cấp", risk: "high" },
+      { key: "menu.reports", label: "Mở menu Báo cáo doanh thu", risk: "medium" },
       { key: "menu.finance_local_delivery", label: "Menu đối soát nội thành", risk: "medium" },
       { key: "menu.finance_ghn_reconciliation", label: "Menu đối soát GHN", risk: "medium" },
       { key: "finance.view", label: "Xem tài chính", risk: "high" },
@@ -403,6 +411,9 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "finance.ghn.view", label: "Xem đối soát GHN", risk: "high" },
       { key: "finance.ghn.import", label: "Import file đối soát GHN", risk: "critical" },
       { key: "finance.payment_source.manage", label: "Quản lý nguồn tiền", risk: "critical" },
+      { key: "supplier_payments.view", label: "Xem công nợ NCC", risk: "high" },
+      { key: "supplier_payments.cost.edit", label: "Sửa giá nhập khi thanh toán NCC", risk: "critical" },
+      { key: "supplier_payments.pay", label: "Thanh toán nhà cung cấp", risk: "critical" },
     ],
   },
   {
@@ -455,6 +466,9 @@ const PERMISSION_MODULES: PermissionModule[] = [
     icon: "🛡️",
     tone: "red",
     actions: [
+      { key: "menu.permissions", label: "Mở menu Phân quyền", risk: "critical" },
+      { key: "menu.settings", label: "Mở menu Cấu hình", risk: "high" },
+      { key: "menu.print_center", label: "Mở menu Trung tâm in ấn", risk: "medium" },
       { key: "permissions.view", label: "Xem phân quyền", risk: "critical" },
       { key: "permissions.manage", label: "Quản lý phân quyền", risk: "critical" },
       { key: "system.manage", label: "Quản lý hệ thống", risk: "critical" },

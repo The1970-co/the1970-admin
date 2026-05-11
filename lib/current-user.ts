@@ -123,11 +123,19 @@ export function getCurrentUserPermissions(user?: any): string[] {
     ? user.branchPermissions
     : [];
 
+  const deniedKeys: string[] = [];
+
   for (const row of branchPermissions) {
     if (Array.isArray(row?.permissionKeys)) keys.push(...row.permissionKeys);
+    if (Array.isArray(row?.extraPermissionKeys)) keys.push(...row.extraPermissionKeys);
+    if (Array.isArray(row?.deniedPermissionKeys)) deniedKeys.push(...row.deniedPermissionKeys);
   }
+
+  const deniedSet = new Set(
+    deniedKeys.map((key) => String(key || "").trim()).filter(Boolean),
+  );
 
   return Array.from(
     new Set(keys.map((key) => String(key || "").trim()).filter(Boolean)),
-  );
+  ).filter((key) => !deniedSet.has(key));
 }
