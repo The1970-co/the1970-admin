@@ -99,7 +99,6 @@ function creatorDisplay(row: any) {
 
 function hasPermission(user: any, key: string) {
   const keys = new Set<string>();
-  const denied = new Set<string>();
 
   const add = (items?: any[]) => {
     if (!Array.isArray(items)) return;
@@ -109,27 +108,12 @@ function hasPermission(user: any, key: string) {
     });
   };
 
-  const addDenied = (items?: any[]) => {
-    if (!Array.isArray(items)) return;
-    items.forEach((item) => {
-      const value = String(item || "").trim();
-      if (value) denied.add(value);
-    });
-  };
-
   add(user?.permissions);
   add(user?.permissionKeys);
-  add(user?.extraPermissionKeys);
 
   if (Array.isArray(user?.branchPermissions)) {
-    user.branchPermissions.forEach((row: any) => {
-      add(row?.permissionKeys);
-      add(row?.extraPermissionKeys);
-      addDenied(row?.deniedPermissionKeys);
-    });
+    user.branchPermissions.forEach((row: any) => add(row?.permissionKeys));
   }
-
-  denied.forEach((permissionKey) => keys.delete(permissionKey));
 
   const roles = [
     ...(Array.isArray(user?.roles) ? user.roles : []),
@@ -184,13 +168,7 @@ export default function CashVoucherPageClient({ type }: Props) {
     ? "cash_voucher.delete_receipt"
     : "cash_voucher.delete_payment";
 
-  const viewPermission = isReceipt
-    ? "cash_voucher.view_receipt"
-    : "cash_voucher.view_payment";
-
-  const canView =
-    hasPermission(currentUser, viewPermission) ||
-    hasPermission(currentUser, "cash_voucher.view");
+  const canView = hasPermission(currentUser, "cash_voucher.view");
   const canCreate = hasPermission(currentUser, createPermission);
   const canEdit = hasPermission(currentUser, editPermission);
   const canConfirm = hasPermission(currentUser, confirmPermission);
