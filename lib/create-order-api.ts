@@ -826,7 +826,46 @@ function normalizeViettelPostInventory(
 }
 
 export async function getPickupLocations(): Promise<PickupLocation[]> {
-  const data = await request<any>("/shipments/pickup-locations");
+  const apiBase =
+    process.env.NEXT_PUBLIC_CORE_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "";
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("the1970_access_token") ||
+        ""
+      : "";
+
+  const url = apiBase
+    ? `${apiBase.replace(/\/$/, "")}/shipments/pickup-locations`
+    : "/shipments/pickup-locations";
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    let message = "Không load được kho lấy hàng";
+    try {
+      const data = await res.json();
+      message = Array.isArray(data?.message)
+        ? data.message.join(", ")
+        : data?.message || message;
+    } catch {}
+    throw new Error(message);
+  }
+
+  const data = await res.json();
 
   const rows = Array.isArray(data)
     ? data
@@ -838,7 +877,16 @@ export async function getPickupLocations(): Promise<PickupLocation[]> {
 
   return rows.map((row: any) => ({
     ...row,
-    id: String(row.id || `${row.carrier || "carrier"}-${row.groupAddressId || row.viettelGroupAddressId || row.ghnShopId || row.address || "default"}`),
+    id: String(
+      row.id ||
+        `${row.carrier || "carrier"}-${
+          row.groupAddressId ||
+          row.viettelGroupAddressId ||
+          row.ghnShopId ||
+          row.address ||
+          "default"
+        }`,
+    ),
     carrier: String(row.carrier || "").toLowerCase() as PickupCarrier,
     label: String(row.label || row.name || row.address || "Kho lấy hàng"),
   }));
