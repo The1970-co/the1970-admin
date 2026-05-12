@@ -224,6 +224,19 @@ export default function PurchaseReceiptsPageClient() {
     roles.includes("admin") ||
     roles.includes("owner");
 
+  const currentBranchId =
+    (currentUser as any)?.branchId ||
+    (currentUser as any)?.workingBranchId ||
+    (currentUser as any)?.currentBranchId ||
+    (currentUser as any)?.branch?.id ||
+    "";
+
+  const allowedBranches = useMemo(() => {
+    if (isAdmin || !currentBranchId) return branches;
+
+    return branches.filter((item) => String(item.id) === String(currentBranchId));
+  }, [branches, currentBranchId, isAdmin]);
+
   function getPermissionKeys() {
     const keys = new Set<string>();
 
@@ -522,6 +535,16 @@ export default function PurchaseReceiptsPageClient() {
   }, []);
 
   useEffect(() => {
+    if (isAdmin) return;
+    if (!currentBranchId) return;
+
+    setBranchId((prev) => {
+      if (!prev || String(prev) !== String(currentBranchId)) return currentBranchId;
+      return prev;
+    });
+  }, [currentBranchId, isAdmin]);
+
+  useEffect(() => {
     if (!createOpen) return;
 
     const keyword = searchVariant.trim();
@@ -564,11 +587,11 @@ export default function PurchaseReceiptsPageClient() {
 
   function resetCreateForm() {
     const firstSupplier = suppliers.find((s) => s.isActive) || suppliers[0];
-    const firstBranch = branches[0];
+    const firstBranch = allowedBranches[0] || branches.find((item) => String(item.id) === String(currentBranchId)) || branches[0];
 
     setEditingReceiptId(null);
     setSupplierId(firstSupplier?.id || "");
-    setBranchId(firstBranch?.id || "");
+    setBranchId(firstBranch?.id || currentBranchId || "");
     setNote("");
     setItems([]);
     setSearchVariant("");
@@ -601,9 +624,14 @@ export default function PurchaseReceiptsPageClient() {
       return;
     }
 
+    if (!isAdmin && currentBranchId && String(receipt.branchId || receipt.branch?.id || "") !== String(currentBranchId)) {
+      setError("Không được sửa phiếu nhập của chi nhánh khác.");
+      return;
+    }
+
     setEditingReceiptId(receipt.id);
     setSupplierId(receipt.supplierId || receipt.supplier?.id || "");
-    setBranchId(receipt.branchId || receipt.branch?.id || "");
+    setBranchId(isAdmin ? (receipt.branchId || receipt.branch?.id || "") : currentBranchId);
     setNote(receipt.note || "");
     setItems(
       getReceiptItems(receipt).map((item) => ({
@@ -761,8 +789,15 @@ export default function PurchaseReceiptsPageClient() {
   );
 
   async function handleSaveReceipt() {
-    if (!branchId) {
-      setError("Chưa chọn kho nhập.");
+    const effectiveBranchId = isAdmin ? branchId : currentBranchId;
+
+    if (!effectiveBranchId) {
+      setError("Tài khoản chưa được gán chi nhánh làm việc.");
+      return;
+    }
+
+    if (!isAdmin && branchId && String(branchId) !== String(effectiveBranchId)) {
+      setError("Nhân viên chỉ được tạo phiếu nhập cho chi nhánh làm việc.");
       return;
     }
 
@@ -789,7 +824,7 @@ export default function PurchaseReceiptsPageClient() {
 
       const payload = {
         supplierId,
-        branchId,
+        branchId: effectiveBranchId,
         note: note.trim() || undefined,
         createdById,
         items: items.map((item) => ({
@@ -1201,12 +1236,13 @@ export default function PurchaseReceiptsPageClient() {
   )}
 
   <select
-    className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-    value={branchId}
+    className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none disabled:bg-neutral-50 disabled:text-neutral-500"
+    value={isAdmin ? branchId : currentBranchId}
     onChange={(e) => setBranchId(e.target.value)}
+    disabled={!isAdmin}
   >
     <option value="">Chọn kho nhập</option>
-    {branches.map((item) => (
+    {allowedBranches.map((item) => (
       <option key={item.id} value={item.id}>
         {item.name}
       </option>

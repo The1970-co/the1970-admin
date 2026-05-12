@@ -15,7 +15,7 @@ import {
 } from "@/lib/stocktake-api";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
-type TabKey = "ALL" | "MISMATCH" | "UNCOUNTED" | "MATCH" | "NOT_FOUND" | "LOGS";
+type TabKey = "ALL" | "COUNTED" | "MISMATCH" | "UNCOUNTED" | "MATCH" | "NOT_FOUND" | "LOGS";
 
 function Badge({ children, tone = "gray" }: { children: React.ReactNode; tone?: Tone }) {
   const styles: Record<Tone, string> = {
@@ -243,6 +243,7 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
           <div className="flex flex-wrap gap-2">
             {([
               ["ALL", "Toàn bộ", kpi?.totalRows ?? kpi?.totalSku],
+              ["COUNTED", "Đã kiểm", kpi?.countedSku],
               ["MISMATCH", "Chênh lệch", kpi?.mismatchSku ?? kpi?.discrepancySku],
               ["UNCOUNTED", "Chưa kiểm", kpi?.uncountedSku],
               ["MATCH", "Khớp", kpi?.matchedSku],

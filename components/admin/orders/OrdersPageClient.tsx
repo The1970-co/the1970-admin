@@ -2255,7 +2255,7 @@ export default function OrdersPageClient() {
 
       const params = new URLSearchParams();
       params.set("page", String(page));
-      params.set("pageSize", submittedQuery.trim() ? "2000" : String(pageSize));
+      params.set("pageSize", String(pageSize));
 
       // Không gửi q lên backend để tránh Internal server error.
       // Enter xong mới cập nhật submittedQuery, sau đó lọc phía client.
