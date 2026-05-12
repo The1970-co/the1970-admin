@@ -324,6 +324,7 @@ type ShippingQuoteApplyPayload = {
   shippingMode: string;
   selectedServiceId?: number;
   selectedServiceTypeId?: number;
+  selectedQuoteKey?: string;
   weight: number;
   length: number;
   width: number;
@@ -766,9 +767,25 @@ function getQuoteCarrier(row: ShipmentQuoteResult) {
 }
 
 function getQuoteKey(row: ShipmentQuoteResult) {
+  const raw = row as any;
+  const carrier = getQuoteCarrier(row);
+
   return String(
-    (row as any)?._quoteKey ||
-      `${getQuoteCarrier(row)}-${row.serviceId || 0}-${row.serviceTypeId || 0}`,
+    raw?._quoteKey ||
+      raw?._ahamoveServiceId ||
+      raw?.service_id ||
+      raw?.serviceCode ||
+      raw?._viettelServiceCode ||
+      [
+        carrier,
+        row.serviceId || 0,
+        row.serviceTypeId || 0,
+        raw?._serviceName || "",
+        raw?.shortName || "",
+        raw?.serviceName || "",
+        raw?._durationMinutes || "",
+        getFeeNumber(row) || "",
+      ].join("-"),
   );
 }
 
@@ -1761,6 +1778,7 @@ export default function CreateOrderPageClient() {
   >();
   const [selectedShippingServiceTypeId, setSelectedShippingServiceTypeId] =
     useState<number | undefined>();
+  const [selectedShippingQuoteKey, setSelectedShippingQuoteKey] = useState("");
 
   const [shippingWeight, setShippingWeight] = useState(200);
   const [shippingLength, setShippingLength] = useState(10);
@@ -2100,6 +2118,7 @@ export default function CreateOrderPageClient() {
 
         setSelectedShippingServiceId(undefined);
         setSelectedShippingServiceTypeId(undefined);
+        setSelectedShippingQuoteKey("");
         setShippingQuotes([]);
 
         const orderItems = Array.isArray(order?.items)
@@ -2943,11 +2962,16 @@ export default function CreateOrderPageClient() {
 
   const selectedQuote =
     shippingQuotes.find(
+      (q) => selectedShippingQuoteKey && getQuoteKey(q) === selectedShippingQuoteKey && !(q as any)?._disabled,
+    ) ||
+    shippingQuotes.find(
       (q) =>
+        getQuoteCarrier(q) === shippingPartner &&
         q.serviceId === selectedShippingServiceId &&
         q.serviceTypeId === selectedShippingServiceTypeId &&
         !(q as any)?._disabled,
-    ) || null;
+    ) ||
+    null;
 
   const appendCustomerFacingNote = (value?: string | null) => {
     const next = String(value || "").trim();
@@ -3569,6 +3593,7 @@ export default function CreateOrderPageClient() {
     setGhnWardCode(undefined);
     setSelectedShippingServiceId(undefined);
     setSelectedShippingServiceTypeId(undefined);
+    setSelectedShippingQuoteKey("");
     setShippingWeight(200);
     setShippingLength(10);
     setShippingWidth(10);
@@ -3846,6 +3871,7 @@ export default function CreateOrderPageClient() {
       setShippingPartner(payload.shippingPartner || "ghn");
       setSelectedShippingServiceId(payload.selectedServiceId);
       setSelectedShippingServiceTypeId(payload.selectedServiceTypeId);
+      setSelectedShippingQuoteKey(payload.selectedQuoteKey || "");
       setShippingWeight(payload.weight);
       setShippingLength(payload.length);
       setShippingWidth(payload.width);
@@ -3883,6 +3909,7 @@ export default function CreateOrderPageClient() {
       setShippingQuotes([]);
       setSelectedShippingServiceId(undefined);
       setSelectedShippingServiceTypeId(undefined);
+      setSelectedShippingQuoteKey("");
       setGhnDistrictId(undefined);
       setGhnWardCode(undefined);
       setShippingMode("pickup");
@@ -3907,6 +3934,7 @@ export default function CreateOrderPageClient() {
       setShippingQuotes([]);
       setSelectedShippingServiceId(undefined);
       setSelectedShippingServiceTypeId(undefined);
+      setSelectedShippingQuoteKey("");
       setShippingPartner("outside");
       setShippingMode("partner");
       return;
@@ -3918,11 +3946,13 @@ export default function CreateOrderPageClient() {
       setShippingQuotes([]);
       setSelectedShippingServiceId(undefined);
       setSelectedShippingServiceTypeId(undefined);
+      setSelectedShippingQuoteKey("");
       return;
     }
 
     if (shippingUiMode !== "carrier") {
       setShippingQuotes([]);
+      setSelectedShippingQuoteKey("");
       return;
     }
 
@@ -4199,6 +4229,7 @@ export default function CreateOrderPageClient() {
           shippingMode: "partner",
           selectedServiceId: selected.serviceId,
           selectedServiceTypeId: selected.serviceTypeId,
+          selectedQuoteKey: getQuoteKey(selected),
           weight: Number(shippingWeight || 200),
           length: Number(shippingLength || 10),
           width: Number(shippingWidth || 10),
@@ -4216,6 +4247,7 @@ export default function CreateOrderPageClient() {
         setShippingQuotes([]);
         setSelectedShippingServiceId(undefined);
         setSelectedShippingServiceTypeId(undefined);
+        setSelectedShippingQuoteKey("");
         setShippingHint("");
         setShippingError(
           err instanceof Error ? err.message : "Không lấy được phí ship.",
@@ -5640,13 +5672,15 @@ export default function CreateOrderPageClient() {
                 ? (() => {
                     const customerShippingFee = parseNumber(shippingFee) || 0;
                     const activeQuote =
+                      selectedQuote ||
                       shippingQuotes.find(
                         (q) =>
                           getQuoteCarrier(q) === shippingPartner &&
                           q.serviceId === selectedShippingServiceId &&
                           q.serviceTypeId === selectedShippingServiceTypeId &&
                           !(q as any)?._disabled,
-                      ) || selectedQuote;
+                      ) ||
+                      null;
 
                     const validQuotes = shippingQuotes.filter(
                       (quote) =>
@@ -5712,6 +5746,7 @@ export default function CreateOrderPageClient() {
                         shippingMode: "partner",
                         selectedServiceId: quote.serviceId,
                         selectedServiceTypeId: quote.serviceTypeId,
+                        selectedQuoteKey: getQuoteKey(quote),
                         weight: Number(shippingWeight || 200),
                         length: Number(shippingLength || 10),
                         width: Number(shippingWidth || 10),
@@ -5847,11 +5882,13 @@ export default function CreateOrderPageClient() {
                                   {group.quotes.map((quote) => {
                                     const carrier = getQuoteCarrier(quote);
                                     const active =
-                                      carrier === shippingPartner &&
-                                      quote.serviceId ===
-                                        selectedShippingServiceId &&
-                                      quote.serviceTypeId ===
-                                        selectedShippingServiceTypeId;
+                                      selectedShippingQuoteKey
+                                        ? getQuoteKey(quote) === selectedShippingQuoteKey
+                                        : carrier === shippingPartner &&
+                                          quote.serviceId ===
+                                            selectedShippingServiceId &&
+                                          quote.serviceTypeId ===
+                                            selectedShippingServiceTypeId;
                                     const badges = getQuoteBadges(quote);
                                     const feeValue = getFeeNumber(quote);
                                     const disabled = Boolean(
