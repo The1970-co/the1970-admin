@@ -2,18 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { hasPermission, type PermissionKey } from "@/lib/authz";
 import {
   getCurrentUserFromStorage,
   getTokenFromStorage,
   clearCurrentUserFromStorage,
+  getCurrentUserPermissions,
 } from "@/lib/current-user";
 
 export default function PagePermissionGuard({
   permission,
   children,
 }: {
-  permission: PermissionKey;
+  permission: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -31,9 +31,13 @@ export default function PagePermissionGuard({
       return;
     }
 
-    const normalizedRole = String(user?.role || "").toLowerCase();
+    const permissions = getCurrentUserPermissions(user);
 
-    if (!hasPermission(normalizedRole as any, permission)) {
+    const allowed =
+      permissions.includes("*") ||
+      permissions.includes(permission);
+
+    if (!allowed) {
       router.replace("/control");
       return;
     }

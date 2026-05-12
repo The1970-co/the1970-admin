@@ -207,6 +207,11 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
   const requiredPermission = useMemo(() => getRequiredPermissionForPath(pathname), [pathname]);
@@ -223,7 +228,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     return user.name.split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase();
   }, [user]);
 
-  if (!checked || loading) {
+  if (!mounted || !checked || loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-neutral-50 text-sm text-neutral-500">
         Đang kiểm tra quyền từ hệ thống...

@@ -95,6 +95,75 @@ function getUploadedImageUrl(result: any) {
   ).trim();
 }
 
+
+function loadImageForResize(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Không đọc được ảnh để nén."));
+    };
+
+    image.src = objectUrl;
+  });
+}
+
+async function resizeImageBeforeUpload(file: File) {
+  const isImage = file.type.startsWith("image/");
+  if (!isImage) return file;
+
+  const maxBytes = 2.8 * 1024 * 1024;
+  const maxSide = 1600;
+
+  if (file.size <= maxBytes && !file.type.includes("png")) {
+    return file;
+  }
+
+  const image = await loadImageForResize(file);
+  const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * ratio));
+  const height = Math.max(1, Math.round(image.height * ratio));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
+
+  const toBlob = (quality: number) =>
+    new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", quality),
+    );
+
+  let quality = 0.82;
+  let blob = await toBlob(quality);
+
+  while (blob && blob.size > maxBytes && quality > 0.5) {
+    quality -= 0.08;
+    blob = await toBlob(quality);
+  }
+
+  if (!blob) return file;
+
+  const baseName = file.name.replace(/\.[^.]+$/, "");
+  return new File([blob], `${baseName}.jpg`, {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
 type ColorImageMap = Record<string, string>;
 
 function normalizeColorKey(value?: string | null) {
@@ -1040,8 +1109,10 @@ export default function ProductDetailPageClient({
     if (!file) return;
     try {
       setUploading(true);
+      setMessage(file.size > 2.8 * 1024 * 1024 ? "Đang nén ảnh trước khi upload..." : "Đang upload ảnh...");
+      const uploadFile = await resizeImageBeforeUpload(file);
       setMessage("Đang upload ảnh...");
-      const result = await uploadProductImage(file);
+      const result = await uploadProductImage(uploadFile);
       const uploadedUrl = getUploadedImageUrl(result);
       if (!uploadedUrl) {
         throw new Error("Upload xong nhưng backend không trả về link ảnh.");
@@ -1066,8 +1137,10 @@ export default function ProductDetailPageClient({
 
     try {
       setUploadingColor(colorKey);
+      setMessage(file.size > 2.8 * 1024 * 1024 ? `Đang nén ảnh màu ${colorKey}...` : `Đang upload ảnh màu ${colorKey}...`);
+      const uploadFile = await resizeImageBeforeUpload(file);
       setMessage(`Đang upload ảnh màu ${colorKey}...`);
-      const result = await uploadProductImage(file);
+      const result = await uploadProductImage(uploadFile);
       const uploadedUrl = getUploadedImageUrl(result);
       if (!uploadedUrl) {
         throw new Error("Upload xong nhưng backend không trả về link ảnh.");
