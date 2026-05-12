@@ -3927,7 +3927,7 @@ export default function OrderDetailPageClient({
                         <div>
                           <p className="text-[11px] text-amber-700">Đơn hoàn đuôi PR</p>
                           <p className="mt-1 text-[15px] font-semibold text-neutral-900">
-                            {currentPartialDelivery?.returnOrderCode || currentPartialDelivery?.returnOrder?.orderCode || `${viewOrder.orderCode}_PR`}
+                            {currentPartialDelivery?.returnTrackingCode || currentPartialDelivery?.returnOrderCode || currentPartialDelivery?.returnOrder?.shipment?.trackingCode || `${viewOrder.shipment?.trackingCode || viewOrder.orderCode}_PR`}
                           </p>
                         </div>
                         <Badge tone={partialReturnStatusTone(currentPartialDelivery?.returnStatus)}>
@@ -3938,14 +3938,13 @@ export default function OrderDetailPageClient({
                         <DataRow
                           label="Mã hoàn"
                           value={
-                            currentPartialDelivery?.returnOrder?.id ? (
-                              <Link className="text-blue-700 hover:underline" href={`/orders/${currentPartialDelivery.returnOrder.id}`}>
-                                {currentPartialDelivery.returnOrder.orderCode || currentPartialDelivery.returnOrderCode}
-                              </Link>
-                            ) : currentPartialDelivery?.returnOrderCode || "Chưa tạo đơn hoàn"
+                            currentPartialDelivery?.returnTrackingCode ||
+                            currentPartialDelivery?.returnOrderCode ||
+                            currentPartialDelivery?.returnOrder?.shipment?.trackingCode ||
+                            `${viewOrder.shipment?.trackingCode || viewOrder.orderCode}_PR`
                           }
                         />
-                        <DataRow label="Vận đơn hoàn" value={currentPartialDelivery?.returnTrackingCode || currentPartialDelivery?.returnOrder?.shipment?.trackingCode || "—"} />
+                        <DataRow label="Vận đơn hoàn" value={currentPartialDelivery?.returnTrackingCode || currentPartialDelivery?.returnOrderCode || currentPartialDelivery?.returnOrder?.shipment?.trackingCode || `${viewOrder.shipment?.trackingCode || viewOrder.orderCode}_PR`} />
                         <DataRow label="Trạng thái hoàn" value={partialReturnStatusText(currentPartialDelivery?.returnStatus)} />
                       </div>
                     </div>

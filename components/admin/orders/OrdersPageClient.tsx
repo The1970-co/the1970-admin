@@ -3923,6 +3923,15 @@ export default function OrdersPageClient() {
             placeholder="Tìm mã đơn, khách hàng, SĐT..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                const value = e.currentTarget.value.trim();
+                setQuery(value);
+                setSubmittedQuery(value);
+                setPage(1);
+              }
+            }}
           />
 
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
@@ -4310,6 +4319,15 @@ export default function OrdersPageClient() {
                 placeholder="Tìm mã đơn, khách hàng, SĐT, địa chỉ..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const value = e.currentTarget.value.trim();
+                    setQuery(value);
+                    setSubmittedQuery(value);
+                    setPage(1);
+                  }
+                }}
               />
               <Button onClick={submitOrderSearch} variant="primary">
                 Tìm
