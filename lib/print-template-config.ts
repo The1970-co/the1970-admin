@@ -45,11 +45,10 @@ function uid() {
 export function getBranchOptions() {
   return [
     { id: "__default__", name: "DEFAULT" },
-    { id: "b1", name: "Hoàn Kiếm" },
-    { id: "b2", name: "Thái Hà" },
-    { id: "b3", name: "Chùa Láng" },
-    { id: "quoc-oai", name: "Quốc Oai" },
-    { id: "qo-warehouse", name: "Kho QO" },
+    { id: "quoc-oai", name: "QUỐC OAI" },
+    { id: "thai-ha", name: "THÁI HÀ" },
+    { id: "chua-lang", name: "CHÙA LÁNG" },
+    { id: "xa-dan", name: "XÃ ĐÀN" },
   ];
 }
 
@@ -67,28 +66,23 @@ function getBranchContact(branchId: string, branchName: string) {
       storeAddress: "",
       storePhone: "0975615475",
     },
-    b1: {
-      storeName: "THE 1970 - Hoàn Kiếm",
-      storeAddress: "",
-      storePhone: "0975615475",
-    },
-    b2: {
-      storeName: "THE 1970 - Thái Hà",
-      storeAddress: "",
-      storePhone: "0975615475",
-    },
-    b3: {
-      storeName: "THE 1970 - Chùa Láng",
-      storeAddress: "",
-      storePhone: "0975615475",
-    },
     "quoc-oai": {
-      storeName: "THE 1970 - Quốc Oai",
+      storeName: "THE 1970 - QUỐC OAI",
       storeAddress: "",
       storePhone: "0975615475",
     },
-    "qo-warehouse": {
-      storeName: "THE 1970 - Kho QO",
+    "thai-ha": {
+      storeName: "THE 1970 - THÁI HÀ",
+      storeAddress: "",
+      storePhone: "0975615475",
+    },
+    "chua-lang": {
+      storeName: "THE 1970 - CHÙA LÁNG",
+      storeAddress: "",
+      storePhone: "0975615475",
+    },
+    "xa-dan": {
+      storeName: "THE 1970 - XÃ ĐÀN",
       storeAddress: "",
       storePhone: "0975615475",
     },
@@ -372,6 +366,136 @@ function defaultTemplateHtml(
   `.trim();
 }
 
+
+function normalizeBranchName(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveAllowedPrintBranch(input: {
+  branchId?: string | null;
+  branchName?: string | null;
+}) {
+  const rawId = String(input.branchId || "").trim();
+  const rawName = String(input.branchName || "").trim();
+  const text = normalizeBranchName(`${rawId} ${rawName}`);
+
+  if (!rawId || rawId === "__default__" || text.includes("default")) {
+    return { id: "__default__", name: "DEFAULT" };
+  }
+
+  if (
+    text.includes("hoan kiem") ||
+    text.includes("xa dan") ||
+    text === "xd" ||
+    text.includes(" x d")
+  ) {
+    return { id: "xa-dan", name: "XÃ ĐÀN" };
+  }
+
+  if (text.includes("thai ha") || text === "th" || text.includes(" t h")) {
+    return { id: "thai-ha", name: "THÁI HÀ" };
+  }
+
+  if (text.includes("chua lang") || text === "cl" || text.includes(" c l")) {
+    return { id: "chua-lang", name: "CHÙA LÁNG" };
+  }
+
+  if (
+    text.includes("quoc oai") ||
+    text.includes("kho qo") ||
+    text.includes("qo warehouse") ||
+    text === "qo" ||
+    text.includes(" q o")
+  ) {
+    return { id: "quoc-oai", name: "QUỐC OAI" };
+  }
+
+  return { id: "quoc-oai", name: "QUỐC OAI" };
+}
+
+function normalizePrintTemplateBranch(template: PrintTemplateConfig) {
+  const branch = resolveAllowedPrintBranch({
+    branchId: template.branchId,
+    branchName: template.branchName,
+  });
+  const contact = getBranchContact(branch.id, branch.name);
+
+  const oldBranchName = String(template.branchName || "").trim();
+  const oldName = String(template.name || "").trim();
+  const suffix = oldName.includes(" - ")
+    ? oldName.split(" - ").slice(1).join(" - ")
+    : oldName || template.title || "Mẫu in";
+
+  const shouldRenameName =
+    !oldName ||
+    Boolean(oldBranchName && oldName.startsWith(`${oldBranchName} - `)) ||
+    /^(Hoàn Kiếm|Kho QO|Quốc Oai|Thái Hà|Chùa Láng|Xã Đàn|DEFAULT)\s+-\s+/i.test(oldName);
+
+  return {
+    ...template,
+    branchId: branch.id,
+    branchName: branch.name,
+    name: shouldRenameName ? `${branch.name} - ${suffix}` : oldName,
+    storeName:
+      !template.storeName ||
+      /Hoàn Kiếm|Kho QO|Quốc Oai|Thái Hà|Chùa Láng|Xã Đàn/i.test(template.storeName)
+        ? contact.storeName
+        : template.storeName,
+    storeAddress: template.storeAddress ?? contact.storeAddress,
+    storePhone: template.storePhone || contact.storePhone,
+  };
+}
+
+function ensurePosPrintTemplates(rows: PrintTemplateConfig[]) {
+  const next = [...rows];
+
+  getBranchOptions().forEach((branch) => {
+    const exists = next.some(
+      (template) =>
+        template.branchId === branch.id &&
+        template.templateType === "sales" &&
+        template.paperSize === "80mm" &&
+        normalizeBranchName(template.name).includes("pos"),
+    );
+
+    if (exists) return;
+
+    const contact = getBranchContact(branch.id, branch.name);
+    next.push({
+      id: uid(),
+      name: `${branch.name} - Phiếu bán hàng POS 80mm`,
+      branchId: branch.id,
+      branchName: branch.name,
+      templateType: "sales",
+      paperSize: "80mm",
+      isDefault: false,
+      title: "PHIẾU BÁN HÀNG POS",
+      templateHtml: defaultTemplateHtml("sales", "80mm"),
+      storeName: contact.storeName,
+      storeAddress: contact.storeAddress,
+      storePhone: contact.storePhone,
+      footerNote: "Cảm ơn quý khách. Hẹn gặp lại!",
+      showBarcode: true,
+      showQr: true,
+      showCod: true,
+      showShippingFee: true,
+      showNote: true,
+    });
+  });
+
+  return next;
+}
+
+function migratePrintTemplates(rows: PrintTemplateConfig[]) {
+  return ensurePosPrintTemplates(rows.map(normalizePrintTemplateBranch));
+}
+
 export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
   const branches = getBranchOptions();
   const rows: PrintTemplateConfig[] = [];
@@ -531,7 +655,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
     );
   });
 
-  return rows;
+  return ensurePosPrintTemplates(rows);
 }
 
 export function loadPrintTemplates(): PrintTemplateConfig[] {
@@ -552,7 +676,9 @@ export function loadPrintTemplates(): PrintTemplateConfig[] {
       return defaults;
     }
 
-    return parsed;
+    const migrated = migratePrintTemplates(parsed);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+    return migrated;
   } catch {
     const defaults = buildDefaultPrintTemplates();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
@@ -562,7 +688,7 @@ export function loadPrintTemplates(): PrintTemplateConfig[] {
 
 export function savePrintTemplates(rows: PrintTemplateConfig[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(migratePrintTemplates(rows)));
 }
 
 export function findPrintTemplate(params: {

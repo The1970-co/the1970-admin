@@ -17,7 +17,9 @@ export default async function OrderDetailPage({
 
   return (
     <AdminShell title="Chi tiết đơn hàng">
-      <PagePermissionGuard permission="orders.view">
+      <PagePermissionGuard
+        permissions={["orders.view", "orders.view_own"]}
+      >
         <OrderDetailPageClient
           orderId={resolvedParams.id}
           created={resolvedSearchParams?.created === "1"}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUserFromStorage,
@@ -11,13 +11,23 @@ import {
 
 export default function PagePermissionGuard({
   permission,
+  permissions,
+  fallbackPath = "/control",
   children,
 }: {
-  permission: string;
+  permission?: string;
+  permissions?: string[];
+  fallbackPath?: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+
+  const requiredPermissions = useMemo(() => {
+    return Array.from(
+      new Set([...(permissions || []), permission].filter(Boolean) as string[]),
+    );
+  }, [permission, permissions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,14 +41,17 @@ export default function PagePermissionGuard({
       return;
     }
 
-    const permissions = getCurrentUserPermissions(user);
+    const userPermissions = getCurrentUserPermissions(user);
 
     const allowed =
-      permissions.includes("*") ||
-      permissions.includes(permission);
+      userPermissions.includes("*") ||
+      requiredPermissions.length === 0 ||
+      requiredPermissions.some((key) =>
+        userPermissions.includes(key),
+      );
 
     if (!allowed) {
-      router.replace("/control");
+      router.replace(fallbackPath);
       return;
     }
 
@@ -49,7 +62,7 @@ export default function PagePermissionGuard({
     return () => {
       cancelled = true;
     };
-  }, [permission, router]);
+  }, [requiredPermissions, fallbackPath, router]);
 
   if (!ready) {
     return <div style={{ padding: 40 }}>Đang kiểm tra quyền truy cập...</div>;
