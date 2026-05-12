@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
-import { getPickupLocations, type PickupCarrier, type PickupLocation } from "@/lib/create-order-api";
+import { API_BASE } from "@/lib/api-base";
+import { type PickupCarrier, type PickupLocation } from "@/lib/create-order-api";
 import PrintTemplatesTab from "@/components/admin/settings/PrintTemplatesTab";
 
 type SettingsTab =
@@ -568,8 +569,40 @@ export default function SettingsPage() {
   const loadPickupLocationSettings = async () => {
     try {
       setPickupLocationsLoading(true);
-      const rows = await getPickupLocations();
-      const backendRows = Array.isArray(rows) ? rows : [];
+
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      // Quan trọng: production không được gọi /api/... trên domain Vercel admin.
+      // Route lấy kho hãng nằm ở core API, nên phải gọi qua API_BASE.
+      const res = await fetch(`${API_BASE}/shipments/pickup-locations`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `Không tải được kho lấy hàng từ core API (${res.status}). ${text}`.trim(),
+        );
+      }
+
+      const json = await res.json();
+      const rows = Array.isArray(json)
+        ? json
+        : Array.isArray(json?.items)
+          ? json.items
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json?.locations)
+              ? json.locations
+              : [];
+
+      const backendRows = rows as PickupLocation[];
       const customAhamoveRows = readCustomAhamovePickups();
 
       setPickupLocations([
