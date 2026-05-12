@@ -636,17 +636,15 @@ function buildShippingTemplateHtml(params: {
 
  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:8mm;height:13mm;border-top:1px solid #111;padding-top:1mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
     <div style="text-align:center;">
-      ${
-        hasTracking && template.showBarcode
-          ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
-          : ""
+      ${hasTracking && template.showBarcode
+        ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
+        : ""
       }
     </div>
     <div style="text-align:center;">
-      ${
-        hasTracking && template.showQr
-          ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
-          : ""
+      ${hasTracking && template.showQr
+        ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
+        : ""
       }
     </div>
   </div>
@@ -690,17 +688,15 @@ function buildShippingTemplateHtml(params: {
     </table>
   </div>
 
-  ${
-    hasTracking && template.showBarcode
+  ${hasTracking && template.showBarcode
       ? `<div style="text-align:center;margin:10px 0 6px;"><img src="${barcodeUrl(trackingCode)}" style="max-width:100%;height:72px;object-fit:contain;" /></div>`
       : ""
-  }
+    }
 
-  ${
-    hasTracking && template.showQr
+  ${hasTracking && template.showQr
       ? `<div style="text-align:center;margin-top:6px;"><img src="${qrUrl(trackingCode)}" style="width:96px;height:96px;object-fit:contain;" /></div>`
       : ""
-  }
+    }
 
 </div>
   `.trim();
@@ -718,10 +714,9 @@ function buildSalesTemplateHtml(params: {
     <div style="font-size:18px;font-weight:700;letter-spacing:.4px;">
       ${data.storeName}
     </div>
-    ${
-      data.storeAddress
-        ? `<div style="font-size:11px;margin-top:2px;">${data.storeAddress}</div>`
-        : ""
+    ${data.storeAddress
+      ? `<div style="font-size:11px;margin-top:2px;">${data.storeAddress}</div>`
+      : ""
     }
   </div>
 
@@ -767,15 +762,14 @@ function buildSalesTemplateHtml(params: {
     </tr>
   </table>
 
-  ${
-    data.note
+  ${data.note
       ? `
     <div style="margin-top:8px;border-top:1px dashed #999;padding-top:6px;">
       <div><strong>Ghi chú:</strong> ${data.note}</div>
     </div>
   `
       : ""
-  }
+    }
 
 </div>
   `.trim();
@@ -1250,7 +1244,7 @@ export function renderOrderTemplateHtml(params: {
   };
 
   if (template.templateType === "shipping" && template.paperSize === "80mm") {
-    const codBlock = template.showCod && Number(codAmount || amountDue || 0) > 0
+    const codBlock = Number(codAmount || amountDue || 0) > 0
       ? `<div style="margin:1mm 0 1.2mm;"><table style="width:100%;border-collapse:collapse;text-align:center;"><tr><td style="border:1px solid #111;padding:1.4mm 2mm;"><span style="font-size:8.8px;">THU HỘ (COD): </span><span style="font-size:12.5px;font-weight:900;">${money(codAmount || amountDue || 0)}</span></td></tr></table></div>`
       : "";
 
@@ -1316,9 +1310,9 @@ export function renderOrderTemplateHtml(params: {
     const templateHtmlForRender =
       template.templateType === "shipping" && !templateHasGhnSortToken && ghnSortCodeBlock
         ? String(template.templateHtml || "").replace(
-            "{{financialBlock}}",
-            "{{financialBlock}}\n{{ghnSortCodeBlock}}",
-          )
+          "{{financialBlock}}",
+          "{{financialBlock}}\n{{ghnSortCodeBlock}}",
+        )
         : template.templateHtml;
 
     let html = replaceAllTokens(templateHtmlForRender, {
@@ -1334,7 +1328,8 @@ export function renderOrderTemplateHtml(params: {
     });
 
     if (template.templateType === "shipping" && ghnSortCodeBlock) {
-      const nextItemsTop = template.showCod ? "43mm" : "40mm";
+      const nextItemsTop =
+        Number(codAmount || amountDue || 0) > 0 ? "43mm" : "40mm";
       html = html
         .replaceAll("top:33mm;bottom:17mm", `top:${nextItemsTop};bottom:17mm`)
         .replaceAll("top:33mm; bottom:17mm", `top:${nextItemsTop}; bottom:17mm`);
