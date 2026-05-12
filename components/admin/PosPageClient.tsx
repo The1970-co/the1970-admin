@@ -1361,7 +1361,6 @@ const handlePay = async () => {
         note.trim() ? `Ghi chú: ${note.trim()}` : "",
         discountNumber ? `Giảm giá POS nhập tay: ${discountNumber}` : "",
         autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
-        totalPaid > mustPay ? `Khách đưa: ${totalPaid} | Tiền thừa: ${change}` : "",
       ]
         .filter(Boolean)
         .join(" | "),

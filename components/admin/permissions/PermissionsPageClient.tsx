@@ -1285,6 +1285,14 @@ export default function PermissionsPageClient() {
 
   // Employee tab - edit/create panel
   const [selectedEmpEditId, setSelectedEmpEditId] = useState<string | null>(null);
+  const [newEmpName, setNewEmpName] = useState("");
+  const [newEmpCode, setNewEmpCode] = useState("");
+  const [newEmpUsername, setNewEmpUsername] = useState("");
+  const [newEmpEmail, setNewEmpEmail] = useState("");
+  const [newEmpPhone, setNewEmpPhone] = useState("");
+  const [newEmpAddress, setNewEmpAddress] = useState("");
+  const [newEmpNote, setNewEmpNote] = useState("");
+  const [newEmpBranchId, setNewEmpBranchId] = useState("");
   const [newEmpPassword, setNewEmpPassword] = useState("");
   const [creatingEmployee, setCreatingEmployee] = useState(false);
 
@@ -2106,9 +2114,22 @@ export default function PermissionsPageClient() {
     setSecondPassword("");
   };
 
+  const resetNewEmployeeForm = () => {
+    setSelectedEmpEditId(null);
+    setNewEmpName("");
+    setNewEmpCode("");
+    setNewEmpUsername("");
+    setNewEmpEmail("");
+    setNewEmpPhone("");
+    setNewEmpAddress("");
+    setNewEmpNote("");
+    setNewEmpBranchId("");
+    setNewEmpPassword("");
+  };
+
   // ── Employee tab: create new employee ────────────────────────────────────────
   const createNewEmployee = async () => {
-    if (!editName.trim() || !editCode.trim()) {
+    if (!newEmpName.trim() || !newEmpCode.trim()) {
       showMessage("Thiếu họ tên và mã nhân viên.", "error"); return;
     }
     if (!newEmpPassword || newEmpPassword.length < 4) {
@@ -2119,21 +2140,20 @@ export default function PermissionsPageClient() {
       await apiJson("/staff", {
         method: "POST",
         body: JSON.stringify({
-          name: editName.trim(),
-          code: editCode.trim(),
-          username: editUsername.trim() || undefined,
-          email: editEmail.trim() || undefined,
-          phone: editPhone.trim() || undefined,
-          address: editAddress.trim() || undefined,
-          branchId: editMainBranchId || undefined,
+          name: newEmpName.trim(),
+          code: newEmpCode.trim(),
+          username: newEmpUsername.trim() || undefined,
+          email: newEmpEmail.trim() || undefined,
+          phone: newEmpPhone.trim() || undefined,
+          address: newEmpAddress.trim() || undefined,
+          note: newEmpNote.trim() || undefined,
+          branchId: newEmpBranchId || undefined,
           password: newEmpPassword,
           role: "retail-staff",
         }),
       });
-      showMessage(`✓ Đã tạo nhân viên "${editName.trim()}". Vào tab Vai trò để gán vai trò và chi nhánh.`, "success");
-      setEditName(""); setEditCode(""); setEditUsername(""); setEditEmail("");
-      setEditPhone(""); setEditAddress(""); setEditNote(""); setEditMainBranchId("");
-      setNewEmpPassword("");
+      showMessage(`✓ Đã tạo nhân viên "${newEmpName.trim()}". Vào tab Vai trò để gán vai trò và chi nhánh.`, "success");
+      resetNewEmployeeForm();
       await loadEmployees();
     } catch (err) {
       showMessage(err instanceof Error ? err.message : "Tạo nhân viên thất bại.", "error");
@@ -3248,20 +3268,54 @@ Lưu override
 
               <div className="space-y-3 p-5">
                 <div className="grid grid-cols-2 gap-3">
-                  <input value={editName} onChange={(e) => setEditName(e.target.value)}
-                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Họ tên *" />
-                  <input value={editCode} onChange={(e) => setEditCode(e.target.value)}
-                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Mã NV *" />
+                  <input
+                    value={selectedEmpEditId ? editName : newEmpName}
+                    onChange={(e) => selectedEmpEditId ? setEditName(e.target.value) : setNewEmpName(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500"
+                    placeholder="Họ tên *"
+                  />
+                  <input
+                    value={selectedEmpEditId ? editCode : newEmpCode}
+                    onChange={(e) => selectedEmpEditId ? setEditCode(e.target.value) : setNewEmpCode(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500"
+                    placeholder="Mã NV *"
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <input value={editUsername} onChange={(e) => setEditUsername(e.target.value)}
-                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Username (đăng nhập)" />
-                  <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)}
-                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Số điện thoại" />
+                  <input
+                    value={selectedEmpEditId ? editUsername : newEmpUsername}
+                    onChange={(e) => selectedEmpEditId ? setEditUsername(e.target.value) : setNewEmpUsername(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500"
+                    placeholder="Username (đăng nhập)"
+                  />
+                  <input
+                    value={selectedEmpEditId ? editPhone : newEmpPhone}
+                    onChange={(e) => selectedEmpEditId ? setEditPhone(e.target.value) : setNewEmpPhone(e.target.value)}
+                    className="h-11 rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500"
+                    placeholder="Số điện thoại"
+                  />
                 </div>
-                <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
-                  className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500" placeholder="Email" />
-                <select value={editMainBranchId} onChange={(e) => setEditMainBranchId(e.target.value)}
+                <input
+                  value={selectedEmpEditId ? editEmail : newEmpEmail}
+                  onChange={(e) => selectedEmpEditId ? setEditEmail(e.target.value) : setNewEmpEmail(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500"
+                  placeholder="Email"
+                />
+                <input
+                  value={selectedEmpEditId ? editAddress : newEmpAddress}
+                  onChange={(e) => selectedEmpEditId ? setEditAddress(e.target.value) : setNewEmpAddress(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500"
+                  placeholder="Địa chỉ"
+                />
+                <textarea
+                  value={selectedEmpEditId ? editNote : newEmpNote}
+                  onChange={(e) => selectedEmpEditId ? setEditNote(e.target.value) : setNewEmpNote(e.target.value)}
+                  className="min-h-[72px] w-full rounded-2xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+                  placeholder="Ghi chú"
+                />
+                <select
+                  value={selectedEmpEditId ? editMainBranchId : newEmpBranchId}
+                  onChange={(e) => selectedEmpEditId ? setEditMainBranchId(e.target.value) : setNewEmpBranchId(e.target.value)}
                   className="h-11 w-full rounded-2xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-500">
                   <option value="">Chi nhánh chính</option>
                   {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -3281,15 +3335,21 @@ Lưu override
                       <Button onClick={saveEmployeeProfile} loading={savingEmployeeId === selectedEmpEditId} className="flex-1">
                         Lưu hồ sơ
                       </Button>
-                      <button type="button" onClick={() => { setSelectedEmpEditId(null); }}
+                      <button type="button" onClick={resetNewEmployeeForm}
                         className="rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50 transition">
                         Huỷ
                       </button>
                     </>
                   ) : (
-                    <Button onClick={createNewEmployee} loading={creatingEmployee} className="w-full">
-                      ＋ Tạo nhân viên mới
-                    </Button>
+                    <div className="grid w-full grid-cols-[1fr_auto] gap-2">
+                      <Button onClick={createNewEmployee} loading={creatingEmployee} className="w-full">
+                        ＋ Tạo nhân viên mới
+                      </Button>
+                      <button type="button" onClick={resetNewEmployeeForm}
+                        className="rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50 transition">
+                        Xoá form
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

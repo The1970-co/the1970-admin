@@ -224,23 +224,19 @@ export default function FinanceDailyPageClient() {
             onChange={(e) => setStatus(e.target.value)}
             className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
           >
-            <option value="ALL">Tất cả trạng thái</option>
-            <option value="PAID">Đã thu</option>
-            <option value="PENDING_COD">COD chờ về</option>
-            <option value="PARTIAL">Thanh toán một phần</option>
-            <option value="REFUNDED">Hoàn tiền</option>
-            <option value="FAILED">Lỗi</option>
-            <option value="UNPAID">Chưa thanh toán</option>
+            <option value="ALL">Tất cả dòng tiền</option>
+            <option value="RECEIPT">Chỉ phiếu thu</option>
+            <option value="PAYMENT">Chỉ phiếu chi</option>
           </select>
         </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
         {[
-          ["Tổng đã thu", summary.totalCollected ?? summary.totalPaid],
-          ["COD chờ về", summary.totalCodPending],
-          ["Thanh toán một phần", summary.totalPartial],
-          ["Hoàn / lỗi", Number(summary.totalRefunded || 0) + Number(summary.totalFailed || 0)],
+          ["Tổng thu", summary.totalReceipt ?? summary.totalCollected ?? summary.totalPaid],
+          ["Tổng chi", summary.totalPayment ?? summary.totalSpent],
+          ["Số dư ròng", summary.netCashFlow],
+          ["Số giao dịch", summary.totalPayments],
           ["TB / giao dịch", summary.averagePayment],
         ].map(([label, value]) => (
           <div

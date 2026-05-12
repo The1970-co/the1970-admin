@@ -11,18 +11,80 @@ import { getBranches, type BranchItem } from "@/lib/products-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import type { AppRole } from "@/lib/authz";
 
-type Tone = "gray" | "green" | "amber" | "red" | "blue" | "black";
+type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
+type ApplyFilter = "ALL" | "APPLIED" | "NOT_APPLIED";
+type ConfirmFilter = "ALL" | "FINISHED_OR_APPLIED" | "NOT_FINISHED";
+type WorkerFilter = "ALL" | "HAS_WORKER" | "NO_WORKER";
 
-function Badge({ children, tone = "gray" }: { children: React.ReactNode; tone?: Tone }) {
+type EnrichedStocktakeSession = StocktakeSessionListItem & {
+  note?: string | null;
+  createdById?: string | null;
+  createdByName?: string | null;
+  createdBy?: { id?: string | null; name?: string | null; username?: string | null } | null;
+  approvedById?: string | null;
+  approvedByName?: string | null;
+  confirmedById?: string | null;
+  confirmedByName?: string | null;
+  finishedById?: string | null;
+  finishedByName?: string | null;
+  appliedById?: string | null;
+  appliedByName?: string | null;
+  cancelledById?: string | null;
+  cancelledByName?: string | null;
+  workers?: Array<{
+    id?: string;
+    name?: string | null;
+    userId?: string | null;
+    username?: string | null;
+    staffName?: string | null;
+    zone?: string | null;
+    deviceName?: string | null;
+    isActive?: boolean;
+    status?: string | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+  }>;
+  kpi?: {
+    totalSku?: number;
+    totalRows?: number;
+    countedSku?: number;
+    uncountedSku?: number;
+    mismatchSku?: number;
+    discrepancySku?: number;
+    matchedSku?: number;
+    notFoundSku?: number;
+    totalDiffQty?: number;
+    totalDiffValue?: number;
+  } | null;
+  _count?: {
+    scanEvents?: number;
+    workers?: number;
+    items?: number;
+  };
+};
+
+function Badge({
+  children,
+  tone = "gray",
+}: {
+  children: React.ReactNode;
+  tone?: Tone;
+}) {
   const styles: Record<Tone, string> = {
     gray: "border-neutral-200 bg-neutral-100 text-neutral-700",
     green: "border-green-200 bg-green-50 text-green-700",
     amber: "border-amber-200 bg-amber-50 text-amber-700",
     red: "border-red-200 bg-red-50 text-red-700",
     blue: "border-blue-200 bg-blue-50 text-blue-700",
+    purple: "border-purple-200 bg-purple-50 text-purple-700",
     black: "border-neutral-950 bg-neutral-950 text-white",
   };
-  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${styles[tone]}`}>{children}</span>;
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${styles[tone]}`}>
+      {children}
+    </span>
+  );
 }
 
 function statusTone(status?: string): Tone {
@@ -57,6 +119,20 @@ function formatDateTime(value?: string | null) {
   }
 }
 
+function formatNumber(value?: number | null) {
+  return Number(value || 0).toLocaleString("vi-VN");
+}
+
+function diffText(value?: number | null) {
+  const n = Number(value || 0);
+  return n > 0 ? `+${formatNumber(n)}` : formatNumber(n);
+}
+
+function compactText(value?: string | null) {
+  const text = String(value || "").trim();
+  return text || "—";
+}
+
 function collectPermissionKeys(user: any) {
   const keys = new Set<string>();
   if (Array.isArray(user?.permissions)) user.permissions.forEach((key: any) => key && keys.add(String(key)));
@@ -64,6 +140,8 @@ function collectPermissionKeys(user: any) {
   if (Array.isArray(user?.branchPermissions)) {
     user.branchPermissions.forEach((row: any) => {
       if (Array.isArray(row?.permissionKeys)) row.permissionKeys.forEach((key: any) => key && keys.add(String(key)));
+      if (Array.isArray(row?.extraPermissionKeys)) row.extraPermissionKeys.forEach((key: any) => key && keys.add(String(key)));
+      if (Array.isArray(row?.deniedPermissionKeys)) row.deniedPermissionKeys.forEach((key: any) => key && keys.delete(String(key)));
     });
   }
   return keys;
@@ -82,8 +160,78 @@ function hasUserPermission(user: any, permission: string) {
   return keys.has("*") || keys.has(permission);
 }
 
+function getCreatorName(item: EnrichedStocktakeSession) {
+  return (
+    item.createdByName ||
+    item.createdBy?.name ||
+    item.createdBy?.username ||
+    (item as any).creatorName ||
+    (item as any).createdUserName ||
+    (item as any).staffName ||
+    ""
+  );
+}
+
+function getFinishedByName(item: EnrichedStocktakeSession) {
+  return (
+    item.finishedByName ||
+    item.confirmedByName ||
+    item.approvedByName ||
+    (item as any).closedByName ||
+    (item as any).endedByName ||
+    ""
+  );
+}
+
+function getAppliedByName(item: EnrichedStocktakeSession) {
+  return item.appliedByName || (item as any).applyByName || (item as any).stockAppliedByName || "";
+}
+
+function getWorkerNames(item: EnrichedStocktakeSession) {
+  const workers = Array.isArray(item.workers) ? item.workers : [];
+
+  return workers
+    .map((worker) => {
+      const row = worker as any;
+      return (
+        row.name ||
+        row.staffName ||
+        row.username ||
+        row.userId ||
+        ""
+      );
+    })
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function getWorkerSummary(item: EnrichedStocktakeSession) {
+  const names = getWorkerNames(item);
+  if (!names.length) return "—";
+  const uniqueNames = Array.from(new Set(names));
+  if (uniqueNames.length <= 2) return uniqueNames.join(", ");
+  return `${uniqueNames.slice(0, 2).join(", ")} +${uniqueNames.length - 2}`;
+}
+
+function getWorkerCount(item: EnrichedStocktakeSession) {
+  return item.workers?.length || item._count?.workers || 0;
+}
+
+function getScanCount(item: EnrichedStocktakeSession) {
+  return item._count?.scanEvents || (item as any).scanEventCount || (item as any).scanCount || 0;
+}
+
+function isFinished(item: EnrichedStocktakeSession) {
+  const status = String(item.status || "").toUpperCase();
+  return status === "FINISHED" || status === "APPLIED";
+}
+
+function isApplied(item: EnrichedStocktakeSession) {
+  return String(item.status || "").toUpperCase() === "APPLIED" || Boolean(item.appliedAt);
+}
+
 export default function StocktakeSessionsPageClient() {
-  const [sessions, setSessions] = useState<StocktakeSessionListItem[]>([]);
+  const [sessions, setSessions] = useState<EnrichedStocktakeSession[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -96,6 +244,13 @@ export default function StocktakeSessionsPageClient() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
+  const [creatorQuery, setCreatorQuery] = useState("");
+  const [workerQuery, setWorkerQuery] = useState("");
+  const [applyFilter, setApplyFilter] = useState<ApplyFilter>("ALL");
+  const [confirmFilter, setConfirmFilter] = useState<ConfirmFilter>("ALL");
+  const [workerFilter, setWorkerFilter] = useState<WorkerFilter>("ALL");
+  const [minScanCount, setMinScanCount] = useState("");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
 
   useEffect(() => {
     const user = getCurrentUserFromStorage();
@@ -125,7 +280,7 @@ export default function StocktakeSessionsPageClient() {
       setLoading(true);
       setMessage("");
       const data = await listStocktakeSessions({ branchId, status, from, to });
-      setSessions(Array.isArray(data) ? data : []);
+      setSessions(Array.isArray(data) ? (data as EnrichedStocktakeSession[]) : []);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không tải được lịch sử kiểm kho.");
     } finally {
@@ -147,49 +302,180 @@ export default function StocktakeSessionsPageClient() {
 
   const visibleSessions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((item) => `${item.id} ${item.name} ${item.note || ""} ${item.branchId} ${branchMap.get(item.branchId) || ""}`.toLowerCase().includes(q));
-  }, [sessions, query, branchMap]);
+    const creator = creatorQuery.trim().toLowerCase();
+    const worker = workerQuery.trim().toLowerCase();
+    const minScan = Number(minScanCount || 0);
+
+    return sessions.filter((item) => {
+      const branchName = branchMap.get(item.branchId) || "";
+      const creatorName = getCreatorName(item);
+      const workerText = getWorkerNames(item).join(" ");
+      const searchBlob = `${item.id} ${item.name} ${item.note || ""} ${item.branchId} ${branchName} ${creatorName} ${workerText}`.toLowerCase();
+
+      if (q && !searchBlob.includes(q)) return false;
+      if (creator && !creatorName.toLowerCase().includes(creator)) return false;
+      if (worker && !workerText.toLowerCase().includes(worker)) return false;
+
+      if (applyFilter === "APPLIED" && !isApplied(item)) return false;
+      if (applyFilter === "NOT_APPLIED" && isApplied(item)) return false;
+
+      if (confirmFilter === "FINISHED_OR_APPLIED" && !isFinished(item)) return false;
+      if (confirmFilter === "NOT_FINISHED" && isFinished(item)) return false;
+
+      if (workerFilter === "HAS_WORKER" && getWorkerCount(item) <= 0) return false;
+      if (workerFilter === "NO_WORKER" && getWorkerCount(item) > 0) return false;
+
+      if (minScan > 0 && getScanCount(item) < minScan) return false;
+
+      return true;
+    });
+  }, [
+    sessions,
+    query,
+    creatorQuery,
+    workerQuery,
+    minScanCount,
+    applyFilter,
+    confirmFilter,
+    workerFilter,
+    branchMap,
+  ]);
 
   const total = visibleSessions.length;
-  const applied = visibleSessions.filter((s) => String(s.status).toUpperCase() === "APPLIED").length;
-  const running = visibleSessions.filter((s) => ["DRAFT", "IN_PROGRESS", "PAUSED"].includes(String(s.status).toUpperCase())).length;
+  const applied = visibleSessions.filter((s) => isApplied(s)).length;
+  const running = visibleSessions.filter((s) =>
+    ["DRAFT", "IN_PROGRESS", "PAUSED"].includes(String(s.status).toUpperCase()),
+  ).length;
   const finished = visibleSessions.filter((s) => String(s.status).toUpperCase() === "FINISHED").length;
+  const cancelled = visibleSessions.filter((s) => String(s.status).toUpperCase() === "CANCELLED").length;
+  const totalScanEvents = visibleSessions.reduce((sum, item) => sum + getScanCount(item), 0);
+  const totalWorkers = visibleSessions.reduce((sum, item) => sum + getWorkerCount(item), 0);
+
+  const clearFilters = () => {
+    setQuery("");
+    setCreatorQuery("");
+    setWorkerQuery("");
+    setStatus("ALL");
+    setApplyFilter("ALL");
+    setConfirmFilter("ALL");
+    setWorkerFilter("ALL");
+    setMinScanCount("");
+    setFrom("");
+    setTo("");
+    if (isOwner) setBranchId("");
+  };
 
   return (
     <div className="min-h-screen space-y-5 bg-[#f7f7f8] p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight text-neutral-950">Lịch sử kiểm kho</h1>
-          <p className="mt-1 text-sm text-neutral-500">Xem lại toàn bộ phiên kiểm, lọc chưa kiểm / chênh lệch và xuất Excel.</p>
+          <h1 className="text-[28px] font-semibold tracking-tight text-neutral-950">
+            Lịch sử kiểm kho
+          </h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Theo dõi người tạo, nhân viên tham gia, trạng thái kết thúc/chốt tồn, lượt scan và lọc nhanh phiên kiểm.
+          </p>
         </div>
-        {canOpenRealtime ? <Link href="/stocktake" className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800">
-          + Vào màn kiểm realtime
-        </Link> : null}
+        {canOpenRealtime ? (
+          <Link href="/stocktake" className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800">
+            + Vào màn kiểm realtime
+          </Link>
+        ) : null}
       </div>
 
-      {message ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{message}</div> : null}
+      {message ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+          {message}
+        </div>
+      ) : null}
 
-      <div className="grid overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm md:grid-cols-4">
-        <div className="border-r border-neutral-200 p-5 last:border-r-0"><p className="text-sm font-medium text-neutral-500">Tổng phiên</p><p className="mt-1 text-2xl font-extrabold">{total}</p></div>
-        <div className="border-r border-neutral-200 p-5 last:border-r-0"><p className="text-sm font-medium text-neutral-500">Đang mở</p><p className="mt-1 text-2xl font-extrabold text-amber-600">{running}</p></div>
-        <div className="border-r border-neutral-200 p-5 last:border-r-0"><p className="text-sm font-medium text-neutral-500">Chờ chốt tồn</p><p className="mt-1 text-2xl font-extrabold text-blue-600">{finished}</p></div>
-        <div className="p-5"><p className="text-sm font-medium text-neutral-500">Đã chốt tồn</p><p className="mt-1 text-2xl font-extrabold text-green-600">{applied}</p></div>
+      <div className="grid overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm md:grid-cols-4 xl:grid-cols-7">
+        <div className="border-r border-neutral-200 p-5 last:border-r-0">
+          <p className="text-sm font-medium text-neutral-500">Tổng phiên</p>
+          <p className="mt-1 text-2xl font-extrabold">{total}</p>
+        </div>
+        <div className="border-r border-neutral-200 p-5 last:border-r-0">
+          <p className="text-sm font-medium text-neutral-500">Đang mở</p>
+          <p className="mt-1 text-2xl font-extrabold text-amber-600">{running}</p>
+        </div>
+        <div className="border-r border-neutral-200 p-5 last:border-r-0">
+          <p className="text-sm font-medium text-neutral-500">Chờ chốt tồn</p>
+          <p className="mt-1 text-2xl font-extrabold text-blue-600">{finished}</p>
+        </div>
+        <div className="border-r border-neutral-200 p-5 last:border-r-0">
+          <p className="text-sm font-medium text-neutral-500">Đã chốt tồn</p>
+          <p className="mt-1 text-2xl font-extrabold text-green-600">{applied}</p>
+        </div>
+        <div className="border-r border-neutral-200 p-5 last:border-r-0">
+          <p className="text-sm font-medium text-neutral-500">Đã huỷ</p>
+          <p className="mt-1 text-2xl font-extrabold text-red-600">{cancelled}</p>
+        </div>
+        <div className="border-r border-neutral-200 p-5 last:border-r-0">
+          <p className="text-sm font-medium text-neutral-500">Tổng máy</p>
+          <p className="mt-1 text-2xl font-extrabold text-neutral-900">{formatNumber(totalWorkers)}</p>
+        </div>
+        <div className="p-5">
+          <p className="text-sm font-medium text-neutral-500">Tổng lượt scan</p>
+          <p className="mt-1 text-2xl font-extrabold text-purple-700">{formatNumber(totalScanEvents)}</p>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-6">
-          <label className="text-xs font-semibold text-neutral-500 md:col-span-2">Tìm kiếm
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Mã phiên, tên phiên, ghi chú..." className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500" />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-bold text-neutral-900">Bộ lọc phiên kiểm</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedFilters((value) => !value)}
+              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+            >
+              {showAdvancedFilters ? "Thu gọn lọc" : "Mở lọc nâng cao"}
+            </button>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+            >
+              Xoá lọc
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-6">
+          <label className="text-xs font-semibold text-neutral-500 md:col-span-2">
+            Tìm kiếm chung
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Mã phiên, tên phiên, ghi chú, người tạo, nhân viên..."
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+            />
           </label>
-          <label className="text-xs font-semibold text-neutral-500">Chi nhánh
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} disabled={!isOwner} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500 disabled:bg-neutral-50">
+
+          <label className="text-xs font-semibold text-neutral-500">
+            Chi nhánh
+            <select
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+              disabled={!isOwner}
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500 disabled:bg-neutral-50"
+            >
               <option value="">Tất cả</option>
-              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
             </select>
           </label>
-          <label className="text-xs font-semibold text-neutral-500">Trạng thái
-            <select value={status} onChange={(e) => setStatus(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500">
+
+          <label className="text-xs font-semibold text-neutral-500">
+            Trạng thái
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+            >
               <option value="ALL">Tất cả</option>
               <option value="DRAFT">Nháp</option>
               <option value="IN_PROGRESS">Đang kiểm</option>
@@ -199,58 +485,277 @@ export default function StocktakeSessionsPageClient() {
               <option value="CANCELLED">Đã huỷ</option>
             </select>
           </label>
-          <label className="text-xs font-semibold text-neutral-500">Từ ngày
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500" />
+
+          <label className="text-xs font-semibold text-neutral-500">
+            Từ ngày
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+            />
           </label>
-          <label className="text-xs font-semibold text-neutral-500">Đến ngày
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500" />
+
+          <label className="text-xs font-semibold text-neutral-500">
+            Đến ngày
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+            />
           </label>
         </div>
+
+        {showAdvancedFilters ? (
+          <div className="mt-3 grid gap-3 md:grid-cols-6">
+            <label className="text-xs font-semibold text-neutral-500">
+              Người tạo phiên
+              <input
+                value={creatorQuery}
+                onChange={(e) => setCreatorQuery(e.target.value)}
+                placeholder="Tên người tạo"
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              />
+            </label>
+
+            <label className="text-xs font-semibold text-neutral-500">
+              Nhân viên / máy scan
+              <input
+                value={workerQuery}
+                onChange={(e) => setWorkerQuery(e.target.value)}
+                placeholder="Tên nhân viên, máy, khu"
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              />
+            </label>
+
+            <label className="text-xs font-semibold text-neutral-500">
+              Trạng thái xác nhận
+              <select
+                value={confirmFilter}
+                onChange={(e) => setConfirmFilter(e.target.value as ConfirmFilter)}
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              >
+                <option value="ALL">Tất cả</option>
+                <option value="FINISHED_OR_APPLIED">Đã xác nhận/kết thúc</option>
+                <option value="NOT_FINISHED">Chưa xác nhận/kết thúc</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-neutral-500">
+              Trạng thái chốt tồn
+              <select
+                value={applyFilter}
+                onChange={(e) => setApplyFilter(e.target.value as ApplyFilter)}
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              >
+                <option value="ALL">Tất cả</option>
+                <option value="APPLIED">Đã chốt tồn</option>
+                <option value="NOT_APPLIED">Chưa chốt tồn</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-neutral-500">
+              Phiên con / nhân viên
+              <select
+                value={workerFilter}
+                onChange={(e) => setWorkerFilter(e.target.value as WorkerFilter)}
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              >
+                <option value="ALL">Tất cả</option>
+                <option value="HAS_WORKER">Có nhân viên/máy scan</option>
+                <option value="NO_WORKER">Chưa có nhân viên/máy scan</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-neutral-500">
+              Lượt scan tối thiểu
+              <input
+                type="number"
+                min={0}
+                value={minScanCount}
+                onChange={(e) => setMinScanCount(e.target.value)}
+                placeholder="VD: 10"
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              />
+            </label>
+          </div>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-neutral-200 p-4">
-          <p className="text-base font-bold text-neutral-950">Danh sách phiên kiểm</p>
-          <button onClick={() => void loadSessions()} className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-neutral-50">Refresh</button>
+          <div>
+            <p className="text-base font-bold text-neutral-950">Danh sách phiên kiểm</p>
+            <p className="mt-1 text-xs font-medium text-neutral-500">
+              Đang hiển thị {formatNumber(visibleSessions.length)} / {formatNumber(sessions.length)} phiên.
+            </p>
+          </div>
+          <button
+            onClick={() => void loadSessions()}
+            className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-neutral-50"
+          >
+            Refresh
+          </button>
         </div>
+
         <div className="overflow-auto">
-          <table className="min-w-full text-sm">
+          <table className="min-w-[1420px] text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3 font-bold">Phiên</th>
                 <th className="px-4 py-3 font-bold">Chi nhánh</th>
                 <th className="px-4 py-3 font-bold">Trạng thái</th>
+                <th className="px-4 py-3 font-bold">Người tạo</th>
+                <th className="px-4 py-3 font-bold">Nhân viên / máy scan</th>
                 <th className="px-4 py-3 font-bold">Bắt đầu</th>
-                <th className="px-4 py-3 font-bold">Kết thúc</th>
+                <th className="px-4 py-3 font-bold">Kết thúc / xác nhận</th>
+                <th className="px-4 py-3 font-bold">Chốt tồn</th>
+                <th className="px-4 py-3 font-bold">KPI kiểm kho</th>
                 <th className="px-4 py-3 font-bold">Máy / lượt scan</th>
                 <th className="px-4 py-3 font-bold text-right">Thao tác</th>
               </tr>
             </thead>
+
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-neutral-500">Đang tải lịch sử...</td></tr>
-              ) : visibleSessions.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-neutral-500">Chưa có phiên kiểm phù hợp.</td></tr>
-              ) : visibleSessions.map((item) => (
-                <tr key={item.id} className="border-t border-neutral-100 hover:bg-neutral-50/70">
-                  <td className="px-4 py-3">
-                    <Link href={`/stocktake-sessions/${item.id}`} className="font-bold text-neutral-950 hover:underline">{item.name || item.id}</Link>
-                    <p className="mt-1 font-mono text-xs text-neutral-400">{item.id}</p>
-                    {item.note ? <p className="mt-1 max-w-md truncate text-xs text-neutral-500">{item.note}</p> : null}
-                  </td>
-                  <td className="px-4 py-3 font-semibold text-neutral-700">{branchMap.get(item.branchId) || item.branchId}</td>
-                  <td className="px-4 py-3"><Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge></td>
-                  <td className="px-4 py-3 text-neutral-600">{formatDateTime(item.startedAt || item.createdAt)}</td>
-                  <td className="px-4 py-3 text-neutral-600">{formatDateTime(item.finishedAt || item.appliedAt)}</td>
-                  <td className="px-4 py-3 text-neutral-600">{item.workers?.length || 0} máy · {item._count?.scanEvents || 0} lượt</td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <Link href={`/stocktake-sessions/${item.id}`} className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50">Xem chi tiết</Link>
-                      {canExportStocktake ? <button onClick={() => void downloadStocktakeSessionExcel(item.id, `kiem-kho-${item.id}.xlsx`)} className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100">Xuất Excel</button> : null}
-                    </div>
+                <tr>
+                  <td colSpan={11} className="px-4 py-10 text-center text-neutral-500">
+                    Đang tải lịch sử...
                   </td>
                 </tr>
-              ))}
+              ) : visibleSessions.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="px-4 py-10 text-center text-neutral-500">
+                    Không có phiên kiểm phù hợp.
+                  </td>
+                </tr>
+              ) : (
+                visibleSessions.map((item) => {
+                  const workerNames = getWorkerNames(item);
+                  const kpi = item.kpi || {};
+                  const mismatch = kpi.mismatchSku ?? kpi.discrepancySku;
+                  const scanCount = getScanCount(item);
+                  const workerCount = getWorkerCount(item);
+                  const creatorName = getCreatorName(item);
+                  const finishedByName = getFinishedByName(item);
+                  const appliedByName = getAppliedByName(item);
+
+                  return (
+                    <tr key={item.id} className="border-t border-neutral-100 align-top hover:bg-neutral-50/70">
+                      <td className="px-4 py-3">
+                        <Link href={`/stocktake-sessions/${item.id}`} className="font-bold text-neutral-950 hover:underline">
+                          {item.name || item.id}
+                        </Link>
+                        <p className="mt-1 font-mono text-xs text-neutral-400">{item.id}</p>
+                        {item.note ? <p className="mt-1 max-w-[260px] truncate text-xs text-neutral-500">{item.note}</p> : null}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-neutral-800">{branchMap.get(item.branchId) || item.branchId}</p>
+                        <p className="mt-1 font-mono text-xs text-neutral-400">{item.branchId}</p>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-neutral-800">{compactText(creatorName)}</p>
+                        <p className="mt-1 text-xs text-neutral-500">{formatDateTime(item.createdAt)}</p>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-neutral-800">{getWorkerSummary(item)}</p>
+                        {workerNames.length > 0 ? (
+                          <div className="mt-1 flex max-w-[260px] flex-wrap gap-1">
+                            {workerNames.slice(0, 4).map((name) => (
+                              <span key={name} className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-600">
+                                {name}
+                              </span>
+                            ))}
+                            {workerNames.length > 4 ? (
+                              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-600">
+                                +{workerNames.length - 4}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-xs text-neutral-400">Chưa có phiên con</p>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3 text-neutral-600">
+                        {formatDateTime(item.startedAt || item.createdAt)}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-neutral-800">{formatDateTime(item.finishedAt)}</p>
+                        <div className="mt-1">
+                          {isFinished(item) ? (
+                            <Badge tone="blue">Đã xác nhận/kết thúc</Badge>
+                          ) : (
+                            <Badge tone="amber">Chưa kết thúc</Badge>
+                          )}
+                        </div>
+                        {finishedByName ? <p className="mt-1 text-xs text-neutral-500">Bởi: {finishedByName}</p> : null}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <div>
+                          {isApplied(item) ? (
+                            <Badge tone="green">Đã chốt tồn</Badge>
+                          ) : (
+                            <Badge tone="gray">Chưa chốt</Badge>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-neutral-500">{formatDateTime(item.appliedAt)}</p>
+                        {appliedByName ? <p className="mt-1 text-xs text-neutral-500">Bởi: {appliedByName}</p> : null}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <div className="grid min-w-[190px] grid-cols-2 gap-1 text-xs">
+                          <span className="rounded-lg bg-neutral-50 px-2 py-1 text-neutral-600">SKU: <b>{formatNumber(kpi.totalRows ?? kpi.totalSku)}</b></span>
+                          <span className="rounded-lg bg-green-50 px-2 py-1 text-green-700">Đã kiểm: <b>{formatNumber(kpi.countedSku)}</b></span>
+                          <span className="rounded-lg bg-amber-50 px-2 py-1 text-amber-700">Chưa: <b>{formatNumber(kpi.uncountedSku)}</b></span>
+                          <span className="rounded-lg bg-red-50 px-2 py-1 text-red-700">Lệch: <b>{formatNumber(mismatch)}</b></span>
+                          <span className="col-span-2 rounded-lg bg-purple-50 px-2 py-1 text-purple-700">Tổng lệch SL: <b>{diffText(kpi.totalDiffQty)}</b></span>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3 text-neutral-600">
+                        <p className="font-semibold text-neutral-800">{workerCount} máy · {scanCount} lượt</p>
+                        {item.workers?.length ? (
+                          <p className="mt-1 max-w-[220px] truncate text-xs text-neutral-500">
+                            {item.workers
+                              .map((worker) => `${worker.deviceName || "Máy scan"}${worker.zone ? ` · ${worker.zone}` : ""}`)
+                              .join(", ")}
+                          </p>
+                        ) : null}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Link
+                            href={`/stocktake-sessions/${item.id}`}
+                            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+                          >
+                            Xem chi tiết
+                          </Link>
+                          {canExportStocktake ? (
+                            <button
+                              onClick={() => void downloadStocktakeSessionExcel(item.id, `kiem-kho-${item.id}.xlsx`)}
+                              className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100"
+                            >
+                              Xuất Excel
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
