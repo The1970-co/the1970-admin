@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
-import { type PickupCarrier, type PickupLocation } from "@/lib/create-order-api";
+import type { PickupCarrier, PickupLocation } from "@/lib/create-order-api";
 import PrintTemplatesTab from "@/components/admin/settings/PrintTemplatesTab";
 
 type SettingsTab =
@@ -568,23 +568,10 @@ export default function SettingsPage() {
   const loadPickupLocationSettings = async () => {
     try {
       setPickupLocationsLoading(true);
+      setMessage("");
 
-      // Không gọi /api/... của Next/Vercel và không đi qua helper của màn tạo đơn.
-      // Trang settings phải lấy trực tiếp từ core API qua apiJson -> API_BASE.
-      // Online trước đó bị 0 kho ViettelPost vì helper/fallback đang không gọi đúng core route.
-      const rows = await apiJson<PickupLocation[] | { data?: PickupLocation[]; locations?: PickupLocation[] }>(
-        "/shipments/pickup-locations",
-        { method: "GET" },
-      );
-
-      const backendRows = Array.isArray(rows)
-        ? rows
-        : Array.isArray(rows?.locations)
-          ? rows.locations
-          : Array.isArray(rows?.data)
-            ? rows.data
-            : [];
-
+      const rows = await apiJson<PickupLocation[]>("/shipments/pickup-locations");
+      const backendRows = Array.isArray(rows) ? rows : [];
       const customAhamoveRows = readCustomAhamovePickups();
 
       setPickupLocations([
@@ -592,18 +579,18 @@ export default function SettingsPage() {
         ...customAhamoveRows,
       ]);
 
-      setMessage(
-        backendRows.length
-          ? `Đã tải ${backendRows.length} kho lấy hàng từ core API.`
-          : "Core API chưa trả kho hãng nào. Kiểm tra Railway env/token ViettelPost hoặc log /shipments/pickup-locations.",
-      );
+      if (!backendRows.length && !customAhamoveRows.length) {
+        setMessage(
+          "Chưa đọc được kho hãng từ core API. Kiểm tra Railway env/token và endpoint /shipments/pickup-locations.",
+        );
+      }
     } catch (err) {
       const customAhamoveRows = readCustomAhamovePickups();
       setPickupLocations(customAhamoveRows);
       setMessage(
         err instanceof Error
           ? `Không load được kho lấy hàng từ core API: ${err.message}`
-          : "Không load được danh sách kho lấy hàng hãng vận chuyển."
+          : "Không load được danh sách kho lấy hàng hãng vận chuyển.",
       );
     } finally {
       setPickupLocationsLoading(false);
