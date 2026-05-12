@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
+import { getPickupLocations, type PickupCarrier, type PickupLocation } from "@/lib/create-order-api";
 import PrintTemplatesTab from "@/components/admin/settings/PrintTemplatesTab";
 
 type SettingsTab =
@@ -61,6 +62,67 @@ type SalesChannelItem = {
 };
 
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
+const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
+const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
+
+type CarrierPickupMapping = Record<
+  string,
+  {
+    ghn?: string;
+    viettelpost?: string;
+    ahamove?: string;
+  }
+>;
+
+type ManualAhamovePickupForm = {
+  name: string;
+  phone: string;
+  address: string;
+  note: string;
+};
+
+function safeJsonParse(value: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCustomAhamovePickups(value: unknown): PickupLocation[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item: any, index) => {
+      const id = String(item?.id || `ahamove-custom-${index}-${Date.now()}`);
+      const name = String(item?.name || item?.label || "").trim();
+      const phone = String(item?.phone || "").trim();
+      const address = String(item?.address || "").trim();
+      const note = String(item?.note || "").trim();
+
+      if (!name && !phone && !address) return null;
+
+      return {
+        id,
+        carrier: "ahamove" as PickupCarrier,
+        label: name || address || id,
+        name: name || address || "Điểm lấy hàng AhaMove",
+        phone,
+        address,
+        note,
+        isCustom: true,
+      } as PickupLocation & { note?: string; isCustom?: boolean };
+    })
+    .filter(Boolean) as PickupLocation[];
+}
+
+function readCustomAhamovePickups() {
+  if (typeof window === "undefined") return [] as PickupLocation[];
+  return normalizeCustomAhamovePickups(
+    safeJsonParse(localStorage.getItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY)),
+  );
+}
 
 const defaultSalesChannels: SalesChannelItem[] = [
   {
@@ -209,6 +271,56 @@ function StatCard({
   );
 }
 
+const PICKUP_CARRIER_META: Record<PickupCarrier, { label: string; code: string; accent: string; hint: string }> = {
+  ghn: {
+    label: "GHN",
+    code: "GHN",
+    accent: "border-amber-200 bg-amber-50 text-amber-700",
+    hint: "Shop ID, quận/huyện gửi, phường/xã gửi",
+  },
+  viettelpost: {
+    label: "ViettelPost",
+    code: "VIETTELPOST",
+    accent: "border-red-200 bg-red-50 text-red-700",
+    hint: "Group address ID / kho gửi trên ViettelPost",
+  },
+  ahamove: {
+    label: "AhaMove",
+    code: "AHAMOVE",
+    accent: "border-orange-200 bg-orange-50 text-orange-700",
+    hint: "Tên, SĐT, địa chỉ điểm lấy hàng nội thành",
+  },
+};
+
+function getPickupCode(item?: PickupLocation | null, carrier?: PickupCarrier) {
+  if (!item) return "Dùng mặc định backend";
+
+  if (carrier === "ghn") {
+    return [
+      item.ghnShopId ? `Shop ${item.ghnShopId}` : "GHN",
+      item.ghnFromDistrictId ? `District ${item.ghnFromDistrictId}` : "",
+      item.ghnFromWardCode ? `Ward ${item.ghnFromWardCode}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (carrier === "viettelpost") {
+    return [
+      item.groupAddressId || item.viettelGroupAddressId
+        ? `Group ${item.groupAddressId || item.viettelGroupAddressId}`
+        : "VTP",
+      item.viettelProvinceId ? `P${item.viettelProvinceId}` : "",
+      item.viettelDistrictId ? `D${item.viettelDistrictId}` : "",
+      item.viettelWardId ? `W${item.viettelWardId}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  return item.phone || item.id || "AhaMove";
+}
+
 const shippingSeed: ShippingProviderItem[] = [
   {
     id: "s1",
@@ -243,6 +355,17 @@ const shippingSeed: ShippingProviderItem[] = [
     isActive: false,
     note: "Để cho nội thành sau",
   },
+  {
+    id: "s4",
+    code: "VIETTELPOST",
+    name: "Viettel Post",
+    mode: "PRODUCTION",
+    apiKey: "",
+    shopId: "",
+    isConnected: true,
+    isActive: true,
+    note: "Dùng token và kho gửi từ backend",
+  },
 ];
 
 const mappingSeed: OperationMapping = {
@@ -266,6 +389,23 @@ export default function SettingsPage() {
   const [selectedProviderId, setSelectedProviderId] = useState<string>(
     shippingSeed[0].id
   );
+  const [pickupLocations, setPickupLocations] = useState<PickupLocation[]>([]);
+  const [pickupLocationsLoading, setPickupLocationsLoading] = useState(false);
+  const [selectedPickupCarrier, setSelectedPickupCarrier] =
+    useState<PickupCarrier>("ghn");
+  const [carrierPickupMapping, setCarrierPickupMapping] =
+    useState<CarrierPickupMapping>({});
+  const [carrierPickupMappingDraft, setCarrierPickupMappingDraft] =
+    useState<CarrierPickupMapping>({});
+  const [carrierPickupMappingDirty, setCarrierPickupMappingDirty] =
+    useState(false);
+  const [manualAhamovePickupForm, setManualAhamovePickupForm] =
+    useState<ManualAhamovePickupForm>({
+      name: "",
+      phone: "",
+      address: "",
+      note: "",
+    });
 
   const [mapping, setMapping] = useState<OperationMapping>(mappingSeed);
 
@@ -374,8 +514,169 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadBranches();
     void loadPaymentSources();
+    void loadPickupLocationSettings();
+    loadCarrierPickupMapping();
     loadSalesChannels();
   }, []);
+
+  const loadCarrierPickupMapping = () => {
+    try {
+      const raw = localStorage.getItem(CARRIER_PICKUP_MAPPING_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      const next = parsed && typeof parsed === "object" ? parsed : {};
+      setCarrierPickupMapping(next);
+      setCarrierPickupMappingDraft(next);
+      setCarrierPickupMappingDirty(false);
+    } catch {
+      setCarrierPickupMapping({});
+      setCarrierPickupMappingDraft({});
+      setCarrierPickupMappingDirty(false);
+    }
+  };
+
+  const saveCarrierPickupMapping = () => {
+    setCarrierPickupMapping(carrierPickupMappingDraft);
+    localStorage.setItem(
+      CARRIER_PICKUP_MAPPING_STORAGE_KEY,
+      JSON.stringify(carrierPickupMappingDraft),
+    );
+    setCarrierPickupMappingDirty(false);
+    setMessage("Đã lưu cấu hình kho lấy hàng theo chi nhánh. Màn tạo đơn sẽ tự dùng mapping này.");
+  };
+
+  const resetCarrierPickupMappingDraft = () => {
+    setCarrierPickupMappingDraft(carrierPickupMapping);
+    setCarrierPickupMappingDirty(false);
+    setMessage("Đã hoàn tác cấu hình kho lấy hàng chưa lưu.");
+  };
+
+  const updateCarrierPickupMapping = (
+    warehouseId: string,
+    carrier: PickupCarrier,
+    pickupLocationId: string,
+  ) => {
+    setCarrierPickupMappingDraft((prev) => ({
+      ...prev,
+      [warehouseId]: {
+        ...(prev[warehouseId] || {}),
+        [carrier]: pickupLocationId || "",
+      },
+    }));
+    setCarrierPickupMappingDirty(true);
+  };
+
+  const loadPickupLocationSettings = async () => {
+    try {
+      setPickupLocationsLoading(true);
+      const rows = await getPickupLocations();
+      const backendRows = Array.isArray(rows) ? rows : [];
+      const customAhamoveRows = readCustomAhamovePickups();
+
+      setPickupLocations([
+        ...backendRows.filter((item) => !String(item.id).startsWith("ahamove-custom-")),
+        ...customAhamoveRows,
+      ]);
+    } catch (err) {
+      const customAhamoveRows = readCustomAhamovePickups();
+      setPickupLocations(customAhamoveRows);
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Không load được danh sách kho lấy hàng hãng vận chuyển."
+      );
+    } finally {
+      setPickupLocationsLoading(false);
+    }
+  };
+
+  const saveCustomAhamovePickups = (items: PickupLocation[]) => {
+    const cleaned = items
+      .filter((item) => item.carrier === "ahamove")
+      .map((item) => ({
+        id: String(item.id),
+        carrier: "ahamove",
+        label: String(item.label || item.name || item.address || "Điểm lấy hàng AhaMove"),
+        name: String(item.name || item.label || "Điểm lấy hàng AhaMove"),
+        phone: String(item.phone || ""),
+        address: String(item.address || ""),
+        note: String((item as any).note || ""),
+        isCustom: true,
+      }));
+
+    localStorage.setItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY, JSON.stringify(cleaned));
+  };
+
+  const addManualAhamovePickup = () => {
+    const name = manualAhamovePickupForm.name.trim();
+    const phone = manualAhamovePickupForm.phone.trim();
+    const address = manualAhamovePickupForm.address.trim();
+    const note = manualAhamovePickupForm.note.trim();
+
+    if (!name || !phone || !address) {
+      setMessage("Thiếu tên điểm lấy hàng, SĐT hoặc địa chỉ AhaMove.");
+      return;
+    }
+
+    const next: PickupLocation & { note?: string; isCustom?: boolean } = {
+      id: `ahamove-custom-${Date.now()}`,
+      carrier: "ahamove",
+      label: name,
+      name,
+      phone,
+      address,
+      note,
+      isCustom: true,
+    };
+
+    const customRows = [...readCustomAhamovePickups(), next];
+    saveCustomAhamovePickups(customRows);
+    setPickupLocations((prev) => [
+      ...prev.filter((item) => String(item.id) !== String(next.id)),
+      next,
+    ]);
+    setManualAhamovePickupForm({ name: "", phone: "", address: "", note: "" });
+    setSelectedPickupCarrier("ahamove");
+    setMessage("Đã thêm điểm lấy hàng AhaMove. Hãy map chi nhánh rồi bấm Lưu cấu hình.");
+  };
+
+  const deleteManualAhamovePickup = (pickupId: string) => {
+    const customRows = readCustomAhamovePickups().filter(
+      (item) => String(item.id) !== String(pickupId),
+    );
+    saveCustomAhamovePickups(customRows);
+
+    setPickupLocations((prev) => prev.filter((item) => String(item.id) !== String(pickupId)));
+    setCarrierPickupMappingDraft((prev) => {
+      const next: CarrierPickupMapping = {};
+      Object.entries(prev).forEach(([warehouseId, value]) => {
+        next[warehouseId] = {
+          ...value,
+          ahamove: value.ahamove === pickupId ? "" : value.ahamove,
+        };
+      });
+      return next;
+    });
+    setCarrierPickupMappingDirty(true);
+    setMessage("Đã xoá điểm lấy hàng AhaMove thủ công. Bấm Lưu cấu hình để cập nhật mapping.");
+  };
+
+  const pickupOptionsByCarrier = (carrier: PickupCarrier) =>
+    pickupLocations.filter((item) => item.carrier === carrier);
+
+  const getSelectedPickupLocation = (warehouseId: string, carrier: PickupCarrier) => {
+    const selectedId = carrierPickupMappingDraft[warehouseId]?.[carrier] || "";
+    if (!selectedId) return null;
+    return pickupLocations.find((item) => String(item.id) === String(selectedId)) || null;
+  };
+
+  const selectedPickupCarrierOptions = pickupOptionsByCarrier(selectedPickupCarrier);
+  const selectedPickupCarrierMeta = PICKUP_CARRIER_META[selectedPickupCarrier];
+  const selectedPickupProvider = shippingProviders.find(
+    (provider) => provider.code.toUpperCase() === selectedPickupCarrierMeta.code,
+  );
+  const mappedPickupCount = warehouses.filter(
+    (warehouse) => Boolean(carrierPickupMappingDraft[warehouse.id]?.[selectedPickupCarrier]),
+  ).length;
 
   const loadSalesChannels = () => {
     try {
@@ -1281,6 +1582,322 @@ const addWarehouse = async () => {
               </Button>
             </div>
           </Panel>
+
+          <Panel className="p-5 xl:col-span-2">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-neutral-900">
+                  Cấu hình kho lấy hàng mặc định
+                </h3>
+                <p className="mt-1 max-w-3xl text-sm text-neutral-500">
+                  Thiết lập giống Sapo: mỗi chi nhánh nội bộ map với một kho gửi của từng hãng. Màn tạo đơn chỉ chọn hãng, hệ thống tự lấy đúng kho theo chi nhánh đang làm việc.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge tone={pickupLocations.length ? "green" : "amber"}>
+                  {pickupLocationsLoading
+                    ? "Đang tải..."
+                    : `${pickupLocations.length} kho hãng`}
+                </Badge>
+                <Button variant="secondary" onClick={() => void loadPickupLocationSettings()}>
+                  Tải lại kho hãng
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={resetCarrierPickupMappingDraft}
+                  disabled={!carrierPickupMappingDirty}
+                >
+                  Hoàn tác
+                </Button>
+                <Button
+                  onClick={saveCarrierPickupMapping}
+                  disabled={!carrierPickupMappingDirty}
+                >
+                  Lưu cấu hình
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              {(["ghn", "viettelpost", "ahamove"] as PickupCarrier[]).map((carrier) => {
+                const meta = PICKUP_CARRIER_META[carrier];
+                const count = pickupOptionsByCarrier(carrier).length;
+                const mapped = warehouses.filter(
+                  (warehouse) => Boolean(carrierPickupMappingDraft[warehouse.id]?.[carrier]),
+                ).length;
+
+                return (
+                  <button
+                    key={carrier}
+                    onClick={() => setSelectedPickupCarrier(carrier)}
+                    className={`rounded-3xl border p-4 text-left transition ${
+                      selectedPickupCarrier === carrier
+                        ? meta.accent
+                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-lg font-semibold">{meta.label}</div>
+                      <Badge tone={count ? "green" : "amber"}>{count} kho</Badge>
+                    </div>
+                    <div className="mt-2 text-xs opacity-80">{meta.hint}</div>
+                    <div className="mt-3 text-sm font-medium">
+                      Đã map {mapped}/{warehouses.length || 0} chi nhánh
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 grid gap-5 xl:grid-cols-[360px_1fr]">
+              <div className="space-y-4">
+                <div className={`rounded-3xl border p-5 ${selectedPickupCarrierMeta.accent}`}>
+                  <div className="text-sm font-medium opacity-80">Hãng đang cấu hình</div>
+                  <div className="mt-1 text-3xl font-semibold tracking-tight">
+                    {selectedPickupCarrierMeta.label}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl bg-white/70 p-3">
+                      <div className="text-xs opacity-70">Kho lấy được</div>
+                      <div className="mt-1 text-xl font-semibold">
+                        {selectedPickupCarrierOptions.length}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl bg-white/70 p-3">
+                      <div className="text-xs opacity-70">Chi nhánh đã map</div>
+                      <div className="mt-1 text-xl font-semibold">
+                        {mappedPickupCount}/{warehouses.length || 0}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-5">
+                  <div className="text-sm font-semibold text-neutral-900">
+                    Thông tin kết nối
+                  </div>
+                  <div className="mt-3 space-y-3 text-sm text-neutral-600">
+                    <div className="flex justify-between gap-3">
+                      <span>Mã hãng</span>
+                      <span className="font-medium text-neutral-900">
+                        {selectedPickupProvider?.code || selectedPickupCarrierMeta.code}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>Mode</span>
+                      <span className="font-medium text-neutral-900">
+                        {selectedPickupProvider?.mode || "ENV"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>Kết nối</span>
+                      <Badge tone={selectedPickupProvider?.isConnected ? "green" : "amber"}>
+                        {selectedPickupProvider?.isConnected ? "Connected" : "Dùng env/backend"}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>Trạng thái</span>
+                      <Badge tone={selectedPickupProvider?.isActive !== false ? "blue" : "gray"}>
+                        {selectedPickupProvider?.isActive !== false ? "ACTIVE" : "INACTIVE"}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-neutral-200 bg-white p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-neutral-900">
+                      Danh sách kho hãng đọc được
+                    </div>
+                    {selectedPickupCarrier === "ahamove" ? (
+                      <Badge tone="blue">Có thể thêm thủ công</Badge>
+                    ) : null}
+                  </div>
+
+                  {selectedPickupCarrier === "ahamove" ? (
+                    <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 p-3">
+                      <div className="text-sm font-semibold text-orange-800">
+                        Thêm điểm lấy hàng AhaMove thủ công
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        <input
+                          className="h-10 rounded-2xl border border-orange-200 bg-white px-3 text-sm outline-none"
+                          value={manualAhamovePickupForm.name}
+                          onChange={(e) =>
+                            setManualAhamovePickupForm((prev) => ({
+                              ...prev,
+                              name: e.target.value,
+                            }))
+                          }
+                          placeholder="Tên điểm lấy hàng, VD: The 1970 Thái Hà"
+                        />
+                        <input
+                          className="h-10 rounded-2xl border border-orange-200 bg-white px-3 text-sm outline-none"
+                          value={manualAhamovePickupForm.phone}
+                          onChange={(e) =>
+                            setManualAhamovePickupForm((prev) => ({
+                              ...prev,
+                              phone: e.target.value,
+                            }))
+                          }
+                          placeholder="SĐT lấy hàng"
+                        />
+                        <textarea
+                          className="min-h-[76px] rounded-2xl border border-orange-200 bg-white px-3 py-2 text-sm outline-none"
+                          value={manualAhamovePickupForm.address}
+                          onChange={(e) =>
+                            setManualAhamovePickupForm((prev) => ({
+                              ...prev,
+                              address: e.target.value,
+                            }))
+                          }
+                          placeholder="Địa chỉ lấy hàng đầy đủ"
+                        />
+                        <input
+                          className="h-10 rounded-2xl border border-orange-200 bg-white px-3 text-sm outline-none"
+                          value={manualAhamovePickupForm.note}
+                          onChange={(e) =>
+                            setManualAhamovePickupForm((prev) => ({
+                              ...prev,
+                              note: e.target.value,
+                            }))
+                          }
+                          placeholder="Ghi chú nội bộ, không bắt buộc"
+                        />
+                        <Button onClick={addManualAhamovePickup}>
+                          Thêm điểm AhaMove
+                        </Button>
+                      </div>
+                      <div className="mt-2 text-xs text-orange-700">
+                        Điểm thủ công sẽ được ưu tiên khi đã map chi nhánh. Nếu chưa map, backend vẫn fallback về env Railway.
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                    {selectedPickupCarrierOptions.length ? (
+                      selectedPickupCarrierOptions.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-sm"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-semibold text-neutral-900">
+                                {item.name || item.label || item.id}
+                              </div>
+                              <div className="mt-1 text-xs text-neutral-500">
+                                {item.address || "Chưa có địa chỉ"}
+                              </div>
+                              <div className="mt-2 text-xs font-medium text-neutral-700">
+                                {getPickupCode(item, selectedPickupCarrier)}
+                              </div>
+                            </div>
+                            {selectedPickupCarrier === "ahamove" && String(item.id).startsWith("ahamove-custom-") ? (
+                              <button
+                                type="button"
+                                onClick={() => deleteManualAhamovePickup(String(item.id))}
+                                className="rounded-full border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                              >
+                                Xoá
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-500">
+                        Chưa đọc được kho của hãng này. Kiểm tra token/env hoặc bấm tải lại kho hãng.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white">
+                <div className="grid grid-cols-[190px_1.2fr_1.4fr_1fr] border-b border-neutral-200 bg-neutral-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                  <div>Chi nhánh Sapo</div>
+                  <div>Địa chỉ chi nhánh</div>
+                  <div>Kho {selectedPickupCarrierMeta.label}</div>
+                  <div>Thông tin kho gửi</div>
+                </div>
+
+                <div className="divide-y divide-neutral-100">
+                  {warehouses.map((warehouse) => {
+                    const selected = getSelectedPickupLocation(warehouse.id, selectedPickupCarrier);
+                    const selectedId =
+                      carrierPickupMappingDraft[warehouse.id]?.[selectedPickupCarrier] || "";
+
+                    return (
+                      <div
+                        key={`${selectedPickupCarrier}-${warehouse.id}`}
+                        className="grid grid-cols-[190px_1.2fr_1.4fr_1fr] gap-4 px-4 py-4 text-sm"
+                      >
+                        <div>
+                          <div className="font-semibold text-neutral-900">
+                            {warehouse.name}
+                          </div>
+                          <div className="mt-1 text-xs text-neutral-400">
+                            {warehouse.code}
+                          </div>
+                        </div>
+                        <div className="text-neutral-600">
+                          {warehouse.address || "Chưa có địa chỉ chi nhánh"}
+                        </div>
+                        <div>
+                          <select
+                            className="h-11 w-full rounded-2xl border border-neutral-300 bg-white px-3 text-sm outline-none"
+                            value={selectedId}
+                            onChange={(e) =>
+                              updateCarrierPickupMapping(
+                                warehouse.id,
+                                selectedPickupCarrier,
+                                e.target.value,
+                              )
+                            }
+                          >
+                            <option value="">Dùng mặc định backend</option>
+                            {selectedPickupCarrierOptions.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name || item.label || item.address || item.id}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="mt-2 text-xs text-neutral-400">
+                            {selected
+                              ? getPickupCode(selected, selectedPickupCarrier)
+                              : "Chưa map riêng, sẽ dùng env/backend fallback"}
+                          </div>
+                        </div>
+                        <div>
+                          {selected ? (
+                            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+                              <div className="font-semibold text-neutral-900">
+                                {selected.name || selected.label || "Kho hãng"}
+                              </div>
+                              <div className="mt-1">{selected.phone || "Chưa có SĐT"}</div>
+                              <div className="mt-1 line-clamp-3">
+                                {selected.address || "Chưa có địa chỉ"}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-400">
+                              Dùng mặc định backend
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              Bấm <b>Lưu cấu hình</b> sau khi map kho. Với AhaMove, điểm lấy hàng thủ công sẽ ưu tiên hơn env Railway khi chi nhánh đã map vào điểm đó. Hiện cấu hình đang lưu localStorage key <b>the1970_carrier_pickup_mapping</b> và <b>the1970_custom_ahamove_pickups</b>; bước sau nên đưa vào DB để tất cả máy dùng chung giống Sapo thật.
+            </div>
+          </Panel>
+
         </div>
       )}
 

@@ -128,6 +128,7 @@ type OrderDetail = {
   salesChannel?: string | null;
   isPartialDelivery?: boolean;
   partialReason?: string | null;
+  partialDeliveries?: PartialDeliveryRecord[];
   shippingGhnDistrictId?: number | null;
   shippingGhnWardCode?: string | null;
   shippingRecipientName?: string | null;
@@ -177,6 +178,58 @@ type PartialDeliveryDraft = {
   note: string;
   approvedBy: string;
   items: PartialDeliveryItemDraft[];
+};
+
+
+type PartialDeliveryRecordItem = {
+  id?: string;
+  orderItemId?: string | null;
+  variantId?: string | null;
+  productName?: string | null;
+  sku?: string | null;
+  color?: string | null;
+  size?: string | null;
+  orderedQty?: number | null;
+  deliveredQty?: number | null;
+  returnedQty?: number | null;
+  qty?: number | null;
+  unitPrice?: number | null;
+  lineTotal?: number | null;
+  actionType?: "KEPT" | "RETURNED" | string | null;
+};
+
+type PartialDeliveryRecord = {
+  id: string;
+  code?: string | null;
+  orderId?: string | null;
+  orderCode?: string | null;
+  ghnTrackingCode?: string | null;
+  originalCod?: number | null;
+  adjustedCod?: number | null;
+  shippingFee?: number | null;
+  reason?: string | null;
+  note?: string | null;
+  approvedBy?: string | null;
+  approvedById?: string | null;
+  handledAt?: string | null;
+  createdAt?: string | null;
+  returnOrderId?: string | null;
+  returnOrderCode?: string | null;
+  returnTrackingCode?: string | null;
+  returnStatus?: string | null;
+  returnReceivedAt?: string | null;
+  items?: PartialDeliveryRecordItem[];
+  keptItems?: PartialDeliveryRecordItem[];
+  returnedItems?: PartialDeliveryRecordItem[];
+  returnOrder?: {
+    id?: string;
+    orderCode?: string | null;
+    status?: string | null;
+    fulfillmentStatus?: string | null;
+    paymentStatus?: string | null;
+    createdAt?: string | null;
+    shipment?: ShipmentItem | null;
+  } | null;
 };
 
 type OrderHistoryEntry = {
@@ -386,6 +439,34 @@ function fulfillmentStatusText(status?: string | null) {
     default:
       return status || "—";
   }
+}
+
+
+function partialReturnStatusText(status?: string | null) {
+  const s = String(status || "").toUpperCase();
+  if (!s || s === "PENDING_RETURN") return "Chờ đơn hoàn";
+  if (s === "RETURNING" || s.includes("RETURN") || s.includes("TRANSIT") || s.includes("DELIVER")) return "Đang hoàn về";
+  if (s === "RETURNED" || s.includes("SUCCESS") || s.includes("COMPLETED")) return "Đã hoàn về";
+  if (s.includes("CANCEL")) return "Đã huỷ hoàn";
+  if (s.includes("FAIL") || s.includes("LOST") || s.includes("DAMAGE")) return "Hoàn lỗi / cần kiểm tra";
+  return status || "—";
+}
+
+function partialReturnStatusTone(status?: string | null): "gray" | "green" | "amber" | "red" | "blue" {
+  const s = String(status || "").toUpperCase();
+  if (s === "RETURNED" || s.includes("SUCCESS") || s.includes("COMPLETED")) return "green";
+  if (s.includes("FAIL") || s.includes("LOST") || s.includes("DAMAGE") || s.includes("CANCEL")) return "red";
+  if (s === "RETURNING" || s.includes("RETURN") || s.includes("TRANSIT") || s.includes("DELIVER")) return "amber";
+  return "gray";
+}
+
+function getPartialRecordItems(record?: PartialDeliveryRecord | null, action?: "KEPT" | "RETURNED") {
+  if (!record) return [];
+  if (action === "KEPT" && Array.isArray(record.keptItems) && record.keptItems.length) return record.keptItems;
+  if (action === "RETURNED" && Array.isArray(record.returnedItems) && record.returnedItems.length) return record.returnedItems;
+  const rows = Array.isArray(record.items) ? record.items : [];
+  if (!action) return rows;
+  return rows.filter((item) => String(item.actionType || "").toUpperCase() === action || (action === "RETURNED" && Number(item.returnedQty || 0) > 0));
 }
 
 function formatVndInput(value: string | number | null | undefined) {
@@ -2091,13 +2172,23 @@ export default function OrderDetailPageClient({
     }
 
     if (order.isPartialDelivery || isPartialDelivery(order)) {
+      const partialRecord = Array.isArray(order.partialDeliveries) ? order.partialDeliveries[0] : null;
+      const kept = getPartialRecordItems(partialRecord, "KEPT").map((item) => `${item.sku || item.productName} x${Number(item.qty || item.deliveredQty || 0)}`).join(", ");
+      const returned = getPartialRecordItems(partialRecord, "RETURNED").map((item) => `${item.sku || item.productName} x${Number(item.qty || item.returnedQty || 0)}`).join(", ");
       entries.push({
-        id: `${order.id}-partial`,
+        id: partialRecord?.id || `${order.id}-partial`,
         title: "Giao hàng 1 phần",
         description:
-          order.partialReason ||
+          [
+            partialRecord?.code ? `Phiếu ${partialRecord.code}` : null,
+            partialRecord?.returnOrderCode ? `Đơn hoàn ${partialRecord.returnOrderCode}` : null,
+            partialRecord?.returnStatus ? `Trạng thái: ${partialReturnStatusText(partialRecord.returnStatus)}` : null,
+            kept ? `Khách nhận: ${kept}` : null,
+            returned ? `Hoàn về: ${returned}` : null,
+            order.partialReason || partialRecord?.reason || null,
+          ].filter(Boolean).join(" · ") ||
           "Đơn đã được đánh dấu giao hàng 1 phần để khớp COD thực tế.",
-        createdAt: order.updatedAt,
+        createdAt: partialRecord?.handledAt || partialRecord?.createdAt || order.updatedAt,
         tone: "warning",
       });
     }
@@ -2221,6 +2312,12 @@ export default function OrderDetailPageClient({
   const partialDelivery = useMemo(
     () => isPartialDelivery(viewOrder),
     [viewOrder],
+  );
+
+
+  const currentPartialDelivery = useMemo(
+    () => (Array.isArray(viewOrder?.partialDeliveries) ? viewOrder?.partialDeliveries?.[0] : null),
+    [viewOrder?.partialDeliveries],
   );
 
   const latestShipmentEvent = latestShipmentTimelineEntry(shipmentTimeline);
@@ -2612,29 +2709,21 @@ export default function OrderDetailPageClient({
         })),
       };
 
-      let savedRecord: any = null;
+      const res = await apiFetch("/partial-delivery", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(partialPayload),
+      });
 
-      try {
-        const res = await apiFetch("/partial-delivery", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify(partialPayload),
-        });
+      const savedRecord = await res.json().catch(() => null);
 
-        const json = await res.json().catch(() => null);
-
-        if (!res.ok) {
-          throw new Error(
-            json?.message || "Không lưu được phiếu giao hàng 1 phần.",
-          );
-        }
-
-        savedRecord = json;
-      } catch {
-        // fallback local
+      if (!res.ok) {
+        throw new Error(
+          savedRecord?.message || "Không lưu được phiếu giao hàng 1 phần.",
+        );
       }
 
       const partialNoteValue = JSON.stringify({
@@ -2658,6 +2747,9 @@ export default function OrderDetailPageClient({
         note: nextNote,
         isPartialDelivery: true,
         partialReason: partialDraft.reason || "Giao hàng 1 phần",
+        partialDeliveries: savedRecord
+          ? [savedRecord, ...(order.partialDeliveries || []).filter((item) => item.id !== savedRecord.id)]
+          : order.partialDeliveries || [],
       };
 
       setOrder(nextOrder);
@@ -2667,15 +2759,12 @@ export default function OrderDetailPageClient({
           note: nextNote,
           isPartialDelivery: true,
           partialReason: partialDraft.reason || "Giao hàng 1 phần",
+          partialDeliveries: nextOrder.partialDeliveries,
         });
       }
 
       setShowPartialDeliveryModal(false);
-      setMessage(
-        savedRecord
-          ? "Đã lưu phiếu giao hàng 1 phần."
-          : "Đã lưu phiếu giao hàng 1 phần trên giao diện.",
-      );
+      setMessage("Đã lưu phiếu giao hàng 1 phần.");
     } catch (err) {
       setMessage(
         err instanceof Error
@@ -3803,12 +3892,121 @@ export default function OrderDetailPageClient({
                       </p>
                     </div>
                   </div>
-                  <div className="rounded-2xl bg-neutral-50 p-4 text-[12px]">
-                    <p className="text-neutral-500">Lý do</p>
-                    <p className="mt-1 font-medium text-neutral-900">
-                      {viewOrder.partialReason ||
-                        "Đơn đã được xử lý theo flow giao hàng 1 phần."}
-                    </p>
+                  <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                    <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-[12px]">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[11px] text-neutral-500">Thông tin phiếu</p>
+                          <p className="mt-1 text-[15px] font-semibold text-neutral-900">
+                            {currentPartialDelivery?.code || "Phiếu giao hàng 1 phần"}
+                          </p>
+                        </div>
+                        {currentPartialDelivery?.id ? (
+                          <Link
+                            href={`/orders/${viewOrder.id}/partial-deliveries/${currentPartialDelivery.id}`}
+                            className="rounded-full border border-neutral-300 px-3 py-1 text-[11px] font-semibold text-neutral-800 hover:bg-neutral-50"
+                          >
+                            Xem chi tiết phiếu
+                          </Link>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <DataRow label="Ngày xử lý" value={formatDateTime(currentPartialDelivery?.handledAt || currentPartialDelivery?.createdAt)} />
+                        <DataRow label="Người xử lý" value={currentPartialDelivery?.approvedBy || "—"} />
+                        <DataRow label="Mã vận đơn" value={currentPartialDelivery?.ghnTrackingCode || viewOrder.shipment?.trackingCode || "—"} />
+                        <DataRow
+                          label="Lý do"
+                          value={currentPartialDelivery?.reason || viewOrder.partialReason || "Đơn đã được xử lý theo flow giao hàng 1 phần."}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px]">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[11px] text-amber-700">Đơn hoàn đuôi PR</p>
+                          <p className="mt-1 text-[15px] font-semibold text-neutral-900">
+                            {currentPartialDelivery?.returnOrderCode || currentPartialDelivery?.returnOrder?.orderCode || `${viewOrder.orderCode}_PR`}
+                          </p>
+                        </div>
+                        <Badge tone={partialReturnStatusTone(currentPartialDelivery?.returnStatus)}>
+                          {partialReturnStatusText(currentPartialDelivery?.returnStatus)}
+                        </Badge>
+                      </div>
+                      <div className="space-y-2">
+                        <DataRow
+                          label="Mã hoàn"
+                          value={
+                            currentPartialDelivery?.returnOrder?.id ? (
+                              <Link className="text-blue-700 hover:underline" href={`/orders/${currentPartialDelivery.returnOrder.id}`}>
+                                {currentPartialDelivery.returnOrder.orderCode || currentPartialDelivery.returnOrderCode}
+                              </Link>
+                            ) : currentPartialDelivery?.returnOrderCode || "Chưa tạo đơn hoàn"
+                          }
+                        />
+                        <DataRow label="Vận đơn hoàn" value={currentPartialDelivery?.returnTrackingCode || currentPartialDelivery?.returnOrder?.shipment?.trackingCode || "—"} />
+                        <DataRow label="Trạng thái hoàn" value={partialReturnStatusText(currentPartialDelivery?.returnStatus)} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-white">
+                      <div className="border-b border-emerald-100 bg-emerald-50 px-4 py-2 text-[12px] font-semibold text-emerald-800">
+                        Sản phẩm khách lấy
+                      </div>
+                      <table className="w-full text-[12px]">
+                        <thead className="bg-neutral-50 text-[10px] uppercase text-neutral-500">
+                          <tr>
+                            <th className="px-3 py-2 text-left">SKU</th>
+                            <th className="px-3 py-2 text-left">Sản phẩm</th>
+                            <th className="px-3 py-2 text-right">SL</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getPartialRecordItems(currentPartialDelivery, "KEPT").length ? (
+                            getPartialRecordItems(currentPartialDelivery, "KEPT").map((item, index) => (
+                              <tr key={`${item.id || item.sku}-kept-${index}`} className="border-t border-neutral-100">
+                                <td className="px-3 py-2 font-medium text-neutral-900">{item.sku || "—"}</td>
+                                <td className="px-3 py-2 text-neutral-700">{item.productName || "—"}</td>
+                                <td className="px-3 py-2 text-right font-semibold">{Number(item.qty || item.deliveredQty || 0)}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr><td colSpan={3} className="px-3 py-4 text-center text-neutral-400">Chưa có dữ liệu khách lấy</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="overflow-hidden rounded-2xl border border-red-200 bg-white">
+                      <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-[12px] font-semibold text-red-800">
+                        Sản phẩm hoàn về
+                      </div>
+                      <table className="w-full text-[12px]">
+                        <thead className="bg-neutral-50 text-[10px] uppercase text-neutral-500">
+                          <tr>
+                            <th className="px-3 py-2 text-left">SKU</th>
+                            <th className="px-3 py-2 text-left">Sản phẩm</th>
+                            <th className="px-3 py-2 text-right">SL</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getPartialRecordItems(currentPartialDelivery, "RETURNED").length ? (
+                            getPartialRecordItems(currentPartialDelivery, "RETURNED").map((item, index) => (
+                              <tr key={`${item.id || item.sku}-returned-${index}`} className="border-t border-neutral-100">
+                                <td className="px-3 py-2 font-medium text-neutral-900">{item.sku || "—"}</td>
+                                <td className="px-3 py-2 text-neutral-700">{item.productName || "—"}</td>
+                                <td className="px-3 py-2 text-right font-semibold">{Number(item.qty || item.returnedQty || 0)}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr><td colSpan={3} className="px-3 py-4 text-center text-neutral-400">Chưa có dữ liệu hoàn về</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </Panel>

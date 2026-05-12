@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
+import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 
 type QuickRange = "today" | "yesterday" | "7d" | "30d" | "custom";
 
@@ -46,6 +47,13 @@ function statusClass(status: string) {
 }
 
 export default function LocalDeliveryReconciliationPage() {
+  const currentUser = getCurrentUserFromStorage();
+  const currentPermissions = getCurrentUserPermissions(currentUser);
+  const canViewLocalDelivery = currentPermissions.includes("*") || currentPermissions.includes("finance.local_delivery.view");
+  const canConfirmLocalDelivery = currentPermissions.includes("*") || currentPermissions.includes("finance.local_delivery.confirm");
+  const currentBranchId = currentUser?.branchId || currentUser?.workingBranchId || currentUser?.branch?.id || "";
+  const isGlobalFinanceUser = currentPermissions.includes("*") || currentPermissions.includes("finance.view");
+
   const initialRange = useMemo(() => getRange("today"), []);
   const [quickRange, setQuickRange] = useState<QuickRange>("today");
   const [dateFrom, setDateFrom] = useState(initialRange.from);
@@ -76,8 +84,13 @@ export default function LocalDeliveryReconciliationPage() {
       apiJson<any[]>("/payment-sources").catch(() => []),
     ]);
 
-    setBranches(Array.isArray(branchRows) ? branchRows : []);
+    const nextBranches = Array.isArray(branchRows) ? branchRows : [];
+    setBranches(isGlobalFinanceUser || !currentBranchId ? nextBranches : nextBranches.filter((b: any) => String(b.id) === String(currentBranchId)));
     setPaymentSources(Array.isArray(sourceRows) ? sourceRows : []);
+
+    if (!isGlobalFinanceUser && currentBranchId) {
+      setBranchId(currentBranchId);
+    }
 
     const codLike = Array.isArray(sourceRows)
       ? sourceRows.find((s: any) => String(s?.type || s?.code || "").toUpperCase().includes("COD"))
@@ -90,12 +103,13 @@ export default function LocalDeliveryReconciliationPage() {
   };
 
   const loadData = async () => {
+    if (!canViewLocalDelivery) return;
     setLoading(true);
     try {
       const params = new URLSearchParams({
         dateFrom,
         dateTo,
-        branchId,
+        branchId: !isGlobalFinanceUser && currentBranchId ? currentBranchId : branchId,
         carrier,
         status,
         q,
@@ -110,7 +124,7 @@ export default function LocalDeliveryReconciliationPage() {
 
   useEffect(() => {
     void loadMeta();
-  }, []);
+  }, [currentBranchId, isGlobalFinanceUser]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -118,9 +132,14 @@ export default function LocalDeliveryReconciliationPage() {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [dateFrom, dateTo, branchId, carrier, status, q]);
+  }, [dateFrom, dateTo, branchId, carrier, status, q, canViewLocalDelivery, currentBranchId, isGlobalFinanceUser]);
 
   const markDelivered = async (row: any, collectCod: boolean) => {
+    if (!canConfirmLocalDelivery) {
+      alert("Bạn không có quyền xác nhận COD nội thành.");
+      return;
+    }
+
     if (collectCod && !paymentSourceId) {
       alert("Chọn nguồn tiền nhận COD trước.");
       return;
@@ -149,6 +168,14 @@ export default function LocalDeliveryReconciliationPage() {
 
   const summary = data?.summary || {};
   const rows = Array.isArray(data?.rows) ? data.rows : [];
+
+  if (!canViewLocalDelivery) {
+    return (
+      <div className="rounded-[28px] border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-700">
+        Bạn chưa có quyền xem đối soát nội thành.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -219,7 +246,7 @@ export default function LocalDeliveryReconciliationPage() {
               onChange={(e) => setBranchId(e.target.value)}
               className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
             >
-              <option value="ALL">Tất cả chi nhánh</option>
+              {isGlobalFinanceUser ? <option value="ALL">Tất cả chi nhánh</option> : null}
               {branches.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name || b.id}

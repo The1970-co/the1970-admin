@@ -17,6 +17,8 @@ export const PERMISSIONS = {
   MENU_WAREHOUSE_MAP: "menu.warehouse_map",
   MENU_FINANCE: "menu.finance",
   MENU_SHIPPING_RECONCILE: "menu.shipping_reconcile",
+  MENU_FINANCE_LOCAL_DELIVERY: "menu.finance_local_delivery",
+  MENU_FINANCE_GHN_RECONCILIATION: "menu.finance_ghn_reconciliation",
   MENU_CASH_VOUCHER: "menu.cash_voucher",
   MENU_SUPPLIER_PAYMENTS: "menu.supplier_payments",
   MENU_REPORTS: "menu.reports",
@@ -114,6 +116,8 @@ export const PERMISSIONS = {
   RETURNS_EXCEL_EXPORT: "returns.excel.export",
 
   CASH_VOUCHER_VIEW: "cash_voucher.view",
+  CASH_VOUCHER_VIEW_RECEIPT: "cash_voucher.view_receipt",
+  CASH_VOUCHER_VIEW_PAYMENT: "cash_voucher.view_payment",
   CASH_VOUCHER_CREATE_RECEIPT: "cash_voucher.create_receipt",
   CASH_VOUCHER_EDIT_RECEIPT: "cash_voucher.edit_receipt",
   CASH_VOUCHER_CONFIRM_RECEIPT: "cash_voucher.confirm_receipt",

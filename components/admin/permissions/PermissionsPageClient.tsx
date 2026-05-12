@@ -183,11 +183,22 @@ function getAllRoleTemplates() {
   return Array.from(map.values());
 }
 
+const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
+  "cash_voucher.view": ["cash_voucher.view_receipt", "cash_voucher.view_payment"],
+  "menu.shipping_reconcile": ["menu.finance_ghn_reconciliation", "menu.finance_local_delivery"],
+};
+
+function normalizePermissionKeyAliases(key: string) {
+  const value = String(key || "").trim();
+  if (!value) return [];
+  return PERMISSION_KEY_ALIASES[value] || [value];
+}
+
 function uniquePermissionKeys(values: any[]) {
   return Array.from(
     new Set(
       safeArray<string>(values)
-        .map((value) => String(value || "").trim())
+        .flatMap((value) => normalizePermissionKeyAliases(String(value || "").trim()))
         .filter(Boolean),
     ),
   );
@@ -441,7 +452,8 @@ const PERMISSION_MODULES: PermissionModule[] = [
     tone: "rose",
     actions: [
       { key: "menu.cash_voucher", label: "Mở menu Phiếu thu / chi", risk: "low" },
-      { key: "cash_voucher.view", label: "Xem phiếu thu / chi", risk: "low" },
+      { key: "cash_voucher.view_receipt", label: "Xem phiếu thu", risk: "low" },
+      { key: "cash_voucher.view_payment", label: "Xem phiếu chi", risk: "low" },
 
       { key: "cash_voucher.create_receipt", label: "Tạo phiếu thu", risk: "high" },
       { key: "cash_voucher.edit_receipt", label: "Sửa phiếu thu", risk: "high" },
@@ -465,7 +477,6 @@ const PERMISSION_MODULES: PermissionModule[] = [
     tone: "rose",
     actions: [
       { key: "menu.finance", label: "Mở menu Tài chính", risk: "low" },
-      { key: "menu.cash_voucher", label: "Mở menu Phiếu thu / chi", risk: "low" },
       { key: "menu.supplier_payments", label: "Mở menu Thanh toán nhà cung cấp", risk: "high" },
       { key: "menu.reports", label: "Mở menu Báo cáo doanh thu", risk: "medium" },
       { key: "menu.finance_local_delivery", label: "Menu đối soát nội thành", risk: "medium" },
@@ -598,7 +609,8 @@ const ROLE_TEMPLATES: RoleItem[] = [
       "finance.ghn.view",
       "finance.ghn.import",
       "finance.payment_source.manage",
-      "cash_voucher.view",
+      "cash_voucher.view_receipt",
+      "cash_voucher.view_payment",
       "cash_voucher.create_receipt",
       "cash_voucher.edit_receipt",
       "cash_voucher.confirm_receipt",
@@ -655,7 +667,8 @@ const ROLE_TEMPLATES: RoleItem[] = [
       "customers.create",
       "customers.edit",
       "menu.cash_voucher",
-      "cash_voucher.view",
+      "cash_voucher.view_receipt",
+      "cash_voucher.view_payment",
       "cash_voucher.create_receipt",
       "cash_voucher.create_payment",
     ],

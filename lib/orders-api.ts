@@ -44,6 +44,58 @@ export type AdminShipment = {
   metadata?: any;
 };
 
+
+export type AdminPartialDeliveryItem = {
+  id?: string;
+  orderItemId?: string | null;
+  variantId?: string | null;
+  productName?: string | null;
+  sku?: string | null;
+  color?: string | null;
+  size?: string | null;
+  orderedQty?: number | null;
+  deliveredQty?: number | null;
+  returnedQty?: number | null;
+  qty?: number | null;
+  unitPrice?: number | null;
+  lineTotal?: number | null;
+  actionType?: string | null;
+};
+
+export type AdminPartialDelivery = {
+  id: string;
+  code?: string | null;
+  orderId?: string | null;
+  orderCode?: string | null;
+  ghnTrackingCode?: string | null;
+  originalCod?: number | null;
+  adjustedCod?: number | null;
+  shippingFee?: number | null;
+  reason?: string | null;
+  note?: string | null;
+  approvedBy?: string | null;
+  approvedById?: string | null;
+  handledAt?: string | null;
+  createdAt?: string | null;
+  returnOrderId?: string | null;
+  returnOrderCode?: string | null;
+  returnTrackingCode?: string | null;
+  returnStatus?: string | null;
+  returnReceivedAt?: string | null;
+  items?: AdminPartialDeliveryItem[];
+  keptItems?: AdminPartialDeliveryItem[];
+  returnedItems?: AdminPartialDeliveryItem[];
+  returnOrder?: {
+    id?: string;
+    orderCode?: string | null;
+    status?: string | null;
+    fulfillmentStatus?: string | null;
+    paymentStatus?: string | null;
+    createdAt?: string | null;
+    shipment?: AdminShipment | null;
+  } | null;
+};
+
 export type AdminOrder = {
   id: string;
   orderCode: string;
@@ -69,6 +121,9 @@ export type AdminOrder = {
 
   items: AdminOrderItem[];
   shipment?: AdminShipment | null;
+  partialDeliveries?: AdminPartialDelivery[];
+  isPartialDelivery?: boolean;
+  partialReason?: string | null;
 
   shippingRecipientName?: string | null;
   shippingPhone?: string | null;

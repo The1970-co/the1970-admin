@@ -66,6 +66,37 @@ function statusClass(status: string) {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+function normalizeMoneySourceName(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isCashSource(source: any) {
+  const text = normalizeMoneySourceName(
+    [source?.name, source?.code, source?.type].filter(Boolean).join(" ")
+  );
+
+  return (
+    text.includes("tien mat") ||
+    text.includes("cash") ||
+    text.includes("tm") ||
+    text.includes("quy tien mat")
+  );
+}
+
+function sourceDisplay(row: any) {
+  const source = row.paymentSourceName || row.paymentSourceCode || row.paymentSourceId || "Tiền mặt";
+  const branch = row.branchName || row.branchId || "";
+  return branch ? `${source} · ${branch}` : source;
+}
+
+function creatorDisplay(row: any) {
+  return row.createdByName || row.staffName || row.createdById || row.staffId || "—";
+}
+
 function hasPermission(user: any, key: string) {
   const keys = new Set<string>();
 
@@ -133,12 +164,16 @@ export default function CashVoucherPageClient({ type }: Props) {
   const cancelPermission = isReceipt
     ? "cash_voucher.cancel_receipt"
     : "cash_voucher.cancel_payment";
+  const deletePermission = isReceipt
+    ? "cash_voucher.delete_receipt"
+    : "cash_voucher.delete_payment";
 
   const canView = hasPermission(currentUser, "cash_voucher.view");
   const canCreate = hasPermission(currentUser, createPermission);
   const canEdit = hasPermission(currentUser, editPermission);
   const canConfirm = hasPermission(currentUser, confirmPermission);
   const canCancel = hasPermission(currentUser, cancelPermission);
+  const canDelete = hasPermission(currentUser, deletePermission) || canCancel;
   const canExport = hasPermission(currentUser, "cash_voucher.export");
 
   const initialRange = useMemo(() => getRange("today"), []);
@@ -164,6 +199,9 @@ export default function CashVoucherPageClient({ type }: Props) {
     return branches.filter((branch) => String(branch.id) === String(currentBranchId));
   }, [branches, currentBranchId, isGlobalFinanceUser]);
 
+  const cashPaymentSource =
+    paymentSources.find((source) => isCashSource(source)) || paymentSources[0] || null;
+
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState({
     branchId: "",
@@ -180,7 +218,7 @@ export default function CashVoucherPageClient({ type }: Props) {
     setEditing(null);
     setForm({
       branchId: allowedBranches[0]?.id || currentBranchId || branches[0]?.id || "",
-      paymentSourceId: paymentSources[0]?.id || "",
+      paymentSourceId: cashPaymentSource?.id || paymentSources[0]?.id || "",
       amount: "",
       category: isReceipt ? "Thu khác" : "Chi khác",
       title: "",
@@ -206,22 +244,25 @@ export default function CashVoucherPageClient({ type }: Props) {
 
     const nextBranches = Array.isArray(branchRows) ? branchRows : [];
     const nextSources = Array.isArray(sourceRows) ? sourceRows : [];
+    const defaultCashSource =
+      nextSources.find((source) => isCashSource(source)) || nextSources[0] || null;
 
     setBranches(nextBranches);
     setPaymentSources(nextSources);
 
     if (!isGlobalFinanceUser && currentBranchId) {
       setBranchId(currentBranchId);
+      setPaymentSourceId(defaultCashSource?.id || "ALL");
       setForm((prev) => ({
         ...prev,
         branchId: prev.branchId || currentBranchId,
-        paymentSourceId: prev.paymentSourceId || nextSources[0]?.id || "",
+        paymentSourceId: prev.paymentSourceId || defaultCashSource?.id || "",
       }));
     } else {
       setForm((prev) => ({
         ...prev,
         branchId: prev.branchId || nextBranches[0]?.id || "",
-        paymentSourceId: prev.paymentSourceId || nextSources[0]?.id || "",
+        paymentSourceId: prev.paymentSourceId || defaultCashSource?.id || "",
       }));
     }
   };
@@ -235,7 +276,7 @@ export default function CashVoucherPageClient({ type }: Props) {
         type,
         dateFrom,
         dateTo,
-        branchId,
+        branchId: !isGlobalFinanceUser && currentBranchId ? currentBranchId : branchId,
         paymentSourceId,
         status,
         q,
@@ -275,18 +316,18 @@ export default function CashVoucherPageClient({ type }: Props) {
       }
     }
 
-    if (!form.paymentSourceId && paymentSources[0]?.id) {
-      setForm((prev) => ({ ...prev, paymentSourceId: paymentSources[0].id }));
+    if (!form.paymentSourceId && cashPaymentSource?.id) {
+      setForm((prev) => ({ ...prev, paymentSourceId: cashPaymentSource.id }));
     }
   }, [
     allowedBranches,
     branches,
     branchId,
+    cashPaymentSource,
     currentBranchId,
     form.branchId,
     form.paymentSourceId,
     isGlobalFinanceUser,
-    paymentSources,
   ]);
 
   const openEdit = (row: any) => {
@@ -321,7 +362,7 @@ export default function CashVoucherPageClient({ type }: Props) {
       const payload = {
         type,
         branchId: (!isGlobalFinanceUser && currentBranchId ? currentBranchId : form.branchId) || undefined,
-        paymentSourceId: form.paymentSourceId || undefined,
+        paymentSourceId: cashPaymentSource?.id || form.paymentSourceId || undefined,
         amount: Number(String(form.amount || "").replace(/[^\d]/g, "")),
         category: form.category.trim() || undefined,
         title: form.title.trim(),
@@ -329,7 +370,7 @@ export default function CashVoucherPageClient({ type }: Props) {
         partnerPhone: form.partnerPhone.trim() || undefined,
         note: form.note.trim() || undefined,
         createdById: currentUser?.id,
-        createdByName: currentUser?.name || currentUser?.username,
+        createdByName: currentUser?.name || currentUser?.username || currentUser?.email,
       };
 
       if (!payload.title || payload.amount <= 0) {
@@ -358,14 +399,6 @@ export default function CashVoucherPageClient({ type }: Props) {
       }
 
       resetForm();
-
-      // Không reload ngay sau khi tạo vì nếu filter/chi nhánh chưa đồng bộ thì dòng vừa tạo sẽ bị xoá khỏi UI.
-      // Dòng đã được đẩy lên đầu danh sách bằng setRows ở trên; người dùng có thể bấm "Tải lại" nếu cần đối soát DB.
-      setActionMessage(
-        editing
-          ? `Đã lưu thay đổi ${title.toLowerCase()} ${saved?.voucherCode || saved?.code || ""}.`
-          : `Đã tạo ${title.toLowerCase()} ${saved?.voucherCode || saved?.code || ""}.`,
-      );
     } catch (error: any) {
       setActionError(error?.message || `Không tạo được ${title.toLowerCase()}.`);
     } finally {
@@ -410,6 +443,35 @@ export default function CashVoucherPageClient({ type }: Props) {
     });
     await loadData();
   };
+
+  const deleteVoucher = async (row: any) => {
+    if (!canDelete) {
+      alert("Bạn không có quyền xoá phiếu.");
+      return;
+    }
+
+    if (row.status === "CONFIRMED") {
+      alert("Phiếu đã xác nhận không được xoá. Hãy huỷ phiếu nếu cần điều chỉnh.");
+      return;
+    }
+
+    if (!window.confirm(`Xoá ${title.toLowerCase()} ${row.voucherCode || row.code}?`)) return;
+
+    setActionMessage("");
+    setActionError("");
+
+    try {
+      await apiJson(`/finance/cash-vouchers/${row.id}`, {
+        method: "DELETE",
+      });
+
+      setRows((prev) => prev.filter((item) => item.id !== row.id));
+      setActionMessage(`Đã xoá ${title.toLowerCase()} ${row.voucherCode || row.code || ""}.`);
+    } catch (error: any) {
+      setActionError(error?.message || `Không xoá được ${title.toLowerCase()}.`);
+    }
+  };
+
 
   const exportCsv = () => {
     const header = ["Mã phiếu", "Loại", "Trạng thái", "Chi nhánh", "Nguồn tiền", "Số tiền", "Nội dung", "Đối tượng", "Ngày tạo"];
@@ -473,6 +535,7 @@ export default function CashVoucherPageClient({ type }: Props) {
           </button>
         </div>
       ) : null}
+
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm text-neutral-500">Tài chính / {title}</p>
@@ -530,15 +593,28 @@ export default function CashVoucherPageClient({ type }: Props) {
             <input type="date" value={dateTo} onChange={(e) => { setQuickRange("custom"); setDateTo(e.target.value); }} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" />
           </Field>
           <Field label="Chi nhánh">
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} disabled={!isGlobalFinanceUser} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500">
+            <select
+              value={!isGlobalFinanceUser && currentBranchId ? currentBranchId : branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+              disabled={!isGlobalFinanceUser}
+              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+            >
               {isGlobalFinanceUser ? <option value="ALL">Tất cả chi nhánh</option> : null}
               {allowedBranches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
             </select>
           </Field>
           <Field label="Nguồn tiền">
-            <select value={paymentSourceId} onChange={(e) => setPaymentSourceId(e.target.value)} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm">
-              <option value="ALL">Tất cả nguồn tiền</option>
-              {paymentSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <select
+              value={cashPaymentSource?.id || paymentSourceId}
+              onChange={(e) => setPaymentSourceId(e.target.value)}
+              disabled
+              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+            >
+              {cashPaymentSource ? (
+                <option value={cashPaymentSource.id}>{cashPaymentSource.name}</option>
+              ) : (
+                <option value="ALL">Tiền mặt</option>
+              )}
             </select>
           </Field>
           <div className="flex items-end">
@@ -574,15 +650,28 @@ export default function CashVoucherPageClient({ type }: Props) {
 
           <div className="mt-4 space-y-3">
             <Field label="Chi nhánh">
-              <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })} disabled={!isGlobalFinanceUser} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500">
+              <select
+                value={!isGlobalFinanceUser && currentBranchId ? currentBranchId : form.branchId}
+                onChange={(e) => setForm({ ...form, branchId: e.target.value })}
+                disabled={!isGlobalFinanceUser}
+                className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+              >
                 <option value="">Chọn chi nhánh</option>
                 {allowedBranches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
               </select>
             </Field>
             <Field label="Nguồn tiền">
-              <select value={form.paymentSourceId} onChange={(e) => setForm({ ...form, paymentSourceId: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm">
-                <option value="">Chọn nguồn tiền</option>
-                {paymentSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <select
+                value={cashPaymentSource?.id || form.paymentSourceId}
+                onChange={(e) => setForm({ ...form, paymentSourceId: e.target.value })}
+                disabled
+                className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+              >
+                {cashPaymentSource ? (
+                  <option value={cashPaymentSource.id}>{cashPaymentSource.name}</option>
+                ) : (
+                  <option value="">Tiền mặt</option>
+                )}
               </select>
             </Field>
             <Field label="Số tiền">
@@ -638,9 +727,10 @@ export default function CashVoucherPageClient({ type }: Props) {
                 <tr>
                   <th className="px-4 py-3">Mã phiếu</th>
                   <th className="px-4 py-3">Nội dung</th>
-                  <th className="px-4 py-3">Nguồn</th>
+                  <th className="px-4 py-3">Nguồn / kho</th>
                   <th className="px-4 py-3 text-right">Số tiền</th>
                   <th className="px-4 py-3">Trạng thái</th>
+                  <th className="px-4 py-3">Người tạo</th>
                   <th className="px-4 py-3">Ngày tạo</th>
                   <th className="px-4 py-3 text-right">Thao tác</th>
                 </tr>
@@ -651,15 +741,19 @@ export default function CashVoucherPageClient({ type }: Props) {
                     <td className="px-4 py-3 font-semibold">{row.voucherCode}</td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{row.title}</div>
-                      <div className="text-xs text-neutral-500">{row.partnerName || row.category || "—"}</div>
+                      <div className="text-xs text-neutral-500">
+                        {[row.category, row.partnerName, row.partnerPhone].filter(Boolean).join(" · ") || "—"}
+                      </div>
+                      {row.note ? <div className="mt-1 text-xs text-neutral-400">{row.note}</div> : null}
                     </td>
-                    <td className="px-4 py-3">{row.paymentSourceName || "—"}</td>
+                    <td className="px-4 py-3">{sourceDisplay(row)}</td>
                     <td className="px-4 py-3 text-right font-semibold">{currency(row.amount)}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(row.status)}`}>
                         {statusLabel(row.status)}
                       </span>
                     </td>
+                    <td className="px-4 py-3">{creatorDisplay(row)}</td>
                     <td className="px-4 py-3">{dateText(row.createdAt)}</td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
@@ -672,6 +766,13 @@ export default function CashVoucherPageClient({ type }: Props) {
                         <button disabled={row.status === "CANCELLED" || !canCancel} onClick={() => cancelVoucher(row)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40">
                           Huỷ
                         </button>
+                        <button
+                          disabled={row.status === "CONFIRMED" || !canDelete}
+                          onClick={() => deleteVoucher(row)}
+                          className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40"
+                        >
+                          Xoá
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -679,7 +780,7 @@ export default function CashVoucherPageClient({ type }: Props) {
 
                 {!rows.length ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-10 text-center text-neutral-500">
+                    <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
                       Chưa có dữ liệu {title.toLowerCase()}.
                     </td>
                   </tr>

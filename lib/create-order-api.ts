@@ -1,28 +1,4 @@
 import { apiFetch } from "@/lib/api";
-export type ShipmentPickupCarrier = "ghn" | "viettelpost" | "ahamove";
-
-export type ShipmentPickupLocation = {
-  id: string;
-  carrier: ShipmentPickupCarrier | string;
-  label: string;
-  name?: string;
-  phone?: string;
-  address?: string;
-  province?: string;
-  district?: string;
-  ward?: string;
-  isDefault?: boolean;
-  source?: string;
-  raw?: any;
-  ghnShopId?: string | number;
-  ghnFromDistrictId?: number;
-  ghnFromWardCode?: string;
-  viettelGroupAddressId?: number;
-  viettelProvinceId?: number;
-  viettelDistrictId?: number;
-  viettelWardId?: number;
-};
-
 export type ViettelPostInventory = {
   group_address_id?: number;
   groupAddressId?: number;
@@ -39,6 +15,28 @@ export type ViettelPostInventory = {
   wardsId?: number;
   ward_id?: number;
   wardId?: number;
+};
+
+
+export type PickupCarrier = "ghn" | "viettelpost" | "ahamove";
+
+export type PickupLocation = {
+  id: string;
+  carrier: PickupCarrier;
+  label: string;
+  name?: string;
+  phone?: string;
+  address?: string;
+
+  ghnShopId?: number;
+  ghnFromDistrictId?: number;
+  ghnFromWardCode?: string;
+
+  viettelGroupAddressId?: number;
+  groupAddressId?: number;
+  viettelProvinceId?: number;
+  viettelDistrictId?: number;
+  viettelWardId?: number;
 };
 
 export type CreateOrderMode = "draft" | "approve" | "ship";
@@ -201,12 +199,6 @@ export type ShipmentQuoteItem = {
 };
 
 export type ShipmentQuotePayload = {
-  pickupLocationId?: string;
-  fromName?: string;
-  fromPhone?: string;
-  fromAddress?: string;
-  fromDistrictId?: number;
-  fromWardCode?: string;
   toDistrictId: number;
   toWardCode: string;
   insuranceValue?: number;
@@ -215,6 +207,11 @@ export type ShipmentQuotePayload = {
   height: number;
   weight: number;
   items?: ShipmentQuoteItem[];
+  fromDistrictId?: number;
+  fromWardCode?: string;
+  fromName?: string;
+  fromPhone?: string;
+  fromAddress?: string;
 };
 
 export type ShipmentQuoteResult = {
@@ -242,12 +239,6 @@ export type ResolveGhnAddressResult = {
 };
 
 export type CreateGhnShipmentPayload = CarrierDeliveryNoteFields & {
-  pickupLocationId?: string;
-  fromName?: string;
-  fromPhone?: string;
-  fromAddress?: string;
-  fromDistrictId?: number;
-  fromWardCode?: string;
   toName: string;
   toPhone: string;
   toAddress: string;
@@ -256,6 +247,11 @@ export type CreateGhnShipmentPayload = CarrierDeliveryNoteFields & {
   codAmount: number;
   clientOrderCode: string;
   content?: string;
+  fromDistrictId?: number;
+  fromWardCode?: string;
+  fromName?: string;
+  fromPhone?: string;
+  fromAddress?: string;
   weight: number;
   length: number;
   width: number;
@@ -673,30 +669,6 @@ export async function quoteShipment(
   return Array.isArray(data) ? data : [];
 }
 
-
-export async function getShipmentPickupLocations(): Promise<ShipmentPickupLocation[]> {
-  const data = await request<any>("/shipments/pickup-locations");
-
-  const rows = Array.isArray(data)
-    ? data
-    : Array.isArray(data?.data)
-      ? data.data
-      : Array.isArray(data?.items)
-        ? data.items
-        : [];
-
-  return rows.map((row: any) => ({
-    ...row,
-    id: String(row?.id || `${row?.carrier || "carrier"}-${row?.value || row?.name || row?.address || Math.random()}`),
-    carrier: String(row?.carrier || "").toLowerCase(),
-    label:
-      row?.label ||
-      [row?.name, row?.phone, row?.address].filter(Boolean).join(" · ") ||
-      row?.id ||
-      "Kho lấy hàng",
-  }));
-}
-
 export async function createGhnShipment(
   orderId: string,
   payload: CreateGhnShipmentPayload,
@@ -851,6 +823,25 @@ function normalizeViettelPostInventory(
     districtId: row.districtId ?? row.district_id,
     wardId: row.wardId ?? row.ward_id ?? row.wards_id,
   };
+}
+
+export async function getPickupLocations(): Promise<PickupLocation[]> {
+  const data = await request<any>("/shipments/pickup-locations");
+
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.data)
+        ? data.data
+        : [];
+
+  return rows.map((row: any) => ({
+    ...row,
+    id: String(row.id || `${row.carrier || "carrier"}-${row.groupAddressId || row.viettelGroupAddressId || row.ghnShopId || row.address || "default"}`),
+    carrier: String(row.carrier || "").toLowerCase() as PickupCarrier,
+    label: String(row.label || row.name || row.address || "Kho lấy hàng"),
+  }));
 }
 
 export async function getViettelPostInventories(): Promise<

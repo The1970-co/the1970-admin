@@ -28,8 +28,11 @@ export const PAYMENT_STATUS_LABEL: Record<string, string> = {
 export const FULFILLMENT_STATUS_LABEL: Record<string, string> = {
   UNFULFILLED: "Chưa xử lý",
   PROCESSING: "Đang đóng gói",
+  PARTIAL: "Giao một phần",
   SHIPPED: "Đã giao hãng",
+  FULFILLED: "Đã giao thành công",
   DELIVERED: "Đã giao thành công",
+  RETURNED: "Đã trả hàng",
 };
 
 export const ORDER_STATUS_TONE: Record<string, BadgeTone> = {
@@ -53,8 +56,11 @@ export const PAYMENT_STATUS_TONE: Record<string, BadgeTone> = {
 export const FULFILLMENT_STATUS_TONE: Record<string, BadgeTone> = {
   UNFULFILLED: "gray",
   PROCESSING: "orange",
+  PARTIAL: "orange",
   SHIPPED: "blue",
+  FULFILLED: "green",
   DELIVERED: "green",
+  RETURNED: "purple",
 };
 
 export function getOrderStatusLabel(status?: string | null) {

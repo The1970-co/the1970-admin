@@ -286,6 +286,7 @@ export default function PosPageClient() {
   const [discount, setDiscount] = useState("0");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [lastPosOrder, setLastPosOrder] = useState<any | null>(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [promoOpen, setPromoOpen] = useState(false);
@@ -757,6 +758,7 @@ export default function PosPageClient() {
     setPaymentRows([{ id: "pay-1", paymentSourceId: visiblePaymentSources[0]?.id ? String(visiblePaymentSources[0].id) : "", amount: "0" }]);
     setDiscount("0");
     setNote("");
+    setLastPosOrder(null);
     setError("");
   };
 
@@ -1155,6 +1157,148 @@ const handleCustomerPhoneChange = async (value: string) => {
   useEffect(() => {
     return () => stopCameraScan();
   }, []);
+
+const handlePrintReceipt = (order?: any | null, preparedWindow?: Window | null) => {
+  const receiptLines = lines;
+
+  if (!receiptLines.length) {
+    setError("Chưa có sản phẩm để in hoá đơn.");
+    if (preparedWindow && !preparedWindow.closed) preparedWindow.close();
+    return;
+  }
+
+  const printWindow =
+    preparedWindow && !preparedWindow.closed
+      ? preparedWindow
+      : window.open("", "_blank", "width=420,height=720");
+
+  if (!printWindow) {
+    setError("Trình duyệt đang chặn cửa sổ in. Hãy bật pop-up cho trang POS.");
+    return;
+  }
+
+  const escapeHtml = (value: any) =>
+    String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+
+  const orderCode =
+    order?.orderCode || order?.code || order?.id || lastPosOrder?.orderCode || lastPosOrder?.code || "POS";
+  const paid = totalPaid;
+  const printTime = new Date().toLocaleString("vi-VN");
+  const paymentSourceNames = paymentRows
+    .filter((row) => moneyNumber(row.amount) > 0)
+    .map((row) => {
+      const source = visiblePaymentSources.find(
+        (item) => String(item.id) === String(row.paymentSourceId)
+      );
+      return `${source?.name || source?.label || source?.displayName || "Nguồn tiền"}: ${currency(
+        moneyNumber(row.amount)
+      )}`;
+    })
+    .join("<br />");
+
+  const rowsHtml = receiptLines
+    .map(
+      (line, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>
+            <strong>${escapeHtml(line.productName)}</strong><br />
+            <span>${escapeHtml(line.sku)} · ${escapeHtml(line.color || "-")} / ${escapeHtml(line.size || "-")}</span>
+          </td>
+          <td class="right">${line.qty}</td>
+          <td class="right">${currency(line.price)}</td>
+          <td class="right"><strong>${currency(line.price * line.qty)}</strong></td>
+        </tr>`
+    )
+    .join("");
+
+  printWindow.document.open();
+  printWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>In hoá đơn ${escapeHtml(orderCode)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #fff; color: #111; font-family: Arial, sans-serif; font-size: 12px; }
+    .receipt { width: 80mm; margin: 0 auto; padding: 10px; }
+    .center { text-align: center; }
+    .muted { color: #666; }
+    .title { font-size: 18px; font-weight: 800; letter-spacing: .3px; }
+    .line { border-top: 1px dashed #999; margin: 10px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; border-bottom: 1px solid #ddd; padding: 6px 3px; font-size: 11px; }
+    td { border-bottom: 1px dashed #ddd; padding: 6px 3px; vertical-align: top; }
+    td span { color: #666; font-size: 11px; }
+    .right { text-align: right; white-space: nowrap; }
+    .summary-row { display: flex; justify-content: space-between; gap: 10px; margin: 5px 0; }
+    .total { font-size: 16px; font-weight: 800; }
+    @media print {
+      @page { size: 80mm auto; margin: 0; }
+      body { width: 80mm; }
+      .receipt { width: 80mm; padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="center">
+      <div class="title">THE 1970</div>
+      <div class="muted">Hoá đơn bán hàng POS</div>
+    </div>
+
+    <div class="line"></div>
+    <div>Mã đơn: <strong>${escapeHtml(orderCode)}</strong></div>
+    <div>Thời gian: ${escapeHtml(printTime)}</div>
+    <div>Chi nhánh: ${escapeHtml(currentBranchLabel)}</div>
+    <div>Khách hàng: ${escapeHtml(customerName.trim() || "Khách POS")}</div>
+    <div>SĐT: ${escapeHtml(customerPhone.trim() || "-")}</div>
+
+    <div class="line"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Sản phẩm</th>
+          <th class="right">SL</th>
+          <th class="right">Giá</th>
+          <th class="right">Tiền</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+
+    <div class="line"></div>
+    <div class="summary-row"><span>Tổng tiền</span><strong>${currency(subtotal)}</strong></div>
+    <div class="summary-row"><span>Giảm giá</span><strong>-${currency(totalDiscountNumber)}</strong></div>
+    <div class="summary-row total"><span>Phải trả</span><strong>${currency(mustPay)}</strong></div>
+    <div class="summary-row"><span>Đã thanh toán</span><strong>${currency(paid)}</strong></div>
+    <div class="summary-row"><span>Tiền thừa</span><strong>${currency(change)}</strong></div>
+    <div class="line"></div>
+    <div><strong>Nguồn tiền</strong></div>
+    <div>${paymentSourceNames || "-"}</div>
+    ${note.trim() ? `<div class="line"></div><div><strong>Ghi chú:</strong> ${escapeHtml(note.trim())}</div>` : ""}
+    <div class="line"></div>
+    <div class="center muted">Cảm ơn quý khách!</div>
+  </div>
+  <script>
+    window.onload = function() {
+      window.focus();
+      window.print();
+      setTimeout(function() { window.close(); }, 500);
+    };
+  </script>
+</body>
+</html>`);
+  printWindow.document.close();
+  setError("");
+};
+
 const handlePay = async () => {
   if (!branchId) {
     setError("Chưa có chi nhánh.");
@@ -1188,10 +1332,14 @@ const handlePay = async () => {
     return;
   }
 
+  let printWindow: Window | null = null;
+
   try {
     setSaving(true);
     setError("");
     setSuccessMessage("");
+
+    printWindow = window.open("", "_blank", "width=420,height=720");
 
     const payload = {
       salesChannel: "POS" as any,
@@ -1244,13 +1392,16 @@ const handlePay = async () => {
       throw new Error(created?.message || "Thanh toán thất bại.");
     }
 
-    setSuccessMessage("Tạo đơn POS thành công. Đang mở chi tiết đơn...");
+    const createdOrder = created?.data || created?.order || created;
+    setLastPosOrder(createdOrder);
+    handlePrintReceipt(createdOrder, printWindow);
+    setSuccessMessage("Tạo đơn POS thành công. Đã gửi lệnh in hoá đơn...");
 
     setTimeout(() => {
-      const createdOrder = created?.data || created?.order || created;
       router.push(`/orders/${encodeURIComponent(createdOrder.id)}?created=1&pos=1`);
     }, 500);
   } catch (err: any) {
+    if (printWindow && !printWindow.closed) printWindow.close();
     setError(err?.message || "Thanh toán thất bại.");
   } finally {
     setSaving(false);
@@ -1683,7 +1834,16 @@ const handlePay = async () => {
             disabled={saving || !lines.length}
             className="mt-4 h-14 w-full rounded-[22px] bg-neutral-950 text-base font-bold text-white shadow-lg shadow-neutral-200 transition hover:bg-neutral-800 disabled:bg-neutral-300 disabled:shadow-none"
           >
-            {saving ? "ĐANG LƯU..." : "THANH TOÁN (F1)"}
+            {saving ? "ĐANG LƯU..." : "THANH TOÁN VÀ IN (F1)"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handlePrintReceipt(lastPosOrder)}
+            disabled={!lines.length}
+            className="mt-3 h-11 w-full rounded-[18px] border border-neutral-900 bg-white text-sm font-bold text-neutral-900 transition hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
+          >
+            In hoá đơn
           </button>
 
           <button

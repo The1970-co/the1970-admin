@@ -15,7 +15,7 @@ import {
   quoteAhamoveShipment,
   quoteViettelPostShipment,
   getViettelPostInventories,
-  getShipmentPickupLocations,
+  getPickupLocations,
   resolveGhnAddress,
   getOrderForCopy,
   type CreateOrderMode,
@@ -23,7 +23,7 @@ import {
   type OrderProduct,
   type ShipmentQuoteResult,
   type ViettelPostInventory,
-  type ShipmentPickupLocation,
+  type PickupLocation,
 } from "@/lib/create-order-api";
 import {
   createCustomerAddress,
@@ -50,6 +50,61 @@ import {
 type ShippingMode = "partner" | "pickup";
 type ShippingPayer = "shop" | "customer";
 type ShippingUiMode = "carrier" | "external" | "pickup" | "schedule";
+
+const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
+const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
+
+type CarrierPickupMapping = Record<
+  string,
+  {
+    ghn?: string;
+    viettelpost?: string;
+    ahamove?: string;
+  }
+>;
+
+function safeJsonParse(value: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function readCustomAhamovePickups(): PickupLocation[] {
+  if (typeof window === "undefined") return [];
+  const raw = safeJsonParse(localStorage.getItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY));
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item: any, index) => {
+      const id = String(item?.id || `ahamove-custom-${index}`);
+      const name = String(item?.name || item?.label || "").trim();
+      const phone = String(item?.phone || "").trim();
+      const address = String(item?.address || "").trim();
+
+      if (!name && !phone && !address) return null;
+
+      return {
+        id,
+        carrier: "ahamove" as const,
+        label: name || address || id,
+        name: name || address || "Điểm lấy hàng AhaMove",
+        phone,
+        address,
+      } satisfies PickupLocation;
+    })
+    .filter(Boolean) as PickupLocation[];
+}
+
+function mergeCustomAhamovePickups(rows: PickupLocation[]) {
+  const customRows = readCustomAhamovePickups();
+  return [
+    ...rows.filter((item) => !String(item.id).startsWith("ahamove-custom-")),
+    ...customRows,
+  ];
+}
 type DeliveryRequirement =
   | "CHOXEMHANG_KHONGTHU"
   | "CHOXEMHANG_CHOTHU"
@@ -691,11 +746,17 @@ const ADMIN_MERGE_ALIASES: Record<string, string> = {
 };
 
 function getFeeNumber(row: ShipmentQuoteResult) {
+  const raw = row as any;
   return Number(
-    (row as any)?.fee?.total ||
-      (row as any)?.fee?.total_fee ||
-      (row as any)?.fee?.service_fee ||
-      (row as any)?.fee ||
+    raw?.fee?.total ||
+      raw?.fee?.total_fee ||
+      raw?.fee?.service_fee ||
+      raw?.data?.user_price_details?.total_fee ||
+      raw?.data?.user_price_details?.total_price ||
+      raw?.data?.total_price ||
+      raw?.data?.total_fee ||
+      raw?.data?.service_fee ||
+      raw?.fee ||
       0,
   );
 }
@@ -1719,9 +1780,11 @@ export default function CreateOrderPageClient() {
   const [selectedViettelInventoryId, setSelectedViettelInventoryId] = useState<
     number | undefined
   >();
-  const [pickupLocations, setPickupLocations] = useState<ShipmentPickupLocation[]>([]);
+  const [pickupLocations, setPickupLocations] = useState<PickupLocation[]>([]);
   const [pickupLocationsLoading, setPickupLocationsLoading] = useState(false);
-  const [selectedPickupLocationIds, setSelectedPickupLocationIds] = useState<Record<string, string>>({});
+  const [selectedPickupLocationId, setSelectedPickupLocationId] = useState(
+    "default",
+  );
 
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [newCustomerSaving, setNewCustomerSaving] = useState(false);
@@ -2158,23 +2221,33 @@ export default function CreateOrderPageClient() {
     const run = async () => {
       try {
         setViettelInventoryLoading(true);
-        const rows = await getViettelPostInventories();
-        setViettelInventories(rows);
+        setPickupLocationsLoading(true);
+
+        const [inventoryRows, pickupRows] = await Promise.all([
+          getViettelPostInventories().catch(() => [] as ViettelPostInventory[]),
+          getPickupLocations().catch(() => [] as PickupLocation[]),
+        ]);
+
+        setViettelInventories(inventoryRows);
+        setPickupLocations(mergeCustomAhamovePickups(pickupRows));
+
         setSelectedViettelInventoryId((current) => {
-          if (current && rows.some((row) => row.groupAddressId === current))
+          if (current && inventoryRows.some((row) => row.groupAddressId === current))
             return current;
           const preferred =
-            rows.find((row) => row.phone === "0975615475") ||
-            rows.find((row) =>
+            inventoryRows.find((row) => row.phone === "0975615475") ||
+            inventoryRows.find((row) =>
               normalizeAddressToken(row.address).includes("sai son"),
             ) ||
-            rows[0];
+            inventoryRows[0];
           return preferred?.groupAddressId;
         });
       } catch {
         setViettelInventories([]);
+        setPickupLocations(mergeCustomAhamovePickups([]));
       } finally {
         setViettelInventoryLoading(false);
+        setPickupLocationsLoading(false);
       }
     };
 
@@ -2189,77 +2262,64 @@ export default function CreateOrderPageClient() {
     [viettelInventories, selectedViettelInventoryId],
   );
 
-  useEffect(() => {
-    const run = async () => {
-      try {
-        setPickupLocationsLoading(true);
-        const rows = await getShipmentPickupLocations();
-        setPickupLocations(rows);
-        setSelectedPickupLocationIds((prev) => {
-          const next = { ...prev };
-          for (const carrier of ["ghn", "viettelpost", "ahamove"]) {
-            if (next[carrier]) continue;
-            const fallback =
-              rows.find((item) => item.carrier === carrier && item.isDefault) ||
-              rows.find((item) => item.carrier === carrier);
-            if (fallback?.id) next[carrier] = fallback.id;
-          }
-          return next;
-        });
-      } catch {
-        setPickupLocations([]);
-      } finally {
-        setPickupLocationsLoading(false);
-      }
-    };
-
-    void run();
-  }, []);
-
-  const pickupLocationsByCarrier = useMemo(() => {
-    const map: Record<string, ShipmentPickupLocation[]> = {
-      ghn: [],
-      viettelpost: [],
-      ahamove: [],
-    };
-    for (const item of pickupLocations) {
-      const carrier = String(item.carrier || "").toLowerCase();
-      if (!map[carrier]) map[carrier] = [];
-      map[carrier].push(item);
-    }
-    return map;
-  }, [pickupLocations]);
-
-  const selectedPickupLocation = useMemo(() => {
-    const carrier = String(shippingPartner || "").toLowerCase();
-    const rows = pickupLocationsByCarrier[carrier] || [];
-    return (
-      rows.find((item) => item.id === selectedPickupLocationIds[carrier]) ||
-      rows.find((item) => item.isDefault) ||
-      rows[0] ||
-      null
+  const carrierPickupLocations = useMemo(() => {
+    if (shippingUiMode !== "carrier") return [];
+    return pickupLocations.filter(
+      (item) => String(item.carrier || "").toLowerCase() === shippingPartner,
     );
-  }, [pickupLocationsByCarrier, selectedPickupLocationIds, shippingPartner]);
+  }, [pickupLocations, shippingPartner, shippingUiMode]);
 
-  const selectedGhnPickup = useMemo(() => {
-    const rows = pickupLocationsByCarrier.ghn || [];
-    return rows.find((item) => item.id === selectedPickupLocationIds.ghn) || rows.find((item) => item.isDefault) || rows[0] || null;
-  }, [pickupLocationsByCarrier, selectedPickupLocationIds]);
-
-  const selectedAhamovePickup = useMemo(() => {
-    const rows = pickupLocationsByCarrier.ahamove || [];
-    return rows.find((item) => item.id === selectedPickupLocationIds.ahamove) || rows.find((item) => item.isDefault) || rows[0] || null;
-  }, [pickupLocationsByCarrier, selectedPickupLocationIds]);
-
-  const selectedViettelPickup = useMemo(() => {
-    const rows = pickupLocationsByCarrier.viettelpost || [];
-    return rows.find((item) => item.id === selectedPickupLocationIds.viettelpost) || rows.find((item) => item.isDefault) || rows[0] || null;
-  }, [pickupLocationsByCarrier, selectedPickupLocationIds]);
+  const selectedCarrierPickup = useMemo(() => {
+    if (shippingUiMode !== "carrier") return null;
+    if (selectedPickupLocationId === "default") return null;
+    return (
+      carrierPickupLocations.find(
+        (item) => String(item.id) === String(selectedPickupLocationId),
+      ) || null
+    );
+  }, [carrierPickupLocations, selectedPickupLocationId, shippingUiMode]);
 
   useEffect(() => {
-    const groupId = Number((selectedViettelPickup as any)?.viettelGroupAddressId || (selectedViettelPickup as any)?.raw?.groupAddressId || 0);
-    if (groupId) setSelectedViettelInventoryId(groupId);
-  }, [selectedViettelPickup]);
+    if (shippingUiMode !== "carrier") {
+      setSelectedPickupLocationId("default");
+      return;
+    }
+
+    let configuredPickupId = "default";
+
+    try {
+      const raw =
+        typeof window !== "undefined"
+          ? localStorage.getItem(CARRIER_PICKUP_MAPPING_STORAGE_KEY)
+          : null;
+      const mapping = raw ? (JSON.parse(raw) as CarrierPickupMapping) : {};
+      const branchMapping = mapping?.[branchId] || {};
+      configuredPickupId =
+        String(branchMapping?.[shippingPartner as keyof typeof branchMapping] || "") ||
+        "default";
+    } catch {
+      configuredPickupId = "default";
+    }
+
+    setSelectedPickupLocationId(() => {
+      if (configuredPickupId === "default") return "default";
+      return carrierPickupLocations.some(
+        (item) => String(item.id) === String(configuredPickupId),
+      )
+        ? configuredPickupId
+        : "default";
+    });
+  }, [branchId, carrierPickupLocations, shippingPartner, shippingUiMode]);
+
+  useEffect(() => {
+    if (shippingPartner !== "viettelpost" || !selectedCarrierPickup) return;
+    const groupAddressId = Number(
+      selectedCarrierPickup.viettelGroupAddressId ||
+        selectedCarrierPickup.groupAddressId ||
+        0,
+    );
+    if (groupAddressId) setSelectedViettelInventoryId(groupAddressId);
+  }, [selectedCarrierPickup, shippingPartner]);
 
   useEffect(() => {
     const run = async () => {
@@ -2851,19 +2911,34 @@ export default function CreateOrderPageClient() {
   });
 
   const quoteItems = useMemo(() => {
-    return lines
-      .filter((item) => Number(item.qty || 0) > 0)
-      .map((item) => ({
-        name: item.productName || item.sku || "Sản phẩm",
-        quantity: Number(item.qty || 0),
-        length: Number(shippingLength || 10),
-        width: Number(shippingWidth || 10),
-        height: Number(shippingHeight || 10),
-        weight: Math.max(
-          1,
-          Math.floor(Number(shippingWeight || 200) / Math.max(lines.length, 1)),
-        ),
-      }));
+    const activeLines = lines.filter((item) => Number(item.qty || 0) > 0);
+
+    // Cho phép báo phí ngay khi đã có địa chỉ, chưa cần chọn sản phẩm.
+    // Sapo bắt buộc có hàng để tính kiện; mình dùng kiện mặc định 200g để tăng tốc tạo đơn.
+    if (!activeLines.length) {
+      return [
+        {
+          name: "Sản phẩm mặc định",
+          quantity: 1,
+          length: Number(shippingLength || 10),
+          width: Number(shippingWidth || 10),
+          height: Number(shippingHeight || 10),
+          weight: Number(shippingWeight || 200),
+        },
+      ];
+    }
+
+    return activeLines.map((item) => ({
+      name: item.productName || item.sku || "Sản phẩm",
+      quantity: Number(item.qty || 0),
+      length: Number(shippingLength || 10),
+      width: Number(shippingWidth || 10),
+      height: Number(shippingHeight || 10),
+      weight: Math.max(
+        1,
+        Math.floor(Number(shippingWeight || 200) / Math.max(activeLines.length, 1)),
+      ),
+    }));
   }, [lines, shippingLength, shippingWidth, shippingHeight, shippingWeight]);
 
   const selectedQuote =
@@ -3852,17 +3927,6 @@ export default function CreateOrderPageClient() {
     }
 
     const run = async () => {
-      if (!quoteItems.length) {
-        setShippingQuotes([]);
-        setSelectedShippingServiceId(undefined);
-        setSelectedShippingServiceTypeId(undefined);
-        setShippingError("");
-        setShippingHint(
-          "Cần có ít nhất 1 sản phẩm trong đơn để tính phí ship.",
-        );
-        return;
-      }
-
       const toAddress =
         carrierToAddress ||
         selectedAddress?.addressLine1 ||
@@ -3900,12 +3964,11 @@ export default function CreateOrderPageClient() {
               height: Number(shippingHeight || 10),
               weight: Number(shippingWeight || 200),
               items: quoteItems,
-              pickupLocationId: selectedGhnPickup?.id,
-              fromName: selectedGhnPickup?.name,
-              fromPhone: selectedGhnPickup?.phone,
-              fromAddress: selectedGhnPickup?.address,
-              fromDistrictId: Number((selectedGhnPickup as any)?.ghnFromDistrictId || (selectedGhnPickup as any)?.raw?.fromDistrictId || 0) || undefined,
-              fromWardCode: String((selectedGhnPickup as any)?.ghnFromWardCode || (selectedGhnPickup as any)?.raw?.fromWardCode || "") || undefined,
+              fromDistrictId: selectedCarrierPickup?.ghnFromDistrictId,
+              fromWardCode: selectedCarrierPickup?.ghnFromWardCode,
+              fromName: selectedCarrierPickup?.name,
+              fromPhone: selectedCarrierPickup?.phone,
+              fromAddress: selectedCarrierPickup?.address,
             });
 
             const mappedGhn = (Array.isArray(ghnRows) ? ghnRows : []).map(
@@ -3941,15 +4004,15 @@ export default function CreateOrderPageClient() {
         if (toAddress) {
           try {
             const rawAhamoveQuote = await quoteAhamoveShipment({
+              fromName: selectedCarrierPickup?.name,
+              fromPhone: selectedCarrierPickup?.phone,
+              fromAddress: selectedCarrierPickup?.address,
               toName:
                 selectedAddress?.recipientName ||
                 customerName.trim() ||
                 "Khách hàng",
               toPhone: selectedAddress?.phone || customerPhone.trim(),
               toAddress,
-              fromName: selectedAhamovePickup?.name,
-              fromPhone: selectedAhamovePickup?.phone,
-              fromAddress: selectedAhamovePickup?.address,
               codAmount: remaining > 0 ? remaining : 0,
               services:
                 "HAN-BIKE,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
@@ -4034,13 +4097,22 @@ export default function CreateOrderPageClient() {
               toPhone: selectedAddress?.phone || customerPhone.trim(),
               toAddress,
               services: "VHT,VTK,VCN",
-              senderGroupAddressId: selectedViettelInventory?.groupAddressId || Number((selectedViettelPickup as any)?.viettelGroupAddressId || 0) || undefined,
-              senderProvinceId: selectedViettelInventory?.provinceId || Number((selectedViettelPickup as any)?.viettelProvinceId || 0) || undefined,
-              senderDistrictId: selectedViettelInventory?.districtId || Number((selectedViettelPickup as any)?.viettelDistrictId || 0) || undefined,
-              senderWardId: selectedViettelInventory?.wardId || Number((selectedViettelPickup as any)?.viettelWardId || 0) || undefined,
-              fromName: selectedViettelInventory?.name || selectedViettelPickup?.name,
-              fromPhone: selectedViettelInventory?.phone || selectedViettelPickup?.phone,
-              fromAddress: selectedViettelInventory?.address || selectedViettelPickup?.address,
+              senderGroupAddressId:
+                selectedCarrierPickup?.viettelGroupAddressId ||
+                selectedCarrierPickup?.groupAddressId ||
+                selectedViettelInventory?.groupAddressId,
+              senderProvinceId:
+                selectedCarrierPickup?.viettelProvinceId ||
+                selectedViettelInventory?.provinceId,
+              senderDistrictId:
+                selectedCarrierPickup?.viettelDistrictId ||
+                selectedViettelInventory?.districtId,
+              senderWardId:
+                selectedCarrierPickup?.viettelWardId ||
+                selectedViettelInventory?.wardId,
+              fromName: selectedCarrierPickup?.name || selectedViettelInventory?.name,
+              fromPhone: selectedCarrierPickup?.phone || selectedViettelInventory?.phone,
+              fromAddress: selectedCarrierPickup?.address || selectedViettelInventory?.address,
               province: viettelOldCarrierAddress.province,
               district: viettelOldCarrierAddress.district,
               ward: viettelOldCarrierAddress.ward,
@@ -4179,6 +4251,7 @@ export default function CreateOrderPageClient() {
     remaining,
     note,
     deliveryRequirement,
+    selectedCarrierPickup,
   ]);
 
   const canCreateOrder = hasCurrentUserPermission("orders.create");
@@ -4452,11 +4525,6 @@ export default function CreateOrderPageClient() {
             ? undefined
             : submitGhnWardCode || undefined,
           shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
-          pickupLocationId: isPickupOrder ? undefined : selectedPickupLocation?.id,
-          pickupLocationLabel: isPickupOrder ? undefined : selectedPickupLocation?.label,
-          pickupLocationName: isPickupOrder ? undefined : selectedPickupLocation?.name,
-          pickupLocationPhone: isPickupOrder ? undefined : selectedPickupLocation?.phone,
-          pickupLocationAddress: isPickupOrder ? undefined : selectedPickupLocation?.address,
           shippingPayer,
           note: isPickupOrder ? undefined : customerFacingShippingNote,
           shippingNote: isPickupOrder ? undefined : customerFacingShippingNote,
@@ -4482,6 +4550,10 @@ export default function CreateOrderPageClient() {
               ? getQuoteKey(selectedQuote)
               : undefined,
           carrier: isPickupOrder ? "pickup" : shippingPartner,
+          pickupLocationId: isPickupOrder ? undefined : selectedCarrierPickup?.id,
+          pickupLocationName: isPickupOrder ? undefined : selectedCarrierPickup?.name,
+          pickupLocationPhone: isPickupOrder ? undefined : selectedCarrierPickup?.phone,
+          pickupLocationAddress: isPickupOrder ? undefined : selectedCarrierPickup?.address,
           viettelServiceCode:
             !isPickupOrder && shippingPartner === "viettelpost"
               ? (selectedQuote as any)?._viettelServiceCode ||
@@ -4545,12 +4617,11 @@ export default function CreateOrderPageClient() {
           length: shippingLength,
           width: shippingWidth,
           height: shippingHeight,
-          pickupLocationId: selectedGhnPickup?.id,
-          fromName: selectedGhnPickup?.name,
-          fromPhone: selectedGhnPickup?.phone,
-          fromAddress: selectedGhnPickup?.address,
-          fromDistrictId: Number((selectedGhnPickup as any)?.ghnFromDistrictId || (selectedGhnPickup as any)?.raw?.fromDistrictId || 0) || undefined,
-          fromWardCode: String((selectedGhnPickup as any)?.ghnFromWardCode || (selectedGhnPickup as any)?.raw?.fromWardCode || "") || undefined,
+          fromDistrictId: selectedCarrierPickup?.ghnFromDistrictId,
+          fromWardCode: selectedCarrierPickup?.ghnFromWardCode,
+          fromName: selectedCarrierPickup?.name,
+          fromPhone: selectedCarrierPickup?.phone,
+          fromAddress: selectedCarrierPickup?.address,
           items: lines.map((line) => ({
             name: line.productName || line.sku || "Sản phẩm",
             quantity: Number(line.qty || 0),
@@ -4588,12 +4659,12 @@ export default function CreateOrderPageClient() {
           shippingAddress.trim();
 
         const ahamoveCreated = await createAhamoveShipment(created.id, {
+          fromName: selectedCarrierPickup?.name,
+          fromPhone: selectedCarrierPickup?.phone,
+          fromAddress: selectedCarrierPickup?.address,
           toName: selectedAddress?.recipientName || customerName.trim(),
           toPhone: selectedAddress?.phone || customerPhone.trim(),
           toAddress,
-          fromName: selectedAhamovePickup?.name,
-          fromPhone: selectedAhamovePickup?.phone,
-          fromAddress: selectedAhamovePickup?.address,
           codAmount: remaining > 0 ? remaining : 0,
           serviceId:
             (
@@ -4659,13 +4730,22 @@ export default function CreateOrderPageClient() {
           toName: selectedAddress?.recipientName || customerName.trim(),
           toPhone: selectedAddress?.phone || customerPhone.trim(),
           toAddress,
-          senderGroupAddressId: selectedViettelInventory?.groupAddressId || Number((selectedViettelPickup as any)?.viettelGroupAddressId || 0) || undefined,
-          senderProvinceId: selectedViettelInventory?.provinceId || Number((selectedViettelPickup as any)?.viettelProvinceId || 0) || undefined,
-          senderDistrictId: selectedViettelInventory?.districtId || Number((selectedViettelPickup as any)?.viettelDistrictId || 0) || undefined,
-          senderWardId: selectedViettelInventory?.wardId || Number((selectedViettelPickup as any)?.viettelWardId || 0) || undefined,
-          fromName: selectedViettelInventory?.name || selectedViettelPickup?.name,
-          fromPhone: selectedViettelInventory?.phone || selectedViettelPickup?.phone,
-          fromAddress: selectedViettelInventory?.address || selectedViettelPickup?.address,
+          senderGroupAddressId:
+            selectedCarrierPickup?.viettelGroupAddressId ||
+            selectedCarrierPickup?.groupAddressId ||
+            selectedViettelInventory?.groupAddressId,
+          senderProvinceId:
+            selectedCarrierPickup?.viettelProvinceId ||
+            selectedViettelInventory?.provinceId,
+          senderDistrictId:
+            selectedCarrierPickup?.viettelDistrictId ||
+            selectedViettelInventory?.districtId,
+          senderWardId:
+            selectedCarrierPickup?.viettelWardId ||
+            selectedViettelInventory?.wardId,
+          fromName: selectedCarrierPickup?.name || selectedViettelInventory?.name,
+          fromPhone: selectedCarrierPickup?.phone || selectedViettelInventory?.phone,
+          fromAddress: selectedCarrierPickup?.address || selectedViettelInventory?.address,
           toProvince: quoteProvince,
           toDistrict: quoteDistrict,
           toWard: quoteWard,
@@ -5425,12 +5505,16 @@ export default function CreateOrderPageClient() {
                     }
                     className={`rounded-2xl border px-3 py-3 text-left transition ${
                       shippingPartner === item.value
-                        ? "border-neutral-900 bg-neutral-50"
-                        : "border-neutral-200"
-                    } ${item.enabled ? "hover:bg-neutral-50" : "cursor-not-allowed opacity-50"}`}
+                        ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
+                        : "border-neutral-200 bg-white text-neutral-900"
+                    } ${item.enabled ? "hover:border-neutral-900" : "cursor-not-allowed opacity-50"}`}
                   >
-                    <div className="text-sm font-medium">{item.label}</div>
-                    <div className="mt-1 text-xs text-neutral-500">
+                    <div className="text-sm font-semibold">{item.label}</div>
+                    <div
+                      className={`mt-1 text-xs ${
+                        shippingPartner === item.value ? "text-neutral-200" : "text-neutral-500"
+                      }`}
+                    >
                       {item.enabled ? "Đang bật" : "Sẽ bật sau"}
                     </div>
                   </button>
@@ -5504,70 +5588,10 @@ export default function CreateOrderPageClient() {
                 </div>
               </div>
 
-              {shippingUiMode === "carrier" ? (
-                <div className="mt-4 rounded-2xl border border-orange-100 bg-orange-50/60 p-4 text-sm">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-neutral-900">
-                        Kho lấy hàng
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        Chọn đúng kho gửi cho từng hãng: GHN / ViettelPost / AhaMove.
-                      </div>
-                    </div>
-                    {pickupLocationsLoading || viettelInventoryLoading ? (
-                      <span className="text-xs text-orange-600">
-                        Đang tải kho...
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <select
-                    className="w-full rounded-2xl border border-orange-200 bg-white px-3 py-3 text-sm outline-none focus:border-orange-400"
-                    value={selectedPickupLocation?.id || ""}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      const carrier = String(shippingPartner || "").toLowerCase();
-                      setSelectedPickupLocationIds((prev) => ({
-                        ...prev,
-                        [carrier]: value,
-                      }));
-
-                      const picked = (pickupLocationsByCarrier[carrier] || []).find(
-                        (item) => item.id === value,
-                      );
-                      if (carrier === "viettelpost") {
-                        const groupId = Number((picked as any)?.viettelGroupAddressId || (picked as any)?.raw?.groupAddressId || 0);
-                        setSelectedViettelInventoryId(groupId || undefined);
-                      }
-                    }}
-                  >
-                    {(pickupLocationsByCarrier[String(shippingPartner || "").toLowerCase()] || []).length ? null : (
-                      <option value="">Dùng cấu hình mặc định</option>
-                    )}
-                    {(pickupLocationsByCarrier[String(shippingPartner || "").toLowerCase()] || []).map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {selectedPickupLocation ? (
-                    <div className="mt-2 grid gap-1 text-xs text-neutral-600 md:grid-cols-[120px_1fr]">
-                      <span>Hãng</span>
-                      <span className="font-medium text-neutral-800">
-                        {getCarrierMeta(String(selectedPickupLocation.carrier)).name}
-                      </span>
-                      <span>Người gửi</span>
-                      <span>{selectedPickupLocation.name || "—"} · {selectedPickupLocation.phone || "—"}</span>
-                      <span>Địa chỉ lấy</span>
-                      <span>{selectedPickupLocation.address || "—"}</span>
-                    </div>
-                  ) : (
-                    <div className="mt-2 text-xs text-neutral-500">
-                      Chưa có kho riêng cho hãng này, backend sẽ dùng env mặc định.
-                    </div>
-                  )}
+              {shippingUiMode === "carrier" && selectedCarrierPickup ? (
+                <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+                  Kho lấy hàng đã cấu hình: <span className="font-semibold text-neutral-900">{selectedCarrierPickup.name || selectedCarrierPickup.label}</span>
+                  {selectedCarrierPickup.address ? ` · ${selectedCarrierPickup.address}` : ""}
                 </div>
               ) : null}
 
