@@ -23,8 +23,9 @@ import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
 
-
-function sortCategoriesForDisplay<T extends { name?: string; sortOrder?: number; isActive?: boolean }>(rows: T[]) {
+function sortCategoriesForDisplay<
+  T extends { name?: string; sortOrder?: number; isActive?: boolean },
+>(rows: T[]) {
   return [...rows]
     .filter((item) => item.isActive !== false)
     .sort((a, b) => {
@@ -80,6 +81,51 @@ function toAbsoluteFileUrl(url?: string | null) {
   return `${API_BASE}${url}`;
 }
 
+function getUploadedImageUrl(result: any) {
+  if (typeof result === "string") return result;
+  return String(
+    result?.url ||
+      result?.imageUrl ||
+      result?.secure_url ||
+      result?.secureUrl ||
+      result?.data?.url ||
+      result?.data?.imageUrl ||
+      result?.file?.url ||
+      "",
+  ).trim();
+}
+
+type ColorImageMap = Record<string, string>;
+
+function normalizeColorKey(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeColorImages(product: any): ColorImageMap {
+  const output: ColorImageMap = {};
+  const raw =
+    product?.colorImages || product?.imagesByColor || product?.colorImageMap;
+
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    Object.entries(raw).forEach(([key, value]) => {
+      const colorKey = normalizeColorKey(key);
+      const image = String(value || "").trim();
+      if (colorKey && image) output[colorKey] = image;
+    });
+  }
+
+  if (Array.isArray(product?.variants)) {
+    product.variants.forEach((variant: any) => {
+      const colorKey = normalizeColorKey(variant?.color);
+      const image = String(variant?.imageUrl || variant?.image || "").trim();
+      if (colorKey && image && !output[colorKey]) output[colorKey] = image;
+    });
+  }
+
+  return output;
+}
 
 type CurrentUserPermissionProfile = {
   id?: string;
@@ -103,16 +149,15 @@ type CurrentUserPermissionProfile = {
 };
 
 function normalizeRoleCode(value: any) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function getUserRoles(user?: CurrentUserPermissionProfile | null) {
   return Array.from(
     new Set(
-      [
-        ...(Array.isArray(user?.roles) ? user?.roles || [] : []),
-        user?.role,
-      ]
+      [...(Array.isArray(user?.roles) ? user?.roles || [] : []), user?.role]
         .map(normalizeRoleCode)
         .filter(Boolean),
     ),
@@ -123,19 +168,17 @@ function getPrimaryAppRole(
   user?: CurrentUserPermissionProfile | null,
 ): AppRole {
   const roles = getUserRoles(user);
-  return (
-    roles.find((role) =>
-      [
-        "owner",
-        "admin",
-        "branch-manager",
-        "fulltime",
-        "retail-staff",
-        "stock-auditor",
-        "stock-staff",
-      ].includes(role),
-    ) || "retail-staff"
-  ) as AppRole;
+  return (roles.find((role) =>
+    [
+      "owner",
+      "admin",
+      "branch-manager",
+      "fulltime",
+      "retail-staff",
+      "stock-auditor",
+      "stock-staff",
+    ].includes(role),
+  ) || "retail-staff") as AppRole;
 }
 
 function isOwnerOrAdminUser(user?: CurrentUserPermissionProfile | null) {
@@ -198,8 +241,10 @@ function hasLegacyProductInventoryPermission(
     if (permission === "inventory.view") return Boolean(row.canViewStock);
     if (permission === "inventory.manage") return Boolean(row.canManageStock);
     if (permission === "inventory.value.view") return Boolean(row.canViewMoney);
-    if (permission === "products.excel.export") return Boolean(row.canExportProductExcel);
-    if (permission === "products.excel.import") return Boolean(row.canImportProductExcel);
+    if (permission === "products.excel.export")
+      return Boolean(row.canExportProductExcel);
+    if (permission === "products.excel.import")
+      return Boolean(row.canImportProductExcel);
     return false;
   });
 }
@@ -216,7 +261,6 @@ function hasProductInventoryPermission(
     hasPermission(role, permission as any)
   );
 }
-
 
 function createEmptyBranchStocks(branches: BranchItem[]) {
   return Object.fromEntries(branches.map((branch) => [branch.id, "0"]));
@@ -546,7 +590,8 @@ export default function ProductDetailPageClient({
   const searchParams = useSearchParams();
 
   const [role, setRole] = useState<AppRole>("retail-staff");
-  const [currentUser, setCurrentUser] = useState<CurrentUserPermissionProfile | null>(null);
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUserPermissionProfile | null>(null);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [categories, setCategories] = useState<ProductCategoryItem[]>([]);
   const [product, setProduct] = useState<ProductItem | null>(null);
@@ -565,6 +610,7 @@ export default function ProductDetailPageClient({
   const [brand, setBrand] = useState("The 1970");
   const [weight, setWeight] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [colorImages, setColorImages] = useState<ColorImageMap>({});
   const [description, setDescription] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
   const [defaultCostPrice, setDefaultCostPrice] = useState("");
@@ -582,6 +628,7 @@ export default function ProductDetailPageClient({
   >({});
   const [variantSaving, setVariantSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingColor, setUploadingColor] = useState("");
   const [statusSaving, setStatusSaving] = useState(false);
 
   const isOwner = isOwnerOrAdminUser(currentUser);
@@ -641,35 +688,32 @@ export default function ProductDetailPageClient({
     "inventory.value.view",
   );
 
-const getAvailableQty = (variantId?: string, branchId?: string) => {
-  if (!variantId || !branchId) return 0;
+  const getAvailableQty = (variantId?: string, branchId?: string) => {
+    if (!variantId || !branchId) return 0;
 
-  const inventoryMatch = inventoryRows.find(
-    (row) =>
-      String(row.variantId) === String(variantId) &&
-      String(row.branchId) === String(branchId),
-  );
+    const inventoryMatch = inventoryRows.find(
+      (row) =>
+        String(row.variantId) === String(variantId) &&
+        String(row.branchId) === String(branchId),
+    );
 
-  if (inventoryMatch) {
-    return Number(inventoryMatch.availableQty || 0);
-  }
+    if (inventoryMatch) {
+      return Number(inventoryMatch.availableQty || 0);
+    }
 
-  const variant = (product?.variants || []).find(
-    (v: any) => String(v.id) === String(variantId),
-  );
+    const variant = (product?.variants || []).find(
+      (v: any) => String(v.id) === String(variantId),
+    );
 
-  if (!variant) return 0;
+    if (!variant) return 0;
 
-const vAny = variant as any;
+    const vAny = variant as any;
 
-const branchStocks =
-  vAny.branchStocks ||
-  vAny.inventoryByBranch ||
-  vAny.stockByBranch ||
-  {};
+    const branchStocks =
+      vAny.branchStocks || vAny.inventoryByBranch || vAny.stockByBranch || {};
 
-  return Number(branchStocks?.[branchId] || 0);
-};
+    return Number(branchStocks?.[branchId] || 0);
+  };
 
   const getVariantTotalQty = (variantId?: string) => {
     if (!variantId) return 0;
@@ -691,7 +735,9 @@ const branchStocks =
         ]);
 
       const nextBranches = Array.isArray(branchData) ? branchData : [];
-      const nextCategories = sortCategoriesForDisplay(Array.isArray(categoryData) ? categoryData : []);
+      const nextCategories = sortCategoriesForDisplay(
+        Array.isArray(categoryData) ? categoryData : [],
+      );
       const nextInventoryRows = getProductInventoryRows(
         productData,
         inventoryData,
@@ -761,6 +807,7 @@ const branchStocks =
     setBrand(item.brand || "The 1970");
     setWeight(String(item.weight || 0));
     setImageUrl(item.imageUrl || "");
+    setColorImages(normalizeColorImages(item));
     setDescription(item.description || "");
     setDefaultPrice(String(minPrice || 0));
     setDefaultCostPrice(String(minCostPrice || 0));
@@ -771,7 +818,8 @@ const branchStocks =
   };
 
   useEffect(() => {
-    const storedUser = getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
+    const storedUser =
+      getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
     setCurrentUser(storedUser);
     setRole(getPrimaryAppRole(storedUser));
 
@@ -788,6 +836,14 @@ const branchStocks =
   }, [inventoryRows, canViewInventory]);
 
   const variantCount = product?.variants?.length || 0;
+
+  const colorList = useMemo(() => {
+    const fromInput = parseCommaTokens(colors).map(normalizeColorKey);
+    const fromVariants = uniqueValues(
+      (product?.variants || []).map((variant: any) => variant.color),
+    ).map(normalizeColorKey);
+    return Array.from(new Set([...fromInput, ...fromVariants].filter(Boolean)));
+  }, [colors, product]);
 
   const catalogValue = useMemo(() => {
     if (!canViewInventoryValue) return 0;
@@ -841,6 +897,7 @@ const branchStocks =
       brand: product.brand || "The 1970",
       weight: String(product.weight || 0),
       imageUrl: product.imageUrl || "",
+      colorImages: normalizeColorImages(product),
       description: product.description || "",
       defaultPrice: String(
         product.variants?.length
@@ -869,6 +926,7 @@ const branchStocks =
       brand,
       weight,
       imageUrl,
+      colorImages,
       description,
       defaultPrice,
       defaultCostPrice,
@@ -882,6 +940,7 @@ const branchStocks =
     brand,
     weight,
     imageUrl,
+    colorImages,
     description,
     defaultPrice,
     defaultCostPrice,
@@ -932,6 +991,8 @@ const branchStocks =
         brand,
         weight: Number(weight || 0),
         imageUrl: imageUrl.trim(),
+        colorImages,
+        imagesByColor: colorImages,
         description: description.trim(),
         ...(canEditProductPrice
           ? { defaultPrice: Number(defaultPrice || 0) }
@@ -944,7 +1005,7 @@ const branchStocks =
         // Tồn kho không lưu ở ProductDetail nữa.
         // Số tồn chuẩn lấy từ InventoryItem / Kho hàng.
         applyPriceToAllVariants,
-      });
+      } as any);
 
       const next = await fetchProductById(product.id);
       const nextInventoryRows = await fetchInventoryByProduct(product.id);
@@ -981,12 +1042,47 @@ const branchStocks =
       setUploading(true);
       setMessage("Đang upload ảnh...");
       const result = await uploadProductImage(file);
-      setImageUrl(result.url);
+      const uploadedUrl = getUploadedImageUrl(result);
+      if (!uploadedUrl) {
+        throw new Error("Upload xong nhưng backend không trả về link ảnh.");
+      }
+      setImageUrl(uploadedUrl);
       setMessage("Đã upload ảnh. Bấm lưu để cập nhật sản phẩm.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Upload ảnh thất bại.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleColorImageUpload = async (color: string, file: File | null) => {
+    const colorKey = normalizeColorKey(color);
+    if (!colorKey) return;
+    if (!canUploadProductImage) {
+      setMessage("Role hiện tại không có quyền upload ảnh sản phẩm.");
+      return;
+    }
+    if (!file) return;
+
+    try {
+      setUploadingColor(colorKey);
+      setMessage(`Đang upload ảnh màu ${colorKey}...`);
+      const result = await uploadProductImage(file);
+      const uploadedUrl = getUploadedImageUrl(result);
+      if (!uploadedUrl) {
+        throw new Error("Upload xong nhưng backend không trả về link ảnh.");
+      }
+      setColorImages((prev) => ({ ...prev, [colorKey]: uploadedUrl }));
+      if (!imageUrl) setImageUrl(uploadedUrl);
+      setMessage(
+        `Đã upload ảnh màu ${colorKey}. Bấm lưu để cập nhật sản phẩm.`,
+      );
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Upload ảnh màu thất bại.",
+      );
+    } finally {
+      setUploadingColor("");
     }
   };
 
@@ -1130,7 +1226,9 @@ const branchStocks =
                   <Badge tone={statusActive ? "green" : "red"}>
                     {product.status || "DRAFT"}
                   </Badge>
-                  {hasUnsavedChanges ? <Badge tone="amber">Chưa lưu</Badge> : null}
+                  {hasUnsavedChanges ? (
+                    <Badge tone="amber">Chưa lưu</Badge>
+                  ) : null}
                 </div>
                 <h1 className="mt-2 text-[22px] font-semibold leading-tight text-neutral-950">
                   {product.name}
@@ -1144,11 +1242,15 @@ const branchStocks =
             <div className="mt-4 grid grid-cols-3 gap-2">
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-[11px] text-neutral-500">Tổng tồn</p>
-                <p className="mt-1 text-lg font-semibold text-neutral-950">{totalStock}</p>
+                <p className="mt-1 text-lg font-semibold text-neutral-950">
+                  {totalStock}
+                </p>
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-[11px] text-neutral-500">Variant</p>
-                <p className="mt-1 text-lg font-semibold text-neutral-950">{variantCount}</p>
+                <p className="mt-1 text-lg font-semibold text-neutral-950">
+                  {variantCount}
+                </p>
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-[11px] text-neutral-500">Giá bán</p>
@@ -1167,14 +1269,22 @@ const branchStocks =
                 disabled={statusSaving || !canToggleProductStatus}
                 onClick={handleToggleStatus}
               >
-                {statusSaving ? "Đang cập nhật..." : statusActive ? "Ngừng bán" : "Kích hoạt"}
+                {statusSaving
+                  ? "Đang cập nhật..."
+                  : statusActive
+                    ? "Ngừng bán"
+                    : "Kích hoạt"}
               </Button>
               <Button
                 className="col-span-2"
                 disabled={saving || !canEditProduct || !hasUnsavedChanges}
                 onClick={() => void saveProduct(true)}
               >
-                {saving ? "Đang lưu..." : hasUnsavedChanges ? "Lưu sản phẩm" : "Đã đồng bộ"}
+                {saving
+                  ? "Đang lưu..."
+                  : hasUnsavedChanges
+                    ? "Lưu sản phẩm"
+                    : "Đã đồng bộ"}
               </Button>
             </div>
           </div>
@@ -1190,15 +1300,26 @@ const branchStocks =
 
         <Panel className="overflow-hidden">
           <div className="border-b border-neutral-100 px-4 py-3">
-            <h2 className="text-[17px] font-semibold text-neutral-950">Tồn kho chi nhánh</h2>
-            <p className="mt-1 text-xs text-neutral-500">Tổng tồn của sản phẩm này: {totalStock}</p>
+            <h2 className="text-[17px] font-semibold text-neutral-950">
+              Tồn kho chi nhánh
+            </h2>
+            <p className="mt-1 text-xs text-neutral-500">
+              Tổng tồn của sản phẩm này: {totalStock}
+            </p>
           </div>
           <div className="divide-y divide-neutral-100">
             {branchStockAlerts.map((item) => (
-              <div key={item.branchId} className="flex items-center justify-between gap-3 px-4 py-3">
+              <div
+                key={item.branchId}
+                className="flex items-center justify-between gap-3 px-4 py-3"
+              >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-neutral-900">{item.branchName}</p>
-                  <p className="mt-0.5 text-[11px] uppercase tracking-wide text-neutral-400">{item.label}</p>
+                  <p className="truncate text-sm font-semibold text-neutral-900">
+                    {item.branchName}
+                  </p>
+                  <p className="mt-0.5 text-[11px] uppercase tracking-wide text-neutral-400">
+                    {item.label}
+                  </p>
                 </div>
                 <Badge tone={item.tone}>{item.qty}</Badge>
               </div>
@@ -1218,8 +1339,12 @@ const branchStocks =
 
         <Panel className="overflow-hidden">
           <div className="border-b border-neutral-100 px-4 py-3">
-            <h2 className="text-[17px] font-semibold text-neutral-950">Variant</h2>
-            <p className="mt-1 text-xs text-neutral-500">{variantCount} màu / size đang có</p>
+            <h2 className="text-[17px] font-semibold text-neutral-950">
+              Variant
+            </h2>
+            <p className="mt-1 text-xs text-neutral-500">
+              {variantCount} màu / size đang có
+            </p>
           </div>
           <div className="divide-y divide-neutral-100">
             {(product.variants || []).map((variant: any) => (
@@ -1248,24 +1373,48 @@ const branchStocks =
         </Panel>
 
         <Panel className="p-4">
-          <h2 className="text-[17px] font-semibold text-neutral-950">Thông tin chính</h2>
+          <h2 className="text-[17px] font-semibold text-neutral-950">
+            Thông tin chính
+          </h2>
           <div className="mt-3 grid gap-3">
             <Field label="Tên sản phẩm">
-              <Input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEditProduct} />
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={!canEditProduct}
+              />
             </Field>
             <Field label="Mã / slug">
-              <Input value={skuCode} onChange={(e) => setSkuCode(slugify(e.target.value))} disabled={!canEditProduct} />
+              <Input
+                value={skuCode}
+                onChange={(e) => setSkuCode(slugify(e.target.value))}
+                disabled={!canEditProduct}
+              />
             </Field>
             <Field label="Giá bán">
-              <Input type="number" value={defaultPrice} onChange={(e) => setDefaultPrice(e.target.value)} disabled={!canEditProductPrice} />
+              <Input
+                type="number"
+                value={defaultPrice}
+                onChange={(e) => setDefaultPrice(e.target.value)}
+                disabled={!canEditProductPrice}
+              />
             </Field>
             {canViewCost ? (
               <Field label="Giá vốn">
-                <Input type="number" value={defaultCostPrice} onChange={(e) => setDefaultCostPrice(e.target.value)} disabled={!canEditProductCost} />
+                <Input
+                  type="number"
+                  value={defaultCostPrice}
+                  onChange={(e) => setDefaultCostPrice(e.target.value)}
+                  disabled={!canEditProductCost}
+                />
               </Field>
             ) : null}
             <Field label="Mô tả">
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEditProduct} />
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={!canEditProduct}
+              />
             </Field>
           </div>
         </Panel>
@@ -1273,613 +1422,751 @@ const branchStocks =
 
       <div className="hidden md:block">
         <div className="space-y-3 p-3 xl:p-4">
-      <Panel className="sticky top-0 z-20 border-neutral-300 bg-white/95 px-4 py-3 backdrop-blur">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <Link
-              href="/products"
-              className="text-[11px] text-neutral-500 hover:text-neutral-900"
-            >
-              ← Quay lại danh sách sản phẩm
-            </Link>
+          <Panel className="sticky top-0 z-20 border-neutral-300 bg-white/95 px-4 py-3 backdrop-blur">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <Link
+                  href="/products"
+                  className="text-[11px] text-neutral-500 hover:text-neutral-900"
+                >
+                  ← Quay lại danh sách sản phẩm
+                </Link>
 
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h1 className="max-w-[720px] truncate text-[20px] font-semibold tracking-tight text-neutral-950">
-                {product.name}
-              </h1>
-              <Badge tone={statusActive ? "green" : "red"}>
-                {product.status || "DRAFT"}
-              </Badge>
-              <Badge tone="blue">/{product.slug || "—"}</Badge>
-              <span className="text-xs text-neutral-400">ID: {product.id}</span>
-              {hasUnsavedChanges ? (
-                <Badge tone="amber">Có thay đổi chưa lưu</Badge>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void loadAll()}>
-              Tải lại
-            </Button>
-            <Button
-              variant={statusActive ? "danger" : "success"}
-              disabled={statusSaving || !canToggleProductStatus}
-              onClick={handleToggleStatus}
-            >
-              {statusSaving
-                ? "Đang cập nhật..."
-                : statusActive
-                  ? "Ngừng bán"
-                  : "Kích hoạt"}
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={saving || !canEditProduct || !hasUnsavedChanges}
-              onClick={() => void saveProduct(false)}
-            >
-              Lưu & về danh sách
-            </Button>
-            <Button
-              disabled={saving || !canEditProduct || !hasUnsavedChanges}
-              onClick={() => void saveProduct(true)}
-            >
-              {saving
-                ? "Đang lưu..."
-                : hasUnsavedChanges
-                  ? "Lưu sản phẩm"
-                  : "Đã đồng bộ"}
-            </Button>
-          </div>
-        </div>
-      </Panel>
-
-      {message ? (
-        <div
-          className={`rounded-2xl border px-4 py-3 text-sm ${message.startsWith("Đã") ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}
-        >
-          {message}
-        </div>
-      ) : null}
-
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-3">
-          <Panel className="p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-[16px] font-semibold">Thông tin chính</h2>
-                <p className="mt-0.5 text-xs text-neutral-500">
-                  Thông tin bán hàng, danh mục và cấu hình tạo variant.
-                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <h1 className="max-w-[720px] truncate text-[20px] font-semibold tracking-tight text-neutral-950">
+                    {product.name}
+                  </h1>
+                  <Badge tone={statusActive ? "green" : "red"}>
+                    {product.status || "DRAFT"}
+                  </Badge>
+                  <Badge tone="blue">/{product.slug || "—"}</Badge>
+                  <span className="text-xs text-neutral-400">
+                    ID: {product.id}
+                  </span>
+                  {hasUnsavedChanges ? (
+                    <Badge tone="amber">Có thay đổi chưa lưu</Badge>
+                  ) : null}
+                </div>
               </div>
 
-              <label className="flex shrink-0 items-center gap-2 text-xs text-neutral-600">
-                <input
-                  type="checkbox"
-                  checked={applyPriceToAllVariants}
-                  disabled={!canEditProductPrice}
-                  onChange={(e) => setApplyPriceToAllVariants(e.target.checked)}
-                />
-                Áp dụng cho toàn bộ variant
-              </label>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-6">
-              <Field label="Tên sản phẩm" wide>
-                <Input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={!canEditProduct}
-                />
-              </Field>
-
-              <Field label="Mã / slug">
-                <Input
-                  value={skuCode}
-                  onChange={(e) => setSkuCode(slugify(e.target.value))}
-                  disabled={!canEditProduct}
-                />
-              </Field>
-
-              <Field label="Danh mục">
-                <select
-                  disabled={!canEditProduct}
-                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  value={categoryId}
-                  onChange={(e) => {
-                    const found = categories.find(
-                      (c) => c.id === e.target.value,
-                    );
-                    setCategoryId(e.target.value);
-                    setCategory(found?.name || "");
-                  }}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => void loadAll()}>
+                  Tải lại
+                </Button>
+                <Button
+                  variant={statusActive ? "danger" : "success"}
+                  disabled={statusSaving || !canToggleProductStatus}
+                  onClick={handleToggleStatus}
                 >
-                  <option value="">Chọn danh mục</option>
-                  {categories.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Brand">
-                <Input
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  disabled={!canEditProduct}
-                />
-              </Field>
-
-              <Field label="Khối lượng">
-                <Input
-                  type="number"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  disabled={!canEditProduct}
-                />
-              </Field>
-
-              <Field label="Giá bán">
-                <Input
-                  type="number"
-                  value={defaultPrice}
-                  onChange={(e) => setDefaultPrice(e.target.value)}
-                  disabled={!canEditProductPrice}
-                />
-              </Field>
-
-              {canViewCost ? (
-                <Field label="Giá vốn">
-                  <Input
-                    type="number"
-                    value={defaultCostPrice}
-                    onChange={(e) => setDefaultCostPrice(e.target.value)}
-                    disabled={!canEditProductCost}
-                  />
-                </Field>
-              ) : null}
-
-              <Field label="Cấu hình màu">
-                <Input
-                  value={colors}
-                  onChange={(e) => setColors(e.target.value)}
-                  placeholder="ĐEN, TRẮNG, NÂU"
-                  disabled={!canEditProduct}
-                />
-                <TokenPreview value={colors} />
-              </Field>
-
-              <Field label="Cấu hình size">
-                <Input
-                  value={sizes}
-                  onChange={(e) => setSizes(e.target.value)}
-                  placeholder="S, M, L, XL"
-                  disabled={!canEditProduct}
-                />
-                <TokenPreview value={sizes} />
-              </Field>
-
-              <Field label="Mô tả" wide>
-                <Textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="min-h-[76px]"
-                  disabled={!canEditProduct}
-                />
-              </Field>
+                  {statusSaving
+                    ? "Đang cập nhật..."
+                    : statusActive
+                      ? "Ngừng bán"
+                      : "Kích hoạt"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={saving || !canEditProduct || !hasUnsavedChanges}
+                  onClick={() => void saveProduct(false)}
+                >
+                  Lưu & về danh sách
+                </Button>
+                <Button
+                  disabled={saving || !canEditProduct || !hasUnsavedChanges}
+                  onClick={() => void saveProduct(true)}
+                >
+                  {saving
+                    ? "Đang lưu..."
+                    : hasUnsavedChanges
+                      ? "Lưu sản phẩm"
+                      : "Đã đồng bộ"}
+                </Button>
+              </div>
             </div>
           </Panel>
 
-          <div className="grid gap-3 xl:grid-cols-[0.86fr_1.14fr]">
-            <Panel className="p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[16px] font-semibold">
-                  Tồn kho các chi nhánh
-                </h2>
-                <span className="text-xs text-neutral-500">
-                  Tổng tồn của sản phẩm này • {totalStock}
-                </span>
-              </div>
+          {message ? (
+            <div
+              className={`rounded-2xl border px-4 py-3 text-sm ${message.startsWith("Đã") ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}
+            >
+              {message}
+            </div>
+          ) : null}
 
-              <div className="mb-3 flex flex-wrap gap-2">
-                {criticalBranchCount > 0 ? (
-                  <Badge tone="red">
-                    {criticalBranchCount} chi nhánh hết hàng
-                  </Badge>
-                ) : null}
-                {lowBranchCount > 0 ? (
-                  <Badge tone="amber">{lowBranchCount} chi nhánh sắp hết</Badge>
-                ) : null}
-                {highBranchCount > 0 ? (
-                  <Badge tone="blue">{highBranchCount} chi nhánh tồn cao</Badge>
-                ) : null}
-                {!criticalBranchCount && !lowBranchCount && !highBranchCount ? (
-                  <Badge tone="green">Tồn ổn định</Badge>
-                ) : null}
-              </div>
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="space-y-3">
+              <Panel className="p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-[16px] font-semibold">
+                      Thông tin chính
+                    </h2>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      Thông tin bán hàng, danh mục và cấu hình tạo variant.
+                    </p>
+                  </div>
 
-              <div className="grid gap-2 md:grid-cols-2">
-                {branches.map((branch) => {
-                  const alert = branchStockAlerts.find(
-                    (item) => item.branchId === branch.id,
-                  );
-                  const qty = Number(alert?.qty || 0);
-                  return (
-                    <div
-                      key={branch.id}
-                      className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2"
+                  <label className="flex shrink-0 items-center gap-2 text-xs text-neutral-600">
+                    <input
+                      type="checkbox"
+                      checked={applyPriceToAllVariants}
+                      disabled={!canEditProductPrice}
+                      onChange={(e) =>
+                        setApplyPriceToAllVariants(e.target.checked)
+                      }
+                    />
+                    Áp dụng cho toàn bộ variant
+                  </label>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-6">
+                  <Field label="Tên sản phẩm" wide>
+                    <Input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      disabled={!canEditProduct}
+                    />
+                  </Field>
+
+                  <Field label="Mã / slug">
+                    <Input
+                      value={skuCode}
+                      onChange={(e) => setSkuCode(slugify(e.target.value))}
+                      disabled={!canEditProduct}
+                    />
+                  </Field>
+
+                  <Field label="Danh mục">
+                    <select
+                      disabled={!canEditProduct}
+                      className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-60"
+                      value={categoryId}
+                      onChange={(e) => {
+                        const found = categories.find(
+                          (c) => c.id === e.target.value,
+                        );
+                        setCategoryId(e.target.value);
+                        setCategory(found?.name || "");
+                      }}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-medium text-neutral-600">
-                          {branch.name}
-                        </span>
-                        <Badge tone={alert?.tone || "gray"}>{qty}</Badge>
-                      </div>
-                      <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
-                        {alert?.label || "—"}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      <option value="">Chọn danh mục</option>
+                      {categories.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-              {isOwner ? (
-                <Link
-                  href={`/inventory?productId=${encodeURIComponent(product.id)}`}
-                  className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
-                >
-                  Mở trong Kho hàng
-                </Link>
-              ) : null}
-            </Panel>
+                  <Field label="Brand">
+                    <Input
+                      value={brand}
+                      onChange={(e) => setBrand(e.target.value)}
+                      disabled={!canEditProduct}
+                    />
+                  </Field>
 
-            <Panel className="p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[16px] font-semibold">
-                  Thêm variant nhanh
-                </h2>
-                <span className="text-xs text-neutral-500">
-                  {variantCount} variant
-                </span>
-              </div>
-
-              <div className="grid gap-2 md:grid-cols-4">
-                <Input
-                  value={variantColor}
-                  onChange={(e) => setVariantColor(e.target.value)}
-                  placeholder="Màu"
-                  className="py-2"
-                  disabled={!canCreateProductVariant}
-                />
-                <Input
-                  value={variantSize}
-                  onChange={(e) => setVariantSize(e.target.value)}
-                  placeholder="Size"
-                  className="py-2"
-                  disabled={!canCreateProductVariant}
-                />
-                <Input
-                  type="number"
-                  value={variantPrice}
-                  onChange={(e) => setVariantPrice(e.target.value)}
-                  placeholder="Giá bán"
-                  className="py-2"
-                  disabled={!canEditProductPrice}
-                />
-                {canViewCost ? (
-                  <Input
-                    type="number"
-                    value={variantCostPrice}
-                    onChange={(e) => setVariantCostPrice(e.target.value)}
-                    placeholder="Giá vốn"
-                    className="py-2"
-                    disabled={!canEditProductCost}
-                  />
-                ) : null}
-              </div>
-
-              <div className="mt-2 grid gap-2 md:grid-cols-4">
-                {branches.map((branch) => (
-                  <div key={branch.id} className="space-y-1">
-                    <span className="block truncate text-[10px] font-semibold uppercase text-neutral-400">
-                      {branch.name}
-                    </span>
+                  <Field label="Khối lượng">
                     <Input
                       type="number"
-                      value={variantBranchStocks[branch.id] || "0"}
-                      onChange={(e) =>
-                        setVariantBranchStocks((prev) => ({
-                          ...prev,
-                          [branch.id]: e.target.value,
-                        }))
-                      }
+                      value={weight}
+                      onChange={(e) => setWeight(e.target.value)}
+                      disabled={!canEditProduct}
+                    />
+                  </Field>
+
+                  <Field label="Giá bán">
+                    <Input
+                      type="number"
+                      value={defaultPrice}
+                      onChange={(e) => setDefaultPrice(e.target.value)}
+                      disabled={!canEditProductPrice}
+                    />
+                  </Field>
+
+                  {canViewCost ? (
+                    <Field label="Giá vốn">
+                      <Input
+                        type="number"
+                        value={defaultCostPrice}
+                        onChange={(e) => setDefaultCostPrice(e.target.value)}
+                        disabled={!canEditProductCost}
+                      />
+                    </Field>
+                  ) : null}
+
+                  <Field label="Cấu hình màu">
+                    <Input
+                      value={colors}
+                      onChange={(e) => setColors(e.target.value)}
+                      placeholder="ĐEN, TRẮNG, NÂU"
+                      disabled={!canEditProduct}
+                    />
+                    <TokenPreview value={colors} />
+                  </Field>
+
+                  <Field label="Cấu hình size">
+                    <Input
+                      value={sizes}
+                      onChange={(e) => setSizes(e.target.value)}
+                      placeholder="S, M, L, XL"
+                      disabled={!canEditProduct}
+                    />
+                    <TokenPreview value={sizes} />
+                  </Field>
+
+                  <Field label="Mô tả" wide>
+                    <Textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      className="min-h-[76px]"
+                      disabled={!canEditProduct}
+                    />
+                  </Field>
+                </div>
+              </Panel>
+
+              <div className="grid gap-3 xl:grid-cols-[0.86fr_1.14fr]">
+                <Panel className="p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-[16px] font-semibold">
+                      Tồn kho các chi nhánh
+                    </h2>
+                    <span className="text-xs text-neutral-500">
+                      Tổng tồn của sản phẩm này • {totalStock}
+                    </span>
+                  </div>
+
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {criticalBranchCount > 0 ? (
+                      <Badge tone="red">
+                        {criticalBranchCount} chi nhánh hết hàng
+                      </Badge>
+                    ) : null}
+                    {lowBranchCount > 0 ? (
+                      <Badge tone="amber">
+                        {lowBranchCount} chi nhánh sắp hết
+                      </Badge>
+                    ) : null}
+                    {highBranchCount > 0 ? (
+                      <Badge tone="blue">
+                        {highBranchCount} chi nhánh tồn cao
+                      </Badge>
+                    ) : null}
+                    {!criticalBranchCount &&
+                    !lowBranchCount &&
+                    !highBranchCount ? (
+                      <Badge tone="green">Tồn ổn định</Badge>
+                    ) : null}
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {branches.map((branch) => {
+                      const alert = branchStockAlerts.find(
+                        (item) => item.branchId === branch.id,
+                      );
+                      const qty = Number(alert?.qty || 0);
+                      return (
+                        <div
+                          key={branch.id}
+                          className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate text-xs font-medium text-neutral-600">
+                              {branch.name}
+                            </span>
+                            <Badge tone={alert?.tone || "gray"}>{qty}</Badge>
+                          </div>
+                          <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+                            {alert?.label || "—"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {isOwner ? (
+                    <Link
+                      href={`/inventory?productId=${encodeURIComponent(product.id)}`}
+                      className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                    >
+                      Mở trong Kho hàng
+                    </Link>
+                  ) : null}
+                </Panel>
+
+                <Panel className="p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-[16px] font-semibold">
+                      Thêm variant nhanh
+                    </h2>
+                    <span className="text-xs text-neutral-500">
+                      {variantCount} variant
+                    </span>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-4">
+                    <Input
+                      value={variantColor}
+                      onChange={(e) => setVariantColor(e.target.value)}
+                      placeholder="Màu"
                       className="py-2"
                       disabled={!canCreateProductVariant}
                     />
-                  </div>
-                ))}
-              </div>
-
-              <Button
-                className="mt-3 w-full"
-                disabled={variantSaving || !canCreateProductVariant}
-                onClick={handleAddVariant}
-              >
-                {variantSaving ? "Đang thêm..." : "+ Thêm variant"}
-              </Button>
-            </Panel>
-          </div>
-
-          <Panel className="overflow-hidden">
-            <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
-              <div>
-                <h2 className="text-[16px] font-semibold">Danh sách variant</h2>
-                <p className="mt-0.5 text-xs text-neutral-500">
-                  SKU, màu, size, giá và tồn theo từng chi nhánh.
-                </p>
-              </div>
-              <Badge tone="gray">{variantCount} dòng</Badge>
-            </div>
-
-            <div className="overflow-auto">
-              <table className="min-w-[920px] w-full border-collapse text-sm">
-                <thead className="bg-neutral-50 text-left text-[11px] uppercase text-neutral-500">
-                  <tr>
-                    <th className="border-b px-4 py-3">SKU</th>
-                    <th className="border-b px-4 py-3">Màu</th>
-                    <th className="border-b px-4 py-3">Size</th>
-                    <th className="border-b px-4 py-3">Giá bán</th>
+                    <Input
+                      value={variantSize}
+                      onChange={(e) => setVariantSize(e.target.value)}
+                      placeholder="Size"
+                      className="py-2"
+                      disabled={!canCreateProductVariant}
+                    />
+                    <Input
+                      type="number"
+                      value={variantPrice}
+                      onChange={(e) => setVariantPrice(e.target.value)}
+                      placeholder="Giá bán"
+                      className="py-2"
+                      disabled={!canEditProductPrice}
+                    />
                     {canViewCost ? (
-                      <th className="border-b px-4 py-3">Giá vốn</th>
+                      <Input
+                        type="number"
+                        value={variantCostPrice}
+                        onChange={(e) => setVariantCostPrice(e.target.value)}
+                        placeholder="Giá vốn"
+                        className="py-2"
+                        disabled={!canEditProductCost}
+                      />
                     ) : null}
-                    <th className="border-b px-4 py-3">Tồn chi nhánh</th>
-                    <th className="border-b px-4 py-3 text-right">Thao tác</th>
-                  </tr>
-                </thead>
+                  </div>
 
-                <tbody>
-                  {(product.variants || []).map((variant) => (
-                    <tr
-                      key={variant.id || variant.sku}
-                      className="hover:bg-neutral-50"
+                  <div className="mt-2 grid gap-2 md:grid-cols-4">
+                    {branches.map((branch) => (
+                      <div key={branch.id} className="space-y-1">
+                        <span className="block truncate text-[10px] font-semibold uppercase text-neutral-400">
+                          {branch.name}
+                        </span>
+                        <Input
+                          type="number"
+                          value={variantBranchStocks[branch.id] || "0"}
+                          onChange={(e) =>
+                            setVariantBranchStocks((prev) => ({
+                              ...prev,
+                              [branch.id]: e.target.value,
+                            }))
+                          }
+                          className="py-2"
+                          disabled={!canCreateProductVariant}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    className="mt-3 w-full"
+                    disabled={variantSaving || !canCreateProductVariant}
+                    onClick={handleAddVariant}
+                  >
+                    {variantSaving ? "Đang thêm..." : "+ Thêm variant"}
+                  </Button>
+                </Panel>
+              </div>
+
+              <Panel className="overflow-hidden">
+                <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
+                  <div>
+                    <h2 className="text-[16px] font-semibold">
+                      Danh sách variant
+                    </h2>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      SKU, màu, size, giá và tồn theo từng chi nhánh.
+                    </p>
+                  </div>
+                  <Badge tone="gray">{variantCount} dòng</Badge>
+                </div>
+
+                <div className="overflow-auto">
+                  <table className="min-w-[920px] w-full border-collapse text-sm">
+                    <thead className="bg-neutral-50 text-left text-[11px] uppercase text-neutral-500">
+                      <tr>
+                        <th className="border-b px-4 py-3">SKU</th>
+                        <th className="border-b px-4 py-3">Màu</th>
+                        <th className="border-b px-4 py-3">Size</th>
+                        <th className="border-b px-4 py-3">Giá bán</th>
+                        {canViewCost ? (
+                          <th className="border-b px-4 py-3">Giá vốn</th>
+                        ) : null}
+                        <th className="border-b px-4 py-3">Tồn chi nhánh</th>
+                        <th className="border-b px-4 py-3 text-right">
+                          Thao tác
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {(product.variants || []).map((variant) => (
+                        <tr
+                          key={variant.id || variant.sku}
+                          className="hover:bg-neutral-50"
+                        >
+                          <td className="border-b px-4 py-3 font-medium">
+                            {variant.sku || "—"}
+                          </td>
+                          <td className="border-b px-4 py-3">
+                            {variant.color || "—"}
+                          </td>
+                          <td className="border-b px-4 py-3">
+                            {variant.size || "—"}
+                          </td>
+                          <td className="border-b px-4 py-3">
+                            {currency(Number(variant.price || 0))}
+                          </td>
+                          {canViewCost ? (
+                            <td className="border-b px-4 py-3">
+                              {currency(Number(variant.costPrice || 0))}
+                            </td>
+                          ) : null}
+                          <td className="border-b px-4 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              {branches.map((branch) => {
+                                const qty = getAvailableQty(
+                                  variant.id,
+                                  branch.id,
+                                );
+                                return (
+                                  <Badge
+                                    key={branch.id}
+                                    tone={
+                                      qty <= 0
+                                        ? "red"
+                                        : qty <= 3
+                                          ? "amber"
+                                          : "green"
+                                    }
+                                  >
+                                    {branch.name}: {qty}
+                                  </Badge>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="border-b px-4 py-3 text-right">
+                            <div className="inline-flex gap-2">
+                              {isOwner ? (
+                                <Link
+                                  href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
+                                  className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                                >
+                                  Kho
+                                </Link>
+                              ) : null}
+                              {canEditProduct ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setMessage(
+                                      "Sửa nhanh variant sẽ làm ở bước tiếp theo.",
+                                    )
+                                  }
+                                  className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                                >
+                                  Sửa
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </div>
+
+            <div className="space-y-3">
+              <Panel className="p-4">
+                <h2 className="text-[16px] font-semibold">Ảnh sản phẩm</h2>
+                <div className="mt-3 overflow-hidden rounded-3xl border border-neutral-200 bg-neutral-100">
+                  {imageUrl ? (
+                    <img
+                      src={toAbsoluteFileUrl(imageUrl)}
+                      alt={name}
+                      className="h-[210px] w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-[210px] items-center justify-center text-sm text-neutral-400">
+                      No image
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 grid gap-2">
+                  <Input
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="Dán link ảnh hoặc upload"
+                    disabled={!canEditProduct}
+                  />
+                  <label
+                    className={`inline-flex items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-900 hover:bg-neutral-50 ${!canEditProduct ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                  >
+                    {uploading ? "Đang upload..." : "Upload ảnh"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={!canUploadProductImage || uploading}
+                      onChange={async (e) => {
+                        const input = e.currentTarget;
+                        const file = input.files?.[0] || null;
+                        try {
+                          await handleUpload(file);
+                        } finally {
+                          input.value = "";
+                        }
+                      }}
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      disabled={!imageUrl}
+                      onClick={() =>
+                        imageUrl &&
+                        window.open(
+                          toAbsoluteFileUrl(imageUrl),
+                          "_blank",
+                          "noopener,noreferrer",
+                        )
+                      }
+                      className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
                     >
-                      <td className="border-b px-4 py-3 font-medium">
-                        {variant.sku || "—"}
-                      </td>
-                      <td className="border-b px-4 py-3">
-                        {variant.color || "—"}
-                      </td>
-                      <td className="border-b px-4 py-3">
-                        {variant.size || "—"}
-                      </td>
-                      <td className="border-b px-4 py-3">
-                        {currency(Number(variant.price || 0))}
-                      </td>
-                      {canViewCost ? (
-                        <td className="border-b px-4 py-3">
-                          {currency(Number(variant.costPrice || 0))}
-                        </td>
-                      ) : null}
-                      <td className="border-b px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {branches.map((branch) => {
-                            const qty = getAvailableQty(variant.id, branch.id);
-                            return (
-                              <Badge
-                                key={branch.id}
-                                tone={
-                                  qty <= 0
-                                    ? "red"
-                                    : qty <= 3
-                                      ? "amber"
-                                      : "green"
-                                }
-                              >
-                                {branch.name}: {qty}
-                              </Badge>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="border-b px-4 py-3 text-right">
-                        <div className="inline-flex gap-2">
-                          {isOwner ? (
-                            <Link
-                              href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
-                              className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                            >
-                              Kho
-                            </Link>
-                          ) : null}
-                          {canEditProduct ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setMessage(
-                                  "Sửa nhanh variant sẽ làm ở bước tiếp theo.",
-                                )
-                              }
-                              className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                            >
-                              Sửa
-                            </button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        </div>
-
-        <div className="space-y-3">
-          <Panel className="p-4">
-            <h2 className="text-[16px] font-semibold">Ảnh sản phẩm</h2>
-            <div className="mt-3 overflow-hidden rounded-3xl border border-neutral-200 bg-neutral-100">
-              {imageUrl ? (
-                <img
-                  src={toAbsoluteFileUrl(imageUrl)}
-                  alt={name}
-                  className="h-[210px] w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-[210px] items-center justify-center text-sm text-neutral-400">
-                  No image
+                      Xem lớn
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!imageUrl}
+                      onClick={async () => {
+                        if (!imageUrl) return;
+                        await navigator.clipboard?.writeText(
+                          toAbsoluteFileUrl(imageUrl),
+                        );
+                        setMessage("Đã copy link ảnh.");
+                      }}
+                      className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                    >
+                      Copy link
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!imageUrl || !canEditProduct}
+                      onClick={() => setImageUrl("")}
+                      className="rounded-2xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-40"
+                    >
+                      Xoá ảnh
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            <div className="mt-3 grid gap-2">
-              <Input
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                placeholder="Dán link ảnh hoặc upload"
-                disabled={!canEditProduct}
-              />
-              <label
-                className={`inline-flex items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-900 hover:bg-neutral-50 ${!canEditProduct ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-              >
-                {uploading ? "Đang upload..." : "Upload ảnh"}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  disabled={!canUploadProductImage || uploading}
-                  onChange={async (e) => {
-                    const input = e.currentTarget;
-                    const file = input.files?.[0] || null;
-                    try {
-                      await handleUpload(file);
-                    } finally {
-                      input.value = "";
-                    }
-                  }}
-                />
-              </label>
+                <div className="mt-4 border-t border-neutral-100 pt-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-950">
+                        Ảnh theo màu
+                      </h3>
+                      <p className="mt-0.5 text-xs text-neutral-500">
+                        Mỗi màu có thể dùng ảnh riêng để sau này show đúng màu
+                        variant.
+                      </p>
+                    </div>
+                    <Badge tone="gray">{colorList.length} màu</Badge>
+                  </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  disabled={!imageUrl}
-                  onClick={() =>
-                    imageUrl &&
-                    window.open(
-                      toAbsoluteFileUrl(imageUrl),
-                      "_blank",
-                      "noopener,noreferrer",
-                    )
-                  }
-                  className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
-                >
-                  Xem lớn
-                </button>
-                <button
-                  type="button"
-                  disabled={!imageUrl}
-                  onClick={async () => {
-                    if (!imageUrl) return;
-                    await navigator.clipboard?.writeText(
-                      toAbsoluteFileUrl(imageUrl),
-                    );
-                    setMessage("Đã copy link ảnh.");
-                  }}
-                  className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
-                >
-                  Copy link
-                </button>
-                <button
-                  type="button"
-                  disabled={!imageUrl || !canEditProduct}
-                  onClick={() => setImageUrl("")}
-                  className="rounded-2xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-40"
-                >
-                  Xoá ảnh
-                </button>
-              </div>
-            </div>
-          </Panel>
+                  <div className="mt-3 space-y-3">
+                    {colorList.length ? (
+                      colorList.map((color) => {
+                        const colorImage = colorImages[color] || "";
+                        return (
+                          <div
+                            key={color}
+                            className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3"
+                          >
+                            <div className="flex gap-3">
+                              <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                                {colorImage ? (
+                                  <img
+                                    src={toAbsoluteFileUrl(colorImage)}
+                                    alt={`${name} ${color}`}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
+                                    No image
+                                  </div>
+                                )}
+                              </div>
 
-          <Panel className="p-4">
-            <h2 className="text-[16px] font-semibold">Tóm tắt</h2>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <div className="rounded-2xl bg-neutral-50 p-3">
-                <p className="text-[11px] text-neutral-500">Tổng tồn</p>
-                <p className="mt-1 text-lg font-semibold">{totalStock}</p>
-              </div>
-              <div className="rounded-2xl bg-neutral-50 p-3">
-                <p className="text-[11px] text-neutral-500">Variant</p>
-                <p className="mt-1 text-lg font-semibold">{variantCount}</p>
-              </div>
-              <div className="rounded-2xl bg-neutral-50 p-3">
-                <p className="text-[11px] text-neutral-500">Giá thấp nhất</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {currency(Number(defaultPrice || 0))}
-                </p>
-              </div>
-              {canViewCost ? (
-                <div className="rounded-2xl bg-neutral-50 p-3">
-                  <p className="text-[11px] text-neutral-500">Giá trị tồn</p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {currency(catalogValue)}
-                  </p>
+                              <div className="min-w-0 flex-1">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <Badge tone="blue">{color}</Badge>
+                                  {colorImage ? (
+                                    <button
+                                      type="button"
+                                      disabled={!canEditProduct}
+                                      onClick={() =>
+                                        setColorImages((prev) => {
+                                          const next = { ...prev };
+                                          delete next[color];
+                                          return next;
+                                        })
+                                      }
+                                      className="text-xs font-medium text-red-600 hover:text-red-500 disabled:opacity-40"
+                                    >
+                                      Xoá
+                                    </button>
+                                  ) : null}
+                                </div>
+
+                                <Input
+                                  value={colorImage}
+                                  onChange={(e) =>
+                                    setColorImages((prev) => ({
+                                      ...prev,
+                                      [color]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={`Link ảnh màu ${color}`}
+                                  disabled={!canEditProduct}
+                                  className="py-2"
+                                />
+
+                                <label
+                                  className={`mt-2 inline-flex w-full items-center justify-center rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50 ${!canUploadProductImage || uploadingColor ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                                >
+                                  {uploadingColor === color
+                                    ? "Đang upload..."
+                                    : `Upload ảnh ${color}`}
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    disabled={
+                                      !canUploadProductImage ||
+                                      Boolean(uploadingColor)
+                                    }
+                                    onChange={async (e) => {
+                                      const input = e.currentTarget;
+                                      const file = input.files?.[0] || null;
+                                      try {
+                                        await handleColorImageUpload(
+                                          color,
+                                          file,
+                                        );
+                                      } finally {
+                                        input.value = "";
+                                      }
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="rounded-2xl bg-neutral-50 p-3 text-xs text-neutral-500">
+                        Chưa có màu. Nhập cấu hình màu trước, ví dụ: ĐEN, RÊU.
+                      </p>
+                    )}
+                  </div>
                 </div>
-              ) : null}
-            </div>
-          </Panel>
+              </Panel>
 
-          <Panel className="p-4">
-            <h2 className="text-[16px] font-semibold">Thông tin nhanh</h2>
-            <div className="mt-3 space-y-2 text-sm">
-              <div className="flex justify-between gap-3">
-                <span className="text-neutral-500">ID</span>
-                <span className="max-w-[210px] truncate font-medium">
-                  {product.id}
-                </span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-neutral-500">Danh mục</span>
-                <span className="font-medium">{category || "—"}</span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-neutral-500">Brand</span>
-                <span className="font-medium">{brand || "—"}</span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-neutral-500">Trạng thái</span>
-                <Badge tone={statusActive ? "green" : "red"}>
-                  {product.status || "DRAFT"}
-                </Badge>
-              </div>
-            </div>
-          </Panel>
+              <Panel className="p-4">
+                <h2 className="text-[16px] font-semibold">Tóm tắt</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl bg-neutral-50 p-3">
+                    <p className="text-[11px] text-neutral-500">Tổng tồn</p>
+                    <p className="mt-1 text-lg font-semibold">{totalStock}</p>
+                  </div>
+                  <div className="rounded-2xl bg-neutral-50 p-3">
+                    <p className="text-[11px] text-neutral-500">Variant</p>
+                    <p className="mt-1 text-lg font-semibold">{variantCount}</p>
+                  </div>
+                  <div className="rounded-2xl bg-neutral-50 p-3">
+                    <p className="text-[11px] text-neutral-500">
+                      Giá thấp nhất
+                    </p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {currency(Number(defaultPrice || 0))}
+                    </p>
+                  </div>
+                  {canViewCost ? (
+                    <div className="rounded-2xl bg-neutral-50 p-3">
+                      <p className="text-[11px] text-neutral-500">
+                        Giá trị tồn
+                      </p>
+                      <p className="mt-1 text-lg font-semibold">
+                        {currency(catalogValue)}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              </Panel>
 
-          <Panel className="p-4">
-            <h2 className="text-[16px] font-semibold">Nhật ký nhanh</h2>
-            <div className="mt-3 space-y-3 text-sm">
-              <div className="rounded-2xl bg-neutral-50 p-3">
-                <p className="text-xs font-medium text-neutral-700">
-                  Trạng thái dữ liệu
-                </p>
-                <p className="mt-1 text-xs text-neutral-500">
-                  {hasUnsavedChanges
-                    ? "Có thay đổi chưa lưu trên form."
-                    : "Thông tin sản phẩm đã đồng bộ."}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-neutral-50 p-3">
-                <p className="text-xs font-medium text-neutral-700">Tồn kho</p>
-                <p className="mt-1 text-xs text-neutral-500">
-                  Số tồn lấy theo sản phẩm hiện tại, không lưu trực tiếp ở form
-                  sản phẩm.
-                </p>
-              </div>
+              <Panel className="p-4">
+                <h2 className="text-[16px] font-semibold">Thông tin nhanh</h2>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-neutral-500">ID</span>
+                    <span className="max-w-[210px] truncate font-medium">
+                      {product.id}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-neutral-500">Danh mục</span>
+                    <span className="font-medium">{category || "—"}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-neutral-500">Brand</span>
+                    <span className="font-medium">{brand || "—"}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-neutral-500">Trạng thái</span>
+                    <Badge tone={statusActive ? "green" : "red"}>
+                      {product.status || "DRAFT"}
+                    </Badge>
+                  </div>
+                </div>
+              </Panel>
+
+              <Panel className="p-4">
+                <h2 className="text-[16px] font-semibold">Nhật ký nhanh</h2>
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="rounded-2xl bg-neutral-50 p-3">
+                    <p className="text-xs font-medium text-neutral-700">
+                      Trạng thái dữ liệu
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {hasUnsavedChanges
+                        ? "Có thay đổi chưa lưu trên form."
+                        : "Thông tin sản phẩm đã đồng bộ."}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-neutral-50 p-3">
+                    <p className="text-xs font-medium text-neutral-700">
+                      Tồn kho
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Số tồn lấy theo sản phẩm hiện tại, không lưu trực tiếp ở
+                      form sản phẩm.
+                    </p>
+                  </div>
+                </div>
+              </Panel>
             </div>
-          </Panel>
-        </div>
-      </div>
+          </div>
         </div>
       </div>
     </>

@@ -167,15 +167,80 @@ function writeCustomRoleTemplates(items: RoleItem[]) {
 }
 
 function getAllRoleTemplates() {
-  // ROLE_TEMPLATES là default hardcode. ROLE_STORAGE_KEY là bản đã chỉnh và phải được ưu tiên.
-  // Nếu không ưu tiên bản đã chỉnh, role mặc định như "Quản lý chi nhánh" sẽ bị bật lại quyền cũ sau khi đổi tab/reload.
-  const merged = [...ROLE_TEMPLATES, ...readStoredRoleTemplates(), ...readCustomRoleTemplates()];
+  // Backend /staff/role-templates là nguồn chính. ROLE_STORAGE_KEY chỉ là cache mirror từ backend.
+  // ROLE_TEMPLATES hardcode chỉ dùng làm fallback metadata khi backend chưa tải xong.
+  const stored = readStoredRoleTemplates();
+  const custom = readCustomRoleTemplates();
+  const merged = [...ROLE_TEMPLATES, ...stored, ...custom];
   const map = new Map<string, RoleItem>();
   merged.forEach((role) => {
     if (!role?.id) return;
-    map.set(role.id, role);
+    map.set(role.id, {
+      ...role,
+      defaultPermissionKeys: uniquePermissionKeys(role.defaultPermissionKeys || []),
+    });
   });
   return Array.from(map.values());
+}
+
+function uniquePermissionKeys(values: any[]) {
+  return Array.from(
+    new Set(
+      safeArray<string>(values)
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function getRolePermissionKeysFromApi(row: any) {
+  if (Array.isArray(row?.permissionKeys)) return uniquePermissionKeys(row.permissionKeys);
+  if (Array.isArray(row?.defaultPermissionKeys)) return uniquePermissionKeys(row.defaultPermissionKeys);
+  if (Array.isArray(row?.permissions)) return uniquePermissionKeys(row.permissions);
+  if (Array.isArray(row?.permissions?.permissionKeys)) return uniquePermissionKeys(row.permissions.permissionKeys);
+  if (Array.isArray(row?.permissions?.keys)) return uniquePermissionKeys(row.permissions.keys);
+  return [];
+}
+
+function mapApiRoleTemplateToRoleItem(row: any): RoleItem | null {
+  const rawId = row?.roleCode || row?.id || row?.code || row?.name;
+  const id = normalizeRoleCodeForStorage(String(rawId || ""));
+  if (!id) return null;
+
+  const fallback = ROLE_TEMPLATES.find((role) => role.id === id);
+  return {
+    id,
+    name: row?.name || fallback?.name || id,
+    scope: row?.scope === "ALL_BRANCHES" ? "ALL_BRANCHES" : "ONE_BRANCH",
+    description: row?.description || fallback?.description || "",
+    badge: fallback?.badge || row?.badge || id,
+    tone: fallback?.tone || row?.tone || "slate",
+    defaultPermissionKeys: getRolePermissionKeysFromApi(row),
+  };
+}
+
+function roleTemplatesFingerprint(items: RoleItem[]) {
+  return JSON.stringify(
+    items
+      .map((role) => ({
+        id: role.id,
+        keys: uniquePermissionKeys(role.defaultPermissionKeys).sort(),
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+}
+
+async function fetchRoleTemplatesFromBackend() {
+  const data = await apiJson<any[]>("/staff/role-templates", { method: "GET" });
+  const mapped = safeArray<any>(data)
+    .map(mapApiRoleTemplateToRoleItem)
+    .filter(Boolean) as RoleItem[];
+
+  if (mapped.length) {
+    writeStoredRoleTemplates(mapped);
+  }
+
+  return mapped;
 }
 
 const AUDIT_STORAGE_KEY = "the1970.permission.audit.timeline.v1";
@@ -928,7 +993,7 @@ function sanitizeBranchPermission(row: BranchPermission): BranchPermission {
   };
 }
 
-function roleKeys(roleCode: string) {
+function roleKeys(roleCode: string): string[] {
   return getRoleTemplate(roleCode)?.defaultPermissionKeys || [];
 }
 
@@ -1159,6 +1224,7 @@ function PermissionCheck({
 export default function PermissionsPageClient() {
   const [employees, setEmployees] = useState<EmployeeItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
+  const [roleTemplatesVersion, setRoleTemplatesVersion] = useState(0);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"info" | "error" | "success">("info");
@@ -1292,10 +1358,58 @@ export default function PermissionsPageClient() {
     }
   };
 
+  const reloadRoleTemplates = async (silent = true) => {
+    try {
+      // no-op: role template sync is intentionally silent for multi-browser consistency.
+      const before = roleTemplatesFingerprint(readStoredRoleTemplates());
+      const roles = await fetchRoleTemplatesFromBackend();
+      const after = roleTemplatesFingerprint(roles.length ? roles : readStoredRoleTemplates());
+
+      if (before !== after || !silent) {
+        setRoleTemplatesVersion((value) => value + 1);
+        setCustomRoleTemplates(readCustomRoleTemplates());
+        if (!silent) showMessage("Đã đồng bộ bộ quyền vai trò từ backend.", "success");
+      }
+
+      return roles;
+    } catch (err) {
+      if (!silent) {
+        showMessage(err instanceof Error ? err.message : "Không đồng bộ được role template từ backend.", "error");
+      }
+      return [];
+    } finally {
+      // keep silent
+    }
+  };
+
+  const refreshRbacFromBackend = async (silent = true) => {
+    await reloadRoleTemplates(silent);
+    await loadEmployees();
+  };
+
   useEffect(() => {
+    void reloadRoleTemplates(true);
     void loadBranches();
     void loadEmployees();
     void loadDepartments();
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => {
+      void refreshRbacFromBackend(true);
+    };
+
+    const interval = window.setInterval(refresh, 12000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("storage", refresh);
+    window.addEventListener("the1970:rbac-updated", refresh);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("the1970:rbac-updated", refresh);
+    };
   }, []);
 
   useEffect(() => {
@@ -1351,9 +1465,9 @@ export default function PermissionsPageClient() {
     setEditBranchExtraPermissionMap(nextExtraPermissionMap);
     setEditBranchDeniedPermissionMap(nextDeniedPermissionMap);
     setSelectedBranchId((prev) => prev && (nextRoleMap[prev] || nextPermissionMap[prev]) ? prev : Object.keys(nextRoleMap)[0] || selectedEmployee.branchId || "");
-  }, [selectedEmployeeId, selectedEmployee]);
+  }, [selectedEmployeeId, selectedEmployee, roleTemplatesVersion]);
 
-  const employeeTree = useMemo(() => buildEmployeeTree(employees, branches), [employees, branches]);
+  const employeeTree = useMemo(() => buildEmployeeTree(employees, branches), [employees, branches, roleTemplatesVersion]);
 
   const filteredTree = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1403,7 +1517,7 @@ export default function PermissionsPageClient() {
     if (!selectedEmployee) return [];
     if (!selectedBranchId) return [];
     return editBranchPermissionMap[selectedBranchId] || roleKeys(editBranchRoleMap[selectedBranchId] || selectedEmployee.roleId);
-  }, [selectedEmployee, selectedBranchId, editBranchPermissionMap, editBranchRoleMap]);
+  }, [selectedEmployee, selectedBranchId, editBranchPermissionMap, editBranchRoleMap, roleTemplatesVersion]);
 
   const selectedBranchExtraKeys = useMemo(
     () => (selectedBranchId ? editBranchExtraPermissionMap[selectedBranchId] || [] : []),
@@ -1424,7 +1538,7 @@ export default function PermissionsPageClient() {
 
   const effectiveKeys = useMemo(
     () => (selectedEmployee ? getEmployeeEffectiveKeys(selectedEmployee, selectedBranchId) : []),
-    [selectedEmployee, selectedBranchId],
+    [selectedEmployee, selectedBranchId, roleTemplatesVersion],
   );
 
   const dangerousCount = useMemo(
@@ -1586,9 +1700,9 @@ export default function PermissionsPageClient() {
       sanitizeBranchPermission({
         ...(selectedEmployee.branchPermissions.find((row) => row.branchId === branchId) || defaultBranchPermission(branchId)),
         branchId,
-        permissionKeys: editBranchPermissionMap[branchId] || roleKeys(roleCode),
-        extraPermissionKeys: editBranchExtraPermissionMap[branchId] || [],
-        deniedPermissionKeys: editBranchDeniedPermissionMap[branchId] || [],
+        permissionKeys: (editBranchPermissionMap[String(branchId)] || roleKeys(String(roleCode))) as string[],
+        extraPermissionKeys: (editBranchExtraPermissionMap[String(branchId)] || []) as string[],
+        deniedPermissionKeys: (editBranchDeniedPermissionMap[String(branchId)] || []) as string[],
       }),
     );
 
@@ -1618,7 +1732,7 @@ export default function PermissionsPageClient() {
       await apiJson(`/staff/${selectedEmployee.id}/permissions`, {
         method: "PATCH",
         body: JSON.stringify({
-          roles: unique(branchRoles.map((row) => row.roleCode)),
+          roles: unique(branchRoles.map((row) => String(row.roleCode))),
           branchPermissions,
         }),
       });
@@ -1830,19 +1944,12 @@ export default function PermissionsPageClient() {
       setSavingRole(true);
       setMessage("Đang lưu bộ quyền vai trò...");
 
-      // Update local role templates for BOTH builtin roles and custom roles.
-      // Builtin roles must also be persisted, otherwise UI reloads ROLE_TEMPLATES hardcode and turns old permissions back on.
-      const nextAllRoles = getAllRoleTemplates().map((role) =>
-        role.id === editingRoleId
-          ? { ...role, defaultPermissionKeys: unique(roleEditorKeys) }
-          : role,
-      );
-      writeStoredRoleTemplates(nextAllRoles);
+      const normalizedRoleEditorKeys = uniquePermissionKeys(roleEditorKeys);
 
       const custom = readCustomRoleTemplates();
       const idx = custom.findIndex((r) => r.id === editingRoleId);
       if (idx !== -1) {
-        custom[idx] = { ...custom[idx], defaultPermissionKeys: unique(roleEditorKeys) };
+        custom[idx] = { ...custom[idx], defaultPermissionKeys: normalizedRoleEditorKeys };
         writeCustomRoleTemplates(custom);
         setCustomRoleTemplates([...custom]);
       }
@@ -1856,12 +1963,13 @@ export default function PermissionsPageClient() {
             name: roleMeta.name,
             scope: roleMeta.scope || "ONE_BRANCH",
             description: roleMeta.description || "",
-            permissions: { permissionKeys: roleEditorKeys },
+            permissions: { permissionKeys: normalizedRoleEditorKeys },
           }],
         }),
       });
 
-      await loadEmployees();
+      await refreshRbacFromBackend(true);
+      window.dispatchEvent(new Event("the1970:rbac-updated"));
       const staffCount = employees.filter((e) => e.roles.includes(editingRoleId) || e.roleId === editingRoleId).length;
       setMessage("");
       // Show sync confirmation modal
@@ -2094,14 +2202,8 @@ export default function PermissionsPageClient() {
     });
   };
 
-  const saveRoleTemplates = () => {
-    try {
-      localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(getAllRoleTemplates()));
-      writeCustomRoleTemplates(customRoleTemplates);
-      setMessage("Đã ghi nhận role template local. Quyền thực tế vẫn lưu theo từng nhân viên/chi nhánh.");
-    } catch {
-      setMessage("Không lưu được template local.");
-    }
+  const saveRoleTemplates = async () => {
+    await reloadRoleTemplates(false);
   };
 
   const currentBranchIds = Object.keys(editBranchRoleMap);
