@@ -445,10 +445,10 @@ function fulfillmentStatusText(status?: string | null) {
 function partialReturnStatusText(status?: string | null) {
   const s = String(status || "").toUpperCase();
   if (!s || s === "PENDING_RETURN") return "Chờ đơn hoàn";
-  if (s === "RETURNING" || s.includes("RETURN") || s.includes("TRANSIT") || s.includes("DELIVER")) return "Đang hoàn về";
   if (s === "RETURNED" || s.includes("SUCCESS") || s.includes("COMPLETED")) return "Đã hoàn về";
   if (s.includes("CANCEL")) return "Đã huỷ hoàn";
   if (s.includes("FAIL") || s.includes("LOST") || s.includes("DAMAGE")) return "Hoàn lỗi / cần kiểm tra";
+  if (s === "RETURNING" || s.includes("RETURN") || s.includes("TRANSIT") || s.includes("DELIVER") || s.includes("PICK")) return "Đang hoàn về";
   return status || "—";
 }
 

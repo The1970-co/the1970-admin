@@ -1315,22 +1315,31 @@ const handlePay = async () => {
     return;
   }
 
-  const validPayments = paymentRows
+  const rawValidPayments = paymentRows
     .map((row) => ({
       paymentSourceId: row.paymentSourceId,
       amount: moneyNumber(row.amount),
     }))
     .filter((row) => row.paymentSourceId && row.amount > 0);
 
-  if (!validPayments.length) {
+  if (!rawValidPayments.length) {
     setError("Chưa nhập nguồn tiền thanh toán.");
     return;
   }
 
-  if (validPayments.reduce((sum, row) => sum + row.amount, 0) < mustPay) {
+  if (rawValidPayments.reduce((sum, row) => sum + row.amount, 0) < mustPay) {
     setError("Tổng tiền khách thanh toán chưa đủ.");
     return;
   }
+
+  let remainingToCollect = mustPay;
+  const validPayments = rawValidPayments
+    .map((row) => {
+      const amount = Math.min(row.amount, remainingToCollect);
+      remainingToCollect = Math.max(0, remainingToCollect - amount);
+      return { ...row, amount };
+    })
+    .filter((row) => row.amount > 0);
 
   let printWindow: Window | null = null;
 
@@ -1352,6 +1361,7 @@ const handlePay = async () => {
         note.trim() ? `Ghi chú: ${note.trim()}` : "",
         discountNumber ? `Giảm giá POS nhập tay: ${discountNumber}` : "",
         autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
+        totalPaid > mustPay ? `Khách đưa: ${totalPaid} | Tiền thừa: ${change}` : "",
       ]
         .filter(Boolean)
         .join(" | "),
