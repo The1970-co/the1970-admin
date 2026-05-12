@@ -99,6 +99,7 @@ function creatorDisplay(row: any) {
 
 function hasPermission(user: any, key: string) {
   const keys = new Set<string>();
+  const denied = new Set<string>();
 
   const add = (items?: any[]) => {
     if (!Array.isArray(items)) return;
@@ -108,12 +109,27 @@ function hasPermission(user: any, key: string) {
     });
   };
 
+  const addDenied = (items?: any[]) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      const value = String(item || "").trim();
+      if (value) denied.add(value);
+    });
+  };
+
   add(user?.permissions);
   add(user?.permissionKeys);
+  add(user?.extraPermissionKeys);
 
   if (Array.isArray(user?.branchPermissions)) {
-    user.branchPermissions.forEach((row: any) => add(row?.permissionKeys));
+    user.branchPermissions.forEach((row: any) => {
+      add(row?.permissionKeys);
+      add(row?.extraPermissionKeys);
+      addDenied(row?.deniedPermissionKeys);
+    });
   }
+
+  denied.forEach((permissionKey) => keys.delete(permissionKey));
 
   const roles = [
     ...(Array.isArray(user?.roles) ? user.roles : []),
@@ -168,7 +184,13 @@ export default function CashVoucherPageClient({ type }: Props) {
     ? "cash_voucher.delete_receipt"
     : "cash_voucher.delete_payment";
 
-  const canView = hasPermission(currentUser, "cash_voucher.view");
+  const viewPermission = isReceipt
+    ? "cash_voucher.view_receipt"
+    : "cash_voucher.view_payment";
+
+  const canView =
+    hasPermission(currentUser, viewPermission) ||
+    hasPermission(currentUser, "cash_voucher.view");
   const canCreate = hasPermission(currentUser, createPermission);
   const canEdit = hasPermission(currentUser, editPermission);
   const canConfirm = hasPermission(currentUser, confirmPermission);
@@ -252,13 +274,14 @@ export default function CashVoucherPageClient({ type }: Props) {
 
     if (!isGlobalFinanceUser && currentBranchId) {
       setBranchId(currentBranchId);
-      setPaymentSourceId(defaultCashSource?.id || "ALL");
+      setPaymentSourceId("ALL");
       setForm((prev) => ({
         ...prev,
         branchId: prev.branchId || currentBranchId,
         paymentSourceId: prev.paymentSourceId || defaultCashSource?.id || "",
       }));
     } else {
+      setPaymentSourceId((prev) => prev || "ALL");
       setForm((prev) => ({
         ...prev,
         branchId: prev.branchId || nextBranches[0]?.id || "",
@@ -605,16 +628,16 @@ export default function CashVoucherPageClient({ type }: Props) {
           </Field>
           <Field label="Nguồn tiền">
             <select
-              value={cashPaymentSource?.id || paymentSourceId}
+              value={paymentSourceId}
               onChange={(e) => setPaymentSourceId(e.target.value)}
-              disabled
-              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
             >
-              {cashPaymentSource ? (
-                <option value={cashPaymentSource.id}>{cashPaymentSource.name}</option>
-              ) : (
-                <option value="ALL">Tiền mặt</option>
-              )}
+              <option value="ALL">Tất cả nguồn tiền</option>
+              {paymentSources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.name || source.code || source.id}
+                </option>
+              ))}
             </select>
           </Field>
           <div className="flex items-end">
