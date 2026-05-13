@@ -1,7 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/api";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getBranches,
   getProducts,
@@ -226,6 +226,9 @@ export default function StockTransfersPageClient() {
   const [note, setNote] = useState("");
   const [items, setItems] = useState<DraftItem[]>([]);
   const [searchVariant, setSearchVariant] = useState("");
+  const [scanNotice, setScanNotice] = useState("");
+  const [recentScans, setRecentScans] = useState<string[]>([]);
+  const variantSearchRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [fromBranchFilter, setFromBranchFilter] = useState("ALL");
@@ -479,13 +482,34 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     setSelectedCategoryNames(dynamicCategories);
   }
 
+
+  function normalizeScanValue(value: unknown) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, "");
+  }
+
+  function findExactVariantByScan(value: string) {
+    const scan = normalizeScanValue(value);
+    if (!scan) return null;
+
+    return (
+      allVariants.find((item: any) => normalizeScanValue(item.sku) === scan) ||
+      allVariants.find((item: any) => normalizeScanValue(item.variantId) === scan) ||
+      null
+    );
+  }
+
   const variantOptions = useMemo(() => {
-    const q = searchVariant.trim().toLowerCase();
+    const q = normalizeScanValue(searchVariant);
     if (!q) return allVariants.slice(0, 20);
 
     return allVariants
       .filter((item) => {
-        const label = `${item.productName} ${item.sku} ${item.color} ${item.size}`.toLowerCase();
+        const label = normalizeScanValue(`${item.productName} ${item.sku} ${item.color} ${item.size}`);
         return label.includes(q);
       })
       .slice(0, 20);
@@ -883,28 +907,77 @@ useEffect(() => {
     setNotice(null);
   }
 
-  function addVariantToDraft(option: {
-    variantId: string;
-    sku: string;
-    productName: string;
-    color?: string;
-    size?: string;
-  }) {
-    const exists = items.find((item) => item.variantId === option.variantId);
-    if (exists) return;
+  function addVariantToDraft(
+    option: {
+      variantId: string;
+      sku: string;
+      productName: string;
+      color?: string;
+      size?: string;
+    },
+    source: "manual" | "scan" = "manual"
+  ) {
+    let existed = false;
 
-    setItems((prev) => [
-      ...prev,
-      {
-        rowId: makeRowId(),
-        variantId: option.variantId,
-        sku: option.sku,
-        productName: option.productName,
-        color: option.color || "",
-        size: option.size || "",
-        qty: "1",
-      },
-    ]);
+    setItems((prev) => {
+      const next = prev.map((item) => {
+        if (item.variantId !== option.variantId) return item;
+
+        existed = true;
+
+        return {
+          ...item,
+          qty: String(Number(item.qty || 0) + 1),
+        };
+      });
+
+      if (existed) return next;
+
+      return [
+        ...prev,
+        {
+          rowId: makeRowId(),
+          variantId: option.variantId,
+          sku: option.sku,
+          productName: option.productName,
+          color: option.color || "",
+          size: option.size || "",
+          qty: "1",
+        },
+      ];
+    });
+
+    if (source === "scan") {
+      const message = `${existed ? "Đã cộng thêm" : "Đã thêm"} ${option.sku}`;
+      setScanNotice(message);
+      setRecentScans((prev) => [message, ...prev].slice(0, 6));
+    }
+  }
+
+  function commitVariantScan(value: string) {
+    const exact = findExactVariantByScan(value);
+    if (!exact) return false;
+
+    addVariantToDraft(exact, "scan");
+    setSearchVariant("");
+
+    window.setTimeout(() => {
+      variantSearchRef.current?.focus();
+      variantSearchRef.current?.select();
+    }, 0);
+
+    return true;
+  }
+
+  function handleVariantSearchChange(value: string) {
+    setSearchVariant(value);
+
+    const cleaned = value.trim();
+    if (!cleaned) return;
+
+    if (cleaned.length >= 4) {
+      commitVariantScan(cleaned);
+    }
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -2411,13 +2484,53 @@ useEffect(() => {
             </p>
 
             <input
-              className="mb-2 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              ref={variantSearchRef}
+              className="mb-2 w-full rounded-xl border-2 border-neutral-300 px-3.5 py-3 text-sm font-medium outline-none focus:border-blue-500"
               value={searchVariant}
-              onChange={(e) => setSearchVariant(e.target.value)}
-              placeholder="Tìm theo tên, SKU, màu, size..."
+              onChange={(e) => handleVariantSearchChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+
+                e.preventDefault();
+
+                if (commitVariantScan(searchVariant)) return;
+
+                if (variantOptions.length === 1) {
+                  addVariantToDraft(variantOptions[0], "scan");
+                  setSearchVariant("");
+                }
+              }}
+              placeholder="Quét mã vạch / SKU để thêm ngay..."
+              autoComplete="off"
+              autoFocus
             />
 
-            <div className="max-h-40 overflow-auto rounded-xl border border-neutral-200">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+              <div className="text-xs font-semibold text-blue-700">
+                Quét phát ăn ngay · SKU trùng sẽ tự cộng số lượng.
+              </div>
+
+              {scanNotice ? (
+                <div className="text-xs font-bold text-emerald-700">
+                  {scanNotice}
+                </div>
+              ) : null}
+            </div>
+
+            {recentScans.length > 0 ? (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {recentScans.map((scan, index) => (
+                  <span
+                    key={`${scan}-${index}`}
+                    className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700"
+                  >
+                    {scan}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="max-h-52 overflow-auto rounded-xl border border-neutral-200">
               {variantOptions.length === 0 ? (
                 <div className="p-3 text-sm text-neutral-500">Không có variant phù hợp.</div>
               ) : (
@@ -2426,7 +2539,7 @@ useEffect(() => {
                     <button
                       key={item.rowId}
                       type="button"
-                      onClick={() => addVariantToDraft(item)}
+                      onClick={() => addVariantToDraft(item, "manual")}
                       className="flex w-full items-center justify-between px-3 py-2.5 text-left transition hover:bg-neutral-50"
                     >
                       <div>
