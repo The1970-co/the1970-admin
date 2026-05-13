@@ -168,7 +168,15 @@ export default function CashVoucherPageClient({ type }: Props) {
     ? "cash_voucher.delete_receipt"
     : "cash_voucher.delete_payment";
 
-  const canView = hasPermission(currentUser, "cash_voucher.view");
+  const canView = isReceipt
+    ? (
+      hasPermission(currentUser, "cash_voucher.view_receipt") ||
+      hasPermission(currentUser, "cash_voucher.view")
+    )
+    : (
+      hasPermission(currentUser, "cash_voucher.view_payment") ||
+      hasPermission(currentUser, "cash_voucher.view")
+    );
   const canCreate = hasPermission(currentUser, createPermission);
   const canEdit = hasPermission(currentUser, editPermission);
   const canConfirm = hasPermission(currentUser, confirmPermission);
@@ -577,9 +585,8 @@ export default function CashVoucherPageClient({ type }: Props) {
                 <button
                   key={value}
                   onClick={() => applyQuickRange(value as QuickRange)}
-                  className={`rounded-xl px-3 py-2 text-sm ${
-                    quickRange === value ? "bg-black text-white" : "border border-neutral-200 bg-white"
-                  }`}
+                  className={`rounded-xl px-3 py-2 text-sm ${quickRange === value ? "bg-black text-white" : "border border-neutral-200 bg-white"
+                    }`}
                 >
                   {label}
                 </button>
