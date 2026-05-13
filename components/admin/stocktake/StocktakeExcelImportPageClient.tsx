@@ -334,6 +334,89 @@ function hasStocktakePermission(user: any, permission: string) {
   return keys.has("*") || keys.has(permission);
 }
 
+
+function AdminMiniSidebar() {
+  const groups: Array<{ title: string; items: Array<[string, string, boolean?]> }> = [
+    {
+      title: "Đơn hàng",
+      items: [
+        ["Danh sách", "/orders"],
+        ["Tạo đơn", "/create-order"],
+        ["POS bán tại quầy", "/pos"],
+        ["Đơn trả hàng", "/returns"],
+      ],
+    },
+    {
+      title: "Sản phẩm",
+      items: [
+        ["Danh sách", "/products"],
+        ["Khuyến mại", "/promotions"],
+        ["Danh mục", "/control/product-categories"],
+        ["Nhà cung cấp", "/control/suppliers"],
+      ],
+    },
+    {
+      title: "Kho",
+      items: [
+        ["Kho hàng", "/inventory"],
+        ["Lịch sử kho", "/inventory-logs"],
+        ["Phiếu nhập", "/control/purchase-receipts"],
+        ["Phiếu chuyển kho", "/control/stock-transfers"],
+        ["Kiểm kho realtime", "/stocktake"],
+        ["Upload Excel kiểm kho", "/stocktake/excel-import", true],
+        ["Lịch sử kiểm kho", "/stocktake-sessions"],
+        ["Sơ đồ kho 3D", "/control/warehouse-map"],
+      ],
+    },
+    {
+      title: "Tài chính",
+      items: [
+        ["Tổng quan dòng tiền", "/finance/daily"],
+        ["Phiếu thu", "/finance/cash-receipts"],
+        ["Phiếu chi", "/finance/cash-payments"],
+        ["Đối soát COD GHN", "/finance/ghn-reconciliation"],
+      ],
+    },
+  ];
+
+  return (
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[260px] overflow-y-auto border-r border-neutral-200 bg-white px-5 py-6 lg:block">
+      <div className="mb-8">
+        <div className="text-[11px] font-bold uppercase tracking-[0.34em] text-neutral-400">Admin Panel</div>
+        <div className="mt-2 text-2xl font-extrabold tracking-tight text-neutral-950">The 1970</div>
+        <div className="mt-1 text-xs font-medium text-neutral-400">Core operations dashboard</div>
+      </div>
+
+      <Link href="/control" className="mb-3 block rounded-xl px-4 py-3 text-sm font-bold text-neutral-700 hover:bg-neutral-50">
+        Tổng quan
+      </Link>
+
+      <div className="space-y-3">
+        {groups.map((group) => (
+          <div key={group.title} className="rounded-3xl border border-neutral-200 bg-white p-3">
+            <div className="px-2 py-2 text-sm font-extrabold text-neutral-950">{group.title}</div>
+            <div className="space-y-1">
+              {group.items.map(([label, href, active]) => (
+                <Link
+                  key={`${group.title}-${href}`}
+                  href={href}
+                  className={`block rounded-xl px-3 py-2 text-sm font-semibold ${
+                    active
+                      ? "bg-neutral-950 text-white"
+                      : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950"
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 export default function StocktakeExcelImportPageClient() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -391,6 +474,25 @@ export default function StocktakeExcelImportPageClient() {
   const closed = isClosedStatus(session?.status);
   const selectedBranchName = branches.find((branch) => branch.id === (session?.branchId || branchId))?.name || session?.branchId || branchId || "—";
 
+  function getStableSnapshotForExcelRow(row: ExcelImportRow, item?: SummaryItem | null) {
+    const excelSystemQty = Number(row.systemQty);
+
+    // Với flow Excel, cột snapshot phải ưu tiên lấy từ file Phiếu kiểm hàng
+    // (cột Tồn chi nhánh/Tồn hệ thống). Sau khi bấm ghi Excel vào phiên,
+    // summary backend có thể trả về số đếm/stock hiện tại khác, không được dùng
+    // để ghi đè snapshot preview vì sẽ làm nhảy số lung tung.
+    if (row.systemQty !== null && row.systemQty !== undefined && Number.isFinite(excelSystemQty)) {
+      return excelSystemQty;
+    }
+
+    return Number(item?.snapshotQty ?? item?.system ?? 0);
+  }
+
+  function isKnownExcelRow(row: ExcelImportRow, item?: SummaryItem | null) {
+    const excelSystemQty = Number(row.systemQty);
+    return Boolean(item?.variantId) || (row.systemQty !== null && row.systemQty !== undefined && Number.isFinite(excelSystemQty));
+  }
+
   const currentCountBySku = useMemo(() => {
     const map = new Map<string, number>();
     summary.forEach((item) => map.set(String(item.sku || ""), Number(item.counted ?? item.countedQty ?? 0)));
@@ -406,9 +508,14 @@ export default function StocktakeExcelImportPageClient() {
     return rows.map((row) => {
       const item = summaryMap.get(row.sku);
       const counted = Number(item?.counted ?? item?.countedQty ?? currentCountBySku.get(row.sku) ?? 0);
-      const snapshot = Number(item?.snapshotQty ?? item?.system ?? row.systemQty ?? 0);
-      const diff = typeof item?.diff === "number" ? Number(item.diff) : counted - snapshot;
-      const status = !item?.variantId ? "NOT_FOUND" : diff === 0 ? "MATCH" : "MISMATCH";
+      const snapshot = getStableSnapshotForExcelRow(row, item);
+      const excelCounted = Number(row.countedQty || 0);
+
+      // Preview phải so sánh Tồn thực tế trong Excel với snapshot đầu phiên.
+      // Snapshot Excel là cột Tồn chi nhánh trong file, không lấy lại từ summary sau khi import.
+      const diff = excelCounted - snapshot;
+      const status: StocktakeRowStatus = !isKnownExcelRow(row, item) ? "NOT_FOUND" : diff === 0 ? "MATCH" : "MISMATCH";
+
       return { row, item, counted, snapshot, diff, status };
     });
   }, [rows, summary, currentCountBySku]);
@@ -425,24 +532,31 @@ export default function StocktakeExcelImportPageClient() {
   const notFoundCount = reconciledRows.filter((row) => row.status === "NOT_FOUND").length;
   const willWriteCount = rows.filter((row) => Number(row.countedQty || 0) !== (currentCountBySku.get(row.sku) || 0)).length;
 
-  async function loadSummary(targetSessionId: string, targetWorkerId?: string) {
-    if (!targetSessionId) return;
+  async function fetchSummaryRows(targetSessionId: string, targetWorkerId?: string) {
+    if (!targetSessionId) return [];
 
+    const path = targetWorkerId
+      ? `/stocktake-sessions/${targetSessionId}/workers/${targetWorkerId}/summary`
+      : `/stocktake-sessions/${targetSessionId}/summary`;
+    const data = await apiRequest<SummaryItem[]>(path);
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function loadSummary(targetSessionId: string, targetWorkerId?: string) {
     try {
-      const path = targetWorkerId
-        ? `/stocktake-sessions/${targetSessionId}/workers/${targetWorkerId}/summary`
-        : `/stocktake-sessions/${targetSessionId}/summary`;
-      const data = await apiRequest<SummaryItem[]>(path);
-      setSummary(Array.isArray(data) ? data : []);
+      const data = await fetchSummaryRows(targetSessionId, targetWorkerId);
+      setSummary(data);
+      return data;
     } catch {
       setSummary([]);
+      return [];
     }
   }
 
   async function loadSession(targetSessionId?: string, preferredWorkerId?: string) {
     const finalSessionId = (targetSessionId || sessionIdInput).trim();
     if (!finalSessionId) {
-      setMessage("Chưa có session ID. Có thể tạo phiên Excel mới ở bước 1.");
+      setMessage("Chưa có session ID. Hãy tạo phiên kiểm kho tổng ở màn kiểm kho realtime trước, hoặc dán Session ID phiên đang mở.");
       return;
     }
 
@@ -458,8 +572,8 @@ export default function StocktakeExcelImportPageClient() {
       const nextWorkerId = (data.workers || []).find((item) => item.id === savedWorkerId)?.id || data.workers?.[0]?.id || "";
       setWorkerId(nextWorkerId);
       saveResumeState({ sessionId: data.id, workerId: nextWorkerId, branchId: data.branchId });
-      await loadSummary(data.id, nextWorkerId);
-      setMessage("Đã tải phiên kiểm. Có thể upload Excel hoặc xác nhận chốt nếu đã import xong.");
+      await loadSummary(data.id);
+      setMessage("Đã tải phiên kiểm đã có snapshot. Có thể upload Excel vào phiên này.");
     } catch (err) {
       setSession(null);
       setSummary([]);
@@ -546,7 +660,7 @@ export default function StocktakeExcelImportPageClient() {
 
   async function refreshWorkerSummaryAfterChange() {
     if (!session?.id) return;
-    await loadSummary(session.id, workerId || undefined);
+    await loadSummary(session.id);
   }
 
   async function importRows() {
@@ -642,8 +756,8 @@ export default function StocktakeExcelImportPageClient() {
       setMessage("Chưa có phiên kiểm để xác nhận.");
       return;
     }
-    if (!summary.length) {
-      setMessage("Chưa có dữ liệu đã ghi vào phiên. Upload Excel trước rồi mới xác nhận.");
+    if (!rows.length) {
+      setMessage("Chưa có file Excel hợp lệ để xác nhận. Upload Excel trước rồi mới xác nhận.");
       return;
     }
     if (closed) {
@@ -651,24 +765,41 @@ export default function StocktakeExcelImportPageClient() {
       return;
     }
 
-    await loadSummary(session.id, workerId || undefined);
+    const freshSummary = await loadSummary(session.id);
 
-    const payloadRows = summary.map((item) => {
-      const counted = Number(item.counted ?? item.countedQty ?? 0);
-      const system = Number(item.snapshotQty ?? item.system ?? 0);
-      const diff = typeof item.diff === "number" ? Number(item.diff) : counted - system;
-      const status: StocktakeRowStatus = !item.variantId ? "NOT_FOUND" : diff === 0 ? "MATCH" : "MISMATCH";
-      return {
-        variantId: item.variantId || undefined,
-        sku: item.sku,
-        counted,
-        system,
-        diff,
-        status,
-        reason: status === "MATCH" ? "" : "Khác",
-        note: file?.name ? `Chốt từ Excel: ${file.name}` : "Chốt từ trang upload Excel",
-      };
-    });
+    if (!freshSummary.length) {
+      setMessage("Chưa ghi được dòng nào vào phiên kiểm. Bấm ‘Ghi Excel vào phiên kiểm’ trước rồi mới xác nhận.");
+      return;
+    }
+
+    const freshSummaryMap = new Map<string, SummaryItem>();
+    freshSummary.forEach((item) => freshSummaryMap.set(String(item.sku || ""), item));
+
+    const payloadRows = rows
+      .map((row) => {
+        const item = freshSummaryMap.get(row.sku);
+        const counted = Number(item?.counted ?? item?.countedQty ?? 0);
+        const system = getStableSnapshotForExcelRow(row, item);
+        const diff = counted - system;
+        const status: StocktakeRowStatus = !isKnownExcelRow(row, item) ? "NOT_FOUND" : diff === 0 ? "MATCH" : "MISMATCH";
+
+        return {
+          variantId: item?.variantId || undefined,
+          sku: row.sku,
+          counted,
+          system,
+          diff,
+          status,
+          reason: status === "MATCH" ? "" : row.reason || "Khác",
+          note: file?.name ? `Chốt từ Excel: ${file.name}` : row.note || "Chốt từ trang upload Excel",
+        };
+      })
+      .filter((row) => row.status !== "NOT_FOUND" && (row.counted !== row.system || row.counted > 0 || row.system > 0));
+
+    if (!payloadRows.length) {
+      setMessage("Không có dòng hợp lệ để chốt. Kiểm tra lại file Excel hoặc bấm ‘Ghi Excel vào phiên kiểm’ trước.");
+      return;
+    }
 
     const ok = window.confirm(
       `Xác nhận kiểm kho và cập nhật tồn thật?\n\nSKU đã kiểm: ${payloadRows.length}\nLệch tổng: ${diffText(payloadRows.reduce((sum, row) => sum + Number(row.diff || 0), 0))}\n\nSau bước này phiên sẽ xuất hiện ở lịch sử với trạng thái đã kết thúc/chốt tồn.`,
@@ -702,7 +833,10 @@ export default function StocktakeExcelImportPageClient() {
   }
 
   return (
-    <div className="min-h-screen space-y-5 bg-[#f7f7f8] p-5">
+    <div className="h-screen overflow-hidden bg-[#f7f7f8] text-neutral-950">
+      <AdminMiniSidebar />
+      <main className="h-screen overflow-y-auto overscroll-contain p-4 pb-24 lg:ml-[260px] lg:p-5 lg:pb-24">
+        <div className="min-h-full space-y-5 pb-24">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -711,7 +845,7 @@ export default function StocktakeExcelImportPageClient() {
             {session ? <Badge tone={closed ? "red" : paused ? "amber" : "green"}>{statusLabel(session.status)}</Badge> : null}
           </div>
           <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-neutral-950">Upload Excel kiểm kho</h1>
-          <p className="mt-1 text-sm text-neutral-500">Flow đầy đủ: tạo/chọn phiên tổng → upload Excel → so sánh snapshot → xác nhận kiểm kho → tự cập nhật tồn và lưu lịch sử.</p>
+          <p className="mt-1 text-sm text-neutral-500">Flow chuẩn: tạo phiên/snapshot ở màn kiểm kho realtime → sang đây upload Excel → so sánh snapshot → xác nhận/chốt tồn.</p>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -730,55 +864,34 @@ export default function StocktakeExcelImportPageClient() {
         <StatBox label="Sẽ ghi" value={formatNumber(willWriteCount)} tone="purple" helper="Dòng có delta khác số đã ghi" />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+      <div className="grid items-start gap-4 xl:grid-cols-[420px_1fr]">
         <div className="space-y-4">
           <Panel>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-extrabold text-neutral-950">1. Tạo hoặc chọn phiên kiểm</h2>
-                <p className="mt-1 text-sm text-neutral-500">Phiên tạo từ đây sẽ hiện ở Lịch sử kiểm kho như phiên scan realtime.</p>
+                <h2 className="text-lg font-extrabold text-neutral-950">1. Chọn phiên kiểm đã có snapshot</h2>
+                <p className="mt-1 text-sm text-neutral-500">Snapshot chỉ tạo ở màn kiểm kho realtime. Trang này chỉ import Excel vào phiên đã tạo sẵn.</p>
               </div>
               <Badge tone={closed ? "red" : paused ? "amber" : session ? "green" : "gray"}>{statusLabel(session?.status)}</Badge>
             </div>
 
-            <div className="mt-4 grid gap-3">
-              <label className="block text-sm font-bold text-neutral-700">
-                Chi nhánh
-                <select value={branchId} onChange={(e) => setBranchId(e.target.value)} disabled={Boolean(session && !closed)} className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-neutral-100">
-                  {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name || branch.id}</option>)}
-                  {!branches.length ? <option value={branchId}>{branchId || "Chưa có chi nhánh"}</option> : null}
-                </select>
-              </label>
-
-              <label className="block text-sm font-bold text-neutral-700">
-                Tên phiên
-                <input value={sessionName} onChange={(e) => setSessionName(e.target.value)} disabled={Boolean(session && !closed)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-neutral-100" />
-              </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block text-sm font-bold text-neutral-700">
-                  Người kiểm
-                  <input value={workerName} onChange={(e) => setWorkerName(e.target.value)} disabled={Boolean(session && !closed)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-neutral-100" />
-                </label>
-                <label className="block text-sm font-bold text-neutral-700">
-                  Khu kiểm
-                  <input value={workerZone} onChange={(e) => setWorkerZone(e.target.value)} disabled={Boolean(session && !closed)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-neutral-100" />
-                </label>
-              </div>
-
-              <button type="button" onClick={() => void createExcelSession()} disabled={creatingSession || !canCreate || Boolean(session && !closed)} className="rounded-xl bg-neutral-950 px-4 py-3 text-sm font-extrabold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300">
-                {creatingSession ? "Đang tạo phiên..." : "Tạo phiên kiểm Excel"}
-              </button>
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+              <p className="font-extrabold">Flow chuẩn</p>
+              <p className="mt-1">Vào màn kiểm kho realtime → tạo phiên tổng để chụp snapshot → quay lại đây upload Excel vào đúng phiên đó.</p>
+              <Link href="/stocktake" className="mt-3 inline-flex rounded-xl bg-neutral-950 px-4 py-2 text-sm font-extrabold text-white hover:bg-neutral-800">
+                Mở màn tạo phiên / snapshot
+              </Link>
             </div>
 
             <div className="mt-5 border-t border-neutral-100 pt-4">
               <label className="block text-sm font-bold text-neutral-700">
-                Hoặc dán Session ID có sẵn
+                Session ID phiên kiểm đã tạo
                 <input value={sessionIdInput} onChange={(e) => setSessionIdInput(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 font-mono text-sm outline-none focus:border-blue-500" placeholder="Dán session ID nếu cần" />
               </label>
               <button type="button" onClick={() => void loadSession()} disabled={loadingSession} className="mt-3 w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-extrabold text-neutral-800 hover:bg-neutral-50 disabled:bg-neutral-100">
-                {loadingSession ? "Đang tải phiên..." : "Tải / đổi phiên kiểm"}
+                {loadingSession ? "Đang tải phiên..." : "Tải phiên kiểm đang mở"}
               </button>
+              <p className="mt-2 text-xs font-semibold text-neutral-500">Nếu trên máy đã lưu phiên đang mở, hệ thống sẽ tự điền Session ID. Có thể dán ID khác để đổi phiên.</p>
             </div>
 
             {session ? (
@@ -790,6 +903,12 @@ export default function StocktakeExcelImportPageClient() {
                   <div>Trạng thái: <span className="text-neutral-950">{statusLabel(session.status)}</span></div>
                 </div>
 
+                {closed ? (
+                  <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700">Phiên này đã đóng/chốt, không thể upload Excel thêm.</div>
+                ) : paused ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">Phiên đang tạm dừng. Quay lại màn realtime bấm tiếp tục trước khi import.</div>
+                ) : null}
+
                 <label className="mt-4 block text-sm font-bold text-neutral-700">
                   Phiên con / máy ghi dữ liệu
                   <select value={workerId} onChange={(e) => { setWorkerId(e.target.value); saveResumeState({ sessionId: session.id, workerId: e.target.value, branchId: session.branchId }); void loadSummary(session.id, e.target.value); }} className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500">
@@ -799,7 +918,11 @@ export default function StocktakeExcelImportPageClient() {
                   </select>
                 </label>
               </div>
-            ) : null}
+            ) : (
+              <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm font-semibold text-neutral-600">
+                Chưa tải phiên kiểm. Hãy tạo phiên tổng ở màn realtime trước rồi bấm tải phiên tại đây.
+              </div>
+            )}
           </Panel>
 
           <Panel className="border-blue-100 bg-blue-50/70">
@@ -843,8 +966,8 @@ export default function StocktakeExcelImportPageClient() {
 
           <Panel className="border-red-100 bg-red-50/60">
             <h2 className="text-lg font-extrabold text-red-950">4. Xác nhận kiểm kho</h2>
-            <p className="mt-1 text-sm font-medium text-red-800/80">Bước này mới cập nhật tồn thật. Có thể kiểm tra preview và lệch trước khi bấm.</p>
-            <button type="button" onClick={() => void confirmAndApplySession()} disabled={!session || closed || confirming || importing || !summary.length || !canApply} className="mt-4 w-full rounded-xl bg-red-600 px-4 py-3 text-sm font-extrabold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-neutral-300">
+            <p className="mt-1 text-sm font-medium text-red-800/80">Bước này mới cập nhật tồn thật. Sau khi bấm “Ghi Excel vào phiên kiểm”, nút sẽ dùng dữ liệu đã ghi trong phiên để chốt.</p>
+            <button type="button" onClick={() => void confirmAndApplySession()} disabled={!session || closed || confirming || importing || !rows.length || !canApply} className="mt-4 w-full rounded-xl bg-red-600 px-4 py-3 text-sm font-extrabold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-neutral-300">
               {confirming ? "Đang xác nhận..." : "Xác nhận kiểm kho + cập nhật tồn"}
             </button>
             <p className="mt-3 text-xs font-semibold text-red-900/70">Sau khi xác nhận, phiên sẽ nằm trong Lịch sử kiểm kho và mở được trang chi tiết.</p>
@@ -898,7 +1021,7 @@ export default function StocktakeExcelImportPageClient() {
                 </thead>
                 <tbody>
                   {!previewRows.length ? (
-                    <tr><td colSpan={9} className="px-4 py-12 text-center text-neutral-500">Chưa có dữ liệu. Tạo/chọn phiên rồi upload Excel để xem so sánh.</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-12 text-center text-neutral-500">Chưa có dữ liệu. Tạo phiên kiểm ở màn realtime rồi tải phiên vào đây, sau đó upload Excel để xem so sánh.</td></tr>
                   ) : previewRows.map(({ row, counted, snapshot, diff, status }) => (
                     <tr key={`${row.rowNumber}-${row.sku}`} className="border-t border-neutral-100 hover:bg-neutral-50/70">
                       <td className="px-4 py-3 text-neutral-500">{row.rowNumber}</td>
@@ -918,6 +1041,8 @@ export default function StocktakeExcelImportPageClient() {
           </Panel>
         </div>
       </div>
+        </div>
+      </main>
     </div>
   );
 }

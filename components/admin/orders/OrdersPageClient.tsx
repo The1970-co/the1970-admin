@@ -1843,15 +1843,32 @@ export default function OrdersPageClient() {
     }
   };
 
+  const normalizeStaffRows = (json: any) => {
+    const data = Array.isArray(json)
+      ? json
+      : Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json?.items)
+          ? json.items
+          : [];
+
+    return data.filter((item: any) => item?.isActive !== false);
+  };
+
   const loadStaffList = async () => {
     try {
+      // Nhân viên thường không nhất thiết có quyền mở toàn bộ /staff.
+      // Endpoint này chỉ trả danh sách nhân viên có thể nhận đơn theo chi nhánh/quyền hiện tại.
+      const json = await apiJson<any>("/orders/assignable-staff");
+      setStaffList(normalizeStaffRows(json));
+      return;
+    } catch {
+      // fallback cho owner/admin hoặc bản core cũ chưa có endpoint mới
+    }
+
+    try {
       const json = await apiJson<any>("/staff");
-      const data = Array.isArray(json)
-        ? json
-        : Array.isArray(json?.data)
-          ? json.data
-          : [];
-      setStaffList(data.filter((item: any) => item?.isActive !== false));
+      setStaffList(normalizeStaffRows(json));
     } catch {
       setStaffList([]);
     }
@@ -4984,6 +5001,11 @@ export default function OrdersPageClient() {
                     </option>
                   ))}
                 </select>
+                {!assignableStaffList.length ? (
+                  <p className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                    Chưa tải được danh sách nhân viên nhận đơn. Kiểm tra quyền orders.edit hoặc endpoint /orders/assignable-staff trên core.
+                  </p>
+                ) : null}
                 <div className="mt-5 flex justify-end gap-2">
                   <Button
                     size="sm"

@@ -247,6 +247,37 @@ function getApiBaseUrl() {
   ).replace(/\/$/, "");
 }
 
+
+function normalizeColorImageKey(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function resolveVariantImageUrl(product: any, variant: any) {
+  const directVariantImage = String(
+    variant?.imageUrl || variant?.image || variant?.image_url || "",
+  ).trim();
+
+  if (directVariantImage) return directVariantImage;
+
+  const colorKey = normalizeColorImageKey(variant?.color);
+  const colorImages =
+    product?.colorImages || product?.imagesByColor || product?.colorImageMap || {};
+
+  if (colorKey && colorImages && typeof colorImages === "object" && !Array.isArray(colorImages)) {
+    const matched = Object.entries(colorImages).find(
+      ([key, value]) => normalizeColorImageKey(key) === colorKey && String(value || "").trim(),
+    );
+
+    if (matched) return String(matched[1] || "").trim();
+  }
+
+  return String(
+    product?.imageUrl || product?.image || product?.thumbnailUrl || "",
+  ).trim();
+}
+
 function branchLabelFromAny(row: any) {
   return (
     row?.displayName ||
@@ -642,7 +673,7 @@ export default function PosPageClient() {
             (product as any).mainSku ||
             product.slug ||
             "",
-          imageUrl: (product as any).imageUrl,
+          imageUrl: resolveVariantImageUrl(product, variant),
           stock: selectedBranchStock,
           selectedBranchStock,
           totalStock,
@@ -1621,10 +1652,20 @@ export default function PosPageClient() {
                         key={variant.id}
                         type="button"
                         onClick={() => addVariant(variant)}
-                        className="flex w-full items-center justify-between border-b border-neutral-100 px-4 py-3 text-left hover:bg-neutral-50"
+                        className="flex w-full items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3 text-left hover:bg-neutral-50"
                       >
-                        <div>
-                          <div className="font-semibold">{variant.sku}</div>
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
+                            {variant.imageUrl ? (
+                              <img
+                                src={variant.imageUrl}
+                                alt={variant.productName || variant.sku || "Sản phẩm"}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : null}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-semibold">{variant.sku}</div>
                           <div className="text-sm text-neutral-500">
                             {variant.productName} · {variant.color} /{" "}
                             {variant.size}
@@ -1636,8 +1677,9 @@ export default function PosPageClient() {
                               {variant.stockNotice.text}
                             </div>
                           ) : null}
+                          </div>
                         </div>
-                        <div className="text-right">
+                        <div className="shrink-0 text-right">
                           <div className="font-semibold">
                             {currency(variant.price)}
                           </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useState } from "react";
 import {
   downloadStocktakeSessionExcel,
@@ -15,6 +16,42 @@ type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
 type ApplyFilter = "ALL" | "APPLIED" | "NOT_APPLIED";
 type ConfirmFilter = "ALL" | "FINISHED_OR_APPLIED" | "NOT_FINISHED";
 type WorkerFilter = "ALL" | "HAS_WORKER" | "NO_WORKER";
+
+function getTokenFromStorage() {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getTokenFromStorage();
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    let message = `Request failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      message = Array.isArray(data?.message)
+        ? data.message.join(", ")
+        : data?.message || message;
+    } catch {}
+    throw new Error(message);
+  }
+
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return {} as T;
+  }
+}
 
 type EnrichedStocktakeSession = StocktakeSessionListItem & {
   note?: string | null;
@@ -266,6 +303,8 @@ export default function StocktakeSessionsPageClient() {
   const isOwner = role === "admin" || role === "owner";
   const canOpenRealtime = hasUserPermission(currentUser, "stocktake.view");
   const canExportStocktake = hasUserPermission(currentUser, "stocktake.excel.export");
+  const canCancelStocktake = hasUserPermission(currentUser, "stocktake.cancel");
+  const canDeleteStocktake = hasUserPermission(currentUser, "stocktake.delete");
 
   const loadBranches = async () => {
     try {
@@ -350,6 +389,58 @@ export default function StocktakeSessionsPageClient() {
   const cancelled = visibleSessions.filter((s) => String(s.status).toUpperCase() === "CANCELLED").length;
   const totalScanEvents = visibleSessions.reduce((sum, item) => sum + getScanCount(item), 0);
   const totalWorkers = visibleSessions.reduce((sum, item) => sum + getWorkerCount(item), 0);
+
+  const handleCancelSession = async (item: EnrichedStocktakeSession) => {
+    if (!canCancelStocktake) {
+      setMessage("Bạn không có quyền huỷ phiên kiểm kho.");
+      return;
+    }
+
+    const ok = window.confirm(`Huỷ phiên kiểm kho "${item.name || item.id}"?`);
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setMessage("");
+      await apiRequest(`/stocktake-sessions/${item.id}/cancel`, {
+        method: "PATCH",
+      });
+      setMessage("Đã huỷ phiên kiểm kho.");
+      await loadSessions();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không huỷ được phiên kiểm kho.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteSession = async (item: EnrichedStocktakeSession) => {
+    if (!canDeleteStocktake) {
+      setMessage("Bạn không có quyền xoá phiên kiểm kho.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Xoá vĩnh viễn phiên kiểm kho "${item.name || item.id}"?
+
+Không xoá phiên đã chốt tồn.`,
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setMessage("");
+      await apiRequest(`/stocktake-sessions/${item.id}`, {
+        method: "DELETE",
+      });
+      setMessage("Đã xoá phiên kiểm kho.");
+      await loadSessions();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không xoá được phiên kiểm kho.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const clearFilters = () => {
     setQuery("");
@@ -644,7 +735,7 @@ export default function StocktakeSessionsPageClient() {
                   return (
                     <tr key={item.id} className="border-t border-neutral-100 align-top hover:bg-neutral-50/70">
                       <td className="px-4 py-3">
-                        <Link href={`/stocktake-sessions/${item.id}`} className="font-bold text-neutral-950 hover:underline">
+                        <Link href={`/stocktake-sessions/${item.id}`} target="_blank" rel="noopener noreferrer" className="font-bold text-neutral-950 hover:underline">
                           {item.name || item.id}
                         </Link>
                         <p className="mt-1 font-mono text-xs text-neutral-400">{item.id}</p>
@@ -738,10 +829,30 @@ export default function StocktakeSessionsPageClient() {
                         <div className="flex justify-end gap-2">
                           <Link
                             href={`/stocktake-sessions/${item.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
                           >
                             Xem chi tiết
                           </Link>
+                          {canCancelStocktake && !isApplied(item) && String(item.status || "").toUpperCase() !== "CANCELLED" ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleCancelSession(item)}
+                              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
+                            >
+                              Huỷ
+                            </button>
+                          ) : null}
+                          {canDeleteStocktake && !isApplied(item) ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteSession(item)}
+                              className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-100"
+                            >
+                              Xoá
+                            </button>
+                          ) : null}
                           {canExportStocktake ? (
                             <button
                               onClick={() => void downloadStocktakeSessionExcel(item.id, `kiem-kho-${item.id}.xlsx`)}

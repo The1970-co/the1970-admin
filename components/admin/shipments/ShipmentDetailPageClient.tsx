@@ -858,6 +858,22 @@ export default function ShipmentDetailPageClient({
   const [softRefreshing, setSoftRefreshing] = useState(false);
   const [error, setError] = useState("");
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoRefreshInFlightRef = useRef(false);
+  const latestStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    latestStatusRef.current =
+      tracking?.tracking.shippingStatus ||
+      tracking?.tracking.partnerStatus ||
+      detail?.shippingStatus ||
+      detail?.partnerStatus ||
+      null;
+  }, [
+    detail?.shippingStatus,
+    detail?.partnerStatus,
+    tracking?.tracking.shippingStatus,
+    tracking?.tracking.partnerStatus,
+  ]);
 
   const fullAddress = useMemo(() => {
     if (!detail) return "";
@@ -961,12 +977,8 @@ export default function ShipmentDetailPageClient({
   useEffect(() => {
     if (!shipmentId) return;
 
-    const tick = () => {
-      const status =
-        tracking?.tracking.shippingStatus ||
-        tracking?.tracking.partnerStatus ||
-        detail?.shippingStatus ||
-        detail?.partnerStatus;
+    const tick = async () => {
+      const status = latestStatusRef.current;
 
       if (isFinalShipmentStatus(status)) {
         if (autoRefreshRef.current) {
@@ -976,27 +988,26 @@ export default function ShipmentDetailPageClient({
         return;
       }
 
-      void loadAll(false, true);
+      if (autoRefreshInFlightRef.current) return;
+
+      autoRefreshInFlightRef.current = true;
+      try {
+        await loadAll(false, true);
+      } finally {
+        autoRefreshInFlightRef.current = false;
+      }
     };
 
-    const intervalMs =
-      typeof document !== "undefined" && document.hidden ? 60000 : 15000;
-
-    autoRefreshRef.current = setInterval(tick, intervalMs);
+    autoRefreshRef.current = setInterval(tick, 30000);
 
     return () => {
       if (autoRefreshRef.current) {
         clearInterval(autoRefreshRef.current);
         autoRefreshRef.current = null;
       }
+      autoRefreshInFlightRef.current = false;
     };
-  }, [
-    shipmentId,
-    detail?.shippingStatus,
-    detail?.partnerStatus,
-    tracking?.tracking.shippingStatus,
-    tracking?.tracking.partnerStatus,
-  ]);
+  }, [shipmentId]);
 
   if (loading) {
     return <ShipmentDetailSkeleton />;

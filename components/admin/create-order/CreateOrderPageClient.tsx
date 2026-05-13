@@ -1184,6 +1184,43 @@ function getApiBaseUrl() {
   ).replace(/\/$/, "");
 }
 
+function normalizeColorImageKey(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function resolveVariantImageUrl(product: any, variant: any) {
+  const directVariantImage = String(
+    variant?.imageUrl || variant?.image || variant?.image_url || "",
+  ).trim();
+
+  if (directVariantImage) return directVariantImage;
+
+  const colorKey = normalizeColorImageKey(variant?.color);
+  const colorImages =
+    product?.colorImages || product?.imagesByColor || product?.colorImageMap || {};
+
+  if (
+    colorKey &&
+    colorImages &&
+    typeof colorImages === "object" &&
+    !Array.isArray(colorImages)
+  ) {
+    const matched = Object.entries(colorImages).find(
+      ([key, value]) =>
+        normalizeColorImageKey(key) === colorKey &&
+        String(value || "").trim(),
+    );
+
+    if (matched) return String(matched[1] || "").trim();
+  }
+
+  return String(
+    product?.imageUrl || product?.image || product?.thumbnailUrl || "",
+  ).trim();
+}
+
 function extractCopyOrderNoteValue(
   note: string | undefined | null,
   labels: string[],
@@ -1839,6 +1876,8 @@ export default function CreateOrderPageClient() {
   const [shippingQuotes, setShippingQuotes] = useState<ShipmentQuoteResult[]>(
     [],
   );
+  const shippingQuoteStableKeyRef = useRef("");
+  const shippingQuoteRequestSeqRef = useRef(0);
   const [viettelInventories, setViettelInventories] = useState<
     ViettelPostInventory[]
   >([]);
@@ -2181,8 +2220,8 @@ export default function CreateOrderPageClient() {
           p.variants.map((v) => ({
             productId: p.id,
             productName: p.name,
-            imageUrl: p.imageUrl,
             ...v,
+            imageUrl: resolveVariantImageUrl(p, v),
           })),
         );
 
@@ -2750,7 +2789,7 @@ export default function CreateOrderPageClient() {
           ...variant,
           productId: (product as any).id,
           productName: product.name,
-          imageUrl: (product as any).imageUrl,
+          imageUrl: resolveVariantImageUrl(product, variant),
           stock,
           totalStock,
           branchStock,
@@ -3007,6 +3046,45 @@ export default function CreateOrderPageClient() {
       ),
     }));
   }, [lines, shippingLength, shippingWidth, shippingHeight, shippingWeight]);
+
+  const shippingQuoteStableKey = useMemo(() => {
+    const toAddress =
+      carrierToAddress ||
+      selectedAddress?.addressLine1 ||
+      addressLine1.trim() ||
+      shippingAddress.trim();
+
+    return JSON.stringify({
+      uiMode: shippingUiMode,
+      fromAddress: normalizeSpaces(selectedCarrierPickup?.address || "default"),
+      fromPhone: normalizePhone(selectedCarrierPickup?.phone || ""),
+      pickupLocationId: selectedPickupLocationId || "default",
+      toAddress: normalizeSpaces(toAddress),
+      province: normalizeSpaces(quoteProvince),
+      district: normalizeSpaces(quoteDistrict),
+      ward: normalizeSpaces(quoteWard),
+      weight: Number(shippingWeight || 200),
+      length: Number(shippingLength || 10),
+      width: Number(shippingWidth || 10),
+      height: Number(shippingHeight || 10),
+    });
+  }, [
+    shippingUiMode,
+    selectedCarrierPickup?.address,
+    selectedCarrierPickup?.phone,
+    selectedPickupLocationId,
+    carrierToAddress,
+    selectedAddress?.addressLine1,
+    addressLine1,
+    shippingAddress,
+    quoteProvince,
+    quoteDistrict,
+    quoteWard,
+    shippingWeight,
+    shippingLength,
+    shippingWidth,
+    shippingHeight,
+  ]);
 
   const selectedQuote =
     shippingQuotes.find(
@@ -4029,10 +4107,17 @@ export default function CreateOrderPageClient() {
     if (shippingUiMode !== "carrier") {
       setShippingQuotes([]);
       setSelectedShippingQuoteKey("");
+      shippingQuoteStableKeyRef.current = "";
+      return;
+    }
+
+    if (shippingQuoteStableKeyRef.current === shippingQuoteStableKey) {
       return;
     }
 
     const run = async () => {
+      const requestSeq = ++shippingQuoteRequestSeqRef.current;
+      shippingQuoteStableKeyRef.current = shippingQuoteStableKey;
       const toAddress =
         carrierToAddress ||
         selectedAddress?.addressLine1 ||
@@ -4043,9 +4128,8 @@ export default function CreateOrderPageClient() {
       const resultQuotes: ShipmentQuoteResult[] = [];
 
       try {
-        setShippingLoading(true);
+        setShippingLoading((prev) => (shippingQuotes.length ? prev : true));
         setShippingError("");
-        setShippingHint("Đang so sánh phí GHN, ViettelPost và AhaMove...");
 
         let resolved: any = null;
 
@@ -4277,6 +4361,8 @@ export default function CreateOrderPageClient() {
           return getFeeNumber(a) - getFeeNumber(b);
         });
 
+        if (requestSeq !== shippingQuoteRequestSeqRef.current) return;
+
         setShippingQuotes(sortedQuotes);
 
         if (!sortedQuotes.length) {
@@ -4321,6 +4407,8 @@ export default function CreateOrderPageClient() {
         );
         setShippingError(errors.length ? errors.join(" | ") : "");
       } catch (err) {
+        if (requestSeq !== shippingQuoteRequestSeqRef.current) return;
+        shippingQuoteStableKeyRef.current = "";
         setShippingQuotes([]);
         setSelectedShippingServiceId(undefined);
         setSelectedShippingServiceTypeId(undefined);
@@ -4330,38 +4418,18 @@ export default function CreateOrderPageClient() {
           err instanceof Error ? err.message : "Không lấy được phí ship.",
         );
       } finally {
-        setShippingLoading(false);
+        if (requestSeq === shippingQuoteRequestSeqRef.current) {
+          setShippingLoading(false);
+        }
       }
     };
 
     const timer = setTimeout(() => {
       void run();
-    }, 350);
+    }, 700);
 
     return () => clearTimeout(timer);
-  }, [
-    quoteProvince,
-    quoteDistrict,
-    quoteWard,
-    quoteItems,
-    orderValueForInsurance,
-    shippingLength,
-    shippingWidth,
-    shippingHeight,
-    shippingWeight,
-    shippingUiMode,
-    shippingMode,
-    shippingPartner,
-    selectedAddress,
-    addressLine1,
-    shippingAddress,
-    customerName,
-    customerPhone,
-    remaining,
-    note,
-    deliveryRequirement,
-    selectedCarrierPickup,
-  ]);
+  }, [shippingQuoteStableKey]);
 
   const canCreateOrder = hasCurrentUserPermission("orders.create");
   const canApproveOrder = hasCurrentUserPermission("orders.approve");
@@ -5198,64 +5266,6 @@ export default function CreateOrderPageClient() {
                     </select>
                   </div>
 
-                  {shippingUiMode === "carrier" && shippingPartner === "ahamove" ? (
-                    <div className="md:col-span-2">
-                      <div className="rounded-3xl border border-orange-200 bg-orange-50 p-4">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-orange-950">
-                              Thanh toán phí ship AhaMove
-                            </p>
-                            <p className="mt-1 text-xs leading-5 text-orange-800">
-                              Đang dùng cấu hình mặc định từ Settings. Có thể đổi nhanh cho riêng đơn này.
-                            </p>
-                          </div>
-                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-orange-700">
-                            payment_method: {ahamovePaymentMethod}
-                          </span>
-                        </div>
-
-                        <div className="mt-3 grid gap-2 md:grid-cols-3">
-                          {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
-                            <button
-                              key={item.value}
-                              type="button"
-                              onClick={() => handleAhamovePaymentMethodChange(item.value)}
-                              className={`rounded-2xl border bg-white p-3 text-left transition ${
-                                ahamovePaymentMethod === item.value
-                                  ? "border-orange-500 ring-2 ring-orange-200"
-                                  : "border-orange-100 hover:border-orange-300"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm font-semibold text-neutral-950">
-                                  {item.label}
-                                </span>
-                                <span
-                                  className={`h-3 w-3 shrink-0 rounded-full border ${
-                                    ahamovePaymentMethod === item.value
-                                      ? "border-orange-600 bg-orange-600"
-                                      : "border-orange-200 bg-white"
-                                  }`}
-                                />
-                              </div>
-                              <p className="mt-2 text-xs leading-5 text-neutral-600">
-                                {item.description}
-                              </p>
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="mt-3 rounded-2xl border border-orange-100 bg-white px-3 py-2 text-xs leading-5 text-orange-900">
-                          <span className="font-semibold">Đang chọn:</span> {ahamovePaymentMethodLabel}. {ahamovePaymentMethodDescription}
-                          <br />
-                          <span className="font-semibold">Người chịu phí trong hệ thống:</span>{" "}
-                          {shippingPayer === "customer" ? "Khách trả" : "Shop trả"}.
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
                   <div>
                     <p className="mb-2 text-sm font-medium text-neutral-700">
                       Yêu cầu giao hàng
@@ -5339,32 +5349,43 @@ export default function CreateOrderPageClient() {
                           onClick={() => addVariantToOrder(variant.id)}
                           className="flex w-full items-start justify-between gap-4 border-b border-neutral-200 px-4 py-3 text-left transition hover:bg-neutral-50"
                         >
-                          <div>
-                            <p className="font-semibold text-neutral-900">
-                              {variant.sku}
-                            </p>
-                            <p className="mt-1 text-sm text-neutral-700">
-                              {(variant as any).productName}
-                            </p>
-                            <p className="mt-1 text-xs text-neutral-500">
-                              {(variant as any).color || "—"} /{" "}
-                              {(variant as any).size || "—"}
-                            </p>
-                            {Number((variant as any).totalStock || 0) <= 0 ? (
-                              <p className="mt-1 text-xs font-semibold text-red-600">
-                                Hết hàng toàn hệ thống · vẫn cho phép tạo đơn âm
-                                kho
+                          <div className="flex min-w-0 flex-1 items-start gap-3">
+                            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
+                              {(variant as any).imageUrl ? (
+                                <img
+                                  src={(variant as any).imageUrl}
+                                  alt={(variant as any).productName || variant.sku || "Sản phẩm"}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : null}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-neutral-900">
+                                {variant.sku}
                               </p>
-                            ) : Number((variant as any).branchStock || 0) <=
-                              0 ? (
-                              <p className="mt-1 text-xs font-medium text-amber-700">
-                                Chi nhánh này hết hàng · còn{" "}
-                                {Number((variant as any).totalStock || 0)} ở chi
-                                nhánh khác
+                              <p className="mt-1 text-sm text-neutral-700">
+                                {(variant as any).productName}
                               </p>
-                            ) : null}
+                              <p className="mt-1 text-xs text-neutral-500">
+                                {(variant as any).color || "—"} /{" "}
+                                {(variant as any).size || "—"}
+                              </p>
+                              {Number((variant as any).totalStock || 0) <= 0 ? (
+                                <p className="mt-1 text-xs font-semibold text-red-600">
+                                  Hết hàng toàn hệ thống · vẫn cho phép tạo đơn âm
+                                  kho
+                                </p>
+                              ) : Number((variant as any).branchStock || 0) <=
+                                0 ? (
+                                <p className="mt-1 text-xs font-medium text-amber-700">
+                                  Chi nhánh này hết hàng · còn{" "}
+                                  {Number((variant as any).totalStock || 0)} ở chi
+                                  nhánh khác
+                                </p>
+                              ) : null}
+                            </div>
                           </div>
-                          <div className="text-right">
+                          <div className="shrink-0 text-right">
                             <p className="font-medium">
                               {currency((variant as any).price)}
                             </p>
@@ -5761,17 +5782,6 @@ export default function CreateOrderPageClient() {
                 </div>
               ) : null}
 
-              {shippingUiMode === "carrier" && shippingPartner === "ahamove" ? (
-                <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
-                  <div className="font-semibold text-orange-950">
-                    Thanh toán phí ship AhaMove: {ahamovePaymentMethodLabel}
-                  </div>
-                  <div className="mt-1 text-xs leading-5">
-                    Mã gửi API khi tạo đơn: <span className="font-semibold">{ahamovePaymentMethod}</span>. COD tiền hàng vẫn tách riêng theo số tiền khách còn phải thanh toán.
-                  </div>
-                </div>
-              ) : null}
-
               {shippingHint ? (
                 <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
                   {shippingHint}
@@ -6020,6 +6030,45 @@ export default function CreateOrderPageClient() {
                                     <div className="mt-3 text-[11px] font-semibold text-neutral-500">
                                       {group.quotes.length} lựa chọn
                                     </div>
+
+                                    {group.carrier === "ahamove" ? (
+                                      <div className="mt-3 rounded-2xl border border-orange-200 bg-white/80 p-2">
+                                        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-orange-700">
+                                          Thanh toán Aha
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                          {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
+                                            <button
+                                              key={item.value}
+                                              type="button"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                handleAhamovePaymentMethodChange(item.value);
+                                              }}
+                                              className={`rounded-xl border px-2 py-2 text-left text-[11px] leading-4 transition ${
+                                                ahamovePaymentMethod === item.value
+                                                  ? "border-orange-500 bg-orange-50 text-orange-900 ring-1 ring-orange-200"
+                                                  : "border-orange-100 bg-white text-neutral-600 hover:border-orange-300"
+                                              }`}
+                                            >
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="font-semibold">{item.label}</span>
+                                                <span
+                                                  className={`h-2.5 w-2.5 shrink-0 rounded-full border ${
+                                                    ahamovePaymentMethod === item.value
+                                                      ? "border-orange-600 bg-orange-600"
+                                                      : "border-orange-200 bg-white"
+                                                  }`}
+                                                />
+                                              </div>
+                                            </button>
+                                          ))}
+                                        </div>
+                                        <div className="mt-2 rounded-xl bg-orange-50 px-2 py-1.5 text-[11px] leading-4 text-orange-800">
+                                          API: <span className="font-semibold">{ahamovePaymentMethod}</span> · {shippingPayer === "customer" ? "Khách chịu phí" : "Shop chịu phí"}
+                                        </div>
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
 

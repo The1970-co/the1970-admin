@@ -31,16 +31,19 @@ import { hasPermission, type AppRole } from "@/lib/authz";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import { useScrollRestore } from "@/hooks/useScrollRestore";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
-import { findPrintTemplate, loadPrintTemplates } from "@/lib/print-template-config";
+import {
+  findPrintTemplate,
+  loadPrintTemplates,
+} from "@/lib/print-template-config";
 import {
   openProductLabelPrintDocument,
   renderProductLabelsHtml,
   type ProductLabelPrintItem,
 } from "@/lib/print-template-engine";
 
-
-
-function sortCategoriesForDisplay<T extends { name?: string; sortOrder?: number; isActive?: boolean }>(rows: T[]) {
+function sortCategoriesForDisplay<
+  T extends { name?: string; sortOrder?: number; isActive?: boolean },
+>(rows: T[]) {
   return [...rows]
     .filter((item) => item.isActive !== false)
     .sort((a, b) => {
@@ -76,7 +79,7 @@ function toCode(input: string) {
 
 function uniqueValues(values: Array<string | undefined | null>) {
   return Array.from(
-    new Set(values.map((v) => String(v || "").trim()).filter(Boolean))
+    new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
   );
 }
 
@@ -106,7 +109,6 @@ function toAbsoluteFileUrl(url?: string | null) {
   return `${API_BASE}${url}`;
 }
 
-
 type CurrentUserPermissionProfile = {
   id?: string;
   code?: string;
@@ -129,16 +131,15 @@ type CurrentUserPermissionProfile = {
 };
 
 function normalizeRoleCode(value: any) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function getUserRoles(user?: CurrentUserPermissionProfile | null) {
   return Array.from(
     new Set(
-      [
-        ...(Array.isArray(user?.roles) ? user?.roles || [] : []),
-        user?.role,
-      ]
+      [...(Array.isArray(user?.roles) ? user?.roles || [] : []), user?.role]
         .map(normalizeRoleCode)
         .filter(Boolean),
     ),
@@ -149,19 +150,17 @@ function getPrimaryAppRole(
   user?: CurrentUserPermissionProfile | null,
 ): AppRole {
   const roles = getUserRoles(user);
-  return (
-    roles.find((role) =>
-      [
-        "owner",
-        "admin",
-        "branch-manager",
-        "fulltime",
-        "retail-staff",
-        "stock-auditor",
-        "stock-staff",
-      ].includes(role),
-    ) || "retail-staff"
-  ) as AppRole;
+  return (roles.find((role) =>
+    [
+      "owner",
+      "admin",
+      "branch-manager",
+      "fulltime",
+      "retail-staff",
+      "stock-auditor",
+      "stock-staff",
+    ].includes(role),
+  ) || "retail-staff") as AppRole;
 }
 
 function isOwnerOrAdminUser(user?: CurrentUserPermissionProfile | null) {
@@ -224,8 +223,10 @@ function hasLegacyProductInventoryPermission(
     if (permission === "inventory.view") return Boolean(row.canViewStock);
     if (permission === "inventory.manage") return Boolean(row.canManageStock);
     if (permission === "inventory.value.view") return Boolean(row.canViewMoney);
-    if (permission === "products.excel.export") return Boolean(row.canExportProductExcel);
-    if (permission === "products.excel.import") return Boolean(row.canImportProductExcel);
+    if (permission === "products.excel.export")
+      return Boolean(row.canExportProductExcel);
+    if (permission === "products.excel.import")
+      return Boolean(row.canImportProductExcel);
     return false;
   });
 }
@@ -242,7 +243,6 @@ function hasProductInventoryPermission(
     hasPermission(role, permission as any)
   );
 }
-
 
 function Panel({
   children,
@@ -446,7 +446,7 @@ function Modal({
 }
 
 function toneForStatus(
-  value?: string
+  value?: string,
 ): "gray" | "green" | "amber" | "red" | "blue" {
   if (["ACTIVE"].includes(String(value))) return "green";
   if (["INACTIVE", "DISABLED", "DRAFT"].includes(String(value))) return "red";
@@ -473,13 +473,7 @@ function shortText(text?: string | null, max = 56) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-function ProductImage({
-  src,
-  alt,
-}: {
-  src?: string | null;
-  alt: string;
-}) {
+function ProductImage({ src, alt }: { src?: string | null; alt: string }) {
   return (
     <div className="h-12 w-12 overflow-hidden rounded-2xl bg-neutral-100">
       {src ? (
@@ -496,7 +490,6 @@ function ProductImage({
     </div>
   );
 }
-
 
 function SortButton({
   label,
@@ -541,6 +534,10 @@ type ImportPreviewRow = {
   sku: string;
   weight: number;
   imageUrl: string;
+  productImageUrl: string;
+  colorImageUrl: string;
+  imageSource: string;
+  imageWarning: string;
   retailPrice: number;
   importPrice: number;
   stockCL: number;
@@ -601,7 +598,11 @@ function findValue(row: ParsedRow, keys: string[]) {
     const matched = rowKeys.find((k) => normalizeHeader(k) === normalizedKey);
     if (matched) {
       const value = row[matched];
-      if (value !== undefined && value !== null && String(value).trim() !== "") {
+      if (
+        value !== undefined &&
+        value !== null &&
+        String(value).trim() !== ""
+      ) {
         return String(value).trim();
       }
     }
@@ -609,6 +610,82 @@ function findValue(row: ParsedRow, keys: string[]) {
   return "";
 }
 
+function findColorImageUrl(row: ParsedRow, color: string) {
+  const colorText = String(color || "").trim();
+  const normalizedColor = normalizeHeader(colorText);
+
+  const direct = findValue(row, [
+    `Ảnh màu ${colorText}`,
+    `Anh mau ${colorText}`,
+    `Ảnh ${colorText}`,
+    `Anh ${colorText}`,
+    `Image ${colorText}`,
+    `Color image ${colorText}`,
+  ]);
+
+  if (direct) return direct;
+
+  const rowKeys = Object.keys(row);
+  const matched = rowKeys.find((key) => {
+    const normalizedKey = normalizeHeader(key);
+    return (
+      normalizedColor &&
+      normalizedKey.includes("anh") &&
+      normalizedKey.includes("mau") &&
+      normalizedKey.includes(normalizedColor)
+    );
+  });
+
+  if (!matched) return "";
+
+  const value = row[matched];
+  return value !== undefined && value !== null ? String(value).trim() : "";
+}
+
+function findColorImageMatch(row: ParsedRow, color: string) {
+  const colorText = String(color || "").trim();
+  const normalizedColor = normalizeHeader(colorText);
+
+  if (!normalizedColor) {
+    return { url: "", source: "" };
+  }
+
+  const wantedHeaders = [
+    `Ảnh màu ${colorText}`,
+    `Anh mau ${colorText}`,
+    `Ảnh ${colorText}`,
+    `Anh ${colorText}`,
+    `Image ${colorText}`,
+    `Color image ${colorText}`,
+  ];
+
+  for (const wanted of wantedHeaders) {
+    const wantedKey = normalizeHeader(wanted);
+    const matchedKey = Object.keys(row).find(
+      (key) => normalizeHeader(key) === wantedKey,
+    );
+    if (!matchedKey) continue;
+
+    const value = String(row[matchedKey] || "").trim();
+    if (value) return { url: value, source: matchedKey };
+  }
+
+  const matchedKey = Object.keys(row).find((key) => {
+    const normalizedKey = normalizeHeader(key);
+    return (
+      normalizedKey.includes("anh") &&
+      normalizedKey.includes("mau") &&
+      normalizedKey.includes(normalizedColor)
+    );
+  });
+
+  if (!matchedKey) {
+    return { url: "", source: "" };
+  }
+
+  const value = String(row[matchedKey] || "").trim();
+  return value ? { url: value, source: matchedKey } : { url: "", source: "" };
+}
 
 function getImportPriceFromRow(row: ParsedRow) {
   // Ưu tiên giá nhập/vốn toàn cục; nếu trống thì lấy giá vốn khởi tạo theo chi nhánh SAPO.
@@ -639,7 +716,7 @@ function getImportPriceFromRow(row: ParsedRow) {
       "LC_CN5_Giá vốn khởi tạo*",
       "LC_CN5_Giá vốn khởi tạo",
       "lc cn5 gia von khoi tao",
-    ])
+    ]),
   );
 }
 
@@ -647,9 +724,7 @@ function detectHeaderRowIndex(sheetData: any[][]) {
   return sheetData.findIndex((row) => {
     if (!Array.isArray(row)) return false;
 
-    const joined = row
-      .map((cell) => normalizeHeader(cell))
-      .join(" | ");
+    const joined = row.map((cell) => normalizeHeader(cell)).join(" | ");
 
     return (
       joined.includes("ten san pham") ||
@@ -663,10 +738,10 @@ function detectHeaderRowIndex(sheetData: any[][]) {
 
 function buildRowsFromSheetData(
   sheetData: any[][],
-  headerRowIndex: number
+  headerRowIndex: number,
 ): ParsedRow[] {
   const headerRow = (sheetData[headerRowIndex] || []).map((cell) =>
-    String(cell ?? "").trim()
+    String(cell ?? "").trim(),
   );
 
   const rows: ParsedRow[] = [];
@@ -725,17 +800,17 @@ function downloadProductTemplate() {
       300,
       "https://example.com/sm936.jpg",
       600000,
-      0,   // Giá nhập
-      0,   // CHÙA LÁNG tồn
-      0,   // CHÙA LÁNG giá vốn
-      0,   // XÃ ĐÀN tồn
-      0,   // XÃ ĐÀN giá vốn
-      0,   // QUỐC OAI tồn
-      0,   // QUỐC OAI giá vốn
-      0,   // THÁI HÀ tồn
-      0,   // THÁI HÀ giá vốn
-      0,   // CN5 tồn nếu file SAPO có
-      0,   // CN5 giá vốn nếu file SAPO có
+      0, // Giá nhập
+      0, // CHÙA LÁNG tồn
+      0, // CHÙA LÁNG giá vốn
+      0, // XÃ ĐÀN tồn
+      0, // XÃ ĐÀN giá vốn
+      0, // QUỐC OAI tồn
+      0, // QUỐC OAI giá vốn
+      0, // THÁI HÀ tồn
+      0, // THÁI HÀ giá vốn
+      0, // CN5 tồn nếu file SAPO có
+      0, // CN5 giá vốn nếu file SAPO có
     ],
   ];
 
@@ -745,7 +820,76 @@ function downloadProductTemplate() {
   XLSX.writeFile(wb, "products_import_template.xlsx");
 }
 
-function getVariantBranchStockValue(variant: ProductItem["variants"][number], branchId: string) {
+function downloadProductImageTemplate() {
+  const headers = [
+    [
+      "Tên sản phẩm*",
+      "Danh mục sản phẩm",
+      "Mô tả sản phẩm",
+      "Nhãn hiệu",
+      "Giá trị thuộc tính 1",
+      "Giá trị thuộc tính 2",
+      "Mã SKU*",
+      "Khối lượng",
+      "Ảnh đại diện",
+      "Ảnh chính",
+      "Ảnh màu",
+      "Ảnh màu ĐEN",
+      "Ảnh màu RÊU",
+      "Ảnh màu XANH",
+      "PL_Giá bán lẻ",
+      "PL_Giá nhập",
+      "LC_CN1_Tồn kho ban đầu*",
+      "LC_CN1_Giá vốn khởi tạo*",
+      "LC_CN2_Tồn kho ban đầu*",
+      "LC_CN2_Giá vốn khởi tạo*",
+      "LC_CN3_Tồn kho ban đầu*",
+      "LC_CN3_Giá vốn khởi tạo*",
+      "LC_CN4_Tồn kho ban đầu*",
+      "LC_CN4_Giá vốn khởi tạo*",
+      "LC_CN5_Tồn kho ban đầu*",
+      "LC_CN5_Giá vốn khởi tạo*",
+    ],
+    [
+      "Áo sơ mi kẻ SM936",
+      "áo somi dài tay",
+      "",
+      "The 1970",
+      "ĐEN",
+      "S",
+      "SM936-DEN-S",
+      300,
+      "https://res.cloudinary.com/demo/image/upload/main.jpg",
+      "https://res.cloudinary.com/demo/image/upload/main.jpg",
+      "https://res.cloudinary.com/demo/image/upload/den.jpg",
+      "https://res.cloudinary.com/demo/image/upload/den.jpg",
+      "",
+      "",
+      600000,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(headers);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "products_image_template");
+  XLSX.writeFile(wb, "products_import_with_images_template.xlsx");
+}
+
+function getVariantBranchStockValue(
+  variant: ProductItem["variants"][number],
+  branchId: string,
+) {
   const v = variant as any;
 
   const directBranchStocks = v.branchStocks || v.inventoryByBranch || {};
@@ -755,7 +899,9 @@ function getVariantBranchStockValue(variant: ProductItem["variants"][number], br
 
   const inventoryItems = v.inventoryItems || v.inventory || [];
   if (Array.isArray(inventoryItems)) {
-    const found = inventoryItems.find((item: any) => item.branchId === branchId);
+    const found = inventoryItems.find(
+      (item: any) => item.branchId === branchId,
+    );
     if (found) {
       return Number(found.availableQty ?? found.qty ?? found.quantity ?? 0);
     }
@@ -765,7 +911,11 @@ function getVariantBranchStockValue(variant: ProductItem["variants"][number], br
 }
 
 type ExportProductScope = "filtered" | "all" | "current_page";
-type ExportSortMode = "product_asc" | "stock_desc" | "value_desc" | "missing_cost_first";
+type ExportSortMode =
+  | "product_asc"
+  | "stock_desc"
+  | "value_desc"
+  | "missing_cost_first";
 
 type ExportColumnKey =
   | "productName"
@@ -821,7 +971,8 @@ const labelPaperOptions = [
   { value: "50x50", label: "Tem cuộn 50 × 50mm" },
 ];
 
-const PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY = "the1970.print-center.product-labels.draft";
+const PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY =
+  "the1970.print-center.product-labels.draft";
 
 const defaultExportColumns: ExportColumnState = {
   productName: true,
@@ -862,14 +1013,18 @@ const exportColumnLabels: Record<ExportColumnKey, string> = {
 };
 
 function safeSheetName(name: string) {
-  return String(name || "Sheet")
-    .replace(/[\\/?*\[\]:]/g, " ")
-    .trim()
-    .slice(0, 31) || "Sheet";
+  return (
+    String(name || "Sheet")
+      .replace(/[\\/?*\[\]:]/g, " ")
+      .trim()
+      .slice(0, 31) || "Sheet"
+  );
 }
 
 function makeWorksheet(rows: Record<string, any>[]) {
-  const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Không có dữ liệu": "" }]);
+  const ws = XLSX.utils.json_to_sheet(
+    rows.length ? rows : [{ "Không có dữ liệu": "" }],
+  );
   const firstRow = rows[0] || { "Không có dữ liệu": "" };
   const columnCount = Object.keys(firstRow).length;
   const rowCount = Math.max(rows.length, 1) + 1;
@@ -893,7 +1048,7 @@ function makeWorksheet(rows: Record<string, any>[]) {
 function buildEnterpriseProductExport(
   exportProducts: ProductItem[],
   exportBranches: BranchItem[],
-  options: EnterpriseExportOptions
+  options: EnterpriseExportOptions,
 ) {
   const selectedBranches = options.branchIds.length
     ? exportBranches.filter((branch) => options.branchIds.includes(branch.id))
@@ -920,11 +1075,11 @@ function buildEnterpriseProductExport(
         selectedBranches.map((branch) => [
           branch.id,
           getVariantBranchStockValue(variant, branch.id),
-        ])
+        ]),
       );
       const totalStock = Object.values(branchStocks).reduce(
         (sum, qty) => sum + Number(qty || 0),
-        0
+        0,
       );
       const inventoryValue = totalStock * costPrice;
       const isMissingCost = totalStock > 0 && costPrice <= 0;
@@ -940,7 +1095,8 @@ function buildEnterpriseProductExport(
       if (options.columns.slug) row["Mã sản phẩm"] = product.slug || "";
       if (options.columns.category) row["Danh mục"] = product.category || "";
       if (options.columns.brand) row["Brand"] = product.brand || "";
-      if (options.columns.weight) row["Khối lượng"] = Number(product.weight || 0);
+      if (options.columns.weight)
+        row["Khối lượng"] = Number(product.weight || 0);
       if (options.columns.imageUrl) row["Ảnh"] = product.imageUrl || "";
       if (options.columns.sku) row["SKU"] = variant.sku || "";
       if (options.columns.color) row["Màu"] = variant.color || "";
@@ -992,14 +1148,26 @@ function buildEnterpriseProductExport(
       return Number(b["Giá trị tồn"] || 0) - Number(a["Giá trị tồn"] || 0);
     }
     if (options.sortMode === "missing_cost_first") {
-      return String(b["Cảnh báo"] || "").localeCompare(String(a["Cảnh báo"] || ""));
+      return String(b["Cảnh báo"] || "").localeCompare(
+        String(a["Cảnh báo"] || ""),
+      );
     }
-    return String(a["Tên sản phẩm"] || "").localeCompare(String(b["Tên sản phẩm"] || ""));
+    return String(a["Tên sản phẩm"] || "").localeCompare(
+      String(b["Tên sản phẩm"] || ""),
+    );
   });
 
-  const totalStock = rows.reduce((sum, row) => sum + Number(row["Tổng tồn"] || 0), 0);
-  const totalValue = rows.reduce((sum, row) => sum + Number(row["Giá trị tồn"] || 0), 0);
-  const missingCostRows = rows.filter((row) => row["Cảnh báo"] === "Thiếu giá nhập");
+  const totalStock = rows.reduce(
+    (sum, row) => sum + Number(row["Tổng tồn"] || 0),
+    0,
+  );
+  const totalValue = rows.reduce(
+    (sum, row) => sum + Number(row["Giá trị tồn"] || 0),
+    0,
+  );
+  const missingCostRows = rows.filter(
+    (row) => row["Cảnh báo"] === "Thiếu giá nhập",
+  );
   const lowStockRows = rows.filter((row) => row["Cảnh báo"] === "Tồn thấp");
 
   const summaryRows = [
@@ -1009,8 +1177,14 @@ function buildEnterpriseProductExport(
     { "Chỉ số": "Tổng giá trị tồn", "Giá trị": totalValue },
     { "Chỉ số": "SKU thiếu giá nhập", "Giá trị": missingCostRows.length },
     { "Chỉ số": "SKU tồn thấp", "Giá trị": lowStockRows.length },
-    { "Chỉ số": "Chi nhánh xuất", "Giá trị": selectedBranches.map((b) => b.name).join(", ") || "Tất cả" },
-    { "Chỉ số": "Thời gian xuất", "Giá trị": new Date().toLocaleString("vi-VN") },
+    {
+      "Chỉ số": "Chi nhánh xuất",
+      "Giá trị": selectedBranches.map((b) => b.name).join(", ") || "Tất cả",
+    },
+    {
+      "Chỉ số": "Thời gian xuất",
+      "Giá trị": new Date().toLocaleString("vi-VN"),
+    },
   ];
 
   const productSummaryRows = Array.from(summaryByProduct.values())
@@ -1028,23 +1202,31 @@ function buildEnterpriseProductExport(
 
   if (options.includeSummarySheet) {
     XLSX.utils.book_append_sheet(wb, makeWorksheet(summaryRows), "Tổng quan");
-    XLSX.utils.book_append_sheet(wb, makeWorksheet(productSummaryRows), "Theo sản phẩm");
+    XLSX.utils.book_append_sheet(
+      wb,
+      makeWorksheet(productSummaryRows),
+      "Theo sản phẩm",
+    );
   }
 
   XLSX.utils.book_append_sheet(wb, makeWorksheet(rows), "Danh sách SKU");
 
   const missingCostExportRows = missingCostRows.map((row) => ({
     "Tên sản phẩm": row["Tên sản phẩm"],
-    "SKU": row["SKU"],
-    "Màu": row["Màu"],
-    "Size": row["Size"],
+    SKU: row["SKU"],
+    Màu: row["Màu"],
+    Size: row["Size"],
     "Giá bán": row["Giá bán"],
     "Giá nhập": row["Giá nhập"],
     "Tổng tồn": row["Tổng tồn"],
     "Giá trị tồn": row["Giá trị tồn"],
   }));
   if (missingCostExportRows.length) {
-    XLSX.utils.book_append_sheet(wb, makeWorksheet(missingCostExportRows), "Thiếu giá nhập");
+    XLSX.utils.book_append_sheet(
+      wb,
+      makeWorksheet(missingCostExportRows),
+      "Thiếu giá nhập",
+    );
   }
 
   if (options.includeBranchSheets) {
@@ -1063,18 +1245,27 @@ function buildEnterpriseProductExport(
           branchRows.push({
             "Tên sản phẩm": product.name || "",
             "Mã sản phẩm": product.slug || "",
-            "SKU": variant.sku || "",
-            "Màu": variant.color || "",
-            "Size": variant.size || "",
+            SKU: variant.sku || "",
+            Màu: variant.color || "",
+            Size: variant.size || "",
             "Giá bán": price,
             "Giá nhập": costPrice,
-            "Tồn": qty,
+            Tồn: qty,
             "Giá trị tồn": qty * costPrice,
-            "Cảnh báo": qty > 0 && costPrice <= 0 ? "Thiếu giá nhập" : qty > 0 && qty <= 3 ? "Tồn thấp" : "",
+            "Cảnh báo":
+              qty > 0 && costPrice <= 0
+                ? "Thiếu giá nhập"
+                : qty > 0 && qty <= 3
+                  ? "Tồn thấp"
+                  : "",
           });
         }
       }
-      XLSX.utils.book_append_sheet(wb, makeWorksheet(branchRows), safeSheetName(branch.name));
+      XLSX.utils.book_append_sheet(
+        wb,
+        makeWorksheet(branchRows),
+        safeSheetName(branch.name),
+      );
     }
   }
 
@@ -1085,7 +1276,10 @@ function buildEnterpriseProductExport(
   const hh = String(now.getHours()).padStart(2, "0");
   const mi = String(now.getMinutes()).padStart(2, "0");
 
-  XLSX.writeFile(wb, `products_enterprise_export_${yyyy}${mm}${dd}_${hh}${mi}.xlsx`);
+  XLSX.writeFile(
+    wb,
+    `products_enterprise_export_${yyyy}${mm}${dd}_${hh}${mi}.xlsx`,
+  );
 
   return rows.length;
 }
@@ -1106,7 +1300,8 @@ export default function ProductsPageClient() {
   const [actionMessage, setActionMessage] = useState("");
 
   const [role, setRole] = useState<AppRole>("retail-staff");
-  const [currentUser, setCurrentUser] = useState<CurrentUserPermissionProfile | null>(null);
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUserPermissionProfile | null>(null);
   const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
@@ -1121,33 +1316,49 @@ export default function ProductsPageClient() {
   const [variantOpen, setVariantOpen] = useState(false);
   const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [importMode, setImportMode] = useState<"products" | "images">(
+    "products",
+  );
   const [exportOpen, setExportOpen] = useState(false);
-  const [exportScope, setExportScope] = useState<ExportProductScope>("filtered");
+  const [exportScope, setExportScope] =
+    useState<ExportProductScope>("filtered");
   const [exportBranchIds, setExportBranchIds] = useState<string[]>([]);
-  const [exportColumns, setExportColumns] = useState<ExportColumnState>(defaultExportColumns);
+  const [exportColumns, setExportColumns] =
+    useState<ExportColumnState>(defaultExportColumns);
   const [exportOnlyInStock, setExportOnlyInStock] = useState(false);
   const [exportOnlyMissingCost, setExportOnlyMissingCost] = useState(false);
   const [exportOnlyLowStock, setExportOnlyLowStock] = useState(false);
-  const [exportIncludeSummarySheet, setExportIncludeSummarySheet] = useState(true);
-  const [exportIncludeBranchSheets, setExportIncludeBranchSheets] = useState(true);
-  const [exportSortMode, setExportSortMode] = useState<ExportSortMode>("product_asc");
+  const [exportIncludeSummarySheet, setExportIncludeSummarySheet] =
+    useState(true);
+  const [exportIncludeBranchSheets, setExportIncludeBranchSheets] =
+    useState(true);
+  const [exportSortMode, setExportSortMode] =
+    useState<ExportSortMode>("product_asc");
   const [exportingProducts, setExportingProducts] = useState(false);
   const [categoryNormalizerOpen, setCategoryNormalizerOpen] = useState(false);
   const [displayOptionsOpen, setDisplayOptionsOpen] = useState(false);
-  const [displayPreset, setDisplayPreset] = useState<ProductDisplayPreset>("default");
-  const [draftDisplayPreset, setDraftDisplayPreset] = useState<ProductDisplayPreset>("default");
+  const [displayPreset, setDisplayPreset] =
+    useState<ProductDisplayPreset>("default");
+  const [draftDisplayPreset, setDraftDisplayPreset] =
+    useState<ProductDisplayPreset>("default");
   const [sortKey, setSortKey] = useState<ProductSortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
 
   const [labelPrintOpen, setLabelPrintOpen] = useState(false);
-  const [labelPrintProduct, setLabelPrintProduct] = useState<ProductItem | null>(null);
+  const [labelPrintProduct, setLabelPrintProduct] =
+    useState<ProductItem | null>(null);
   const [labelPrinterName, setLabelPrinterName] = useState("Máy in mặc định");
   const [labelPaperMode, setLabelPaperMode] = useState("50x50_gap04");
-  const [labelPrintQtyMap, setLabelPrintQtyMap] = useState<Record<string, string>>({});
-  const [labelSelectedMap, setLabelSelectedMap] = useState<Record<string, boolean>>({});
-  const [labelPriceMode, setLabelPriceMode] = useState<"retail" | "hidden">("retail");
-
+  const [labelPrintQtyMap, setLabelPrintQtyMap] = useState<
+    Record<string, string>
+  >({});
+  const [labelSelectedMap, setLabelSelectedMap] = useState<
+    Record<string, boolean>
+  >({});
+  const [labelPriceMode, setLabelPriceMode] = useState<"retail" | "hidden">(
+    "retail",
+  );
 
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -1156,7 +1367,9 @@ export default function ProductsPageClient() {
   const [savingVariant, setSavingVariant] = useState(false);
   const [savingCategory, setSavingCategory] = useState(false);
   const [togglingStatusId, setTogglingStatusId] = useState<string | null>(null);
-  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(
+    null,
+  );
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [importProgressLabel, setImportProgressLabel] = useState("");
@@ -1193,7 +1406,10 @@ export default function ProductsPageClient() {
     };
 
     try {
-      localStorage.setItem(PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(
+        PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY,
+        JSON.stringify(next),
+      );
     } catch {
       // ignore localStorage error
     }
@@ -1241,9 +1457,9 @@ export default function ProductsPageClient() {
   const [editDefaultCostPrice, setEditDefaultCostPrice] = useState("");
   const [editColors, setEditColors] = useState("");
   const [editSizes, setEditSizes] = useState("");
-  const [editBranchStocks, setEditBranchStocks] = useState<Record<string, string>>(
-    {}
-  );
+  const [editBranchStocks, setEditBranchStocks] = useState<
+    Record<string, string>
+  >({});
   const [applyPriceToAllVariants, setApplyPriceToAllVariants] = useState(true);
 
   const [quickCategoryName, setQuickCategoryName] = useState("");
@@ -1263,7 +1479,8 @@ export default function ProductsPageClient() {
   const [importErrors, setImportErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    const storedUser = getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
+    const storedUser =
+      getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
     setCurrentUser(storedUser);
     setRole(getPrimaryAppRole(storedUser));
     setCurrentBranchId(storedUser?.branchId || null);
@@ -1316,7 +1533,10 @@ export default function ProductsPageClient() {
 
     const normalizedRaw = normalizeHeader(raw);
     const found = syncedCategoryItems.find(
-      (item) => normalizeHeader(item.name) === normalizedRaw || normalizeHeader(item.slug) === normalizedRaw || normalizeHeader(item.code) === normalizedRaw,
+      (item) =>
+        normalizeHeader(item.name) === normalizedRaw ||
+        normalizeHeader(item.slug) === normalizedRaw ||
+        normalizeHeader(item.code) === normalizedRaw,
     );
 
     if (found?.name) return found.name;
@@ -1327,12 +1547,12 @@ export default function ProductsPageClient() {
       .split(" ")
       .map((word, index) => {
         const lower = word.toLocaleLowerCase("vi-VN");
-        if (index > 0 && ["và", "hoặc", "của", "cho"].includes(lower)) return lower;
+        if (index > 0 && ["và", "hoặc", "của", "cho"].includes(lower))
+          return lower;
         return lower.charAt(0).toLocaleUpperCase("vi-VN") + lower.slice(1);
       })
       .join(" ");
   };
-
 
   // UI permission lock theo authz.ts.
   // - products.view: được vào xem catalog.
@@ -1396,8 +1616,11 @@ export default function ProductsPageClient() {
     "products.delete",
   );
   const canManageProductMasterData =
-    hasProductInventoryPermission(currentUser, role, "products.master_data.manage") ||
-    hasProductInventoryPermission(currentUser, role, "system.manage");
+    hasProductInventoryPermission(
+      currentUser,
+      role,
+      "products.master_data.manage",
+    ) || hasProductInventoryPermission(currentUser, role, "system.manage");
   const canImportProducts = hasProductInventoryPermission(
     currentUser,
     role,
@@ -1420,13 +1643,13 @@ export default function ProductsPageClient() {
       setBranches(data);
 
       setBranchStocks((prev) =>
-        Object.keys(prev).length ? prev : createEmptyBranchStocks(data)
+        Object.keys(prev).length ? prev : createEmptyBranchStocks(data),
       );
       setVariantBranchStocks((prev) =>
-        Object.keys(prev).length ? prev : createEmptyBranchStocks(data)
+        Object.keys(prev).length ? prev : createEmptyBranchStocks(data),
       );
       setEditBranchStocks((prev) =>
-        Object.keys(prev).length ? prev : createEmptyBranchStocks(data)
+        Object.keys(prev).length ? prev : createEmptyBranchStocks(data),
       );
     } finally {
       setLoadingBranches(false);
@@ -1448,7 +1671,8 @@ export default function ProductsPageClient() {
   const loadProductCategoryOptions = async () => {
     try {
       const res = await fetch(`${API_BASE}/products/category-options`);
-      if (!res.ok) throw new Error("Không tải được danh mục sản phẩm từ sản phẩm.");
+      if (!res.ok)
+        throw new Error("Không tải được danh mục sản phẩm từ sản phẩm.");
       const data = await res.json();
       setCategoryOptions(Array.isArray(data) ? data : []);
     } catch {
@@ -1462,9 +1686,12 @@ export default function ProductsPageClient() {
       if (query.trim()) params.set("q", query.trim());
       if (groupFilter !== "ALL") params.set("category", groupFilter);
       if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (!isOwner && !canViewInventory && currentBranchId) params.set("branchId", currentBranchId);
+      if (!isOwner && !canViewInventory && currentBranchId)
+        params.set("branchId", currentBranchId);
 
-      const res = await fetch(`${API_BASE}/products/summary?${params.toString()}`);
+      const res = await fetch(
+        `${API_BASE}/products/summary?${params.toString()}`,
+      );
 
       if (!res.ok) throw new Error("Không tải được tổng quan sản phẩm.");
 
@@ -1485,7 +1712,10 @@ export default function ProductsPageClient() {
         q: query.trim(),
         category: groupFilter,
         status: statusFilter,
-        branchId: !isOwner && !canViewInventory && currentBranchId ? currentBranchId : undefined,
+        branchId:
+          !isOwner && !canViewInventory && currentBranchId
+            ? currentBranchId
+            : undefined,
       });
 
       const nextProducts = Array.isArray(result) ? result : result?.data || [];
@@ -1494,11 +1724,15 @@ export default function ProductsPageClient() {
         Number(
           Array.isArray(result)
             ? result.length
-            : result?.total ?? nextProducts.length ?? 0
-        )
+            : (result?.total ?? nextProducts.length ?? 0),
+        ),
       );
-      setPage(Number(Array.isArray(result) ? nextPage : result?.page || nextPage));
-      setLimit(Number(Array.isArray(result) ? nextLimit : result?.limit || nextLimit));
+      setPage(
+        Number(Array.isArray(result) ? nextPage : result?.page || nextPage),
+      );
+      setLimit(
+        Number(Array.isArray(result) ? nextLimit : result?.limit || nextLimit),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được sản phẩm.");
     } finally {
@@ -1541,7 +1775,7 @@ export default function ProductsPageClient() {
           sum +
           Object.values(branchStocks).reduce(
             (branchSum, qty) => branchSum + Number(qty || 0),
-            0
+            0,
           )
         );
       }
@@ -1555,8 +1789,9 @@ export default function ProductsPageClient() {
       return (
         sum +
         (product.variants || []).reduce(
-          (branchSum, variant) => branchSum + Number(variant.branchStocks?.[branch.id] || 0),
-          0
+          (branchSum, variant) =>
+            branchSum + Number(variant.branchStocks?.[branch.id] || 0),
+          0,
         )
       );
     }, 0);
@@ -1564,8 +1799,12 @@ export default function ProductsPageClient() {
 
   const getProductSortValue = (product: ProductItem, key: ProductSortKey) => {
     const variants = product.variants || [];
-    const colors = uniqueValues(variants.map((variant) => variant.color)).join(", ");
-    const sizes = uniqueValues(variants.map((variant) => variant.size)).join(", ");
+    const colors = uniqueValues(variants.map((variant) => variant.color)).join(
+      ", ",
+    );
+    const sizes = uniqueValues(variants.map((variant) => variant.size)).join(
+      ", ",
+    );
     const firstSku = getMainSku(product);
 
     const minPrice =
@@ -1575,7 +1814,11 @@ export default function ProductsPageClient() {
 
     const minCostPrice =
       variants.length > 0
-        ? Math.min(...variants.map((variant) => Number((variant as any).costPrice || 0)))
+        ? Math.min(
+            ...variants.map((variant) =>
+              Number((variant as any).costPrice || 0),
+            ),
+          )
         : 0;
 
     switch (key) {
@@ -1602,7 +1845,11 @@ export default function ProductsPageClient() {
       case "description":
         return product.description || "";
       case "createdAt":
-        return new Date((product as any).createdAt || (product as any).updatedAt || 0).getTime() || 0;
+        return (
+          new Date(
+            (product as any).createdAt || (product as any).updatedAt || 0,
+          ).getTime() || 0
+        );
       case "sales":
         return Number(
           (product as any).soldQty ??
@@ -1610,7 +1857,7 @@ export default function ProductsPageClient() {
             (product as any).totalSold ??
             (product as any).orderItemsCount ??
             (product as any).salesCount ??
-            0
+            0,
         );
       default:
         return product.name || "";
@@ -1672,12 +1919,22 @@ export default function ProductsPageClient() {
 
       return sortDirection === "asc" ? result : -result;
     });
-  }, [products, sortKey, sortDirection, visibleBranches, currentBranchId, isOwner, canViewInventory]);
+  }, [
+    products,
+    sortKey,
+    sortDirection,
+    visibleBranches,
+    currentBranchId,
+    isOwner,
+    canViewInventory,
+  ]);
 
   const totalProductPages = Math.max(1, Math.ceil(totalProducts / limit));
   const currentPageStart = totalProducts === 0 ? 0 : (page - 1) * limit + 1;
-  const currentPageEnd = Math.min(page * limit, totalProducts || filteredProducts.length);
-
+  const currentPageEnd = Math.min(
+    page * limit,
+    totalProducts || filteredProducts.length,
+  );
 
   const selectedProducts = useMemo(() => {
     const selected = new Set(selectedProductIds);
@@ -1686,7 +1943,9 @@ export default function ProductsPageClient() {
 
   const allVisibleSelected =
     filteredProducts.length > 0 &&
-    filteredProducts.every((product) => selectedProductIds.includes(product.id));
+    filteredProducts.every((product) =>
+      selectedProductIds.includes(product.id),
+    );
 
   const toggleSelectProduct = (productId: string) => {
     setSelectedProductIds((prev) =>
@@ -1760,7 +2019,9 @@ export default function ProductsPageClient() {
       return;
     }
 
-    const ok = window.confirm(`Ngừng bán ${selectedProducts.length} sản phẩm đã chọn?`);
+    const ok = window.confirm(
+      `Ngừng bán ${selectedProducts.length} sản phẩm đã chọn?`,
+    );
     if (!ok) return;
 
     try {
@@ -1774,7 +2035,11 @@ export default function ProductsPageClient() {
       await loadProducts(page, limit);
       setActionMessage("Đã cập nhật trạng thái các sản phẩm đã chọn.");
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : "Không cập nhật được sản phẩm đã chọn.");
+      setActionMessage(
+        err instanceof Error
+          ? err.message
+          : "Không cập nhật được sản phẩm đã chọn.",
+      );
     }
   };
 
@@ -1782,7 +2047,7 @@ export default function ProductsPageClient() {
     if (isOwner) {
       return Object.values(variant.branchStocks || {}).reduce(
         (sum, v) => sum + Number(v || 0),
-        0
+        0,
       );
     }
     return Number(variant.branchStocks?.[currentBranchId || ""] || 0);
@@ -1831,14 +2096,24 @@ export default function ProductsPageClient() {
     setImportProgressLabel("");
   };
 
+  const openImportModal = (mode: "products" | "images") => {
+    setImportMode(mode);
+    resetImportForm();
+    setImportOpen(true);
+  };
+
   const validateCreateForm = () => {
     if (!hasCommaFormat(colors)) {
-      setActionMessage("Màu sắc sai định dạng. Hãy nhập theo kiểu: ĐEN, TRẮNG, NÂU");
+      setActionMessage(
+        "Màu sắc sai định dạng. Hãy nhập theo kiểu: ĐEN, TRẮNG, NÂU",
+      );
       return false;
     }
 
     if (!hasCommaFormat(sizes)) {
-      setActionMessage("Kích thước sai định dạng. Hãy nhập theo kiểu: S, M, L, XL");
+      setActionMessage(
+        "Kích thước sai định dạng. Hãy nhập theo kiểu: S, M, L, XL",
+      );
       return false;
     }
 
@@ -1847,12 +2122,16 @@ export default function ProductsPageClient() {
 
   const validateEditForm = () => {
     if (!hasCommaFormat(editColors)) {
-      setActionMessage("Màu sắc sai định dạng. Hãy nhập theo kiểu: ĐEN, TRẮNG, NÂU");
+      setActionMessage(
+        "Màu sắc sai định dạng. Hãy nhập theo kiểu: ĐEN, TRẮNG, NÂU",
+      );
       return false;
     }
 
     if (!hasCommaFormat(editSizes)) {
-      setActionMessage("Kích thước sai định dạng. Hãy nhập theo kiểu: S, M, L, XL");
+      setActionMessage(
+        "Kích thước sai định dạng. Hãy nhập theo kiểu: S, M, L, XL",
+      );
       return false;
     }
 
@@ -1896,12 +2175,17 @@ export default function ProductsPageClient() {
         imageUrl: imageUrl.trim(),
         description: description.trim(),
         defaultPrice: canEditProductPrice ? Number(defaultPrice || 0) : 0,
-        defaultCostPrice: canEditProductCost ? Number(defaultCostPrice || 0) : 0,
+        defaultCostPrice: canEditProductCost
+          ? Number(defaultCostPrice || 0)
+          : 0,
         colorOptions: parseCommaTokens(colors),
         sizeOptions: parseCommaTokens(sizes),
         defaultBranchStocks: canManageInventory
           ? Object.fromEntries(
-              branches.map((branch) => [branch.id, Number(branchStocks[branch.id] || 0)])
+              branches.map((branch) => [
+                branch.id,
+                Number(branchStocks[branch.id] || 0),
+              ]),
             )
           : {},
       };
@@ -1916,7 +2200,9 @@ export default function ProductsPageClient() {
       setPage(1);
       setActionMessage("Đã tạo sản phẩm mới.");
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : "Không tạo được sản phẩm.");
+      setActionMessage(
+        err instanceof Error ? err.message : "Không tạo được sản phẩm.",
+      );
     } finally {
       setSavingProduct(false);
     }
@@ -1935,7 +2221,9 @@ export default function ProductsPageClient() {
     window.open(href, "_blank", "noopener,noreferrer");
   };
 
-  const getLabelPrintRows = (product: ProductItem | null): LabelPrintVariantRow[] => {
+  const getLabelPrintRows = (
+    product: ProductItem | null,
+  ): LabelPrintVariantRow[] => {
     if (!product) return [];
 
     const variants = Array.isArray(product.variants) ? product.variants : [];
@@ -1974,7 +2262,9 @@ export default function ProductsPageClient() {
   };
 
   const openProductsInPrintCenter = (targetProducts: ProductItem[]) => {
-    const safeProducts = Array.isArray(targetProducts) ? targetProducts.filter(Boolean) : [];
+    const safeProducts = Array.isArray(targetProducts)
+      ? targetProducts.filter(Boolean)
+      : [];
 
     if (!safeProducts.length) {
       setActionMessage("Chưa chọn sản phẩm để in tem.");
@@ -2009,13 +2299,20 @@ export default function ProductsPageClient() {
     };
 
     try {
-      sessionStorage.setItem(PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY, JSON.stringify(draft));
+      sessionStorage.setItem(
+        PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY,
+        JSON.stringify(draft),
+      );
     } catch {
       setActionMessage("Không lưu được dữ liệu in tem trên trình duyệt.");
       return;
     }
 
-    window.open("/print-center/product-labels", "_blank", "noopener,noreferrer");
+    window.open(
+      "/print-center/product-labels",
+      "_blank",
+      "noopener,noreferrer",
+    );
   };
 
   const openLabelPrintModal = (product: ProductItem) => {
@@ -2045,7 +2342,11 @@ export default function ProductsPageClient() {
         price: labelPriceMode === "hidden" ? 0 : row.price,
         quantity: Math.max(
           1,
-          Math.floor(Number(String(labelPrintQtyMap[row.key] || "1").replace(/[^\d]/g, "")) || 1),
+          Math.floor(
+            Number(
+              String(labelPrintQtyMap[row.key] || "1").replace(/[^\d]/g, ""),
+            ) || 1,
+          ),
         ),
       }));
   };
@@ -2063,7 +2364,10 @@ export default function ProductsPageClient() {
   const labelPrintRows = getLabelPrintRows(labelPrintProduct);
   const labelPreviewItems = buildLabelPrintItems();
   const labelPreviewHtml = labelPreviewItems.length
-    ? renderProductLabelsHtml({ items: labelPreviewItems, template: getLabelPrintTemplate() })
+    ? renderProductLabelsHtml({
+        items: labelPreviewItems,
+        template: getLabelPrintTemplate(),
+      })
     : `<div style="font-family:Arial,sans-serif;padding:16px;color:#666;">Chưa chọn SKU để in tem.</div>`;
 
   const handlePrintProductLabels = (product: ProductItem) => {
@@ -2087,12 +2391,18 @@ export default function ProductsPageClient() {
 
   const handleOpenEdit = (product: ProductItem) => {
     if (!canEditProduct) {
-      setActionMessage("Role hiện tại chỉ có quyền xem sản phẩm, không được sửa.");
+      setActionMessage(
+        "Role hiện tại chỉ có quyền xem sản phẩm, không được sửa.",
+      );
       return;
     }
 
-    const uniqueColors = uniqueValues(product.variants.map((variant) => variant.color));
-    const uniqueSizes = uniqueValues(product.variants.map((variant) => variant.size));
+    const uniqueColors = uniqueValues(
+      product.variants.map((variant) => variant.color),
+    );
+    const uniqueSizes = uniqueValues(
+      product.variants.map((variant) => variant.size),
+    );
 
     const minPrice =
       product.variants.length > 0
@@ -2109,15 +2419,16 @@ export default function ProductsPageClient() {
         branch.id,
         String(
           product.variants.reduce(
-            (sum, variant) => sum + Number(variant.branchStocks?.[branch.id] || 0),
-            0
-          )
+            (sum, variant) =>
+              sum + Number(variant.branchStocks?.[branch.id] || 0),
+            0,
+          ),
         ),
-      ])
+      ]),
     );
 
     const foundCategory = categories.find(
-      (item) => item.name === (product.category || "")
+      (item) => item.name === (product.category || ""),
     );
 
     setEditingProductId(product.id);
@@ -2140,7 +2451,9 @@ export default function ProductsPageClient() {
 
   const handleSaveEditProduct = async () => {
     if (!canEditProduct) {
-      setActionMessage("Role hiện tại chỉ có quyền xem sản phẩm, không được sửa.");
+      setActionMessage(
+        "Role hiện tại chỉ có quyền xem sản phẩm, không được sửa.",
+      );
       return;
     }
     if (!editingProductId) return;
@@ -2173,7 +2486,7 @@ export default function ProductsPageClient() {
                 branches.map((branch) => [
                   branch.id,
                   Number(editBranchStocks[branch.id] || 0),
-                ])
+                ]),
               ),
             }
           : {}),
@@ -2194,7 +2507,7 @@ export default function ProductsPageClient() {
       setActionMessage("Đã cập nhật sản phẩm.");
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Không cập nhật được sản phẩm."
+        err instanceof Error ? err.message : "Không cập nhật được sản phẩm.",
       );
     } finally {
       setSavingProduct(false);
@@ -2208,7 +2521,7 @@ export default function ProductsPageClient() {
     }
 
     const ok = window.confirm(
-      `Xóa sản phẩm "${product.name}"? Thao tác này sẽ xóa cả variant và tồn kho liên quan.`
+      `Xóa sản phẩm "${product.name}"? Thao tác này sẽ xóa cả variant và tồn kho liên quan.`,
     );
 
     if (!ok) return;
@@ -2221,7 +2534,7 @@ export default function ProductsPageClient() {
       setActionMessage("Đã xóa sản phẩm.");
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Không xóa được sản phẩm."
+        err instanceof Error ? err.message : "Không xóa được sản phẩm.",
       );
     } finally {
       setDeletingProductId(null);
@@ -2230,7 +2543,9 @@ export default function ProductsPageClient() {
 
   const handleQuickCreateCategory = async () => {
     if (!canManageProductMasterData) {
-      setActionMessage("Role hiện tại không có quyền quản trị danh mục sản phẩm.");
+      setActionMessage(
+        "Role hiện tại không có quyền quản trị danh mục sản phẩm.",
+      );
       return;
     }
 
@@ -2267,7 +2582,9 @@ export default function ProductsPageClient() {
       resetQuickCategoryForm();
       setActionMessage("Đã tạo danh mục mới.");
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : "Không tạo được danh mục.");
+      setActionMessage(
+        err instanceof Error ? err.message : "Không tạo được danh mục.",
+      );
     } finally {
       setSavingCategory(false);
     }
@@ -2300,7 +2617,7 @@ export default function ProductsPageClient() {
               Object.entries(variantBranchStocks).map(([key, value]) => [
                 key,
                 Number(value || 0),
-              ])
+              ]),
             )
           : {},
       };
@@ -2311,7 +2628,9 @@ export default function ProductsPageClient() {
       await loadProducts(page, limit);
       setActionMessage("Đã thêm variant mới.");
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : "Không thêm được variant.");
+      setActionMessage(
+        err instanceof Error ? err.message : "Không thêm được variant.",
+      );
     } finally {
       setSavingVariant(false);
     }
@@ -2331,7 +2650,9 @@ export default function ProductsPageClient() {
       setActionMessage("Đã cập nhật trạng thái sản phẩm.");
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Không đổi được trạng thái sản phẩm."
+        err instanceof Error
+          ? err.message
+          : "Không đổi được trạng thái sản phẩm.",
       );
     } finally {
       setTogglingStatusId(null);
@@ -2354,7 +2675,9 @@ export default function ProductsPageClient() {
       setImageUrl(result.url);
       setActionMessage("Đã upload ảnh sản phẩm.");
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : "Upload ảnh thất bại.");
+      setActionMessage(
+        err instanceof Error ? err.message : "Upload ảnh thất bại.",
+      );
     } finally {
       setUploadingCreateImage(false);
     }
@@ -2384,7 +2707,9 @@ export default function ProductsPageClient() {
       setActionMessage("Đã upload ảnh sản phẩm.");
     } catch (err) {
       console.error("upload edit image error:", err);
-      setActionMessage(err instanceof Error ? err.message : "Upload ảnh thất bại.");
+      setActionMessage(
+        err instanceof Error ? err.message : "Upload ảnh thất bại.",
+      );
     } finally {
       setUploadingEditImage(false);
     }
@@ -2437,37 +2762,67 @@ export default function ProductsPageClient() {
       ]);
 
       const sku = findValue(row, ["Mã SKU*", "Mã SKU", "ma sku", "sku"]);
-      const imageUrl = findValue(row, [
+      const productImageUrl = findValue(row, [
+        "Ảnh chính",
+        "Anh chinh",
         "Ảnh đại diện",
         "anh dai dien",
+        "Image chính",
+        "main image",
+        "product image",
         "image",
         "image url",
       ]);
+      const genericColorImageUrl = findValue(row, [
+        "Ảnh màu",
+        "Anh mau",
+        "Ảnh biến thể",
+        "Anh bien the",
+        "Variant image",
+        "Color image",
+      ]);
+      const colorImageMatch = findColorImageMatch(row, color);
+      const colorImageUrl = colorImageMatch.url || genericColorImageUrl;
+      const imageUrl = colorImageUrl || productImageUrl;
+      const imageSource = colorImageMatch.url
+        ? colorImageMatch.source
+        : genericColorImageUrl
+          ? "Ảnh màu"
+          : productImageUrl
+            ? "Ảnh chính / Ảnh đại diện"
+            : "";
+      const imageWarning = imageUrl
+        ? colorImageUrl
+          ? ""
+          : color
+            ? `Không thấy ảnh riêng cho màu ${color}; sẽ dùng ảnh chính.`
+            : "Không có màu để map ảnh riêng; sẽ dùng ảnh chính."
+        : "Chưa có link ảnh.";
 
       const weight = normalizeNumber(
-        findValue(row, ["Khối lượng", "khoi luong", "weight"])
+        findValue(row, ["Khối lượng", "khoi luong", "weight"]),
       );
 
       const retailPrice = normalizeNumber(
-        findValue(row, ["PL_Giá bán lẻ", "pl gia ban le", "gia ban le"])
+        findValue(row, ["PL_Giá bán lẻ", "pl gia ban le", "gia ban le"]),
       );
 
       const importPrice = getImportPriceFromRow(row);
 
       const stockCL = normalizeNumber(
-        findValue(row, ["LC_CN1_Tồn kho ban đầu*", "lc cn1 ton kho ban dau"])
+        findValue(row, ["LC_CN1_Tồn kho ban đầu*", "lc cn1 ton kho ban dau"]),
       );
 
       const stockXD = normalizeNumber(
-        findValue(row, ["LC_CN2_Tồn kho ban đầu*", "lc cn2 ton kho ban dau"])
+        findValue(row, ["LC_CN2_Tồn kho ban đầu*", "lc cn2 ton kho ban dau"]),
       );
 
       const stockQO = normalizeNumber(
-        findValue(row, ["LC_CN3_Tồn kho ban đầu*", "lc cn3 ton kho ban dau"])
+        findValue(row, ["LC_CN3_Tồn kho ban đầu*", "lc cn3 ton kho ban dau"]),
       );
 
       const stockTH = normalizeNumber(
-        findValue(row, ["LC_CN4_Tồn kho ban đầu*", "lc cn4 ton kho ban dau"])
+        findValue(row, ["LC_CN4_Tồn kho ban đầu*", "lc cn4 ton kho ban dau"]),
       );
 
       const hasAnyUsefulValue =
@@ -2483,17 +2838,23 @@ export default function ProductsPageClient() {
         stockXD ||
         stockQO ||
         stockTH ||
+        productImageUrl ||
+        colorImageUrl ||
         imageUrl;
 
       if (!hasAnyUsefulValue) continue;
 
       if (!currentProductName) {
-        errors.push(`Dòng ${index + 2}: không xác định được sản phẩm gốc, đã bỏ qua`);
+        errors.push(
+          `Dòng ${index + 2}: không xác định được sản phẩm gốc, đã bỏ qua`,
+        );
         continue;
       }
 
       if (!sku || !color || !size) {
-        errors.push(`Dòng ${index + 2}: thiếu SKU hoặc màu hoặc size, đã bỏ qua`);
+        errors.push(
+          `Dòng ${index + 2}: thiếu SKU hoặc màu hoặc size, đã bỏ qua`,
+        );
         continue;
       }
 
@@ -2506,6 +2867,10 @@ export default function ProductsPageClient() {
         sku,
         weight,
         imageUrl,
+        productImageUrl,
+        colorImageUrl,
+        imageSource,
+        imageWarning,
         retailPrice,
         importPrice,
         stockCL,
@@ -2548,15 +2913,17 @@ export default function ProductsPageClient() {
         const headerRowIndex = detectHeaderRowIndex(sheetData);
 
         if (headerRowIndex === -1) {
-          previewErrors.push(`${file.name}: không tìm thấy dòng tiêu đề hợp lệ.`);
+          previewErrors.push(
+            `${file.name}: không tìm thấy dòng tiêu đề hợp lệ.`,
+          );
           continue;
         }
 
-        const rawRows = buildRowsFromSheetData(sheetData, headerRowIndex).filter(
-          (row) =>
-            Object.values(row).some(
-              (value) => String(value ?? "").trim() !== ""
-            )
+        const rawRows = buildRowsFromSheetData(
+          sheetData,
+          headerRowIndex,
+        ).filter((row) =>
+          Object.values(row).some((value) => String(value ?? "").trim() !== ""),
         );
 
         if (!rawRows.length) {
@@ -2570,8 +2937,9 @@ export default function ProductsPageClient() {
       } catch (err) {
         console.error("Preview Excel error:", err);
         previewErrors.push(
-          `${file.name}: không đọc được file. ${err instanceof Error ? err.message : ""
-          }`
+          `${file.name}: không đọc được file. ${
+            err instanceof Error ? err.message : ""
+          }`,
         );
       }
     }
@@ -2597,16 +2965,20 @@ export default function ProductsPageClient() {
       setImportProgressLabel("Đang upload file Excel...");
       setActionMessage("");
 
-      const result = await importProductsFiles(selectedFiles, true, (percent) => {
-        setImportProgress(percent);
-        setImportProgressLabel(
-          percent >= 100
-            ? "Hoàn tất import."
-            : percent >= 85
-              ? "Đã upload xong, server đang xử lý dữ liệu..."
-              : `Đang upload file Excel... ${percent}%`
-        );
-      });
+      const result = await importProductsFiles(
+        selectedFiles,
+        true,
+        (percent) => {
+          setImportProgress(percent);
+          setImportProgressLabel(
+            percent >= 100
+              ? "Hoàn tất import."
+              : percent >= 85
+                ? "Đã upload xong, server đang xử lý dữ liệu..."
+                : `Đang upload file Excel... ${percent}%`,
+          );
+        },
+      );
       await loadCategories();
       await loadProductCategoryOptions();
       await loadProducts(1, limit);
@@ -2620,17 +2992,16 @@ export default function ProductsPageClient() {
 
       resetImportForm();
       setActionMessage(
-        `Đã import sản phẩm. Thành công ${successCount} dòng, lỗi ${failedCount} dòng.`
+        `Đã import sản phẩm. Thành công ${successCount} dòng, lỗi ${failedCount} dòng.`,
       );
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Import sản phẩm thất bại."
+        err instanceof Error ? err.message : "Import sản phẩm thất bại.",
       );
     } finally {
       setImporting(false);
     }
   };
-
 
   const handleClearAllDescriptions = async () => {
     if (!canManageProductMasterData) {
@@ -2639,12 +3010,12 @@ export default function ProductsPageClient() {
     }
 
     const ok1 = window.confirm(
-      "Xoá toàn bộ mô tả sản phẩm? Thao tác này không hoàn tác được."
+      "Xoá toàn bộ mô tả sản phẩm? Thao tác này không hoàn tác được.",
     );
     if (!ok1) return;
 
     const ok2 = window.confirm(
-      "Xác nhận lần 2: tất cả mô tả sản phẩm sẽ bị xoá trắng."
+      "Xác nhận lần 2: tất cả mô tả sản phẩm sẽ bị xoá trắng.",
     );
     if (!ok2) return;
 
@@ -2656,7 +3027,7 @@ export default function ProductsPageClient() {
       setActionMessage(`Đã xoá mô tả của ${result?.count || 0} sản phẩm.`);
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Không xoá được mô tả sản phẩm."
+        err instanceof Error ? err.message : "Không xoá được mô tả sản phẩm.",
       );
     }
   };
@@ -2682,29 +3053,38 @@ export default function ProductsPageClient() {
         q: exportScope === "all" ? "" : query.trim(),
         category: exportScope === "all" ? "ALL" : groupFilter,
         status: exportScope === "all" ? "ALL" : statusFilter,
-        branchId: !isOwner && !canViewInventory && currentBranchId ? currentBranchId : undefined,
+        branchId:
+          !isOwner && !canViewInventory && currentBranchId
+            ? currentBranchId
+            : undefined,
       });
 
       const exportSource = Array.isArray(result) ? result : result?.data || [];
-      const branchesForExport = visibleBranches.length ? visibleBranches : branches;
+      const branchesForExport = visibleBranches.length
+        ? visibleBranches
+        : branches;
 
-      const rowCount = buildEnterpriseProductExport(exportSource, branchesForExport, {
-        scope: exportScope,
-        branchIds: exportBranchIds,
-        columns: exportColumns,
-        onlyInStock: exportOnlyInStock,
-        onlyMissingCost: exportOnlyMissingCost,
-        onlyLowStock: exportOnlyLowStock,
-        includeSummarySheet: exportIncludeSummarySheet,
-        includeBranchSheets: exportIncludeBranchSheets,
-        sortMode: exportSortMode,
-      });
+      const rowCount = buildEnterpriseProductExport(
+        exportSource,
+        branchesForExport,
+        {
+          scope: exportScope,
+          branchIds: exportBranchIds,
+          columns: exportColumns,
+          onlyInStock: exportOnlyInStock,
+          onlyMissingCost: exportOnlyMissingCost,
+          onlyLowStock: exportOnlyLowStock,
+          includeSummarySheet: exportIncludeSummarySheet,
+          includeBranchSheets: exportIncludeBranchSheets,
+          sortMode: exportSortMode,
+        },
+      );
 
       setExportOpen(false);
       setActionMessage(`Đã xuất Excel enterprise ${rowCount} dòng SKU.`);
     } catch (err) {
       setActionMessage(
-        err instanceof Error ? err.message : "Xuất Excel sản phẩm thất bại."
+        err instanceof Error ? err.message : "Xuất Excel sản phẩm thất bại.",
       );
     } finally {
       setExportingProducts(false);
@@ -2712,7 +3092,13 @@ export default function ProductsPageClient() {
   };
 
   const applyExportPreset = (
-    preset: "management" | "accounting" | "stocktake" | "missing_cost" | "low_stock" | "full"
+    preset:
+      | "management"
+      | "accounting"
+      | "stocktake"
+      | "missing_cost"
+      | "low_stock"
+      | "full",
   ) => {
     if (preset === "management") {
       setExportScope("filtered");
@@ -2845,13 +3231,18 @@ export default function ProductsPageClient() {
     setExportSortMode("product_asc");
     setExportColumns(
       Object.fromEntries(
-        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [key, true])
-      ) as ExportColumnState
+        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [
+          key,
+          true,
+        ]),
+      ) as ExportColumnState,
     );
   };
 
-  const exportSelectedBranchCount = exportBranchIds.length || visibleBranches.length;
-  const exportSelectedColumnCount = Object.values(exportColumns).filter(Boolean).length;
+  const exportSelectedBranchCount =
+    exportBranchIds.length || visibleBranches.length;
+  const exportSelectedColumnCount =
+    Object.values(exportColumns).filter(Boolean).length;
   const exportScopeLabel =
     exportScope === "all"
       ? "Tất cả sản phẩm"
@@ -2902,13 +3293,23 @@ export default function ProductsPageClient() {
             ) : null}
 
             {canImportProducts ? (
-              <Button
-                variant="secondary"
-                onClick={() => setImportOpen(true)}
-                className="rounded-full"
-              >
-                Nhập Excel
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => openImportModal("products")}
+                  className="rounded-full"
+                >
+                  Nhập Excel
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => openImportModal("images")}
+                  className="rounded-full"
+                >
+                  Nhập Excel ảnh
+                </Button>
+              </>
             ) : null}
 
             {canManageProductMasterData ? (
@@ -2936,13 +3337,21 @@ export default function ProductsPageClient() {
       />
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Tổng sản phẩm" value={totalProducts} sub="Theo bộ lọc hiện tại" />
+        <StatCard
+          title="Tổng sản phẩm"
+          value={totalProducts}
+          sub="Theo bộ lọc hiện tại"
+        />
         <StatCard
           title="Tổng variants"
           value={totalVariants}
           sub="Tất cả size / màu đang có"
         />
-        <StatCard title="SKU tồn thấp" value={lowStockCount} sub="<= 3 sản phẩm" />
+        <StatCard
+          title="SKU tồn thấp"
+          value={lowStockCount}
+          sub="<= 3 sản phẩm"
+        />
 
         {canViewInventoryValue ? (
           <StatCard
@@ -3047,10 +3456,17 @@ export default function ProductsPageClient() {
                 Lưu để giữ cách sắp xếp này cho lần mở sau.
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={resetDisplayOptions} className="rounded-xl px-3 py-2 text-xs">
+                <Button
+                  variant="secondary"
+                  onClick={resetDisplayOptions}
+                  className="rounded-xl px-3 py-2 text-xs"
+                >
                   Về mặc định
                 </Button>
-                <Button onClick={saveDisplayOptions} className="rounded-xl px-3 py-2 text-xs">
+                <Button
+                  onClick={saveDisplayOptions}
+                  className="rounded-xl px-3 py-2 text-xs"
+                >
                   Lưu tuỳ chọn
                 </Button>
               </div>
@@ -3079,7 +3495,8 @@ export default function ProductsPageClient() {
                 Đã chọn {selectedProductIds.length} sản phẩm
               </div>
               <div className="mt-1 text-xs text-neutral-500">
-                Có thể đưa sản phẩm đã chọn sang Trung tâm in ấn để cấu hình tem và preview trước khi in.
+                Có thể đưa sản phẩm đã chọn sang Trung tâm in ấn để cấu hình tem
+                và preview trước khi in.
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -3091,9 +3508,7 @@ export default function ProductsPageClient() {
                   Xuất Excel đã chọn
                 </Button>
               ) : null}
-              <Button onClick={handleBulkPrintLabels}>
-                In tem đã chọn
-              </Button>
+              <Button onClick={handleBulkPrintLabels}>In tem đã chọn</Button>
               {canToggleProductStatus ? (
                 <Button variant="danger" onClick={handleBulkToggleInactive}>
                   Ngừng bán đã chọn
@@ -3110,14 +3525,19 @@ export default function ProductsPageClient() {
             type="button"
             onClick={() => setCategoryNormalizerOpen((prev) => !prev)}
             className="flex w-full items-center justify-between px-5 py-4 text-left"
-            title={categoryNormalizerOpen ? "Thu gọn chuẩn hoá danh mục" : "Mở chuẩn hoá danh mục"}
+            title={
+              categoryNormalizerOpen
+                ? "Thu gọn chuẩn hoá danh mục"
+                : "Mở chuẩn hoá danh mục"
+            }
           >
             <div>
               <h3 className="text-base font-semibold text-neutral-900">
                 Chuẩn hoá danh mục sản phẩm
               </h3>
               <p className="mt-1 text-xs text-neutral-500">
-                Gộp danh mục dư thừa khi cần. Mặc định thu gọn để bảng sản phẩm gọn hơn.
+                Gộp danh mục dư thừa khi cần. Mặc định thu gọn để bảng sản phẩm
+                gọn hơn.
               </p>
             </div>
             <span className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-700">
@@ -3148,7 +3568,9 @@ export default function ProductsPageClient() {
           </div>
         ) : filteredProducts.length === 0 ? (
           <div className="p-5">
-            <p className="text-sm text-neutral-500">Không có sản phẩm phù hợp.</p>
+            <p className="text-sm text-neutral-500">
+              Không có sản phẩm phù hợp.
+            </p>
           </div>
         ) : (
           <>
@@ -3157,14 +3579,14 @@ export default function ProductsPageClient() {
                 const variants = product.variants || [];
                 const productStock = variants.reduce(
                   (sum, v) => sum + getVariantScopedStock(v),
-                  0
+                  0,
                 );
                 const branchBadges = visibleBranches.map((branch) => ({
                   id: branch.id,
                   name: branch.name,
                   qty: variants.reduce(
                     (s, v) => s + Number(v.branchStocks?.[branch.id] || 0),
-                    0
+                    0,
                   ),
                 }));
                 const shortBranchText = branchBadges
@@ -3188,7 +3610,8 @@ export default function ProductsPageClient() {
                         {product.name}
                       </div>
                       <div className="mt-1 truncate text-xs text-neutral-500">
-                        /{product.slug || getMainSku(product)} · {variants.length} SKU
+                        /{product.slug || getMainSku(product)} ·{" "}
+                        {variants.length} SKU
                       </div>
                       <div className="mt-1 truncate text-[11px] text-neutral-500">
                         {shortBranchText || "Chưa có tồn theo chi nhánh"}
@@ -3207,7 +3630,9 @@ export default function ProductsPageClient() {
                       >
                         {productStock}
                       </div>
-                      <div className="mt-1 text-[11px] text-neutral-500">tồn</div>
+                      <div className="mt-1 text-[11px] text-neutral-500">
+                        tồn
+                      </div>
                     </div>
                   </button>
                 );
@@ -3215,7 +3640,9 @@ export default function ProductsPageClient() {
 
               <div className="bg-white p-3">
                 <div className="flex flex-wrap gap-2 text-sm text-neutral-500">
-                  <span>Trang {page} / {totalProductPages}</span>
+                  <span>
+                    Trang {page} / {totalProductPages}
+                  </span>
                   <span>· {totalProducts} sản phẩm</span>
                   <span className="rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-white">
                     Đã chọn {selectedProductIds.length} sản phẩm
@@ -3233,10 +3660,16 @@ export default function ProductsPageClient() {
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={page >= Math.max(1, Math.ceil(totalProducts / limit)) || loading}
+                    disabled={
+                      page >= Math.max(1, Math.ceil(totalProducts / limit)) ||
+                      loading
+                    }
                     onClick={() =>
                       setPage((prev) =>
-                        Math.min(Math.max(1, Math.ceil(totalProducts / limit)), prev + 1)
+                        Math.min(
+                          Math.max(1, Math.ceil(totalProducts / limit)),
+                          prev + 1,
+                        ),
                       )
                     }
                     className="w-full"
@@ -3248,300 +3681,424 @@ export default function ProductsPageClient() {
             </div>
 
             <div className="hidden overflow-auto md:block">
-            <table className="min-w-[1750px] w-full border-collapse">
-              <thead className="bg-neutral-50">
-                <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
-                  <th className="w-10 border-b border-neutral-200 px-3 py-3">
-                    <input
-                      type="checkbox"
-                      aria-label="Chọn tất cả sản phẩm đang hiện"
-                      checked={allVisibleSelected}
-                      onChange={toggleSelectAllVisibleProducts}
-                      className="h-4 w-4 accent-neutral-900"
-                    />
-                  </th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Ảnh</th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Sản phẩm" active={sortKey === "name"} direction={sortDirection} onClick={() => handleSort("name")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Loại" active={sortKey === "category"} direction={sortDirection} onClick={() => handleSort("category")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Màu" active={sortKey === "color"} direction={sortDirection} onClick={() => handleSort("color")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Size" active={sortKey === "size"} direction={sortDirection} onClick={() => handleSort("size")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="SKU chính" active={sortKey === "sku"} direction={sortDirection} onClick={() => handleSort("sku")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Giá bán" active={sortKey === "price"} direction={sortDirection} onClick={() => handleSort("price")} /></th>
-                  {canViewCost ? (
-                    <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Giá nhập" active={sortKey === "costPrice"} direction={sortDirection} onClick={() => handleSort("costPrice")} /></th>
-                  ) : null}
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Theo chi nhánh" active={sortKey === "branchStock"} direction={sortDirection} onClick={() => handleSort("branchStock")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Tồn" active={sortKey === "stock"} direction={sortDirection} onClick={() => handleSort("stock")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Trạng thái" active={sortKey === "status"} direction={sortDirection} onClick={() => handleSort("status")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3"><SortButton label="Mô tả" active={sortKey === "description"} direction={sortDirection} onClick={() => handleSort("description")} /></th>
-                  <th className="border-b border-neutral-200 px-3 py-3">Thao tác</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredProducts.map((product) => {
-                  const productStock = product.variants.reduce(
-                    (sum, v) => sum + getVariantScopedStock(v),
-                    0
-                  );
-
-                  const branchBadges = visibleBranches.map((branch) => ({
-                    id: branch.id,
-                    name: branch.name,
-                    qty: product.variants.reduce(
-                      (s, v) => s + Number(v.branchStocks?.[branch.id] || 0),
-                      0
-                    ),
-                  }));
-
-                  const minPrice =
-                    product.variants.length > 0
-                      ? Math.min(...product.variants.map((v) => Number(v.price || 0)))
-                      : 0;
-
-                  const minCostPrice =
-                    product.variants.length > 0
-                      ? Math.min(...product.variants.map((v) => Number(v.costPrice || 0)))
-                      : 0;
-
-                  const colorsList = uniqueValues(
-                    product.variants.map((variant) => variant.color)
-                  );
-                  const sizesList = uniqueValues(
-                    product.variants.map((variant) => variant.size)
-                  );
-
-                  return (
-                    <tr
-                      key={product.id}
-                      className={`align-middle text-sm hover:bg-neutral-50 ${
-                        selectedProductIds.includes(product.id) ? "bg-neutral-50" : "bg-white"
-                      }`}
-                    >
-                      <td className="border-b border-neutral-100 px-3 py-3 align-middle">
-                        <input
-                          type="checkbox"
-                          aria-label={`Chọn ${product.name}`}
-                          checked={selectedProductIds.includes(product.id)}
-                          onChange={() => toggleSelectProduct(product.id)}
-                          className="h-4 w-4 accent-neutral-900"
+              <table className="min-w-[1750px] w-full border-collapse">
+                <thead className="bg-neutral-50">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
+                    <th className="w-10 border-b border-neutral-200 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label="Chọn tất cả sản phẩm đang hiện"
+                        checked={allVisibleSelected}
+                        onChange={toggleSelectAllVisibleProducts}
+                        className="h-4 w-4 accent-neutral-900"
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      Ảnh
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Sản phẩm"
+                        active={sortKey === "name"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("name")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Loại"
+                        active={sortKey === "category"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("category")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Màu"
+                        active={sortKey === "color"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("color")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Size"
+                        active={sortKey === "size"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("size")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="SKU chính"
+                        active={sortKey === "sku"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("sku")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Giá bán"
+                        active={sortKey === "price"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("price")}
+                      />
+                    </th>
+                    {canViewCost ? (
+                      <th className="border-b border-neutral-200 px-3 py-3">
+                        <SortButton
+                          label="Giá nhập"
+                          active={sortKey === "costPrice"}
+                          direction={sortDirection}
+                          onClick={() => handleSort("costPrice")}
                         />
-                      </td>
-                      <td className="border-b border-neutral-100 px-3 py-3 align-middle">
-                        <button
-                          type="button"
-                          onClick={() => openProductDetail(product)}
-                          className="block rounded-2xl transition hover:opacity-80"
-                          title="Mở chi tiết sản phẩm trong tab mới"
-                        >
-                          <ProductImage src={product.imageUrl} alt={product.name} />
-                        </button>
-                      </td>
+                      </th>
+                    ) : null}
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Theo chi nhánh"
+                        active={sortKey === "branchStock"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("branchStock")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Tồn"
+                        active={sortKey === "stock"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("stock")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Trạng thái"
+                        active={sortKey === "status"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("status")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      <SortButton
+                        label="Mô tả"
+                        active={sortKey === "description"}
+                        direction={sortDirection}
+                        onClick={() => handleSort("description")}
+                      />
+                    </th>
+                    <th className="border-b border-neutral-200 px-3 py-3">
+                      Thao tác
+                    </th>
+                  </tr>
+                </thead>
 
-                      <td className="min-w-[260px] border-b border-neutral-100 px-3 py-3">
-                        <button
-                          type="button"
-                          onClick={() => openProductDetail(product)}
-                          className="text-left font-medium text-neutral-900 underline-offset-2 hover:underline"
-                          title="Mở chi tiết sản phẩm trong tab mới"
-                        >
-                          {product.name}
-                        </button>
-                        <div className="mt-1 text-xs text-neutral-500">
-                          /{product.slug || "—"} · {product.weight || 0}g
-                        </div>
-                      </td>
+                <tbody>
+                  {filteredProducts.map((product) => {
+                    const productStock = product.variants.reduce(
+                      (sum, v) => sum + getVariantScopedStock(v),
+                      0,
+                    );
 
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        {canManageProductMasterData ? (
-                          <Link href="/control/product-categories" className="inline-flex" title="Sửa danh mục sản phẩm">
-                            <Badge tone="blue">{product.category || "Chưa có danh mục"}</Badge>
-                          </Link>
-                        ) : (
-                          <Badge tone="blue">{product.category || "Chưa có danh mục"}</Badge>
-                        )}
-                      </td>
+                    const branchBadges = visibleBranches.map((branch) => ({
+                      id: branch.id,
+                      name: branch.name,
+                      qty: product.variants.reduce(
+                        (s, v) => s + Number(v.branchStocks?.[branch.id] || 0),
+                        0,
+                      ),
+                    }));
 
-                      <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {colorsList.map((color) => (
-                            <Badge key={color} tone="gray">
-                              {color}
-                            </Badge>
-                          ))}
-                        </div>
-                      </td>
+                    const minPrice =
+                      product.variants.length > 0
+                        ? Math.min(
+                            ...product.variants.map((v) =>
+                              Number(v.price || 0),
+                            ),
+                          )
+                        : 0;
 
-                      <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {sizesList.map((size) => (
-                            <Badge key={size} tone="gray">
-                              {size}
-                            </Badge>
-                          ))}
-                        </div>
-                      </td>
+                    const minCostPrice =
+                      product.variants.length > 0
+                        ? Math.min(
+                            ...product.variants.map((v) =>
+                              Number(v.costPrice || 0),
+                            ),
+                          )
+                        : 0;
 
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        <Badge tone="gray">{getMainSku(product)}</Badge>
-                      </td>
+                    const colorsList = uniqueValues(
+                      product.variants.map((variant) => variant.color),
+                    );
+                    const sizesList = uniqueValues(
+                      product.variants.map((variant) => variant.size),
+                    );
 
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        {currency(minPrice)}
-                      </td>
-
-                      {canViewCost ? (
-                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                          {currency(minCostPrice)}
+                    return (
+                      <tr
+                        key={product.id}
+                        className={`align-middle text-sm hover:bg-neutral-50 ${
+                          selectedProductIds.includes(product.id)
+                            ? "bg-neutral-50"
+                            : "bg-white"
+                        }`}
+                      >
+                        <td className="border-b border-neutral-100 px-3 py-3 align-middle">
+                          <input
+                            type="checkbox"
+                            aria-label={`Chọn ${product.name}`}
+                            checked={selectedProductIds.includes(product.id)}
+                            onChange={() => toggleSelectProduct(product.id)}
+                            className="h-4 w-4 accent-neutral-900"
+                          />
                         </td>
-                      ) : null}
-
-                      <td className="min-w-[220px] border-b border-neutral-100 px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {branchBadges.map((item) => (
-                            <Badge
-                              key={item.id}
-                              tone={item.qty <= 3 ? "amber" : "green"}
-                            >
-                              {item.name}: {item.qty}
-                            </Badge>
-                          ))}
-                        </div>
-                      </td>
-
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        <div className="font-medium text-neutral-900">{productStock}</div>
-                        <div className="mt-1 text-xs text-neutral-500">
-                          {isOwner ? "Tổng tất cả chi nhánh" : "Tồn chi nhánh của bạn"}
-                        </div>
-                      </td>
-
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                        <Badge tone={toneForStatus(product.status)}>
-                          {product.status || "DRAFT"}
-                        </Badge>
-                      </td>
-
-                      <td className="min-w-[180px] border-b border-neutral-100 px-3 py-3 text-neutral-600">
-                        {shortText(product.description, 80)}
-                      </td>
-
-                      <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3 align-middle">
-                        <div className="flex items-center justify-end gap-2">
+                        <td className="border-b border-neutral-100 px-3 py-3 align-middle">
                           <button
                             type="button"
                             onClick={() => openProductDetail(product)}
-                            className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
+                            className="block rounded-2xl transition hover:opacity-80"
+                            title="Mở chi tiết sản phẩm trong tab mới"
                           >
-                            Chi tiết
+                            <ProductImage
+                              src={product.imageUrl}
+                              alt={product.name}
+                            />
                           </button>
+                        </td>
 
+                        <td className="min-w-[260px] border-b border-neutral-100 px-3 py-3">
                           <button
                             type="button"
-                            onClick={() => handlePrintProductLabels(product)}
-                            className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                            onClick={() => openProductDetail(product)}
+                            className="text-left font-medium text-neutral-900 underline-offset-2 hover:underline"
+                            title="Mở chi tiết sản phẩm trong tab mới"
                           >
-                            In tem
+                            {product.name}
                           </button>
+                          <div className="mt-1 text-xs text-neutral-500">
+                            /{product.slug || "—"} · {product.weight || 0}g
+                          </div>
+                        </td>
 
-                          <button
-                            type="button"
-                            onClick={() => toggleSelectProduct(product.id)}
-                            className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
-                          >
-                            {selectedProductIds.includes(product.id) ? "Bỏ chọn" : "Chọn"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
+                          {canManageProductMasterData ? (
+                            <Link
+                              href="/control/product-categories"
+                              className="inline-flex"
+                              title="Sửa danh mục sản phẩm"
+                            >
+                              <Badge tone="blue">
+                                {product.category || "Chưa có danh mục"}
+                              </Badge>
+                            </Link>
+                          ) : (
+                            <Badge tone="blue">
+                              {product.category || "Chưa có danh mục"}
+                            </Badge>
+                          )}
+                        </td>
 
-            <div className="flex flex-col gap-3 border-t border-neutral-200 px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
-              <div className="flex flex-wrap items-center gap-2 text-neutral-500">
-                <span>Trang {page} / {totalProductPages}</span>
-                <span>· {totalProducts} sản phẩm</span>
-                <span className="rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-white">
-                  Đã chọn {selectedProductIds.length} sản phẩm
-                </span>
-              </div>
+                        <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            {colorsList.map((color) => (
+                              <Badge key={color} tone="gray">
+                                {color}
+                              </Badge>
+                            ))}
+                          </div>
+                        </td>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  className="rounded-xl border border-neutral-300 px-3 py-2 outline-none"
-                  value={limit}
-                  onChange={(e) => {
-                    const nextLimit = Number(e.target.value);
-                    setLimit(nextLimit);
-                    setPage(1);
-                  }}
-                >
-                  <option value={20}>20 dòng</option>
-                  <option value={50}>50 dòng</option>
-                  <option value={100}>100 dòng</option>
-                </select>
+                        <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            {sizesList.map((size) => (
+                              <Badge key={size} tone="gray">
+                                {size}
+                              </Badge>
+                            ))}
+                          </div>
+                        </td>
 
-                {/* về đầu */}
-                <Button
-                  variant="secondary"
-                  disabled={page <= 1 || loading}
-                  onClick={() => setPage(1)}
-                >
-                  Đầu
-                </Button>
+                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
+                          <Badge tone="gray">{getMainSku(product)}</Badge>
+                        </td>
 
-                {/* lùi */}
-                <Button
-                  variant="secondary"
-                  disabled={page <= 1 || loading}
-                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                >
-                  Trước
-                </Button>
+                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
+                          {currency(minPrice)}
+                        </td>
 
-                {/* input nhảy trang */}
-                <input
-                  type="number"
-                  min={1}
-                  max={Math.max(1, Math.ceil(totalProducts / limit))}
-                  value={page}
-                  onChange={(e) => {
-                    const maxPage = Math.max(1, Math.ceil(totalProducts / limit));
-                    const nextPage = Math.min(
-                      maxPage,
-                      Math.max(1, Number(e.target.value || 1))
+                        {canViewCost ? (
+                          <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
+                            {currency(minCostPrice)}
+                          </td>
+                        ) : null}
+
+                        <td className="min-w-[220px] border-b border-neutral-100 px-3 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            {branchBadges.map((item) => (
+                              <Badge
+                                key={item.id}
+                                tone={item.qty <= 3 ? "amber" : "green"}
+                              >
+                                {item.name}: {item.qty}
+                              </Badge>
+                            ))}
+                          </div>
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
+                          <div className="font-medium text-neutral-900">
+                            {productStock}
+                          </div>
+                          <div className="mt-1 text-xs text-neutral-500">
+                            {isOwner
+                              ? "Tổng tất cả chi nhánh"
+                              : "Tồn chi nhánh của bạn"}
+                          </div>
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
+                          <Badge tone={toneForStatus(product.status)}>
+                            {product.status || "DRAFT"}
+                          </Badge>
+                        </td>
+
+                        <td className="min-w-[180px] border-b border-neutral-100 px-3 py-3 text-neutral-600">
+                          {shortText(product.description, 80)}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3 align-middle">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openProductDetail(product)}
+                              className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
+                            >
+                              Chi tiết
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handlePrintProductLabels(product)}
+                              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                            >
+                              In tem
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleSelectProduct(product.id)}
+                              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                            >
+                              {selectedProductIds.includes(product.id)
+                                ? "Bỏ chọn"
+                                : "Chọn"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     );
-                    setPage(nextPage);
-                  }}
-                  className="w-20 rounded-xl border border-neutral-300 px-3 py-2 text-center outline-none"
-                />
+                  })}
+                </tbody>
+              </table>
 
-                {/* tiến */}
-                <Button
-                  variant="secondary"
-                  disabled={page >= Math.max(1, Math.ceil(totalProducts / limit)) || loading}
-                  onClick={() =>
-                    setPage((prev) =>
-                      Math.min(Math.max(1, Math.ceil(totalProducts / limit)), prev + 1)
-                    )
-                  }
-                >
-                  Sau
-                </Button>
+              <div className="flex flex-col gap-3 border-t border-neutral-200 px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap items-center gap-2 text-neutral-500">
+                  <span>
+                    Trang {page} / {totalProductPages}
+                  </span>
+                  <span>· {totalProducts} sản phẩm</span>
+                  <span className="rounded-full bg-neutral-900 px-3 py-1 text-xs font-semibold text-white">
+                    Đã chọn {selectedProductIds.length} sản phẩm
+                  </span>
+                </div>
 
-                {/* về cuối */}
-                <Button
-                  variant="secondary"
-                  disabled={page >= Math.max(1, Math.ceil(totalProducts / limit)) || loading}
-                  onClick={() => setPage(Math.max(1, Math.ceil(totalProducts / limit)))}
-                >
-                  Cuối
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className="rounded-xl border border-neutral-300 px-3 py-2 outline-none"
+                    value={limit}
+                    onChange={(e) => {
+                      const nextLimit = Number(e.target.value);
+                      setLimit(nextLimit);
+                      setPage(1);
+                    }}
+                  >
+                    <option value={20}>20 dòng</option>
+                    <option value={50}>50 dòng</option>
+                    <option value={100}>100 dòng</option>
+                  </select>
+
+                  {/* về đầu */}
+                  <Button
+                    variant="secondary"
+                    disabled={page <= 1 || loading}
+                    onClick={() => setPage(1)}
+                  >
+                    Đầu
+                  </Button>
+
+                  {/* lùi */}
+                  <Button
+                    variant="secondary"
+                    disabled={page <= 1 || loading}
+                    onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                  >
+                    Trước
+                  </Button>
+
+                  {/* input nhảy trang */}
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, Math.ceil(totalProducts / limit))}
+                    value={page}
+                    onChange={(e) => {
+                      const maxPage = Math.max(
+                        1,
+                        Math.ceil(totalProducts / limit),
+                      );
+                      const nextPage = Math.min(
+                        maxPage,
+                        Math.max(1, Number(e.target.value || 1)),
+                      );
+                      setPage(nextPage);
+                    }}
+                    className="w-20 rounded-xl border border-neutral-300 px-3 py-2 text-center outline-none"
+                  />
+
+                  {/* tiến */}
+                  <Button
+                    variant="secondary"
+                    disabled={
+                      page >= Math.max(1, Math.ceil(totalProducts / limit)) ||
+                      loading
+                    }
+                    onClick={() =>
+                      setPage((prev) =>
+                        Math.min(
+                          Math.max(1, Math.ceil(totalProducts / limit)),
+                          prev + 1,
+                        ),
+                      )
+                    }
+                  >
+                    Sau
+                  </Button>
+
+                  {/* về cuối */}
+                  <Button
+                    variant="secondary"
+                    disabled={
+                      page >= Math.max(1, Math.ceil(totalProducts / limit)) ||
+                      loading
+                    }
+                    onClick={() =>
+                      setPage(Math.max(1, Math.ceil(totalProducts / limit)))
+                    }
+                  >
+                    Cuối
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
           </>
         )}
       </Panel>
@@ -3555,7 +4112,9 @@ export default function ProductsPageClient() {
         <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-3">
             <Panel className="p-4">
-              <p className="text-sm font-semibold text-neutral-900">Phạm vi sản phẩm</p>
+              <p className="text-sm font-semibold text-neutral-900">
+                Phạm vi sản phẩm
+              </p>
               <div className="mt-3 space-y-2 text-sm text-neutral-700">
                 <label className="flex items-center gap-2">
                   <input
@@ -3585,7 +4144,9 @@ export default function ProductsPageClient() {
             </Panel>
 
             <Panel className="p-4">
-              <p className="text-sm font-semibold text-neutral-900">Bộ lọc nhanh</p>
+              <p className="text-sm font-semibold text-neutral-900">
+                Bộ lọc nhanh
+              </p>
               <div className="mt-3 space-y-2 text-sm text-neutral-700">
                 <label className="flex items-center gap-2">
                   <input
@@ -3615,13 +4176,17 @@ export default function ProductsPageClient() {
             </Panel>
 
             <Panel className="p-4">
-              <p className="text-sm font-semibold text-neutral-900">Sheet & sắp xếp</p>
+              <p className="text-sm font-semibold text-neutral-900">
+                Sheet & sắp xếp
+              </p>
               <div className="mt-3 space-y-2 text-sm text-neutral-700">
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
                     checked={exportIncludeSummarySheet}
-                    onChange={(e) => setExportIncludeSummarySheet(e.target.checked)}
+                    onChange={(e) =>
+                      setExportIncludeSummarySheet(e.target.checked)
+                    }
                   />
                   Có sheet tổng quan
                 </label>
@@ -3629,19 +4194,25 @@ export default function ProductsPageClient() {
                   <input
                     type="checkbox"
                     checked={exportIncludeBranchSheets}
-                    onChange={(e) => setExportIncludeBranchSheets(e.target.checked)}
+                    onChange={(e) =>
+                      setExportIncludeBranchSheets(e.target.checked)
+                    }
                   />
                   Mỗi chi nhánh 1 sheet
                 </label>
                 <select
                   className="mt-2 w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
                   value={exportSortMode}
-                  onChange={(e) => setExportSortMode(e.target.value as ExportSortMode)}
+                  onChange={(e) =>
+                    setExportSortMode(e.target.value as ExportSortMode)
+                  }
                 >
                   <option value="product_asc">Sắp xếp theo tên sản phẩm</option>
                   <option value="stock_desc">Tồn nhiều nhất</option>
                   <option value="value_desc">Giá trị tồn cao nhất</option>
-                  <option value="missing_cost_first">Thiếu giá nhập lên đầu</option>
+                  <option value="missing_cost_first">
+                    Thiếu giá nhập lên đầu
+                  </option>
                 </select>
               </div>
             </Panel>
@@ -3650,38 +4221,79 @@ export default function ProductsPageClient() {
           <Panel className="p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <p className="text-sm font-semibold text-neutral-900">Preset xuất nhanh</p>
+                <p className="text-sm font-semibold text-neutral-900">
+                  Preset xuất nhanh
+                </p>
                 <p className="mt-1 text-xs text-neutral-500">
-                  Chọn cấu hình có sẵn để khỏi tick thủ công từng cột khi xuất Excel.
+                  Chọn cấu hình có sẵn để khỏi tick thủ công từng cột khi xuất
+                  Excel.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => applyExportPreset("management")}>Quản lý</Button>
-                <Button variant="secondary" onClick={() => applyExportPreset("accounting")}>Kế toán tồn</Button>
-                <Button variant="secondary" onClick={() => applyExportPreset("stocktake")}>Kiểm kho</Button>
-                <Button variant="secondary" onClick={() => applyExportPreset("missing_cost")}>Thiếu giá nhập</Button>
-                <Button variant="secondary" onClick={() => applyExportPreset("low_stock")}>Tồn thấp</Button>
-                <Button variant="secondary" onClick={() => applyExportPreset("full")}>Full SAPO</Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyExportPreset("management")}
+                >
+                  Quản lý
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyExportPreset("accounting")}
+                >
+                  Kế toán tồn
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyExportPreset("stocktake")}
+                >
+                  Kiểm kho
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyExportPreset("missing_cost")}
+                >
+                  Thiếu giá nhập
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyExportPreset("low_stock")}
+                >
+                  Tồn thấp
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyExportPreset("full")}
+                >
+                  Full SAPO
+                </Button>
               </div>
             </div>
 
             <div className="mt-4 grid gap-3 md:grid-cols-4">
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-xs text-neutral-500">Phạm vi</p>
-                <p className="mt-1 text-sm font-semibold text-neutral-900">{exportScopeLabel}</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">
+                  {exportScopeLabel}
+                </p>
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-xs text-neutral-500">Chi nhánh</p>
-                <p className="mt-1 text-sm font-semibold text-neutral-900">{exportSelectedBranchCount} chi nhánh</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">
+                  {exportSelectedBranchCount} chi nhánh
+                </p>
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-xs text-neutral-500">Cột dữ liệu</p>
-                <p className="mt-1 text-sm font-semibold text-neutral-900">{exportSelectedColumnCount} cột</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">
+                  {exportSelectedColumnCount} cột
+                </p>
               </div>
               <div className="rounded-2xl bg-neutral-50 p-3">
                 <p className="text-xs text-neutral-500">Lọc thêm</p>
                 <p className="mt-1 text-sm font-semibold text-neutral-900">
-                  {exportFilterLabels.length ? exportFilterLabels.join(", ") : "Không"}
+                  {exportFilterLabels.length
+                    ? exportFilterLabels.join(", ")
+                    : "Không"}
                 </p>
               </div>
             </div>
@@ -3690,19 +4302,29 @@ export default function ProductsPageClient() {
           <Panel className="p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-sm font-semibold text-neutral-900">Chọn chi nhánh</p>
+                <p className="text-sm font-semibold text-neutral-900">
+                  Chọn chi nhánh
+                </p>
                 <p className="mt-1 text-xs text-neutral-500">
-                  Không chọn chi nhánh nào = xuất tất cả chi nhánh đang có quyền xem.
+                  Không chọn chi nhánh nào = xuất tất cả chi nhánh đang có quyền
+                  xem.
                 </p>
               </div>
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
-                  onClick={() => setExportBranchIds(visibleBranches.map((branch) => branch.id))}
+                  onClick={() =>
+                    setExportBranchIds(
+                      visibleBranches.map((branch) => branch.id),
+                    )
+                  }
                 >
                   Chọn tất cả
                 </Button>
-                <Button variant="secondary" onClick={() => setExportBranchIds([])}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setExportBranchIds([])}
+                >
                   Bỏ chọn
                 </Button>
               </div>
@@ -3721,7 +4343,7 @@ export default function ProductsPageClient() {
                       setExportBranchIds((prev) =>
                         e.target.checked
                           ? Array.from(new Set([...prev, branch.id]))
-                          : prev.filter((id) => id !== branch.id)
+                          : prev.filter((id) => id !== branch.id),
                       );
                     }}
                   />
@@ -3734,13 +4356,18 @@ export default function ProductsPageClient() {
           <Panel className="p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-sm font-semibold text-neutral-900">Cột dữ liệu</p>
+                <p className="text-sm font-semibold text-neutral-900">
+                  Cột dữ liệu
+                </p>
                 <p className="mt-1 text-xs text-neutral-500">
                   Chọn thông tin cần đưa vào sheet Danh sách SKU.
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => setExportColumns(defaultExportColumns)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setExportColumns(defaultExportColumns)}
+                >
                   Mặc định
                 </Button>
                 <Button
@@ -3748,8 +4375,10 @@ export default function ProductsPageClient() {
                   onClick={() =>
                     setExportColumns(
                       Object.fromEntries(
-                        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [key, true])
-                      ) as ExportColumnState
+                        (
+                          Object.keys(defaultExportColumns) as ExportColumnKey[]
+                        ).map((key) => [key, true]),
+                      ) as ExportColumnState,
                     )
                   }
                 >
@@ -3760,8 +4389,10 @@ export default function ProductsPageClient() {
                   onClick={() =>
                     setExportColumns(
                       Object.fromEntries(
-                        (Object.keys(defaultExportColumns) as ExportColumnKey[]).map((key) => [key, false])
-                      ) as ExportColumnState
+                        (
+                          Object.keys(defaultExportColumns) as ExportColumnKey[]
+                        ).map((key) => [key, false]),
+                      ) as ExportColumnState,
                     )
                   }
                 >
@@ -3796,7 +4427,10 @@ export default function ProductsPageClient() {
             <Button variant="secondary" onClick={() => setExportOpen(false)}>
               Huỷ
             </Button>
-            <Button onClick={() => void handleExportProductsExcel()} disabled={exportingProducts || !canExportProducts}>
+            <Button
+              onClick={() => void handleExportProductsExcel()}
+              disabled={exportingProducts || !canExportProducts}
+            >
               {exportingProducts ? "Đang xuất..." : "Xuất Excel"}
             </Button>
           </div>
@@ -3843,7 +4477,9 @@ export default function ProductsPageClient() {
                 value={categoryId}
                 onChange={(e) => {
                   const nextId = e.target.value;
-                  const found = syncedCategoryItems.find((item) => item.id === nextId);
+                  const found = syncedCategoryItems.find(
+                    (item) => item.id === nextId,
+                  );
                   setCategoryId(nextId);
                   setCategory(found?.name || "");
                 }}
@@ -3987,7 +4623,10 @@ export default function ProductsPageClient() {
               placeholder="ĐEN, TRẮNG, NÂU"
             />
             <div className="mt-2">
-              <TokenPreview value={colors} placeholder="Ví dụ: ĐEN, TRẮNG, NÂU" />
+              <TokenPreview
+                value={colors}
+                placeholder="Ví dụ: ĐEN, TRẮNG, NÂU"
+              />
             </div>
           </div>
 
@@ -4050,8 +4689,15 @@ export default function ProductsPageClient() {
           <Button variant="secondary" onClick={() => setCreateOpen(false)}>
             Đóng
           </Button>
-          <Button onClick={() => void handleCreateProduct()} disabled={savingProduct || !canCreateProduct}>
-            {savingProduct ? "Đang tạo..." : canCreateProduct ? "Tạo sản phẩm" : "Không có quyền tạo"}
+          <Button
+            onClick={() => void handleCreateProduct()}
+            disabled={savingProduct || !canCreateProduct}
+          >
+            {savingProduct
+              ? "Đang tạo..."
+              : canCreateProduct
+                ? "Tạo sản phẩm"
+                : "Không có quyền tạo"}
           </Button>
         </div>
       </Modal>
@@ -4099,7 +4745,9 @@ export default function ProductsPageClient() {
                 disabled={!canEditProduct}
                 onChange={(e) => {
                   const nextId = e.target.value;
-                  const found = syncedCategoryItems.find((item) => item.id === nextId);
+                  const found = syncedCategoryItems.find(
+                    (item) => item.id === nextId,
+                  );
                   setEditCategoryId(nextId);
                   setEditCategory(found?.name || "");
                 }}
@@ -4173,7 +4821,11 @@ export default function ProductsPageClient() {
               />
 
               <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-                {canEditProduct ? (uploadingEditImage ? "Đang upload..." : "Upload ảnh") : "Không có quyền upload"}
+                {canEditProduct
+                  ? uploadingEditImage
+                    ? "Đang upload..."
+                    : "Upload ảnh"
+                  : "Không có quyền upload"}
                 <input
                   type="file"
                   accept="image/*"
@@ -4257,7 +4909,10 @@ export default function ProductsPageClient() {
               placeholder="ĐEN, TRẮNG, NÂU"
             />
             <div className="mt-2">
-              <TokenPreview value={editColors} placeholder="Ví dụ: ĐEN, TRẮNG, NÂU" />
+              <TokenPreview
+                value={editColors}
+                placeholder="Ví dụ: ĐEN, TRẮNG, NÂU"
+              />
             </div>
           </div>
 
@@ -4273,7 +4928,10 @@ export default function ProductsPageClient() {
               placeholder="S, M, L, XL"
             />
             <div className="mt-2">
-              <TokenPreview value={editSizes} placeholder="Ví dụ: S, M, L, XL" />
+              <TokenPreview
+                value={editSizes}
+                placeholder="Ví dụ: S, M, L, XL"
+              />
             </div>
           </div>
 
@@ -4322,7 +4980,10 @@ export default function ProductsPageClient() {
           <Button variant="secondary" onClick={() => setEditOpen(false)}>
             Đóng
           </Button>
-          <Button onClick={() => void handleSaveEditProduct()} disabled={savingProduct || !canEditProduct}>
+          <Button
+            onClick={() => void handleSaveEditProduct()}
+            disabled={savingProduct || !canEditProduct}
+          >
             {savingProduct ? "Đang lưu..." : "Lưu thay đổi"}
           </Button>
         </div>
@@ -4360,7 +5021,10 @@ export default function ProductsPageClient() {
         </div>
 
         <div className="mt-5 flex justify-end gap-3">
-          <Button variant="secondary" onClick={() => setQuickCategoryOpen(false)}>
+          <Button
+            variant="secondary"
+            onClick={() => setQuickCategoryOpen(false)}
+          >
             Đóng
           </Button>
           <Button
@@ -4461,8 +5125,15 @@ export default function ProductsPageClient() {
           <Button variant="secondary" onClick={() => setVariantOpen(false)}>
             Đóng
           </Button>
-          <Button onClick={() => void handleAddVariant()} disabled={savingVariant || !canCreateProductVariant}>
-            {savingVariant ? "Đang thêm..." : canCreateProductVariant ? "Thêm variant" : "Không có quyền thêm"}
+          <Button
+            onClick={() => void handleAddVariant()}
+            disabled={savingVariant || !canCreateProductVariant}
+          >
+            {savingVariant
+              ? "Đang thêm..."
+              : canCreateProductVariant
+                ? "Thêm variant"
+                : "Không có quyền thêm"}
           </Button>
         </div>
       </Modal>
@@ -4470,21 +5141,79 @@ export default function ProductsPageClient() {
       <Modal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        title="Nhập sản phẩm từ Excel"
+        title={
+          importMode === "images"
+            ? "Nhập ảnh sản phẩm từ Excel"
+            : "Nhập sản phẩm từ Excel"
+        }
         maxWidthClass="max-w-6xl"
       >
         <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-neutral-500">
-              Import thông minh theo file Excel. Hiện ảnh sản phẩm dùng cột
-              <strong> Image URL </strong>
-              chứ chưa phải upload file ảnh trực tiếp.
+              {importMode === "images" ? (
+                <>
+                  Import ảnh sản phẩm bằng Excel. Dán link Cloudinary vào cột
+                  <strong> Ảnh chính </strong> và{" "}
+                  <strong> Ảnh màu / Ảnh màu ĐEN, RÊU, XANH </strong>.
+                </>
+              ) : (
+                <>
+                  Import sản phẩm bằng flow cũ. File cũ vẫn dùng bình thường,
+                  không bắt buộc có cột ảnh.
+                </>
+              )}
             </div>
 
-            <Button variant="secondary" onClick={downloadProductTemplate}>
-              Tải file mẫu
+            <Button
+              variant="secondary"
+              onClick={
+                importMode === "images"
+                  ? downloadProductImageTemplate
+                  : downloadProductTemplate
+              }
+            >
+              {importMode === "images" ? "Tải file mẫu có ảnh" : "Tải file mẫu"}
             </Button>
           </div>
+
+          {importMode === "images" ? (
+            <Panel className="p-4">
+              <div className="text-sm font-semibold text-neutral-900">
+                Cách map ảnh màu
+              </div>
+              <div className="mt-2 grid gap-3 text-sm text-neutral-600 md:grid-cols-3">
+                <div className="rounded-2xl bg-neutral-50 p-3">
+                  <div className="font-semibold text-neutral-800">
+                    1. Màu lấy theo từng dòng
+                  </div>
+                  <div className="mt-1 text-xs leading-5">
+                    Hệ thống đọc cột <b>Giá trị thuộc tính 1</b>. Ví dụ dòng có
+                    màu <b>ĐEN</b> thì sẽ tìm ảnh cho màu ĐEN.
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-neutral-50 p-3">
+                  <div className="font-semibold text-neutral-800">
+                    2. Cột ảnh theo tên màu
+                  </div>
+                  <div className="mt-1 text-xs leading-5">
+                    Tên cột nên là <b>Ảnh màu ĐEN</b>, <b>Ảnh màu XÁM</b>,{" "}
+                    <b>Ảnh màu RÊU</b>... Không phụ thuộc là cột K/L/M, chỉ cần
+                    đúng tiêu đề cột.
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-neutral-50 p-3">
+                  <div className="font-semibold text-neutral-800">
+                    3. Sai màu sẽ fallback
+                  </div>
+                  <div className="mt-1 text-xs leading-5">
+                    Nếu màu là <b>ĐEN</b> nhưng chỉ có cột <b>Ảnh màu XÁM</b>,
+                    hệ thống không lấy nhầm; nó sẽ dùng <b>Ảnh chính</b> nếu có.
+                  </div>
+                </div>
+              </div>
+            </Panel>
+          ) : null}
 
           <Panel className="p-4">
             <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
@@ -4553,7 +5282,21 @@ export default function ProductsPageClient() {
                       <th className="px-4 py-3">Giá bán</th>
                       <th className="px-4 py-3">Giá nhập</th>
                       <th className="px-4 py-3">Tồn đầu</th>
-                      <th className="px-4 py-3">Ảnh</th>
+                      {importMode === "images" ? (
+                        <th className="px-4 py-3">Ảnh chính</th>
+                      ) : null}
+                      {importMode === "images" ? (
+                        <th className="px-4 py-3">Ảnh màu</th>
+                      ) : null}
+                      {importMode === "images" ? (
+                        <th className="px-4 py-3">Ảnh sẽ dùng</th>
+                      ) : null}
+                      {importMode === "images" ? (
+                        <th className="px-4 py-3">Nguồn map</th>
+                      ) : null}
+                      {importMode === "images" ? (
+                        <th className="px-4 py-3">Cảnh báo</th>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -4564,28 +5307,118 @@ export default function ProductsPageClient() {
                         <td className="px-4 py-3">{row.color || "—"}</td>
                         <td className="px-4 py-3">{row.size || "—"}</td>
                         <td className="px-4 py-3">{row.sku || "—"}</td>
-                        <td className="px-4 py-3">{currency(row.retailPrice || 0)}</td>
-                        <td className="px-4 py-3">{currency(row.importPrice || 0)}</td>
+                        <td className="px-4 py-3">
+                          {currency(row.retailPrice || 0)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {currency(row.importPrice || 0)}
+                        </td>
                         <td className="px-4 py-3 text-xs space-y-1">
                           <div>CL: {row.stockCL || 0}</div>
                           <div>XD: {row.stockXD || 0}</div>
                           <div>QO: {row.stockQO || 0}</div>
                           <div>TH: {row.stockTH || 0}</div>
                         </td>
-                        <td className="px-4 py-3">
-                          {row.imageUrl ? (
-                            <a
-                              href={row.imageUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 underline"
-                            >
-                              Link ảnh
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
+                        {importMode === "images" ? (
+                          <td className="px-4 py-3">
+                            {row.productImageUrl ? (
+                              <div className="flex items-center gap-2">
+                                <ProductImage
+                                  src={row.productImageUrl}
+                                  alt={row.productName || "Ảnh chính"}
+                                />
+                                <a
+                                  href={row.productImageUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-blue-600 underline"
+                                >
+                                  Link
+                                </a>
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        ) : null}
+                        {importMode === "images" ? (
+                          <td className="px-4 py-3">
+                            {row.colorImageUrl ? (
+                              <div className="flex items-center gap-2">
+                                <ProductImage
+                                  src={row.colorImageUrl}
+                                  alt={`${row.productName || "Sản phẩm"} ${row.color || ""}`}
+                                />
+                                <a
+                                  href={row.colorImageUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-blue-600 underline"
+                                >
+                                  Link
+                                </a>
+                              </div>
+                            ) : row.imageUrl ? (
+                              <span className="text-xs text-neutral-500">
+                                Dùng ảnh chính
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        ) : null}
+                        {importMode === "images" ? (
+                          <td className="px-4 py-3">
+                            {row.imageUrl ? (
+                              <div className="flex items-center gap-2">
+                                <ProductImage
+                                  src={row.imageUrl}
+                                  alt={`${row.productName || "Sản phẩm"} ${row.color || ""}`}
+                                />
+                                <a
+                                  href={row.imageUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-blue-600 underline"
+                                >
+                                  Link
+                                </a>
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        ) : null}
+                        {importMode === "images" ? (
+                          <td className="px-4 py-3 text-xs">
+                            {row.imageSource ? (
+                              <span className="rounded-full bg-blue-50 px-2 py-1 font-medium text-blue-700">
+                                {row.imageSource}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        ) : null}
+                        {importMode === "images" ? (
+                          <td className="px-4 py-3 text-xs">
+                            {row.imageWarning ? (
+                              <span
+                                className={
+                                  row.imageUrl
+                                    ? "text-amber-700"
+                                    : "text-red-600"
+                                }
+                              >
+                                {row.imageWarning}
+                              </span>
+                            ) : (
+                              <span className="text-green-700">
+                                Map đúng ảnh màu
+                              </span>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -4608,9 +5441,12 @@ export default function ProductsPageClient() {
               <div className="p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-neutral-900">Chọn SKU và số tem</div>
+                    <div className="text-sm font-semibold text-neutral-900">
+                      Chọn SKU và số tem
+                    </div>
                     <div className="mt-1 text-xs text-neutral-500">
-                      Mặc định 1 tem / SKU. Có thể bỏ chọn SKU hoặc đổi số lượng từng dòng.
+                      Mặc định 1 tem / SKU. Có thể bỏ chọn SKU hoặc đổi số lượng
+                      từng dòng.
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -4618,7 +5454,9 @@ export default function ProductsPageClient() {
                       variant="secondary"
                       onClick={() =>
                         setLabelSelectedMap(
-                          Object.fromEntries(labelPrintRows.map((row) => [row.key, true])),
+                          Object.fromEntries(
+                            labelPrintRows.map((row) => [row.key, true]),
+                          ),
                         )
                       }
                     >
@@ -4628,7 +5466,9 @@ export default function ProductsPageClient() {
                       variant="secondary"
                       onClick={() =>
                         setLabelSelectedMap(
-                          Object.fromEntries(labelPrintRows.map((row) => [row.key, false])),
+                          Object.fromEntries(
+                            labelPrintRows.map((row) => [row.key, false]),
+                          ),
                         )
                       }
                     >
@@ -4641,18 +5481,35 @@ export default function ProductsPageClient() {
                   <table className="w-full min-w-[760px] border-collapse text-sm">
                     <thead className="sticky top-0 bg-neutral-50 text-left text-[11px] uppercase tracking-wide text-neutral-500">
                       <tr>
-                        <th className="border-b border-neutral-200 px-3 py-2">In</th>
-                        <th className="border-b border-neutral-200 px-3 py-2">SKU</th>
-                        <th className="border-b border-neutral-200 px-3 py-2">Size</th>
-                        <th className="border-b border-neutral-200 px-3 py-2">Màu</th>
-                        <th className="border-b border-neutral-200 px-3 py-2">Tồn</th>
-                        <th className="border-b border-neutral-200 px-3 py-2">Giá</th>
-                        <th className="border-b border-neutral-200 px-3 py-2">Số tem</th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          In
+                        </th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          SKU
+                        </th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          Size
+                        </th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          Màu
+                        </th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          Tồn
+                        </th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          Giá
+                        </th>
+                        <th className="border-b border-neutral-200 px-3 py-2">
+                          Số tem
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {labelPrintRows.map((row) => (
-                        <tr key={row.key} className="bg-white hover:bg-neutral-50">
+                        <tr
+                          key={row.key}
+                          className="bg-white hover:bg-neutral-50"
+                        >
                           <td className="border-b border-neutral-100 px-3 py-2">
                             <input
                               type="checkbox"
@@ -4668,17 +5525,28 @@ export default function ProductsPageClient() {
                           <td className="border-b border-neutral-100 px-3 py-2 font-medium text-neutral-900">
                             {row.sku}
                           </td>
-                          <td className="border-b border-neutral-100 px-3 py-2">{row.size || "—"}</td>
-                          <td className="border-b border-neutral-100 px-3 py-2">{row.color || "—"}</td>
-                          <td className="border-b border-neutral-100 px-3 py-2">{row.stock}</td>
-                          <td className="border-b border-neutral-100 px-3 py-2">{currency(row.price)}</td>
+                          <td className="border-b border-neutral-100 px-3 py-2">
+                            {row.size || "—"}
+                          </td>
+                          <td className="border-b border-neutral-100 px-3 py-2">
+                            {row.color || "—"}
+                          </td>
+                          <td className="border-b border-neutral-100 px-3 py-2">
+                            {row.stock}
+                          </td>
+                          <td className="border-b border-neutral-100 px-3 py-2">
+                            {currency(row.price)}
+                          </td>
                           <td className="border-b border-neutral-100 px-3 py-2">
                             <input
                               value={labelPrintQtyMap[row.key] || "1"}
                               onChange={(event) =>
                                 setLabelPrintQtyMap((prev) => ({
                                   ...prev,
-                                  [row.key]: event.target.value.replace(/[^\d]/g, ""),
+                                  [row.key]: event.target.value.replace(
+                                    /[^\d]/g,
+                                    "",
+                                  ),
                                 }))
                               }
                               className="w-20 rounded-xl border border-neutral-300 px-3 py-2 text-center"
@@ -4696,40 +5564,59 @@ export default function ProductsPageClient() {
             <Panel>
               <div className="grid gap-4 p-4 md:grid-cols-3">
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-neutral-700">Máy in</label>
+                  <label className="mb-2 block text-sm font-medium text-neutral-700">
+                    Máy in
+                  </label>
                   <select
                     value={labelPrinterName}
-                    onChange={(event) => setLabelPrinterName(event.target.value)}
+                    onChange={(event) =>
+                      setLabelPrinterName(event.target.value)
+                    }
                     className="w-full rounded-2xl border border-neutral-300 px-3 py-3 text-sm"
                   >
                     {labelPrinterOptions.map((name) => (
-                      <option key={name} value={name}>{name}</option>
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
                     ))}
                   </select>
                   <div className="mt-1 text-[11px] text-neutral-500">
-                    Web không chọn máy in trực tiếp được; chọn máy thật ở hộp thoại in của trình duyệt.
+                    Web không chọn máy in trực tiếp được; chọn máy thật ở hộp
+                    thoại in của trình duyệt.
                   </div>
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-neutral-700">Khổ tem</label>
+                  <label className="mb-2 block text-sm font-medium text-neutral-700">
+                    Khổ tem
+                  </label>
                   <select
                     value={labelPaperMode}
                     onChange={(event) => setLabelPaperMode(event.target.value)}
                     className="w-full rounded-2xl border border-neutral-300 px-3 py-3 text-sm"
                   >
                     {labelPaperOptions.map((item) => (
-                      <option key={item.value} value={item.value}>{item.label}</option>
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
                     ))}
                   </select>
-                  <div className="mt-1 text-[11px] text-neutral-500">Preview đã chừa hở 0,4mm giữa 2 tem.</div>
+                  <div className="mt-1 text-[11px] text-neutral-500">
+                    Preview đã chừa hở 0,4mm giữa 2 tem.
+                  </div>
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-neutral-700">Giá bán</label>
+                  <label className="mb-2 block text-sm font-medium text-neutral-700">
+                    Giá bán
+                  </label>
                   <select
                     value={labelPriceMode}
-                    onChange={(event) => setLabelPriceMode(event.target.value as "retail" | "hidden")}
+                    onChange={(event) =>
+                      setLabelPriceMode(
+                        event.target.value as "retail" | "hidden",
+                      )
+                    }
                     className="w-full rounded-2xl border border-neutral-300 px-3 py-3 text-sm"
                   >
                     <option value="retail">Hiện giá bán lẻ</option>
@@ -4744,12 +5631,21 @@ export default function ProductsPageClient() {
             <div className="p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-neutral-900">Preview trước khi in</div>
+                  <div className="text-sm font-semibold text-neutral-900">
+                    Preview trước khi in
+                  </div>
                   <div className="mt-1 text-xs text-neutral-500">
-                    {labelPreviewItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0)} tem sẽ được in
+                    {labelPreviewItems.reduce(
+                      (sum, item) => sum + Number(item.quantity || 1),
+                      0,
+                    )}{" "}
+                    tem sẽ được in
                   </div>
                 </div>
-                <Button variant="success" onClick={handleConfirmPrintProductLabels}>
+                <Button
+                  variant="success"
+                  onClick={handleConfirmPrintProductLabels}
+                >
                   In tem
                 </Button>
               </div>
