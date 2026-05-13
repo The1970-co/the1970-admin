@@ -1,8 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
-import { useMemo, useState } from "react";
-
+import { useMemo, useState, type ReactNode } from "react";
 
 const ISSUE_LABELS: Record<string, string> = {
   NOT_FOUND_INTERNAL_ORDER: "Chưa tìm thấy đơn nội bộ",
@@ -14,6 +13,9 @@ const ISSUE_LABELS: Record<string, string> = {
   COD_MISMATCH: "Lệch COD",
   FEE_MISMATCH: "Lệch phí",
 };
+
+const ALL_GHN_STATUSES = "__ALL_GHN_STATUSES__";
+const DELIVERED_ONLY = "__DELIVERED_ONLY__";
 
 type Row = {
   rowNumber: number;
@@ -67,14 +69,74 @@ type Result = {
   };
 };
 
+type ExcelStatusOption = {
+  label: string;
+  value: string;
+  count: number;
+  delivered: boolean;
+};
+
+type ExcelPreview = {
+  fileName: string;
+  sheetName: string;
+  headerRowIndex: number;
+  statusColumnIndex: number;
+  totalStatusRows: number;
+  statusOptions: ExcelStatusOption[];
+};
+
 export default function GhnCodReconciliationPage() {
   const [file, setFile] = useState<File | null>(null);
   const [transferDate, setTransferDate] = useState("");
   const [transferCode, setTransferCode] = useState("");
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
+  const [parsingExcel, setParsingExcel] = useState(false);
+  const [excelPreview, setExcelPreview] = useState<ExcelPreview | null>(null);
+  const [excelPreviewError, setExcelPreviewError] = useState("");
+  const [uploadStatusFilter, setUploadStatusFilter] = useState(DELIVERED_ONLY);
   const [result, setResult] = useState<Result | null>(null);
   const [filter, setFilter] = useState("ALL");
+
+  const uploadFilterSummary = useMemo(() => {
+    if (!excelPreview) {
+      return {
+        selectedRows: 0,
+        totalRows: 0,
+        selectedLabel: "Chưa đọc file",
+      };
+    }
+
+    if (uploadStatusFilter === ALL_GHN_STATUSES) {
+      return {
+        selectedRows: excelPreview.totalStatusRows,
+        totalRows: excelPreview.totalStatusRows,
+        selectedLabel: "Tất cả trạng thái",
+      };
+    }
+
+    if (uploadStatusFilter === DELIVERED_ONLY) {
+      const selectedRows = excelPreview.statusOptions
+        .filter((item) => item.delivered)
+        .reduce((sum, item) => sum + item.count, 0);
+
+      return {
+        selectedRows,
+        totalRows: excelPreview.totalStatusRows,
+        selectedLabel: "Chỉ đơn giao thành công",
+      };
+    }
+
+    const selectedOption = excelPreview.statusOptions.find(
+      (item) => item.value === uploadStatusFilter
+    );
+
+    return {
+      selectedRows: selectedOption?.count || 0,
+      totalRows: excelPreview.totalStatusRows,
+      selectedLabel: selectedOption?.label || uploadStatusFilter,
+    };
+  }, [excelPreview, uploadStatusFilter]);
 
   const rows = useMemo(() => {
     if (!result) return [];
@@ -88,17 +150,61 @@ export default function GhnCodReconciliationPage() {
     return result.rows.filter((r) => r.issueTypes.includes(filter));
   }, [result, filter]);
 
+  async function handleFileChange(nextFile: File | null) {
+    setFile(nextFile);
+    setResult(null);
+    setFilter("ALL");
+    setExcelPreview(null);
+    setExcelPreviewError("");
+    setUploadStatusFilter(DELIVERED_ONLY);
+
+    if (!nextFile) return;
+
+    setParsingExcel(true);
+    try {
+      const preview = await readGhnExcelPreview(nextFile);
+      setExcelPreview(preview);
+
+      const hasDeliveredStatus = preview.statusOptions.some((item) => item.delivered);
+      setUploadStatusFilter(hasDeliveredStatus ? DELIVERED_ONLY : ALL_GHN_STATUSES);
+    } catch (err) {
+      setExcelPreviewError(
+        err instanceof Error
+          ? err.message
+          : "Không đọc được trạng thái GHN trong file Excel."
+      );
+      setUploadStatusFilter(ALL_GHN_STATUSES);
+    } finally {
+      setParsingExcel(false);
+    }
+  }
+
   async function uploadAndRun() {
     if (!file) {
       alert("Chọn file Excel GHN trước.");
       return;
     }
 
+    if (uploadStatusFilter !== ALL_GHN_STATUSES && excelPreviewError) {
+      alert("Chưa đọc được danh sách trạng thái trong file. Chọn lại file hoặc đổi bộ lọc thành Tất cả trạng thái.");
+      return;
+    }
+
+    if (uploadStatusFilter !== ALL_GHN_STATUSES && excelPreview && uploadFilterSummary.selectedRows <= 0) {
+      alert("Bộ lọc hiện tại không có dòng nào để gửi đối soát.");
+      return;
+    }
+
+    const uploadFile = await buildFilteredGhnExcelFile(file, uploadStatusFilter, excelPreview);
+
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", uploadFile);
     fd.append("transferDate", transferDate);
     fd.append("transferCode", transferCode);
     fd.append("note", note);
+    fd.append("clientStatusFilter", uploadFilterSummary.selectedLabel);
+    fd.append("clientFilteredRows", String(uploadFilterSummary.selectedRows));
+    fd.append("clientTotalStatusRows", String(uploadFilterSummary.totalRows));
 
     setLoading(true);
 
@@ -156,7 +262,7 @@ export default function GhnCodReconciliationPage() {
               type="file"
               accept=".xlsx,.xls,.numbers"
               className="hidden"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
             />
 
             {file ? (
@@ -166,42 +272,101 @@ export default function GhnCodReconciliationPage() {
             ) : null}
           </label>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Ngày chuyển tiền">
-              <input
-                type="date"
-                value={transferDate}
-                onChange={(e) => setTransferDate(e.target.value)}
-                className="w-full rounded-2xl border px-4 py-3 text-sm"
-              />
-            </Field>
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Ngày chuyển tiền">
+                <input
+                  type="date"
+                  value={transferDate}
+                  onChange={(e) => setTransferDate(e.target.value)}
+                  className="w-full rounded-2xl border px-4 py-3 text-sm"
+                />
+              </Field>
 
-            <Field label="Mã phiên / mã đối soát">
-              <input
-                value={transferCode}
-                onChange={(e) => setTransferCode(e.target.value)}
-                placeholder="Để trống sẽ tự đọc từ file"
-                className="w-full rounded-2xl border px-4 py-3 text-sm"
-              />
-            </Field>
+              <Field label="Mã phiên / mã đối soát">
+                <input
+                  value={transferCode}
+                  onChange={(e) => setTransferCode(e.target.value)}
+                  placeholder="Để trống sẽ tự đọc từ file"
+                  className="w-full rounded-2xl border px-4 py-3 text-sm"
+                />
+              </Field>
 
-            <Field label="Ghi chú">
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Nhập ghi chú..."
-                className="w-full rounded-2xl border px-4 py-3 text-sm"
-              />
-            </Field>
+              <Field label="Ghi chú">
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Nhập ghi chú..."
+                  className="w-full rounded-2xl border px-4 py-3 text-sm"
+                />
+              </Field>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="Lọc trạng thái GHN trước khi gửi core">
+                  <select
+                    value={uploadStatusFilter}
+                    onChange={(e) => setUploadStatusFilter(e.target.value)}
+                    disabled={!file || parsingExcel}
+                    className="min-w-[280px] rounded-2xl border bg-white px-4 py-3 text-sm font-semibold text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <option value={DELIVERED_ONLY}>Chỉ đơn giao thành công</option>
+                    <option value={ALL_GHN_STATUSES}>Tất cả trạng thái trong file</option>
+                    {excelPreview?.statusOptions.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label} ({item.count})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm">
+                  <div className="text-xs font-semibold text-neutral-500">Sẽ gửi đối soát</div>
+                  <div className="mt-1 font-bold text-neutral-950">
+                    {parsingExcel
+                      ? "Đang đọc file..."
+                      : `${uploadFilterSummary.selectedRows} / ${uploadFilterSummary.totalRows} dòng có trạng thái`}
+                  </div>
+                </div>
+
+                {excelPreview ? (
+                  <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm">
+                    <div className="text-xs font-semibold text-neutral-500">Sheet / dòng tiêu đề</div>
+                    <div className="mt-1 font-semibold text-neutral-950">
+                      {excelPreview.sheetName} · dòng {excelPreview.headerRowIndex + 1}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {excelPreviewError ? (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                  {excelPreviewError} File sẽ được gửi nguyên bản nếu chọn “Tất cả trạng thái”.
+                </div>
+              ) : null}
+
+              {uploadStatusFilter === ALL_GHN_STATUSES && file ? (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                  Đang chọn tất cả trạng thái, hệ thống sẽ gửi cả đơn đang trung chuyển / nhập kho / hoàn lên đối soát. Chỉ dùng khi cần kiểm tra toàn bộ file.
+                </div>
+              ) : null}
+
+              {uploadStatusFilter === DELIVERED_ONLY && file ? (
+                <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+                  Mặc định chỉ gửi các dòng GHN có trạng thái giao thành công. Core giữ nguyên, FE sẽ tạo file Excel đã lọc rồi mới upload.
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex flex-col items-end justify-center gap-3">
             <button
               onClick={uploadAndRun}
-              disabled={loading}
+              disabled={loading || parsingExcel}
               className="rounded-2xl bg-neutral-950 px-6 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {loading ? "Đang đối soát..." : "Chạy đối soát"}
+              {loading ? "Đang đối soát..." : parsingExcel ? "Đang đọc file..." : "Chạy đối soát"}
             </button>
 
             <button
@@ -212,6 +377,9 @@ export default function GhnCodReconciliationPage() {
                 setTransferDate("");
                 setNote("");
                 setFilter("ALL");
+                setExcelPreview(null);
+                setExcelPreviewError("");
+                setUploadStatusFilter(DELIVERED_ONLY);
               }}
               className="text-sm text-blue-600"
             >
@@ -464,7 +632,7 @@ function StatusBadge({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label>
       <div className="mb-2 text-sm text-neutral-500">{label}</div>
@@ -531,7 +699,7 @@ function Filter({
 }: {
   active: boolean;
   onClick: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <button
@@ -547,4 +715,198 @@ function Filter({
 
 function money(value?: number | null) {
   return `${new Intl.NumberFormat("vi-VN").format(Number(value || 0))}đ`;
+}
+
+async function readGhnExcelPreview(file: File): Promise<ExcelPreview> {
+  const XLSX = await import("xlsx");
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+  const sheetName = workbook.SheetNames[0];
+
+  if (!sheetName) {
+    throw new Error("File Excel không có sheet dữ liệu.");
+  }
+
+  const sheet = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: "",
+    raw: false,
+  });
+
+  const headerInfo = findGhnStatusHeader(matrix);
+
+  if (!headerInfo) {
+    throw new Error("Không tìm thấy cột trạng thái GHN trong file Excel.");
+  }
+
+  const statusCount = new Map<string, number>();
+
+  for (let index = headerInfo.headerRowIndex + 1; index < matrix.length; index += 1) {
+    const row = matrix[index] || [];
+    const status = cleanCell(row[headerInfo.statusColumnIndex]);
+
+    if (!status) continue;
+
+    statusCount.set(status, (statusCount.get(status) || 0) + 1);
+  }
+
+  const statusOptions = Array.from(statusCount.entries())
+    .map(([label, count]) => ({
+      label,
+      value: label,
+      count,
+      delivered: isDeliveredGhnStatus(label),
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "vi"));
+
+  return {
+    fileName: file.name,
+    sheetName,
+    headerRowIndex: headerInfo.headerRowIndex,
+    statusColumnIndex: headerInfo.statusColumnIndex,
+    totalStatusRows: statusOptions.reduce((sum, item) => sum + item.count, 0),
+    statusOptions,
+  };
+}
+
+async function buildFilteredGhnExcelFile(
+  file: File,
+  statusFilter: string,
+  preview: ExcelPreview | null
+): Promise<File> {
+  if (statusFilter === ALL_GHN_STATUSES || !preview) {
+    return file;
+  }
+
+  const XLSX = await import("xlsx");
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+  const sheetName = workbook.SheetNames[0];
+
+  if (!sheetName) return file;
+
+  const sheet = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: "",
+    raw: false,
+  });
+
+  const filteredMatrix = matrix.filter((row, index) => {
+    if (index <= preview.headerRowIndex) return true;
+
+    const status = cleanCell(row?.[preview.statusColumnIndex]);
+
+    // Giữ lại các dòng không có trạng thái để không làm mất các dòng ghi chú/tổng hợp nếu file GHN có footer.
+    if (!status) return true;
+
+    return shouldKeepGhnStatus(status, statusFilter);
+  });
+
+  const nextWorkbook = XLSX.utils.book_new();
+  const nextSheet = XLSX.utils.aoa_to_sheet(filteredMatrix);
+  XLSX.utils.book_append_sheet(nextWorkbook, nextSheet, sheetName);
+
+  const output = XLSX.write(nextWorkbook, {
+    bookType: "xlsx",
+    type: "array",
+  });
+
+  const blob = new Blob([output], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+
+  return new File([blob], getFilteredFileName(file.name, statusFilter), {
+    type: blob.type,
+  });
+}
+
+function findGhnStatusHeader(matrix: unknown[][]) {
+  let bestMatch: { headerRowIndex: number; statusColumnIndex: number; score: number } | null = null;
+
+  matrix.forEach((row, rowIndex) => {
+    const cells = row.map((cell) => normalizeText(cell));
+    const statusColumnIndex = cells.findIndex((cell) => isLikelyGhnStatusHeader(cell));
+
+    if (statusColumnIndex < 0) return;
+
+    const joined = cells.join(" ");
+    let score = 1;
+
+    if (joined.includes("ma don")) score += 2;
+    if (joined.includes("cod")) score += 2;
+    if (joined.includes("phi")) score += 1;
+    if (joined.includes("cua hang") || joined.includes("shop")) score += 1;
+    if (joined.includes("ghn")) score += 1;
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { headerRowIndex: rowIndex, statusColumnIndex, score };
+    }
+  });
+
+  if (!bestMatch) return null;
+
+  return {
+    headerRowIndex: bestMatch.headerRowIndex,
+    statusColumnIndex: bestMatch.statusColumnIndex,
+  };
+}
+
+function isLikelyGhnStatusHeader(normalizedCell: string) {
+  if (!normalizedCell) return false;
+
+  return (
+    normalizedCell === "trang thai" ||
+    normalizedCell.includes("trang thai ghn") ||
+    normalizedCell.includes("trang thai don") ||
+    normalizedCell.includes("trang thai giao") ||
+    normalizedCell.includes("status")
+  );
+}
+
+function shouldKeepGhnStatus(status: string, statusFilter: string) {
+  if (statusFilter === ALL_GHN_STATUSES) return true;
+  if (statusFilter === DELIVERED_ONLY) return isDeliveredGhnStatus(status);
+
+  return cleanCell(status) === cleanCell(statusFilter);
+}
+
+function isDeliveredGhnStatus(value: unknown) {
+  const text = normalizeText(value);
+
+  return (
+    text.includes("giao thanh cong") ||
+    text.includes("da giao") ||
+    text.includes("delivered") ||
+    text.includes("completed") ||
+    text.includes("delivery success") ||
+    text.includes("thanh cong")
+  );
+}
+
+function cleanCell(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeText(value: unknown) {
+  return cleanCell(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function getFilteredFileName(fileName: string, statusFilter: string) {
+  const dotIndex = fileName.lastIndexOf(".");
+  const baseName = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
+
+  const suffix = statusFilter === DELIVERED_ONLY ? "giao-thanh-cong" : slugify(statusFilter);
+
+  return `${baseName}-filtered-${suffix}.xlsx`;
+}
+
+function slugify(value: string) {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "ghn-status";
 }

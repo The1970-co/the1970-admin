@@ -4051,8 +4051,6 @@ export default function CreateOrderPageClient() {
               length: Number(shippingLength || 10),
               width: Number(shippingWidth || 10),
               height: Number(shippingHeight || 10),
-              payment_method: "BALANCE",
-              paymentMethod: "BALANCE",
               note: note.trim() || "",
               items: quoteItems.map((item) => ({
                 name: item.name,

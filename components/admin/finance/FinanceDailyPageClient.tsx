@@ -26,6 +26,10 @@ type MoneyRow = {
   category?: string;
   note?: string;
   recordType?: string;
+  createdById?: string;
+  createdByName?: string;
+  staffId?: string;
+  staffName?: string;
   createdAt?: string;
   paidAt?: string;
 };
@@ -119,7 +123,6 @@ function isReceiptRow(row: MoneyRow) {
   const type = String(row.flowType || row.type || "").toUpperCase();
   if (type === "PAYMENT") return false;
   if (type === "RECEIPT") return true;
-  if (String(row.recordType || "").toUpperCase() === "CASH_VOUCHER") return true;
   return Number(row.amount || 0) >= 0;
 }
 
@@ -143,6 +146,10 @@ function rowStatusLabel(row: MoneyRow) {
   if (status === "CANCELLED") return "Đã huỷ";
   if (status === "REFUNDED") return "Hoàn tiền";
   return row.status || "—";
+}
+
+function creatorName(row: MoneyRow) {
+  return row.createdByName || row.staffName || row.createdById || row.staffId || "—";
 }
 
 function rowStatusClass(row: MoneyRow) {
@@ -179,6 +186,7 @@ export default function FinanceDailyPageClient() {
   const [branchId, setBranchId] = useState("ALL");
   const [paymentSourceId, setPaymentSourceId] = useState("ALL");
   const [flow, setFlow] = useState<FlowFilter>("ALL");
+  const [staffFilter, setStaffFilter] = useState("ALL");
   const [q, setQ] = useState("");
 
   const [branches, setBranches] = useState<any[]>([]);
@@ -245,6 +253,7 @@ export default function FinanceDailyPageClient() {
 
     return rawRows
       .filter((row) => passFlowFilter(row, flow))
+      .filter((row) => staffFilter === "ALL" || creatorName(row) === staffFilter)
       .filter((row) => {
         if (!q.trim()) return true;
         const keyword = normalizeText(q);
@@ -264,7 +273,15 @@ export default function FinanceDailyPageClient() {
         ].filter(Boolean).join(" "));
         return haystack.includes(keyword);
       });
-  }, [data, flow, q]);
+  }, [data, flow, staffFilter, q]);
+
+  const staffOptions = useMemo(() => {
+    const names = safeRows(data?.payments)
+      .map((row) => creatorName(row))
+      .filter((name) => name && name !== "—");
+
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [data]);
 
   const summary = useMemo(() => {
     const receipt = rows
@@ -476,7 +493,7 @@ export default function FinanceDailyPageClient() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_260px_220px]">
+        <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_240px_240px_220px]">
           <input
             value={q}
             onChange={(event) => setQ(event.target.value)}
@@ -499,12 +516,26 @@ export default function FinanceDailyPageClient() {
             <option value="OTHER">Nguồn khác</option>
           </select>
 
+          <select
+            value={staffFilter}
+            onChange={(event) => setStaffFilter(event.target.value)}
+            className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
+          >
+            <option value="ALL">Tất cả nhân viên</option>
+            {staffOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+
           <button
             type="button"
             onClick={() => {
               setBranchId("ALL");
               setPaymentSourceId("ALL");
               setFlow("ALL");
+              setStaffFilter("ALL");
               setQ("");
               applyQuickRange("today");
             }}
@@ -665,6 +696,7 @@ export default function FinanceDailyPageClient() {
                 <th className="px-4 py-3">Mã</th>
                 <th className="px-4 py-3">Đối tượng</th>
                 <th className="px-4 py-3">Chi nhánh</th>
+                <th className="px-4 py-3">Nhân viên</th>
                 <th className="px-4 py-3">Nguồn tiền</th>
                 <th className="px-4 py-3 text-right">Số tiền</th>
                 <th className="px-4 py-3">Trạng thái</th>
@@ -687,6 +719,7 @@ export default function FinanceDailyPageClient() {
                     <div className="text-xs text-neutral-500">{row.customerPhone || "—"}</div>
                   </td>
                   <td className="px-4 py-3">{row.branchName || row.branchId || "—"}</td>
+                  <td className="px-4 py-3">{creatorName(row)}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium">{row.sourceName || row.method || "—"}</div>
                     <div className="text-xs text-neutral-500">{sourceKind(row)}</div>
@@ -707,7 +740,7 @@ export default function FinanceDailyPageClient() {
 
               {!rows.length ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-neutral-500">
                     Chưa có giao dịch trong khoảng lọc này.
                   </td>
                 </tr>

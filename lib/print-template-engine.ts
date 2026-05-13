@@ -181,12 +181,12 @@ function buildItemsRowsForPrint(order: any, type: string, showQty = true) {
     .map((item: any) =>
       `
 <tr>
-  <td style="padding:2px 0; border-bottom:1px dashed #ddd;">
-    <div style="font-size:11px;font-weight:600;line-height:1.2;">
+  <td style="padding:.55mm 0; border-bottom:1px dashed #ddd;">
+    <div style="font-size:9.1px;font-weight:700;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:63mm;">
       ${escapeHtml(getCleanPrintItemName(item))}
     </div>
   </td>
-  ${showQty ? `<td style="padding:2px 0; text-align:center; border-bottom:1px dashed #ddd;">${getItemQty(item)}</td>` : ""}
+  ${showQty ? `<td style="padding:.55mm 0; text-align:center; border-bottom:1px dashed #ddd;font-size:9.1px;font-weight:800;">${getItemQty(item)}</td>` : ""}
 </tr>
       `.trim(),
     )
@@ -467,8 +467,9 @@ function buildGhnSortCodeBlock(sortCode: string, compact = true) {
   const code = String(sortCode || "").trim().toUpperCase();
   if (!code) return "";
 
+  // Bản 80x80 cần tiết kiệm chiều cao để phần danh sách sản phẩm in được nhiều dòng hơn.
   return compact
-    ? `<div data-ghn-sort-code="1" style="margin:1.2mm 0 1.4mm;border-top:1px dashed #111;border-bottom:1px dashed #111;text-align:center;font-size:16px;font-weight:900;letter-spacing:.7px;line-height:1.05;padding:1mm 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(code)}</div>`
+    ? `<div data-ghn-sort-code="1" style="margin:.6mm 0 .7mm;border-top:1px dashed #111;border-bottom:1px dashed #111;text-align:center;font-size:14px;font-weight:900;letter-spacing:.45px;line-height:1;padding:.65mm 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(code)}</div>`
     : `<div data-ghn-sort-code="1" style="margin:8px 0;border-top:1px dashed #111;border-bottom:1px dashed #111;text-align:center;font-size:28px;font-weight:900;letter-spacing:1px;line-height:1.1;padding:4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(code)}</div>`;
 }
 
@@ -598,14 +599,14 @@ function buildShippingTemplateHtml(params: {
   const hasTracking = Boolean(trackingCode);
   const isSquare80 = template.paperSize === "80mm";
   const ghnSortCodeBlock = buildGhnSortCodeBlock(ghnSortCode, isSquare80);
-  const squareItemsTop = ghnSortCodeBlock ? "40mm" : "33mm";
+  const squareItemsTop = ghnSortCodeBlock ? "36mm" : "29mm";
 
   if (isSquare80) {
     return `
-<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.6px;line-height:1.08;padding:2.2mm 2.5mm;border:1px solid #111;overflow:hidden;position:relative;">
+<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.2px;line-height:1.05;padding:1.8mm 2.3mm;border:1px solid #111;overflow:hidden;position:relative;">
   <div style="text-align:center;margin:0 0 2px 0;">
-    <div style="font-size:14px;font-weight:900;letter-spacing:.5px;line-height:1;">${data.storeName}</div>
-    <div style="font-size:11px;font-weight:900;letter-spacing:.1px;margin-top:1px;">${data.title || "PHIẾU GIAO HÀNG"}</div>
+    <div style="font-size:13px;font-weight:900;letter-spacing:.45px;line-height:1;">${data.storeName}</div>
+    <div style="font-size:10px;font-weight:900;letter-spacing:.1px;margin-top:.3mm;">${data.title || "PHIẾU GIAO HÀNG"}</div>
   </div>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:start;margin-bottom:2px;font-size:8.8px;border-bottom:1px dashed #999;padding-bottom:2px;">
@@ -613,17 +614,17 @@ function buildShippingTemplateHtml(params: {
     <div style="text-align:right;"><b>Ngày tạo:</b> ${data.createdAt}</div>
   </div>
 
-  <div style="font-size:9.5px;margin-bottom:2px;">
+  <div style="font-size:9px;margin-bottom:1px;line-height:1.05;">
     <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Người nhận:</b> ${data.customerName}</div>
     <div><b>SĐT:</b> ${data.customerPhone}</div>
-    <div style="height:22px;overflow:hidden;"><b>Đ/C:</b> ${data.shippingAddress}</div>
+    <div style="height:13px;overflow:hidden;"><b>Đ/C:</b> ${data.shippingAddress}</div>
   </div>
 
   ${data.financialBlock || ""}
   ${ghnSortCodeBlock}
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;top:${squareItemsTop};bottom:17mm;overflow:hidden;">
-    <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
+  <div style="position:absolute;left:2.3mm;right:2.3mm;top:${squareItemsTop};bottom:15mm;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:9.1px;line-height:1.03;">
       <thead>
         <tr>
           <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;font-size:9.6px;">Sản phẩm</th>
@@ -634,7 +635,7 @@ function buildShippingTemplateHtml(params: {
     </table>
   </div>
 
- <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:8mm;height:13mm;border-top:1px solid #111;padding-top:1mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
+ <div style="position:absolute;left:2.3mm;right:2.3mm;bottom:2.8mm;height:12mm;border-top:1px solid #111;padding-top:.8mm;display:grid;grid-template-columns:1fr 14mm;gap:4mm;align-items:center;">
     <div style="text-align:center;">
       ${hasTracking && template.showBarcode
         ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
@@ -643,7 +644,7 @@ function buildShippingTemplateHtml(params: {
     </div>
     <div style="text-align:center;">
       ${hasTracking && template.showQr
-        ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
+        ? `<img src="${qrUrl(trackingCode)}" style="width:12mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
         : ""
       }
     </div>
@@ -1245,26 +1246,26 @@ export function renderOrderTemplateHtml(params: {
 
   if (template.templateType === "shipping" && template.paperSize === "80mm") {
     const codBlock = Number(codAmount || amountDue || 0) > 0
-      ? `<div style="margin:1mm 0 1.2mm;"><table style="width:100%;border-collapse:collapse;text-align:center;"><tr><td style="border:1px solid #111;padding:1.4mm 2mm;"><span style="font-size:8.8px;">THU HỘ (COD): </span><span style="font-size:12.5px;font-weight:900;">${money(codAmount || amountDue || 0)}</span></td></tr></table></div>`
+      ? `<div style="margin:.6mm 0 .7mm;"><table style="width:100%;border-collapse:collapse;text-align:center;"><tr><td style="border:1px solid #111;padding:.9mm 2mm;"><span style="font-size:8.4px;">THU HỘ (COD): </span><span style="font-size:12px;font-weight:900;">${money(codAmount || amountDue || 0)}</span></td></tr></table></div>`
       : "";
 
     const requiredNoteBlock = ghnRequiredNoteLabel
-      ? `<div style="margin:.8mm 0 1.2mm;text-align:center;font-size:8.2px;font-weight:900;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ghnRequiredNoteLabel)}</div>`
+      ? `<div style="margin:.45mm 0 .65mm;text-align:center;font-size:7.7px;font-weight:900;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ghnRequiredNoteLabel)}</div>`
       : "";
 
     const barcodeBlock = trackingCode && template.showBarcode
-      ? `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;"><img src="${barcodeUrl(trackingCode)}" style="width:36mm;height:12mm;object-fit:fill;display:block;margin:0 auto;" /><div style="margin-top:.2mm;font-size:6.8px;font-weight:800;line-height:1;white-space:nowrap;max-width:38mm;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(trackingCode)}</div></div>`
+      ? `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;"><img src="${barcodeUrl(trackingCode)}" style="width:34mm;height:10.8mm;object-fit:fill;display:block;margin:0 auto;" /><div style="margin-top:.1mm;font-size:6.4px;font-weight:800;line-height:1;white-space:nowrap;max-width:36mm;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(trackingCode)}</div></div>`
       : "";
 
     const qrBlock = trackingCode && template.showQr
-      ? `<img src="${qrUrl(trackingCode)}" style="width:14mm;height:14mm;object-fit:contain;display:block;margin:0 auto;" />`
+      ? `<img src="${qrUrl(trackingCode)}" style="width:12.5mm;height:12.5mm;object-fit:contain;display:block;margin:0 auto;" />`
       : "";
 
     return `
-<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.4px;line-height:1.08;padding:2mm 2.5mm;border:1px solid #111;overflow:hidden;position:relative;">
-  <div style="text-align:center;margin:0 0 1.4mm 0;">
-    <div style="font-size:13.5px;font-weight:900;letter-spacing:.5px;line-height:1;">${data.storeName}</div>
-    <div style="font-size:10.5px;font-weight:900;letter-spacing:.1px;margin-top:.5mm;">${data.title || "PHIẾU GIAO HÀNG"}</div>
+<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.1px;line-height:1.04;padding:1.6mm 2.2mm;border:1px solid #111;overflow:hidden;position:relative;">
+  <div style="text-align:center;margin:0 0 .8mm 0;">
+    <div style="font-size:12.8px;font-weight:900;letter-spacing:.45px;line-height:1;">${data.storeName}</div>
+    <div style="font-size:9.8px;font-weight:900;letter-spacing:.1px;margin-top:.25mm;">${data.title || "PHIẾU GIAO HÀNG"}</div>
   </div>
 
   ${orderMetaBlock}
@@ -1273,8 +1274,8 @@ export function renderOrderTemplateHtml(params: {
   ${ghnSortCodeBlock}
   ${requiredNoteBlock}
 
-  ${showItems ? `<div style="position:absolute;left:2.5mm;right:2.5mm;top:${ghnSortCodeBlock || requiredNoteBlock ? "45mm" : codBlock ? "36mm" : "31mm"};bottom:18mm;overflow:hidden;">
-    <table style="width:100%;border-collapse:collapse;font-size:9.1px;line-height:1.05;">
+  ${showItems ? `<div style="position:absolute;left:2.2mm;right:2.2mm;top:${ghnSortCodeBlock || requiredNoteBlock ? (codBlock ? "37mm" : "34mm") : codBlock ? "29mm" : "25mm"};bottom:15.5mm;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:9px;line-height:1.03;">
       <thead>
         <tr>
           <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;font-size:9.4px;">Sản phẩm</th>
@@ -1285,7 +1286,7 @@ export function renderOrderTemplateHtml(params: {
     </table>
   </div>` : ""}
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:3mm;height:14mm;border-top:1px solid #111;padding-top:1mm;display:grid;grid-template-columns:1fr 16mm;gap:4mm;align-items:center;">
+  <div style="position:absolute;left:2.2mm;right:2.2mm;bottom:2.2mm;height:12.5mm;border-top:1px solid #111;padding-top:.7mm;display:grid;grid-template-columns:1fr 14.5mm;gap:3.5mm;align-items:center;">
     <div style="text-align:center;">${barcodeBlock}</div>
     <div style="text-align:center;">${qrBlock}</div>
   </div>
@@ -1319,20 +1320,20 @@ export function renderOrderTemplateHtml(params: {
       ...data,
       barcodeBlock:
         trackingCode && template.showBarcode
-          ? `<img src="${barcodeUrl(trackingCode)}" style="width:30mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${barcodeUrl(trackingCode)}" style="width:32mm;height:10.5mm;object-fit:fill;display:block;margin:0 auto;" />`
           : "",
       qrBlock:
         trackingCode && template.showQr
-          ? `<img src="${qrUrl(trackingCode)}" style="width:13mm;height:13mm;object-fit:contain;display:block;margin:0 auto;" />`
+          ? `<img src="${qrUrl(trackingCode)}" style="width:12mm;height:12mm;object-fit:contain;display:block;margin:0 auto;" />`
           : "",
     });
 
     if (template.templateType === "shipping" && ghnSortCodeBlock) {
       const nextItemsTop =
-        Number(codAmount || amountDue || 0) > 0 ? "43mm" : "40mm";
+        Number(codAmount || amountDue || 0) > 0 ? "37mm" : "34mm";
       html = html
-        .replaceAll("top:33mm;bottom:17mm", `top:${nextItemsTop};bottom:17mm`)
-        .replaceAll("top:33mm; bottom:17mm", `top:${nextItemsTop}; bottom:17mm`);
+        .replaceAll("top:33mm;bottom:17mm", `top:${nextItemsTop};bottom:15.5mm`)
+        .replaceAll("top:33mm; bottom:17mm", `top:${nextItemsTop}; bottom:15.5mm`);
     }
 
     return html

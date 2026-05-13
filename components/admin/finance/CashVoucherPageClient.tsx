@@ -87,6 +87,120 @@ function isCashSource(source: any) {
   );
 }
 
+function branchAliasTokens(branch: any, currentUser?: any) {
+  const rawValues = [
+    branch?.code,
+    branch?.name,
+    branch?.shortName,
+    branch?.slug,
+    currentUser?.branchCode,
+    currentUser?.workingBranchCode,
+    currentUser?.branch?.code,
+    currentUser?.branch?.name,
+    currentUser?.workingBranch?.code,
+    currentUser?.workingBranch?.name,
+    currentUser?.name,
+    currentUser?.username,
+    currentUser?.displayName,
+  ];
+
+  const text = rawValues
+    .map((value) => normalizeMoneySourceName(value))
+    .filter(Boolean)
+    .join(" ");
+
+  const tokens = new Set<string>();
+
+  rawValues.forEach((value) => {
+    const normalized = normalizeMoneySourceName(value);
+    if (!normalized) return;
+
+    tokens.add(normalized);
+
+    normalized
+      .split(/[^a-z0-9]+/g)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((part) => tokens.add(part));
+
+    const words = normalized
+      .split(/[^a-z0-9]+/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (words.length > 1) {
+      tokens.add(words.map((word) => word[0]).join(""));
+    }
+  });
+
+  [
+    ["quoc oai", "qo"],
+    ["quoc-oai", "qo"],
+    ["thai ha", "th"],
+    ["thai-ha", "th"],
+    ["chua lang", "cl"],
+    ["chua-lang", "cl"],
+    ["xa dan", "xd"],
+    ["xa-dan", "xd"],
+  ].forEach(([name, code]) => {
+    if (text.includes(name) || text.includes(code)) {
+      tokens.add(name.replace("-", " "));
+      tokens.add(code);
+    }
+  });
+
+  return Array.from(tokens).filter(Boolean);
+}
+
+function sourceMatchesBranch(source: any, branch: any, currentUser?: any) {
+  if (!source) return false;
+
+  if (source.branchId && branch?.id && String(source.branchId) === String(branch.id)) {
+    return true;
+  }
+
+  const sourceText = normalizeMoneySourceName(
+    [source?.name, source?.code, source?.description, source?.branchCode, source?.branchName]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const tokens = branchAliasTokens(branch, currentUser);
+
+  return tokens.some((token) => {
+    if (!token || token.length < 2) return false;
+    return sourceText.includes(token);
+  });
+}
+
+function findCashSourceForBranch(sources: any[], branch: any, currentUser?: any) {
+  const cashSources = sources.filter((source) => isCashSource(source));
+
+  if (!cashSources.length) return null;
+  if (!branch && !currentUser) return cashSources[0] || null;
+
+  return (
+    cashSources.find((source) => sourceMatchesBranch(source, branch, currentUser)) ||
+    null
+  );
+}
+
+function creatorKey(row: any) {
+  return row.createdByName || row.staffName || row.createdById || row.staffId || "—";
+}
+
+
+
+function cashSourceOptionsForBranch(sources: any[], branch: any, currentUser?: any) {
+  const cashSources = sources.filter((source) => isCashSource(source));
+  const matched = cashSources.filter((source) => sourceMatchesBranch(source, branch, currentUser));
+
+  // Tuyệt đối không fallback sang tiền mặt chi nhánh khác.
+  // Nếu QO chưa có TIỀN MẶT QO thì trả rỗng để UI báo cấu hình thiếu,
+  // tránh ghi nhầm vào TIỀN MẶT CL/TH/XD.
+  return matched;
+}
+
 function sourceDisplay(row: any) {
   const source = row.paymentSourceName || row.paymentSourceCode || row.paymentSourceId || "Tiền mặt";
   const branch = row.branchName || row.branchId || "";
@@ -177,12 +291,25 @@ export default function CashVoucherPageClient({ type }: Props) {
       hasPermission(currentUser, "cash_voucher.view_payment") ||
       hasPermission(currentUser, "cash_voucher.view")
     );
-  const canCreate = hasPermission(currentUser, createPermission);
-  const canEdit = hasPermission(currentUser, editPermission);
-  const canConfirm = hasPermission(currentUser, confirmPermission);
-  const canCancel = hasPermission(currentUser, cancelPermission);
-  const canDelete = hasPermission(currentUser, deletePermission) || canCancel;
-  const canExport = hasPermission(currentUser, "cash_voucher.export");
+  const roleText = String(
+    currentUser?.role ||
+    currentUser?.userRole ||
+    currentUser?.primaryRole ||
+    currentUser?.appRole ||
+    ""
+  ).toUpperCase();
+
+  const isPowerFinanceUser =
+    roleText.includes("OWNER") ||
+    roleText.includes("ADMIN") ||
+    hasPermission(currentUser, "system.manage");
+
+  const canCreate = hasPermission(currentUser, createPermission) || isPowerFinanceUser;
+  const canEdit = hasPermission(currentUser, editPermission) || isPowerFinanceUser;
+  const canConfirm = hasPermission(currentUser, confirmPermission) || isPowerFinanceUser;
+  const canCancel = hasPermission(currentUser, cancelPermission) || isPowerFinanceUser;
+  const canDelete = hasPermission(currentUser, deletePermission) || canCancel || isPowerFinanceUser;
+  const canExport = hasPermission(currentUser, "cash_voucher.export") || isPowerFinanceUser;
 
   const initialRange = useMemo(() => getRange("today"), []);
   const [quickRange, setQuickRange] = useState<QuickRange>("today");
@@ -201,14 +328,17 @@ export default function CashVoucherPageClient({ type }: Props) {
   const [saving, setSaving] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
+  const [creatorFilter, setCreatorFilter] = useState("ALL");
+  const [confirmDialog, setConfirmDialog] = useState<{
+    kind: "confirm" | "cancel" | "delete";
+    row: any;
+  } | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const allowedBranches = useMemo(() => {
     if (isGlobalFinanceUser || !currentBranchId) return branches;
     return branches.filter((branch) => String(branch.id) === String(currentBranchId));
   }, [branches, currentBranchId, isGlobalFinanceUser]);
-
-  const cashPaymentSource =
-    paymentSources.find((source) => isCashSource(source)) || paymentSources[0] || null;
 
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState({
@@ -221,6 +351,24 @@ export default function CashVoucherPageClient({ type }: Props) {
     partnerPhone: "",
     note: "",
   });
+
+  const selectedFormBranchId =
+    (!isGlobalFinanceUser && currentBranchId ? currentBranchId : form.branchId) ||
+    allowedBranches[0]?.id ||
+    currentBranchId ||
+    branches[0]?.id ||
+    "";
+
+  const selectedFormBranch =
+    branches.find((branch) => String(branch.id) === String(selectedFormBranchId)) ||
+    allowedBranches[0] ||
+    null;
+
+  const cashPaymentSource = findCashSourceForBranch(paymentSources, selectedFormBranch, currentUser);
+  const cashSourceOptions = useMemo(
+    () => cashSourceOptionsForBranch(paymentSources, selectedFormBranch, currentUser),
+    [paymentSources, selectedFormBranch, currentUser]
+  );
 
   const resetForm = () => {
     setEditing(null);
@@ -252,8 +400,13 @@ export default function CashVoucherPageClient({ type }: Props) {
 
     const nextBranches = Array.isArray(branchRows) ? branchRows : [];
     const nextSources = Array.isArray(sourceRows) ? sourceRows : [];
+    const branchForDefault = !isGlobalFinanceUser && currentBranchId
+      ? nextBranches.find((branch) => String(branch.id) === String(currentBranchId))
+      : nextBranches[0];
+
     const defaultCashSource =
-      nextSources.find((source) => isCashSource(source)) || nextSources[0] || null;
+      findCashSourceForBranch(nextSources, branchForDefault, currentUser) ||
+      null;
 
     setBranches(nextBranches);
     setPaymentSources(nextSources);
@@ -325,7 +478,7 @@ export default function CashVoucherPageClient({ type }: Props) {
       }
     }
 
-    if (!form.paymentSourceId && cashPaymentSource?.id) {
+    if (cashPaymentSource?.id && form.paymentSourceId !== cashPaymentSource.id) {
       setForm((prev) => ({ ...prev, paymentSourceId: cashPaymentSource.id }));
     }
   }, [
@@ -333,6 +486,7 @@ export default function CashVoucherPageClient({ type }: Props) {
     branches,
     branchId,
     cashPaymentSource,
+    cashSourceOptions,
     currentBranchId,
     form.branchId,
     form.paymentSourceId,
@@ -371,7 +525,7 @@ export default function CashVoucherPageClient({ type }: Props) {
       const payload = {
         type,
         branchId: (!isGlobalFinanceUser && currentBranchId ? currentBranchId : form.branchId) || undefined,
-        paymentSourceId: cashPaymentSource?.id || form.paymentSourceId || undefined,
+        paymentSourceId: form.paymentSourceId || cashPaymentSource?.id || undefined,
         amount: Number(String(form.amount || "").replace(/[^\d]/g, "")),
         category: form.category.trim() || undefined,
         title: form.title.trim(),
@@ -384,6 +538,11 @@ export default function CashVoucherPageClient({ type }: Props) {
 
       if (!payload.title || payload.amount <= 0) {
         setActionError("Nhập đủ nội dung và số tiền hợp lệ.");
+        return;
+      }
+
+      if (!payload.paymentSourceId) {
+        setActionError("Chưa tìm thấy nguồn tiền mặt đúng với chi nhánh đang làm việc.");
         return;
       }
 
@@ -417,74 +576,98 @@ export default function CashVoucherPageClient({ type }: Props) {
 
   const confirmVoucher = async (row: any) => {
     if (!canConfirm) {
-      alert("Bạn không có quyền xác nhận phiếu.");
+      setActionError("Bạn không có quyền xác nhận phiếu.");
       return;
     }
 
-    if (!window.confirm(`Xác nhận ${title.toLowerCase()} ${row.voucherCode}?`)) return;
-
-    await apiJson(`/finance/cash-vouchers/${row.id}/confirm`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        confirmedById: currentUser?.id,
-        confirmedByName: currentUser?.name || currentUser?.username,
-      }),
-    });
-    await loadData();
+    setConfirmDialog({ kind: "confirm", row });
   };
 
   const cancelVoucher = async (row: any) => {
     if (!canCancel) {
-      alert("Bạn không có quyền huỷ phiếu.");
+      setActionError("Bạn không có quyền huỷ phiếu.");
       return;
     }
 
-    const reason = window.prompt(`Lý do huỷ ${title.toLowerCase()} ${row.voucherCode}?`);
-    if (reason === null) return;
-
-    await apiJson(`/finance/cash-vouchers/${row.id}/cancel`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        cancelledById: currentUser?.id,
-        cancelledByName: currentUser?.name || currentUser?.username,
-        note: reason || row.note,
-      }),
-    });
-    await loadData();
+    setCancelReason("");
+    setConfirmDialog({ kind: "cancel", row });
   };
 
   const deleteVoucher = async (row: any) => {
     if (!canDelete) {
-      alert("Bạn không có quyền xoá phiếu.");
+      setActionError("Bạn không có quyền xoá phiếu.");
       return;
     }
 
-    if (row.status === "CONFIRMED") {
-      alert("Phiếu đã xác nhận không được xoá. Hãy huỷ phiếu nếu cần điều chỉnh.");
-      return;
-    }
+    setConfirmDialog({ kind: "delete", row });
+  };
 
-    if (!window.confirm(`Xoá ${title.toLowerCase()} ${row.voucherCode || row.code}?`)) return;
+  const runDialogAction = async () => {
+    if (!confirmDialog?.row) return;
+
+    const row = confirmDialog.row;
 
     setActionMessage("");
     setActionError("");
 
     try {
-      await apiJson(`/finance/cash-vouchers/${row.id}`, {
-        method: "DELETE",
-      });
+      if (confirmDialog.kind === "confirm") {
+        const saved: any = await apiJson(`/finance/cash-vouchers/${row.id}/confirm`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            confirmedById: currentUser?.id,
+            confirmedByName: currentUser?.name || currentUser?.username,
+          }),
+        });
 
-      setRows((prev) => prev.filter((item) => item.id !== row.id));
-      setActionMessage(`Đã xoá ${title.toLowerCase()} ${row.voucherCode || row.code || ""}.`);
+        setActionMessage(`Đã xác nhận ${title.toLowerCase()} ${saved?.voucherCode || row.voucherCode || ""}.`);
+      }
+
+      if (confirmDialog.kind === "cancel") {
+        const saved: any = await apiJson(`/finance/cash-vouchers/${row.id}/cancel`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            cancelledById: currentUser?.id,
+            cancelledByName: currentUser?.name || currentUser?.username,
+            note: cancelReason || row.note,
+          }),
+        });
+
+        setActionMessage(`Đã huỷ ${title.toLowerCase()} ${saved?.voucherCode || row.voucherCode || ""}.`);
+      }
+
+      if (confirmDialog.kind === "delete") {
+        await apiJson(`/finance/cash-vouchers/${row.id}`, {
+          method: "DELETE",
+        });
+
+        setActionMessage(`Đã xoá ${title.toLowerCase()} ${row.voucherCode || row.code || ""}.`);
+      }
+
+      setConfirmDialog(null);
+      setCancelReason("");
+      await loadData();
     } catch (error: any) {
-      setActionError(error?.message || `Không xoá được ${title.toLowerCase()}.`);
+      setActionError(error?.message || `Không thực hiện được thao tác với ${title.toLowerCase()}.`);
     }
   };
 
+  const creatorOptions = useMemo(() => {
+    const names = rows
+      .map((row) => creatorKey(row))
+      .filter((name) => name && name !== "—");
+
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [rows]);
+
+  const visibleRows = useMemo(() => {
+    if (creatorFilter === "ALL") return rows;
+    return rows.filter((row) => creatorKey(row) === creatorFilter);
+  }, [rows, creatorFilter]);
 
   const exportCsv = () => {
     const header = ["Mã phiếu", "Loại", "Trạng thái", "Chi nhánh", "Nguồn tiền", "Số tiền", "Nội dung", "Đối tượng", "Ngày tạo"];
-    const body = rows.map((row) => [
+    const body = visibleRows.map((row) => [
       row.voucherCode,
       row.type,
       statusLabel(row.status),
@@ -520,36 +703,108 @@ export default function CashVoucherPageClient({ type }: Props) {
   return (
     <div className="space-y-6 p-5">
       {actionMessage ? (
-        <div className="fixed right-6 top-24 z-[80] flex max-w-md items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 shadow-lg">
-          <span>{actionMessage}</span>
-          <button
-            type="button"
-            onClick={() => setActionMessage("")}
-            className="rounded-full px-2 text-emerald-700 hover:bg-emerald-100"
-          >
-            ×
-          </button>
+        <div className="fixed right-6 top-24 z-[80] max-w-md rounded-3xl border border-emerald-200 bg-white p-4 text-sm shadow-2xl shadow-emerald-950/10">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-lg font-black text-emerald-800">✓</div>
+            <div className="min-w-0">
+              <p className="font-bold text-emerald-800">Thao tác thành công</p>
+              <p className="mt-1 text-neutral-700">{actionMessage}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionMessage("")}
+              className="ml-2 rounded-full px-2 py-1 text-neutral-900 placeholder:text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            >
+              ×
+            </button>
+          </div>
         </div>
       ) : null}
 
       {actionError ? (
-        <div className="fixed right-6 top-24 z-[80] flex max-w-md items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-lg">
-          <span>{actionError}</span>
-          <button
-            type="button"
-            onClick={() => setActionError("")}
-            className="rounded-full px-2 text-red-700 hover:bg-red-100"
-          >
-            ×
-          </button>
+        <div className="fixed right-6 top-24 z-[80] max-w-md rounded-3xl border border-red-200 bg-white p-4 text-sm shadow-2xl shadow-red-950/10">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 text-lg font-black text-red-800">!</div>
+            <div className="min-w-0">
+              <p className="font-bold text-red-800">Không thực hiện được</p>
+              <p className="mt-1 text-neutral-700">{actionError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionError("")}
+              className="ml-2 rounded-full px-2 py-1 text-neutral-900 placeholder:text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmDialog ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[28px] border border-neutral-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xl font-black ${
+                confirmDialog.kind === "confirm"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-red-100 text-red-800"
+              }`}>
+                {confirmDialog.kind === "confirm" ? "✓" : "!"}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <h3 className="text-xl font-bold text-neutral-950">
+                  {confirmDialog.kind === "confirm"
+                    ? `Xác nhận ${title.toLowerCase()}`
+                    : confirmDialog.kind === "cancel"
+                      ? `Huỷ ${title.toLowerCase()}`
+                      : `Xoá ${title.toLowerCase()}`}
+                </h3>
+                <p className="mt-2 text-sm text-neutral-600">
+                  Mã phiếu <b>{confirmDialog.row?.voucherCode || confirmDialog.row?.code}</b> · số tiền <b>{currency(confirmDialog.row?.amount)}</b>
+                </p>
+
+                {confirmDialog.kind === "cancel" ? (
+                  <textarea
+                    value={cancelReason}
+                    onChange={(event) => setCancelReason(event.target.value)}
+                    className="mt-4 min-h-24 w-full rounded-2xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                    placeholder="Nhập lý do huỷ phiếu..."
+                  />
+                ) : null}
+
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmDialog(null);
+                      setCancelReason("");
+                    }}
+                    className="rounded-2xl border border-neutral-300 bg-white px-5 py-3 text-sm font-semibold"
+                  >
+                    Để sau
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void runDialogAction()}
+                    className={`rounded-2xl px-5 py-3 text-sm font-semibold text-white ${
+                      confirmDialog.kind === "confirm" ? "bg-emerald-700" : "bg-red-700"
+                    }`}
+                  >
+                    {confirmDialog.kind === "confirm" ? "Xác nhận ngay" : confirmDialog.kind === "cancel" ? "Huỷ phiếu" : "Xoá phiếu"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm text-neutral-500">Tài chính / {title}</p>
+          <p className="text-sm text-neutral-900 placeholder:text-neutral-500">Tài chính / {title}</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">{title}</h1>
-          <p className="mt-1 max-w-3xl text-sm text-neutral-500">{subtitle}</p>
+          <p className="mt-1 max-w-3xl text-sm text-neutral-900 placeholder:text-neutral-500">{subtitle}</p>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -595,17 +850,17 @@ export default function CashVoucherPageClient({ type }: Props) {
           </div>
 
           <Field label="Từ ngày">
-            <input type="date" value={dateFrom} onChange={(e) => { setQuickRange("custom"); setDateFrom(e.target.value); }} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" />
+            <input type="date" value={dateFrom} onChange={(e) => { setQuickRange("custom"); setDateFrom(e.target.value); }} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" />
           </Field>
           <Field label="Đến ngày">
-            <input type="date" value={dateTo} onChange={(e) => { setQuickRange("custom"); setDateTo(e.target.value); }} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" />
+            <input type="date" value={dateTo} onChange={(e) => { setQuickRange("custom"); setDateTo(e.target.value); }} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" />
           </Field>
           <Field label="Chi nhánh">
             <select
               value={!isGlobalFinanceUser && currentBranchId ? currentBranchId : branchId}
               onChange={(e) => setBranchId(e.target.value)}
               disabled={!isGlobalFinanceUser}
-              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500 disabled:opacity-100 disabled:bg-neutral-50 disabled:text-neutral-950"
             >
               {isGlobalFinanceUser ? <option value="ALL">Tất cả chi nhánh</option> : null}
               {allowedBranches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
@@ -615,7 +870,7 @@ export default function CashVoucherPageClient({ type }: Props) {
             <select
               value={paymentSourceId}
               onChange={(e) => setPaymentSourceId(e.target.value)}
-              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
+              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500"
             >
               <option value="ALL">Tất cả nguồn tiền</option>
               {paymentSources.map((source) => (
@@ -632,13 +887,20 @@ export default function CashVoucherPageClient({ type }: Props) {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-[1fr_220px]">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã phiếu, nội dung, đối tượng, ghi chú..." className="h-11 rounded-xl border border-neutral-200 px-3 text-sm" />
-          <select value={status} onChange={(e) => setStatus(e.target.value as VoucherStatus)} className="h-11 rounded-xl border border-neutral-200 px-3 text-sm">
+        <div className="mt-4 grid gap-4 md:grid-cols-[1fr_220px_220px]">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã phiếu, nội dung, đối tượng, ghi chú..." className="h-11 rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" />
+          <select value={status} onChange={(e) => setStatus(e.target.value as VoucherStatus)} className="h-11 rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500">
             <option value="ALL">Tất cả trạng thái</option>
             <option value="DRAFT">Nháp</option>
             <option value="CONFIRMED">Đã xác nhận</option>
             <option value="CANCELLED">Đã huỷ</option>
+          </select>
+
+          <select value={creatorFilter} onChange={(e) => setCreatorFilter(e.target.value)} className="h-11 rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500">
+            <option value="ALL">Tất cả người tạo</option>
+            {creatorOptions.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
           </select>
         </div>
       </section>
@@ -662,7 +924,7 @@ export default function CashVoucherPageClient({ type }: Props) {
                 value={!isGlobalFinanceUser && currentBranchId ? currentBranchId : form.branchId}
                 onChange={(e) => setForm({ ...form, branchId: e.target.value })}
                 disabled={!isGlobalFinanceUser}
-                className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+                className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500 disabled:opacity-100 disabled:bg-neutral-50 disabled:text-neutral-950"
               >
                 <option value="">Chọn chi nhánh</option>
                 {allowedBranches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
@@ -670,41 +932,59 @@ export default function CashVoucherPageClient({ type }: Props) {
             </Field>
             <Field label="Nguồn tiền">
               <select
-                value={cashPaymentSource?.id || form.paymentSourceId}
+                value={cashPaymentSource?.id || ""}
                 onChange={(e) => setForm({ ...form, paymentSourceId: e.target.value })}
                 disabled
-                className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+                className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500 disabled:opacity-100 disabled:bg-neutral-50 disabled:text-neutral-950"
               >
                 {cashPaymentSource ? (
-                  <option value={cashPaymentSource.id}>{cashPaymentSource.name}</option>
+                  <option value={cashPaymentSource.id}>
+                    {cashPaymentSource.name || cashPaymentSource.code || cashPaymentSource.id}
+                  </option>
                 ) : (
-                  <option value="">Tiền mặt</option>
+                  <option value="">
+                    Chưa có nguồn tiền mặt {selectedFormBranch?.code || selectedFormBranch?.name || ""}
+                  </option>
                 )}
               </select>
+
+              {cashPaymentSource ? (
+                <p className="mt-1 text-xs text-neutral-500">
+                  Đã tự khoá đúng quỹ tiền mặt theo chi nhánh {selectedFormBranch?.name || selectedFormBranch?.code || "làm việc"}.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs font-semibold text-amber-700">
+                  Chưa có nguồn tiền mặt đúng chi nhánh {selectedFormBranch?.code || selectedFormBranch?.name || ""}. Cần tạo/mở nguồn TIỀN MẶT {selectedFormBranch?.code || ""} trong cấu hình nguồn tiền.
+                </p>
+              )}
             </Field>
             <Field label="Số tiền">
-              <input value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d]/g, "") })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" placeholder="Nhập số tiền" />
+              <input value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d]/g, "") })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" placeholder="Nhập số tiền" />
             </Field>
             <Field label="Nhóm khoản">
-              <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" placeholder={isReceipt ? "Thu khác / Thu cọc..." : "Chi vận hành / Chi khác..."} />
+              <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" placeholder={isReceipt ? "Thu khác / Thu cọc..." : "Chi vận hành / Chi khác..."} />
             </Field>
             <Field label="Nội dung">
-              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" placeholder="Ví dụ: Thu cọc khách A" />
+              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" placeholder="Ví dụ: Thu cọc khách A" />
             </Field>
             <div className="grid gap-3 md:grid-cols-2">
               <Field label="Đối tượng">
-                <input value={form.partnerName} onChange={(e) => setForm({ ...form, partnerName: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" placeholder="Khách/NCC/người nhận" />
+                <input value={form.partnerName} onChange={(e) => setForm({ ...form, partnerName: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" placeholder="Khách/NCC/người nhận" />
               </Field>
               <Field label="SĐT">
-                <input value={form.partnerPhone} onChange={(e) => setForm({ ...form, partnerPhone: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" placeholder="Số điện thoại" />
+                <input value={form.partnerPhone} onChange={(e) => setForm({ ...form, partnerPhone: e.target.value })} className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" placeholder="Số điện thoại" />
               </Field>
             </div>
             <Field label="Ghi chú">
-              <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="min-h-24 w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm" placeholder="Ghi chú nội bộ..." />
+              <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="min-h-24 w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-950 placeholder:text-neutral-500" placeholder="Ghi chú nội bộ..." />
             </Field>
 
             <div className="flex flex-wrap gap-2">
-              <button disabled={saving || (!editing && !canCreate) || (editing && !canEdit)} onClick={saveVoucher} className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">
+              <button
+                disabled={saving || !cashPaymentSource?.id || (!editing && !canCreate) || (editing && !canEdit)}
+                onClick={saveVoucher}
+                className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 {saving ? "Đang lưu..." : editing ? "Lưu thay đổi" : `Tạo ${title.toLowerCase()}`}
               </button>
               <button onClick={resetForm} className="rounded-2xl border border-neutral-300 bg-white px-5 py-3 text-sm font-semibold">
@@ -718,7 +998,7 @@ export default function CashVoucherPageClient({ type }: Props) {
           <div className="border-b border-neutral-200 p-5">
             <h2 className="text-lg font-semibold">Danh sách {title.toLowerCase()}</h2>
             <div className="mt-1 flex items-center justify-between gap-3">
-              <p className="text-sm text-neutral-500">{rows.length} phiếu trong khoảng lọc.</p>
+              <p className="text-sm text-neutral-900 placeholder:text-neutral-500">{visibleRows.length} / {rows.length} phiếu trong khoảng lọc.</p>
               <button
                 type="button"
                 onClick={() => void loadData()}
@@ -744,7 +1024,7 @@ export default function CashVoucherPageClient({ type }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {visibleRows.map((row) => (
                   <tr key={row.id} className="border-t border-neutral-100">
                     <td className="px-4 py-3 font-semibold">{row.voucherCode}</td>
                     <td className="px-4 py-3">
@@ -752,7 +1032,7 @@ export default function CashVoucherPageClient({ type }: Props) {
                       <div className="text-xs text-neutral-500">
                         {[row.category, row.partnerName, row.partnerPhone].filter(Boolean).join(" · ") || "—"}
                       </div>
-                      {row.note ? <div className="mt-1 text-xs text-neutral-400">{row.note}</div> : null}
+                      {row.note ? <div className="mt-1 text-xs text-neutral-900 placeholder:text-neutral-500">{row.note}</div> : null}
                     </td>
                     <td className="px-4 py-3">{sourceDisplay(row)}</td>
                     <td className="px-4 py-3 text-right font-semibold">{currency(row.amount)}</td>
@@ -775,7 +1055,7 @@ export default function CashVoucherPageClient({ type }: Props) {
                           Huỷ
                         </button>
                         <button
-                          disabled={row.status === "CONFIRMED" || !canDelete}
+                          disabled={!canDelete}
                           onClick={() => deleteVoucher(row)}
                           className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40"
                         >

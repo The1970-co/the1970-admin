@@ -36,7 +36,7 @@ export type PrintTemplateConfig = {
 
 // Đổi key lên v21 để xoá cache template cũ đang lưu trong localStorage.
 // Nếu không đổi key, trình duyệt vẫn dùng HTML cũ nên sửa engine/config không ăn.
-const STORAGE_KEY = "the1970.printTemplates.v23";
+const STORAGE_KEY = "the1970.printTemplates.v24";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -99,27 +99,27 @@ function getBranchContact(branchId: string, branchName: string) {
 
 function defaultShipping80TemplateHtml() {
   return `
-<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.6px;line-height:1.08;padding:2.2mm 2.5mm;border:1px solid #111;overflow:hidden;position:relative;">
-  <div style="text-align:center;margin:0 0 2px 0;">
-    <div style="font-size:14px;font-weight:900;letter-spacing:.5px;line-height:1;">{{storeName}}</div>
-    <div style="font-size:11px;font-weight:900;letter-spacing:.1px;margin-top:1px;">{{title}}</div>
+<div style="width:80mm;height:80mm;box-sizing:border-box;margin:0 auto;background:#fff;color:#000;font-family:Arial,sans-serif;font-size:9.1px;line-height:1.04;padding:1.6mm 2.2mm;border:1px solid #111;overflow:hidden;position:relative;">
+  <div style="text-align:center;margin:0 0 .8mm 0;">
+    <div style="font-size:12.8px;font-weight:900;letter-spacing:.45px;line-height:1;">{{storeName}}</div>
+    <div style="font-size:9.8px;font-weight:900;letter-spacing:.1px;margin-top:.25mm;">{{title}}</div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:start;margin-bottom:2px;font-size:8.8px;border-bottom:1px dashed #999;padding-bottom:2px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:start;margin-bottom:1px;font-size:8.2px;border-bottom:1px dashed #999;padding-bottom:1px;">
     <div><b>Mã đơn:</b> {{orderCode}}</div>
     <div style="text-align:right;"><b>Ngày tạo:</b> {{createdAt}}</div>
   </div>
 
-  <div style="font-size:9.5px;margin-bottom:2px;">
+  <div style="font-size:9px;margin-bottom:1px;line-height:1.05;">
     <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Người nhận:</b> {{customerName}}</div>
     <div><b>SĐT:</b> {{customerPhone}}</div>
-    <div style="height:22px;overflow:hidden;"><b>Đ/C:</b> {{shippingAddress}}</div>
+    <div style="height:13px;overflow:hidden;"><b>Đ/C:</b> {{shippingAddress}}</div>
   </div>
 
   {{financialBlock}}
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;top:33mm;bottom:17mm;overflow:hidden;">
-    <table style="width:100%;border-collapse:collapse;font-size:9.3px;line-height:1.05;">
+  <div style="position:absolute;left:2.2mm;right:2.2mm;top:29mm;bottom:15.5mm;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:9px;line-height:1.03;">
       <thead>
         <tr>
           <th style="text-align:left;border-bottom:1px solid #999;padding:1px 0;font-size:9.6px;">Sản phẩm</th>
@@ -130,14 +130,11 @@ function defaultShipping80TemplateHtml() {
     </table>
   </div>
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:5.5mm;height:11mm;border-top:1px solid #111;padding-top:2mm;display:grid;grid-template-columns:1fr 15mm;gap:5mm;align-items:center;">
+  <div style="position:absolute;left:2.2mm;right:2.2mm;bottom:2.2mm;height:12.5mm;border-top:1px solid #111;padding-top:.7mm;display:grid;grid-template-columns:1fr 14.5mm;gap:3.5mm;align-items:center;">
     <div style="text-align:center;">{{barcodeBlock}}</div>
     <div style="text-align:center;">{{qrBlock}}</div>
   </div>
 
-  <div style="position:absolute;left:2.5mm;right:2.5mm;bottom:1.7mm;text-align:center;font-size:8.3px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    {{footerNote}}
-  </div>
 </div>
 `.trim();
 }
