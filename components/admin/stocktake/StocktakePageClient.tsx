@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { API_BASE } from "@/lib/api-base";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -2539,115 +2540,24 @@ export default function StocktakePageClient() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-extrabold text-blue-950">
-                  Upload Excel kiểm kho nhanh
+                  Upload Excel kiểm kho
                 </p>
                 <p className="mt-1 text-xs font-medium text-blue-800/80">
-                  Dùng file Phiếu kiểm hàng. Ưu tiên header dòng 10, nếu không thấy sẽ tự dò cột Mã SKU / Tên sản phẩm / Tồn thực tế.
+                  Đã tách sang trang riêng để thao tác rộng hơn, xem preview rõ hơn và không làm rối màn scan realtime.
                 </p>
               </div>
-              <Badge tone={stocktakeExcelRows.length ? "green" : "blue"}>
-                {stocktakeExcelRows.length ? `${stocktakeExcelRows.length} dòng` : "Excel"}
-              </Badge>
+              <Badge tone="blue">Excel</Badge>
             </div>
 
-            <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-blue-200 bg-white/80 p-4 text-center hover:bg-white">
-              <span className="text-sm font-bold text-neutral-900">
-                Chọn file Excel kiểm kho
-              </span>
-              <span className="mt-1 text-xs font-medium text-neutral-500">
-                .xlsx / .xls · đọc cột Mã SKU và Tồn thực tế
-              </span>
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                disabled={!session || !worker || paused || closed || stocktakeExcelImporting || !canScanStocktake}
-                onChange={(event) => void handleStocktakeExcelFileChange(event.target.files?.[0] || null)}
-              />
-            </label>
-
-            {stocktakeExcelFile ? (
-              <div className="mt-3 rounded-xl bg-white p-3 text-xs font-semibold text-neutral-700">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate">{stocktakeExcelFile.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleStocktakeExcelFileChange(null)}
-                    className="shrink-0 text-red-600 hover:underline"
-                    disabled={stocktakeExcelImporting}
-                  >
-                    Xóa file
-                  </button>
-                </div>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  <span>Sheet: {stocktakeExcelSheetName || "—"}</span>
-                  <span>Header: dòng {stocktakeExcelHeaderRow || "—"}</span>
-                  <span>Bỏ qua: {stocktakeExcelSkippedRows}</span>
-                </div>
-                <div className="mt-1 text-neutral-500">
-                  Hợp lệ: {stocktakeExcelRows.length} / {stocktakeExcelTotalRows} dòng có dữ liệu.
-                </div>
-              </div>
-            ) : null}
-
-            {stocktakeExcelRows.length ? (
-              <div className="mt-3 overflow-hidden rounded-xl border border-blue-100 bg-white">
-                <div className="max-h-44 overflow-auto">
-                  <table className="min-w-full text-xs">
-                    <thead className="sticky top-0 bg-blue-50 text-left text-blue-900">
-                      <tr>
-                        <th className="px-3 py-2 font-bold">Dòng</th>
-                        <th className="px-3 py-2 font-bold">SKU</th>
-                        <th className="px-3 py-2 font-bold">Tên SP</th>
-                        <th className="px-3 py-2 text-right font-bold">Tồn thực tế</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stocktakeExcelRows.slice(0, 8).map((row) => (
-                        <tr key={`${row.rowNumber}-${row.sku}`} className="border-t border-neutral-100">
-                          <td className="px-3 py-2 text-neutral-500">{row.rowNumber}</td>
-                          <td className="px-3 py-2 font-bold text-neutral-900">{row.sku}</td>
-                          <td className="max-w-[180px] truncate px-3 py-2 text-neutral-600">{row.productName || "—"}</td>
-                          <td className="px-3 py-2 text-right font-extrabold text-neutral-950">{row.countedQty}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {stocktakeExcelRows.length > 8 ? (
-                  <div className="border-t border-neutral-100 px-3 py-2 text-xs font-semibold text-neutral-500">
-                    Còn {stocktakeExcelRows.length - 8} dòng nữa sẽ được import.
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {stocktakeExcelImporting ? (
-              <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-bold text-blue-700">
-                Đang ghi {stocktakeExcelProgress.done}/{stocktakeExcelProgress.total} dòng vào phiên kiểm...
-              </div>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={() => void importStocktakeExcelRows()}
-              disabled={
-                !session ||
-                !worker ||
-                paused ||
-                closed ||
-                scanning ||
-                stocktakeExcelImporting ||
-                !stocktakeExcelRows.length ||
-                !canScanStocktake
-              }
-              className="mt-3 w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+            <Link
+              href="/stocktake/excel-import"
+              className="mt-4 flex w-full items-center justify-center rounded-xl bg-blue-700 px-4 py-3 text-sm font-extrabold text-white hover:bg-blue-800"
             >
-              {stocktakeExcelImporting ? "Đang import Excel..." : "Ghi số lượng từ Excel vào phiên kiểm"}
-            </button>
+              Mở trang upload Excel kiểm kho
+            </Link>
 
             <p className="mt-2 text-[11px] font-semibold text-blue-900/70">
-              Lưu ý: hệ thống set đúng số lượng theo cột Tồn thực tế bằng cách tự tính delta so với số đã scan hiện tại.
+              Trang upload sẽ tự lấy phiên kiểm đang mở trên máy này. Nếu chưa có phiên, tạo/join phiên trước rồi quay lại upload.
             </p>
           </div>
 

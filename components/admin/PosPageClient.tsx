@@ -304,6 +304,7 @@ export default function PosPageClient() {
 
   const barcodeBufferRef = useRef("");
   const barcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastVariantAddRef = useRef<{ variantId: string; at: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
@@ -726,6 +727,23 @@ export default function PosPageClient() {
   };
 
   const addVariant = (variant: any) => {
+    const variantId = String(variant?.id || "");
+    const now = Date.now();
+    const last = lastVariantAddRef.current;
+
+    // Máy quét barcode thường bắn chuỗi + Enter rất nhanh.
+    // Trước đây POS có thể ăn cùng lúc: auto-match, onKeyDown input và keydown window,
+    // nên lần quét sau bị cộng nhảy 3-4 sản phẩm. Chặn trùng trong cùng một nhịp quét.
+    if (variantId && last?.variantId === variantId && now - last.at < 350) {
+      setProductSearch("");
+      setTimeout(() => searchRef.current?.focus(), 0);
+      return;
+    }
+
+    if (variantId) {
+      lastVariantAddRef.current = { variantId, at: now };
+    }
+
     setLines((prev) => {
       const existed = prev.find((line) => line.variantId === variant.id);
 
@@ -767,18 +785,8 @@ export default function PosPageClient() {
     setTimeout(() => searchRef.current?.focus(), 0);
   };
 
-  useEffect(() => {
-    const q = productSearch.trim().toLowerCase();
-    if (!q) return;
-    if (filteredVariants.length !== 1) return;
-
-    const variant = filteredVariants[0];
-    const isExact =
-      String(variant.sku || "").toLowerCase() === q ||
-      String(variant.productCode || "").toLowerCase() === q;
-
-    if (isExact) addVariant(variant);
-  }, [filteredVariants, productSearch]);
+  // Không auto-add khi text search khớp đúng SKU nữa.
+  // Máy quét barcode đã gửi Enter sau mã, nên chỉ add ở handler Enter để tránh nhảy số lượng nhiều lần.
 
   const addExchangeVariant = (variant: any) => {
     setExchangeLines((prev) => {
@@ -1253,12 +1261,14 @@ export default function PosPageClient() {
       }
 
       if (e.key === "Enter" && document.activeElement === searchRef.current) {
+        // Input search tự xử lý Enter. Không cho window xử lý lần nữa.
         e.preventDefault();
-        if (filteredVariants[0]) addVariant(filteredVariants[0]);
         return;
       }
 
-      if (isTyping && document.activeElement !== searchRef.current) return;
+      // Khi đang gõ trong input/select/textarea thì không gom buffer barcode ở window.
+      // Như vậy scanner đang focus ô SKU sẽ chỉ đi qua onKeyDown của chính input.
+      if (isTyping) return;
 
       if (e.key.length === 1) {
         barcodeBufferRef.current += e.key;
@@ -1590,7 +1600,12 @@ export default function PosPageClient() {
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && filteredVariants[0]) {
+                    if (e.key !== "Enter") return;
+
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    if (filteredVariants[0]) {
                       addVariant(filteredVariants[0]);
                     }
                   }}

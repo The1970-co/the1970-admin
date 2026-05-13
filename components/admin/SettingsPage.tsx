@@ -64,6 +64,39 @@ type SalesChannelItem = {
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
 const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
+const AHAMOVE_PAYMENT_METHOD_STORAGE_KEY = "the1970_ahamove_payment_method";
+
+type AhamovePaymentMethod = "BALANCE" | "CASH" | "CASH_BY_RECIPIENT";
+
+const AHAMOVE_PAYMENT_METHOD_OPTIONS: Array<{
+  value: AhamovePaymentMethod;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "BALANCE",
+    label: "Trừ ví / công nợ AhaMove",
+    description: "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.",
+  },
+  {
+    value: "CASH",
+    label: "Shop trả tiền mặt cho tài xế",
+    description: "Tài xế thu phí ship từ shop lúc lấy hàng.",
+  },
+  {
+    value: "CASH_BY_RECIPIENT",
+    label: "Khách trả tiền ship",
+    description: "Tài xế thu phí ship từ khách nhận hàng. COD tiền hàng vẫn tách riêng theo đơn.",
+  },
+];
+
+function normalizeAhamovePaymentMethod(value?: string | null): AhamovePaymentMethod {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "CASH" || normalized === "CASH_BY_RECIPIENT" || normalized === "BALANCE") {
+    return normalized as AhamovePaymentMethod;
+  }
+  return "BALANCE";
+}
 
 type CarrierPickupMapping = Record<
   string,
@@ -406,6 +439,8 @@ export default function SettingsPage() {
       address: "",
       note: "",
     });
+  const [ahamovePaymentMethod, setAhamovePaymentMethod] =
+    useState<AhamovePaymentMethod>("BALANCE");
 
   const [mapping, setMapping] = useState<OperationMapping>(mappingSeed);
 
@@ -516,6 +551,7 @@ export default function SettingsPage() {
     void loadPaymentSources();
     void loadPickupLocationSettings();
     loadCarrierPickupMapping();
+    loadAhamovePaymentMethod();
     loadSalesChannels();
   }, []);
 
@@ -532,6 +568,30 @@ export default function SettingsPage() {
       setCarrierPickupMappingDraft({});
       setCarrierPickupMappingDirty(false);
     }
+  };
+
+  const loadAhamovePaymentMethod = () => {
+    if (typeof window === "undefined") return;
+    try {
+      setAhamovePaymentMethod(
+        normalizeAhamovePaymentMethod(
+          localStorage.getItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY),
+        ),
+      );
+    } catch {
+      setAhamovePaymentMethod("BALANCE");
+    }
+  };
+
+  const saveAhamovePaymentMethod = (method: AhamovePaymentMethod) => {
+    const safeMethod = normalizeAhamovePaymentMethod(method);
+    setAhamovePaymentMethod(safeMethod);
+    try {
+      localStorage.setItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY, safeMethod);
+    } catch {
+      // ignore localStorage error
+    }
+    setMessage(`Đã lưu thanh toán AhaMove: ${safeMethod}.`);
   };
 
   const saveCarrierPickupMapping = () => {
@@ -657,9 +717,10 @@ export default function SettingsPage() {
     setCarrierPickupMappingDraft((prev) => {
       const next: CarrierPickupMapping = {};
       Object.entries(prev).forEach(([warehouseId, value]) => {
+        const row = (value || {}) as CarrierPickupMapping[string];
         next[warehouseId] = {
-          ...value,
-          ahamove: value.ahamove === pickupId ? "" : value.ahamove,
+          ...row,
+          ahamove: row.ahamove === pickupId ? "" : row.ahamove,
         };
       });
       return next;
@@ -1655,6 +1716,54 @@ const addWarehouse = async () => {
                   </button>
                 );
               })}
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-orange-200 bg-orange-50 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-semibold text-orange-950">
+                    Thanh toán phí ship AhaMove mặc định
+                  </h4>
+                  <p className="mt-1 text-sm text-orange-800">
+                    Cấu hình này áp dụng cho cả báo giá và tạo đơn AhaMove. Staging AhaMove yêu cầu gửi payment_method ngay từ bước báo giá.
+                  </p>
+                </div>
+                <Badge tone="amber">{ahamovePaymentMethod}</Badge>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => saveAhamovePaymentMethod(item.value)}
+                    className={`rounded-2xl border bg-white p-4 text-left transition ${
+                      ahamovePaymentMethod === item.value
+                        ? "border-orange-500 ring-2 ring-orange-200"
+                        : "border-orange-100 hover:border-orange-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-neutral-950">
+                        {item.label}
+                      </div>
+                      <span
+                        className={`h-3 w-3 rounded-full border ${
+                          ahamovePaymentMethod === item.value
+                            ? "border-orange-600 bg-orange-600"
+                            : "border-orange-200 bg-white"
+                        }`}
+                      />
+                    </div>
+                    <div className="mt-2 text-xs leading-5 text-neutral-600">
+                      {item.description}
+                    </div>
+                    <div className="mt-3 rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
+                      payment_method: {item.value}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="mt-5 grid gap-5 xl:grid-cols-[360px_1fr]">

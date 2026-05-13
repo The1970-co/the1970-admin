@@ -88,6 +88,15 @@ function getAhamovePaymentMethodLabel(value?: string | null) {
   return AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)?.label || "Trừ ví / công nợ AhaMove";
 }
 
+function getAhamovePaymentMethodDescription(value?: string | null) {
+  const method = normalizeAhamovePaymentMethod(value);
+  return AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)?.description || "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.";
+}
+
+function inferShippingPayerFromAhamovePaymentMethod(value?: string | null): ShippingPayer {
+  return normalizeAhamovePaymentMethod(value) === "CASH_BY_RECIPIENT" ? "customer" : "shop";
+}
+
 const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
 const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
 
@@ -3027,6 +3036,19 @@ export default function CreateOrderPageClient() {
   }, []);
 
   const ahamovePaymentMethodLabel = getAhamovePaymentMethodLabel(ahamovePaymentMethod);
+  const ahamovePaymentMethodDescription = getAhamovePaymentMethodDescription(ahamovePaymentMethod);
+
+  const handleAhamovePaymentMethodChange = (nextValue: AhamovePaymentMethod) => {
+    const safeValue = normalizeAhamovePaymentMethod(nextValue);
+    setAhamovePaymentMethod(safeValue);
+    setShippingPayer(inferShippingPayerFromAhamovePaymentMethod(safeValue));
+    try {
+      localStorage.setItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY, safeValue);
+    } catch {
+      // ignore localStorage error
+    }
+  };
+
   const appendCustomerFacingNote = (value?: string | null) => {
     const next = String(value || "").trim();
     if (!next) return;
@@ -4101,6 +4123,8 @@ export default function CreateOrderPageClient() {
               services:
                 "HAN-BIKE,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
               serviceId: "HAN-BIKE",
+              payment_method: ahamovePaymentMethod,
+              paymentMethod: ahamovePaymentMethod,
               weight: Number(shippingWeight || 200),
               length: Number(shippingLength || 10),
               width: Number(shippingWidth || 10),
@@ -5173,6 +5197,64 @@ export default function CreateOrderPageClient() {
                       <option value="shop">Shop trả</option>
                     </select>
                   </div>
+
+                  {shippingUiMode === "carrier" && shippingPartner === "ahamove" ? (
+                    <div className="md:col-span-2">
+                      <div className="rounded-3xl border border-orange-200 bg-orange-50 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-orange-950">
+                              Thanh toán phí ship AhaMove
+                            </p>
+                            <p className="mt-1 text-xs leading-5 text-orange-800">
+                              Đang dùng cấu hình mặc định từ Settings. Có thể đổi nhanh cho riêng đơn này.
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-orange-700">
+                            payment_method: {ahamovePaymentMethod}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 md:grid-cols-3">
+                          {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
+                            <button
+                              key={item.value}
+                              type="button"
+                              onClick={() => handleAhamovePaymentMethodChange(item.value)}
+                              className={`rounded-2xl border bg-white p-3 text-left transition ${
+                                ahamovePaymentMethod === item.value
+                                  ? "border-orange-500 ring-2 ring-orange-200"
+                                  : "border-orange-100 hover:border-orange-300"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm font-semibold text-neutral-950">
+                                  {item.label}
+                                </span>
+                                <span
+                                  className={`h-3 w-3 shrink-0 rounded-full border ${
+                                    ahamovePaymentMethod === item.value
+                                      ? "border-orange-600 bg-orange-600"
+                                      : "border-orange-200 bg-white"
+                                  }`}
+                                />
+                              </div>
+                              <p className="mt-2 text-xs leading-5 text-neutral-600">
+                                {item.description}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="mt-3 rounded-2xl border border-orange-100 bg-white px-3 py-2 text-xs leading-5 text-orange-900">
+                          <span className="font-semibold">Đang chọn:</span> {ahamovePaymentMethodLabel}. {ahamovePaymentMethodDescription}
+                          <br />
+                          <span className="font-semibold">Người chịu phí trong hệ thống:</span>{" "}
+                          {shippingPayer === "customer" ? "Khách trả" : "Shop trả"}.
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div>
                     <p className="mb-2 text-sm font-medium text-neutral-700">

@@ -328,28 +328,41 @@ const lockedSourceBranchName = useMemo(() => {
 
 function collectPermissionKeys(user: any) {
   const keys = new Set<string>();
+  const denied = new Set<string>();
 
-  if (Array.isArray(user?.permissions)) {
-    user.permissions.forEach((key: any) => {
-      if (key) keys.add(String(key));
+  const add = (items: any) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((key: any) => {
+      const value = String(key || "").trim();
+      if (value) keys.add(value);
     });
-  }
+  };
 
-  if (Array.isArray(user?.permissionKeys)) {
-    user.permissionKeys.forEach((key: any) => {
-      if (key) keys.add(String(key));
-    });
-  }
+  add(user?.permissions);
+  add(user?.permissionKeys);
+  add(user?.extraPermissionKeys);
 
-  if (Array.isArray(user?.branchPermissions)) {
-    user.branchPermissions.forEach((row: any) => {
-      if (Array.isArray(row?.permissionKeys)) {
-        row.permissionKeys.forEach((key: any) => {
-          if (key) keys.add(String(key));
-        });
-      }
-    });
-  }
+  const scopedRows = Array.isArray(user?.branchPermissions)
+    ? user.branchPermissions.filter((row: any) => {
+        if (!currentBranchId) return true;
+        const rowBranchId = String(row?.branchId || "").trim();
+        return !rowBranchId || rowBranchId === currentBranchId;
+      })
+    : [];
+
+  scopedRows.forEach((row: any) => {
+    add(row?.permissionKeys);
+    add(row?.extraPermissionKeys);
+
+    if (Array.isArray(row?.deniedPermissionKeys)) {
+      row.deniedPermissionKeys.forEach((key: any) => {
+        const value = String(key || "").trim();
+        if (value) denied.add(value);
+      });
+    }
+  });
+
+  denied.forEach((key) => keys.delete(key));
 
   return keys;
 }
