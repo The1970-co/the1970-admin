@@ -21,6 +21,7 @@ export type PrintTemplateConfig = {
   showCod: boolean;
   showShippingFee: boolean;
   showNote: boolean;
+  showTotalQty?: boolean;
 
   showOrderCode?: boolean;
   showCreatedAt?: boolean;
@@ -36,7 +37,7 @@ export type PrintTemplateConfig = {
 
 // Đổi key lên v21 để xoá cache template cũ đang lưu trong localStorage.
 // Nếu không đổi key, trình duyệt vẫn dùng HTML cũ nên sửa engine/config không ăn.
-const STORAGE_KEY = "the1970.printTemplates.v24";
+const STORAGE_KEY = "the1970.printTemplates.v25";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -117,6 +118,8 @@ function defaultShipping80TemplateHtml() {
   </div>
 
   {{financialBlock}}
+  {{shippingFeeBlock}}
+  {{noteBlock}}
 
   <div style="position:absolute;left:2.2mm;right:2.2mm;top:29mm;bottom:15.5mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9px;line-height:1.03;">
@@ -165,6 +168,7 @@ function defaultShippingLongTemplateHtml() {
       <td colspan="2" style="padding:2px 0;"><b>Đ/C:</b> {{shippingAddress}}</td>
     </tr>
     {{financialBlock}}
+    {{shippingFeeBlock}}
     {{noteBlock}}
   </table>
 
@@ -185,6 +189,7 @@ function defaultShippingLongTemplateHtml() {
       {{itemsRows}}
     </tbody>
   </table>
+  {{totalQtyBlock}}
 
   <div style="margin-top:14px; text-align:center;">
     {{barcodeBlock}}
@@ -294,6 +299,7 @@ function defaultTemplateHtml(
       {{itemsRows}}
     </tbody>
   </table>
+  {{totalQtyBlock}}
 
   <div style="margin-top:10px; font-size:12px; line-height:1.7;">
     <div style="display:flex; justify-content:space-between;">
@@ -446,6 +452,10 @@ function normalizePrintTemplateBranch(template: PrintTemplateConfig) {
         : template.storeName,
     storeAddress: template.storeAddress ?? contact.storeAddress,
     storePhone: template.storePhone || contact.storePhone,
+    showTotalQty:
+      typeof (template as any).showTotalQty === "boolean"
+        ? (template as any).showTotalQty
+        : template.templateType !== "product_label",
   };
 }
 
@@ -510,6 +520,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
       showCod: false,
       showShippingFee: false,
       showNote: false,
+      showTotalQty: true,
     };
 
     rows.push(
@@ -568,6 +579,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
         showCod: true,
         showShippingFee: true,
         showNote: true,
+        showTotalQty: true,
       },
       {
         id: uid(),
@@ -588,6 +600,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
         showCod: true,
         showShippingFee: true,
         showNote: true,
+        showTotalQty: true,
       },
       {
         id: uid(),
@@ -608,6 +621,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
         showCod: true,
         showShippingFee: true,
         showNote: true,
+        showTotalQty: true,
       },
       {
         id: uid(),
@@ -628,6 +642,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
         showCod: true,
         showShippingFee: true,
         showNote: true,
+        showTotalQty: true,
       },
       {
         id: uid(),
@@ -648,6 +663,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
         showCod: false,
         showShippingFee: false,
         showNote: false,
+        showTotalQty: false,
       }
     );
   });

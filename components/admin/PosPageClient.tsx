@@ -52,7 +52,6 @@ type BranchOption = {
   isActive?: boolean;
 };
 
-
 type PromotionRow = {
   id: string;
   name: string;
@@ -65,27 +64,38 @@ type PromotionRow = {
   salesChannel?: string | null;
   startAt?: string | null;
   endAt?: string | null;
-  products?: Array<{ productId?: string | null; product?: { id?: string | null } | null }>;
+  products?: Array<{
+    productId?: string | null;
+    product?: { id?: string | null } | null;
+  }>;
   priority?: number | string | null;
 };
 
 function isPromotionActiveForContext(
   promotion: PromotionRow,
-  input: { branchId?: string | null; salesChannel?: string | null }
+  input: { branchId?: string | null; salesChannel?: string | null },
 ) {
   if (promotion.status !== "ACTIVE") return false;
 
   const now = Date.now();
-  if (promotion.startAt && new Date(promotion.startAt).getTime() > now) return false;
-  if (promotion.endAt && new Date(promotion.endAt).getTime() < now) return false;
+  if (promotion.startAt && new Date(promotion.startAt).getTime() > now)
+    return false;
+  if (promotion.endAt && new Date(promotion.endAt).getTime() < now)
+    return false;
 
-  if (promotion.branchId && input.branchId && String(promotion.branchId) !== String(input.branchId)) return false;
+  if (
+    promotion.branchId &&
+    input.branchId &&
+    String(promotion.branchId) !== String(input.branchId)
+  )
+    return false;
   if (promotion.branchId && !input.branchId) return false;
 
   if (
     promotion.salesChannel &&
     input.salesChannel &&
-    String(promotion.salesChannel).toUpperCase() !== String(input.salesChannel).toUpperCase()
+    String(promotion.salesChannel).toUpperCase() !==
+      String(input.salesChannel).toUpperCase()
   ) {
     return false;
   }
@@ -102,7 +112,7 @@ function calculatePromotionDiscount(input: {
 }) {
   const subtotal = input.lines.reduce(
     (sum, line) => sum + Number(line.price || 0) * Number(line.qty || 0),
-    0
+    0,
   );
 
   const workingLines = input.lines.map((line) => ({
@@ -130,17 +140,21 @@ function calculatePromotionDiscount(input: {
       const productIds = new Set(
         (promotion.products || [])
           .map((row) => String(row.productId || row.product?.id || ""))
-          .filter(Boolean)
+          .filter(Boolean),
       );
 
       let discountForPromotion = 0;
 
       for (const line of workingLines) {
-        if (!line.productId || !productIds.has(String(line.productId))) continue;
+        if (!line.productId || !productIds.has(String(line.productId)))
+          continue;
 
         const qty = Math.max(1, Number(line.qty || 0));
         const alreadyDiscountedPerUnit = Number(line.discountAmount || 0) / qty;
-        const base = Math.max(0, Number(line.price || 0) - alreadyDiscountedPerUnit);
+        const base = Math.max(
+          0,
+          Number(line.price || 0) - alreadyDiscountedPerUnit,
+        );
         const discountPerUnit =
           promotion.discountType === "PERCENT"
             ? (base * Number(promotion.discountValue || 0)) / 100
@@ -246,6 +260,42 @@ function branchLabelFromAny(row: any) {
   );
 }
 
+function buildStockNotice(input: {
+  selectedBranchStock: number;
+  totalStock: number;
+  otherBranchStock: number;
+}) {
+  const selectedBranchStock = Number(input.selectedBranchStock || 0);
+  const totalStock = Number(input.totalStock || 0);
+  const otherBranchStock = Number(input.otherBranchStock || 0);
+
+  if (totalStock <= 0) {
+    return {
+      text: "Hết hàng toàn hệ thống · vẫn cho phép bán âm kho",
+      className: "text-red-600",
+      badgeClassName: "border-red-200 bg-red-50 text-red-700",
+    };
+  }
+
+  if (selectedBranchStock <= 0 && otherBranchStock > 0) {
+    return {
+      text: `Chi nhánh này hết hàng · còn ${otherBranchStock} ở chi nhánh khác`,
+      className: "text-orange-600",
+      badgeClassName: "border-orange-200 bg-orange-50 text-orange-700",
+    };
+  }
+
+  if (selectedBranchStock < 0) {
+    return {
+      text: `Tồn chi nhánh đang âm ${Math.abs(selectedBranchStock)} · vẫn cho phép bán`,
+      className: "text-red-600",
+      badgeClassName: "border-red-200 bg-red-50 text-red-700",
+    };
+  }
+
+  return null;
+}
+
 export default function PosPageClient() {
   const router = useRouter();
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -294,7 +344,9 @@ export default function PosPageClient() {
   const [promoValue, setPromoValue] = useState("");
 
   const [cashVoucherOpen, setCashVoucherOpen] = useState(false);
-  const [voucherType, setVoucherType] = useState<"income" | "expense">("income");
+  const [voucherType, setVoucherType] = useState<"income" | "expense">(
+    "income",
+  );
   const [voucherAmount, setVoucherAmount] = useState("");
   const [voucherReason, setVoucherReason] = useState("");
 
@@ -302,7 +354,9 @@ export default function PosPageClient() {
   const [returnFormOpen, setReturnFormOpen] = useState(false);
   const [returnSearch, setReturnSearch] = useState("");
   const [returnOrders, setReturnOrders] = useState<any[]>([]);
-  const [selectedReturnOrder, setSelectedReturnOrder] = useState<any | null>(null);
+  const [selectedReturnOrder, setSelectedReturnOrder] = useState<any | null>(
+    null,
+  );
   const [returnLines, setReturnLines] = useState<ReturnLine[]>([]);
   const [exchangeLines, setExchangeLines] = useState<PosLine[]>([]);
   const [returnNote, setReturnNote] = useState("");
@@ -316,7 +370,7 @@ export default function PosPageClient() {
 
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + line.price * line.qty, 0),
-    [lines]
+    [lines],
   );
 
   const discountNumber = moneyNumber(discount);
@@ -328,18 +382,18 @@ export default function PosPageClient() {
         branchId,
         salesChannel: "POS",
       }),
-    [promotions, lines, branchId]
+    [promotions, lines, branchId],
   );
   const autoPromotionDiscount = promotionPreview.totalDiscount;
   const discountedProductIdSet = useMemo(
     () => new Set(promotionPreview.discountedProductIds || []),
-    [promotionPreview.discountedProductIds]
+    [promotionPreview.discountedProductIds],
   );
   const totalDiscountNumber = discountNumber + autoPromotionDiscount;
   const mustPay = Math.max(0, subtotal - totalDiscountNumber);
   const totalPaid = useMemo(
     () => paymentRows.reduce((sum, row) => sum + moneyNumber(row.amount), 0),
-    [paymentRows]
+    [paymentRows],
   );
   const change = Math.max(0, totalPaid - mustPay);
 
@@ -393,7 +447,7 @@ export default function PosPageClient() {
       const mapped: BranchOption[] = rows
         .map((row: any) => ({
           value: String(
-            row?.id ?? row?.branchId ?? row?.warehouseId ?? row?.code ?? ""
+            row?.id ?? row?.branchId ?? row?.warehouseId ?? row?.code ?? "",
           ),
           label: branchLabelFromAny(row),
           code: row?.code ? String(row.code) : undefined,
@@ -404,10 +458,10 @@ export default function PosPageClient() {
       const filtered = canPickAll
         ? mapped
         : mapped.filter(
-          (item) =>
-            userBranchIds.includes(item.value) ||
-            (item.code && userBranchIds.includes(item.code))
-        );
+            (item) =>
+              userBranchIds.includes(item.value) ||
+              (item.code && userBranchIds.includes(item.code)),
+          );
 
       setBranchOptions(filtered);
 
@@ -432,7 +486,6 @@ export default function PosPageClient() {
 
     void run();
   }, []);
-
 
   useEffect(() => {
     const run = async () => {
@@ -537,7 +590,7 @@ export default function PosPageClient() {
 
       return rows.map((row, index) => {
         const stillValid = visiblePaymentSources.some(
-          (source) => String(source.id) === String(row.paymentSourceId)
+          (source) => String(source.id) === String(row.paymentSourceId),
         );
 
         if (row.paymentSourceId && stillValid) return row;
@@ -560,32 +613,44 @@ export default function PosPageClient() {
 
   const allVariants = useMemo(() => {
     return products.flatMap((product) =>
-      product.variants
-        .map((variant: any) => {
-          const branchStocks: Record<string, number> = variant.branchStocks || {};
-          const stock = canPickAll
-            ? Object.values(branchStocks).reduce((a, b) => a + Number(b || 0), 0)
-            : Number(branchStocks[branchId] || 0);
+      product.variants.map((variant: any) => {
+        const branchStocks: Record<string, number> = variant.branchStocks || {};
+        const totalStock = Object.values(branchStocks).reduce(
+          (a, b) => a + Number(b || 0),
+          0,
+        );
+        const selectedBranchStock = branchId
+          ? Number(branchStocks[branchId] || 0)
+          : totalStock;
+        const otherBranchStock = Math.max(0, totalStock - selectedBranchStock);
+        const stockNotice = buildStockNotice({
+          selectedBranchStock,
+          totalStock,
+          otherBranchStock,
+        });
 
-          return {
-            ...variant,
-            productId: (product as any).id,
-            productName: product.name,
-            productCode:
-              variant.productCode ||
-              (product as any).sku ||
-              (product as any).code ||
-              (product as any).productCode ||
-              (product as any).mainSku ||
-              product.slug ||
-              "",
-            imageUrl: (product as any).imageUrl,
-            stock,
-          };
-        })
-        .filter((v: any) => Number(v.stock || 0) > 0)
+        return {
+          ...variant,
+          productId: (product as any).id,
+          productName: product.name,
+          productCode:
+            variant.productCode ||
+            (product as any).sku ||
+            (product as any).code ||
+            (product as any).productCode ||
+            (product as any).mainSku ||
+            product.slug ||
+            "",
+          imageUrl: (product as any).imageUrl,
+          stock: selectedBranchStock,
+          selectedBranchStock,
+          totalStock,
+          otherBranchStock,
+          stockNotice,
+        };
+      }),
     );
-  }, [products, branchId, canPickAll]);
+  }, [products, branchId]);
 
   const filteredVariants = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
@@ -594,11 +659,21 @@ export default function PosPageClient() {
     return allVariants
       .filter((v: any) => {
         return (
-          String(v.sku || "").toLowerCase().includes(q) ||
-          String(v.productCode || "").toLowerCase().includes(q) ||
-          String(v.productName || "").toLowerCase().includes(q) ||
-          String(v.color || "").toLowerCase().includes(q) ||
-          String(v.size || "").toLowerCase().includes(q)
+          String(v.sku || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.productCode || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.productName || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.color || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.size || "")
+            .toLowerCase()
+            .includes(q)
         );
       })
       .slice(0, 20);
@@ -611,11 +686,21 @@ export default function PosPageClient() {
     return allVariants
       .filter((v: any) => {
         return (
-          String(v.sku || "").toLowerCase().includes(q) ||
-          String(v.productCode || "").toLowerCase().includes(q) ||
-          String(v.productName || "").toLowerCase().includes(q) ||
-          String(v.color || "").toLowerCase().includes(q) ||
-          String(v.size || "").toLowerCase().includes(q)
+          String(v.sku || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.productCode || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.productName || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.color || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(v.size || "")
+            .toLowerCase()
+            .includes(q)
         );
       })
       .slice(0, 20);
@@ -623,7 +708,9 @@ export default function PosPageClient() {
 
   const playScanSound = () => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = new (
+        window.AudioContext || (window as any).webkitAudioContext
+      )();
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
 
@@ -635,7 +722,7 @@ export default function PosPageClient() {
       gain.connect(ctx.destination);
       oscillator.start();
       oscillator.stop(ctx.currentTime + 0.08);
-    } catch { }
+    } catch {}
   };
 
   const addVariant = (variant: any) => {
@@ -644,9 +731,7 @@ export default function PosPageClient() {
 
       if (existed) {
         return prev.map((line) =>
-          line.variantId === variant.id
-            ? { ...line, qty: Math.min(line.qty + 1, line.stock) }
-            : line
+          line.variantId === variant.id ? { ...line, qty: line.qty + 1 } : line,
         );
       }
 
@@ -663,7 +748,13 @@ export default function PosPageClient() {
           stock: Number(variant.stock || 0),
           qty: 1,
           imageUrl: variant.imageUrl,
-        },
+          selectedBranchStock: Number(
+            variant.selectedBranchStock ?? variant.stock ?? 0,
+          ),
+          totalStock: Number(variant.totalStock ?? variant.stock ?? 0),
+          otherBranchStock: Number(variant.otherBranchStock ?? 0),
+          stockNotice: variant.stockNotice || null,
+        } as any,
       ];
     });
 
@@ -695,9 +786,7 @@ export default function PosPageClient() {
 
       if (existed) {
         return prev.map((line) =>
-          line.variantId === variant.id
-            ? { ...line, qty: Math.min(line.qty + 1, line.stock) }
-            : line
+          line.variantId === variant.id ? { ...line, qty: line.qty + 1 } : line,
         );
       }
 
@@ -725,9 +814,9 @@ export default function PosPageClient() {
     setLines((prev) =>
       prev.map((line) =>
         line.variantId === variantId
-          ? { ...line, qty: Math.max(1, Math.min(qty, line.stock || 1)) }
-          : line
-      )
+          ? { ...line, qty: Math.max(1, Number(qty || 1)) }
+          : line,
+      ),
     );
   };
 
@@ -735,9 +824,9 @@ export default function PosPageClient() {
     setExchangeLines((prev) =>
       prev.map((line) =>
         line.variantId === variantId
-          ? { ...line, qty: Math.max(1, Math.min(qty, line.stock || 1)) }
-          : line
-      )
+          ? { ...line, qty: Math.max(1, Number(qty || 1)) }
+          : line,
+      ),
     );
   };
 
@@ -746,7 +835,9 @@ export default function PosPageClient() {
   };
 
   const removeExchangeLine = (variantId: string) => {
-    setExchangeLines((prev) => prev.filter((line) => line.variantId !== variantId));
+    setExchangeLines((prev) =>
+      prev.filter((line) => line.variantId !== variantId),
+    );
   };
 
   const clearOrder = () => {
@@ -755,7 +846,15 @@ export default function PosPageClient() {
     setCustomerPhone("");
     setCustomerSuggestions([]);
     setPaidAmount("0");
-    setPaymentRows([{ id: "pay-1", paymentSourceId: visiblePaymentSources[0]?.id ? String(visiblePaymentSources[0].id) : "", amount: "0" }]);
+    setPaymentRows([
+      {
+        id: "pay-1",
+        paymentSourceId: visiblePaymentSources[0]?.id
+          ? String(visiblePaymentSources[0].id)
+          : "",
+        amount: "0",
+      },
+    ]);
     setDiscount("0");
     setNote("");
     setLastPosOrder(null);
@@ -775,39 +874,39 @@ export default function PosPageClient() {
     setActiveTabId(next.id);
   };
 
-const handleCustomerPhoneChange = async (value: string) => {
-  const version = ++customerSearchVersionRef.current;
-  setCustomerPhone(value);
+  const handleCustomerPhoneChange = async (value: string) => {
+    const version = ++customerSearchVersionRef.current;
+    setCustomerPhone(value);
 
-  const phone = value.replace(/\D/g, "");
-  if (phone.length < 3) {
-    setCustomerSuggestions([]);
-    return;
-  }
-
-  try {
-    setCustomerSearching(true);
-    const result: any = await findCustomerByPhone(phone);
-
-    if (version !== customerSearchVersionRef.current) return;
-
-    const rows = Array.isArray(result)
-      ? result
-      : Array.isArray(result?.items)
-        ? result.items
-        : Array.isArray(result?.data)
-          ? result.data
-          : result
-            ? [result]
-            : [];
-
-    setCustomerSuggestions(rows.slice(0, 8));
-  } finally {
-    if (version === customerSearchVersionRef.current) {
-      setCustomerSearching(false);
+    const phone = value.replace(/\D/g, "");
+    if (phone.length < 3) {
+      setCustomerSuggestions([]);
+      return;
     }
-  }
-};
+
+    try {
+      setCustomerSearching(true);
+      const result: any = await findCustomerByPhone(phone);
+
+      if (version !== customerSearchVersionRef.current) return;
+
+      const rows = Array.isArray(result)
+        ? result
+        : Array.isArray(result?.items)
+          ? result.items
+          : Array.isArray(result?.data)
+            ? result.data
+            : result
+              ? [result]
+              : [];
+
+      setCustomerSuggestions(rows.slice(0, 8));
+    } finally {
+      if (version === customerSearchVersionRef.current) {
+        setCustomerSearching(false);
+      }
+    }
+  };
 
   const searchReturnOrders = async () => {
     if (!returnSearch.trim()) return;
@@ -823,7 +922,7 @@ const handleCustomerPhoneChange = async (value: string) => {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         cache: "no-store",
-      }
+      },
     );
 
     if (!res.ok) {
@@ -874,10 +973,14 @@ const handleCustomerPhoneChange = async (value: string) => {
     const mappedReturnLines = items.map((item: any) => {
       const variant = item.variant || item.productVariant || {};
       const product = item.product || variant.product || {};
-      const orderedQty = Number(item.qty || item.quantity || item.orderedQty || 1);
+      const orderedQty = Number(
+        item.qty || item.quantity || item.orderedQty || 1,
+      );
 
       return {
-        id: String(item.id || item.variantId || variant.id || crypto.randomUUID()),
+        id: String(
+          item.id || item.variantId || variant.id || crypto.randomUUID(),
+        ),
         variantId: item.variantId || variant.id,
         sku: item.sku || variant.sku || "",
         productName:
@@ -890,11 +993,11 @@ const handleCustomerPhoneChange = async (value: string) => {
         size: item.size || variant.size || "",
         price: Number(
           item.price ||
-          item.unitPrice ||
-          item.salePrice ||
-          item.finalPrice ||
-          item.priceAtSale ||
-          0
+            item.unitPrice ||
+            item.salePrice ||
+            item.finalPrice ||
+            item.priceAtSale ||
+            0,
         ),
         orderedQty,
         returnQty: orderedQty,
@@ -912,10 +1015,12 @@ const handleCustomerPhoneChange = async (value: string) => {
       detail.customerName ||
         detail.customer?.fullName ||
         detail.customer?.name ||
-        customerName
+        customerName,
     );
 
-    setCustomerPhone(detail.customerPhone || detail.customer?.phone || customerPhone);
+    setCustomerPhone(
+      detail.customerPhone || detail.customer?.phone || customerPhone,
+    );
     setCustomerSuggestions([]);
     setCustomerSearching(false);
 
@@ -926,17 +1031,17 @@ const handleCustomerPhoneChange = async (value: string) => {
   const quickAmounts = useMemo(() => {
     const base = mustPay;
     const roundUp = Math.ceil(base / 100000) * 100000;
-    return Array.from(new Set([base, roundUp, 500000, 1000000, 2000000])).filter(
-      (n) => n > 0
-    );
+    return Array.from(
+      new Set([base, roundUp, 500000, 1000000, 2000000]),
+    ).filter((n) => n > 0);
   }, [mustPay]);
 
   const updatePaymentRow = (
     id: string,
-    patch: Partial<Pick<PaymentRow, "paymentSourceId" | "amount">>
+    patch: Partial<Pick<PaymentRow, "paymentSourceId" | "amount">>,
   ) => {
     setPaymentRows((prev) =>
-      prev.map((row) => (row.id === id ? { ...row, ...patch } : row))
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     );
   };
 
@@ -956,18 +1061,30 @@ const handleCustomerPhoneChange = async (value: string) => {
 
   const removePaymentRow = (id: string) => {
     setPaymentRows((prev) =>
-      prev.length <= 1 ? prev : prev.filter((row) => row.id !== id)
+      prev.length <= 1 ? prev : prev.filter((row) => row.id !== id),
     );
   };
 
   const quickActions = [
-    { label: "Thêm dịch vụ", action: () => setError("Tính năng thêm dịch vụ sẽ làm sau.") },
+    {
+      label: "Thêm dịch vụ",
+      action: () => setError("Tính năng thêm dịch vụ sẽ làm sau."),
+    },
     { label: "Chiết khấu đơn", action: () => setPromoOpen(true) },
     { label: "Khuyến mãi", action: () => setPromoOpen(true) },
-    { label: "Đổi quà", action: () => setError("Tính năng đổi quà sẽ làm sau.") },
-    { label: "Đổi giá bán hàng", action: () => setError("Đổi giá cần phân quyền riêng.") },
+    {
+      label: "Đổi quà",
+      action: () => setError("Tính năng đổi quà sẽ làm sau."),
+    },
+    {
+      label: "Đổi giá bán hàng",
+      action: () => setError("Đổi giá cần phân quyền riêng."),
+    },
     { label: "Phiếu thu/chi", action: () => setCashVoucherOpen(true) },
-    { label: "Thông tin khách hàng", action: () => setError("Nhập SĐT để tìm khách hàng.") },
+    {
+      label: "Thông tin khách hàng",
+      action: () => setError("Nhập SĐT để tìm khách hàng."),
+    },
     { label: "Xoá toàn bộ", action: clearOrder },
     {
       label: "Đổi trả hàng",
@@ -978,7 +1095,10 @@ const handleCustomerPhoneChange = async (value: string) => {
       },
     },
     { label: "Xem danh sách đơn", action: () => router.push("/orders") },
-    { label: "Tất cả thao tác", action: () => setError("Menu thao tác nâng cao sẽ làm sau.") },
+    {
+      label: "Tất cả thao tác",
+      action: () => setError("Menu thao tác nâng cao sẽ làm sau."),
+    },
   ];
 
   const stopCameraScan = () => {
@@ -1011,12 +1131,22 @@ const handleCustomerPhoneChange = async (value: string) => {
       const BarcodeDetectorClass = (window as any).BarcodeDetector;
 
       if (!BarcodeDetectorClass) {
-        setError("Trình duyệt này chưa hỗ trợ camera scan. Dùng máy quét barcode hoặc nhập SKU.");
+        setError(
+          "Trình duyệt này chưa hỗ trợ camera scan. Dùng máy quét barcode hoặc nhập SKU.",
+        );
         return;
       }
 
       const detector = new BarcodeDetectorClass({
-        formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e"],
+        formats: [
+          "qr_code",
+          "code_128",
+          "code_39",
+          "ean_13",
+          "ean_8",
+          "upc_a",
+          "upc_e",
+        ],
       });
 
       const scanLoop = async () => {
@@ -1031,7 +1161,7 @@ const handleCustomerPhoneChange = async (value: string) => {
             const found = allVariants.find(
               (v: any) =>
                 String(v.sku || "").toLowerCase() === code ||
-                String(v.productCode || "").toLowerCase() === code
+                String(v.productCode || "").toLowerCase() === code,
             );
 
             if (found) {
@@ -1042,7 +1172,7 @@ const handleCustomerPhoneChange = async (value: string) => {
 
             setProductSearch(rawValue);
           }
-        } catch { }
+        } catch {}
 
         requestAnimationFrame(scanLoop);
       };
@@ -1058,7 +1188,10 @@ const handleCustomerPhoneChange = async (value: string) => {
     if (!products.length) return;
 
     try {
-      localStorage.setItem("the1970_pos_products_cache", JSON.stringify(products));
+      localStorage.setItem(
+        "the1970_pos_products_cache",
+        JSON.stringify(products),
+      );
       setOfflineReady(true);
     } catch {
       setOfflineReady(false);
@@ -1141,7 +1274,7 @@ const handleCustomerPhoneChange = async (value: string) => {
           const found = allVariants.find(
             (v: any) =>
               String(v.sku || "").toLowerCase() === code ||
-              String(v.productCode || "").toLowerCase() === code
+              String(v.productCode || "").toLowerCase() === code,
           );
 
           if (found) addVariant(found);
@@ -1152,58 +1285,82 @@ const handleCustomerPhoneChange = async (value: string) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [allVariants, filteredVariants, cameraOpen, returnPickerOpen, returnFormOpen, lines, branchId, paymentRows, totalPaid, discountNumber, note, customerName, customerPhone]);
+  }, [
+    allVariants,
+    filteredVariants,
+    cameraOpen,
+    returnPickerOpen,
+    returnFormOpen,
+    lines,
+    branchId,
+    paymentRows,
+    totalPaid,
+    discountNumber,
+    note,
+    customerName,
+    customerPhone,
+  ]);
 
   useEffect(() => {
     return () => stopCameraScan();
   }, []);
 
-const handlePrintReceipt = (order?: any | null, preparedWindow?: Window | null) => {
-  const receiptLines = lines;
+  const handlePrintReceipt = (
+    order?: any | null,
+    preparedWindow?: Window | null,
+  ) => {
+    const receiptLines = lines;
 
-  if (!receiptLines.length) {
-    setError("Chưa có sản phẩm để in hoá đơn.");
-    if (preparedWindow && !preparedWindow.closed) preparedWindow.close();
-    return;
-  }
+    if (!receiptLines.length) {
+      setError("Chưa có sản phẩm để in hoá đơn.");
+      if (preparedWindow && !preparedWindow.closed) preparedWindow.close();
+      return;
+    }
 
-  const printWindow =
-    preparedWindow && !preparedWindow.closed
-      ? preparedWindow
-      : window.open("", "_blank", "width=420,height=720");
+    const printWindow =
+      preparedWindow && !preparedWindow.closed
+        ? preparedWindow
+        : window.open("", "_blank", "width=420,height=720");
 
-  if (!printWindow) {
-    setError("Trình duyệt đang chặn cửa sổ in. Hãy bật pop-up cho trang POS.");
-    return;
-  }
-
-  const escapeHtml = (value: any) =>
-    String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-
-  const orderCode =
-    order?.orderCode || order?.code || order?.id || lastPosOrder?.orderCode || lastPosOrder?.code || "POS";
-  const paid = totalPaid;
-  const printTime = new Date().toLocaleString("vi-VN");
-  const paymentSourceNames = paymentRows
-    .filter((row) => moneyNumber(row.amount) > 0)
-    .map((row) => {
-      const source = visiblePaymentSources.find(
-        (item) => String(item.id) === String(row.paymentSourceId)
+    if (!printWindow) {
+      setError(
+        "Trình duyệt đang chặn cửa sổ in. Hãy bật pop-up cho trang POS.",
       );
-      return `${source?.name || source?.label || source?.displayName || "Nguồn tiền"}: ${currency(
-        moneyNumber(row.amount)
-      )}`;
-    })
-    .join("<br />");
+      return;
+    }
 
-  const rowsHtml = receiptLines
-    .map(
-      (line, index) => `
+    const escapeHtml = (value: any) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+    const orderCode =
+      order?.orderCode ||
+      order?.code ||
+      order?.id ||
+      lastPosOrder?.orderCode ||
+      lastPosOrder?.code ||
+      "POS";
+    const paid = totalPaid;
+    const printTime = new Date().toLocaleString("vi-VN");
+    const paymentSourceNames = paymentRows
+      .filter((row) => moneyNumber(row.amount) > 0)
+      .map((row) => {
+        const source = visiblePaymentSources.find(
+          (item) => String(item.id) === String(row.paymentSourceId),
+        );
+        return `${source?.name || source?.label || source?.displayName || "Nguồn tiền"}: ${currency(
+          moneyNumber(row.amount),
+        )}`;
+      })
+      .join("<br />");
+
+    const rowsHtml = receiptLines
+      .map(
+        (line, index) => `
         <tr>
           <td>${index + 1}</td>
           <td>
@@ -1213,12 +1370,12 @@ const handlePrintReceipt = (order?: any | null, preparedWindow?: Window | null) 
           <td class="right">${line.qty}</td>
           <td class="right">${currency(line.price)}</td>
           <td class="right"><strong>${currency(line.price * line.qty)}</strong></td>
-        </tr>`
-    )
-    .join("");
+        </tr>`,
+      )
+      .join("");
 
-  printWindow.document.open();
-  printWindow.document.write(`<!doctype html>
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -1295,127 +1452,131 @@ const handlePrintReceipt = (order?: any | null, preparedWindow?: Window | null) 
   </script>
 </body>
 </html>`);
-  printWindow.document.close();
-  setError("");
-};
-
-const handlePay = async () => {
-  if (!branchId) {
-    setError("Chưa có chi nhánh.");
-    return;
-  }
-
-  if (!lines.length) {
-    setError("Chưa có sản phẩm trong đơn.");
-    return;
-  }
-
-  if (!customerPhone.trim() && !customerName.trim()) {
-    setError("Cần nhập SĐT hoặc tên khách hàng trước khi thanh toán.");
-    return;
-  }
-
-  const rawValidPayments = paymentRows
-    .map((row) => ({
-      paymentSourceId: row.paymentSourceId,
-      amount: moneyNumber(row.amount),
-    }))
-    .filter((row) => row.paymentSourceId && row.amount > 0);
-
-  if (!rawValidPayments.length) {
-    setError("Chưa nhập nguồn tiền thanh toán.");
-    return;
-  }
-
-  if (rawValidPayments.reduce((sum, row) => sum + row.amount, 0) < mustPay) {
-    setError("Tổng tiền khách thanh toán chưa đủ.");
-    return;
-  }
-
-  let remainingToCollect = mustPay;
-  const validPayments = rawValidPayments
-    .map((row) => {
-      const amount = Math.min(row.amount, remainingToCollect);
-      remainingToCollect = Math.max(0, remainingToCollect - amount);
-      return { ...row, amount };
-    })
-    .filter((row) => row.amount > 0);
-
-  let printWindow: Window | null = null;
-
-  try {
-    setSaving(true);
+    printWindow.document.close();
     setError("");
-    setSuccessMessage("");
+  };
 
-    printWindow = window.open("", "_blank", "width=420,height=720");
-
-    const payload = {
-      salesChannel: "POS" as any,
-      isPosSale: true,
-      branchId,
-      customerName: customerName.trim() || "Khách POS",
-      customerPhone: customerPhone.trim() || "",
-      note: [
-        "Đơn POS bán tại quầy",
-        note.trim() ? `Ghi chú: ${note.trim()}` : "",
-        discountNumber ? `Giảm giá POS nhập tay: ${discountNumber}` : "",
-        autoPromotionDiscount ? `Khuyến mại tự động: ${autoPromotionDiscount}` : "",
-      ]
-        .filter(Boolean)
-        .join(" | "),
-      mode: "approve" as any,
-      discountAmount: discountNumber,
-      payments: validPayments,
-      paymentSourceId: validPayments[0]?.paymentSourceId || "",
-      paidAmount: validPayments.reduce((sum, row) => sum + row.amount, 0),
-      paymentNote: "Thanh toán POS",
-      items: lines.map((line) => ({
-        variantId: line.variantId,
-        qty: Number(line.qty),
-      })),
-    };
-
-    const apiBase = getApiBaseUrl();
-    const token = localStorage.getItem("token");
-
-    const posPayStartedAt = performance.now();
-
-    const res = await fetch(`${apiBase}/orders`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const created = await res.json().catch(() => null);
-
-    console.log(
-      "[POS PAY] /orders request ms:",
-      Math.round(performance.now() - posPayStartedAt)
-    );
-
-    if (!res.ok) {
-      throw new Error(created?.message || "Thanh toán thất bại.");
+  const handlePay = async () => {
+    if (!branchId) {
+      setError("Chưa có chi nhánh.");
+      return;
     }
 
-    const createdOrder = created?.data || created?.order || created;
-    setLastPosOrder(createdOrder);
-    handlePrintReceipt(createdOrder, printWindow);
-    setSuccessMessage("Tạo đơn POS thành công. Đã gửi lệnh in hoá đơn...");
+    if (!lines.length) {
+      setError("Chưa có sản phẩm trong đơn.");
+      return;
+    }
 
-    setTimeout(() => {
-      router.push(`/orders/${encodeURIComponent(createdOrder.id)}?created=1&pos=1`);
-    }, 500);
-  } catch (err: any) {
-    if (printWindow && !printWindow.closed) printWindow.close();
-    setError(err?.message || "Thanh toán thất bại.");
-  } finally {
-    setSaving(false);
-  }
-};
+    if (!customerPhone.trim() && !customerName.trim()) {
+      setError("Cần nhập SĐT hoặc tên khách hàng trước khi thanh toán.");
+      return;
+    }
+
+    const rawValidPayments = paymentRows
+      .map((row) => ({
+        paymentSourceId: row.paymentSourceId,
+        amount: moneyNumber(row.amount),
+      }))
+      .filter((row) => row.paymentSourceId && row.amount > 0);
+
+    if (!rawValidPayments.length) {
+      setError("Chưa nhập nguồn tiền thanh toán.");
+      return;
+    }
+
+    if (rawValidPayments.reduce((sum, row) => sum + row.amount, 0) < mustPay) {
+      setError("Tổng tiền khách thanh toán chưa đủ.");
+      return;
+    }
+
+    let remainingToCollect = mustPay;
+    const validPayments = rawValidPayments
+      .map((row) => {
+        const amount = Math.min(row.amount, remainingToCollect);
+        remainingToCollect = Math.max(0, remainingToCollect - amount);
+        return { ...row, amount };
+      })
+      .filter((row) => row.amount > 0);
+
+    let printWindow: Window | null = null;
+
+    try {
+      setSaving(true);
+      setError("");
+      setSuccessMessage("");
+
+      printWindow = window.open("", "_blank", "width=420,height=720");
+
+      const payload = {
+        salesChannel: "POS" as any,
+        isPosSale: true,
+        branchId,
+        customerName: customerName.trim() || "Khách POS",
+        customerPhone: customerPhone.trim() || "",
+        note: [
+          "Đơn POS bán tại quầy",
+          note.trim() ? `Ghi chú: ${note.trim()}` : "",
+          discountNumber ? `Giảm giá POS nhập tay: ${discountNumber}` : "",
+          autoPromotionDiscount
+            ? `Khuyến mại tự động: ${autoPromotionDiscount}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" | "),
+        mode: "approve" as any,
+        discountAmount: discountNumber,
+        payments: validPayments,
+        paymentSourceId: validPayments[0]?.paymentSourceId || "",
+        paidAmount: validPayments.reduce((sum, row) => sum + row.amount, 0),
+        paymentNote: "Thanh toán POS",
+        items: lines.map((line) => ({
+          variantId: line.variantId,
+          qty: Number(line.qty),
+        })),
+      };
+
+      const apiBase = getApiBaseUrl();
+      const token = localStorage.getItem("token");
+
+      const posPayStartedAt = performance.now();
+
+      const res = await fetch(`${apiBase}/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const created = await res.json().catch(() => null);
+
+      console.log(
+        "[POS PAY] /orders request ms:",
+        Math.round(performance.now() - posPayStartedAt),
+      );
+
+      if (!res.ok) {
+        throw new Error(created?.message || "Thanh toán thất bại.");
+      }
+
+      const createdOrder = created?.data || created?.order || created;
+      setLastPosOrder(createdOrder);
+      handlePrintReceipt(createdOrder, printWindow);
+      setSuccessMessage("Tạo đơn POS thành công. Đã gửi lệnh in hoá đơn...");
+
+      setTimeout(() => {
+        router.push(
+          `/orders/${encodeURIComponent(createdOrder.id)}?created=1&pos=1`,
+        );
+      }, 500);
+    } catch (err: any) {
+      if (printWindow && !printWindow.closed) printWindow.close();
+      setError(err?.message || "Thanh toán thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="h-[calc(100vh-145px)] overflow-hidden rounded-[28px] border border-neutral-200 bg-[#f5f5f3] shadow-sm">
@@ -1450,14 +1611,33 @@ const handlePay = async () => {
                         <div>
                           <div className="font-semibold">{variant.sku}</div>
                           <div className="text-sm text-neutral-500">
-                            {variant.productName} · {variant.color} / {variant.size}
+                            {variant.productName} · {variant.color} /{" "}
+                            {variant.size}
                           </div>
+                          {variant.stockNotice ? (
+                            <div
+                              className={`mt-1 text-xs font-bold ${variant.stockNotice.className}`}
+                            >
+                              {variant.stockNotice.text}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="text-right">
-                          <div className="font-semibold">{currency(variant.price)}</div>
-                          <div className="text-xs text-neutral-500">
-                            Tồn {variant.stock}
+                          <div className="font-semibold">
+                            {currency(variant.price)}
                           </div>
+                          <div className="text-xs text-neutral-500">
+                            Tồn CN{" "}
+                            {variant.selectedBranchStock ?? variant.stock}
+                          </div>
+                          {Number(variant.totalStock || 0) !==
+                          Number(
+                            variant.selectedBranchStock ?? variant.stock,
+                          ) ? (
+                            <div className="text-[11px] text-neutral-400">
+                              Tổng {variant.totalStock}
+                            </div>
+                          ) : null}
                         </div>
                       </button>
                     ))}
@@ -1484,7 +1664,8 @@ const handlePay = async () => {
               )}
 
               <div className="rounded-2xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold">
-                {orderTabs.find((tab) => tab.id === activeTabId)?.name || "Đơn 1"}
+                {orderTabs.find((tab) => tab.id === activeTabId)?.name ||
+                  "Đơn 1"}
               </div>
 
               <button
@@ -1527,8 +1708,11 @@ const handlePay = async () => {
               lines.map((line, index) => (
                 <div
                   key={line.variantId}
-                  className={`grid grid-cols-[48px_64px_120px_1fr_100px_110px_120px_40px] items-center border-b border-neutral-100 px-4 py-2 text-sm transition ${highlightId === line.variantId ? "bg-amber-100" : "hover:bg-neutral-50"
-                    }`}
+                  className={`grid grid-cols-[48px_64px_120px_1fr_100px_110px_120px_40px] items-center border-b border-neutral-100 px-4 py-2 text-sm transition ${
+                    highlightId === line.variantId
+                      ? "bg-amber-100"
+                      : "hover:bg-neutral-50"
+                  }`}
                 >
                   <div className="text-neutral-500">{index + 1}</div>
 
@@ -1549,15 +1733,24 @@ const handlePay = async () => {
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="font-medium">{line.productName}</div>
-                      {line.productId && discountedProductIdSet.has(String(line.productId)) ? (
+                      {line.productId &&
+                      discountedProductIdSet.has(String(line.productId)) ? (
                         <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                           Đang KM
                         </span>
                       ) : null}
                     </div>
                     <div className="mt-1 text-xs text-neutral-500">
-                      {line.color || "—"} / {line.size || "—"} · Tồn {line.stock}
+                      {line.color || "—"} / {line.size || "—"} · Tồn CN{" "}
+                      {line.stock}
                     </div>
+                    {(line as any).stockNotice ? (
+                      <div
+                        className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ${(line as any).stockNotice.badgeClassName}`}
+                      >
+                        {(line as any).stockNotice.text}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex h-9 w-[90px] items-center rounded-xl border border-neutral-200">
@@ -1656,7 +1849,9 @@ const handlePay = async () => {
                       type="button"
                       onClick={() => {
                         customerSearchVersionRef.current++;
-                        setCustomerName(customer.fullName || customer.name || "");
+                        setCustomerName(
+                          customer.fullName || customer.name || "",
+                        );
                         setCustomerPhone(customer.phone || "");
                         setCustomerSuggestions([]);
                         setCustomerSearching(false);
@@ -1666,7 +1861,9 @@ const handlePay = async () => {
                       <div className="font-semibold">
                         {customer.fullName || customer.name || "Khách hàng"}
                       </div>
-                      <div className="text-xs text-neutral-500">{customer.phone}</div>
+                      <div className="text-xs text-neutral-500">
+                        {customer.phone}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -1676,14 +1873,18 @@ const handlePay = async () => {
             <input
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
-              placeholder={customerSearching ? "Đang tìm khách..." : "Tên khách hàng"}
+              placeholder={
+                customerSearching ? "Đang tìm khách..." : "Tên khách hàng"
+              }
               className="h-10 w-full rounded-2xl border border-neutral-200 px-4 text-sm outline-none focus:border-black"
             />
 
             <label className="flex items-center gap-2 rounded-2xl border border-neutral-200 px-4 py-2.5 text-sm text-neutral-500">
               <input type="checkbox" disabled />
               Giao hàng
-              <span className="ml-auto text-xs text-neutral-400">Tắt trong POS</span>
+              <span className="ml-auto text-xs text-neutral-400">
+                Tắt trong POS
+              </span>
             </label>
           </div>
 
@@ -1699,7 +1900,9 @@ const handlePay = async () => {
               <span>Chiết khấu nhập tay</span>
               <input
                 value={formatMoneyInput(discount)}
-                onChange={(e) => setDiscount(String(moneyNumber(e.target.value)))}
+                onChange={(e) =>
+                  setDiscount(String(moneyNumber(e.target.value)))
+                }
                 className="h-9 w-32 rounded-xl border border-neutral-200 px-3 text-right outline-none"
               />
             </div>
@@ -1746,18 +1949,26 @@ const handlePay = async () => {
 
           <div className="mt-2 space-y-2">
             {paymentRows.map((row, index) => (
-              <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_128px_28px] gap-2">
+              <div
+                key={row.id}
+                className="grid grid-cols-[minmax(0,1fr)_128px_28px] gap-2"
+              >
                 <select
                   value={row.paymentSourceId}
                   onChange={(e) =>
-                    updatePaymentRow(row.id, { paymentSourceId: e.target.value })
+                    updatePaymentRow(row.id, {
+                      paymentSourceId: e.target.value,
+                    })
                   }
                   className="h-10 min-w-0 rounded-2xl border border-neutral-200 px-3 text-sm outline-none"
                 >
                   <option value="">Chọn nguồn tiền</option>
                   {visiblePaymentSources.map((source) => (
                     <option key={source.id} value={source.id}>
-                      {source.name || source.label || source.displayName || source.code}
+                      {source.name ||
+                        source.label ||
+                        source.displayName ||
+                        source.code}
                     </option>
                   ))}
                 </select>
@@ -1794,8 +2005,17 @@ const handlePay = async () => {
                 onClick={() =>
                   setPaymentRows((prev) =>
                     prev.length
-                      ? [{ ...prev[0], amount: String(amount) }, ...prev.slice(1)]
-                      : [{ id: "pay-1", paymentSourceId: "", amount: String(amount) }]
+                      ? [
+                          { ...prev[0], amount: String(amount) },
+                          ...prev.slice(1),
+                        ]
+                      : [
+                          {
+                            id: "pay-1",
+                            paymentSourceId: "",
+                            amount: String(amount),
+                          },
+                        ],
                   )
                 }
                 className="rounded-xl bg-neutral-100 px-2 py-2 text-xs font-medium hover:bg-neutral-200"
@@ -1811,7 +2031,9 @@ const handlePay = async () => {
               <strong>{currency(totalPaid)}</strong>
             </div>
             <div className="flex justify-between">
-              <span>{totalPaid >= mustPay ? "Tiền thừa trả khách" : "Còn thiếu"}</span>
+              <span>
+                {totalPaid >= mustPay ? "Tiền thừa trả khách" : "Còn thiếu"}
+              </span>
               <strong className={totalPaid >= mustPay ? "" : "text-red-600"}>
                 {currency(totalPaid >= mustPay ? change : mustPay - totalPaid)}
               </strong>
@@ -1870,7 +2092,9 @@ const handlePay = async () => {
           <div className="w-full max-w-xl rounded-3xl bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold">Scan barcode bằng camera</h3>
+                <h3 className="text-lg font-semibold">
+                  Scan barcode bằng camera
+                </h3>
                 <p className="mt-1 text-xs text-neutral-500">
                   Đưa mã vạch/QR vào giữa khung. Nhấn Esc để đóng.
                 </p>
@@ -1885,7 +2109,12 @@ const handlePay = async () => {
             </div>
 
             <div className="overflow-hidden rounded-2xl bg-black">
-              <video ref={videoRef} className="h-[360px] w-full object-cover" muted playsInline />
+              <video
+                ref={videoRef}
+                className="h-[360px] w-full object-cover"
+                muted
+                playsInline
+              />
             </div>
 
             <div className="mt-3 text-center text-xs text-neutral-500">
@@ -1914,7 +2143,9 @@ const handlePay = async () => {
 
             <input
               value={formatMoneyInput(promoValue)}
-              onChange={(e) => setPromoValue(String(moneyNumber(e.target.value)))}
+              onChange={(e) =>
+                setPromoValue(String(moneyNumber(e.target.value)))
+              }
               placeholder="Nhập giá trị"
               className="mt-3 h-11 w-full rounded-2xl border px-4"
             />
@@ -1923,17 +2154,20 @@ const handlePay = async () => {
               onClick={() => {
                 const value = moneyNumber(promoValue);
                 const nextDiscount =
-                  promoType === "percent" ? Math.floor((subtotal * value) / 100) : value;
+                  promoType === "percent"
+                    ? Math.floor((subtotal * value) / 100)
+                    : value;
 
                 setDiscount(String(nextDiscount));
                 setNote((prev) =>
                   [
                     prev,
-                    `Khuyến mãi POS: ${promoType === "percent" ? `${value}%` : currency(value)
+                    `Khuyến mãi POS: ${
+                      promoType === "percent" ? `${value}%` : currency(value)
                     }`,
                   ]
                     .filter(Boolean)
-                    .join(" | ")
+                    .join(" | "),
                 );
                 setPromoOpen(false);
               }}
@@ -1964,7 +2198,9 @@ const handlePay = async () => {
 
             <input
               value={formatMoneyInput(voucherAmount)}
-              onChange={(e) => setVoucherAmount(String(moneyNumber(e.target.value)))}
+              onChange={(e) =>
+                setVoucherAmount(String(moneyNumber(e.target.value)))
+              }
               placeholder="Số tiền"
               className="mt-3 h-11 w-full rounded-2xl border px-4"
             />
@@ -1982,11 +2218,11 @@ const handlePay = async () => {
                   [
                     prev,
                     `${voucherType === "income" ? "Phiếu thu" : "Phiếu chi"} POS: ${currency(
-                      moneyNumber(voucherAmount)
+                      moneyNumber(voucherAmount),
                     )} - ${voucherReason || "không có lý do"}`,
                   ]
                     .filter(Boolean)
-                    .join(" | ")
+                    .join(" | "),
                 );
                 setCashVoucherOpen(false);
               }}
@@ -2010,7 +2246,9 @@ const handlePay = async () => {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold">Chọn đơn đổi trả</h3>
-                <p className="mt-1 text-sm text-neutral-500">Chọn đơn là tự tick trả toàn bộ. ESC hoặc click ngoài để đóng.</p>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Chọn đơn là tự tick trả toàn bộ. ESC hoặc click ngoài để đóng.
+                </p>
               </div>
               <button
                 type="button"
@@ -2036,10 +2274,11 @@ const handlePay = async () => {
               <button
                 disabled={!returnSearch.trim()}
                 onClick={searchReturnOrders}
-                className={`h-11 rounded-2xl px-5 font-semibold ${returnSearch.trim()
-                  ? "bg-blue-600 text-white"
-                  : "bg-neutral-200 text-neutral-400"
-                  }`}
+                className={`h-11 rounded-2xl px-5 font-semibold ${
+                  returnSearch.trim()
+                    ? "bg-blue-600 text-white"
+                    : "bg-neutral-200 text-neutral-400"
+                }`}
               >
                 Tìm kiếm
               </button>
@@ -2063,8 +2302,16 @@ const handlePay = async () => {
                     {order.orderCode || order.code || order.id}
                   </div>
                   <div>{String(order.createdAt || "").slice(0, 10)}</div>
-                  <div>{order.customerName || order.customer?.fullName || "Khách lẻ"}</div>
-                  <div>{currency(order.total || order.totalAmount || order.grandTotal || 0)}</div>
+                  <div>
+                    {order.customerName ||
+                      order.customer?.fullName ||
+                      "Khách lẻ"}
+                  </div>
+                  <div>
+                    {currency(
+                      order.total || order.totalAmount || order.grandTotal || 0,
+                    )}
+                  </div>
                   <button
                     onClick={() => void pickReturnOrder(order)}
                     className="rounded-xl border border-blue-500 px-3 py-2 text-sm font-semibold text-blue-600"
@@ -2095,9 +2342,12 @@ const handlePay = async () => {
           >
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-semibold">Tạo phiếu đổi trả hàng</h3>
+                <h3 className="text-xl font-semibold">
+                  Tạo phiếu đổi trả hàng
+                </h3>
                 <p className="mt-1 text-sm text-neutral-500">
-                  Đơn gốc: {selectedReturnOrder.orderCode || selectedReturnOrder.code}
+                  Đơn gốc:{" "}
+                  {selectedReturnOrder.orderCode || selectedReturnOrder.code}
                 </p>
               </div>
               <button
@@ -2116,19 +2366,33 @@ const handlePay = async () => {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h4 className="font-semibold">Sản phẩm trả</h4>
-                      <p className="mt-1 text-xs text-neutral-500">Mặc định đã chọn trả toàn bộ. Có thể chỉnh số lượng từng dòng.</p>
+                      <p className="mt-1 text-xs text-neutral-500">
+                        Mặc định đã chọn trả toàn bộ. Có thể chỉnh số lượng từng
+                        dòng.
+                      </p>
                     </div>
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setReturnLines((prev) => prev.map((line) => ({ ...line, returnQty: line.orderedQty })))}
+                        onClick={() =>
+                          setReturnLines((prev) =>
+                            prev.map((line) => ({
+                              ...line,
+                              returnQty: line.orderedQty,
+                            })),
+                          )
+                        }
                         className="rounded-2xl border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-neutral-50"
                       >
                         Trả toàn bộ
                       </button>
                       <button
                         type="button"
-                        onClick={() => setReturnLines((prev) => prev.map((line) => ({ ...line, returnQty: 0 })))}
+                        onClick={() =>
+                          setReturnLines((prev) =>
+                            prev.map((line) => ({ ...line, returnQty: 0 })),
+                          )
+                        }
                         className="rounded-2xl border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-neutral-50"
                       >
                         Bỏ chọn
@@ -2150,7 +2414,9 @@ const handlePay = async () => {
                         className="grid grid-cols-[1fr_100px_120px_120px] items-center border-t border-neutral-100 px-4 py-3 text-sm"
                       >
                         <div>
-                          <div className="font-semibold">{line.productName}</div>
+                          <div className="font-semibold">
+                            {line.productName}
+                          </div>
                           <div className="text-xs text-neutral-500">
                             {line.sku} · {line.color} / {line.size}
                           </div>
@@ -2161,12 +2427,15 @@ const handlePay = async () => {
                           onChange={(e) => {
                             const qty = Math.max(
                               0,
-                              Math.min(Number(e.target.value || 0), line.orderedQty)
+                              Math.min(
+                                Number(e.target.value || 0),
+                                line.orderedQty,
+                              ),
                             );
                             setReturnLines((prev) =>
                               prev.map((x) =>
-                                x.id === line.id ? { ...x, returnQty: qty } : x
-                              )
+                                x.id === line.id ? { ...x, returnQty: qty } : x,
+                              ),
                             );
                           }}
                           className="h-10 w-20 rounded-xl border border-neutral-200 px-3 text-center"
@@ -2202,10 +2471,13 @@ const handlePay = async () => {
                             <div>
                               <div className="font-semibold">{variant.sku}</div>
                               <div className="text-neutral-500">
-                                {variant.productName} · {variant.color} / {variant.size}
+                                {variant.productName} · {variant.color} /{" "}
+                                {variant.size}
                               </div>
                             </div>
-                            <div className="font-semibold">{currency(variant.price)}</div>
+                            <div className="font-semibold">
+                              {currency(variant.price)}
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -2219,7 +2491,9 @@ const handlePay = async () => {
                         className="flex items-center justify-between rounded-2xl border border-neutral-200 px-4 py-3 text-sm"
                       >
                         <div>
-                          <div className="font-semibold">{line.productName}</div>
+                          <div className="font-semibold">
+                            {line.productName}
+                          </div>
                           <div className="text-xs text-neutral-500">
                             {line.sku} · {line.color} / {line.size}
                           </div>
@@ -2229,7 +2503,9 @@ const handlePay = async () => {
                           <div className="flex h-9 w-[90px] items-center rounded-xl border border-neutral-200">
                             <button
                               type="button"
-                              onClick={() => updateExchangeQty(line.variantId, line.qty - 1)}
+                              onClick={() =>
+                                updateExchangeQty(line.variantId, line.qty - 1)
+                              }
                               className="h-9 w-7"
                             >
                               -
@@ -2237,13 +2513,18 @@ const handlePay = async () => {
                             <input
                               value={line.qty}
                               onChange={(e) =>
-                                updateExchangeQty(line.variantId, Number(e.target.value || 1))
+                                updateExchangeQty(
+                                  line.variantId,
+                                  Number(e.target.value || 1),
+                                )
                               }
                               className="h-9 w-8 text-center outline-none"
                             />
                             <button
                               type="button"
-                              onClick={() => updateExchangeQty(line.variantId, line.qty + 1)}
+                              onClick={() =>
+                                updateExchangeQty(line.variantId, line.qty + 1)
+                              }
                               className="h-9 w-7"
                             >
                               +
@@ -2272,19 +2553,21 @@ const handlePay = async () => {
                   <div className="mt-3 flex gap-3">
                     <button
                       onClick={() => setReturnReceived(true)}
-                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold ${returnReceived
-                        ? "border-blue-600 text-blue-600"
-                        : "border-neutral-200"
-                        }`}
+                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold ${
+                        returnReceived
+                          ? "border-blue-600 text-blue-600"
+                          : "border-neutral-200"
+                      }`}
                     >
                       Đã nhận và nhập kho
                     </button>
                     <button
                       onClick={() => setReturnReceived(false)}
-                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold ${!returnReceived
-                        ? "border-blue-600 text-blue-600"
-                        : "border-neutral-200"
-                        }`}
+                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold ${
+                        !returnReceived
+                          ? "border-blue-600 text-blue-600"
+                          : "border-neutral-200"
+                      }`}
                     >
                       Chưa nhận hàng
                     </button>
@@ -2294,16 +2577,18 @@ const handlePay = async () => {
 
               <aside className="rounded-3xl border border-neutral-200 p-4">
                 <h4 className="font-semibold">Tự tính hoàn tiền / bù tiền</h4>
-                <p className="mt-1 text-xs text-neutral-500">POS tự ghi chú hoàn tiền hoặc khách bù thêm theo chênh lệch.</p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  POS tự ghi chú hoàn tiền hoặc khách bù thêm theo chênh lệch.
+                </p>
 
                 {(() => {
                   const returnTotal = returnLines.reduce(
                     (sum, line) => sum + line.price * line.returnQty,
-                    0
+                    0,
                   );
                   const exchangeTotal = exchangeLines.reduce(
                     (sum, line) => sum + line.price * line.qty,
-                    0
+                    0,
                   );
                   const diff = returnTotal - exchangeTotal;
 
@@ -2337,7 +2622,9 @@ const handlePay = async () => {
 
                 <button
                   onClick={() => {
-                    const returnedItems = returnLines.filter((line) => line.returnQty > 0);
+                    const returnedItems = returnLines.filter(
+                      (line) => line.returnQty > 0,
+                    );
 
                     if (!returnedItems.length) {
                       setError("Chưa chọn sản phẩm trả.");
@@ -2346,11 +2633,11 @@ const handlePay = async () => {
 
                     const returnTotal = returnedItems.reduce(
                       (sum, line) => sum + line.price * line.returnQty,
-                      0
+                      0,
                     );
                     const exchangeTotal = exchangeLines.reduce(
                       (sum, line) => sum + line.price * line.qty,
-                      0
+                      0,
                     );
                     const diff = returnTotal - exchangeTotal;
 
@@ -2365,7 +2652,9 @@ const handlePay = async () => {
                       [
                         prev,
                         `Đổi trả đơn ${selectedReturnOrder.orderCode || selectedReturnOrder.code}`,
-                        returnReceived ? "Đã nhận hàng trả" : "Chưa nhận hàng trả",
+                        returnReceived
+                          ? "Đã nhận hàng trả"
+                          : "Chưa nhận hàng trả",
                         `Sản phẩm trả: ${returnedItems.map((line) => `${line.sku || line.productName} x${line.returnQty}`).join(", ")}`,
                         exchangeLines.length
                           ? `Sản phẩm đổi: ${exchangeLines.map((line) => `${line.sku || line.productName} x${line.qty}`).join(", ")}`
@@ -2376,7 +2665,7 @@ const handlePay = async () => {
                         returnNote ? `Ghi chú: ${returnNote}` : "",
                       ]
                         .filter(Boolean)
-                        .join(" | ")
+                        .join(" | "),
                     );
 
                     setLines(exchangeLines);
@@ -2385,21 +2674,34 @@ const handlePay = async () => {
                       setDiscount(String(exchangeTotal));
                       setPaidAmount("0");
                       setPaymentRows((prev) =>
-                        prev.length ? [{ ...prev[0], amount: "0" }, ...prev.slice(1)] : prev
+                        prev.length
+                          ? [{ ...prev[0], amount: "0" }, ...prev.slice(1)]
+                          : prev,
                       );
                     } else if (diff < 0) {
                       setDiscount(String(returnTotal));
                       setPaidAmount(String(Math.abs(diff)));
                       setPaymentRows((prev) =>
                         prev.length
-                          ? [{ ...prev[0], amount: String(Math.abs(diff)) }, ...prev.slice(1)]
-                          : [{ id: "pay-1", paymentSourceId: "", amount: String(Math.abs(diff)) }]
+                          ? [
+                              { ...prev[0], amount: String(Math.abs(diff)) },
+                              ...prev.slice(1),
+                            ]
+                          : [
+                              {
+                                id: "pay-1",
+                                paymentSourceId: "",
+                                amount: String(Math.abs(diff)),
+                              },
+                            ],
                       );
                     } else {
                       setDiscount(String(exchangeTotal));
                       setPaidAmount("0");
                       setPaymentRows((prev) =>
-                        prev.length ? [{ ...prev[0], amount: "0" }, ...prev.slice(1)] : prev
+                        prev.length
+                          ? [{ ...prev[0], amount: "0" }, ...prev.slice(1)]
+                          : prev,
                       );
                     }
 
@@ -2409,7 +2711,7 @@ const handlePay = async () => {
                         ? `Đã áp dụng đổi trả. Cần hoàn khách ${currency(diff)}.`
                         : diff < 0
                           ? `Đã áp dụng đổi trả. Khách cần bù ${currency(Math.abs(diff))}.`
-                          : "Đã áp dụng đổi ngang."
+                          : "Đã áp dụng đổi ngang.",
                     );
                   }}
                   className="mt-5 h-12 w-full rounded-2xl bg-neutral-950 font-semibold text-white hover:bg-neutral-800"

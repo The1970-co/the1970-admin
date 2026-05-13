@@ -108,6 +108,27 @@ type ReviewRow = {
   lastScannedAt?: string | null;
 };
 
+type StocktakeExcelImportRow = {
+  rowNumber: number;
+  sku: string;
+  productName?: string;
+  unit?: string;
+  batchCode?: string;
+  countedQty: number;
+  systemQty?: number | null;
+  diffQty?: number | null;
+  reason?: string;
+  note?: string;
+};
+
+type StocktakeExcelParseResult = {
+  rows: StocktakeExcelImportRow[];
+  headerRowNumber: number;
+  sheetName: string;
+  totalDataRows: number;
+  skippedRows: number;
+};
+
 function getTokenFromStorage() {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
@@ -198,6 +219,173 @@ function formatDateTime(value?: string | null) {
 function diffText(value: number) {
   if (value > 0) return `+${value}`;
   return String(value || 0);
+}
+
+
+function normalizeExcelHeader(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeExcelText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function parseExcelNumber(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+
+  const withoutSpaces = raw.replace(/\s/g, "");
+  let normalized = withoutSpaces;
+
+  if (withoutSpaces.includes(",") && withoutSpaces.includes(".")) {
+    normalized = withoutSpaces.replace(/\./g, "").replace(",", ".");
+  } else if (withoutSpaces.includes(",")) {
+    const parts = withoutSpaces.split(",");
+    normalized = parts.length === 2 && parts[1].length === 3
+      ? withoutSpaces.replace(/,/g, "")
+      : withoutSpaces.replace(",", ".");
+  } else if (withoutSpaces.includes(".")) {
+    const parts = withoutSpaces.split(".");
+    normalized = parts.length > 2 || parts[parts.length - 1]?.length === 3
+      ? withoutSpaces.replace(/\./g, "")
+      : withoutSpaces;
+  }
+
+  const parsed = Number(normalized.replace(/[^0-9.-]/g, ""));
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function findExcelColumnIndex(headerRow: unknown[], aliases: string[]) {
+  const normalizedAliases = aliases.map(normalizeExcelHeader);
+
+  return headerRow.findIndex((cell) => {
+    const normalized = normalizeExcelHeader(cell);
+    if (!normalized) return false;
+    return normalizedAliases.some((alias) => normalized === alias || normalized.includes(alias));
+  });
+}
+
+function hasStocktakeHeaderSignal(row: unknown[]) {
+  const headers = row.map(normalizeExcelHeader).filter(Boolean);
+  const hasSku = headers.some((h) => h.includes("masku") || h === "sku" || h.includes("masanpham"));
+  const hasName = headers.some((h) => h.includes("tensanpham") || h.includes("sanpham"));
+  const hasCounted = headers.some((h) => h.includes("tonthucte") || h.includes("thucte") || h.includes("soluongthucte") || h.includes("demduoc"));
+
+  return (hasSku && hasCounted) || (hasName && hasCounted) || (hasSku && hasName);
+}
+
+function findStocktakeHeaderRowIndex(rawRows: unknown[][]) {
+  const preferred = rawRows[9];
+  if (preferred && hasStocktakeHeaderSignal(preferred)) return 9;
+
+  const limit = Math.min(rawRows.length, 60);
+  for (let index = 0; index < limit; index += 1) {
+    if (hasStocktakeHeaderSignal(rawRows[index] || [])) return index;
+  }
+
+  return -1;
+}
+
+async function parseStocktakeExcelFile(file: File): Promise<StocktakeExcelParseResult> {
+  const XLSX = await import("xlsx");
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+
+  if (!sheet) {
+    throw new Error("Không đọc được sheet đầu tiên trong file Excel.");
+  }
+
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+    blankrows: false,
+  }) as unknown[][];
+
+  const headerRowIndex = findStocktakeHeaderRowIndex(rawRows);
+  if (headerRowIndex < 0) {
+    throw new Error("Không tìm thấy header kiểm kho. File cần có cột Mã SKU và Tồn thực tế, hoặc header bắt đầu ở dòng 10.");
+  }
+
+  const headerRow = rawRows[headerRowIndex] || [];
+  const skuIndex = findExcelColumnIndex(headerRow, ["Mã SKU", "SKU", "Mã sản phẩm", "Barcode", "Mã vạch"]);
+  const productNameIndex = findExcelColumnIndex(headerRow, ["Tên sản phẩm", "Sản phẩm", "Tên hàng", "Tên SKU"]);
+  const unitIndex = findExcelColumnIndex(headerRow, ["Đơn vị tính", "ĐVT", "Unit"]);
+  const batchIndex = findExcelColumnIndex(headerRow, ["Mã lô", "Lô", "Batch"]);
+  const countedIndex = findExcelColumnIndex(headerRow, ["Tồn thực tế", "Thực tế", "SL thực tế", "Số lượng thực tế", "Đếm được", "Số lượng kiểm"]);
+  const systemIndex = findExcelColumnIndex(headerRow, ["Tồn chi nhánh", "Tồn hệ thống", "Tồn kho", "Tồn hiện tại"]);
+  const diffIndex = findExcelColumnIndex(headerRow, ["Lệch", "Chênh lệch", "Sai lệch"]);
+  const reasonIndex = findExcelColumnIndex(headerRow, ["Lý do", "Nguyên nhân"]);
+  const noteIndex = findExcelColumnIndex(headerRow, ["Ghi chú", "Note"]);
+
+  if (skuIndex < 0) {
+    throw new Error("Không tìm thấy cột Mã SKU trong file kiểm kho.");
+  }
+
+  if (countedIndex < 0) {
+    throw new Error("Không tìm thấy cột Tồn thực tế trong file kiểm kho.");
+  }
+
+  const rows: StocktakeExcelImportRow[] = [];
+  let totalDataRows = 0;
+  let skippedRows = 0;
+
+  rawRows.slice(headerRowIndex + 1).forEach((row, rowOffset) => {
+    const rowNumber = headerRowIndex + rowOffset + 2;
+    const sku = normalizeExcelText(row?.[skuIndex]);
+    const productName = productNameIndex >= 0 ? normalizeExcelText(row?.[productNameIndex]) : "";
+    const countedRaw = row?.[countedIndex];
+    const countedQty = parseExcelNumber(countedRaw);
+
+    const hasAnyValue = Array.isArray(row) && row.some((cell) => normalizeExcelText(cell));
+    if (!hasAnyValue) return;
+
+    totalDataRows += 1;
+
+    if (!sku) {
+      skippedRows += 1;
+      return;
+    }
+
+    if (!Number.isFinite(countedQty) || countedQty < 0) {
+      skippedRows += 1;
+      return;
+    }
+
+    rows.push({
+      rowNumber,
+      sku,
+      productName,
+      unit: unitIndex >= 0 ? normalizeExcelText(row?.[unitIndex]) : "",
+      batchCode: batchIndex >= 0 ? normalizeExcelText(row?.[batchIndex]) : "",
+      countedQty: Math.max(0, Math.floor(countedQty)),
+      systemQty: systemIndex >= 0 ? parseExcelNumber(row?.[systemIndex]) : null,
+      diffQty: diffIndex >= 0 ? parseExcelNumber(row?.[diffIndex]) : null,
+      reason: reasonIndex >= 0 ? normalizeExcelText(row?.[reasonIndex]) : "",
+      note: noteIndex >= 0 ? normalizeExcelText(row?.[noteIndex]) : "",
+    });
+  });
+
+  return {
+    rows,
+    headerRowNumber: headerRowIndex + 1,
+    sheetName,
+    totalDataRows,
+    skippedRows,
+  };
 }
 
 function isClosedStatus(status?: string | null) {
@@ -423,6 +611,14 @@ export default function StocktakePageClient() {
 
   const [scanCode, setScanCode] = useState("");
   const [scanQty, setScanQty] = useState("1");
+  const [stocktakeExcelFile, setStocktakeExcelFile] = useState<File | null>(null);
+  const [stocktakeExcelRows, setStocktakeExcelRows] = useState<StocktakeExcelImportRow[]>([]);
+  const [stocktakeExcelHeaderRow, setStocktakeExcelHeaderRow] = useState<number | null>(null);
+  const [stocktakeExcelSheetName, setStocktakeExcelSheetName] = useState("");
+  const [stocktakeExcelSkippedRows, setStocktakeExcelSkippedRows] = useState(0);
+  const [stocktakeExcelTotalRows, setStocktakeExcelTotalRows] = useState(0);
+  const [stocktakeExcelImporting, setStocktakeExcelImporting] = useState(false);
+  const [stocktakeExcelProgress, setStocktakeExcelProgress] = useState({ done: 0, total: 0 });
   const [quickQtyBySku, setQuickQtyBySku] = useState<Record<string, string>>(
     {},
   );
@@ -1384,6 +1580,145 @@ export default function StocktakePageClient() {
     }
   };
 
+  const handleStocktakeExcelFileChange = async (nextFile?: File | null) => {
+    const selectedFile = nextFile || null;
+    setStocktakeExcelFile(selectedFile);
+    setStocktakeExcelRows([]);
+    setStocktakeExcelHeaderRow(null);
+    setStocktakeExcelSheetName("");
+    setStocktakeExcelSkippedRows(0);
+    setStocktakeExcelTotalRows(0);
+    setStocktakeExcelProgress({ done: 0, total: 0 });
+
+    if (!selectedFile) return;
+
+    try {
+      setMessage("Đang đọc file Excel kiểm kho...");
+      const parsed = await parseStocktakeExcelFile(selectedFile);
+      setStocktakeExcelRows(parsed.rows);
+      setStocktakeExcelHeaderRow(parsed.headerRowNumber);
+      setStocktakeExcelSheetName(parsed.sheetName);
+      setStocktakeExcelSkippedRows(parsed.skippedRows);
+      setStocktakeExcelTotalRows(parsed.totalDataRows);
+      setMessage(
+        `Đã đọc ${parsed.rows.length}/${parsed.totalDataRows} dòng từ Excel. Header dòng ${parsed.headerRowNumber}.`,
+      );
+    } catch (err) {
+      setStocktakeExcelFile(null);
+      setStocktakeExcelRows([]);
+      setMessage(err instanceof Error ? err.message : "Không đọc được file Excel kiểm kho.");
+    }
+  };
+
+  const importStocktakeExcelRows = async () => {
+    if (!canScanStocktake) {
+      setMessage("Bạn không có quyền upload/ghi số lượng kiểm kho.");
+      return;
+    }
+
+    if (!session?.id || !worker?.id) {
+      setMessage("Cần tạo hoặc join phiên kiểm kho trước khi upload Excel.");
+      return;
+    }
+
+    if (paused) {
+      setMessage("Phiên đang tạm dừng. Bấm tiếp tục rồi upload Excel.");
+      return;
+    }
+
+    if (closed) {
+      setMessage("Phiên đã đóng, không thể upload Excel vào phiên này.");
+      return;
+    }
+
+    if (!stocktakeExcelRows.length) {
+      setMessage("Chưa có dòng Excel hợp lệ để import.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Ghi ${stocktakeExcelRows.length} dòng từ Excel vào phiên kiểm hiện tại? Hệ thống sẽ set số lượng theo cột Tồn thực tế.`,
+    );
+    if (!ok) return;
+
+    try {
+      setStocktakeExcelImporting(true);
+      setScanning(true);
+      setMessage("Đang import số lượng từ Excel vào phiên kiểm...");
+      setStocktakeExcelProgress({ done: 0, total: stocktakeExcelRows.length });
+
+      const currentCountBySku = new Map<string, number>();
+      rows.forEach((row) => currentCountBySku.set(row.sku, Number(row.counted || 0)));
+
+      let imported = 0;
+      let skipped = 0;
+      let failed = 0;
+      const failedSamples: string[] = [];
+
+      for (const excelRow of stocktakeExcelRows) {
+        const sku = excelRow.sku.trim();
+        const targetQty = Number(excelRow.countedQty || 0);
+        const currentQty = currentCountBySku.get(sku) || 0;
+        const delta = targetQty - currentQty;
+
+        if (!sku || delta === 0) {
+          skipped += 1;
+          imported += 1;
+          setStocktakeExcelProgress({ done: imported, total: stocktakeExcelRows.length });
+          continue;
+        }
+
+        try {
+          const variant = findVariantByCode(sku);
+          const finalCode = variant?.sku || sku;
+          const result = await apiRequest<any>("/stocktake-sessions/scan", {
+            method: "POST",
+            body: JSON.stringify({
+              sessionId: session.id,
+              workerId: worker.id,
+              branchId,
+              code: finalCode,
+              zone: worker.zone || scanZone,
+              qtyDelta: delta,
+              note: `Import Excel dòng ${excelRow.rowNumber}${excelRow.note ? ` · ${excelRow.note}` : ""}`,
+            }),
+          });
+
+          const scannedSku = result?.variant?.sku || finalCode;
+          currentCountBySku.set(scannedSku, targetQty);
+          setLastScannedSku(scannedSku);
+        } catch (err) {
+          failed += 1;
+          if (failedSamples.length < 5) {
+            failedSamples.push(`${sku}: ${err instanceof Error ? err.message : "lỗi import"}`);
+          }
+        } finally {
+          imported += 1;
+          setStocktakeExcelProgress({ done: imported, total: stocktakeExcelRows.length });
+        }
+      }
+
+      saveStocktakeResumeState({
+        sessionId: session.id,
+        workerId: worker.id,
+        branchId,
+      });
+
+      await refreshSession(session.id);
+      await refreshWorkerSummary(session.id, worker.id);
+      setScanCode("");
+      setShowSuggestions(false);
+
+      setMessage(
+        `Import Excel xong: ${stocktakeExcelRows.length - failed - skipped} dòng đã ghi, ${skipped} dòng không đổi, ${failed} dòng lỗi.${failedSamples.length ? ` Lỗi mẫu: ${failedSamples.join(" | ")}` : ""}`,
+      );
+      window.setTimeout(() => scanInputRef.current?.focus(), 100);
+    } finally {
+      setScanning(false);
+      setStocktakeExcelImporting(false);
+    }
+  };
+
   const handleScannerInputChange = (value: string) => {
     setScanCode(value);
     setShowSuggestions(true);
@@ -2199,6 +2534,122 @@ export default function StocktakePageClient() {
             Máy tít: quét mã sẽ tự +1. Nếu máy tít có suffix Enter thì lưu ngay;
             nếu không có Enter, hệ thống tự lưu sau khoảng 0.3 giây.
           </p>
+
+          <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-extrabold text-blue-950">
+                  Upload Excel kiểm kho nhanh
+                </p>
+                <p className="mt-1 text-xs font-medium text-blue-800/80">
+                  Dùng file Phiếu kiểm hàng. Ưu tiên header dòng 10, nếu không thấy sẽ tự dò cột Mã SKU / Tên sản phẩm / Tồn thực tế.
+                </p>
+              </div>
+              <Badge tone={stocktakeExcelRows.length ? "green" : "blue"}>
+                {stocktakeExcelRows.length ? `${stocktakeExcelRows.length} dòng` : "Excel"}
+              </Badge>
+            </div>
+
+            <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-blue-200 bg-white/80 p-4 text-center hover:bg-white">
+              <span className="text-sm font-bold text-neutral-900">
+                Chọn file Excel kiểm kho
+              </span>
+              <span className="mt-1 text-xs font-medium text-neutral-500">
+                .xlsx / .xls · đọc cột Mã SKU và Tồn thực tế
+              </span>
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                disabled={!session || !worker || paused || closed || stocktakeExcelImporting || !canScanStocktake}
+                onChange={(event) => void handleStocktakeExcelFileChange(event.target.files?.[0] || null)}
+              />
+            </label>
+
+            {stocktakeExcelFile ? (
+              <div className="mt-3 rounded-xl bg-white p-3 text-xs font-semibold text-neutral-700">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate">{stocktakeExcelFile.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleStocktakeExcelFileChange(null)}
+                    className="shrink-0 text-red-600 hover:underline"
+                    disabled={stocktakeExcelImporting}
+                  >
+                    Xóa file
+                  </button>
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <span>Sheet: {stocktakeExcelSheetName || "—"}</span>
+                  <span>Header: dòng {stocktakeExcelHeaderRow || "—"}</span>
+                  <span>Bỏ qua: {stocktakeExcelSkippedRows}</span>
+                </div>
+                <div className="mt-1 text-neutral-500">
+                  Hợp lệ: {stocktakeExcelRows.length} / {stocktakeExcelTotalRows} dòng có dữ liệu.
+                </div>
+              </div>
+            ) : null}
+
+            {stocktakeExcelRows.length ? (
+              <div className="mt-3 overflow-hidden rounded-xl border border-blue-100 bg-white">
+                <div className="max-h-44 overflow-auto">
+                  <table className="min-w-full text-xs">
+                    <thead className="sticky top-0 bg-blue-50 text-left text-blue-900">
+                      <tr>
+                        <th className="px-3 py-2 font-bold">Dòng</th>
+                        <th className="px-3 py-2 font-bold">SKU</th>
+                        <th className="px-3 py-2 font-bold">Tên SP</th>
+                        <th className="px-3 py-2 text-right font-bold">Tồn thực tế</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stocktakeExcelRows.slice(0, 8).map((row) => (
+                        <tr key={`${row.rowNumber}-${row.sku}`} className="border-t border-neutral-100">
+                          <td className="px-3 py-2 text-neutral-500">{row.rowNumber}</td>
+                          <td className="px-3 py-2 font-bold text-neutral-900">{row.sku}</td>
+                          <td className="max-w-[180px] truncate px-3 py-2 text-neutral-600">{row.productName || "—"}</td>
+                          <td className="px-3 py-2 text-right font-extrabold text-neutral-950">{row.countedQty}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {stocktakeExcelRows.length > 8 ? (
+                  <div className="border-t border-neutral-100 px-3 py-2 text-xs font-semibold text-neutral-500">
+                    Còn {stocktakeExcelRows.length - 8} dòng nữa sẽ được import.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {stocktakeExcelImporting ? (
+              <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-bold text-blue-700">
+                Đang ghi {stocktakeExcelProgress.done}/{stocktakeExcelProgress.total} dòng vào phiên kiểm...
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => void importStocktakeExcelRows()}
+              disabled={
+                !session ||
+                !worker ||
+                paused ||
+                closed ||
+                scanning ||
+                stocktakeExcelImporting ||
+                !stocktakeExcelRows.length ||
+                !canScanStocktake
+              }
+              className="mt-3 w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+            >
+              {stocktakeExcelImporting ? "Đang import Excel..." : "Ghi số lượng từ Excel vào phiên kiểm"}
+            </button>
+
+            <p className="mt-2 text-[11px] font-semibold text-blue-900/70">
+              Lưu ý: hệ thống set đúng số lượng theo cột Tồn thực tế bằng cách tự tính delta so với số đã scan hiện tại.
+            </p>
+          </div>
 
           <div className="mt-8">
             <p className="mb-3 text-sm font-semibold text-neutral-700">

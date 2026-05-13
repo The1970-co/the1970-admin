@@ -50,6 +50,43 @@ import {
 type ShippingMode = "partner" | "pickup";
 type ShippingPayer = "shop" | "customer";
 type ShippingUiMode = "carrier" | "external" | "pickup" | "schedule";
+type AhamovePaymentMethod = "BALANCE" | "CASH" | "CASH_BY_RECIPIENT";
+
+const AHAMOVE_PAYMENT_METHOD_STORAGE_KEY = "the1970_ahamove_payment_method";
+const AHAMOVE_PAYMENT_METHOD_OPTIONS: Array<{
+  value: AhamovePaymentMethod;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "BALANCE",
+    label: "Trừ ví / công nợ AhaMove",
+    description: "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.",
+  },
+  {
+    value: "CASH",
+    label: "Shop trả tiền mặt cho tài xế",
+    description: "Tài xế thu phí ship từ shop lúc lấy hàng.",
+  },
+  {
+    value: "CASH_BY_RECIPIENT",
+    label: "Khách trả tiền ship",
+    description: "Tài xế thu phí ship từ khách nhận hàng.",
+  },
+];
+
+function normalizeAhamovePaymentMethod(value?: string | null): AhamovePaymentMethod {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "CASH" || normalized === "CASH_BY_RECIPIENT" || normalized === "BALANCE") {
+    return normalized as AhamovePaymentMethod;
+  }
+  return "BALANCE";
+}
+
+function getAhamovePaymentMethodLabel(value?: string | null) {
+  const method = normalizeAhamovePaymentMethod(value);
+  return AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)?.label || "Trừ ví / công nợ AhaMove";
+}
 
 const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
 const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
@@ -1768,6 +1805,8 @@ export default function CreateOrderPageClient() {
   const [shippingUiMode, setShippingUiMode] =
     useState<ShippingUiMode>("carrier");
   const [shippingPartner, setShippingPartner] = useState("ghn");
+  const [ahamovePaymentMethod, setAhamovePaymentMethod] =
+    useState<AhamovePaymentMethod>("BALANCE");
   const [deliveryRequirement, setDeliveryRequirement] =
     useState<DeliveryRequirement>("CHOXEMHANG_KHONGTHU");
 
@@ -2973,6 +3012,21 @@ export default function CreateOrderPageClient() {
     ) ||
     null;
 
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      setAhamovePaymentMethod(
+        normalizeAhamovePaymentMethod(
+          localStorage.getItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY),
+        ),
+      );
+    } catch {
+      setAhamovePaymentMethod("BALANCE");
+    }
+  }, []);
+
+  const ahamovePaymentMethodLabel = getAhamovePaymentMethodLabel(ahamovePaymentMethod);
   const appendCustomerFacingNote = (value?: string | null) => {
     const next = String(value || "").trim();
     if (!next) return;
@@ -4063,7 +4117,6 @@ export default function CreateOrderPageClient() {
 
             const ahamoveRows = normalizeAhamoveQuoteItems(rawAhamoveQuote)
               .map((item: any) => parseAhamoveQuoteFee(item))
-              .filter((parsed: any) => parsed.quoteFee > 0)
               .filter((parsed: any) =>
                 shouldShowAhamoveService(
                   parsed.serviceLabel,
@@ -4098,7 +4151,9 @@ export default function CreateOrderPageClient() {
                   _durationMinutes: parsed.durationMinutes,
                   _distanceKm: parsed.distanceKm,
                   _raw: parsed.raw,
-                  _applyFeeToInput: true,
+                  _disabled: Boolean((parsed.raw as any)?._disabled),
+                  _disabledReason: (parsed.raw as any)?._disabledReason || "",
+                  _applyFeeToInput: parsed.quoteFee > 0 && !Boolean((parsed.raw as any)?._disabled),
                 } as any),
               };
 
@@ -4705,8 +4760,7 @@ export default function CreateOrderPageClient() {
                   quote.serviceTypeId === selectedShippingServiceTypeId,
               ) as any
             )?._serviceName || "HAN-BIKE",
-          payment_method: "BALANCE",
-          paymentMethod: "BALANCE",
+          payment_method: ahamovePaymentMethod,
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
           note: customerFacingShippingNote,
@@ -5622,6 +5676,17 @@ export default function CreateOrderPageClient() {
                 <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
                   Kho lấy hàng đã cấu hình: <span className="font-semibold text-neutral-900">{selectedCarrierPickup.name || selectedCarrierPickup.label}</span>
                   {selectedCarrierPickup.address ? ` · ${selectedCarrierPickup.address}` : ""}
+                </div>
+              ) : null}
+
+              {shippingUiMode === "carrier" && shippingPartner === "ahamove" ? (
+                <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+                  <div className="font-semibold text-orange-950">
+                    Thanh toán phí ship AhaMove: {ahamovePaymentMethodLabel}
+                  </div>
+                  <div className="mt-1 text-xs leading-5">
+                    Mã gửi API khi tạo đơn: <span className="font-semibold">{ahamovePaymentMethod}</span>. COD tiền hàng vẫn tách riêng theo số tiền khách còn phải thanh toán.
+                  </div>
                 </div>
               ) : null}
 

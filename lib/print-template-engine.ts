@@ -140,6 +140,7 @@ function templateFieldVisible(
     | "showShippingAddress"
     | "showItems"
     | "showItemQty"
+    | "showTotalQty"
     | "showFooter",
 ) {
   return (template as any)?.[key] !== false;
@@ -593,9 +594,10 @@ function buildShippingTemplateHtml(params: {
   trackingCode: string;
   noteValue: string;
   itemCount: number;
+  totalQty?: number;
   ghnSortCode?: string;
 }) {
-  const { template, data, trackingCode, noteValue, itemCount, ghnSortCode = "" } = params;
+  const { template, data, trackingCode, noteValue, itemCount, totalQty = itemCount, ghnSortCode = "" } = params;
   const hasTracking = Boolean(trackingCode);
   const isSquare80 = template.paperSize === "80mm";
   const ghnSortCodeBlock = buildGhnSortCodeBlock(ghnSortCode, isSquare80);
@@ -1069,6 +1071,7 @@ export function renderOrderTemplateHtml(params: {
   );
   const showItems = templateFieldVisible(template, "showItems");
   const showItemQty = templateFieldVisible(template, "showItemQty");
+  const showTotalQty = templateFieldVisible(template, "showTotalQty");
   const showFooter = templateFieldVisible(template, "showFooter");
 
   const baseItemsRows = showItems
@@ -1077,16 +1080,16 @@ export function renderOrderTemplateHtml(params: {
 
   const totalQty = Number(order?.totalQty ?? itemCount ?? 0);
 
-  const transferTotalQtyRow =
-    template.templateType === "transfer" && showItems
+  const totalQtyRow =
+    template.templateType !== "product_label" && showItems && showTotalQty
       ? `<tr>
-  <td colspan="${showItemQty ? 2 : 1}" style="padding:4px 0 2px;border-top:1px dashed #999;text-align:right;font-size:11px;font-weight:900;">
+  <td colspan="${template.templateType === "sales" ? (showItemQty ? 4 : 3) : (showItemQty ? 2 : 1)}" style="padding:4px 0 2px;border-top:1px dashed #999;text-align:right;font-size:10.5px;font-weight:900;">
     Tổng SL: ${totalQty}
   </td>
 </tr>`
       : "";
 
-  const itemsRows = `${baseItemsRows}${transferTotalQtyRow}`;
+  const itemsRows = `${baseItemsRows}${totalQtyRow}`;
   const shippingAddress = buildShippingAddress(order, meta.address || "");
   const noteValue = template.showNote ? buildCleanNote(order, meta) : "";
 
@@ -1199,10 +1202,8 @@ export function renderOrderTemplateHtml(params: {
     ghnSortCode: escapeHtml(ghnSortCode),
     ghnSortCodeBlock,
 
-    shippingFee: template.showShippingFee
-      ? money(shippingFee)
-      : money(shippingFee),
-    codAmount: template.showCod ? money(codAmount) : money(codAmount),
+    shippingFee: template.showShippingFee ? money(shippingFee) : "",
+    codAmount: template.showCod ? money(codAmount) : "",
     amountDue: money(amountDue),
     subtotal: money(subtotal),
     finalAmount: money(finalAmount),
@@ -1210,14 +1211,14 @@ export function renderOrderTemplateHtml(params: {
     itemCount: String(itemCount),
     totalQty: String(totalQty),
     totalQtyBlock:
-      template.templateType === "transfer" && showItems
-        ? `<div style="margin-top:4px;padding-top:4px;border-top:1px dashed #999;text-align:right;font-size:11px;font-weight:900;">Tổng SL: ${totalQty}</div>`
+      template.templateType !== "product_label" && showItems && showTotalQty
+        ? `<div style="margin-top:4px;padding-top:4px;border-top:1px dashed #999;text-align:right;font-size:10.5px;font-weight:900;">Tổng SL: ${totalQty}</div>`
         : "",
     itemsRows,
     barcodeBlock: "",
     qrBlock: "",
     financialBlock:
-      template.templateType === "shipping" && (template.showCod !== false || codAmount > 0 || amountDue > 0)
+      template.templateType === "shipping" && template.showCod !== false && Number(codAmount || amountDue || 0) > 0
         ? `<div style="margin:2px 0 2px;">
               <table style="width:100%;border-collapse:collapse;text-align:center;">
                 <tr>
@@ -1233,6 +1234,10 @@ export function renderOrderTemplateHtml(params: {
       template.showNote && noteValue
         ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>`
         : "",
+    shippingFeeBlock:
+      template.showShippingFee && Number(shippingFee || 0) > 0
+        ? `<div style="font-size:10px;margin:2px 0;text-align:center;">Phí ship: <b>${money(shippingFee)}</b></div>`
+        : "",
     orderMetaBlock,
     customerBlock,
     itemsBlock: template.paperSize === "80mm" ? itemsBlock : longItemsBlock,
@@ -1245,8 +1250,20 @@ export function renderOrderTemplateHtml(params: {
   };
 
   if (template.templateType === "shipping" && template.paperSize === "80mm") {
-    const codBlock = Number(codAmount || amountDue || 0) > 0
+    const codBlock = template.showCod !== false && Number(codAmount || amountDue || 0) > 0
       ? `<div style="margin:.6mm 0 .7mm;"><table style="width:100%;border-collapse:collapse;text-align:center;"><tr><td style="border:1px solid #111;padding:.9mm 2mm;"><span style="font-size:8.4px;">THU HỘ (COD): </span><span style="font-size:12px;font-weight:900;">${money(codAmount || amountDue || 0)}</span></td></tr></table></div>`
+      : "";
+
+    const shippingFeeBlock = template.showShippingFee && Number(shippingFee || 0) > 0
+      ? `<div style="font-size:7.6px;margin:.25mm 0 .45mm;text-align:center;">Phí ship: <b>${money(shippingFee)}</b></div>`
+      : "";
+
+    const noteBlock = template.showNote && noteValue
+      ? `<div style="font-size:7.4px;line-height:1.05;margin:.25mm 0 .45mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Ghi chú:</b> ${escapeHtml(noteValue)}</div>`
+      : "";
+
+    const totalQtyMini = showTotalQty && showItems
+      ? `<div style="position:absolute;right:2.2mm;bottom:16.1mm;font-size:7.2px;font-weight:900;">Tổng SL: ${totalQty}</div>`
       : "";
 
     const requiredNoteBlock = ghnRequiredNoteLabel
@@ -1271,6 +1288,8 @@ export function renderOrderTemplateHtml(params: {
   ${orderMetaBlock}
   ${customerBlock}
   ${codBlock}
+  ${shippingFeeBlock}
+  ${noteBlock}
   ${ghnSortCodeBlock}
   ${requiredNoteBlock}
 
@@ -1350,6 +1369,7 @@ export function renderOrderTemplateHtml(params: {
     trackingCode,
     noteValue,
     itemCount,
+    totalQty,
     ghnSortCode,
   });
 }
