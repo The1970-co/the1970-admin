@@ -769,6 +769,25 @@ export default function StocktakePageClient() {
 
   const isOwner = role === "admin" || role === "owner";
 
+  const currentUserDisplayName = useMemo(() => {
+    const user: any = currentUser || {};
+    return (
+      user.name ||
+      user.fullName ||
+      user.displayName ||
+      user.username ||
+      user.email ||
+      "Nhân viên"
+    );
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUserDisplayName) return;
+    setScannerName(currentUserDisplayName);
+    setWorkerDraftName(currentUserDisplayName);
+    setJoinWorkerName(currentUserDisplayName);
+  }, [currentUserDisplayName]);
+
   function collectPermissionKeys(user: any) {
     const keys = new Set<string>();
 
@@ -1226,7 +1245,7 @@ export default function StocktakePageClient() {
   const closed = isClosedStatus(session?.status);
   const canCreateNewSession = canCreateStocktake && (!session || closed);
   const canCreateWorker = canCreateStocktake && Boolean(session?.id && !closed);
-  const canJoinWorker = canCreateStocktake && !closed;
+  const canJoinWorker = canScanStocktake && !closed;
   const canEditSessionMeta = canCreateStocktake && (!session || closed);
   const refreshWorkerSummary = async (
     sessionId?: string,
@@ -1471,7 +1490,7 @@ export default function StocktakePageClient() {
         {
           method: "POST",
           body: JSON.stringify({
-            name: scannerName || "Nhân viên",
+            name: currentUserDisplayName || "Nhân viên",
             zone: scanZone,
             deviceName,
           }),
@@ -1553,7 +1572,7 @@ export default function StocktakePageClient() {
     }
 
     setJoinSessionId("");
-    setJoinWorkerName(scannerName || "Nhân viên");
+    setJoinWorkerName(currentUserDisplayName || "Nhân viên");
     setJoinWorkerZone(scanZone || "Khu chính");
     setJoinDeviceName(deviceName || "Máy scan 1");
     setJoinModalOpen(true);
@@ -1587,7 +1606,7 @@ export default function StocktakePageClient() {
         {
           method: "POST",
           body: JSON.stringify({
-            name: joinWorkerName || scannerName || "Nhân viên",
+            name: currentUserDisplayName || joinWorkerName || "Nhân viên",
             zone: joinWorkerZone || scanZone || "Khu chính",
             deviceName: joinDeviceName || deviceName || "Máy scan",
           }),
@@ -1598,7 +1617,7 @@ export default function StocktakePageClient() {
       if (finalBranchId) setBranchId(finalBranchId);
 
       setWorker(joined);
-      setScannerName(joined.name || joinWorkerName);
+      setScannerName(joined.name || currentUserDisplayName || "Nhân viên");
       setScanZone(joined.zone || joinWorkerZone);
       setDeviceName(joined.deviceName || joinDeviceName);
       setJoinModalOpen(false);
@@ -1661,7 +1680,7 @@ export default function StocktakePageClient() {
           {
             method: "POST",
             body: JSON.stringify({
-              name: scannerName || currentUser?.name || "Nhân viên",
+              name: currentUserDisplayName || "Nhân viên",
               zone: scanZone || "Khu chính",
               deviceName: deviceName || "Máy scan",
             }),
@@ -1671,7 +1690,7 @@ export default function StocktakePageClient() {
       setSession(fullSession);
       setWorker(joined);
       setBranchId(fullSession.branchId || branchId);
-      setScannerName(joined.name || scannerName);
+      setScannerName(joined.name || currentUserDisplayName || "Nhân viên");
       setScanZone(joined.zone || scanZone);
       setDeviceName(joined.deviceName || deviceName);
       setSummaryMode("WORKER");
@@ -1719,7 +1738,7 @@ export default function StocktakePageClient() {
         {
           method: "POST",
           body: JSON.stringify({
-            name: workerDraftName || "Nhân viên",
+            name: currentUserDisplayName || workerDraftName || "Nhân viên",
             zone: workerDraftZone || "Khu chính",
             deviceName: workerDraftDevice || "Máy scan",
           }),
@@ -1727,7 +1746,7 @@ export default function StocktakePageClient() {
       );
 
       setWorker(joined);
-      setScannerName(joined.name);
+      setScannerName(joined.name || currentUserDisplayName || "Nhân viên");
       setScanZone(joined.zone || workerDraftZone);
       setDeviceName(joined.deviceName || workerDraftDevice);
       setWorkerModalOpen(false);
@@ -3087,8 +3106,8 @@ export default function StocktakePageClient() {
                   className={`group rounded-2xl border px-4 py-4 text-left transition ${
                     !session?.id
                       ? "border-neutral-950 bg-neutral-950 text-white shadow-sm hover:bg-neutral-800"
-                      : "border-neutral-200 bg-white text-neutral-400"
-                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-300`}
+                      : "border-neutral-200 bg-white text-neutral-700 shadow-sm hover:border-neutral-300 hover:bg-neutral-50"
+                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-600`}
                 >
                   <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
                     Bước 1
@@ -3115,8 +3134,8 @@ export default function StocktakePageClient() {
                   className={`rounded-2xl border px-4 py-4 text-left shadow-sm transition ${
                     session?.id && !closed && String(session?.status || "").toUpperCase() !== "FINISHED"
                       ? "border-neutral-950 bg-neutral-950 text-white hover:bg-neutral-800"
-                      : "border-neutral-200 bg-white text-neutral-400"
-                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-300 disabled:shadow-none`}
+                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50"
+                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-600 disabled:shadow-sm`}
                 >
                   <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
                     Bước 2
@@ -3140,8 +3159,8 @@ export default function StocktakePageClient() {
                   className={`rounded-2xl border px-4 py-4 text-left shadow-sm transition ${
                     String(session?.status || "").toUpperCase() === "FINISHED"
                       ? "border-neutral-950 bg-neutral-950 text-white hover:bg-neutral-800"
-                      : "border-neutral-200 bg-white text-neutral-400"
-                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-300 disabled:shadow-none`}
+                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50"
+                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-600 disabled:shadow-sm`}
                 >
                   <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
                     Bước 3
@@ -3248,12 +3267,13 @@ export default function StocktakePageClient() {
             </label>
 
             <label className="text-xs font-semibold text-neutral-500">
-              Người kiểm
+              Người kiểm (theo tài khoản đăng nhập)
               <input
                 className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
-                value={scannerName}
-                onChange={(e) => setScannerName(e.target.value)}
-                disabled={Boolean(worker)}
+                value={currentUserDisplayName || scannerName}
+                readOnly
+                disabled
+                title="Người kiểm lấy theo tài khoản đăng nhập"
               />
             </label>
 
@@ -4289,11 +4309,12 @@ export default function StocktakePageClient() {
 
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block text-sm font-semibold text-neutral-700">
-              Nhân viên / người kiểm
+              Nhân viên / người kiểm (theo tài khoản đăng nhập)
               <input
-                value={joinWorkerName}
-                onChange={(e) => setJoinWorkerName(e.target.value)}
-                placeholder="Ví dụ: Hằng"
+                value={currentUserDisplayName || joinWorkerName}
+                readOnly
+                disabled
+                placeholder="Lấy theo tài khoản đăng nhập"
                 className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-neutral-500"
               />
             </label>
@@ -4362,11 +4383,12 @@ export default function StocktakePageClient() {
           </div>
 
           <label className="block text-sm font-semibold text-neutral-700">
-            Nhân viên kiểm
+            Nhân viên kiểm (theo tài khoản đăng nhập)
             <input
-              value={workerDraftName}
-              onChange={(e) => setWorkerDraftName(e.target.value)}
-              placeholder="Ví dụ: Hùng"
+              value={currentUserDisplayName || workerDraftName}
+              readOnly
+              disabled
+              placeholder="Lấy theo tài khoản đăng nhập"
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-neutral-500"
             />
           </label>
