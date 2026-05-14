@@ -23,7 +23,7 @@ type StocktakeStatus =
   | "CANCELLED"
   | string;
 
-type StocktakeRowStatus = "MATCH" | "MISMATCH" | "NOT_FOUND";
+type StocktakeRowStatus = "MATCH" | "MISMATCH" | "NOT_FOUND" | "PENDING";
 
 type RealtimeSession = {
   id: string;
@@ -222,7 +222,6 @@ function diffText(value: number) {
   return String(value || 0);
 }
 
-
 function normalizeExcelHeader(value: unknown) {
   return String(value || "")
     .trim()
@@ -252,14 +251,16 @@ function parseExcelNumber(value: unknown) {
     normalized = withoutSpaces.replace(/\./g, "").replace(",", ".");
   } else if (withoutSpaces.includes(",")) {
     const parts = withoutSpaces.split(",");
-    normalized = parts.length === 2 && parts[1].length === 3
-      ? withoutSpaces.replace(/,/g, "")
-      : withoutSpaces.replace(",", ".");
+    normalized =
+      parts.length === 2 && parts[1].length === 3
+        ? withoutSpaces.replace(/,/g, "")
+        : withoutSpaces.replace(",", ".");
   } else if (withoutSpaces.includes(".")) {
     const parts = withoutSpaces.split(".");
-    normalized = parts.length > 2 || parts[parts.length - 1]?.length === 3
-      ? withoutSpaces.replace(/\./g, "")
-      : withoutSpaces;
+    normalized =
+      parts.length > 2 || parts[parts.length - 1]?.length === 3
+        ? withoutSpaces.replace(/\./g, "")
+        : withoutSpaces;
   }
 
   const parsed = Number(normalized.replace(/[^0-9.-]/g, ""));
@@ -273,17 +274,31 @@ function findExcelColumnIndex(headerRow: unknown[], aliases: string[]) {
   return headerRow.findIndex((cell) => {
     const normalized = normalizeExcelHeader(cell);
     if (!normalized) return false;
-    return normalizedAliases.some((alias) => normalized === alias || normalized.includes(alias));
+    return normalizedAliases.some(
+      (alias) => normalized === alias || normalized.includes(alias),
+    );
   });
 }
 
 function hasStocktakeHeaderSignal(row: unknown[]) {
   const headers = row.map(normalizeExcelHeader).filter(Boolean);
-  const hasSku = headers.some((h) => h.includes("masku") || h === "sku" || h.includes("masanpham"));
-  const hasName = headers.some((h) => h.includes("tensanpham") || h.includes("sanpham"));
-  const hasCounted = headers.some((h) => h.includes("tonthucte") || h.includes("thucte") || h.includes("soluongthucte") || h.includes("demduoc"));
+  const hasSku = headers.some(
+    (h) => h.includes("masku") || h === "sku" || h.includes("masanpham"),
+  );
+  const hasName = headers.some(
+    (h) => h.includes("tensanpham") || h.includes("sanpham"),
+  );
+  const hasCounted = headers.some(
+    (h) =>
+      h.includes("tonthucte") ||
+      h.includes("thucte") ||
+      h.includes("soluongthucte") ||
+      h.includes("demduoc"),
+  );
 
-  return (hasSku && hasCounted) || (hasName && hasCounted) || (hasSku && hasName);
+  return (
+    (hasSku && hasCounted) || (hasName && hasCounted) || (hasSku && hasName)
+  );
 }
 
 function findStocktakeHeaderRowIndex(rawRows: unknown[][]) {
@@ -298,7 +313,9 @@ function findStocktakeHeaderRowIndex(rawRows: unknown[][]) {
   return -1;
 }
 
-async function parseStocktakeExcelFile(file: File): Promise<StocktakeExcelParseResult> {
+async function parseStocktakeExcelFile(
+  file: File,
+): Promise<StocktakeExcelParseResult> {
   const XLSX = await import("xlsx");
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: "array" });
@@ -318,17 +335,50 @@ async function parseStocktakeExcelFile(file: File): Promise<StocktakeExcelParseR
 
   const headerRowIndex = findStocktakeHeaderRowIndex(rawRows);
   if (headerRowIndex < 0) {
-    throw new Error("Không tìm thấy header kiểm kho. File cần có cột Mã SKU và Tồn thực tế, hoặc header bắt đầu ở dòng 10.");
+    throw new Error(
+      "Không tìm thấy header kiểm kho. File cần có cột Mã SKU và Tồn thực tế, hoặc header bắt đầu ở dòng 10.",
+    );
   }
 
   const headerRow = rawRows[headerRowIndex] || [];
-  const skuIndex = findExcelColumnIndex(headerRow, ["Mã SKU", "SKU", "Mã sản phẩm", "Barcode", "Mã vạch"]);
-  const productNameIndex = findExcelColumnIndex(headerRow, ["Tên sản phẩm", "Sản phẩm", "Tên hàng", "Tên SKU"]);
-  const unitIndex = findExcelColumnIndex(headerRow, ["Đơn vị tính", "ĐVT", "Unit"]);
+  const skuIndex = findExcelColumnIndex(headerRow, [
+    "Mã SKU",
+    "SKU",
+    "Mã sản phẩm",
+    "Barcode",
+    "Mã vạch",
+  ]);
+  const productNameIndex = findExcelColumnIndex(headerRow, [
+    "Tên sản phẩm",
+    "Sản phẩm",
+    "Tên hàng",
+    "Tên SKU",
+  ]);
+  const unitIndex = findExcelColumnIndex(headerRow, [
+    "Đơn vị tính",
+    "ĐVT",
+    "Unit",
+  ]);
   const batchIndex = findExcelColumnIndex(headerRow, ["Mã lô", "Lô", "Batch"]);
-  const countedIndex = findExcelColumnIndex(headerRow, ["Tồn thực tế", "Thực tế", "SL thực tế", "Số lượng thực tế", "Đếm được", "Số lượng kiểm"]);
-  const systemIndex = findExcelColumnIndex(headerRow, ["Tồn chi nhánh", "Tồn hệ thống", "Tồn kho", "Tồn hiện tại"]);
-  const diffIndex = findExcelColumnIndex(headerRow, ["Lệch", "Chênh lệch", "Sai lệch"]);
+  const countedIndex = findExcelColumnIndex(headerRow, [
+    "Tồn thực tế",
+    "Thực tế",
+    "SL thực tế",
+    "Số lượng thực tế",
+    "Đếm được",
+    "Số lượng kiểm",
+  ]);
+  const systemIndex = findExcelColumnIndex(headerRow, [
+    "Tồn chi nhánh",
+    "Tồn hệ thống",
+    "Tồn kho",
+    "Tồn hiện tại",
+  ]);
+  const diffIndex = findExcelColumnIndex(headerRow, [
+    "Lệch",
+    "Chênh lệch",
+    "Sai lệch",
+  ]);
   const reasonIndex = findExcelColumnIndex(headerRow, ["Lý do", "Nguyên nhân"]);
   const noteIndex = findExcelColumnIndex(headerRow, ["Ghi chú", "Note"]);
 
@@ -347,11 +397,13 @@ async function parseStocktakeExcelFile(file: File): Promise<StocktakeExcelParseR
   rawRows.slice(headerRowIndex + 1).forEach((row, rowOffset) => {
     const rowNumber = headerRowIndex + rowOffset + 2;
     const sku = normalizeExcelText(row?.[skuIndex]);
-    const productName = productNameIndex >= 0 ? normalizeExcelText(row?.[productNameIndex]) : "";
+    const productName =
+      productNameIndex >= 0 ? normalizeExcelText(row?.[productNameIndex]) : "";
     const countedRaw = row?.[countedIndex];
     const countedQty = parseExcelNumber(countedRaw);
 
-    const hasAnyValue = Array.isArray(row) && row.some((cell) => normalizeExcelText(cell));
+    const hasAnyValue =
+      Array.isArray(row) && row.some((cell) => normalizeExcelText(cell));
     if (!hasAnyValue) return;
 
     totalDataRows += 1;
@@ -432,7 +484,10 @@ function workerStatusLabel(status?: string | null) {
   return status || "Đang kiểm";
 }
 
-function workerScanCount(worker?: RealtimeWorker | null, session?: RealtimeSession | null) {
+function workerScanCount(
+  worker?: RealtimeWorker | null,
+  session?: RealtimeSession | null,
+) {
   if (!worker) return 0;
   if (typeof worker.count === "number") return worker.count;
   const events = Array.isArray(session?.scanEvents) ? session!.scanEvents! : [];
@@ -440,7 +495,6 @@ function workerScanCount(worker?: RealtimeWorker | null, session?: RealtimeSessi
     .filter((event) => event.workerId === worker.id && event.status === "OK")
     .reduce((sum, event) => sum + Number(event.qtyDelta || 0), 0);
 }
-
 
 function Panel({
   children,
@@ -641,16 +695,28 @@ export default function StocktakePageClient() {
 
   const [scanCode, setScanCode] = useState("");
   const [scanQty, setScanQty] = useState("1");
-  const [stocktakeExcelFile, setStocktakeExcelFile] = useState<File | null>(null);
-  const [stocktakeExcelRows, setStocktakeExcelRows] = useState<StocktakeExcelImportRow[]>([]);
-  const [stocktakeExcelHeaderRow, setStocktakeExcelHeaderRow] = useState<number | null>(null);
+  const [stocktakeExcelFile, setStocktakeExcelFile] = useState<File | null>(
+    null,
+  );
+  const [stocktakeExcelRows, setStocktakeExcelRows] = useState<
+    StocktakeExcelImportRow[]
+  >([]);
+  const [stocktakeExcelHeaderRow, setStocktakeExcelHeaderRow] = useState<
+    number | null
+  >(null);
   const [stocktakeExcelSheetName, setStocktakeExcelSheetName] = useState("");
   const [stocktakeExcelSkippedRows, setStocktakeExcelSkippedRows] = useState(0);
   const [stocktakeExcelTotalRows, setStocktakeExcelTotalRows] = useState(0);
   const [stocktakeExcelImporting, setStocktakeExcelImporting] = useState(false);
-  const [stocktakeExcelProgress, setStocktakeExcelProgress] = useState({ done: 0, total: 0 });
+  const [stocktakeExcelProgress, setStocktakeExcelProgress] = useState({
+    done: 0,
+    total: 0,
+  });
   const [quickQtyBySku, setQuickQtyBySku] = useState<Record<string, string>>(
     {},
+  );
+  const [manualPickVariantIds, setManualPickVariantIds] = useState<string[]>(
+    [],
   );
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [lastScannedSku, setLastScannedSku] = useState("");
@@ -670,7 +736,9 @@ export default function StocktakePageClient() {
   const [showAllOpenSessions, setShowAllOpenSessions] = useState(false);
   const [cleanupSessionsOpen, setCleanupSessionsOpen] = useState(false);
   const [sessionActionLoadingId, setSessionActionLoadingId] = useState("");
-  const [optimisticQueue, setOptimisticQueue] = useState<Record<string, number>>({});
+  const [optimisticQueue, setOptimisticQueue] = useState<
+    Record<string, number>
+  >({});
   const [finishingOnly, setFinishingOnly] = useState(false);
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
@@ -809,6 +877,8 @@ export default function StocktakePageClient() {
       products.flatMap((product: any) =>
         (product.variants || []).map((variant: any) => ({
           ...variant,
+          productId: product.id,
+          productSlug: product.slug,
           productName: product.name,
         })),
       ),
@@ -863,6 +933,42 @@ export default function StocktakePageClient() {
       })
       .slice(0, 10);
   }, [allVariants, scanCode]);
+
+  const productSuggestions = useMemo(() => {
+    const q = scanCode.trim().toLowerCase();
+    if (!q) return [];
+
+    return products
+      .filter((product: any) => {
+        const name = String(product.name || "").toLowerCase();
+        const slug = String(product.slug || "").toLowerCase();
+        const code = String(
+          product.code || product.productCode || "",
+        ).toLowerCase();
+        const variants = Array.isArray(product.variants)
+          ? product.variants
+          : [];
+
+        return (
+          name.includes(q) ||
+          slug.includes(q) ||
+          code.includes(q) ||
+          variants.some((variant: any) => {
+            const sku = String(variant.sku || "").toLowerCase();
+            const barcode = String(variant.barcode || "").toLowerCase();
+            const color = String(variant.color || "").toLowerCase();
+            const size = String(variant.size || "").toLowerCase();
+            return (
+              sku.includes(q) ||
+              barcode.includes(q) ||
+              color.includes(q) ||
+              size.includes(q)
+            );
+          })
+        );
+      })
+      .slice(0, 5);
+  }, [products, scanCode]);
 
   const latestEvents = session?.scanEvents || [];
 
@@ -967,7 +1073,7 @@ export default function StocktakePageClient() {
   };
 
   const rows = useMemo<ReviewRow[]>(() => {
-    return activeSummary.map((item) => {
+    const mappedRows = activeSummary.map((item) => {
       const variant =
         allVariants.find((v: any) => v.id === item.variantId) ||
         allVariants.find((v: any) => v.sku === item.sku) ||
@@ -1014,7 +1120,46 @@ export default function StocktakePageClient() {
         lastScannedAt: item.lastScannedAt,
       };
     });
-  }, [activeSummary, allVariants, branchId]);
+
+    const existingSkuSet = new Set(mappedRows.map((row) => row.sku));
+    const manualRows: ReviewRow[] = manualPickVariantIds
+      .map((variantId) =>
+        allVariants.find((variant: any) => variant.id === variantId),
+      )
+      .filter(Boolean)
+      .filter((variant: any) => !existingSkuSet.has(String(variant.sku || "")))
+      .map((variant: any) => {
+        const snapshotQty = getVariantBranchStock(variant, branchId);
+
+        return {
+          sku: String(variant.sku || ""),
+          counted: 0,
+          system: snapshotQty,
+          totalSystem: getVariantTotalStock(variant),
+          diff: 0,
+          movementDuringStocktake: 0,
+          finalQty: snapshotQty,
+          status: "PENDING",
+          variant,
+          reason: "Nhập tay",
+          note: "Chọn từ sản phẩm chính",
+          events: 0,
+          workerId: worker?.id || null,
+          zone: worker?.zone || scanZone,
+          lastScannedAt: null,
+        };
+      });
+
+    return [...manualRows, ...mappedRows];
+  }, [
+    activeSummary,
+    allVariants,
+    branchId,
+    manualPickVariantIds,
+    scanZone,
+    worker?.id,
+    worker?.zone,
+  ]);
 
   const visibleRows = useMemo(() => {
     const q = rowQuery.trim().toLowerCase();
@@ -1040,11 +1185,18 @@ export default function StocktakePageClient() {
       });
   }, [rows, rowFilter, rowQuery, lastScannedSku]);
 
-  const matchedCount = rows.filter((row) => row.status === "MATCH").length;
-  const mismatchCount = rows.filter((row) => row.status === "MISMATCH").length;
-  const notFoundCount = rows.filter((row) => row.status === "NOT_FOUND").length;
+  const countedRows = rows.filter((row) => row.status !== "PENDING");
+  const matchedCount = countedRows.filter(
+    (row) => row.status === "MATCH",
+  ).length;
+  const mismatchCount = countedRows.filter(
+    (row) => row.status === "MISMATCH",
+  ).length;
+  const notFoundCount = countedRows.filter(
+    (row) => row.status === "NOT_FOUND",
+  ).length;
   const totalCounted = rows.reduce((sum, row) => sum + row.counted, 0);
-  const totalDiff = rows.reduce((sum, row) => sum + row.diff, 0);
+  const totalDiff = countedRows.reduce((sum, row) => sum + row.diff, 0);
   const totalSystem = rows.reduce((sum, row) => sum + row.system, 0);
   const movementDuring = rows.reduce(
     (sum, row) => sum + row.movementDuringStocktake,
@@ -1102,7 +1254,10 @@ export default function StocktakePageClient() {
     }
   };
 
-  const refreshSession = async (sessionId?: string, options?: { silent?: boolean }) => {
+  const refreshSession = async (
+    sessionId?: string,
+    options?: { silent?: boolean },
+  ) => {
     const id = sessionId || session?.id;
     if (!id) return;
 
@@ -1166,9 +1321,10 @@ export default function StocktakePageClient() {
         }
       }
     } catch (err) {
-      if (!options?.silent) setMessage(
-        err instanceof Error ? err.message : "Không refresh được session.",
-      );
+      if (!options?.silent)
+        setMessage(
+          err instanceof Error ? err.message : "Không refresh được session.",
+        );
     } finally {
       if (!options?.silent) setRefreshing(false);
     }
@@ -1355,7 +1511,10 @@ export default function StocktakePageClient() {
 
   const loadJoinableSessions = async (targetBranchId?: string) => {
     // Admin/Owner cần xem toàn bộ phiên tổng đang mở. Dùng __ALL__ để không bị fallback về branchId hiện tại.
-    const finalBranchId = targetBranchId === "__ALL__" ? "" : targetBranchId || branchId || currentBranchId || "";
+    const finalBranchId =
+      targetBranchId === "__ALL__"
+        ? ""
+        : targetBranchId || branchId || currentBranchId || "";
 
     try {
       setLoadingJoinableSessions(true);
@@ -1398,7 +1557,9 @@ export default function StocktakePageClient() {
     setJoinWorkerZone(scanZone || "Khu chính");
     setJoinDeviceName(deviceName || "Máy scan 1");
     setJoinModalOpen(true);
-    void loadJoinableSessions(isOwner ? "__ALL__" : (branchId || currentBranchId || undefined));
+    void loadJoinableSessions(
+      isOwner ? "__ALL__" : branchId || currentBranchId || undefined,
+    );
   };
 
   const joinExistingSession = async () => {
@@ -1462,7 +1623,6 @@ export default function StocktakePageClient() {
     }
   };
 
-
   const quickJoinMasterSession = async (targetSession: RealtimeSession) => {
     if (!canJoinWorker) {
       setMessage("Bạn không có quyền tham gia phiên kiểm kho.");
@@ -1479,15 +1639,18 @@ export default function StocktakePageClient() {
 
       const existingWorker =
         fullSession.workers?.find((item: any) => {
-          const sameUser = item.userId && currentUser?.id && item.userId === currentUser.id;
+          const sameUser =
+            item.userId && currentUser?.id && item.userId === currentUser.id;
           const sameName =
             item.name &&
             scannerName &&
-            String(item.name).trim().toLowerCase() === String(scannerName).trim().toLowerCase();
+            String(item.name).trim().toLowerCase() ===
+              String(scannerName).trim().toLowerCase();
           const sameDevice =
             item.deviceName &&
             deviceName &&
-            String(item.deviceName).trim().toLowerCase() === String(deviceName).trim().toLowerCase();
+            String(item.deviceName).trim().toLowerCase() ===
+              String(deviceName).trim().toLowerCase();
           return sameUser || (sameName && sameDevice);
         }) || null;
 
@@ -1521,7 +1684,9 @@ export default function StocktakePageClient() {
 
       await refreshSession(fullSession.id);
       await refreshWorkerSummary(fullSession.id, joined.id);
-      await loadJoinableSessions(fullSession.branchId || branchId || currentBranchId || undefined);
+      await loadJoinableSessions(
+        fullSession.branchId || branchId || currentBranchId || undefined,
+      );
 
       setMessage(
         existingWorker
@@ -1529,7 +1694,9 @@ export default function StocktakePageClient() {
           : "Đã tham gia phiên tổng và tạo phiên con cho máy này.",
       );
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không tham gia được phiên tổng.");
+      setMessage(
+        err instanceof Error ? err.message : "Không tham gia được phiên tổng.",
+      );
     }
   };
 
@@ -1593,7 +1760,11 @@ export default function StocktakePageClient() {
 
   const getScanQty = () => normalizePositiveInt(scanQty, 1);
 
-  const applyOptimisticScanRow = (variant: any, qtyDelta: number, selectedWorkerId?: string | null) => {
+  const applyOptimisticScanRow = (
+    variant: any,
+    qtyDelta: number,
+    selectedWorkerId?: string | null,
+  ) => {
     const scannedSku = String(variant?.sku || "");
     if (!scannedSku) return;
 
@@ -1630,7 +1801,10 @@ export default function StocktakePageClient() {
 
     setWorkerSummary((prev) => buildOptimisticRows(prev));
     setStableWorkerSummary((prev) => buildOptimisticRows(prev));
-    setOptimisticQueue((prev) => ({ ...prev, [scannedSku]: Number(prev[scannedSku] || 0) + qtyDelta }));
+    setOptimisticQueue((prev) => ({
+      ...prev,
+      [scannedSku]: Number(prev[scannedSku] || 0) + qtyDelta,
+    }));
     setLastScannedSku(scannedSku);
   };
 
@@ -1670,7 +1844,9 @@ export default function StocktakePageClient() {
       if (!variant) {
         if (scannerBufferTimer) clearTimeout(scannerBufferTimer);
         setShowSuggestions(false);
-        setMessage(`Không tìm thấy SKU/barcode: ${code}. Dòng này chưa được ghi vào phiên kiểm.`);
+        setMessage(
+          `Không tìm thấy SKU/barcode: ${code}. Dòng này chưa được ghi vào phiên kiểm.`,
+        );
         window.setTimeout(() => scanInputRef.current?.focus(), 80);
         return;
       }
@@ -1682,7 +1858,9 @@ export default function StocktakePageClient() {
       applyOptimisticScanRow(variant, qtyDelta, worker.id);
       setScanCode("");
       setShowSuggestions(false);
-      setMessage(`${qtyDelta > 0 ? "Đã nhận" : "Đã trừ"} ${finalCode} · đang lưu nền`);
+      setMessage(
+        `${qtyDelta > 0 ? "Đã nhận" : "Đã trừ"} ${finalCode} · đang lưu nền`,
+      );
       window.setTimeout(() => scanInputRef.current?.focus(), 20);
 
       const result = await apiRequest<any>("/stocktake-sessions/scan", {
@@ -1722,7 +1900,11 @@ export default function StocktakePageClient() {
       }, 2500);
       window.setTimeout(() => scanInputRef.current?.focus(), 20);
     } catch (err) {
-      setMessage(err instanceof Error ? `${err.message} · dữ liệu sẽ được refresh lại` : "Scan lỗi.");
+      setMessage(
+        err instanceof Error
+          ? `${err.message} · dữ liệu sẽ được refresh lại`
+          : "Scan lỗi.",
+      );
       if (session?.id) void refreshSession(session.id, { silent: true });
     } finally {
       setScanning(false);
@@ -1755,7 +1937,11 @@ export default function StocktakePageClient() {
     } catch (err) {
       setStocktakeExcelFile(null);
       setStocktakeExcelRows([]);
-      setMessage(err instanceof Error ? err.message : "Không đọc được file Excel kiểm kho.");
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Không đọc được file Excel kiểm kho.",
+      );
     }
   };
 
@@ -1797,7 +1983,9 @@ export default function StocktakePageClient() {
       setStocktakeExcelProgress({ done: 0, total: stocktakeExcelRows.length });
 
       const currentCountBySku = new Map<string, number>();
-      rows.forEach((row) => currentCountBySku.set(row.sku, Number(row.counted || 0)));
+      rows.forEach((row) =>
+        currentCountBySku.set(row.sku, Number(row.counted || 0)),
+      );
 
       let imported = 0;
       let skipped = 0;
@@ -1813,7 +2001,10 @@ export default function StocktakePageClient() {
         if (!sku || delta === 0) {
           skipped += 1;
           imported += 1;
-          setStocktakeExcelProgress({ done: imported, total: stocktakeExcelRows.length });
+          setStocktakeExcelProgress({
+            done: imported,
+            total: stocktakeExcelRows.length,
+          });
           continue;
         }
 
@@ -1839,11 +2030,16 @@ export default function StocktakePageClient() {
         } catch (err) {
           failed += 1;
           if (failedSamples.length < 5) {
-            failedSamples.push(`${sku}: ${err instanceof Error ? err.message : "lỗi import"}`);
+            failedSamples.push(
+              `${sku}: ${err instanceof Error ? err.message : "lỗi import"}`,
+            );
           }
         } finally {
           imported += 1;
-          setStocktakeExcelProgress({ done: imported, total: stocktakeExcelRows.length });
+          setStocktakeExcelProgress({
+            done: imported,
+            total: stocktakeExcelRows.length,
+          });
         }
       }
 
@@ -1887,7 +2083,10 @@ export default function StocktakePageClient() {
     const timer = setTimeout(() => {
       const finalValue = nextValue.trim();
       if (finalValue.length >= 3) {
-        void handleScanCode(finalValue, 1);
+        const exactVariant = findVariantByCode(finalValue);
+        if (exactVariant) {
+          void handleScanCode(finalValue, 1);
+        }
       }
     }, 260);
 
@@ -1896,6 +2095,28 @@ export default function StocktakePageClient() {
 
   const handlePickSuggestion = async (variant: any) => {
     await handleScanCode(String(variant?.sku || ""), getScanQty());
+  };
+
+  const handlePickProduct = (product: any) => {
+    const variants = Array.isArray(product?.variants) ? product.variants : [];
+    const variantIds = variants
+      .map((variant: any) => String(variant.id || ""))
+      .filter(Boolean);
+
+    if (!variantIds.length) {
+      setMessage("Sản phẩm này chưa có phiên bản con để nhập số lượng.");
+      return;
+    }
+
+    setManualPickVariantIds((prev) =>
+      Array.from(new Set([...variantIds, ...prev])),
+    );
+    setRowQuery(String(product?.name || product?.slug || ""));
+    setShowSuggestions(false);
+    setScanCode("");
+    setMessage(
+      `Đã đưa ${variantIds.length} phiên bản con của ${product?.name || "sản phẩm"} sang bảng nhập tay.`,
+    );
   };
 
   const adjustRowCount = async (sku: string, delta: number) => {
@@ -1922,19 +2143,38 @@ export default function StocktakePageClient() {
     const currentCount = Number(row.counted || 0);
 
     if (!currentCount) {
+      if (row.variant?.id) {
+        setManualPickVariantIds((prev) =>
+          prev.filter((id) => id !== row.variant?.id),
+        );
+        setQuickQtyBySku((prev) => {
+          const next = { ...prev };
+          delete next[row.sku];
+          return next;
+        });
+        setMessage(`Đã bỏ ${row.sku} khỏi bảng nhập tay.`);
+        return;
+      }
+
       setMessage(`SKU ${row.sku} chưa có số lượng để xoá.`);
       return;
     }
 
     if (!row.variant?.id) {
       setWorkerSummary((prev) => prev.filter((item) => item.sku !== row.sku));
-      setStableWorkerSummary((prev) => prev.filter((item) => item.sku !== row.sku));
+      setStableWorkerSummary((prev) =>
+        prev.filter((item) => item.sku !== row.sku),
+      );
       setSummary((prev) => prev.filter((item) => item.sku !== row.sku));
-      setMessage(`Đã xoá dòng mã lạ ${row.sku} khỏi giao diện. Mã lạ mới sẽ không được ghi vào phiên nữa.`);
+      setMessage(
+        `Đã xoá dòng mã lạ ${row.sku} khỏi giao diện. Mã lạ mới sẽ không được ghi vào phiên nữa.`,
+      );
       return;
     }
 
-    const ok = window.confirm(`Xoá số kiểm của ${row.sku} khỏi phiên này? Hệ thống sẽ trừ lại ${currentCount}.`);
+    const ok = window.confirm(
+      `Xoá số kiểm của ${row.sku} khỏi phiên này? Hệ thống sẽ trừ lại ${currentCount}.`,
+    );
     if (!ok) return;
 
     await adjustRowCount(row.sku, -currentCount);
@@ -1957,7 +2197,9 @@ export default function StocktakePageClient() {
       await refreshSession(session.id);
       setMessage("Đã tạm dừng phiên kiểm kho.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không tạm dừng được phiên kiểm.");
+      setMessage(
+        err instanceof Error ? err.message : "Không tạm dừng được phiên kiểm.",
+      );
     }
   };
 
@@ -1977,14 +2219,17 @@ export default function StocktakePageClient() {
       setMessage("Đã tiếp tục phiên kiểm kho.");
       window.setTimeout(() => scanInputRef.current?.focus(), 100);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không tiếp tục được phiên kiểm.");
+      setMessage(
+        err instanceof Error ? err.message : "Không tiếp tục được phiên kiểm.",
+      );
     }
   };
 
-
   useEffect(() => {
     if (!currentUser) return;
-    void loadJoinableSessions(isOwner ? "__ALL__" : (branchId || currentBranchId || undefined));
+    void loadJoinableSessions(
+      isOwner ? "__ALL__" : branchId || currentBranchId || undefined,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, branchId, currentBranchId, isOwner]);
 
@@ -2018,9 +2263,13 @@ export default function StocktakePageClient() {
       });
 
       await refreshSession(session.id);
-      setMessage("Đã kết thúc phiên kiểm. Kiểm tra lại kết quả rồi bấm Chốt tồn kho thật.");
+      setMessage(
+        "Đã kết thúc phiên kiểm. Kiểm tra lại kết quả rồi bấm Chốt tồn kho thật.",
+      );
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không kết thúc được phiên kiểm.");
+      setMessage(
+        err instanceof Error ? err.message : "Không kết thúc được phiên kiểm.",
+      );
     } finally {
       setFinishingOnly(false);
     }
@@ -2043,7 +2292,9 @@ export default function StocktakePageClient() {
     }
 
     if (String(session.status || "").toUpperCase() !== "FINISHED") {
-      setMessage("Cần bấm Kết thúc phiên kiểm trước, sau đó mới chốt tồn kho thật.");
+      setMessage(
+        "Cần bấm Kết thúc phiên kiểm trước, sau đó mới chốt tồn kho thật.",
+      );
       return;
     }
 
@@ -2059,16 +2310,18 @@ export default function StocktakePageClient() {
         sessionName: session.name,
         sessionNote: session.note || sessionNote,
         branchId,
-        rows: rows.map((row) => ({
-          variantId: row.variant?.id,
-          sku: row.sku,
-          counted: row.counted,
-          system: row.system,
-          diff: row.diff,
-          status: row.status,
-          reason: row.reason,
-          note: row.note,
-        })),
+        rows: rows
+          .filter((row) => row.status !== "PENDING")
+          .map((row) => ({
+            variantId: row.variant?.id,
+            sku: row.sku,
+            counted: row.counted,
+            system: row.system,
+            diff: row.diff,
+            status: row.status as "MATCH" | "MISMATCH" | "NOT_FOUND",
+            reason: row.reason,
+            note: row.note,
+          })),
       };
 
       const result = await applyStocktake(payload);
@@ -2127,29 +2380,40 @@ export default function StocktakePageClient() {
     window.setTimeout(() => scanInputRef.current?.focus(), 80);
   };
 
-  const closeOrDeleteSession = async (targetSession: RealtimeSession, mode: "cancel" | "delete") => {
+  const closeOrDeleteSession = async (
+    targetSession: RealtimeSession,
+    mode: "cancel" | "delete",
+  ) => {
     if (!isOwner) {
       setMessage("Chỉ admin/owner được xử lý phiên kiểm cũ.");
       return;
     }
 
     const label = mode === "delete" ? "xoá" : "huỷ";
-    const ok = window.confirm(`${label === "xoá" ? "Xoá" : "Huỷ"} phiên ${targetSession.name || targetSession.id}?`);
+    const ok = window.confirm(
+      `${label === "xoá" ? "Xoá" : "Huỷ"} phiên ${targetSession.name || targetSession.id}?`,
+    );
     if (!ok) return;
 
     try {
       setSessionActionLoadingId(targetSession.id);
       if (mode === "delete") {
-        await apiRequest(`/stocktake-sessions/${targetSession.id}`, { method: "DELETE" });
+        await apiRequest(`/stocktake-sessions/${targetSession.id}`, {
+          method: "DELETE",
+        });
       } else {
-        await apiRequest(`/stocktake-sessions/${targetSession.id}/cancel`, { method: "PATCH" });
+        await apiRequest(`/stocktake-sessions/${targetSession.id}/cancel`, {
+          method: "PATCH",
+        });
       }
 
       setJoinableSessions((prev) =>
         mode === "delete"
           ? prev.filter((item) => item.id !== targetSession.id)
           : prev.map((item) =>
-              item.id === targetSession.id ? { ...item, status: "CANCELLED" } : item,
+              item.id === targetSession.id
+                ? { ...item, status: "CANCELLED" }
+                : item,
             ),
       );
 
@@ -2169,7 +2433,9 @@ export default function StocktakePageClient() {
       );
       await loadJoinableSessions(branchId || currentBranchId || undefined);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : `Không ${label} được phiên kiểm.`);
+      setMessage(
+        err instanceof Error ? err.message : `Không ${label} được phiên kiểm.`,
+      );
     } finally {
       setSessionActionLoadingId("");
     }
@@ -2177,12 +2443,17 @@ export default function StocktakePageClient() {
 
   const recentJoinableSessions = useMemo(() => {
     const activeRows = joinableSessions.filter((item) =>
-      ["IN_PROGRESS", "PAUSED"].includes(String(item.status || "").toUpperCase()),
+      ["IN_PROGRESS", "PAUSED"].includes(
+        String(item.status || "").toUpperCase(),
+      ),
     );
 
     const branchScopedRows = isOwner
       ? activeRows
-      : activeRows.filter((item) => item.branchId === currentBranchId || item.branchId === branchId);
+      : activeRows.filter(
+          (item) =>
+            item.branchId === currentBranchId || item.branchId === branchId,
+        );
 
     const sortedRows = [...branchScopedRows].sort((a, b) => {
       const aTime = new Date(a.startedAt || a.createdAt || 0).getTime();
@@ -2191,12 +2462,26 @@ export default function StocktakePageClient() {
     });
 
     return showAllOpenSessions ? sortedRows : sortedRows.slice(0, 3);
-  }, [joinableSessions, isOwner, currentBranchId, branchId, showAllOpenSessions]);
+  }, [
+    joinableSessions,
+    isOwner,
+    currentBranchId,
+    branchId,
+    showAllOpenSessions,
+  ]);
 
   const cleanupCandidateSessions = useMemo(() => {
     return joinableSessions
-      .filter((item) => ["DRAFT", "IN_PROGRESS", "PAUSED", "FINISHED"].includes(String(item.status || "").toUpperCase()))
-      .sort((a, b) => new Date(b.startedAt || b.createdAt || 0).getTime() - new Date(a.startedAt || a.createdAt || 0).getTime());
+      .filter((item) =>
+        ["DRAFT", "IN_PROGRESS", "PAUSED", "FINISHED"].includes(
+          String(item.status || "").toUpperCase(),
+        ),
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.startedAt || b.createdAt || 0).getTime() -
+          new Date(a.startedAt || a.createdAt || 0).getTime(),
+      );
   }, [joinableSessions]);
 
   const visibleCleanupSessions = useMemo(() => {
@@ -2237,17 +2522,24 @@ export default function StocktakePageClient() {
                   Hệ thống kiểm kho realtime
                 </p>
                 <h3 className="mt-1 text-2xl font-extrabold tracking-tight">
-                  {runningSession ? session?.name || "Phiên kiểm đang chạy" : "Command Center kiểm kho"}
+                  {runningSession
+                    ? session?.name || "Phiên kiểm đang chạy"
+                    : "Command Center kiểm kho"}
                 </h3>
                 <p className="mt-1 text-sm font-semibold text-neutral-300">
-                  Snapshot một lần · máy tít nhận tức thì · lưu DB nền · mã sai không ghi vào phiên.
+                  Snapshot một lần · máy tít nhận tức thì · lưu DB nền · mã sai
+                  không ghi vào phiên.
                 </p>
               </div>
             </div>
 
             <div className="relative flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-bold text-neutral-200">
-                {paused ? "Đang tạm dừng" : runningSession ? "Đang kiểm" : "Sẵn sàng"}
+                {paused
+                  ? "Đang tạm dừng"
+                  : runningSession
+                    ? "Đang kiểm"
+                    : "Sẵn sàng"}
               </span>
               <button
                 type="button"
@@ -2280,7 +2572,8 @@ export default function StocktakePageClient() {
               Phiên tổng đang mở
             </h3>
             <p className="mt-1 text-sm text-neutral-500">
-              Chọn phiên tổng của kho rồi bấm tham gia. Admin thấy tất cả, nhân viên chỉ thấy chi nhánh của mình.
+              Chọn phiên tổng của kho rồi bấm tham gia. Admin thấy tất cả, nhân
+              viên chỉ thấy chi nhánh của mình.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2299,7 +2592,9 @@ export default function StocktakePageClient() {
                 onClick={() => setShowAllOpenSessions((value) => !value)}
                 className="rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
               >
-                {showAllOpenSessions ? "Thu gọn" : `Xem thêm ${joinableSessions.length - recentJoinableSessions.length}`}
+                {showAllOpenSessions
+                  ? "Thu gọn"
+                  : `Xem thêm ${joinableSessions.length - recentJoinableSessions.length}`}
               </button>
             ) : null}
             <button
@@ -2317,16 +2612,20 @@ export default function StocktakePageClient() {
           <div className="mb-4 overflow-hidden rounded-3xl border border-neutral-200 bg-neutral-50">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 bg-white px-4 py-3">
               <div>
-                <p className="font-extrabold text-neutral-950">Quản lý phiên kiểm chưa chốt</p>
+                <p className="font-extrabold text-neutral-950">
+                  Quản lý phiên kiểm chưa chốt
+                </p>
                 <p className="text-xs font-semibold text-neutral-500">
-                  Admin/Owner dọn các phiên nháp, đang kiểm, tạm dừng hoặc chờ chốt tồn. Phiên đã chốt tồn thật không hiện ở đây.
+                  Admin/Owner dọn các phiên nháp, đang kiểm, tạm dừng hoặc chờ
+                  chốt tồn. Phiên đã chốt tồn thật không hiện ở đây.
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">
                   {cleanupCandidateSessions.length} phiên
                 </span>
-                {cleanupCandidateSessions.length > visibleCleanupSessions.length ? (
+                {cleanupCandidateSessions.length >
+                visibleCleanupSessions.length ? (
                   <button
                     type="button"
                     onClick={() => setShowAllOpenSessions(true)}
@@ -2347,49 +2646,86 @@ export default function StocktakePageClient() {
             </div>
             <div className="max-h-[420px] overflow-auto">
               {visibleCleanupSessions.map((item) => {
-                const branchName = branchMap.get(item.branchId) || item.branchId;
-                const isApplied = String(item.status || "").toUpperCase() === "APPLIED" || Boolean((item as any).appliedAt);
+                const branchName =
+                  branchMap.get(item.branchId) || item.branchId;
+                const isApplied =
+                  String(item.status || "").toUpperCase() === "APPLIED" ||
+                  Boolean((item as any).appliedAt);
                 const workerCount = item.workers?.length || 0;
-                const scanCount = item._count?.scanEvents || item.scanEvents?.length || 0;
+                const scanCount =
+                  item._count?.scanEvents || item.scanEvents?.length || 0;
                 return (
-                  <div key={`cleanup-${item.id}`} className="grid gap-3 border-b border-neutral-200 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[1fr_130px_150px_130px_110px_220px] md:items-center">
+                  <div
+                    key={`cleanup-${item.id}`}
+                    className="grid gap-3 border-b border-neutral-200 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[1fr_130px_150px_130px_110px_220px] md:items-center"
+                  >
                     <div className="min-w-0">
-                      <p className="truncate font-extrabold text-neutral-950">{item.name || "Kiểm kho realtime"}</p>
-                      <p className="mt-1 font-mono text-[11px] text-neutral-400">{item.id}</p>
+                      <p className="truncate font-extrabold text-neutral-950">
+                        {item.name || "Kiểm kho realtime"}
+                      </p>
+                      <p className="mt-1 font-mono text-[11px] text-neutral-400">
+                        {item.id}
+                      </p>
                     </div>
-                    <div className="font-bold text-neutral-700">{branchName}</div>
+                    <div className="font-bold text-neutral-700">
+                      {branchName}
+                    </div>
                     <div className="text-xs font-semibold text-neutral-500">
-                      <p>Bắt đầu: {formatDateTime(item.startedAt || item.createdAt)}</p>
-                      {item.finishedAt ? <p>Kết thúc: {formatDateTime(item.finishedAt)}</p> : null}
+                      <p>
+                        Bắt đầu:{" "}
+                        {formatDateTime(item.startedAt || item.createdAt)}
+                      </p>
+                      {item.finishedAt ? (
+                        <p>Kết thúc: {formatDateTime(item.finishedAt)}</p>
+                      ) : null}
                     </div>
                     <div className="text-xs font-semibold text-neutral-600">
                       <p>{workerCount} máy</p>
                       <p>{scanCount} lượt scan</p>
                     </div>
-                    <Badge tone={statusTone(item.status)}>{stocktakeStatusLabel(item.status)}</Badge>
+                    <Badge tone={statusTone(item.status)}>
+                      {stocktakeStatusLabel(item.status)}
+                    </Badge>
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => window.open(`/stocktake-sessions/${item.id}`, "_blank")}
+                        onClick={() =>
+                          window.open(
+                            `/stocktake-sessions/${item.id}`,
+                            "_blank",
+                          )
+                        }
                         className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
                       >
                         Xem
                       </button>
                       <button
                         type="button"
-                        onClick={() => void closeOrDeleteSession(item, "cancel")}
-                        disabled={isApplied || sessionActionLoadingId === item.id}
+                        onClick={() =>
+                          void closeOrDeleteSession(item, "cancel")
+                        }
+                        disabled={
+                          isApplied || sessionActionLoadingId === item.id
+                        }
                         className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-40"
                       >
-                        {sessionActionLoadingId === item.id ? "Đang xử lý" : "Huỷ"}
+                        {sessionActionLoadingId === item.id
+                          ? "Đang xử lý"
+                          : "Huỷ"}
                       </button>
                       <button
                         type="button"
-                        onClick={() => void closeOrDeleteSession(item, "delete")}
-                        disabled={isApplied || sessionActionLoadingId === item.id}
+                        onClick={() =>
+                          void closeOrDeleteSession(item, "delete")
+                        }
+                        disabled={
+                          isApplied || sessionActionLoadingId === item.id
+                        }
                         className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-40"
                       >
-                        {sessionActionLoadingId === item.id ? "Đang xử lý" : "Xoá"}
+                        {sessionActionLoadingId === item.id
+                          ? "Đang xử lý"
+                          : "Xoá"}
                       </button>
                     </div>
                   </div>
@@ -2415,55 +2751,77 @@ export default function StocktakePageClient() {
               const branchName = branchMap.get(item.branchId) || item.branchId;
               const workers = Array.isArray(item.workers) ? item.workers : [];
               const workerCount = workers.length;
-              const scanCount = item._count?.scanEvents || item.scanEvents?.length || 0;
+              const scanCount =
+                item._count?.scanEvents || item.scanEvents?.length || 0;
               const visibleWorkers = workers.slice(0, 4);
 
               return (
                 <div
                   key={item.id}
                   className={`rounded-[28px] border bg-white p-4 shadow-sm transition hover:shadow-md ${
-                    active ? "border-neutral-950 ring-2 ring-neutral-950/10" : "border-neutral-200"
+                    active
+                      ? "border-neutral-950 ring-2 ring-neutral-950/10"
+                      : "border-neutral-200"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <button
                       type="button"
-                      onClick={() => window.open(`/stocktake-sessions/${item.id}`, "_blank")}
+                      onClick={() =>
+                        window.open(`/stocktake-sessions/${item.id}`, "_blank")
+                      }
                       className="min-w-0 text-left"
                       title="Mở chi tiết phiên ở tab mới"
                     >
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
-                        String(item.status || "").toUpperCase() === "PAUSED"
-                          ? "bg-amber-50 text-amber-700"
-                          : "bg-emerald-50 text-emerald-700"
-                      }`}>
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                          String(item.status || "").toUpperCase() === "PAUSED"
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
                         {stocktakeStatusLabel(item.status)}
                       </span>
                       <h4 className="mt-3 truncate text-lg font-extrabold text-neutral-950 hover:underline">
                         {item.name || "Kiểm kho realtime"}
                       </h4>
                       <p className="mt-1 text-xs font-semibold text-neutral-500">
-                        {branchName} · {formatDateTime(item.startedAt || item.createdAt)}
+                        {branchName} ·{" "}
+                        {formatDateTime(item.startedAt || item.createdAt)}
                       </p>
                     </button>
                     <div className="rounded-2xl bg-neutral-50 px-3 py-2 text-right">
-                      <p className="text-[11px] font-bold uppercase text-neutral-400">Máy</p>
-                      <p className="text-xl font-extrabold text-neutral-950">{workerCount}</p>
+                      <p className="text-[11px] font-bold uppercase text-neutral-400">
+                        Máy
+                      </p>
+                      <p className="text-xl font-extrabold text-neutral-950">
+                        {workerCount}
+                      </p>
                     </div>
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 overflow-hidden rounded-2xl border border-neutral-100">
                     <div className="border-r border-neutral-100 p-3">
-                      <p className="text-[11px] font-bold uppercase text-neutral-400">Snapshot</p>
+                      <p className="text-[11px] font-bold uppercase text-neutral-400">
+                        Snapshot
+                      </p>
                       <p className="mt-1 font-extrabold text-emerald-700">OK</p>
                     </div>
                     <div className="border-r border-neutral-100 p-3">
-                      <p className="text-[11px] font-bold uppercase text-neutral-400">Lượt scan</p>
-                      <p className="mt-1 font-extrabold text-neutral-950">{scanCount}</p>
+                      <p className="text-[11px] font-bold uppercase text-neutral-400">
+                        Lượt scan
+                      </p>
+                      <p className="mt-1 font-extrabold text-neutral-950">
+                        {scanCount}
+                      </p>
                     </div>
                     <div className="p-3">
-                      <p className="text-[11px] font-bold uppercase text-neutral-400">Phiên con</p>
-                      <p className="mt-1 font-extrabold text-neutral-950">{workerCount}</p>
+                      <p className="text-[11px] font-bold uppercase text-neutral-400">
+                        Phiên con
+                      </p>
+                      <p className="mt-1 font-extrabold text-neutral-950">
+                        {workerCount}
+                      </p>
                     </div>
                   </div>
 
@@ -2474,7 +2832,12 @@ export default function StocktakePageClient() {
                       </p>
                       <button
                         type="button"
-                        onClick={() => window.open(`/stocktake-sessions/${item.id}`, "_blank")}
+                        onClick={() =>
+                          window.open(
+                            `/stocktake-sessions/${item.id}`,
+                            "_blank",
+                          )
+                        }
                         className="text-xs font-bold text-neutral-500 hover:text-neutral-950"
                       >
                         Xem chi tiết →
@@ -2484,14 +2847,20 @@ export default function StocktakePageClient() {
                     {visibleWorkers.length ? (
                       <div className="grid gap-2 sm:grid-cols-2">
                         {visibleWorkers.map((workerItem) => {
-                          const currentWorker = active && worker?.id === workerItem.id;
+                          const currentWorker =
+                            active && worker?.id === workerItem.id;
                           const count = workerScanCount(workerItem, item);
 
                           return (
                             <button
                               key={`${item.id}-${workerItem.id}`}
                               type="button"
-                              onClick={() => window.open(`/stocktake-sessions/${item.id}`, "_blank")}
+                              onClick={() =>
+                                window.open(
+                                  `/stocktake-sessions/${item.id}`,
+                                  "_blank",
+                                )
+                              }
                               className="rounded-2xl bg-neutral-950 p-3 text-left text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-neutral-900"
                               title="Mở chi tiết phiên ở tab mới"
                             >
@@ -2512,11 +2881,17 @@ export default function StocktakePageClient() {
                               </div>
                               <div className="mt-3 grid grid-cols-2 gap-2">
                                 <div className="rounded-xl bg-white/10 p-2">
-                                  <p className="text-[10px] font-bold text-neutral-400">Lượt scan</p>
-                                  <p className="mt-1 text-base font-extrabold">{count}</p>
+                                  <p className="text-[10px] font-bold text-neutral-400">
+                                    Lượt scan
+                                  </p>
+                                  <p className="mt-1 text-base font-extrabold">
+                                    {count}
+                                  </p>
                                 </div>
                                 <div className="rounded-xl bg-white/10 p-2">
-                                  <p className="text-[10px] font-bold text-neutral-400">Khu</p>
+                                  <p className="text-[10px] font-bold text-neutral-400">
+                                    Khu
+                                  </p>
                                   <p className="mt-1 truncate text-xs font-extrabold">
                                     {workerItem.zone || "Khu chính"}
                                   </p>
@@ -2531,17 +2906,24 @@ export default function StocktakePageClient() {
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-dashed border-neutral-200 bg-neutral-50 p-3 text-xs font-semibold text-neutral-500">
-                        Chưa có phiên con. Nhân viên bấm Tham gia kiểm để bắt đầu.
+                        Chưa có phiên con. Nhân viên bấm Tham gia kiểm để bắt
+                        đầu.
                       </div>
                     )}
 
                     {workerCount > visibleWorkers.length ? (
                       <button
                         type="button"
-                        onClick={() => window.open(`/stocktake-sessions/${item.id}`, "_blank")}
+                        onClick={() =>
+                          window.open(
+                            `/stocktake-sessions/${item.id}`,
+                            "_blank",
+                          )
+                        }
                         className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-100"
                       >
-                        Xem thêm {workerCount - visibleWorkers.length} máy trong chi tiết phiên
+                        Xem thêm {workerCount - visibleWorkers.length} máy trong
+                        chi tiết phiên
                       </button>
                     ) : null}
                   </div>
@@ -2556,11 +2938,15 @@ export default function StocktakePageClient() {
                           : "bg-neutral-950 text-white hover:bg-neutral-800"
                       }`}
                     >
-                      {active ? "Đang làm việc trong phiên này" : "Tham gia kiểm"}
+                      {active
+                        ? "Đang làm việc trong phiên này"
+                        : "Tham gia kiểm"}
                     </button>
                     <button
                       type="button"
-                      onClick={() => window.open(`/stocktake-sessions/${item.id}`, "_blank")}
+                      onClick={() =>
+                        window.open(`/stocktake-sessions/${item.id}`, "_blank")
+                      }
                       className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 hover:bg-neutral-50"
                     >
                       Chi tiết
@@ -2571,8 +2957,12 @@ export default function StocktakePageClient() {
             })
           ) : (
             <div className="rounded-3xl border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center">
-              <p className="text-base font-extrabold text-neutral-950">Chưa có phiên tổng đang mở</p>
-              <p className="mt-1 text-sm text-neutral-500">Tạo phiên tổng để chụp snapshot và bắt đầu kiểm kho.</p>
+              <p className="text-base font-extrabold text-neutral-950">
+                Chưa có phiên tổng đang mở
+              </p>
+              <p className="mt-1 text-sm text-neutral-500">
+                Tạo phiên tổng để chụp snapshot và bắt đầu kiểm kho.
+              </p>
             </div>
           )}
         </div>
@@ -2770,7 +3160,9 @@ export default function StocktakePageClient() {
               <button
                 type="button"
                 onClick={() => void resumeSession()}
-                disabled={!session?.id || !paused || closed || !canEditStocktake}
+                disabled={
+                  !session?.id || !paused || closed || !canEditStocktake
+                }
                 className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-bold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Tiếp tục
@@ -2779,7 +3171,14 @@ export default function StocktakePageClient() {
               <button
                 type="button"
                 onClick={() => void finishCountingSession()}
-                disabled={!session?.id || closed || paused || finishingOnly || !rows.length || !canEditStocktake}
+                disabled={
+                  !session?.id ||
+                  closed ||
+                  paused ||
+                  finishingOnly ||
+                  !rows.length ||
+                  !canEditStocktake
+                }
                 className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
               >
                 {finishingOnly ? "Đang kết thúc..." : "Kết thúc phiên kiểm"}
@@ -2998,7 +3397,7 @@ export default function StocktakePageClient() {
       <Panel className="grid overflow-hidden md:grid-cols-5">
         <StatCard
           title="SKU đã kiểm"
-          value={rows.length}
+          value={countedRows.length}
           helper={`trên tổng ${branchScopedVariantCount || 0} SKU của kho này`}
           tone="blue"
           icon="▣"
@@ -3015,7 +3414,7 @@ export default function StocktakePageClient() {
         <StatCard
           title="Lệch"
           value={mismatchCount}
-          helper={`${rows.length ? Math.round((mismatchCount / rows.length) * 100) : 0}% SKU đã kiểm`}
+          helper={`${countedRows.length ? Math.round((mismatchCount / countedRows.length) * 100) : 0}% SKU đã kiểm`}
           tone="amber"
           icon="≠"
         />
@@ -3075,7 +3474,14 @@ export default function StocktakePageClient() {
                     : "Chọn / tạo phiên con trước khi scan"
               }
               autoFocus
-              disabled={!session || !worker || scanning || paused || closed || !canScanStocktake}
+              disabled={
+                !session ||
+                !worker ||
+                scanning ||
+                paused ||
+                closed ||
+                !canScanStocktake
+              }
             />
 
             <div className="mt-3 grid gap-2 sm:grid-cols-[120px_1fr]">
@@ -3090,7 +3496,14 @@ export default function StocktakePageClient() {
                   className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
                   inputMode="numeric"
                   placeholder="1"
-                  disabled={!session || !worker || scanning || paused || closed || !canScanStocktake}
+                  disabled={
+                    !session ||
+                    !worker ||
+                    scanning ||
+                    paused ||
+                    closed ||
+                    !canScanStocktake
+                  }
                 />
               </label>
 
@@ -3112,8 +3525,51 @@ export default function StocktakePageClient() {
               </button>
             </div>
 
-            {showSuggestions && scanCode.trim() && suggestions.length > 0 ? (
-              <div className="absolute left-0 right-0 top-[56px] z-50 max-h-80 overflow-auto rounded-2xl border border-neutral-200 bg-white shadow-xl">
+            {showSuggestions &&
+            scanCode.trim() &&
+            (productSuggestions.length > 0 || suggestions.length > 0) ? (
+              <div className="absolute left-0 right-0 top-[56px] z-50 max-h-96 overflow-auto rounded-2xl border border-neutral-200 bg-white shadow-xl">
+                {productSuggestions.length > 0 ? (
+                  <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-wide text-neutral-500">
+                    Sản phẩm chính · chọn để bung tất cả phiên bản con
+                  </div>
+                ) : null}
+
+                {productSuggestions.map((product: any) => {
+                  const variantCount = Array.isArray(product.variants)
+                    ? product.variants.length
+                    : 0;
+
+                  return (
+                    <button
+                      key={`product-${product.id || product.slug || product.name}`}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handlePickProduct(product);
+                      }}
+                      className="flex w-full items-center justify-between gap-4 border-b border-neutral-100 px-4 py-3 text-left hover:bg-neutral-50"
+                    >
+                      <div>
+                        <p className="text-sm font-extrabold text-neutral-950">
+                          {product.name || product.slug || "Sản phẩm"}
+                        </p>
+                        <p className="mt-1 text-xs text-neutral-500">
+                          {variantCount} phiên bản con · đưa sang bảng nhập tay
+                          bên phải
+                        </p>
+                      </div>
+                      <Badge tone="black">Chọn sản phẩm</Badge>
+                    </button>
+                  );
+                })}
+
+                {suggestions.length > 0 ? (
+                  <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-2 text-[11px] font-extrabold uppercase tracking-wide text-neutral-500">
+                    Phiên bản / SKU · chọn để ghi nhanh +{getScanQty()}
+                  </div>
+                ) : null}
+
                 {suggestions.map((variant: any) => (
                   <button
                     key={variant.id || variant.sku}
@@ -3146,7 +3602,10 @@ export default function StocktakePageClient() {
               </div>
             ) : null}
 
-            {showSuggestions && scanCode.trim() && suggestions.length === 0 ? (
+            {showSuggestions &&
+            scanCode.trim() &&
+            productSuggestions.length === 0 &&
+            suggestions.length === 0 ? (
               <div className="absolute left-0 right-0 top-[56px] z-50 rounded-2xl border border-red-100 bg-white p-4 text-sm text-red-600 shadow-xl">
                 Không tìm thấy sản phẩm phù hợp.
               </div>
@@ -3165,11 +3624,14 @@ export default function StocktakePageClient() {
                   Upload Excel kiểm kho nhanh
                 </p>
                 <p className="mt-1 text-xs font-medium text-blue-800/80">
-                  Dùng file Phiếu kiểm hàng. Ưu tiên header dòng 10, nếu không thấy sẽ tự dò cột Mã SKU / Tên sản phẩm / Tồn thực tế.
+                  Dùng file Phiếu kiểm hàng. Ưu tiên header dòng 10, nếu không
+                  thấy sẽ tự dò cột Mã SKU / Tên sản phẩm / Tồn thực tế.
                 </p>
               </div>
               <Badge tone={stocktakeExcelRows.length ? "green" : "blue"}>
-                {stocktakeExcelRows.length ? `${stocktakeExcelRows.length} dòng` : "Excel"}
+                {stocktakeExcelRows.length
+                  ? `${stocktakeExcelRows.length} dòng`
+                  : "Excel"}
               </Badge>
             </div>
 
@@ -3192,8 +3654,19 @@ export default function StocktakePageClient() {
                 type="file"
                 accept=".xlsx,.xls"
                 className="hidden"
-                disabled={!session || !worker || paused || closed || stocktakeExcelImporting || !canScanStocktake}
-                onChange={(event) => void handleStocktakeExcelFileChange(event.target.files?.[0] || null)}
+                disabled={
+                  !session ||
+                  !worker ||
+                  paused ||
+                  closed ||
+                  stocktakeExcelImporting ||
+                  !canScanStocktake
+                }
+                onChange={(event) =>
+                  void handleStocktakeExcelFileChange(
+                    event.target.files?.[0] || null,
+                  )
+                }
               />
             </label>
 
@@ -3216,7 +3689,8 @@ export default function StocktakePageClient() {
                   <span>Bỏ qua: {stocktakeExcelSkippedRows}</span>
                 </div>
                 <div className="mt-1 text-neutral-500">
-                  Hợp lệ: {stocktakeExcelRows.length} / {stocktakeExcelTotalRows} dòng có dữ liệu.
+                  Hợp lệ: {stocktakeExcelRows.length} /{" "}
+                  {stocktakeExcelTotalRows} dòng có dữ liệu.
                 </div>
               </div>
             ) : null}
@@ -3230,16 +3704,29 @@ export default function StocktakePageClient() {
                         <th className="px-3 py-2 font-bold">Dòng</th>
                         <th className="px-3 py-2 font-bold">SKU</th>
                         <th className="px-3 py-2 font-bold">Tên SP</th>
-                        <th className="px-3 py-2 text-right font-bold">Tồn thực tế</th>
+                        <th className="px-3 py-2 text-right font-bold">
+                          Tồn thực tế
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {stocktakeExcelRows.slice(0, 8).map((row) => (
-                        <tr key={`${row.rowNumber}-${row.sku}`} className="border-t border-neutral-100">
-                          <td className="px-3 py-2 text-neutral-500">{row.rowNumber}</td>
-                          <td className="px-3 py-2 font-bold text-neutral-900">{row.sku}</td>
-                          <td className="max-w-[180px] truncate px-3 py-2 text-neutral-600">{row.productName || "—"}</td>
-                          <td className="px-3 py-2 text-right font-extrabold text-neutral-950">{row.countedQty}</td>
+                        <tr
+                          key={`${row.rowNumber}-${row.sku}`}
+                          className="border-t border-neutral-100"
+                        >
+                          <td className="px-3 py-2 text-neutral-500">
+                            {row.rowNumber}
+                          </td>
+                          <td className="px-3 py-2 font-bold text-neutral-900">
+                            {row.sku}
+                          </td>
+                          <td className="max-w-[180px] truncate px-3 py-2 text-neutral-600">
+                            {row.productName || "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right font-extrabold text-neutral-950">
+                            {row.countedQty}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -3255,7 +3742,8 @@ export default function StocktakePageClient() {
 
             {stocktakeExcelImporting ? (
               <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-bold text-blue-700">
-                Đang ghi {stocktakeExcelProgress.done}/{stocktakeExcelProgress.total} dòng vào phiên kiểm...
+                Đang ghi {stocktakeExcelProgress.done}/
+                {stocktakeExcelProgress.total} dòng vào phiên kiểm...
               </div>
             ) : null}
 
@@ -3274,11 +3762,14 @@ export default function StocktakePageClient() {
               }
               className="mt-3 w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
             >
-              {stocktakeExcelImporting ? "Đang import Excel..." : "Ghi số lượng từ Excel vào phiên kiểm"}
+              {stocktakeExcelImporting
+                ? "Đang import Excel..."
+                : "Ghi số lượng từ Excel vào phiên kiểm"}
             </button>
 
             <p className="mt-2 text-[11px] font-semibold text-blue-900/70">
-              Lưu ý: hệ thống set đúng số lượng theo cột Tồn thực tế bằng cách tự tính delta so với số đã scan hiện tại.
+              Lưu ý: hệ thống set đúng số lượng theo cột Tồn thực tế bằng cách
+              tự tính delta so với số đã scan hiện tại.
             </p>
           </div>
 
@@ -3486,14 +3977,18 @@ export default function StocktakePageClient() {
                                 ? "green"
                                 : row.status === "MISMATCH"
                                   ? "amber"
-                                  : "red"
+                                  : row.status === "PENDING"
+                                    ? "gray"
+                                    : "red"
                             }
                           >
                             {row.status === "MATCH"
                               ? "KHỚP"
                               : row.status === "MISMATCH"
                                 ? "LỆCH"
-                                : "KHÔNG THẤY"}
+                                : row.status === "PENDING"
+                                  ? "CHỜ NHẬP"
+                                  : "KHÔNG THẤY"}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
