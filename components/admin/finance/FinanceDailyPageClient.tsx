@@ -239,47 +239,31 @@ function canonicalSourceKey(row: any, branchName: string) {
 }
 
 function mergeLedgerAmount(target: DailyLedgerRow, source: DailyLedgerRow) {
-  const normalizedSource = normalizeLedgerRowAmounts(source);
+  target.openingBalance = Number(target.openingBalance || 0) + Number(source.openingBalance || 0);
+  target.posReceiptAmount = Number(target.posReceiptAmount || 0) + Number(source.posReceiptAmount || 0);
+  target.manualReceiptAmount = Number(target.manualReceiptAmount || 0) + Number(source.manualReceiptAmount || 0);
+  target.manualPaymentAmount = Number(target.manualPaymentAmount || 0) + Number(source.manualPaymentAmount || 0);
+  target.totalReceipt = Number(target.totalReceipt || 0) + Number(source.totalReceipt || 0);
+  target.totalPayment = Number(target.totalPayment || 0) + Number(source.totalPayment || 0);
+  target.netAmount = Number(target.totalReceipt || 0) - Number(target.totalPayment || 0);
+  target.closingBalance = Number(target.openingBalance || 0) + Number(target.netAmount || 0);
 
-  target.openingBalance =
-    Number(target.openingBalance || 0) + Number(normalizedSource.openingBalance || 0);
-  target.posReceiptAmount =
-    Number(target.posReceiptAmount || 0) + Number(normalizedSource.posReceiptAmount || 0);
-  target.manualReceiptAmount =
-    Number(target.manualReceiptAmount || 0) +
-    Number(normalizedSource.manualReceiptAmount || 0);
-  target.manualPaymentAmount =
-    Number(target.manualPaymentAmount || 0) +
-    Number(normalizedSource.manualPaymentAmount || 0);
-
-  target.totalReceipt =
-    Number(target.posReceiptAmount || 0) +
-    Number(target.manualReceiptAmount || 0);
-  target.totalPayment = Number(target.manualPaymentAmount || 0);
-  target.netAmount =
-    Number(target.totalReceipt || 0) - Number(target.totalPayment || 0);
-  target.closingBalance =
-    Number(target.openingBalance || 0) + Number(target.netAmount || 0);
-
-  if (
-    normalizedSource.countedAmount !== null &&
-    normalizedSource.countedAmount !== undefined
-  ) {
-    target.countedAmount = Number(normalizedSource.countedAmount || 0);
-    target.differenceAmount =
-      Number(target.countedAmount || 0) - Number(target.closingBalance || 0);
+  if (source.countedAmount !== null && source.countedAmount !== undefined) {
+    target.countedAmount = Number(target.countedAmount || 0) + Number(source.countedAmount || 0);
   }
 
-  if (String(normalizedSource.status || "").toUpperCase() === "LOCKED") {
+  if (source.differenceAmount !== null && source.differenceAmount !== undefined) {
+    target.differenceAmount = Number(target.differenceAmount || 0) + Number(source.differenceAmount || 0);
+  }
+
+  if (String(source.status || "").toUpperCase() === "LOCKED") {
     target.status = "LOCKED";
   }
 
-  if (!target.branchId && normalizedSource.branchId) target.branchId = normalizedSource.branchId;
-  if (!target.paymentSourceId && normalizedSource.paymentSourceId)
-    target.paymentSourceId = normalizedSource.paymentSourceId;
-  if (!target.paymentSourceCode && normalizedSource.paymentSourceCode)
-    target.paymentSourceCode = normalizedSource.paymentSourceCode;
-  if (normalizedSource.isSyntheticLive) target.isSyntheticLive = target.isSyntheticLive || false;
+  if (!target.branchId && source.branchId) target.branchId = source.branchId;
+  if (!target.paymentSourceId && source.paymentSourceId) target.paymentSourceId = source.paymentSourceId;
+  if (!target.paymentSourceCode && source.paymentSourceCode) target.paymentSourceCode = source.paymentSourceCode;
+  if (source.isSyntheticLive) target.isSyntheticLive = target.isSyntheticLive || false;
 }
 
 function branchSortWeight(name: unknown) {
@@ -493,49 +477,6 @@ function safeRows(value: unknown): MoneyRow[] {
   return Array.isArray(value) ? (value as MoneyRow[]) : [];
 }
 
-function normalizeLedgerRowAmounts(row: DailyLedgerRow): DailyLedgerRow {
-  const openingBalance = Number(row.openingBalance || 0);
-  const posReceiptAmount = Number(row.posReceiptAmount || 0);
-  const manualReceiptAmount = Number(row.manualReceiptAmount || 0);
-  const manualPaymentAmount = Number(row.manualPaymentAmount || 0);
-  const componentReceipt = posReceiptAmount + manualReceiptAmount;
-  const componentPayment = manualPaymentAmount;
-  const hasComponentBreakdown =
-    componentReceipt !== 0 || componentPayment !== 0;
-
-  const totalReceipt = hasComponentBreakdown
-    ? componentReceipt
-    : Number(row.totalReceipt || 0);
-  const totalPayment = hasComponentBreakdown
-    ? componentPayment
-    : Number(row.totalPayment || 0);
-  const netAmount = totalReceipt - totalPayment;
-  const closingBalance = openingBalance + netAmount;
-
-  const countedAmount =
-    row.countedAmount === null || row.countedAmount === undefined
-      ? row.countedAmount
-      : Number(row.countedAmount || 0);
-  const differenceAmount =
-    countedAmount === null || countedAmount === undefined
-      ? row.differenceAmount
-      : Number(countedAmount || 0) - closingBalance;
-
-  return {
-    ...row,
-    openingBalance,
-    posReceiptAmount,
-    manualReceiptAmount,
-    manualPaymentAmount,
-    totalReceipt,
-    totalPayment,
-    netAmount,
-    closingBalance,
-    countedAmount,
-    differenceAmount,
-  };
-}
-
 function rowDateKey(row: MoneyRow) {
   const raw = row.paidAt || row.createdAt || "";
   if (!raw) return "";
@@ -580,6 +521,25 @@ function ledgerRowKey(row: DailyLedgerRow) {
     paymentSourceName: row.paymentSourceName,
     paymentSourceCode: row.paymentSourceCode,
   });
+}
+
+
+function ledgerBusinessKey(row: any, dateOverride?: string) {
+  const date = String(dateOverride || row?.date || rowDateKey(row) || "").slice(0, 10);
+  const branch = canonicalBranchName(
+    row?.branchName || row?.branch?.name || row?.branchCode || row?.branch?.code || row?.branchId,
+  );
+  const sourceKey = canonicalSourceKey(
+    {
+      sourceType: row?.sourceType || sourceKind(row),
+      paymentSourceName: row?.paymentSourceName || row?.sourceName || row?.name || row?.method,
+      paymentSourceCode: row?.paymentSourceCode || row?.sourceCode || row?.code,
+      paymentSourceId: row?.paymentSourceId || row?.id,
+    },
+    branch,
+  );
+
+  return [date || "NO_DATE", branch || "NO_BRANCH", sourceKey || "NO_SOURCE"].join("|");
 }
 
 export default function FinanceDailyPageClient() {
@@ -1113,7 +1073,7 @@ export default function FinanceDailyPageClient() {
     const map = new Map<string, any>();
 
     rows.forEach((row) => {
-      const key = row.branchName || row.branchId || "Chưa rõ chi nhánh";
+      const key = canonicalBranchName(row.branchName || row.branchId || "Chưa rõ chi nhánh");
       const current = map.get(key) || {
         branchName: key,
         receipt: 0,
@@ -1142,16 +1102,14 @@ export default function FinanceDailyPageClient() {
 
   const ledgerRows = useMemo(() => {
     const baseRows = safeLedgerRows(ledgerData).map((row) =>
-      normalizeLedgerRowAmounts(
-        closedLedgerKeys.has(ledgerRowKey(row))
-          ? {
-              ...row,
-              status: "LOCKED",
-              countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
-              differenceAmount: row.differenceAmount ?? 0,
-            }
-          : row,
-      ),
+      closedLedgerKeys.has(ledgerRowKey(row))
+        ? {
+            ...row,
+            status: "LOCKED",
+            countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
+            differenceAmount: row.differenceAmount ?? 0,
+          }
+        : row,
     );
 
     const liveByKey = new Map<string, any>();
@@ -1164,20 +1122,13 @@ export default function FinanceDailyPageClient() {
       const amount = Math.abs(Number(row.amount || 0));
       if (!amount) return;
 
-      const key = ledgerMatchKey({
-        date: dateKey,
-        branchId: row.branchId,
-        branchName: row.branchName,
-        paymentSourceId: row.paymentSourceId,
-        sourceName: row.sourceName,
-        sourceCode: row.sourceCode,
-        method: row.method,
-      });
+      const canonicalBranch = canonicalBranchName(row.branchName || row.branchId);
+      const key = ledgerBusinessKey(row, dateKey);
 
       const current = liveByKey.get(key) || {
         date: dateKey,
         branchId: row.branchId,
-        branchName: row.branchName || row.branchId || "—",
+        branchName: canonicalBranch || row.branchName || row.branchId || "—",
         paymentSourceId: row.paymentSourceId,
         paymentSourceName:
           row.sourceName ||
@@ -1223,25 +1174,8 @@ export default function FinanceDailyPageClient() {
     const patchedRows = baseRows.map((row) => {
       const dateKey = String(row.date || "").slice(0, 10);
 
-      const keyCandidates = [
-        ledgerMatchKey({
-          date: dateKey,
-          branchId: row.branchId,
-          branchName: row.branchName,
-          paymentSourceId: row.paymentSourceId,
-          paymentSourceName: row.paymentSourceName,
-          paymentSourceCode: row.paymentSourceCode,
-        }),
-        ledgerMatchKey({
-          date: dateKey,
-          branchName: row.branchName,
-          paymentSourceName: row.paymentSourceName,
-          paymentSourceCode: row.paymentSourceCode,
-        }),
-      ];
-
-      const liveKey = keyCandidates.find((candidate) => liveByKey.has(candidate));
-      if (!liveKey) return row;
+      const liveKey = ledgerBusinessKey(row, dateKey);
+      if (!liveByKey.has(liveKey)) return row;
 
       const live = liveByKey.get(liveKey);
       usedLiveKeys.add(liveKey);
@@ -1253,48 +1187,50 @@ export default function FinanceDailyPageClient() {
         Number(row.totalReceipt || 0) !== 0 ||
         Number(row.totalPayment || 0) !== 0;
 
-      // Chỉ bù live khi dòng ledger đang trắng / thiếu breakdown. Không ghi đè dòng backend đã đủ số.
-      if (rowHasBreakdown) return row;
-
+      const liveTotalReceipt = Number(live.totalReceipt || 0);
+      const liveTotalPayment = Number(live.totalPayment || 0);
+      const liveHasBreakdown = liveTotalReceipt !== 0 || liveTotalPayment !== 0;
       const openingBalance = Number(row.openingBalance || 0);
-      const totalReceipt = Number(live.totalReceipt || 0);
-      const totalPayment = Number(live.totalPayment || 0);
-      const netAmount = totalReceipt - totalPayment;
+      const netAmount = liveTotalReceipt - liveTotalPayment;
 
-      return normalizeLedgerRowAmounts({
+      const totalsMismatch =
+        liveHasBreakdown &&
+        rowHasBreakdown &&
+        (Number(row.totalReceipt || 0) !== liveTotalReceipt ||
+          Number(row.totalPayment || 0) !== liveTotalPayment ||
+          Number(row.posReceiptAmount || 0) !== Number(live.posReceiptAmount || 0) ||
+          Number(row.manualReceiptAmount || 0) !== Number(live.manualReceiptAmount || 0) ||
+          Number(row.manualPaymentAmount || 0) !== Number(live.manualPaymentAmount || 0));
+
+      // Nếu backend đã có breakdown và khớp live thì giữ nguyên.
+      // Nếu backend bị cộng trùng snapshot + live, dùng live làm nguồn sự thật cho phát sinh trong ngày.
+      if (rowHasBreakdown && !totalsMismatch) return row;
+      if (!liveHasBreakdown) return row;
+
+      const countedAmount = row.countedAmount;
+      const closingBalance = openingBalance + netAmount;
+      const shouldRecalcDifference = countedAmount !== null && countedAmount !== undefined;
+
+      return {
         ...row,
+        branchName: canonicalBranchName(row.branchName || row.branchId),
         posReceiptAmount: Number(live.posReceiptAmount || 0),
         manualReceiptAmount: Number(live.manualReceiptAmount || 0),
         manualPaymentAmount: Number(live.manualPaymentAmount || 0),
-        totalReceipt,
-        totalPayment,
+        totalReceipt: liveTotalReceipt,
+        totalPayment: liveTotalPayment,
         netAmount,
-        closingBalance: openingBalance + netAmount,
+        closingBalance,
+        differenceAmount: shouldRecalcDifference
+          ? Number(countedAmount || 0) - closingBalance
+          : row.differenceAmount,
         isSyntheticLive: row.isSyntheticLive || false,
-      });
+      };
     });
-
-    const existingDisplayKeys = new Set(
-      patchedRows.map((row) => {
-        const branchName = canonicalBranchName(row.branchName || row.branchId);
-        return [
-          String(row.date || "").slice(0, 10),
-          branchName,
-          canonicalSourceKey(row, branchName),
-        ].join("|");
-      }),
-    );
 
     liveByKey.forEach((live, key) => {
       if (usedLiveKeys.has(key)) return;
-      const liveBranchName = canonicalBranchName(live.branchName || live.branchId);
-      const liveDisplayKey = [
-        String(live.date || "").slice(0, 10),
-        liveBranchName,
-        canonicalSourceKey(live, liveBranchName),
-      ].join("|");
-      if (existingDisplayKeys.has(liveDisplayKey)) return;
-      patchedRows.push(normalizeLedgerRowAmounts({
+      patchedRows.push({
         date: live.date,
         branchId: live.branchId,
         branchName: live.branchName,
@@ -1314,11 +1250,64 @@ export default function FinanceDailyPageClient() {
         differenceAmount: null,
         status: "OPEN",
         isSyntheticLive: true,
-      }));
-      existingDisplayKeys.add(liveDisplayKey);
+      });
     });
 
-    return patchedRows.map(normalizeLedgerRowAmounts).sort((a, b) => {
+    // Chặn double count: cùng ngày + cùng chi nhánh + cùng nguồn tiền chỉ giữ một dòng tổng.
+    // Trường hợp hay gặp: backend đã có ledger, UI fallback live lại tạo thêm một dòng synthetic
+    // do paymentSourceId/name không khớp tuyệt đối. Nếu dòng ledger thật đã có số, bỏ dòng live trùng.
+    const dedupedRows: DailyLedgerRow[] = [];
+    const byBusinessKey = new Map<string, DailyLedgerRow>();
+    const hasAmounts = (row: DailyLedgerRow) =>
+      Number(row.posReceiptAmount || 0) !== 0 ||
+      Number(row.manualReceiptAmount || 0) !== 0 ||
+      Number(row.manualPaymentAmount || 0) !== 0 ||
+      Number(row.totalReceipt || 0) !== 0 ||
+      Number(row.totalPayment || 0) !== 0 ||
+      Number(row.netAmount || 0) !== 0 ||
+      Number(row.closingBalance || 0) !== 0;
+
+    patchedRows.forEach((row) => {
+      const branchName = canonicalBranchName(row.branchName || row.branchId);
+      const businessKey = [
+        String(row.date || "").slice(0, 10),
+        branchName,
+        canonicalSourceKey(row, branchName),
+      ].join("|");
+
+      const existing = byBusinessKey.get(businessKey);
+      if (!existing) {
+        const next = { ...row, branchName };
+        byBusinessKey.set(businessKey, next);
+        dedupedRows.push(next);
+        return;
+      }
+
+      const existingHas = hasAmounts(existing);
+      const rowHas = hasAmounts(row);
+
+      // Dòng live synthetic chỉ dùng để bù khi ledger thật đang trắng.
+      if (row.isSyntheticLive && !existing.isSyntheticLive) {
+        if (!existingHas && rowHas) mergeLedgerAmount(existing, row);
+        return;
+      }
+
+      // Nếu trước đó là live nhưng giờ gặp ledger thật, ưu tiên ledger thật.
+      if (existing.isSyntheticLive && !row.isSyntheticLive) {
+        Object.assign(existing, { ...row, branchName });
+        return;
+      }
+
+      // Hai dòng thật cùng business key: cộng khi chúng là các mảnh khác nhau.
+      // Nếu một dòng chỉ là bản lặp số liệu đã có thì tránh cộng đôi bằng cách bỏ dòng có tổng giống nhau.
+      const sameNet =
+        Number(existing.netAmount || 0) === Number(row.netAmount || 0) &&
+        Number(existing.totalReceipt || 0) === Number(row.totalReceipt || 0) &&
+        Number(existing.totalPayment || 0) === Number(row.totalPayment || 0);
+      if (!sameNet) mergeLedgerAmount(existing, row);
+    });
+
+    return dedupedRows.sort((a, b) => {
       const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
       if (dateDiff !== 0) return dateDiff;
       return String(a.branchName || a.branchId || "").localeCompare(
@@ -1596,9 +1585,9 @@ export default function FinanceDailyPageClient() {
           const key = canonicalSourceKey(row, branchName);
           const existing = rowMap.get(key);
           if (existing) {
-            mergeLedgerAmount(existing, normalizeLedgerRowAmounts(row));
+            mergeLedgerAmount(existing, row);
           } else {
-            rowMap.set(key, normalizeLedgerRowAmounts({ ...row, branchName }));
+            rowMap.set(key, { ...row, branchName });
           }
         });
 

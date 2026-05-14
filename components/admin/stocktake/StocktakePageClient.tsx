@@ -1,6 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getBranches,
@@ -741,6 +742,10 @@ export default function StocktakePageClient() {
     hasStocktakePermission("stocktake.create");
   const canApplyStocktake = hasStocktakePermission("stocktake.apply");
   const canExportStocktake = hasStocktakePermission("stocktake.excel.export");
+
+  const excelImportHref = session?.id
+    ? `/stocktake/excel-import?sessionId=${session.id}${worker?.id ? `&workerId=${worker.id}` : ""}`
+    : "/stocktake/excel-import";
 
   useEffect(() => {
     const loadBranches = async () => {
@@ -3159,7 +3164,15 @@ export default function StocktakePageClient() {
               </Badge>
             </div>
 
-            <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-blue-200 bg-white/80 p-4 text-center hover:bg-white">
+            <Link
+              href={excelImportHref}
+              target="_blank"
+              className="mt-4 flex w-full items-center justify-center rounded-xl bg-neutral-950 px-4 py-3 text-sm font-extrabold text-white hover:bg-neutral-800"
+            >
+              Mở trang Upload Excel kiểm kho
+            </Link>
+
+            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-blue-200 bg-white/80 p-4 text-center hover:bg-white">
               <span className="text-sm font-bold text-neutral-900">
                 Chọn file Excel kiểm kho
               </span>
