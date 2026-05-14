@@ -743,7 +743,6 @@ export default function StocktakePageClient() {
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const lastScanAtRef = useRef(0);
-  const scanRefreshTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const currentUser = getCurrentUserFromStorage();
@@ -1896,15 +1895,8 @@ export default function StocktakePageClient() {
       window.setTimeout(() => {
         // Chỉ đồng bộ lại sau khi backend có thời gian ghi xong; nếu scan liên tiếp thì không đè UI lạc quan.
         if (Date.now() - lastScanAtRef.current < 2400) return;
-      if (scanRefreshTimerRef.current) {
-        window.clearTimeout(scanRefreshTimerRef.current);
-      }
-
-      scanRefreshTimerRef.current = window.setTimeout(() => {
-        if (!session?.id || !worker?.id) return;
         void refreshSession(session.id, { silent: true });
         void refreshWorkerSummary(session.id, worker.id);
-      }, 1800);
       }, 2500);
       window.setTimeout(() => scanInputRef.current?.focus(), 20);
     } catch (err) {
@@ -2056,15 +2048,9 @@ export default function StocktakePageClient() {
         workerId: worker.id,
         branchId,
       });
-      if (scanRefreshTimerRef.current) {
-        window.clearTimeout(scanRefreshTimerRef.current);
-      }
 
-      scanRefreshTimerRef.current = window.setTimeout(() => {
-        if (!session?.id || !worker?.id) return;
-        void refreshSession(session.id, { silent: true });
-        void refreshWorkerSummary(session.id, worker.id);
-      }, 1800);
+      await refreshSession(session.id);
+      await refreshWorkerSummary(session.id, worker.id);
       setScanCode("");
       setShowSuggestions(false);
 
@@ -3089,127 +3075,135 @@ export default function StocktakePageClient() {
             </div>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={createRealtimeSession}
-              disabled={!canCreateNewSession}
-              className={`rounded-xl px-4 py-2 text-sm font-bold ${
-                !canCreateNewSession
-                  ? "cursor-not-allowed border border-neutral-200 bg-neutral-100 text-neutral-400"
-                  : "border border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800"
-              }`}
-            >
-              Bắt đầu phiên kiểm
-            </button>
+          <div className="mt-5 rounded-3xl border border-neutral-200 bg-neutral-50/80 p-3">
+            <div className="grid gap-3 xl:grid-cols-[1fr_auto] xl:items-stretch">
+              <div className="grid gap-2 md:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={createRealtimeSession}
+                  disabled={!canCreateNewSession}
+                  className={`group rounded-2xl border px-4 py-4 text-left transition ${
+                    !canCreateNewSession
+                      ? "cursor-not-allowed border-neutral-200 bg-white text-neutral-300"
+                      : "border-neutral-950 bg-neutral-950 text-white shadow-sm hover:bg-neutral-800"
+                  }`}
+                >
+                  <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
+                    Bước 1
+                  </span>
+                  <span className="mt-1 block text-base font-extrabold">
+                    Bắt đầu phiên kiểm
+                  </span>
+                  <span className="mt-1 block text-xs font-semibold opacity-70">
+                    Tạo phiên tổng và chụp tồn đầu phiên
+                  </span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => setWorkerModalOpen(true)}
-              disabled={!canCreateWorker}
-              className="hidden rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              + Tạo phiên con
-            </button>
+                <button
+                  type="button"
+                  onClick={() => void finishCountingSession()}
+                  disabled={
+                    !session?.id ||
+                    closed ||
+                    paused ||
+                    finishingOnly ||
+                    !rows.length ||
+                    !canEditStocktake
+                  }
+                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-4 text-left text-neutral-950 shadow-sm transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-300 disabled:shadow-none"
+                >
+                  <span className="block text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">
+                    Bước 2
+                  </span>
+                  <span className="mt-1 block text-base font-extrabold">
+                    {finishingOnly ? "Đang kết thúc..." : "Kết thúc phiên kiểm"}
+                  </span>
+                  <span className="mt-1 block text-xs font-semibold text-neutral-500">
+                    Khóa bước scan để rà soát kết quả
+                  </span>
+                </button>
 
-            <button
-              type="button"
-              onClick={openJoinModal}
-              disabled={!canJoinWorker}
-              className="hidden rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Join phiên tổng
-            </button>
+                <button
+                  type="button"
+                  onClick={() => void finishSession()}
+                  disabled={
+                    String(session?.status || "").toUpperCase() !== "FINISHED" ||
+                    applying ||
+                    !canApplyStocktake
+                  }
+                  className="rounded-2xl border border-neutral-950 bg-neutral-950 px-4 py-4 text-left text-white shadow-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none"
+                >
+                  <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
+                    Bước 3
+                  </span>
+                  <span className="mt-1 block text-base font-extrabold">
+                    {applying ? "Đang xác nhận..." : "Xác nhận tồn kho"}
+                  </span>
+                  <span className="mt-1 block text-xs font-semibold opacity-70">
+                    Cập nhật tồn thật sau khi đã kết thúc phiên
+                  </span>
+                </button>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                window.open("/stocktake-sessions", "_blank", "noreferrer");
-              }}
-              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
-            >
-              Lịch sử kiểm kho
-            </button>
+              <div className="flex flex-wrap items-center justify-start gap-2 xl:w-[440px] xl:justify-end">
+                <button
+                  type="button"
+                  onClick={() => void pauseSession()}
+                  disabled={!session?.id || paused || closed || !canEditStocktake}
+                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-300"
+                >
+                  Tạm dừng
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (session?.id) {
-                  window.location.href = `/stocktake-sessions/${session.id}`;
-                  return;
-                }
-                window.location.href = "/stocktake-sessions";
-              }}
-              className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
-            >
-              {session?.id ? "Chi tiết phiên" : "Xem phiên đã chốt"}
-            </button>
+                <button
+                  type="button"
+                  onClick={() => void resumeSession()}
+                  disabled={!session?.id || !paused || closed || !canEditStocktake}
+                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-300"
+                >
+                  Tiếp tục
+                </button>
 
-            <button
-              type="button"
-              onClick={() => void refreshSession()}
-              className="hidden rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
-            >
-              {refreshing ? "Đang refresh..." : "Refresh"}
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.open("/stocktake-sessions", "_blank", "noreferrer");
+                  }}
+                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+                >
+                  Lịch sử kiểm kho
+                </button>
 
-            <button
-              type="button"
-              onClick={resetLocal}
-              className="hidden rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
-            >
-              Reset UI
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (session?.id) {
+                      window.location.href = `/stocktake-sessions/${session.id}`;
+                      return;
+                    }
+                    window.location.href = "/stocktake-sessions";
+                  }}
+                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+                >
+                  {session?.id ? "Chi tiết phiên" : "Phiên đã chốt"}
+                </button>
 
-            <div className="ml-auto flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void pauseSession()}
-                disabled={!session?.id || paused || closed || !canEditStocktake}
-                className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-bold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Tạm dừng
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshSession()}
+                  className="hidden rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 hover:bg-neutral-50"
+                >
+                  {refreshing ? "Đang tải lại..." : "Tải lại"}
+                </button>
 
-              <button
-                type="button"
-                onClick={() => void resumeSession()}
-                disabled={
-                  !session?.id || !paused || closed || !canEditStocktake
-                }
-                className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-bold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Tiếp tục
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void finishCountingSession()}
-                disabled={
-                  !session?.id ||
-                  closed ||
-                  paused ||
-                  finishingOnly ||
-                  !rows.length ||
-                  !canEditStocktake
-                }
-                className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
-              >
-                {finishingOnly ? "Đang kết thúc..." : "Kết thúc phiên kiểm"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void finishSession()}
-                disabled={
-                  String(session?.status || "").toUpperCase() !== "FINISHED" ||
-                  applying ||
-                  !canApplyStocktake
-                }
-                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-neutral-300"
-              >
-                {applying ? "Đang chốt..." : "Chốt tồn kho thật"}
-              </button>
+                <button
+                  type="button"
+                  onClick={resetLocal}
+                  className="hidden rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 hover:bg-neutral-50"
+                >
+                  Đặt lại giao diện
+                </button>
+              </div>
             </div>
           </div>
 
