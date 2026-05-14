@@ -2747,7 +2747,7 @@ export default function StocktakePageClient() {
             </div>
           ) : recentJoinableSessions.length ? (
             recentJoinableSessions.map((item) => {
-              const active = session?.id === item.id;
+              const active = session?.id === item.id && Boolean(worker?.id);
               const branchName = branchMap.get(item.branchId) || item.branchId;
               const workers = Array.isArray(item.workers) ? item.workers : [];
               const workerCount = workers.length;
@@ -2932,7 +2932,7 @@ export default function StocktakePageClient() {
                     <button
                       type="button"
                       onClick={() => void quickJoinMasterSession(item)}
-                      className={`rounded-2xl px-4 py-3 text-sm font-extrabold ${
+                      className={`rounded-2xl px-4 py-3 text-sm font-extrabold transition ${
                         active
                           ? "bg-neutral-100 text-neutral-800"
                           : "bg-neutral-950 text-white hover:bg-neutral-800"
@@ -2940,14 +2940,16 @@ export default function StocktakePageClient() {
                     >
                       {active
                         ? "Đang làm việc trong phiên này"
-                        : "Tham gia kiểm"}
+                        : session?.id === item.id
+                          ? "Tạo phiên con cho máy này"
+                          : "Tham gia kiểm"}
                     </button>
                     <button
                       type="button"
                       onClick={() =>
                         window.open(`/stocktake-sessions/${item.id}`, "_blank")
                       }
-                      className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 hover:bg-neutral-50"
+                      className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
                     >
                       Chi tiết
                     </button>
@@ -3083,10 +3085,10 @@ export default function StocktakePageClient() {
                   onClick={createRealtimeSession}
                   disabled={!canCreateNewSession}
                   className={`group rounded-2xl border px-4 py-4 text-left transition ${
-                    !canCreateNewSession
-                      ? "cursor-not-allowed border-neutral-200 bg-white text-neutral-300"
-                      : "border-neutral-950 bg-neutral-950 text-white shadow-sm hover:bg-neutral-800"
-                  }`}
+                    !session?.id
+                      ? "border-neutral-950 bg-neutral-950 text-white shadow-sm hover:bg-neutral-800"
+                      : "border-neutral-200 bg-white text-neutral-400"
+                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-300`}
                 >
                   <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
                     Bước 1
@@ -3110,15 +3112,19 @@ export default function StocktakePageClient() {
                     !rows.length ||
                     !canEditStocktake
                   }
-                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-4 text-left text-neutral-950 shadow-sm transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-300 disabled:shadow-none"
+                  className={`rounded-2xl border px-4 py-4 text-left shadow-sm transition ${
+                    session?.id && !closed && String(session?.status || "").toUpperCase() !== "FINISHED"
+                      ? "border-neutral-950 bg-neutral-950 text-white hover:bg-neutral-800"
+                      : "border-neutral-200 bg-white text-neutral-400"
+                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-300 disabled:shadow-none`}
                 >
-                  <span className="block text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">
+                  <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
                     Bước 2
                   </span>
                   <span className="mt-1 block text-base font-extrabold">
                     {finishingOnly ? "Đang kết thúc..." : "Kết thúc phiên kiểm"}
                   </span>
-                  <span className="mt-1 block text-xs font-semibold text-neutral-500">
+                  <span className="mt-1 block text-xs font-semibold opacity-70">
                     Khóa bước scan để rà soát kết quả
                   </span>
                 </button>
@@ -3131,7 +3137,11 @@ export default function StocktakePageClient() {
                     applying ||
                     !canApplyStocktake
                   }
-                  className="rounded-2xl border border-neutral-950 bg-neutral-950 px-4 py-4 text-left text-white shadow-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none"
+                  className={`rounded-2xl border px-4 py-4 text-left shadow-sm transition ${
+                    String(session?.status || "").toUpperCase() === "FINISHED"
+                      ? "border-neutral-950 bg-neutral-950 text-white hover:bg-neutral-800"
+                      : "border-neutral-200 bg-white text-neutral-400"
+                  } disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-300 disabled:shadow-none`}
                 >
                   <span className="block text-[11px] font-black uppercase tracking-[0.18em] opacity-60">
                     Bước 3
@@ -3145,12 +3155,15 @@ export default function StocktakePageClient() {
                 </button>
               </div>
 
-              <div className="flex flex-wrap items-center justify-start gap-2 xl:w-[440px] xl:justify-end">
+              <div className="flex flex-wrap items-center justify-start gap-2 rounded-2xl border border-neutral-200 bg-white p-2 xl:w-[440px] xl:justify-end">
+                <span className="mr-auto px-2 text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">
+                  Điều khiển phụ
+                </span>
                 <button
                   type="button"
                   onClick={() => void pauseSession()}
                   disabled={!session?.id || paused || closed || !canEditStocktake}
-                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-300"
+                  className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-white disabled:cursor-not-allowed disabled:bg-neutral-50 disabled:text-neutral-300"
                 >
                   Tạm dừng
                 </button>
@@ -3159,7 +3172,7 @@ export default function StocktakePageClient() {
                   type="button"
                   onClick={() => void resumeSession()}
                   disabled={!session?.id || !paused || closed || !canEditStocktake}
-                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-300"
+                  className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-white disabled:cursor-not-allowed disabled:bg-neutral-50 disabled:text-neutral-300"
                 >
                   Tiếp tục
                 </button>
@@ -3169,9 +3182,9 @@ export default function StocktakePageClient() {
                   onClick={() => {
                     window.open("/stocktake-sessions", "_blank", "noreferrer");
                   }}
-                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+                  className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-white"
                 >
-                  Lịch sử kiểm kho
+                  Lịch sử
                 </button>
 
                 <button
@@ -3183,9 +3196,9 @@ export default function StocktakePageClient() {
                     }
                     window.location.href = "/stocktake-sessions";
                   }}
-                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+                  className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-extrabold text-neutral-700 transition hover:border-neutral-300 hover:bg-white"
                 >
-                  {session?.id ? "Chi tiết phiên" : "Phiên đã chốt"}
+                  {session?.id ? "Chi tiết" : "Phiên đã chốt"}
                 </button>
 
                 <button
