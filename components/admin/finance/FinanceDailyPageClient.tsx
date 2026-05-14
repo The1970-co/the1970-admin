@@ -87,6 +87,14 @@ type CashHandoverDialog = {
   note: string;
 } | null;
 
+type ConfirmDialog = {
+  title: string;
+  message: string;
+  confirmText: string;
+  tone?: "black" | "amber" | "red";
+  onConfirm: () => Promise<void> | void;
+} | null;
+
 function currency(value: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(value || 0)) + "đ";
 }
@@ -165,6 +173,128 @@ function normalizeText(value: unknown) {
     .trim();
 }
 
+
+function canonicalBranchName(value: unknown) {
+  const raw = String(value || "").trim();
+  const key = normalizeText(raw).replace(/\s+/g, " ");
+
+  if (key === "th" || key.includes("thai ha")) return "THÁI HÀ";
+  if (key === "qo" || key.includes("quoc oai")) return "QUỐC OAI";
+  if (key === "cl" || key.includes("chua lang")) return "CHÙA LÁNG";
+  if (key === "xd" || key.includes("xa dan")) return "XÃ ĐÀN";
+
+  return raw || "—";
+}
+
+
+const DEFAULT_BRANCH_NAMES = ["THÁI HÀ", "QUỐC OAI", "CHÙA LÁNG", "XÃ ĐÀN"];
+
+function branchCodeFromName(value: unknown) {
+  const name = canonicalBranchName(value);
+  if (name === "THÁI HÀ") return "TH";
+  if (name === "QUỐC OAI") return "QO";
+  if (name === "CHÙA LÁNG") return "CL";
+  if (name === "XÃ ĐÀN") return "XD";
+  return "";
+}
+
+function sourceBelongsToBranch(source: any, branchName: string) {
+  const canonical = canonicalBranchName(branchName);
+  const code = branchCodeFromName(canonical);
+  const text = normalizeText([
+    source?.branchName,
+    source?.branch?.name,
+    source?.branchCode,
+    source?.branch?.code,
+    source?.branchId,
+    source?.name,
+    source?.code,
+    source?.paymentSourceName,
+    source?.paymentSourceCode,
+  ].filter(Boolean).join(" "));
+
+  if (!text) return false;
+  if (normalizeText(canonical) && text.includes(normalizeText(canonical))) return true;
+  if (code) {
+    const lowerCode = normalizeText(code);
+    if (text.includes(`-${lowerCode}`) || text.includes(` ${lowerCode}`) || text.endsWith(lowerCode)) return true;
+  }
+  return false;
+}
+
+function canonicalSourceKey(row: any, branchName: string) {
+  const branch = canonicalBranchName(branchName);
+  if (isCashLedgerRow({
+    date: row?.date || "",
+    sourceType: row?.sourceType,
+    paymentSourceName: row?.paymentSourceName || row?.name,
+    paymentSourceCode: row?.paymentSourceCode || row?.code,
+    paymentSourceId: row?.paymentSourceId || row?.id,
+  } as DailyLedgerRow)) {
+    return `CASH:${branch}`;
+  }
+
+  const label = row?.paymentSourceName || row?.name || row?.paymentSourceCode || row?.code || row?.paymentSourceId || row?.id || "—";
+  return normalizeText(label);
+}
+
+function mergeLedgerAmount(target: DailyLedgerRow, source: DailyLedgerRow) {
+  target.openingBalance = Number(target.openingBalance || 0) + Number(source.openingBalance || 0);
+  target.posReceiptAmount = Number(target.posReceiptAmount || 0) + Number(source.posReceiptAmount || 0);
+  target.manualReceiptAmount = Number(target.manualReceiptAmount || 0) + Number(source.manualReceiptAmount || 0);
+  target.manualPaymentAmount = Number(target.manualPaymentAmount || 0) + Number(source.manualPaymentAmount || 0);
+  target.totalReceipt = Number(target.totalReceipt || 0) + Number(source.totalReceipt || 0);
+  target.totalPayment = Number(target.totalPayment || 0) + Number(source.totalPayment || 0);
+  target.netAmount = Number(target.totalReceipt || 0) - Number(target.totalPayment || 0);
+  target.closingBalance = Number(target.openingBalance || 0) + Number(target.netAmount || 0);
+
+  if (source.countedAmount !== null && source.countedAmount !== undefined) {
+    target.countedAmount = Number(target.countedAmount || 0) + Number(source.countedAmount || 0);
+  }
+
+  if (source.differenceAmount !== null && source.differenceAmount !== undefined) {
+    target.differenceAmount = Number(target.differenceAmount || 0) + Number(source.differenceAmount || 0);
+  }
+
+  if (String(source.status || "").toUpperCase() === "LOCKED") {
+    target.status = "LOCKED";
+  }
+
+  if (!target.branchId && source.branchId) target.branchId = source.branchId;
+  if (!target.paymentSourceId && source.paymentSourceId) target.paymentSourceId = source.paymentSourceId;
+  if (!target.paymentSourceCode && source.paymentSourceCode) target.paymentSourceCode = source.paymentSourceCode;
+  if (source.isSyntheticLive) target.isSyntheticLive = target.isSyntheticLive || false;
+}
+
+function branchSortWeight(name: unknown) {
+  const key = canonicalBranchName(name);
+  const order: Record<string, number> = {
+    "THÁI HÀ": 1,
+    "QUỐC OAI": 2,
+    "CHÙA LÁNG": 3,
+    "XÃ ĐÀN": 4,
+  };
+  return order[key] || 99;
+}
+
+function uniqBranchNames(values: unknown[]) {
+  const seen = new Set<string>();
+  const rows: string[] = [];
+
+  values.forEach((value) => {
+    const name = canonicalBranchName(value);
+    if (!name || name === "—" || seen.has(name)) return;
+    seen.add(name);
+    rows.push(name);
+  });
+
+  return rows.sort((a, b) => {
+    const weightDiff = branchSortWeight(a) - branchSortWeight(b);
+    if (weightDiff !== 0) return weightDiff;
+    return a.localeCompare(b, "vi");
+  });
+}
+
 function sourceKind(row: any) {
   const sourceText = normalizeText(
     [row?.sourceType, row?.sourceName, row?.sourceCode, row?.method]
@@ -190,6 +320,16 @@ function sourceKind(row: any) {
     return "CASH";
   }
   return row?.sourceType || "OTHER";
+}
+
+function sourceKindLabel(value: unknown) {
+  const text = String(value || "").toUpperCase();
+  if (text === "CASH") return "Tiền mặt";
+  if (text === "BANK") return "Ngân hàng / chuyển khoản";
+  if (text === "COD") return "COD";
+  if (text === "OTHER") return "Khác";
+  if (!text || text === "—") return "—";
+  return String(value || "Khác");
 }
 
 function ledgerSourceKind(row: DailyLedgerRow) {
@@ -304,7 +444,7 @@ function dateOnlyText(value?: string | null) {
 }
 
 function ledgerStatusLabel(status?: string) {
-  if (String(status || "").toUpperCase() === "LOCKED") return "Đã chốt";
+  if (String(status || "").toUpperCase() === "LOCKED") return "Đã chốt sổ";
   return "Đang mở";
 }
 
@@ -372,6 +512,17 @@ function ledgerMatchKey(parts: {
   ].join("|");
 }
 
+function ledgerRowKey(row: DailyLedgerRow) {
+  return ledgerMatchKey({
+    date: row.date,
+    branchId: row.branchId,
+    branchName: row.branchName,
+    paymentSourceId: row.paymentSourceId,
+    paymentSourceName: row.paymentSourceName,
+    paymentSourceCode: row.paymentSourceCode,
+  });
+}
+
 export default function FinanceDailyPageClient() {
   const initialRange = useMemo(() => getRange("today"), []);
   const initialLedgerRange = useMemo(() => getRange("today"), []);
@@ -392,17 +543,26 @@ export default function FinanceDailyPageClient() {
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [data, setData] = useState<any>(null);
   const [ledgerData, setLedgerData] = useState<any>(null);
+  const [ledgerLiveData, setLedgerLiveData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [savingLedger, setSavingLedger] = useState(false);
   const [error, setError] = useState("");
   const [ledgerMessage, setLedgerMessage] = useState("");
+  const [ledgerMessageTitle, setLedgerMessageTitle] = useState("Đã cập nhật");
   const [closeDialog, setCloseDialog] = useState<LedgerCloseDialog>(null);
   const [cashHandoverDialog, setCashHandoverDialog] =
     useState<CashHandoverDialog>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog>(null);
+  const [closedLedgerKeys, setClosedLedgerKeys] = useState<Set<string>>(new Set());
   const [expandedLedgerDate, setExpandedLedgerDate] = useState(() =>
     toDateInput(new Date()),
   );
+
+  const showToast = (title: string, message: string) => {
+    setLedgerMessageTitle(title);
+    setLedgerMessage(message);
+  };
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
@@ -476,6 +636,24 @@ export default function FinanceDailyPageClient() {
     }
   };
 
+  const loadLedgerLiveData = async () => {
+    try {
+      const params = new URLSearchParams({
+        dateFrom: ledgerDateFrom,
+        dateTo: ledgerDateTo,
+        branchId,
+        paymentSourceId,
+        status: "ALL",
+        q: "",
+      });
+
+      const result = await apiJson<any>(`/finance/daily?${params.toString()}`);
+      setLedgerLiveData(result);
+    } catch {
+      // Dữ liệu live chỉ dùng để bù giao dịch mới phát sinh; lỗi thì vẫn giữ ledger chính.
+    }
+  };
+
   const closeLedgerDay = async () => {
     if (!closeDialog?.row) return;
 
@@ -484,7 +662,7 @@ export default function FinanceDailyPageClient() {
     setLedgerMessage("");
 
     try {
-      await apiJson("/finance/daily-ledger/close", {
+      const saved: any = await apiJson("/finance/daily-ledger/close", {
         method: "POST",
         body: JSON.stringify({
           date: closeDialog.row.date,
@@ -495,43 +673,97 @@ export default function FinanceDailyPageClient() {
         }),
       });
 
-      setLedgerMessage("Đã chốt sổ nguồn tiền trong ngày.");
+      setLedgerData((previous: any) => {
+        const rows = safeLedgerRows(previous);
+        const savedRow: DailyLedgerRow = {
+          ...closeDialog.row,
+          ...(saved || {}),
+          date: String(saved?.date || closeDialog.row.date).slice(0, 10),
+          branchId: saved?.branchId || closeDialog.row.branchId,
+          branchName: closeDialog.row.branchName,
+          paymentSourceId: saved?.paymentSourceId || closeDialog.row.paymentSourceId,
+          paymentSourceName: closeDialog.row.paymentSourceName,
+          paymentSourceCode: closeDialog.row.paymentSourceCode,
+          sourceType: closeDialog.row.sourceType,
+          countedAmount: parseMoneyInput(closeDialog.countedAmount),
+          differenceAmount: parseMoneyInput(closeDialog.countedAmount) - Number(closeDialog.row.closingBalance || 0),
+          status: "LOCKED",
+          isSyntheticLive: false,
+        };
+        const key = ledgerRowKey(savedRow);
+        let replaced = false;
+        const nextRows = rows.map((item) => {
+          if (ledgerRowKey(item) === key) {
+            replaced = true;
+            return savedRow;
+          }
+          return item;
+        });
+        if (!replaced) nextRows.push(savedRow);
+        return { ...(previous || {}), rows: nextRows };
+      });
+
+      setClosedLedgerKeys((previous) => {
+        const next = new Set(previous);
+        next.add(ledgerRowKey(closeDialog.row));
+        return next;
+      });
+
+      showToast(
+        "Đã chốt sổ",
+        "Nguồn tiền đã được khóa sổ và ghi nhận số thực đếm.",
+      );
       setCloseDialog(null);
-      await Promise.all([loadData(), loadLedger()]);
+      await Promise.all([loadData(), loadLedger(), loadLedgerLiveData()]);
     } catch (err: any) {
       setError(err?.message || "Không chốt được sổ nguồn tiền.");
+      showToast("Không chốt được sổ", err?.message || "Backend chưa ghi được sổ. Kiểm tra lại core daily-ledger/close.");
     } finally {
       setSavingLedger(false);
     }
   };
 
   const reopenLedgerDay = async (row: DailyLedgerRow) => {
-    const ok = window.confirm(
-      `Mở lại sổ ngày ${dateOnlyText(row.date)} - ${row.branchName || row.branchId || ""}?`,
-    );
-    if (!ok) return;
+    setConfirmDialog({
+      title: "Mở lại sổ nguồn tiền?",
+      message: `Mở lại sổ ngày ${dateOnlyText(row.date)} - ${row.branchName || row.branchId || ""}. Sau khi mở lại, admin có thể kiểm tra và chốt lại số liệu.`,
+      confirmText: "Mở lại sổ",
+      tone: "amber",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setSavingLedger(true);
+        setError("");
+        setLedgerMessage("");
 
-    setSavingLedger(true);
-    setError("");
-    setLedgerMessage("");
+        try {
+          await apiJson("/finance/daily-ledger/reopen", {
+            method: "POST",
+            body: JSON.stringify({
+              date: row.date,
+              branchId: row.branchId,
+              paymentSourceId: row.paymentSourceId,
+            }),
+          });
 
-    try {
-      await apiJson("/finance/daily-ledger/reopen", {
-        method: "POST",
-        body: JSON.stringify({
-          date: row.date,
-          branchId: row.branchId,
-          paymentSourceId: row.paymentSourceId,
-        }),
-      });
+          setClosedLedgerKeys((previous) => {
+            const next = new Set(previous);
+            next.delete(ledgerRowKey(row));
+            return next;
+          });
 
-      setLedgerMessage("Đã mở lại sổ nguồn tiền.");
-      await Promise.all([loadData(), loadLedger()]);
-    } catch (err: any) {
-      setError(err?.message || "Không mở lại được sổ nguồn tiền.");
-    } finally {
-      setSavingLedger(false);
-    }
+          showToast(
+            "Đã mở lại sổ",
+            "Nguồn tiền đã được mở lại để kiểm tra hoặc chỉnh sửa.",
+          );
+          await Promise.all([loadData(), loadLedger(), loadLedgerLiveData()]);
+        } catch (err: any) {
+          setError(err?.message || "Không mở lại được sổ nguồn tiền.");
+          showToast("Không mở lại được sổ", err?.message || "Backend chưa mở lại được dòng sổ.");
+        } finally {
+          setSavingLedger(false);
+        }
+      },
+    });
   };
 
   const closeBranchLedgerRows = async (
@@ -547,36 +779,54 @@ export default function FinanceDailyPageClient() {
       return;
     }
 
-    const ok = window.confirm(
-      `Chốt sổ ${branchName} với ${closeableRows.length} nguồn tiền? Hệ thống sẽ lấy số dư cuối làm số xác nhận cho từng nguồn.`,
-    );
-    if (!ok) return;
+    setConfirmDialog({
+      title: `Chốt sổ chi nhánh ${branchName}?`,
+      message: `Hệ thống sẽ chốt ${closeableRows.length} nguồn tiền, lấy số dư cuối làm số xác nhận cho từng nguồn. Sau khi chốt, trạng thái từng nguồn sẽ chuyển thành Đã chốt sổ.`,
+      confirmText: "Xác nhận chốt sổ",
+      tone: "black",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setSavingLedger(true);
+        setError("");
+        setLedgerMessage("");
 
-    setSavingLedger(true);
-    setError("");
-    setLedgerMessage("");
+        try {
+          for (const row of closeableRows) {
+            await apiJson("/finance/daily-ledger/close", {
+              method: "POST",
+              body: JSON.stringify({
+                date: row.date,
+                branchId: row.branchId,
+                paymentSourceId: row.paymentSourceId,
+                countedAmount: Number(
+                  row.countedAmount ?? row.closingBalance ?? 0,
+                ),
+                note: `Admin chốt sổ chi nhánh ${branchName} ngày ${dateOnlyText(row.date)}.`,
+              }),
+            });
+          }
 
-    try {
-      for (const row of closeableRows) {
-        await apiJson("/finance/daily-ledger/close", {
-          method: "POST",
-          body: JSON.stringify({
-            date: row.date,
-            branchId: row.branchId,
-            paymentSourceId: row.paymentSourceId,
-            countedAmount: Number(row.countedAmount ?? row.closingBalance ?? 0),
-            note: `Admin chốt sổ chi nhánh ${branchName} ngày ${dateOnlyText(row.date)}.`,
-          }),
-        });
-      }
+          setClosedLedgerKeys((previous) => {
+            const next = new Set(previous);
+            closeableRows.forEach((item) => next.add(ledgerRowKey(item)));
+            return next;
+          });
 
-      setLedgerMessage(`Đã chốt sổ chi nhánh ${branchName}.`);
-      await Promise.all([loadData(), loadLedger()]);
-    } catch (err: any) {
-      setError(err?.message || `Không chốt được sổ chi nhánh ${branchName}.`);
-    } finally {
-      setSavingLedger(false);
-    }
+          showToast(
+            "Đã chốt sổ chi nhánh",
+            `Đã chốt sổ chi nhánh ${branchName}. Các nguồn tiền đã được xác nhận theo số dư hệ thống.`,
+          );
+          await Promise.all([loadData(), loadLedger(), loadLedgerLiveData()]);
+        } catch (err: any) {
+          setError(
+            err?.message || `Không chốt được sổ chi nhánh ${branchName}.`,
+          );
+          showToast("Không chốt được sổ chi nhánh", err?.message || `Backend chưa ghi được sổ chi nhánh ${branchName}.`);
+        } finally {
+          setSavingLedger(false);
+        }
+      },
+    });
   };
 
   const confirmCashHandover = async () => {
@@ -637,11 +887,12 @@ export default function FinanceDailyPageClient() {
         }),
       });
 
-      setLedgerMessage(
+      showToast(
+        "Đã nhận tiền mặt",
         "Đã xác nhận tiền mặt nhân viên nộp về admin. Số dư tiền mặt cửa hàng đã được trừ khỏi sổ.",
       );
       setCashHandoverDialog(null);
-      await Promise.all([loadData(), loadLedger()]);
+      await Promise.all([loadData(), loadLedger(), loadLedgerLiveData()]);
     } catch (err: any) {
       setError(err?.message || "Không xác nhận được tiền mặt nộp về admin.");
     } finally {
@@ -664,10 +915,35 @@ export default function FinanceDailyPageClient() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadLedger();
+      void loadLedgerLiveData();
     }, 250);
 
     return () => window.clearTimeout(timer);
   }, [ledgerDateFrom, ledgerDateTo, branchId, paymentSourceId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!savingLedger && !closeDialog && !cashHandoverDialog) {
+        void loadData();
+        void loadLedger();
+        void loadLedgerLiveData();
+      }
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    dateFrom,
+    dateTo,
+    ledgerDateFrom,
+    ledgerDateTo,
+    branchId,
+    paymentSourceId,
+    flow,
+    q,
+    savingLedger,
+    closeDialog,
+    cashHandoverDialog,
+  ]);
 
   const rows = useMemo(() => {
     const rawRows = safeRows(data?.payments);
@@ -751,7 +1027,7 @@ export default function FinanceDailyPageClient() {
         row.sourceName || row.sourceCode || row.method || "Chưa rõ nguồn tiền";
       const current = map.get(key) || {
         sourceName: key,
-        sourceType: sourceKind(row),
+        sourceType: sourceKindLabel(sourceKind(row)),
         receipt: 0,
         payment: 0,
         net: 0,
@@ -800,13 +1076,27 @@ export default function FinanceDailyPageClient() {
     );
   }, [rows]);
 
+  const ledgerLiveRows = useMemo(
+    () => safeRows(ledgerLiveData?.payments),
+    [ledgerLiveData],
+  );
+
   const ledgerRows = useMemo(() => {
-    const baseRows = safeLedgerRows(ledgerData);
+    const baseRows = safeLedgerRows(ledgerData).map((row) =>
+      closedLedgerKeys.has(ledgerRowKey(row))
+        ? {
+            ...row,
+            status: "LOCKED",
+            countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
+            differenceAmount: row.differenceAmount ?? 0,
+          }
+        : row,
+    );
 
     const liveByKey = new Map<string, any>();
     const liveByDate = new Map<string, any>();
 
-    rows.forEach((row) => {
+    ledgerLiveRows.forEach((row) => {
       const dateKey = rowDateKey(row);
       if (!dateKey) return;
 
@@ -828,7 +1118,11 @@ export default function FinanceDailyPageClient() {
         branchId: row.branchId,
         branchName: row.branchName || row.branchId || "—",
         paymentSourceId: row.paymentSourceId,
-        paymentSourceName: row.sourceName || row.method || row.sourceCode || "Chưa rõ nguồn tiền",
+        paymentSourceName:
+          row.sourceName ||
+          row.method ||
+          row.sourceCode ||
+          "Chưa rõ nguồn tiền",
         paymentSourceCode: row.sourceCode,
         sourceType: sourceKind(row),
         posReceiptAmount: 0,
@@ -840,7 +1134,10 @@ export default function FinanceDailyPageClient() {
       };
 
       if (isReceiptRow(row)) {
-        if (isPosRow(row) || String(row.recordType || "").toUpperCase() === "PAYMENT") {
+        if (
+          isPosRow(row) ||
+          String(row.recordType || "").toUpperCase() === "PAYMENT"
+        ) {
           current.posReceiptAmount += amount;
         } else {
           current.manualReceiptAmount += amount;
@@ -872,8 +1169,10 @@ export default function FinanceDailyPageClient() {
     const datesNeedLivePatch = new Set<string>();
     liveByDate.forEach((live, dateKey) => {
       const ledger = ledgerByDate.get(dateKey) || { receipt: 0, payment: 0 };
-      if ((Number(ledger.receipt || 0) + Number(ledger.payment || 0)) === 0 &&
-          (Number(live.receipt || 0) + Number(live.payment || 0)) > 0) {
+      if (
+        Number(ledger.receipt || 0) + Number(ledger.payment || 0) === 0 &&
+        Number(live.receipt || 0) + Number(live.payment || 0) > 0
+      ) {
         datesNeedLivePatch.add(dateKey);
       }
     });
@@ -901,7 +1200,9 @@ export default function FinanceDailyPageClient() {
         }),
       ];
 
-      const liveKey = keyCandidates.find((candidate) => liveByKey.has(candidate));
+      const liveKey = keyCandidates.find((candidate) =>
+        liveByKey.has(candidate),
+      );
       if (!liveKey) return row;
 
       const live = liveByKey.get(liveKey);
@@ -957,7 +1258,7 @@ export default function FinanceDailyPageClient() {
         "vi",
       );
     });
-  }, [ledgerData, rows]);
+  }, [ledgerData, ledgerLiveRows, closedLedgerKeys]);
 
   const ledgerSummary = useMemo(() => {
     return ledgerRows.reduce(
@@ -1002,6 +1303,23 @@ export default function FinanceDailyPageClient() {
 
     return map;
   }, [ledgerRows]);
+
+  const configuredBranchNames = useMemo(() => DEFAULT_BRANCH_NAMES, []);
+
+  const branchIdByName = useMemo(() => {
+    const map = new Map<string, string>();
+    branches.forEach((branch: any) => {
+      const name = canonicalBranchName(branch?.name || branch?.code || branch?.id);
+      if (name && name !== "—" && branch?.id) map.set(name, String(branch.id));
+    });
+    ledgerRows.forEach((row) => {
+      const name = canonicalBranchName(row.branchName || row.branchId);
+      if (name && name !== "—" && row.branchId && !map.has(name)) {
+        map.set(name, String(row.branchId));
+      }
+    });
+    return map;
+  }, [branches, ledgerRows]);
 
   const dailyLedgerRows = useMemo(() => {
     const map = new Map<string, any>();
@@ -1058,7 +1376,7 @@ export default function FinanceDailyPageClient() {
       else current.open += 1;
 
       current.rowCount += 1;
-      const branchKey = row.branchName || row.branchId || "—";
+      const branchKey = canonicalBranchName(row.branchName || row.branchId || "—");
       current.branches.add(branchKey);
       current.sources.add(row.paymentSourceName || row.paymentSourceId || "—");
 
@@ -1070,6 +1388,7 @@ export default function FinanceDailyPageClient() {
         netAmount: 0,
         closingBalance: 0,
         cashClosingBalance: 0,
+        cashHandedOverAmount: 0,
         sourceCount: 0,
       };
       branchSummary.openingBalance += Number(row.openingBalance || 0);
@@ -1079,6 +1398,9 @@ export default function FinanceDailyPageClient() {
       branchSummary.closingBalance += Number(row.closingBalance || 0);
       if (isCashLedgerRow(row)) {
         branchSummary.cashClosingBalance += Number(row.closingBalance || 0);
+        branchSummary.cashHandedOverAmount += Number(
+          row.manualPaymentAmount || 0,
+        );
       }
       branchSummary.sourceCount += 1;
       current.branchMap.set(branchKey, branchSummary);
@@ -1089,20 +1411,151 @@ export default function FinanceDailyPageClient() {
     return Array.from(map.values())
       .map((row) => ({
         ...row,
-        branchCount: row.branches.size,
+        branchCount: uniqBranchNames([...configuredBranchNames, ...Array.from(row.branches)]).length,
         sourceCount: row.sources.size,
-        branchSummaries: Array.from(row.branchMap.values()).sort(
-          (a: any, b: any) =>
-            Math.abs(Number(b.closingBalance || 0)) -
-            Math.abs(Number(a.closingBalance || 0)),
-        ),
+        branchSummaries: uniqBranchNames([
+          ...configuredBranchNames,
+          ...Array.from(row.branchMap.keys()),
+        ])
+          .map((name) =>
+            row.branchMap.get(name) || {
+              branchName: name,
+              openingBalance: 0,
+              totalReceipt: 0,
+              totalPayment: 0,
+              netAmount: 0,
+              closingBalance: 0,
+              cashClosingBalance: 0,
+              cashHandedOverAmount: 0,
+              sourceCount: 0,
+            },
+          )
+          .sort((a: any, b: any) => {
+            const weightDiff =
+              branchSortWeight(a.branchName) - branchSortWeight(b.branchName);
+            if (weightDiff !== 0) return weightDiff;
+            return String(a.branchName || "").localeCompare(
+              String(b.branchName || ""),
+              "vi",
+            );
+          }),
         branches: undefined,
         sources: undefined,
         branchMap: undefined,
         status: row.open > 0 ? "OPEN" : "LOCKED",
       }))
       .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-  }, [ledgerRows]);
+  }, [ledgerRows, configuredBranchNames]);
+
+  const paymentSourcesByBranch = useMemo(() => {
+    const map = new Map<string, any[]>();
+    configuredBranchNames.forEach((name) => map.set(name, []));
+
+    paymentSources.forEach((source) => {
+      configuredBranchNames.forEach((branchName) => {
+        if (sourceBelongsToBranch(source, branchName)) {
+          const rows = map.get(branchName) || [];
+          rows.push(source);
+          map.set(branchName, rows);
+        }
+      });
+    });
+
+    configuredBranchNames.forEach((branchName) => {
+      const rows = map.get(branchName) || [];
+      rows.sort((a, b) => {
+        const aCash = sourceKind({ sourceType: a?.type || a?.sourceType, sourceName: a?.name, sourceCode: a?.code }) === "CASH" ? 1 : 0;
+        const bCash = sourceKind({ sourceType: b?.type || b?.sourceType, sourceName: b?.name, sourceCode: b?.code }) === "CASH" ? 1 : 0;
+        if (aCash !== bCash) return aCash - bCash;
+        return String(a?.name || a?.code || "").localeCompare(String(b?.name || b?.code || ""), "vi");
+      });
+      map.set(branchName, rows);
+    });
+
+    return map;
+  }, [configuredBranchNames, paymentSources]);
+
+  const buildDetailGroups = (detailRows: DailyLedgerRow[]) => {
+    return configuredBranchNames.map((branchName) => {
+      const rowMap = new Map<string, DailyLedgerRow>();
+      const date = detailRows[0]?.date || expandedLedgerDate || dateTo;
+
+      const sourcesForBranch = paymentSourcesByBranch.get(branchName) || [];
+      sourcesForBranch.forEach((source) => {
+        const sourceType = sourceKind({
+          sourceType: source?.type || source?.sourceType,
+          sourceName: source?.name,
+          sourceCode: source?.code,
+        });
+        const seed: DailyLedgerRow = {
+          date,
+          branchId: source?.branchId || source?.branch?.id || branchIdByName.get(branchName) || branchCodeFromName(branchName),
+          branchName,
+          paymentSourceId: source?.id || source?.paymentSourceId || source?.code || source?.name,
+          paymentSourceName: source?.name || source?.paymentSourceName || source?.code || "Nguồn tiền",
+          paymentSourceCode: source?.code || source?.paymentSourceCode,
+          sourceType,
+          openingBalance: 0,
+          posReceiptAmount: 0,
+          manualReceiptAmount: 0,
+          manualPaymentAmount: 0,
+          totalReceipt: 0,
+          totalPayment: 0,
+          netAmount: 0,
+          closingBalance: 0,
+          countedAmount: null,
+          differenceAmount: null,
+          status: "OPEN",
+        };
+        rowMap.set(canonicalSourceKey(seed, branchName), seed);
+      });
+
+      detailRows
+        .filter((row) => canonicalBranchName(row.branchName || row.branchId) === branchName)
+        .forEach((row) => {
+          const key = canonicalSourceKey(row, branchName);
+          const existing = rowMap.get(key);
+          if (existing) {
+            mergeLedgerAmount(existing, row);
+          } else {
+            rowMap.set(key, { ...row, branchName });
+          }
+        });
+
+      const rowsForBranch = Array.from(rowMap.values()).sort((a, b) => {
+        const aCash = isCashLedgerRow(a) ? 1 : 0;
+        const bCash = isCashLedgerRow(b) ? 1 : 0;
+        if (aCash !== bCash) return aCash - bCash;
+        return String(a.paymentSourceName || "").localeCompare(String(b.paymentSourceName || ""), "vi");
+      });
+
+      const summary = rowsForBranch.reduce(
+        (acc, detailRow) => {
+          acc.closingBalance += Number(detailRow.closingBalance || 0);
+          acc.totalReceipt += Number(detailRow.totalReceipt || 0);
+          acc.totalPayment += Number(detailRow.totalPayment || 0);
+          acc.netAmount += Number(detailRow.netAmount || 0);
+          if (isCashLedgerRow(detailRow)) {
+            acc.cashClosingBalance += Number(detailRow.closingBalance || 0);
+            acc.cashHandedOverAmount += Math.max(0, Number(detailRow.manualPaymentAmount || 0));
+          }
+          return acc;
+        },
+        {
+          branchName,
+          rows: rowsForBranch,
+          closingBalance: 0,
+          cashClosingBalance: 0,
+          cashHandedOverAmount: 0,
+          totalReceipt: 0,
+          totalPayment: 0,
+          netAmount: 0,
+        },
+      );
+
+      return summary;
+    });
+  };
 
   const sourceTotal = Math.max(
     1,
@@ -1303,6 +1756,60 @@ export default function FinanceDailyPageClient() {
         </div>
       ) : null}
 
+      {confirmDialog ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-2xl">
+            <div className="bg-neutral-950 px-6 py-5 text-white">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-white/45">
+                    Xác nhận thao tác
+                  </p>
+                  <h3 className="mt-2 text-xl font-black">
+                    {confirmDialog.title}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDialog(null)}
+                  className="rounded-full px-3 py-1 text-xl font-semibold text-white/60 hover:bg-white/10"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="text-sm leading-6 text-neutral-600">
+                {confirmDialog.message}
+              </p>
+              <div className="mt-6 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDialog(null)}
+                  className="rounded-2xl border border-neutral-300 bg-white px-5 py-3 text-sm font-semibold"
+                >
+                  Huỷ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmDialog.onConfirm()}
+                  disabled={savingLedger}
+                  className={`rounded-2xl px-5 py-3 text-sm font-black text-white disabled:opacity-50 ${
+                    confirmDialog.tone === "red"
+                      ? "bg-red-600"
+                      : confirmDialog.tone === "amber"
+                        ? "bg-amber-600"
+                        : "bg-neutral-950"
+                  }`}
+                >
+                  {savingLedger ? "Đang xử lý..." : confirmDialog.confirmText}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {ledgerMessage ? (
         <div className="fixed right-6 top-24 z-[80] max-w-md rounded-3xl border border-emerald-200 bg-white p-4 text-sm shadow-2xl shadow-emerald-950/10">
           <div className="flex items-start gap-3">
@@ -1310,7 +1817,7 @@ export default function FinanceDailyPageClient() {
               ✓
             </div>
             <div className="min-w-0 flex-1">
-              <p className="font-bold text-emerald-800">Đã cập nhật</p>
+              <p className="font-bold text-emerald-800">{ledgerMessageTitle}</p>
               <p className="mt-1 text-neutral-700">{ledgerMessage}</p>
             </div>
             <button
@@ -1323,38 +1830,70 @@ export default function FinanceDailyPageClient() {
           </div>
         </div>
       ) : null}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <p className="text-sm text-neutral-500">
-            Tài chính / Tổng quan nguồn tiền
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
-            Tổng quan nguồn tiền
-          </h1>
-          <p className="mt-1 max-w-4xl text-sm text-neutral-500">
-            Theo dõi tiền thực nhận theo nguồn tiền, chi nhánh và loại dòng
-            tiền. POS hoàn thành, phiếu thu/chi xác nhận và tiền cọc/chuyển
-            khoản đã ghi nhận được gom vào đây.
-          </p>
+      <section className="overflow-hidden rounded-[32px] bg-neutral-950 p-6 text-white shadow-2xl shadow-neutral-950/20">
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45">
+              Tài chính / Tổng quan nguồn tiền
+            </p>
+            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">
+              Tổng quan nguồn tiền
+            </h1>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-white/65">
+              Theo dõi tiền thực nhận theo nguồn tiền, chi nhánh và loại dòng
+              tiền. POS hoàn thành, phiếu thu/chi xác nhận và tiền cọc/chuyển
+              khoản đã ghi nhận được gom vào đây. Dữ liệu tự làm mới khoảng 30
+              giây/lần.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[520px]">
+            <div className="rounded-3xl bg-white px-5 py-4 text-neutral-950">
+              <p className="text-xs font-bold uppercase tracking-wide text-neutral-500">
+                Tiền mặt còn
+              </p>
+              <p className="mt-2 text-2xl font-black">
+                {currency(ledgerSummary.cashClosing)}
+              </p>
+            </div>
+            <div className="rounded-3xl bg-white/10 px-5 py-4 ring-1 ring-white/10">
+              <p className="text-xs font-bold uppercase tracking-wide text-white/45">
+                Thu - chi
+              </p>
+              <p
+                className={`mt-2 text-2xl font-black ${summary.net >= 0 ? "text-emerald-200" : "text-red-200"}`}
+              >
+                {currency(summary.net)}
+              </p>
+            </div>
+            <div className="rounded-3xl bg-white/10 px-5 py-4 ring-1 ring-white/10">
+              <p className="text-xs font-bold uppercase tracking-wide text-white/45">
+                Giao dịch
+              </p>
+              <p className="mt-2 text-2xl font-black">
+                {numberText(summary.count)}
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => (window.location.href = "/finance/cash-receipts")}
-            className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold"
+            className="rounded-2xl bg-white px-4 py-2.5 text-sm font-bold text-neutral-950 hover:bg-neutral-100"
           >
             Phiếu thu
           </button>
           <button
             type="button"
             onClick={() => (window.location.href = "/finance/cash-payments")}
-            className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold"
+            className="rounded-2xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white ring-1 ring-white/15 hover:bg-white/15"
           >
             Phiếu chi
           </button>
         </div>
-      </div>
+      </section>
 
       <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
         <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]">
@@ -1586,7 +2125,7 @@ export default function FinanceDailyPageClient() {
                       {source.sourceName}
                     </td>
                     <td className="py-3 pr-3 text-neutral-500">
-                      {source.sourceType}
+                      {sourceKindLabel(source.sourceType)}
                     </td>
                     <td className="py-3 pr-3 text-right">
                       {currency(source.receipt)}
@@ -1711,7 +2250,9 @@ export default function FinanceDailyPageClient() {
               <button
                 type="button"
                 onClick={() =>
-                  applyLedgerQuickRange(ledgerQuickRange === "month" ? "10d" : "month")
+                  applyLedgerQuickRange(
+                    ledgerQuickRange === "month" ? "10d" : "month",
+                  )
                 }
                 className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
@@ -1721,7 +2262,10 @@ export default function FinanceDailyPageClient() {
               </button>
               <button
                 type="button"
-                onClick={() => void loadLedger()}
+                onClick={() => {
+                  void loadLedger();
+                  void loadLedgerLiveData();
+                }}
                 className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
                 {ledgerLoading ? "Đang tải..." : "Tải lại sổ"}
@@ -1825,7 +2369,9 @@ export default function FinanceDailyPageClient() {
                 <th className="px-4 py-3 text-right">Phiếu chi</th>
                 <th className="px-4 py-3 text-right">Thu - chi</th>
                 <th className="px-4 py-3 text-right">Số dư cuối</th>
-                <th className="px-4 py-3 text-right">Tiền mặt còn tổng các chi nhánh</th>
+                <th className="px-4 py-3 text-right">
+                  Tiền mặt còn tổng các chi nhánh
+                </th>
                 <th className="px-4 py-3 text-right">Thực đếm</th>
                 <th className="px-4 py-3 text-right">Lệch</th>
                 <th className="px-4 py-3">Chi nhánh</th>
@@ -1896,13 +2442,13 @@ export default function FinanceDailyPageClient() {
                           : "—"}
                       </td>
                       <td className="px-4 py-3 text-xs text-neutral-600">
-                        <div className="flex max-w-[340px] flex-wrap gap-1.5">
+                        <div className="grid w-[380px] max-w-full grid-cols-2 gap-2">
                           {(row.branchSummaries || [])
                             .slice(0, 4)
                             .map((branch: any) => (
                               <span
                                 key={branch.branchName}
-                                className="inline-flex min-w-[165px] flex-col rounded-3xl border border-neutral-950 bg-neutral-950 px-5 py-4 font-bold text-white shadow-lg"
+                                className="inline-flex min-h-[104px] flex-col justify-center rounded-3xl border border-neutral-950 bg-neutral-950 px-5 py-4 font-bold text-white shadow-lg"
                               >
                                 <span className="text-xs uppercase tracking-wide text-white/70">
                                   {branch.branchName}
@@ -1916,13 +2462,17 @@ export default function FinanceDailyPageClient() {
                                     Number(branch.cashClosingBalance || 0),
                                   )}
                                 </span>
+                                {Number(branch.cashHandedOverAmount || 0) >
+                                0 ? (
+                                  <span className="mt-1 text-[11px] font-bold text-emerald-200">
+                                    Admin đã nhận{" "}
+                                    {currency(
+                                      Number(branch.cashHandedOverAmount || 0),
+                                    )}
+                                  </span>
+                                ) : null}
                               </span>
                             ))}
-                          {(row.branchSummaries || []).length > 4 ? (
-                            <span className="inline-flex rounded-full bg-neutral-100 px-2 py-1 font-semibold text-neutral-500">
-                              +{(row.branchSummaries || []).length - 4} CN
-                            </span>
-                          ) : null}
                         </div>
                         <div className="mt-1 text-neutral-400">
                           {row.branchCount} chi nhánh · {row.sourceCount} nguồn
@@ -1964,46 +2514,21 @@ export default function FinanceDailyPageClient() {
                             </div>
 
                             <div className="space-y-4 px-4">
-                              {Array.from(
-                                detailRows
-                                  .reduce((groupMap, detailRow) => {
-                                    const key =
-                                      detailRow.branchName ||
-                                      detailRow.branchId ||
-                                      "—";
-                                    const current = groupMap.get(key) || {
-                                      branchName: key,
-                                      rows: [] as DailyLedgerRow[],
-                                      closingBalance: 0,
-                                      cashClosingBalance: 0,
-                                      totalReceipt: 0,
-                                      totalPayment: 0,
-                                      netAmount: 0,
-                                    };
+                              {buildDetailGroups(detailRows).map((branchGroup: any) => {
+                                const branchCloseableRows = branchGroup.rows.filter(
+                                  (item: DailyLedgerRow) =>
+                                    item.branchId &&
+                                    item.paymentSourceId &&
+                                    !item.isSyntheticLive,
+                                );
+                                const branchIsClosed =
+                                  branchCloseableRows.length > 0 &&
+                                  branchCloseableRows.every(
+                                    (item: DailyLedgerRow) =>
+                                      String(item.status || "").toUpperCase() === "LOCKED",
+                                  );
 
-                                    current.rows.push(detailRow);
-                                    current.closingBalance += Number(
-                                      detailRow.closingBalance || 0,
-                                    );
-                                    current.totalReceipt += Number(
-                                      detailRow.totalReceipt || 0,
-                                    );
-                                    current.totalPayment += Number(
-                                      detailRow.totalPayment || 0,
-                                    );
-                                    current.netAmount += Number(
-                                      detailRow.netAmount || 0,
-                                    );
-                                    if (isCashLedgerRow(detailRow)) {
-                                      current.cashClosingBalance += Number(
-                                        detailRow.closingBalance || 0,
-                                      );
-                                    }
-                                    groupMap.set(key, current);
-                                    return groupMap;
-                                  }, new Map<string, any>())
-                                  .values(),
-                              ).map((branchGroup: any) => (
+                                return (
                                 <div
                                   key={branchGroup.branchName}
                                   className="overflow-hidden rounded-3xl border border-neutral-900 bg-white shadow-sm"
@@ -2018,7 +2543,7 @@ export default function FinanceDailyPageClient() {
                                         trong ngày
                                       </div>
                                     </div>
-                                    <div className="grid gap-2 text-xs sm:grid-cols-4">
+                                    <div className="flex flex-wrap justify-end gap-2 text-xs">
                                       <div className="rounded-2xl bg-white/10 px-3 py-2">
                                         <div className="text-white/50">
                                           Tổng thu
@@ -2053,20 +2578,42 @@ export default function FinanceDailyPageClient() {
                                           )}
                                         </div>
                                       </div>
+                                      <div className="rounded-2xl bg-emerald-500/15 px-3 py-2 ring-1 ring-emerald-300/20">
+                                        <div className="text-emerald-100/70">
+                                          Admin đã nhận
+                                        </div>
+                                        <div className="font-black text-emerald-100">
+                                          {currency(
+                                            branchGroup.cashHandedOverAmount ||
+                                              0,
+                                          )}
+                                        </div>
+                                      </div>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
                                       <button
                                         type="button"
-                                        disabled={savingLedger || branchGroup.rows.every((item: DailyLedgerRow) => item.isSyntheticLive)}
+                                        disabled={
+                                          savingLedger ||
+                                          branchIsClosed ||
+                                          branchGroup.rows.every(
+                                            (item: DailyLedgerRow) =>
+                                              item.isSyntheticLive,
+                                          )
+                                        }
                                         onClick={() =>
                                           void closeBranchLedgerRows(
                                             branchGroup.branchName,
                                             branchGroup.rows,
                                           )
                                         }
-                                        className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-xs font-black text-white shadow-sm hover:bg-white/15 disabled:opacity-50"
+                                        className={`rounded-2xl border px-4 py-3 text-xs font-black shadow-sm disabled:opacity-80 ${
+                                          branchIsClosed
+                                            ? "border-emerald-300/30 bg-emerald-500/20 text-emerald-100"
+                                            : "border-white/20 bg-white/10 text-white hover:bg-white/15"
+                                        }`}
                                       >
-                                        Chốt sổ chi nhánh
+                                        {branchIsClosed ? "✓ Đã chốt sổ" : "Chốt sổ chi nhánh"}
                                       </button>
                                       {branchGroup.cashClosingBalance > 0 ? (
                                         <button
@@ -2181,11 +2728,13 @@ export default function FinanceDailyPageClient() {
                                                       "—"}
                                                   </div>
                                                   <div className="text-[11px] text-neutral-500">
-                                                    {detailRow.sourceType ||
-                                                      ledgerSourceKind(
-                                                        detailRow,
-                                                      ) ||
-                                                      "—"}
+                                                    {sourceKindLabel(
+                                                      detailRow.sourceType ||
+                                                        ledgerSourceKind(
+                                                          detailRow,
+                                                        ) ||
+                                                        "—",
+                                                    )}
                                                   </div>
                                                 </td>
                                                 <td className="px-3 py-2 text-right">
@@ -2276,13 +2825,36 @@ export default function FinanceDailyPageClient() {
                                                       {detailRow.lockedByName}
                                                     </div>
                                                   ) : null}
+                                                  {isCashLedgerRow(detailRow) &&
+                                                  Number(
+                                                    detailRow.manualPaymentAmount ||
+                                                      0,
+                                                  ) > 0 ? (
+                                                    <div className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                                      Admin đã nhận{" "}
+                                                      {currency(
+                                                        Number(
+                                                          detailRow.manualPaymentAmount ||
+                                                            0,
+                                                        ),
+                                                      )}
+                                                    </div>
+                                                  ) : null}
                                                 </td>
                                                 <td className="px-3 py-2 text-right">
                                                   <div className="flex justify-end gap-2">
                                                     <button
                                                       type="button"
-                                                      disabled={savingLedger || detailRow.isSyntheticLive}
-                                                      title={detailRow.isSyntheticLive ? "Dòng live lấy từ giao dịch mới phát sinh, tải lại sổ hoặc đổi ngày để chốt" : undefined}
+                                                      disabled={
+                                                        savingLedger ||
+                                                        detailRow.isSyntheticLive ||
+                                                        isLocked
+                                                      }
+                                                      title={
+                                                        detailRow.isSyntheticLive
+                                                          ? "Dòng live lấy từ giao dịch mới phát sinh, tải lại sổ hoặc đổi ngày để chốt"
+                                                          : undefined
+                                                      }
                                                       onClick={(event) => {
                                                         event.stopPropagation();
                                                         setCloseDialog({
@@ -2306,7 +2878,7 @@ export default function FinanceDailyPageClient() {
                                                       {detailRow.isSyntheticLive
                                                         ? "Live"
                                                         : isLocked
-                                                          ? "Chốt lại"
+                                                          ? "✓ Đã chốt"
                                                           : "Chốt sổ"}
                                                     </button>
                                                     <button
@@ -2335,7 +2907,8 @@ export default function FinanceDailyPageClient() {
                                     </table>
                                   </div>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         </td>

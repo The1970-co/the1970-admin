@@ -1,5 +1,59 @@
 "use client";
 
+
+
+/* STOCKTAKE_V27_DETAIL_SCOPE */
+function getScopedStocktakeRowsV27(detail: any, items: any[]) {
+  const branchId = String(detail?.branchId || detail?.session?.branchId || '').trim();
+  const raw = Array.isArray(items) ? items : [];
+
+  const scoped = raw.filter((item: any) => {
+    const itemBranchId = String(item?.branchId || item?.branch?.id || item?.inventoryItem?.branchId || '').trim();
+    if (branchId && itemBranchId) return itemBranchId === branchId;
+
+    const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+    const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+    const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+    const status = String(item?.status || '').toUpperCase();
+
+    // Chặn catalog toàn hệ thống rỗng: snapshot=0, counted=0, diff=0, chưa có scan.
+    return snapshotQty !== 0 || countedQty !== 0 || diff !== 0 || status === 'NOT_FOUND' || Boolean(item?.lastScannedAt || item?.workerId);
+  });
+
+  return scoped;
+}
+
+function buildScopedStocktakeKpiV27(detail: any, items: any[]) {
+  const rows = getScopedStocktakeRowsV27(detail, items);
+  const snapshotSku = rows.filter((item: any) => Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0) !== 0).length;
+  const countedSku = rows.filter((item: any) => Number(item?.countedQty ?? item?.counted ?? 0) !== 0).length;
+  const diffRows = rows.filter((item: any) => {
+    const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+    const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+    const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+    return diff !== 0;
+  });
+  const totalDiffQty = diffRows.reduce((sum: number, item: any) => {
+    const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+    const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+    const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+    return sum + diff;
+  }, 0);
+
+  return {
+    totalSku: rows.length,
+    totalSnapshotSku: rows.length,
+    snapshotSku,
+    countedSku,
+    checkedSku: countedSku,
+    uncountedSku: Math.max(rows.length - countedSku, 0),
+    uncheckedSku: Math.max(rows.length - countedSku, 0),
+    discrepancySku: diffRows.length,
+    mismatchSku: diffRows.length,
+    totalDiffQty,
+  };
+}
+
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
@@ -94,6 +148,59 @@ function StatCard({ title, value, helper, tone = "blue" }: { title: string; valu
   );
 }
 
+function normalizeBranchId(value: any) {
+  return String(value || "").trim();
+}
+
+function isCountedStocktakeRow(row: StocktakeDetailItem) {
+  const status = String(row.status || "").toUpperCase();
+  if (["COUNTED", "MATCH", "MATCHED", "MISMATCH", "OVER", "SHORT", "NOT_FOUND"].includes(status)) return true;
+  if (row.isCounted === true) return true;
+  if (row.lastScannedAt) return true;
+  if (Number(row.eventCount || 0) > 0) return true;
+  return Number(row.countedQty || 0) !== 0;
+}
+
+function getBranchScopedStocktakeRows(rows: StocktakeDetailItem[], branchId?: string | null) {
+  const targetBranchId = normalizeBranchId(branchId);
+  if (!targetBranchId) return rows;
+
+  const rowsWithBranch = rows.filter((row) => normalizeBranchId((row as any).branchId));
+  if (!rowsWithBranch.length) return rows;
+
+  return rows.filter((row) => normalizeBranchId((row as any).branchId) === targetBranchId);
+}
+
+function buildBranchScopedKpiForDetail(rows: StocktakeDetailItem[], fallback?: any) {
+  const totalRows = rows.length;
+  const countedRows = rows.filter(isCountedStocktakeRow);
+  const countedSku = countedRows.length;
+  const notFoundSku = rows.filter((row) => String(row.status || "").toUpperCase() === "NOT_FOUND").length;
+  const mismatchSku = rows.filter((row) => Number(row.diff || 0) !== 0).length;
+  const matchedSku = rows.filter((row) => isCountedStocktakeRow(row) && Number(row.diff || 0) === 0 && String(row.status || "").toUpperCase() !== "NOT_FOUND").length;
+  const totalSnapshotQty = rows.reduce((sum, row) => sum + Number(row.snapshotQty || 0), 0);
+  const totalCountedQty = rows.reduce((sum, row) => sum + Number(row.countedQty || 0), 0);
+  const totalDiffQty = rows.reduce((sum, row) => sum + Number(row.diff || 0), 0);
+  const totalDiffValue = rows.reduce((sum, row) => sum + Number((row as any).diffValue ?? (row as any).valueDiff ?? 0), 0);
+
+  return {
+    ...(fallback || {}),
+    totalRows,
+    totalSku: totalRows,
+    totalSnapshotSku: totalRows,
+    countedSku,
+    uncountedSku: Math.max(totalRows - countedSku, 0),
+    matchedSku,
+    mismatchSku,
+    discrepancySku: mismatchSku,
+    notFoundSku,
+    totalSnapshotQty,
+    totalCountedQty,
+    totalDiffQty,
+    totalDiffValue,
+  };
+}
+
 function collectPermissionKeys(user: any) {
   const keys = new Set<string>();
   if (Array.isArray(user?.permissions)) user.permissions.forEach((key: any) => key && keys.add(String(key)));
@@ -136,6 +243,11 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
 
   const canApplyStocktake = hasUserPermission(currentUser, "stocktake.apply");
   const canExportStocktake = hasUserPermission(currentUser, "stocktake.excel.export");
+  const canSeeStocktakeValue =
+    isOwnerOrAdmin(currentUser) ||
+    hasUserPermission(currentUser, "stocktake.value.view") ||
+    hasUserPermission(currentUser, "inventory.value.view") ||
+    hasUserPermission(currentUser, "finance.view");
 
   const loadDetail = async () => {
     try {
@@ -145,8 +257,13 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
         getStocktakeSessionDetail(sessionId),
         getStocktakeSessionItems(sessionId, { status: tab === "LOGS" ? "ALL" : tab, q: query.trim() || undefined }),
       ]);
-      setDetail(detailData);
-      setItems(Array.isArray(itemData) ? itemData : []);
+
+      const rawItems = Array.isArray(itemData) ? itemData : [];
+      const scopedItems = getBranchScopedStocktakeRows(rawItems, (detailData as any)?.branchId);
+      const scopedKpi = buildBranchScopedKpiForDetail(scopedItems, (detailData as any)?.kpi);
+
+      setDetail({ ...(detailData as any), kpi: scopedKpi });
+      setItems(scopedItems);
 
       if (tab === "LOGS") {
         const logData = await getStocktakeSessionLogs(sessionId);
@@ -165,7 +282,78 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, tab, query]);
 
-  const kpi = detail?.kpi;
+  const scopedItems = useMemo(() => {
+    const rows = Array.isArray(items) ? items : [];
+    const sessionBranchId = String((detail as any)?.branchId || "").trim();
+
+    return rows.filter((item: any) => {
+      const itemBranchId = String(item?.branchId || item?.branch?.id || item?.inventoryBranchId || "").trim();
+      if (sessionBranchId && itemBranchId) return itemBranchId === sessionBranchId;
+
+      const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+      const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+      const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+      const status = String(item?.status || "").toUpperCase();
+
+      // Fallback cho API cũ đang trả toàn bộ 6.184 variant:
+      // chỉ giữ SKU có tồn snapshot của phiên/chi nhánh, đã kiểm, có lệch, mã lạ hoặc có log scan.
+      // Những SKU toàn hệ thống snapshot=0/count=0/status=UNCOUNTED sẽ bị ẩn khỏi chi tiết phiên chi nhánh.
+      return (
+        snapshotQty !== 0 ||
+        countedQty !== 0 ||
+        diff !== 0 ||
+        Boolean(item?.lastScannedAt) ||
+        Boolean(item?.workerId) ||
+        status === "NOT_FOUND" ||
+        status === "MISMATCH" ||
+        status === "OVER" ||
+        status === "SHORT" ||
+        status === "MATCH" ||
+        status === "MATCHED"
+      );
+    });
+  }, [items, detail]);
+
+  const kpi = useMemo(() => {
+    const rows = scopedItems;
+    const totalRows = rows.length;
+    const countedSku = rows.filter((item: any) => Number(item?.countedQty ?? item?.counted ?? 0) !== 0 || Boolean(item?.lastScannedAt) || Boolean(item?.workerId)).length;
+    const notFoundSku = rows.filter((item: any) => String(item?.status || "").toUpperCase() === "NOT_FOUND").length;
+    const mismatchSku = rows.filter((item: any) => {
+      const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+      const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+      const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+      const status = String(item?.status || "").toUpperCase();
+      return diff !== 0 || status === "MISMATCH" || status === "OVER" || status === "SHORT";
+    }).length;
+    const matchedSku = rows.filter((item: any) => {
+      const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+      const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+      const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+      return (countedQty !== 0 || Boolean(item?.lastScannedAt) || Boolean(item?.workerId)) && diff === 0;
+    }).length;
+    const totalDiffQty = rows.reduce((sum: number, item: any) => {
+      const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
+      const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
+      return sum + Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
+    }, 0);
+    const totalDiffValue = rows.reduce((sum: number, item: any) => sum + Number(item?.diffValue ?? item?.valueDiff ?? 0), 0);
+
+    return {
+      ...(detail?.kpi || {}),
+      totalRows,
+      totalSku: totalRows,
+      totalSnapshotSku: totalRows,
+      countedSku,
+      uncountedSku: Math.max(totalRows - countedSku, 0),
+      mismatchSku,
+      discrepancySku: mismatchSku,
+      matchedSku,
+      notFoundSku,
+      totalDiffQty,
+      totalDiffValue,
+    };
+  }, [detail, scopedItems]);
   const filteredLogs = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return logs;
@@ -224,7 +412,9 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
         <StatCard title="Chưa kiểm" value={formatNumber(kpi?.uncountedSku)} helper="lọc sẵn ở tab Chưa kiểm" tone="amber" />
         <StatCard title="Chênh lệch" value={formatNumber(kpi?.mismatchSku ?? kpi?.discrepancySku)} helper="thiếu / thừa so snapshot" tone="red" />
         <StatCard title="Tổng lệch SL" value={diffText(kpi?.totalDiffQty)} helper="counted - snapshot" tone="purple" />
-        <StatCard title="Giá trị lệch" value={formatNumber(kpi?.totalDiffValue)} helper="tạm tính theo giá vốn" tone="amber" />
+        {canSeeStocktakeValue ? (
+          <StatCard title="Giá trị lệch" value={formatNumber(kpi?.totalDiffValue)} helper="tạm tính theo giá vốn" tone="amber" />
+        ) : null}
       </div>
 
       <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
@@ -284,17 +474,19 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
           ) : (
             <table className="min-w-full text-sm">
               <thead className="sticky top-0 z-10 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
-                <tr><th className="px-4 py-3 font-bold">SKU</th><th className="px-4 py-3 font-bold">Sản phẩm</th><th className="px-4 py-3 font-bold">Snapshot</th><th className="px-4 py-3 font-bold">Đã kiểm</th><th className="px-4 py-3 font-bold">Lệch</th><th className="px-4 py-3 font-bold">Giá trị lệch</th><th className="px-4 py-3 font-bold">Vị trí</th><th className="px-4 py-3 font-bold">Người kiểm cuối</th><th className="px-4 py-3 font-bold">Trạng thái</th></tr>
+                <tr><th className="px-4 py-3 font-bold">SKU</th><th className="px-4 py-3 font-bold">Sản phẩm</th><th className="px-4 py-3 font-bold">Snapshot</th><th className="px-4 py-3 font-bold">Đã kiểm</th><th className="px-4 py-3 font-bold">Lệch</th>{canSeeStocktakeValue ? <th className="px-4 py-3 font-bold">Giá trị lệch</th> : null}<th className="px-4 py-3 font-bold">Vị trí</th><th className="px-4 py-3 font-bold">Người kiểm cuối</th><th className="px-4 py-3 font-bold">Trạng thái</th></tr>
               </thead>
               <tbody>
-                {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-neutral-500">Đang tải...</td></tr> : items.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-neutral-500">Không có dòng phù hợp.</td></tr> : items.map((item) => (
+                {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-neutral-500">Đang tải...</td></tr> : scopedItems.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-neutral-500">Không có dòng phù hợp.</td></tr> : scopedItems.map((item) => (
                   <tr key={`${item.variantId || item.sku}-${item.status}`} className="border-t border-neutral-100 hover:bg-neutral-50/70">
                     <td className="px-4 py-3"><p className="font-bold text-neutral-950">{item.sku}</p><p className="text-xs text-neutral-400">{item.barcode || ""}</p></td>
                     <td className="px-4 py-3"><p className="font-semibold text-neutral-900">{item.productName || "—"}</p><p className="text-xs text-neutral-500">{[item.color, item.size].filter(Boolean).join(" · ")}</p></td>
                     <td className="px-4 py-3 font-bold text-neutral-700">{formatNumber(item.snapshotQty)}</td>
                     <td className="px-4 py-3 font-bold text-neutral-700">{formatNumber(item.countedQty)}</td>
                     <td className={`px-4 py-3 font-extrabold ${Number(item.diff) === 0 ? "text-neutral-500" : Number(item.diff) > 0 ? "text-green-700" : "text-red-700"}`}>{diffText(item.diff)}</td>
-                    <td className="px-4 py-3 font-semibold text-neutral-700">{formatNumber(item.diffValue ?? item.valueDiff)}</td>
+                    {canSeeStocktakeValue ? (
+                      <td className="px-4 py-3 font-semibold text-neutral-700">{formatNumber(item.diffValue ?? item.valueDiff)}</td>
+                    ) : null}
                     <td className="px-4 py-3 text-neutral-600">{[item.zone, item.rackCode, item.locationCode].filter(Boolean).join(" · ") || "—"}</td>
                     <td className="px-4 py-3"><p className="font-semibold text-neutral-700">{item.workerName || item.workerId || "—"}</p><p className="text-xs text-neutral-400">{formatDateTime(item.lastScannedAt)}</p></td>
                     <td className="px-4 py-3"><Badge tone={statusTone(item.status)}>{item.statusLabel || statusLabel(item.status)}</Badge></td>
