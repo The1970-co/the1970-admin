@@ -2115,6 +2115,14 @@ export default function StocktakePageClient() {
         await apiRequest(`/stocktake-sessions/${targetSession.id}/cancel`, { method: "PATCH" });
       }
 
+      setJoinableSessions((prev) =>
+        mode === "delete"
+          ? prev.filter((item) => item.id !== targetSession.id)
+          : prev.map((item) =>
+              item.id === targetSession.id ? { ...item, status: "CANCELLED" } : item,
+            ),
+      );
+
       if (session?.id === targetSession.id) {
         clearStocktakeResumeState();
         setSession(null);
@@ -2124,7 +2132,11 @@ export default function StocktakePageClient() {
         setStableWorkerSummary([]);
       }
 
-      setMessage(`Đã ${label} phiên kiểm cũ.`);
+      setMessage(
+        mode === "delete"
+          ? `Đã xoá phiên ${targetSession.name || targetSession.id}.`
+          : `Đã huỷ phiên ${targetSession.name || targetSession.id}.`,
+      );
       await loadJoinableSessions(branchId || currentBranchId || undefined);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : `Không ${label} được phiên kiểm.`);
@@ -2156,6 +2168,10 @@ export default function StocktakePageClient() {
       .filter((item) => ["DRAFT", "IN_PROGRESS", "PAUSED", "FINISHED"].includes(String(item.status || "").toUpperCase()))
       .sort((a, b) => new Date(b.startedAt || b.createdAt || 0).getTime() - new Date(a.startedAt || a.createdAt || 0).getTime());
   }, [joinableSessions]);
+
+  const visibleCleanupSessions = useMemo(() => {
+    return cleanupCandidateSessions.slice(0, showAllOpenSessions ? 50 : 8);
+  }, [cleanupCandidateSessions, showAllOpenSessions]);
 
   return (
     <div className="min-h-screen space-y-4 bg-[#f7f7f8] p-5">
@@ -2271,22 +2287,55 @@ export default function StocktakePageClient() {
           <div className="mb-4 overflow-hidden rounded-3xl border border-neutral-200 bg-neutral-50">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 bg-white px-4 py-3">
               <div>
-                <p className="font-extrabold text-neutral-950">Quản lý phiên kiểm đang mở</p>
-                <p className="text-xs font-semibold text-neutral-500">Chỉ admin/owner xử lý phiên chưa chốt tồn thật.</p>
+                <p className="font-extrabold text-neutral-950">Quản lý phiên kiểm chưa chốt</p>
+                <p className="text-xs font-semibold text-neutral-500">
+                  Admin/Owner dọn các phiên nháp, đang kiểm, tạm dừng hoặc chờ chốt tồn. Phiên đã chốt tồn thật không hiện ở đây.
+                </p>
               </div>
-              <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">{cleanupCandidateSessions.length} phiên</span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">
+                  {cleanupCandidateSessions.length} phiên
+                </span>
+                {cleanupCandidateSessions.length > visibleCleanupSessions.length ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllOpenSessions(true)}
+                    className="rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+                  >
+                    Xem thêm
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <div className="max-h-[360px] overflow-auto">
-              {cleanupCandidateSessions.map((item) => {
+            <div className="grid border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-neutral-400 md:grid-cols-[1fr_130px_150px_130px_110px_220px]">
+              <div>Phiên</div>
+              <div>Chi nhánh</div>
+              <div>Thời gian</div>
+              <div>Máy / lượt</div>
+              <div>Trạng thái</div>
+              <div className="text-right">Thao tác</div>
+            </div>
+            <div className="max-h-[420px] overflow-auto">
+              {visibleCleanupSessions.map((item) => {
                 const branchName = branchMap.get(item.branchId) || item.branchId;
                 const isApplied = String(item.status || "").toUpperCase() === "APPLIED" || Boolean((item as any).appliedAt);
+                const workerCount = item.workers?.length || 0;
+                const scanCount = item._count?.scanEvents || item.scanEvents?.length || 0;
                 return (
-                  <div key={`cleanup-${item.id}`} className="grid gap-3 border-b border-neutral-200 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[1fr_120px_120px_220px] md:items-center">
+                  <div key={`cleanup-${item.id}`} className="grid gap-3 border-b border-neutral-200 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[1fr_130px_150px_130px_110px_220px] md:items-center">
                     <div className="min-w-0">
                       <p className="truncate font-extrabold text-neutral-950">{item.name || "Kiểm kho realtime"}</p>
                       <p className="mt-1 font-mono text-[11px] text-neutral-400">{item.id}</p>
                     </div>
                     <div className="font-bold text-neutral-700">{branchName}</div>
+                    <div className="text-xs font-semibold text-neutral-500">
+                      <p>Bắt đầu: {formatDateTime(item.startedAt || item.createdAt)}</p>
+                      {item.finishedAt ? <p>Kết thúc: {formatDateTime(item.finishedAt)}</p> : null}
+                    </div>
+                    <div className="text-xs font-semibold text-neutral-600">
+                      <p>{workerCount} máy</p>
+                      <p>{scanCount} lượt scan</p>
+                    </div>
                     <Badge tone={statusTone(item.status)}>{stocktakeStatusLabel(item.status)}</Badge>
                     <div className="flex justify-end gap-2">
                       <button
@@ -2302,7 +2351,7 @@ export default function StocktakePageClient() {
                         disabled={isApplied || sessionActionLoadingId === item.id}
                         className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-40"
                       >
-                        Huỷ
+                        {sessionActionLoadingId === item.id ? "Đang xử lý" : "Huỷ"}
                       </button>
                       <button
                         type="button"
@@ -2310,12 +2359,17 @@ export default function StocktakePageClient() {
                         disabled={isApplied || sessionActionLoadingId === item.id}
                         className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-40"
                       >
-                        Xoá
+                        {sessionActionLoadingId === item.id ? "Đang xử lý" : "Xoá"}
                       </button>
                     </div>
                   </div>
                 );
               })}
+              {!visibleCleanupSessions.length ? (
+                <div className="px-4 py-8 text-center text-sm font-semibold text-neutral-500">
+                  Không còn phiên nháp/đang kiểm/tạm dừng/chờ chốt cần xử lý.
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
