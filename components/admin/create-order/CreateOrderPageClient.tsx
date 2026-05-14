@@ -2826,7 +2826,9 @@ export default function CreateOrderPageClient() {
     const skuQuery = normalizeSkuSearch(raw);
     const textQuery = normalizeSearchText(raw);
 
-    if (!skuQuery && !textQuery) return allVariants;
+    // Ô tìm sản phẩm mới được mở danh sách gợi ý.
+    // Ô scan chỉ dùng để cộng mã chính xác vào đơn, không làm xổ list để tránh nhìn như nhảy sang SKU khác.
+    if (!skuQuery && !textQuery) return [];
 
     return allVariants.filter((variant) => {
       const sku = normalizeSkuSearch(variant.sku || "");
@@ -2844,8 +2846,7 @@ export default function CreateOrderPageClient() {
     });
   }, [allVariants, productSearch]);
 
-  const shouldShowProductResults =
-    productSearch.trim().length > 0 || barcodeInput.trim().length > 0;
+  const shouldShowProductResults = productSearch.trim().length > 0;
 
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + line.price * line.qty, 0),
@@ -3672,23 +3673,54 @@ export default function CreateOrderPageClient() {
     });
   };
 
-  const handleBarcodeAdd = () => {
-    const code = normalizeSkuSearch(barcodeInput);
+  const handleBarcodeAdd = (rawCode?: string) => {
+    const originalCode = String(rawCode ?? barcodeInput ?? "").trim();
+    const code = normalizeSkuSearch(originalCode);
     if (!code) return;
 
-    const found = allVariants.find((v) => {
+    const exactFound = allVariants.find((v) => {
       const sku = normalizeSkuSearch(v.sku || "");
-      return sku === code || sku.includes(code);
+      const id = normalizeSkuSearch((v as any).id || "");
+      const barcode = normalizeSkuSearch((v as any).barcode || "");
+      const barcodeValue = normalizeSkuSearch((v as any).barcodeValue || "");
+
+      return (
+        sku === code ||
+        id === code ||
+        barcode === code ||
+        barcodeValue === code
+      );
     });
 
-    if (!found) {
-      setError(`Không tìm thấy SKU / mã vạch: ${barcodeInput}`);
+    if (exactFound) {
+      addVariantToOrder(exactFound.id);
+      setBarcodeInput("");
+      setProductSearch("");
+      setError(null);
       return;
     }
 
-    addVariantToOrder(found.id);
-    setBarcodeInput("");
-    setError(null);
+    // Chỉ cho match gần đúng khi mã đủ dài và chỉ khớp duy nhất 1 variant.
+    // Tránh trường hợp tít thiếu/kẹt ký tự rồi cộng nhầm sang SKU gần giống.
+    const looseMatches = allVariants.filter((v) => {
+      const sku = normalizeSkuSearch(v.sku || "");
+      return code.length >= 6 && sku.includes(code);
+    });
+
+    if (looseMatches.length === 1) {
+      addVariantToOrder(looseMatches[0].id);
+      setBarcodeInput("");
+      setProductSearch("");
+      setError(null);
+      return;
+    }
+
+    if (looseMatches.length > 1) {
+      setError(`Mã ${originalCode} khớp nhiều sản phẩm, cần quét/nhập đủ SKU.`);
+      return;
+    }
+
+    setError(`Không tìm thấy SKU / mã vạch: ${originalCode}`);
   };
 
   const updateLine = (variantId: string, patch: Partial<OrderLine>) => {
@@ -5321,13 +5353,14 @@ export default function CreateOrderPageClient() {
                       value={barcodeInput}
                       onChange={(e) => setBarcodeInput(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" || e.key === "Tab") {
                           e.preventDefault();
                           handleBarcodeAdd();
                         }
                       }}
+                      autoComplete="off"
                     />
-                    <Button onClick={handleBarcodeAdd}>Quét</Button>
+                    <Button onClick={() => handleBarcodeAdd()}>Quét</Button>
                   </div>
                 </div>
 

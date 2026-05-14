@@ -456,12 +456,25 @@ export default function StocktakeExcelImportPageClient() {
       .catch(() => setBranches([]));
 
     if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const querySessionId = params.get("sessionId") || "";
+    const queryWorkerId = params.get("workerId") || "";
     const savedSessionId = localStorage.getItem(STORAGE_SESSION_ID) || "";
     const savedWorkerId = localStorage.getItem(STORAGE_WORKER_ID) || "";
     const savedBranchId = localStorage.getItem(STORAGE_BRANCH_ID) || "";
+    const initialSessionId = querySessionId || savedSessionId;
+    const initialWorkerId = queryWorkerId || savedWorkerId;
+
     if (savedBranchId) setBranchId(savedBranchId);
-    setSessionIdInput(savedSessionId);
-    setWorkerId(savedWorkerId);
+    setSessionIdInput(initialSessionId);
+    setWorkerId(initialWorkerId);
+
+    if (querySessionId) {
+      setMessage("Đang mở đúng phiên kiểm vừa chọn từ màn realtime...");
+      void loadSession(querySessionId, queryWorkerId);
+      return;
+    }
+
     if (savedSessionId) void loadSession(savedSessionId, savedWorkerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -891,7 +904,7 @@ export default function StocktakeExcelImportPageClient() {
               <button type="button" onClick={() => void loadSession()} disabled={loadingSession} className="mt-3 w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-extrabold text-neutral-800 hover:bg-neutral-50 disabled:bg-neutral-100">
                 {loadingSession ? "Đang tải phiên..." : "Tải phiên kiểm đang mở"}
               </button>
-              <p className="mt-2 text-xs font-semibold text-neutral-500">Nếu trên máy đã lưu phiên đang mở, hệ thống sẽ tự điền Session ID. Có thể dán ID khác để đổi phiên.</p>
+              <p className="mt-2 text-xs font-semibold text-neutral-500">Nếu mở từ màn realtime, trang sẽ nhận đúng Session ID qua URL. Nếu tự vào trang này, hệ thống mới dùng session đã lưu trên máy.</p>
             </div>
 
             {session ? (

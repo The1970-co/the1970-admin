@@ -250,3 +250,15 @@ export async function downloadStocktakeSessionExcel(id: string, fallbackFileName
   a.remove();
   window.URL.revokeObjectURL(url);
 }
+
+export async function cancelStocktakeSession(id: string): Promise<StocktakeSessionListItem> {
+  return request<StocktakeSessionListItem>(`/stocktake-sessions/${id}/cancel`, {
+    method: "PATCH",
+  });
+}
+
+export async function deleteStocktakeSession(id: string): Promise<{ ok: boolean; deleted: boolean; id: string }> {
+  return request<{ ok: boolean; deleted: boolean; id: string }>(`/stocktake-sessions/${id}`, {
+    method: "DELETE",
+  });
+}

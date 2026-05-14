@@ -1284,6 +1284,93 @@ function buildEnterpriseProductExport(
   return rows.length;
 }
 
+
+function matchBranchForExport(branches: BranchItem[], wanted: "CL" | "XD" | "QO" | "TH") {
+  const keywordMap: Record<typeof wanted, string[]> = {
+    CL: ["cl", "chua lang", "chùa láng"],
+    XD: ["xd", "xa dan", "xã đàn", "hoan kiem", "hoàn kiếm"],
+    QO: ["qo", "quoc oai", "quốc oai", "kho qo"],
+    TH: ["th", "thai ha", "thái hà"],
+  };
+
+  const keywords = keywordMap[wanted] || [];
+
+  return branches.find((branch: any) => {
+    const text = normalizeHeader(
+      [branch?.id, branch?.code, branch?.name, branch?.displayName, branch?.branchName]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+    return keywords.some((keyword) => text.includes(normalizeHeader(keyword)));
+  });
+}
+
+function getVariantImageUrl(variant: any) {
+  return String(variant?.imageUrl || variant?.image || variant?.imageUrlByColor || "").trim();
+}
+
+function buildProductImageImportWorkbook(
+  exportProducts: ProductItem[],
+  _exportBranches: BranchItem[],
+) {
+  const rows: Record<string, any>[] = [];
+  const seen = new Set<string>();
+
+  for (const product of exportProducts) {
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+    const colors = uniqueValues(variants.map((variant: any) => variant.color));
+
+    if (!colors.length) {
+      const key = `${product.id || product.slug || product.name}:__NO_COLOR__`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        rows.push({
+          "Tên sản phẩm": product.name || "",
+          "Màu": "",
+          "Ảnh màu": "",
+        });
+      }
+      continue;
+    }
+
+    for (const color of colors) {
+      const key = `${product.id || product.slug || product.name}:${normalizeHeader(color)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      rows.push({
+        "Tên sản phẩm": product.name || "",
+        "Màu": color,
+        "Ảnh màu": "",
+      });
+    }
+  }
+
+  const wb = XLSX.utils.book_new();
+  const ws = makeWorksheet(rows);
+  XLSX.utils.book_append_sheet(wb, ws, "Dán link ảnh theo màu");
+
+  const guideRows = [
+    { "Hướng dẫn": "File này chỉ dùng để dán ảnh theo màu, không chứa giá bán, giá nhập hay tồn kho." },
+    { "Hướng dẫn": "Mỗi dòng là 1 sản phẩm + 1 màu. Một sản phẩm có 4 màu thì file có đúng 4 dòng cho sản phẩm đó." },
+    { "Hướng dẫn": "Chỉ dán link Cloudinary vào cột Ảnh màu. Không sửa tên sản phẩm và màu nếu không cần." },
+    { "Hướng dẫn": "Khi import, hệ thống tự áp dụng link ảnh đó cho toàn bộ size/SKU của đúng sản phẩm và đúng màu." },
+  ];
+  XLSX.utils.book_append_sheet(wb, makeWorksheet(guideRows), "Hướng dẫn");
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mi = String(now.getMinutes()).padStart(2, "0");
+
+  XLSX.writeFile(wb, `products_image_by_color_${yyyy}${mm}${dd}_${hh}${mi}.xlsx`);
+
+  return rows.length;
+}
+
 export default function ProductsPageClient() {
   useScrollRestore("products-list");
 
@@ -1371,6 +1458,7 @@ export default function ProductsPageClient() {
     null,
   );
   const [importing, setImporting] = useState(false);
+  const [exportingImageImportRows, setExportingImageImportRows] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [importProgressLabel, setImportProgressLabel] = useState("");
   const [uploadingCreateImage, setUploadingCreateImage] = useState(false);
@@ -2715,6 +2803,123 @@ export default function ProductsPageClient() {
     }
   };
 
+  const findProductForImageImport = (productName: string) => {
+    const wanted = normalizeHeader(productName);
+    if (!wanted) return null;
+
+    return (
+      products.find((product) => {
+        return [product.name, product.slug, product.id]
+          .map((value) => normalizeHeader(value))
+          .filter(Boolean)
+          .some((value) => value === wanted);
+      }) || null
+    );
+  };
+
+  const buildPreviewRowFromExistingVariant = (params: {
+    product: ProductItem;
+    variant: ProductItem["variants"][number];
+    colorImageUrl: string;
+    imageSource?: string;
+  }): ImportPreviewRow => {
+    const { product, variant, colorImageUrl, imageSource = "Ảnh màu" } = params;
+    const branchCL = matchBranchForExport(branches, "CL");
+    const branchXD = matchBranchForExport(branches, "XD");
+    const branchQO = matchBranchForExport(branches, "QO");
+    const branchTH = matchBranchForExport(branches, "TH");
+    const productImageUrl = String(product.imageUrl || "").trim();
+    const imageUrl = colorImageUrl || getVariantImageUrl(variant) || productImageUrl;
+    const costPrice = Number((variant as any).costPrice || 0);
+
+    return {
+      productName: product.name || "",
+      category: product.category || "",
+      brand: product.brand || "The 1970",
+      color: String(variant.color || ""),
+      size: String(variant.size || ""),
+      sku: String(variant.sku || ""),
+      weight: Number(product.weight || 0),
+      imageUrl,
+      productImageUrl,
+      colorImageUrl: colorImageUrl || getVariantImageUrl(variant),
+      imageSource: colorImageUrl ? imageSource : getVariantImageUrl(variant) ? "Ảnh màu đang có" : productImageUrl ? "Ảnh chính / Ảnh đại diện" : "",
+      imageWarning: colorImageUrl
+        ? "Sẽ áp dụng ảnh này cho toàn bộ SKU cùng màu."
+        : imageUrl
+          ? "Chưa dán ảnh mới; sẽ giữ ảnh đang có / ảnh chính."
+          : "Chưa có link ảnh.",
+      retailPrice: Number(variant.price || 0),
+      importPrice: costPrice,
+      stockCL: branchCL ? getVariantBranchStockValue(variant, branchCL.id) : 0,
+      stockXD: branchXD ? getVariantBranchStockValue(variant, branchXD.id) : 0,
+      stockQO: branchQO ? getVariantBranchStockValue(variant, branchQO.id) : 0,
+      stockTH: branchTH ? getVariantBranchStockValue(variant, branchTH.id) : 0,
+    };
+  };
+
+  const buildImageImportUploadFiles = async (files: File[]) => {
+    const allRows: ImportPreviewRow[] = [];
+
+    for (const file of files) {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const sheetData = XLSX.utils.sheet_to_json<any[]>(worksheet, {
+        header: 1,
+        defval: "",
+      });
+      const headerRowIndex = detectHeaderRowIndex(sheetData);
+      if (headerRowIndex === -1) continue;
+
+      const rawRows = buildRowsFromSheetData(sheetData, headerRowIndex).filter((row) =>
+        Object.values(row).some((value) => String(value ?? "").trim() !== ""),
+      );
+      const { normalized } = parseProductRows(rawRows);
+      allRows.push(...normalized);
+    }
+
+    if (!allRows.length) return files;
+
+    const rowsForUpload = allRows.map((row) => ({
+      "Tên sản phẩm*": row.productName,
+      "Danh mục sản phẩm": row.category,
+      "Mô tả sản phẩm": "",
+      "Nhãn hiệu": row.brand || "The 1970",
+      "Giá trị thuộc tính 1": row.color,
+      "Giá trị thuộc tính 2": row.size,
+      "Mã SKU*": row.sku,
+      "Khối lượng": row.weight,
+      "Ảnh đại diện": row.productImageUrl,
+      "Ảnh chính": row.productImageUrl,
+      "Ảnh màu": row.colorImageUrl,
+      "PL_Giá bán lẻ": row.retailPrice,
+      "PL_Giá nhập": row.importPrice,
+      "LC_CN1_Tồn kho ban đầu*": row.stockCL,
+      "LC_CN1_Giá vốn khởi tạo*": row.importPrice,
+      "LC_CN2_Tồn kho ban đầu*": row.stockXD,
+      "LC_CN2_Giá vốn khởi tạo*": row.importPrice,
+      "LC_CN3_Tồn kho ban đầu*": row.stockQO,
+      "LC_CN3_Giá vốn khởi tạo*": row.importPrice,
+      "LC_CN4_Tồn kho ban đầu*": row.stockTH,
+      "LC_CN4_Giá vốn khởi tạo*": row.importPrice,
+    }));
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, makeWorksheet(rowsForUpload), "products_image_upload");
+    const arrayBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([arrayBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    return [
+      new File([blob], `products_image_import_expanded_${Date.now()}.xlsx`, {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    ];
+  };
+
   const parseProductRows = (rows: ParsedRow[]) => {
     const errors: string[] = [];
     const previewRows: ImportPreviewRow[] = [];
@@ -2851,6 +3056,46 @@ export default function ProductsPageClient() {
         continue;
       }
 
+      const isColorImageOnlyRow =
+        importMode === "images" &&
+        Boolean(currentProductName) &&
+        Boolean(color) &&
+        !sku &&
+        !size;
+
+      if (isColorImageOnlyRow) {
+        const matchedProduct = findProductForImageImport(currentProductName);
+        if (!matchedProduct) {
+          errors.push(
+            `Dòng ${index + 2}: không tìm thấy sản phẩm "${currentProductName}" trong hệ thống.`,
+          );
+          continue;
+        }
+
+        const matchedVariants = (matchedProduct.variants || []).filter(
+          (variant: any) => normalizeHeader(variant.color) === normalizeHeader(color),
+        );
+
+        if (!matchedVariants.length) {
+          errors.push(
+            `Dòng ${index + 2}: sản phẩm "${currentProductName}" không có màu "${color}".`,
+          );
+          continue;
+        }
+
+        matchedVariants.forEach((variant: any) => {
+          previewRows.push(
+            buildPreviewRowFromExistingVariant({
+              product: matchedProduct,
+              variant,
+              colorImageUrl: colorImageUrl || productImageUrl,
+              imageSource: colorImageUrl ? "Ảnh màu" : "Ảnh chính / Ảnh đại diện",
+            }),
+          );
+        });
+        continue;
+      }
+
       if (!sku || !color || !size) {
         errors.push(
           `Dòng ${index + 2}: thiếu SKU hoặc màu hoặc size, đã bỏ qua`,
@@ -2965,8 +3210,13 @@ export default function ProductsPageClient() {
       setImportProgressLabel("Đang upload file Excel...");
       setActionMessage("");
 
+      const filesForImport =
+        importMode === "images"
+          ? await buildImageImportUploadFiles(selectedFiles)
+          : selectedFiles;
+
       const result = await importProductsFiles(
-        selectedFiles,
+        filesForImport,
         true,
         (percent) => {
           setImportProgress(percent);
@@ -3029,6 +3279,45 @@ export default function ProductsPageClient() {
       setActionMessage(
         err instanceof Error ? err.message : "Không xoá được mô tả sản phẩm.",
       );
+    }
+  };
+
+  const handleExportImageImportRowsExcel = async () => {
+    if (!canExportProducts) {
+      setActionMessage("Role hiện tại không có quyền xuất Excel sản phẩm.");
+      return;
+    }
+
+    try {
+      setExportingImageImportRows(true);
+      setActionMessage("Đang xuất file dán link ảnh theo từng SKU...");
+
+      const exportLimit = Math.max(totalProducts, products.length, 1000);
+      const result = await (getProducts as any)({
+        page: 1,
+        limit: exportLimit,
+        q: query.trim(),
+        category: groupFilter,
+        status: statusFilter,
+        branchId:
+          !isOwner && !canViewInventory && currentBranchId
+            ? currentBranchId
+            : undefined,
+      });
+
+      const exportSource = Array.isArray(result) ? result : result?.data || [];
+      const branchesForExport = visibleBranches.length ? visibleBranches : branches;
+      const rowCount = buildProductImageImportWorkbook(exportSource, branchesForExport);
+
+      setActionMessage(
+        `Đã xuất ${rowCount} dòng SKU để dán link ảnh. Mỗi dòng tương ứng một màu/size.`,
+      );
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Không xuất được file dán link ảnh.",
+      );
+    } finally {
+      setExportingImageImportRows(false);
     }
   };
 
@@ -5153,9 +5442,7 @@ export default function ProductsPageClient() {
             <div className="text-sm text-neutral-500">
               {importMode === "images" ? (
                 <>
-                  Import ảnh sản phẩm bằng Excel. Dán link Cloudinary vào cột
-                  <strong> Ảnh chính </strong> và{" "}
-                  <strong> Ảnh màu / Ảnh màu ĐEN, RÊU, XANH </strong>.
+                  Import ảnh sản phẩm bằng Excel. Nút xuất file sẽ tạo danh sách chỉ gồm tên sản phẩm, màu và 1 cột dán link ảnh.
                 </>
               ) : (
                 <>
@@ -5165,16 +5452,30 @@ export default function ProductsPageClient() {
               )}
             </div>
 
-            <Button
-              variant="secondary"
-              onClick={
-                importMode === "images"
-                  ? downloadProductImageTemplate
-                  : downloadProductTemplate
-              }
-            >
-              {importMode === "images" ? "Tải file mẫu có ảnh" : "Tải file mẫu"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {importMode === "images" ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleExportImageImportRowsExcel()}
+                  disabled={exportingImageImportRows || loading}
+                >
+                  {exportingImageImportRows
+                    ? "Đang xuất..."
+                    : "Xuất file dán ảnh theo màu"}
+                </Button>
+              ) : null}
+
+              <Button
+                variant="secondary"
+                onClick={
+                  importMode === "images"
+                    ? downloadProductImageTemplate
+                    : downloadProductTemplate
+                }
+              >
+                {importMode === "images" ? "Tải file mẫu có ảnh" : "Tải file mẫu"}
+              </Button>
+            </div>
           </div>
 
           {importMode === "images" ? (
@@ -5188,8 +5489,7 @@ export default function ProductsPageClient() {
                     1. Màu lấy theo từng dòng
                   </div>
                   <div className="mt-1 text-xs leading-5">
-                    Hệ thống đọc cột <b>Giá trị thuộc tính 1</b>. Ví dụ dòng có
-                    màu <b>ĐEN</b> thì sẽ tìm ảnh cho màu ĐEN.
+                    File xuất ảnh chỉ có <b>Tên sản phẩm</b>, <b>Màu</b> và <b>Ảnh màu</b>. Mỗi dòng là 1 sản phẩm + 1 màu.
                   </div>
                 </div>
                 <div className="rounded-2xl bg-neutral-50 p-3">
@@ -5197,9 +5497,7 @@ export default function ProductsPageClient() {
                     2. Cột ảnh theo tên màu
                   </div>
                   <div className="mt-1 text-xs leading-5">
-                    Tên cột nên là <b>Ảnh màu ĐEN</b>, <b>Ảnh màu XÁM</b>,{" "}
-                    <b>Ảnh màu RÊU</b>... Không phụ thuộc là cột K/L/M, chỉ cần
-                    đúng tiêu đề cột.
+                    Chỉ cần dán link Cloudinary vào đúng cột <b>Ảnh màu</b>. Không cần cột ảnh theo từng màu nữa.
                   </div>
                 </div>
                 <div className="rounded-2xl bg-neutral-50 p-3">
@@ -5207,8 +5505,7 @@ export default function ProductsPageClient() {
                     3. Sai màu sẽ fallback
                   </div>
                   <div className="mt-1 text-xs leading-5">
-                    Nếu màu là <b>ĐEN</b> nhưng chỉ có cột <b>Ảnh màu XÁM</b>,
-                    hệ thống không lấy nhầm; nó sẽ dùng <b>Ảnh chính</b> nếu có.
+                    Khi import, hệ thống tự tìm toàn bộ SKU/size thuộc đúng sản phẩm và đúng màu để gắn ảnh.
                   </div>
                 </div>
               </div>

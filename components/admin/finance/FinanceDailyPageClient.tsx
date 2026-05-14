@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
 
-type QuickRange = "today" | "yesterday" | "7d" | "30d" | "month" | "custom";
+type QuickRange =
+  | "today"
+  | "yesterday"
+  | "7d"
+  | "10d"
+  | "30d"
+  | "month"
+  | "custom";
 type FlowFilter =
   | "ALL"
   | "RECEIPT"
@@ -72,6 +79,12 @@ type LedgerCloseDialog = {
   note: string;
 } | null;
 
+type CashHandoverDialog = {
+  row: DailyLedgerRow;
+  amount: string;
+  note: string;
+} | null;
+
 function currency(value: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(value || 0)) + "đ";
 }
@@ -100,6 +113,12 @@ function getRange(type: QuickRange) {
   if (type === "7d") {
     const d = new Date(today);
     d.setDate(d.getDate() - 6);
+    return { from: toDateInput(d), to: toDateInput(today) };
+  }
+
+  if (type === "10d") {
+    const d = new Date(today);
+    d.setDate(d.getDate() - 9);
     return { from: toDateInput(d), to: toDateInput(today) };
   }
 
@@ -169,6 +188,35 @@ function sourceKind(row: any) {
     return "CASH";
   }
   return row?.sourceType || "OTHER";
+}
+
+function ledgerSourceKind(row: DailyLedgerRow) {
+  return sourceKind({
+    sourceType: row.sourceType,
+    sourceName: row.paymentSourceName,
+    sourceCode: row.paymentSourceCode,
+    method: row.paymentSourceId,
+  });
+}
+
+function isCashLedgerRow(row: DailyLedgerRow) {
+  const text = normalizeText(
+    [
+      row.sourceType,
+      row.paymentSourceName,
+      row.paymentSourceCode,
+      row.paymentSourceId,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  return (
+    ledgerSourceKind(row) === "CASH" ||
+    text.includes("tien mat") ||
+    text.includes("cash") ||
+    text.includes("quy tien mat")
+  );
 }
 
 function isReceiptRow(row: MoneyRow) {
@@ -289,9 +337,13 @@ function safeRows(value: unknown): MoneyRow[] {
 
 export default function FinanceDailyPageClient() {
   const initialRange = useMemo(() => getRange("today"), []);
+  const initialLedgerRange = useMemo(() => getRange("today"), []);
   const [quickRange, setQuickRange] = useState<QuickRange>("today");
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
+  const [ledgerQuickRange, setLedgerQuickRange] = useState<QuickRange>("today");
+  const [ledgerDateFrom, setLedgerDateFrom] = useState(initialLedgerRange.from);
+  const [ledgerDateTo, setLedgerDateTo] = useState(initialLedgerRange.to);
 
   const [branchId, setBranchId] = useState("ALL");
   const [paymentSourceId, setPaymentSourceId] = useState("ALL");
@@ -309,6 +361,11 @@ export default function FinanceDailyPageClient() {
   const [error, setError] = useState("");
   const [ledgerMessage, setLedgerMessage] = useState("");
   const [closeDialog, setCloseDialog] = useState<LedgerCloseDialog>(null);
+  const [cashHandoverDialog, setCashHandoverDialog] =
+    useState<CashHandoverDialog>(null);
+  const [expandedLedgerDate, setExpandedLedgerDate] = useState(() =>
+    toDateInput(new Date()),
+  );
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
@@ -316,6 +373,14 @@ export default function FinanceDailyPageClient() {
     const next = getRange(range);
     setDateFrom(next.from);
     setDateTo(next.to);
+  };
+
+  const applyLedgerQuickRange = (range: QuickRange) => {
+    setLedgerQuickRange(range);
+    if (range === "custom") return;
+    const next = getRange(range);
+    setLedgerDateFrom(next.from);
+    setLedgerDateTo(next.to);
   };
 
   const loadMeta = async () => {
@@ -357,8 +422,8 @@ export default function FinanceDailyPageClient() {
 
     try {
       const params = new URLSearchParams({
-        dateFrom,
-        dateTo,
+        dateFrom: ledgerDateFrom,
+        dateTo: ledgerDateTo,
         branchId,
         paymentSourceId,
       });
@@ -432,6 +497,121 @@ export default function FinanceDailyPageClient() {
     }
   };
 
+  const closeBranchLedgerRows = async (
+    branchName: string,
+    rowsToClose: DailyLedgerRow[],
+  ) => {
+    const closeableRows = rowsToClose.filter(
+      (row) => row.branchId && row.paymentSourceId,
+    );
+
+    if (!closeableRows.length) {
+      setError("Không có dòng nguồn tiền hợp lệ để chốt sổ chi nhánh.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Chốt sổ ${branchName} với ${closeableRows.length} nguồn tiền? Hệ thống sẽ lấy số dư cuối làm số xác nhận cho từng nguồn.`,
+    );
+    if (!ok) return;
+
+    setSavingLedger(true);
+    setError("");
+    setLedgerMessage("");
+
+    try {
+      for (const row of closeableRows) {
+        await apiJson("/finance/daily-ledger/close", {
+          method: "POST",
+          body: JSON.stringify({
+            date: row.date,
+            branchId: row.branchId,
+            paymentSourceId: row.paymentSourceId,
+            countedAmount: Number(row.countedAmount ?? row.closingBalance ?? 0),
+            note: `Admin chốt sổ chi nhánh ${branchName} ngày ${dateOnlyText(row.date)}.`,
+          }),
+        });
+      }
+
+      setLedgerMessage(`Đã chốt sổ chi nhánh ${branchName}.`);
+      await Promise.all([loadData(), loadLedger()]);
+    } catch (err: any) {
+      setError(err?.message || `Không chốt được sổ chi nhánh ${branchName}.`);
+    } finally {
+      setSavingLedger(false);
+    }
+  };
+
+  const confirmCashHandover = async () => {
+    if (!cashHandoverDialog?.row) return;
+
+    const row = cashHandoverDialog.row;
+    const amount = parseMoneyInput(cashHandoverDialog.amount);
+    const currentCash = Number(row.closingBalance || 0);
+
+    if (!row.branchId || !row.paymentSourceId) {
+      setError("Thiếu chi nhánh hoặc nguồn tiền mặt để xác nhận nộp tiền.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Nhập số tiền mặt admin đã nhận lớn hơn 0.");
+      return;
+    }
+
+    if (amount > currentCash) {
+      setError(
+        "Số tiền nộp về admin không được lớn hơn tiền mặt còn trên hệ thống.",
+      );
+      return;
+    }
+
+    setSavingLedger(true);
+    setError("");
+    setLedgerMessage("");
+
+    try {
+      const created: any = await apiJson("/finance/cash-vouchers", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "PAYMENT",
+          branchId: row.branchId,
+          paymentSourceId: row.paymentSourceId,
+          amount,
+          category: "Nộp tiền mặt về admin",
+          title: `Admin xác nhận nhận tiền mặt ${row.branchName || row.branchId || ""}`,
+          partnerName: "Admin",
+          note:
+            cashHandoverDialog.note.trim() ||
+            `Admin xác nhận đã nhận tiền mặt ngày ${dateOnlyText(row.date)}.`,
+        }),
+      });
+
+      if (!created?.id) {
+        throw new Error("Không tạo được phiếu chi nộp tiền mặt.");
+      }
+
+      await apiJson(`/finance/cash-vouchers/${created.id}/confirm`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          note:
+            cashHandoverDialog.note.trim() ||
+            `Admin đã nhận tiền mặt từ ${row.branchName || row.branchId || "chi nhánh"}.`,
+        }),
+      });
+
+      setLedgerMessage(
+        "Đã xác nhận tiền mặt nhân viên nộp về admin. Số dư tiền mặt cửa hàng đã được trừ khỏi sổ.",
+      );
+      setCashHandoverDialog(null);
+      await Promise.all([loadData(), loadLedger()]);
+    } catch (err: any) {
+      setError(err?.message || "Không xác nhận được tiền mặt nộp về admin.");
+    } finally {
+      setSavingLedger(false);
+    }
+  };
+
   useEffect(() => {
     void loadMeta();
   }, []);
@@ -439,11 +619,18 @@ export default function FinanceDailyPageClient() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadData();
-      void loadLedger();
     }, 250);
 
     return () => window.clearTimeout(timer);
   }, [dateFrom, dateTo, branchId, paymentSourceId, flow, q]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadLedger();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [ledgerDateFrom, ledgerDateTo, branchId, paymentSourceId]);
 
   const rows = useMemo(() => {
     const rawRows = safeRows(data?.payments);
@@ -595,6 +782,9 @@ export default function FinanceDailyPageClient() {
         acc.payment += Number(row.totalPayment || 0);
         acc.net += Number(row.netAmount || 0);
         acc.closing += Number(row.closingBalance || 0);
+        if (isCashLedgerRow(row)) {
+          acc.cashClosing += Number(row.closingBalance || 0);
+        }
         acc.difference += Number(row.differenceAmount || 0);
         if (String(row.status || "").toUpperCase() === "LOCKED")
           acc.locked += 1;
@@ -608,10 +798,125 @@ export default function FinanceDailyPageClient() {
         net: 0,
         closing: 0,
         difference: 0,
+        cashClosing: 0,
         locked: 0,
         open: 0,
       },
     );
+  }, [ledgerRows]);
+
+  const ledgerRowsByDate = useMemo(() => {
+    const map = new Map<string, DailyLedgerRow[]>();
+
+    ledgerRows.forEach((row) => {
+      const dateKey = String(row.date || "").slice(0, 10) || "—";
+      const current = map.get(dateKey) || [];
+      current.push(row);
+      map.set(dateKey, current);
+    });
+
+    return map;
+  }, [ledgerRows]);
+
+  const dailyLedgerRows = useMemo(() => {
+    const map = new Map<string, any>();
+
+    ledgerRows.forEach((row) => {
+      const dateKey = String(row.date || "").slice(0, 10) || "—";
+      const current = map.get(dateKey) || {
+        date: dateKey,
+        openingBalance: 0,
+        posReceiptAmount: 0,
+        manualReceiptAmount: 0,
+        manualPaymentAmount: 0,
+        totalReceipt: 0,
+        totalPayment: 0,
+        netAmount: 0,
+        closingBalance: 0,
+        cashClosingBalance: 0,
+        countedAmount: 0,
+        countedRowCount: 0,
+        differenceAmount: 0,
+        differenceRowCount: 0,
+        locked: 0,
+        open: 0,
+        rowCount: 0,
+        branches: new Set<string>(),
+        sources: new Set<string>(),
+        branchMap: new Map<string, any>(),
+      };
+
+      current.openingBalance += Number(row.openingBalance || 0);
+      current.posReceiptAmount += Number(row.posReceiptAmount || 0);
+      current.manualReceiptAmount += Number(row.manualReceiptAmount || 0);
+      current.manualPaymentAmount += Number(row.manualPaymentAmount || 0);
+      current.totalReceipt += Number(row.totalReceipt || 0);
+      current.totalPayment += Number(row.totalPayment || 0);
+      current.netAmount += Number(row.netAmount || 0);
+      current.closingBalance += Number(row.closingBalance || 0);
+      if (isCashLedgerRow(row)) {
+        current.cashClosingBalance += Number(row.closingBalance || 0);
+      }
+
+      if (row.countedAmount !== null && row.countedAmount !== undefined) {
+        current.countedAmount += Number(row.countedAmount || 0);
+        current.countedRowCount += 1;
+      }
+
+      if (row.differenceAmount !== null && row.differenceAmount !== undefined) {
+        current.differenceAmount += Number(row.differenceAmount || 0);
+        current.differenceRowCount += 1;
+      }
+
+      if (String(row.status || "").toUpperCase() === "LOCKED")
+        current.locked += 1;
+      else current.open += 1;
+
+      current.rowCount += 1;
+      const branchKey = row.branchName || row.branchId || "—";
+      current.branches.add(branchKey);
+      current.sources.add(row.paymentSourceName || row.paymentSourceId || "—");
+
+      const branchSummary = current.branchMap.get(branchKey) || {
+        branchName: branchKey,
+        openingBalance: 0,
+        totalReceipt: 0,
+        totalPayment: 0,
+        netAmount: 0,
+        closingBalance: 0,
+        cashClosingBalance: 0,
+        sourceCount: 0,
+      };
+      branchSummary.openingBalance += Number(row.openingBalance || 0);
+      branchSummary.totalReceipt += Number(row.totalReceipt || 0);
+      branchSummary.totalPayment += Number(row.totalPayment || 0);
+      branchSummary.netAmount += Number(row.netAmount || 0);
+      branchSummary.closingBalance += Number(row.closingBalance || 0);
+      if (isCashLedgerRow(row)) {
+        branchSummary.cashClosingBalance += Number(row.closingBalance || 0);
+      }
+      branchSummary.sourceCount += 1;
+      current.branchMap.set(branchKey, branchSummary);
+
+      map.set(dateKey, current);
+    });
+
+    return Array.from(map.values())
+      .map((row) => ({
+        ...row,
+        branchCount: row.branches.size,
+        sourceCount: row.sources.size,
+        branchSummaries: Array.from(row.branchMap.values()).sort(
+          (a: any, b: any) =>
+            Math.abs(Number(b.closingBalance || 0)) -
+            Math.abs(Number(a.closingBalance || 0)),
+        ),
+        branches: undefined,
+        sources: undefined,
+        branchMap: undefined,
+        status: row.open > 0 ? "OPEN" : "LOCKED",
+      }))
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   }, [ledgerRows]);
 
   const sourceTotal = Math.max(
@@ -714,6 +1019,99 @@ export default function FinanceDailyPageClient() {
                 className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {savingLedger ? "Đang chốt..." : "Xác nhận chốt ngày"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {cashHandoverDialog ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-[28px] border border-neutral-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-neutral-950">
+                  Admin xác nhận nhận tiền mặt
+                </h3>
+                <p className="mt-1 text-sm text-neutral-500">
+                  {dateOnlyText(cashHandoverDialog.row.date)} ·{" "}
+                  {cashHandoverDialog.row.branchName ||
+                    cashHandoverDialog.row.branchId ||
+                    "—"}{" "}
+                  ·{" "}
+                  {cashHandoverDialog.row.paymentSourceName ||
+                    cashHandoverDialog.row.paymentSourceId ||
+                    "—"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCashHandoverDialog(null)}
+                className="rounded-full px-3 py-1 text-xl font-semibold text-neutral-500 hover:bg-neutral-100"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-3xl bg-neutral-950 p-5 text-white">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/50">
+                Tiền mặt còn trên sổ
+              </div>
+              <div className="mt-2 text-3xl font-black tracking-tight">
+                {currency(Number(cashHandoverDialog.row.closingBalance || 0))}
+              </div>
+              <p className="mt-2 text-sm text-white/60">
+                Khi admin xác nhận đã nhận tiền, hệ thống tự tạo và xác nhận một
+                phiếu chi “Nộp tiền mặt về admin”, tiền mặt tại cửa hàng sẽ giảm
+                tương ứng.
+              </p>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <Field label="Số tiền admin đã nhận">
+                <input
+                  value={cashHandoverDialog.amount}
+                  onChange={(event) =>
+                    setCashHandoverDialog({
+                      ...cashHandoverDialog,
+                      amount: event.target.value.replace(/[^\d-]/g, ""),
+                    })
+                  }
+                  className="h-12 w-full rounded-2xl border border-neutral-200 px-4 text-sm font-semibold outline-none focus:border-neutral-400"
+                  placeholder="Nhập số tiền mặt đã nhận"
+                />
+              </Field>
+
+              <Field label="Ghi chú bàn giao">
+                <textarea
+                  value={cashHandoverDialog.note}
+                  onChange={(event) =>
+                    setCashHandoverDialog({
+                      ...cashHandoverDialog,
+                      note: event.target.value,
+                    })
+                  }
+                  className="min-h-24 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                  placeholder="Ví dụ: Mai Trang nộp tiền mặt cuối ngày cho admin, đã kiểm đủ."
+                />
+              </Field>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCashHandoverDialog(null)}
+                className="rounded-2xl border border-neutral-300 bg-white px-5 py-3 text-sm font-semibold"
+              >
+                Để sau
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmCashHandover()}
+                disabled={savingLedger}
+                className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingLedger ? "Đang xác nhận..." : "Xác nhận đã nhận tiền"}
               </button>
             </div>
           </div>
@@ -1112,18 +1510,30 @@ export default function FinanceDailyPageClient() {
         <div className="border-b border-neutral-200 p-5">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Sổ nguồn tiền theo ngày</h2>
+              <h2 className="text-lg font-semibold">
+                Bảng chốt tiền từng ngày
+              </h2>
               <p className="mt-1 text-sm text-neutral-500">
-                Mỗi ngày tự lấy số dư cuối hôm trước làm số dư đầu hôm sau.
-                POS/phiếu thu tự cộng vào thu, phiếu chi xác nhận tự trừ vào
-                chi.
+                Mỗi hàng là một ngày. Cột chi nhánh gom thành từng khung để nhìn
+                nhanh từng cửa hàng; bấm vào ngày để xổ chi tiết đúng ngày đó.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">
-                {ledgerRows.length} dòng · {ledgerSummary.locked} đã chốt ·{" "}
-                {ledgerSummary.open} đang mở
+                {dailyLedgerRows.length} ngày · {ledgerSummary.locked} mục đã
+                chốt
               </span>
+              <button
+                type="button"
+                onClick={() =>
+                  applyLedgerQuickRange(ledgerQuickRange === "month" ? "10d" : "month")
+                }
+                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                {ledgerQuickRange === "month"
+                  ? "Thu gọn 10 ngày ↑"
+                  : "Xem cả tháng ↓"}
+              </button>
               <button
                 type="button"
                 onClick={() => void loadLedger()}
@@ -1134,7 +1544,7 @@ export default function FinanceDailyPageClient() {
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             <MiniStat
               label="Tổng thu"
               value={`+${currency(ledgerSummary.receipt)}`}
@@ -1145,10 +1555,15 @@ export default function FinanceDailyPageClient() {
               value={`-${currency(ledgerSummary.payment)}`}
               tone="red"
             />
-            <MiniStat label="Net" value={currency(ledgerSummary.net)} />
+            <MiniStat label="Thu - chi" value={currency(ledgerSummary.net)} />
             <MiniStat
               label="Số dư cuối"
               value={currency(ledgerSummary.closing)}
+            />
+            <MiniStat
+              label="Tiền mặt còn tổng các chi nhánh"
+              value={currency(ledgerSummary.cashClosing)}
+              tone="dark"
             />
             <MiniStat
               label="Tổng lệch"
@@ -1162,6 +1577,56 @@ export default function FinanceDailyPageClient() {
               }
             />
           </div>
+
+          <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="mb-2 text-xs font-bold uppercase tracking-wide text-neutral-500">
+              Lọc nhanh bảng chốt tiền
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[
+                ["today", "Hôm nay"],
+                ["yesterday", "Hôm qua"],
+                ["7d", "7 ngày"],
+                ["10d", "10 ngày"],
+                ["30d", "30 ngày"],
+                ["month", "Tháng này"],
+                ["custom", "Tuỳ chỉnh"],
+              ].map(([value, label]) => (
+                <button
+                  key={`ledger-filter-${value}`}
+                  type="button"
+                  onClick={() => applyLedgerQuickRange(value as QuickRange)}
+                  className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                    ledgerQuickRange === value
+                      ? "bg-neutral-950 text-white"
+                      : "border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              <div className="ml-auto grid min-w-[320px] grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  value={ledgerDateFrom}
+                  onChange={(event) => {
+                    setLedgerQuickRange("custom");
+                    setLedgerDateFrom(event.target.value);
+                  }}
+                  className="h-9 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-700"
+                />
+                <input
+                  type="date"
+                  value={ledgerDateTo}
+                  onChange={(event) => {
+                    setLedgerQuickRange("custom");
+                    setLedgerDateTo(event.target.value);
+                  }}
+                  className="h-9 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-700"
+                />
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1169,141 +1634,536 @@ export default function FinanceDailyPageClient() {
             <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3">Ngày</th>
-                <th className="px-4 py-3">Chi nhánh</th>
-                <th className="px-4 py-3">Nguồn tiền</th>
                 <th className="px-4 py-3 text-right">Số dư đầu</th>
                 <th className="px-4 py-3 text-right">POS/Payment</th>
                 <th className="px-4 py-3 text-right">Phiếu thu</th>
                 <th className="px-4 py-3 text-right">Phiếu chi</th>
-                <th className="px-4 py-3 text-right">Net</th>
+                <th className="px-4 py-3 text-right">Thu - chi</th>
                 <th className="px-4 py-3 text-right">Số dư cuối</th>
+                <th className="px-4 py-3 text-right">Tiền mặt còn tổng các chi nhánh</th>
                 <th className="px-4 py-3 text-right">Thực đếm</th>
                 <th className="px-4 py-3 text-right">Lệch</th>
+                <th className="px-4 py-3">Chi nhánh</th>
                 <th className="px-4 py-3">Trạng thái</th>
-                <th className="px-4 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody>
-              {ledgerRows.map((row, index) => {
-                const status = String(row.status || "OPEN").toUpperCase();
-                const isLocked = status === "LOCKED";
-                const difference = Number(row.differenceAmount || 0);
+              {dailyLedgerRows.map((row) => {
+                const hasCounted = row.countedRowCount > 0;
+                const hasDifference = row.differenceRowCount > 0;
+                const isExpanded = expandedLedgerDate === row.date;
+                const detailRows = ledgerRowsByDate.get(row.date) || [];
 
                 return (
-                  <tr
-                    key={`${row.date}-${row.branchId}-${row.paymentSourceId}-${index}`}
-                    className="border-t border-neutral-100 align-top"
-                  >
-                    <td className="px-4 py-3 whitespace-nowrap font-semibold">
-                      {dateOnlyText(row.date)}
-                    </td>
-                    <td className="px-4 py-3">
-                      {row.branchName || row.branchId || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-semibold">
-                        {row.paymentSourceName ||
-                          row.paymentSourceCode ||
-                          row.paymentSourceId ||
-                          "—"}
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        {row.sourceType || "—"}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {currency(Number(row.openingBalance || 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right text-emerald-700">
-                      +{currency(Number(row.posReceiptAmount || 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right text-emerald-700">
-                      +{currency(Number(row.manualReceiptAmount || 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right text-red-700">
-                      -{currency(Number(row.manualPaymentAmount || 0))}
-                    </td>
-                    <td
-                      className={`px-4 py-3 text-right font-semibold ${Number(row.netAmount || 0) >= 0 ? "text-emerald-700" : "text-red-700"}`}
+                  <Fragment key={row.date}>
+                    <tr
+                      className={`cursor-pointer border-t border-neutral-100 align-top hover:bg-neutral-50 ${isExpanded ? "bg-neutral-50" : ""}`}
+                      onClick={() =>
+                        setExpandedLedgerDate(isExpanded ? "" : row.date)
+                      }
                     >
-                      {currency(Number(row.netAmount || 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold">
-                      {currency(Number(row.closingBalance || 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {row.countedAmount === null ||
-                      row.countedAmount === undefined
-                        ? "—"
-                        : currency(Number(row.countedAmount || 0))}
-                    </td>
-                    <td
-                      className={`px-4 py-3 text-right font-semibold ${differenceClass(difference)}`}
-                    >
-                      {row.differenceAmount === null ||
-                      row.differenceAmount === undefined
-                        ? "—"
-                        : currency(difference)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${ledgerStatusClass(row.status)}`}
-                      >
-                        {ledgerStatusLabel(row.status)}
-                      </span>
-                      {row.lockedByName ? (
-                        <div className="mt-1 text-xs text-neutral-500">
-                          {row.lockedByName}
+                      <td className="px-4 py-3 whitespace-nowrap font-semibold">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-xs">
+                            {isExpanded ? "−" : "+"}
+                          </span>
+                          <span>{dateOnlyText(row.date)}</span>
                         </div>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          disabled={savingLedger}
-                          onClick={() =>
-                            setCloseDialog({
-                              row,
-                              countedAmount: String(
-                                Math.round(
-                                  Number(
-                                    row.countedAmount ??
-                                      row.closingBalance ??
-                                      0,
-                                  ),
-                                ),
-                              ),
-                              note: row.note || "",
-                            })
-                          }
-                          className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold hover:bg-neutral-50 disabled:opacity-50"
+                        <div className="mt-1 text-xs font-normal text-neutral-500">
+                          Bấm để {isExpanded ? "thu gọn" : "xem chi tiết"}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {currency(Number(row.openingBalance || 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-emerald-700">
+                        +{currency(Number(row.posReceiptAmount || 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-emerald-700">
+                        +{currency(Number(row.manualReceiptAmount || 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-red-700">
+                        -{currency(Number(row.manualPaymentAmount || 0))}
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right font-semibold ${Number(row.netAmount || 0) >= 0 ? "text-emerald-700" : "text-red-700"}`}
+                      >
+                        {currency(Number(row.netAmount || 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-base font-bold text-neutral-950">
+                        {currency(Number(row.closingBalance || 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="inline-flex rounded-xl bg-neutral-950 px-3 py-1.5 text-xs font-bold text-white shadow-sm">
+                          {currency(Number(row.cashClosingBalance || 0))}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {hasCounted
+                          ? currency(Number(row.countedAmount || 0))
+                          : "—"}
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right font-semibold ${differenceClass(row.differenceAmount)}`}
+                      >
+                        {hasDifference
+                          ? currency(Number(row.differenceAmount || 0))
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-neutral-600">
+                        <div className="flex max-w-[340px] flex-wrap gap-1.5">
+                          {(row.branchSummaries || [])
+                            .slice(0, 4)
+                            .map((branch: any) => (
+                              <span
+                                key={branch.branchName}
+                                className="inline-flex min-w-[165px] flex-col rounded-3xl border border-neutral-950 bg-neutral-950 px-5 py-4 font-bold text-white shadow-lg"
+                              >
+                                <span className="text-xs uppercase tracking-wide text-white/70">
+                                  {branch.branchName}
+                                </span>
+                                <span className="mt-1 text-base font-black">
+                                  {currency(Number(branch.closingBalance || 0))}
+                                </span>
+                                <span className="mt-1 text-base font-black text-white/85">
+                                  TM{" "}
+                                  {currency(
+                                    Number(branch.cashClosingBalance || 0),
+                                  )}
+                                </span>
+                              </span>
+                            ))}
+                          {(row.branchSummaries || []).length > 4 ? (
+                            <span className="inline-flex rounded-full bg-neutral-100 px-2 py-1 font-semibold text-neutral-500">
+                              +{(row.branchSummaries || []).length - 4} CN
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-neutral-400">
+                          {row.branchCount} chi nhánh · {row.sourceCount} nguồn
+                          tiền · bấm dòng để xem chi tiết
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${ledgerStatusClass(row.status)}`}
                         >
-                          {isLocked ? "Chốt lại" : "Chốt ngày"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!isLocked || savingLedger}
-                          onClick={() => void reopenLedgerDay(row)}
-                          className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-40"
-                        >
-                          Mở lại
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                          {row.open > 0 ? "Cần chốt sổ" : "Đã chốt"}
+                        </span>
+                        {row.open > 0 ? (
+                          <div className="mt-1 text-xs text-neutral-500">
+                            Mở chi tiết để chốt từng quỹ
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+
+                    {isExpanded ? (
+                      <tr className="border-t border-neutral-100 bg-neutral-50/70">
+                        <td colSpan={12} className="px-0 py-4">
+                          <div className="bg-transparent">
+                            <div className="flex flex-col gap-2 px-4 pb-4 md:flex-row md:items-center md:justify-between">
+                              <div>
+                                <div className="text-sm font-bold text-neutral-950">
+                                  Chi tiết ngày {dateOnlyText(row.date)}
+                                </div>
+                                <div className="mt-1 text-xs text-neutral-500">
+                                  Mỗi dòng là một chi nhánh + một nguồn tiền.
+                                  Chỉ mở ngày đang cần soi để màn không bị kéo
+                                  dài.
+                                </div>
+                              </div>
+                              <div className="text-xs font-semibold text-neutral-500">
+                                {detailRows.length} dòng chi tiết
+                              </div>
+                            </div>
+
+                            <div className="space-y-4 px-4">
+                              {Array.from(
+                                detailRows
+                                  .reduce((groupMap, detailRow) => {
+                                    const key =
+                                      detailRow.branchName ||
+                                      detailRow.branchId ||
+                                      "—";
+                                    const current = groupMap.get(key) || {
+                                      branchName: key,
+                                      rows: [] as DailyLedgerRow[],
+                                      closingBalance: 0,
+                                      cashClosingBalance: 0,
+                                      totalReceipt: 0,
+                                      totalPayment: 0,
+                                      netAmount: 0,
+                                    };
+
+                                    current.rows.push(detailRow);
+                                    current.closingBalance += Number(
+                                      detailRow.closingBalance || 0,
+                                    );
+                                    current.totalReceipt += Number(
+                                      detailRow.totalReceipt || 0,
+                                    );
+                                    current.totalPayment += Number(
+                                      detailRow.totalPayment || 0,
+                                    );
+                                    current.netAmount += Number(
+                                      detailRow.netAmount || 0,
+                                    );
+                                    if (isCashLedgerRow(detailRow)) {
+                                      current.cashClosingBalance += Number(
+                                        detailRow.closingBalance || 0,
+                                      );
+                                    }
+                                    groupMap.set(key, current);
+                                    return groupMap;
+                                  }, new Map<string, any>())
+                                  .values(),
+                              ).map((branchGroup: any) => (
+                                <div
+                                  key={branchGroup.branchName}
+                                  className="overflow-hidden rounded-3xl border border-neutral-900 bg-white shadow-sm"
+                                >
+                                  <div className="flex flex-col gap-3 bg-neutral-950 px-4 py-3 text-white md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                      <div className="text-sm font-black uppercase tracking-wide">
+                                        {branchGroup.branchName}
+                                      </div>
+                                      <div className="mt-1 text-xs text-white/60">
+                                        {branchGroup.rows.length} nguồn tiền
+                                        trong ngày
+                                      </div>
+                                    </div>
+                                    <div className="grid gap-2 text-xs sm:grid-cols-4">
+                                      <div className="rounded-2xl bg-white/10 px-3 py-2">
+                                        <div className="text-white/50">
+                                          Tổng thu
+                                        </div>
+                                        <div className="font-bold text-emerald-200">
+                                          +{currency(branchGroup.totalReceipt)}
+                                        </div>
+                                      </div>
+                                      <div className="rounded-2xl bg-white/10 px-3 py-2">
+                                        <div className="text-white/50">
+                                          Tổng chi
+                                        </div>
+                                        <div className="font-bold text-red-200">
+                                          -{currency(branchGroup.totalPayment)}
+                                        </div>
+                                      </div>
+                                      <div className="rounded-2xl bg-white/10 px-3 py-2">
+                                        <div className="text-white/50">
+                                          Số dư cuối
+                                        </div>
+                                        <div className="font-bold">
+                                          {currency(branchGroup.closingBalance)}
+                                        </div>
+                                      </div>
+                                      <div className="rounded-2xl bg-white px-3 py-2 text-neutral-950">
+                                        <div className="text-neutral-500">
+                                          Tiền mặt còn
+                                        </div>
+                                        <div className="font-black">
+                                          {currency(
+                                            branchGroup.cashClosingBalance,
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={savingLedger}
+                                        onClick={() =>
+                                          void closeBranchLedgerRows(
+                                            branchGroup.branchName,
+                                            branchGroup.rows,
+                                          )
+                                        }
+                                        className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-xs font-black text-white shadow-sm hover:bg-white/15 disabled:opacity-50"
+                                      >
+                                        Chốt sổ chi nhánh
+                                      </button>
+                                      {branchGroup.cashClosingBalance > 0 ? (
+                                        <button
+                                          type="button"
+                                          disabled={savingLedger}
+                                          onClick={() => {
+                                            const cashRow =
+                                              branchGroup.rows.find(
+                                                (item: DailyLedgerRow) =>
+                                                  isCashLedgerRow(item) &&
+                                                  Number(
+                                                    item.closingBalance || 0,
+                                                  ) > 0,
+                                              ) ||
+                                              branchGroup.rows.find(
+                                                (item: DailyLedgerRow) =>
+                                                  isCashLedgerRow(item),
+                                              );
+
+                                            if (!cashRow) {
+                                              setError(
+                                                "Không tìm thấy nguồn tiền mặt của chi nhánh này.",
+                                              );
+                                              return;
+                                            }
+
+                                            setCashHandoverDialog({
+                                              row: cashRow,
+                                              amount: String(
+                                                Math.round(
+                                                  Number(
+                                                    branchGroup.cashClosingBalance ||
+                                                      0,
+                                                  ),
+                                                ),
+                                              ),
+                                              note: `Admin xác nhận nhận tiền mặt từ ${branchGroup.branchName} ngày ${dateOnlyText(row.date)}.`,
+                                            });
+                                          }}
+                                          className="rounded-2xl border border-white/20 bg-white px-4 py-3 text-xs font-black text-neutral-950 shadow-sm hover:bg-neutral-100 disabled:opacity-50"
+                                        >
+                                          Admin nhận tiền mặt
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </div>
+
+                                  <div className="overflow-x-auto">
+                                    <table className="min-w-[1180px] w-full text-xs">
+                                      <thead className="bg-neutral-50 text-left uppercase tracking-wide text-neutral-500">
+                                        <tr>
+                                          <th className="px-3 py-2">
+                                            Nguồn tiền
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Số dư đầu
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            POS/Payment
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Phiếu thu
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Phiếu chi
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Thu - chi
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Số dư cuối
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Thực đếm
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Lệch
+                                          </th>
+                                          <th className="px-3 py-2">
+                                            Trạng thái
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Thao tác
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {branchGroup.rows.map(
+                                          (
+                                            detailRow: DailyLedgerRow,
+                                            index: number,
+                                          ) => {
+                                            const status = String(
+                                              detailRow.status || "OPEN",
+                                            ).toUpperCase();
+                                            const isLocked =
+                                              status === "LOCKED";
+                                            const difference = Number(
+                                              detailRow.differenceAmount || 0,
+                                            );
+
+                                            return (
+                                              <tr
+                                                key={`${detailRow.date}-${detailRow.branchId}-${detailRow.paymentSourceId}-${index}`}
+                                                className="border-t border-neutral-100 align-top"
+                                              >
+                                                <td className="px-3 py-2">
+                                                  <div className="font-semibold">
+                                                    {detailRow.paymentSourceName ||
+                                                      detailRow.paymentSourceCode ||
+                                                      detailRow.paymentSourceId ||
+                                                      "—"}
+                                                  </div>
+                                                  <div className="text-[11px] text-neutral-500">
+                                                    {detailRow.sourceType ||
+                                                      ledgerSourceKind(
+                                                        detailRow,
+                                                      ) ||
+                                                      "—"}
+                                                  </div>
+                                                </td>
+                                                <td className="px-3 py-2 text-right">
+                                                  {currency(
+                                                    Number(
+                                                      detailRow.openingBalance ||
+                                                        0,
+                                                    ),
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2 text-right text-emerald-700">
+                                                  +
+                                                  {currency(
+                                                    Number(
+                                                      detailRow.posReceiptAmount ||
+                                                        0,
+                                                    ),
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2 text-right text-emerald-700">
+                                                  +
+                                                  {currency(
+                                                    Number(
+                                                      detailRow.manualReceiptAmount ||
+                                                        0,
+                                                    ),
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2 text-right text-red-700">
+                                                  -
+                                                  {currency(
+                                                    Number(
+                                                      detailRow.manualPaymentAmount ||
+                                                        0,
+                                                    ),
+                                                  )}
+                                                </td>
+                                                <td
+                                                  className={`px-3 py-2 text-right font-semibold ${Number(detailRow.netAmount || 0) >= 0 ? "text-emerald-700" : "text-red-700"}`}
+                                                >
+                                                  {currency(
+                                                    Number(
+                                                      detailRow.netAmount || 0,
+                                                    ),
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-bold text-neutral-950">
+                                                  {currency(
+                                                    Number(
+                                                      detailRow.closingBalance ||
+                                                        0,
+                                                    ),
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2 text-right">
+                                                  {detailRow.countedAmount ===
+                                                    null ||
+                                                  detailRow.countedAmount ===
+                                                    undefined
+                                                    ? "—"
+                                                    : currency(
+                                                        Number(
+                                                          detailRow.countedAmount ||
+                                                            0,
+                                                        ),
+                                                      )}
+                                                </td>
+                                                <td
+                                                  className={`px-3 py-2 text-right font-semibold ${differenceClass(difference)}`}
+                                                >
+                                                  {detailRow.differenceAmount ===
+                                                    null ||
+                                                  detailRow.differenceAmount ===
+                                                    undefined
+                                                    ? "—"
+                                                    : currency(difference)}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                  <span
+                                                    className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${ledgerStatusClass(detailRow.status)}`}
+                                                  >
+                                                    {ledgerStatusLabel(
+                                                      detailRow.status,
+                                                    )}
+                                                  </span>
+                                                  {detailRow.lockedByName ? (
+                                                    <div className="mt-1 text-[11px] text-neutral-500">
+                                                      {detailRow.lockedByName}
+                                                    </div>
+                                                  ) : null}
+                                                </td>
+                                                <td className="px-3 py-2 text-right">
+                                                  <div className="flex justify-end gap-2">
+                                                    <button
+                                                      type="button"
+                                                      disabled={savingLedger}
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        setCloseDialog({
+                                                          row: detailRow,
+                                                          countedAmount: String(
+                                                            Math.round(
+                                                              Number(
+                                                                detailRow.countedAmount ??
+                                                                  detailRow.closingBalance ??
+                                                                  0,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          note:
+                                                            detailRow.note ||
+                                                            "",
+                                                        });
+                                                      }}
+                                                      className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-[11px] font-semibold hover:bg-neutral-50 disabled:opacity-50"
+                                                    >
+                                                      {isLocked
+                                                        ? "Chốt lại"
+                                                        : "Chốt sổ"}
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      disabled={
+                                                        !isLocked ||
+                                                        savingLedger
+                                                      }
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        void reopenLedgerDay(
+                                                          detailRow,
+                                                        );
+                                                      }}
+                                                      className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700 disabled:opacity-40"
+                                                    >
+                                                      Mở lại
+                                                    </button>
+                                                  </div>
+                                                </td>
+                                              </tr>
+                                            );
+                                          },
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
 
-              {!ledgerRows.length ? (
+              {!dailyLedgerRows.length ? (
                 <tr>
                   <td
-                    colSpan={13}
+                    colSpan={12}
                     className="px-4 py-10 text-center text-neutral-500"
                   >
-                    Chưa có sổ ngày trong khoảng lọc. Kiểm tra lại backend{" "}
-                    <b>/finance/daily-ledger</b> hoặc bộ lọc chi nhánh/nguồn
-                    tiền.
+                    Chưa có dữ liệu sổ ngày trong khoảng lọc.
                   </td>
                 </tr>
               ) : null}
@@ -1327,9 +2187,60 @@ export default function FinanceDailyPageClient() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="border-b border-neutral-100 bg-neutral-50/60 p-4">
+          <div className="mb-2 text-xs font-bold uppercase tracking-wide text-neutral-500">
+            Bộ lọc nhanh bảng giao dịch
+          </div>
+          <div className="grid gap-3 xl:grid-cols-[1fr_220px_220px_180px]">
+            <input
+              value={q}
+              onChange={(event) => setQ(event.target.value)}
+              placeholder="Tìm mã đơn, phiếu, khách, SĐT, nguồn tiền, ghi chú..."
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            />
+            <select
+              value={flow}
+              onChange={(event) => setFlow(event.target.value as FlowFilter)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            >
+              <option value="ALL">Tất cả dòng tiền</option>
+              <option value="RECEIPT">Chỉ tiền vào</option>
+              <option value="PAYMENT">Chỉ tiền ra</option>
+              <option value="POS">Bán lẻ POS hoàn thành</option>
+              <option value="TRANSFER">Chuyển khoản / cọc</option>
+              <option value="CASH">Tiền mặt</option>
+              <option value="BANK">Ngân hàng</option>
+              <option value="OTHER">Nguồn khác</option>
+            </select>
+            <select
+              value={staffFilter}
+              onChange={(event) => setStaffFilter(event.target.value)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            >
+              <option value="ALL">Tất cả nhân viên</option>
+              {staffOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                setFlow("ALL");
+                setStaffFilter("ALL");
+                setQ("");
+              }}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold hover:bg-neutral-50"
+            >
+              Xoá lọc giao dịch
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[620px] overflow-auto">
           <table className="min-w-full text-sm">
-            <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
+            <thead className="sticky top-0 z-10 bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3">Thời gian</th>
                 <th className="px-4 py-3">Mã</th>
@@ -1443,18 +2354,24 @@ function MiniStat({
 }: {
   label: string;
   value: string;
-  tone?: "neutral" | "green" | "red";
+  tone?: "neutral" | "green" | "red" | "dark";
 }) {
   const toneClass =
     tone === "green"
       ? "text-emerald-700"
       : tone === "red"
         ? "text-red-700"
-        : "text-neutral-950";
+        : tone === "dark"
+          ? "text-white"
+          : "text-neutral-950";
 
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+    <div
+      className={`rounded-2xl border p-4 ${tone === "dark" ? "border-neutral-950 bg-neutral-950" : "border-neutral-200 bg-white"}`}
+    >
+      <p
+        className={`text-xs font-semibold uppercase tracking-wide ${tone === "dark" ? "text-white/50" : "text-neutral-400"}`}
+      >
         {label}
       </p>
       <p className={`mt-2 text-lg font-semibold ${toneClass}`}>{value}</p>
