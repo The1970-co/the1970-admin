@@ -743,6 +743,7 @@ export default function StocktakePageClient() {
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const lastScanAtRef = useRef(0);
+  const scanRefreshTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const currentUser = getCurrentUserFromStorage();
@@ -1895,8 +1896,15 @@ export default function StocktakePageClient() {
       window.setTimeout(() => {
         // Chỉ đồng bộ lại sau khi backend có thời gian ghi xong; nếu scan liên tiếp thì không đè UI lạc quan.
         if (Date.now() - lastScanAtRef.current < 2400) return;
+      if (scanRefreshTimerRef.current) {
+        window.clearTimeout(scanRefreshTimerRef.current);
+      }
+
+      scanRefreshTimerRef.current = window.setTimeout(() => {
+        if (!session?.id || !worker?.id) return;
         void refreshSession(session.id, { silent: true });
         void refreshWorkerSummary(session.id, worker.id);
+      }, 1800);
       }, 2500);
       window.setTimeout(() => scanInputRef.current?.focus(), 20);
     } catch (err) {
@@ -2048,9 +2056,15 @@ export default function StocktakePageClient() {
         workerId: worker.id,
         branchId,
       });
+      if (scanRefreshTimerRef.current) {
+        window.clearTimeout(scanRefreshTimerRef.current);
+      }
 
-      await refreshSession(session.id);
-      await refreshWorkerSummary(session.id, worker.id);
+      scanRefreshTimerRef.current = window.setTimeout(() => {
+        if (!session?.id || !worker?.id) return;
+        void refreshSession(session.id, { silent: true });
+        void refreshWorkerSummary(session.id, worker.id);
+      }, 1800);
       setScanCode("");
       setShowSuggestions(false);
 
