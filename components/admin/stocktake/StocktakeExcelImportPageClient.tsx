@@ -475,7 +475,27 @@ export default function StocktakeExcelImportPageClient() {
       return;
     }
 
-    if (savedSessionId) void loadSession(savedSessionId, savedWorkerId);
+    if (savedSessionId) {
+      void loadSession(savedSessionId, savedWorkerId);
+      return;
+    }
+
+    const autoBranchId = savedBranchId || user?.branchId || "";
+    const query = autoBranchId ? `?branchId=${encodeURIComponent(autoBranchId)}` : "";
+    setMessage("Đang tìm phiên kiểm đang mở để tải vào trang Excel...");
+    void apiRequest<RealtimeSession | null>(`/stocktake-sessions/active/current${query}`)
+      .then((active) => {
+        if (!active?.id) {
+          setMessage("Chưa tải phiên kiểm. Hãy tạo phiên tổng ở màn realtime trước rồi bấm tải phiên tại đây.");
+          return;
+        }
+        const firstWorkerId = active.workers?.[0]?.id || "";
+        setSessionIdInput(active.id);
+        setWorkerId(firstWorkerId);
+        saveResumeState({ sessionId: active.id, workerId: firstWorkerId, branchId: active.branchId });
+        void loadSession(active.id, firstWorkerId);
+      })
+      .catch(() => setMessage("Chưa tải phiên kiểm. Hãy tạo phiên tổng ở màn realtime trước rồi bấm tải phiên tại đây."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -676,13 +696,38 @@ export default function StocktakeExcelImportPageClient() {
     await loadSummary(session.id);
   }
 
+  async function ensureExcelWorkerId() {
+    if (!session?.id) return "";
+    if (workerId) return workerId;
+
+    const existingWorkerId = session.workers?.[0]?.id || "";
+    if (existingWorkerId) {
+      setWorkerId(existingWorkerId);
+      saveResumeState({ sessionId: session.id, workerId: existingWorkerId, branchId: session.branchId });
+      return existingWorkerId;
+    }
+
+    const joined = await apiRequest<RealtimeWorker>(`/stocktake-sessions/${session.id}/join`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: workerName || "Người import Excel",
+        zone: workerZone || "Khu chính",
+        deviceName: deviceName || "Máy import Excel",
+      }),
+    });
+
+    setWorkerId(joined.id);
+    saveResumeState({ sessionId: session.id, workerId: joined.id, branchId: session.branchId });
+    return joined.id;
+  }
+
   async function importRows() {
     if (!canImport) {
       setMessage("Bạn không có quyền upload/ghi số lượng kiểm kho.");
       return;
     }
-    if (!session?.id || !workerId) {
-      setMessage("Cần có phiên kiểm và phiên con/máy scan trước khi import.");
+    if (!session?.id) {
+      setMessage("Cần có phiên kiểm trước khi import.");
       return;
     }
     if (paused) {
@@ -693,6 +738,13 @@ export default function StocktakeExcelImportPageClient() {
       setMessage("Phiên đã đóng, không thể import Excel.");
       return;
     }
+
+    const finalWorkerId = await ensureExcelWorkerId();
+    if (!finalWorkerId) {
+      setMessage("Không tạo được phiên con/máy import Excel cho phiên này.");
+      return;
+    }
+
     if (!rows.length) {
       setMessage("Chưa có dòng Excel hợp lệ để import.");
       return;
@@ -730,7 +782,7 @@ export default function StocktakeExcelImportPageClient() {
             method: "POST",
             body: JSON.stringify({
               sessionId: session.id,
-              workerId,
+              workerId: finalWorkerId,
               branchId: session.branchId,
               code: sku,
               zone: selectedWorker?.zone || workerZone || "Khu chính",
@@ -750,7 +802,7 @@ export default function StocktakeExcelImportPageClient() {
         }
       }
 
-      saveResumeState({ sessionId: session.id, workerId, branchId: session.branchId });
+      saveResumeState({ sessionId: session.id, workerId: finalWorkerId, branchId: session.branchId });
       await refreshWorkerSummaryAfterChange();
       setMessage(`Import Excel xong: ${rows.length - failed - skipped} dòng đã ghi, ${skipped} dòng không đổi, ${failed} dòng lỗi.${failedSamples.length ? ` Lỗi mẫu: ${failedSamples.join(" | ")}` : ""}`);
     } catch (err) {
@@ -970,7 +1022,7 @@ export default function StocktakeExcelImportPageClient() {
 
             {importing ? <div className="mt-4 rounded-xl bg-white px-4 py-3 text-sm font-extrabold text-blue-700">Đang ghi {progress.done}/{progress.total} dòng vào phiên kiểm...</div> : null}
 
-            <button type="button" onClick={() => void importRows()} disabled={!session || !workerId || paused || closed || importing || !rows.length || !canImport} className="mt-4 w-full rounded-xl bg-blue-700 px-4 py-3 text-sm font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-neutral-300">
+            <button type="button" onClick={() => void importRows()} disabled={!session || closed || importing || !rows.length || !canImport} className="mt-4 w-full rounded-xl bg-blue-700 px-4 py-3 text-sm font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-neutral-300">
               {importing ? "Đang import Excel..." : "Ghi Excel vào phiên kiểm"}
             </button>
 

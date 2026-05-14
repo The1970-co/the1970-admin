@@ -674,6 +674,7 @@ export default function StocktakePageClient() {
   const [finishingOnly, setFinishingOnly] = useState(false);
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const lastScanAtRef = useRef(0);
 
   useEffect(() => {
     const currentUser = getCurrentUserFromStorage();
@@ -1267,6 +1268,8 @@ export default function StocktakePageClient() {
     if (!session?.id) return;
 
     const timer = window.setInterval(() => {
+      // Không refresh đè ngay sau khi máy tít vừa scan, tránh dòng vừa hiện bị nháy mất.
+      if (Date.now() - lastScanAtRef.current < 2500) return;
       void refreshSession(session.id, { silent: true });
     }, 6000);
 
@@ -1351,7 +1354,8 @@ export default function StocktakePageClient() {
   };
 
   const loadJoinableSessions = async (targetBranchId?: string) => {
-    const finalBranchId = targetBranchId || branchId || currentBranchId || "";
+    // Admin/Owner cần xem toàn bộ phiên tổng đang mở. Dùng __ALL__ để không bị fallback về branchId hiện tại.
+    const finalBranchId = targetBranchId === "__ALL__" ? "" : targetBranchId || branchId || currentBranchId || "";
 
     try {
       setLoadingJoinableSessions(true);
@@ -1394,7 +1398,7 @@ export default function StocktakePageClient() {
     setJoinWorkerZone(scanZone || "Khu chính");
     setJoinDeviceName(deviceName || "Máy scan 1");
     setJoinModalOpen(true);
-    void loadJoinableSessions(isOwner ? undefined : (branchId || currentBranchId || undefined));
+    void loadJoinableSessions(isOwner ? "__ALL__" : (branchId || currentBranchId || undefined));
   };
 
   const joinExistingSession = async () => {
@@ -1672,6 +1676,7 @@ export default function StocktakePageClient() {
       }
 
       const finalCode = variant.sku;
+      lastScanAtRef.current = Date.now();
 
       // Cập nhật UI ngay khi mã hợp lệ để máy tít phản hồi tức thì; DB ghi nền phía sau.
       applyOptimisticScanRow(variant, qtyDelta, worker.id);
@@ -1709,8 +1714,12 @@ export default function StocktakePageClient() {
       });
       setMessage(`${qtyDelta > 0 ? "Đã lưu" : "Đã trừ"} ${scannedSku}`);
 
-      void refreshSession(session.id, { silent: true });
-      void refreshWorkerSummary(session.id, worker.id);
+      window.setTimeout(() => {
+        // Chỉ đồng bộ lại sau khi backend có thời gian ghi xong; nếu scan liên tiếp thì không đè UI lạc quan.
+        if (Date.now() - lastScanAtRef.current < 2400) return;
+        void refreshSession(session.id, { silent: true });
+        void refreshWorkerSummary(session.id, worker.id);
+      }, 2500);
       window.setTimeout(() => scanInputRef.current?.focus(), 20);
     } catch (err) {
       setMessage(err instanceof Error ? `${err.message} · dữ liệu sẽ được refresh lại` : "Scan lỗi.");
@@ -1975,7 +1984,7 @@ export default function StocktakePageClient() {
 
   useEffect(() => {
     if (!currentUser) return;
-    void loadJoinableSessions(isOwner ? undefined : (branchId || currentBranchId || undefined));
+    void loadJoinableSessions(isOwner ? "__ALL__" : (branchId || currentBranchId || undefined));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, branchId, currentBranchId, isOwner]);
 
