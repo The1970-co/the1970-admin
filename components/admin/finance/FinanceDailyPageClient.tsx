@@ -239,31 +239,47 @@ function canonicalSourceKey(row: any, branchName: string) {
 }
 
 function mergeLedgerAmount(target: DailyLedgerRow, source: DailyLedgerRow) {
-  target.openingBalance = Number(target.openingBalance || 0) + Number(source.openingBalance || 0);
-  target.posReceiptAmount = Number(target.posReceiptAmount || 0) + Number(source.posReceiptAmount || 0);
-  target.manualReceiptAmount = Number(target.manualReceiptAmount || 0) + Number(source.manualReceiptAmount || 0);
-  target.manualPaymentAmount = Number(target.manualPaymentAmount || 0) + Number(source.manualPaymentAmount || 0);
-  target.totalReceipt = Number(target.totalReceipt || 0) + Number(source.totalReceipt || 0);
-  target.totalPayment = Number(target.totalPayment || 0) + Number(source.totalPayment || 0);
-  target.netAmount = Number(target.totalReceipt || 0) - Number(target.totalPayment || 0);
-  target.closingBalance = Number(target.openingBalance || 0) + Number(target.netAmount || 0);
+  const normalizedSource = normalizeLedgerRowAmounts(source);
 
-  if (source.countedAmount !== null && source.countedAmount !== undefined) {
-    target.countedAmount = Number(target.countedAmount || 0) + Number(source.countedAmount || 0);
+  target.openingBalance =
+    Number(target.openingBalance || 0) + Number(normalizedSource.openingBalance || 0);
+  target.posReceiptAmount =
+    Number(target.posReceiptAmount || 0) + Number(normalizedSource.posReceiptAmount || 0);
+  target.manualReceiptAmount =
+    Number(target.manualReceiptAmount || 0) +
+    Number(normalizedSource.manualReceiptAmount || 0);
+  target.manualPaymentAmount =
+    Number(target.manualPaymentAmount || 0) +
+    Number(normalizedSource.manualPaymentAmount || 0);
+
+  target.totalReceipt =
+    Number(target.posReceiptAmount || 0) +
+    Number(target.manualReceiptAmount || 0);
+  target.totalPayment = Number(target.manualPaymentAmount || 0);
+  target.netAmount =
+    Number(target.totalReceipt || 0) - Number(target.totalPayment || 0);
+  target.closingBalance =
+    Number(target.openingBalance || 0) + Number(target.netAmount || 0);
+
+  if (
+    normalizedSource.countedAmount !== null &&
+    normalizedSource.countedAmount !== undefined
+  ) {
+    target.countedAmount = Number(normalizedSource.countedAmount || 0);
+    target.differenceAmount =
+      Number(target.countedAmount || 0) - Number(target.closingBalance || 0);
   }
 
-  if (source.differenceAmount !== null && source.differenceAmount !== undefined) {
-    target.differenceAmount = Number(target.differenceAmount || 0) + Number(source.differenceAmount || 0);
-  }
-
-  if (String(source.status || "").toUpperCase() === "LOCKED") {
+  if (String(normalizedSource.status || "").toUpperCase() === "LOCKED") {
     target.status = "LOCKED";
   }
 
-  if (!target.branchId && source.branchId) target.branchId = source.branchId;
-  if (!target.paymentSourceId && source.paymentSourceId) target.paymentSourceId = source.paymentSourceId;
-  if (!target.paymentSourceCode && source.paymentSourceCode) target.paymentSourceCode = source.paymentSourceCode;
-  if (source.isSyntheticLive) target.isSyntheticLive = target.isSyntheticLive || false;
+  if (!target.branchId && normalizedSource.branchId) target.branchId = normalizedSource.branchId;
+  if (!target.paymentSourceId && normalizedSource.paymentSourceId)
+    target.paymentSourceId = normalizedSource.paymentSourceId;
+  if (!target.paymentSourceCode && normalizedSource.paymentSourceCode)
+    target.paymentSourceCode = normalizedSource.paymentSourceCode;
+  if (normalizedSource.isSyntheticLive) target.isSyntheticLive = target.isSyntheticLive || false;
 }
 
 function branchSortWeight(name: unknown) {
@@ -475,6 +491,49 @@ function safeLedgerRows(value: unknown): DailyLedgerRow[] {
 
 function safeRows(value: unknown): MoneyRow[] {
   return Array.isArray(value) ? (value as MoneyRow[]) : [];
+}
+
+function normalizeLedgerRowAmounts(row: DailyLedgerRow): DailyLedgerRow {
+  const openingBalance = Number(row.openingBalance || 0);
+  const posReceiptAmount = Number(row.posReceiptAmount || 0);
+  const manualReceiptAmount = Number(row.manualReceiptAmount || 0);
+  const manualPaymentAmount = Number(row.manualPaymentAmount || 0);
+  const componentReceipt = posReceiptAmount + manualReceiptAmount;
+  const componentPayment = manualPaymentAmount;
+  const hasComponentBreakdown =
+    componentReceipt !== 0 || componentPayment !== 0;
+
+  const totalReceipt = hasComponentBreakdown
+    ? componentReceipt
+    : Number(row.totalReceipt || 0);
+  const totalPayment = hasComponentBreakdown
+    ? componentPayment
+    : Number(row.totalPayment || 0);
+  const netAmount = totalReceipt - totalPayment;
+  const closingBalance = openingBalance + netAmount;
+
+  const countedAmount =
+    row.countedAmount === null || row.countedAmount === undefined
+      ? row.countedAmount
+      : Number(row.countedAmount || 0);
+  const differenceAmount =
+    countedAmount === null || countedAmount === undefined
+      ? row.differenceAmount
+      : Number(countedAmount || 0) - closingBalance;
+
+  return {
+    ...row,
+    openingBalance,
+    posReceiptAmount,
+    manualReceiptAmount,
+    manualPaymentAmount,
+    totalReceipt,
+    totalPayment,
+    netAmount,
+    closingBalance,
+    countedAmount,
+    differenceAmount,
+  };
 }
 
 function rowDateKey(row: MoneyRow) {
@@ -1083,14 +1142,16 @@ export default function FinanceDailyPageClient() {
 
   const ledgerRows = useMemo(() => {
     const baseRows = safeLedgerRows(ledgerData).map((row) =>
-      closedLedgerKeys.has(ledgerRowKey(row))
-        ? {
-            ...row,
-            status: "LOCKED",
-            countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
-            differenceAmount: row.differenceAmount ?? 0,
-          }
-        : row,
+      normalizeLedgerRowAmounts(
+        closedLedgerKeys.has(ledgerRowKey(row))
+          ? {
+              ...row,
+              status: "LOCKED",
+              countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
+              differenceAmount: row.differenceAmount ?? 0,
+            }
+          : row,
+      ),
     );
 
     const liveByKey = new Map<string, any>();
@@ -1157,31 +1218,10 @@ export default function FinanceDailyPageClient() {
       liveByDate.set(dateKey, day);
     });
 
-    const ledgerByDate = new Map<string, any>();
-    baseRows.forEach((row) => {
-      const dateKey = String(row.date || "").slice(0, 10);
-      const day = ledgerByDate.get(dateKey) || { receipt: 0, payment: 0 };
-      day.receipt += Number(row.totalReceipt || 0);
-      day.payment += Number(row.totalPayment || 0);
-      ledgerByDate.set(dateKey, day);
-    });
-
-    const datesNeedLivePatch = new Set<string>();
-    liveByDate.forEach((live, dateKey) => {
-      const ledger = ledgerByDate.get(dateKey) || { receipt: 0, payment: 0 };
-      if (
-        Number(ledger.receipt || 0) + Number(ledger.payment || 0) === 0 &&
-        Number(live.receipt || 0) + Number(live.payment || 0) > 0
-      ) {
-        datesNeedLivePatch.add(dateKey);
-      }
-    });
-
     const usedLiveKeys = new Set<string>();
 
     const patchedRows = baseRows.map((row) => {
       const dateKey = String(row.date || "").slice(0, 10);
-      if (!datesNeedLivePatch.has(dateKey)) return row;
 
       const keyCandidates = [
         ledgerMatchKey({
@@ -1200,20 +1240,28 @@ export default function FinanceDailyPageClient() {
         }),
       ];
 
-      const liveKey = keyCandidates.find((candidate) =>
-        liveByKey.has(candidate),
-      );
+      const liveKey = keyCandidates.find((candidate) => liveByKey.has(candidate));
       if (!liveKey) return row;
 
       const live = liveByKey.get(liveKey);
       usedLiveKeys.add(liveKey);
+
+      const rowHasBreakdown =
+        Number(row.posReceiptAmount || 0) !== 0 ||
+        Number(row.manualReceiptAmount || 0) !== 0 ||
+        Number(row.manualPaymentAmount || 0) !== 0 ||
+        Number(row.totalReceipt || 0) !== 0 ||
+        Number(row.totalPayment || 0) !== 0;
+
+      // Chỉ bù live khi dòng ledger đang trắng / thiếu breakdown. Không ghi đè dòng backend đã đủ số.
+      if (rowHasBreakdown) return row;
 
       const openingBalance = Number(row.openingBalance || 0);
       const totalReceipt = Number(live.totalReceipt || 0);
       const totalPayment = Number(live.totalPayment || 0);
       const netAmount = totalReceipt - totalPayment;
 
-      return {
+      return normalizeLedgerRowAmounts({
         ...row,
         posReceiptAmount: Number(live.posReceiptAmount || 0),
         manualReceiptAmount: Number(live.manualReceiptAmount || 0),
@@ -1222,12 +1270,31 @@ export default function FinanceDailyPageClient() {
         totalPayment,
         netAmount,
         closingBalance: openingBalance + netAmount,
-      };
+        isSyntheticLive: row.isSyntheticLive || false,
+      });
     });
 
+    const existingDisplayKeys = new Set(
+      patchedRows.map((row) => {
+        const branchName = canonicalBranchName(row.branchName || row.branchId);
+        return [
+          String(row.date || "").slice(0, 10),
+          branchName,
+          canonicalSourceKey(row, branchName),
+        ].join("|");
+      }),
+    );
+
     liveByKey.forEach((live, key) => {
-      if (!datesNeedLivePatch.has(live.date) || usedLiveKeys.has(key)) return;
-      patchedRows.push({
+      if (usedLiveKeys.has(key)) return;
+      const liveBranchName = canonicalBranchName(live.branchName || live.branchId);
+      const liveDisplayKey = [
+        String(live.date || "").slice(0, 10),
+        liveBranchName,
+        canonicalSourceKey(live, liveBranchName),
+      ].join("|");
+      if (existingDisplayKeys.has(liveDisplayKey)) return;
+      patchedRows.push(normalizeLedgerRowAmounts({
         date: live.date,
         branchId: live.branchId,
         branchName: live.branchName,
@@ -1247,10 +1314,11 @@ export default function FinanceDailyPageClient() {
         differenceAmount: null,
         status: "OPEN",
         isSyntheticLive: true,
-      });
+      }));
+      existingDisplayKeys.add(liveDisplayKey);
     });
 
-    return patchedRows.sort((a, b) => {
+    return patchedRows.map(normalizeLedgerRowAmounts).sort((a, b) => {
       const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
       if (dateDiff !== 0) return dateDiff;
       return String(a.branchName || a.branchId || "").localeCompare(
@@ -1261,34 +1329,46 @@ export default function FinanceDailyPageClient() {
   }, [ledgerData, ledgerLiveRows, closedLedgerKeys]);
 
   const ledgerSummary = useMemo(() => {
-    return ledgerRows.reduce(
-      (acc, row) => {
-        acc.opening += Number(row.openingBalance || 0);
-        acc.receipt += Number(row.totalReceipt || 0);
-        acc.payment += Number(row.totalPayment || 0);
-        acc.net += Number(row.netAmount || 0);
-        acc.closing += Number(row.closingBalance || 0);
-        if (isCashLedgerRow(row)) {
-          acc.cashClosing += Number(row.closingBalance || 0);
-        }
-        acc.difference += Number(row.differenceAmount || 0);
-        if (String(row.status || "").toUpperCase() === "LOCKED")
-          acc.locked += 1;
-        else acc.open += 1;
-        return acc;
-      },
-      {
-        opening: 0,
-        receipt: 0,
-        payment: 0,
-        net: 0,
-        closing: 0,
-        difference: 0,
-        cashClosing: 0,
-        locked: 0,
-        open: 0,
-      },
+    const acc = {
+      opening: 0,
+      receipt: 0,
+      payment: 0,
+      net: 0,
+      closing: 0,
+      difference: 0,
+      cashClosing: 0,
+      locked: 0,
+      open: 0,
+    };
+
+    const rowsByDate = new Map<string, DailyLedgerRow[]>();
+    ledgerRows.forEach((row) => {
+      const dateKey = String(row.date || "").slice(0, 10);
+      if (!dateKey) return;
+      const list = rowsByDate.get(dateKey) || [];
+      list.push(row);
+      rowsByDate.set(dateKey, list);
+
+      acc.receipt += Number(row.totalReceipt || 0);
+      acc.payment += Number(row.totalPayment || 0);
+      acc.net += Number(row.netAmount || 0);
+      acc.difference += Number(row.differenceAmount || 0);
+      if (String(row.status || "").toUpperCase() === "LOCKED") acc.locked += 1;
+      else acc.open += 1;
+    });
+
+    const dates = Array.from(rowsByDate.keys()).sort();
+    const firstRows = rowsByDate.get(dates[0] || "") || [];
+    const lastRows = rowsByDate.get(dates[dates.length - 1] || "") || [];
+
+    acc.opening = firstRows.reduce((sum, row) => sum + Number(row.openingBalance || 0), 0);
+    acc.closing = lastRows.reduce((sum, row) => sum + Number(row.closingBalance || 0), 0);
+    acc.cashClosing = lastRows.reduce(
+      (sum, row) => sum + (isCashLedgerRow(row) ? Number(row.closingBalance || 0) : 0),
+      0,
     );
+
+    return acc;
   }, [ledgerRows]);
 
   const ledgerRowsByDate = useMemo(() => {
@@ -1516,9 +1596,9 @@ export default function FinanceDailyPageClient() {
           const key = canonicalSourceKey(row, branchName);
           const existing = rowMap.get(key);
           if (existing) {
-            mergeLedgerAmount(existing, row);
+            mergeLedgerAmount(existing, normalizeLedgerRowAmounts(row));
           } else {
-            rowMap.set(key, { ...row, branchName });
+            rowMap.set(key, normalizeLedgerRowAmounts({ ...row, branchName }));
           }
         });
 

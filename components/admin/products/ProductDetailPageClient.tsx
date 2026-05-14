@@ -1852,17 +1852,18 @@ export default function ProductDetailPageClient({
                       Danh sách variant
                     </h2>
                     <p className="mt-0.5 text-xs text-neutral-500">
-                      SKU, màu, size, giá và tồn theo từng chi nhánh.
+                      SKU, tên phiên bản, màu, size, giá và tồn theo từng chi nhánh.
                     </p>
                   </div>
                   <Badge tone="gray">{variantCount} dòng</Badge>
                 </div>
 
                 <div className="overflow-auto">
-                  <table className="min-w-[920px] w-full border-collapse text-sm">
+                  <table className="min-w-[1120px] w-full border-collapse text-sm">
                     <thead className="bg-neutral-50 text-left text-[11px] uppercase text-neutral-500">
                       <tr>
                         <th className="border-b px-4 py-3">SKU</th>
+                        <th className="border-b px-4 py-3">Tên phiên bản</th>
                         <th className="border-b px-4 py-3">Màu</th>
                         <th className="border-b px-4 py-3">Size</th>
                         <th className="border-b px-4 py-3">Giá bán</th>
@@ -1884,6 +1885,9 @@ export default function ProductDetailPageClient({
                         >
                           <td className="border-b px-4 py-3 font-medium">
                             {variant.sku || "—"}
+                          </td>
+                          <td className="min-w-[240px] border-b px-4 py-3">
+                            {(variant as any).variantName || `${product.name || ""}${variant.color ? ` - ${variant.color}` : ""}${variant.size ? ` - ${variant.size}` : ""}` || "—"}
                           </td>
                           <td className="border-b px-4 py-3">
                             {variant.color || "—"}

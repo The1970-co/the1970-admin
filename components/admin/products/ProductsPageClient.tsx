@@ -532,6 +532,7 @@ type ImportPreviewRow = {
   color: string;
   size: string;
   sku: string;
+  variantName: string;
   weight: number;
   imageUrl: string;
   productImageUrl: string;
@@ -774,6 +775,7 @@ function downloadProductTemplate() {
       "Giá trị thuộc tính 1",
       "Giá trị thuộc tính 2",
       "Mã SKU*",
+      "Tên phiên bản sản phẩm",
       "Khối lượng",
       "Ảnh đại diện",
       "PL_Giá bán lẻ",
@@ -797,6 +799,7 @@ function downloadProductTemplate() {
       "THAN",
       "S",
       "SM936-T-S",
+      "Áo sơ mi kẻ SM936 - THAN - S",
       300,
       "https://example.com/sm936.jpg",
       600000,
@@ -830,6 +833,7 @@ function downloadProductImageTemplate() {
       "Giá trị thuộc tính 1",
       "Giá trị thuộc tính 2",
       "Mã SKU*",
+      "Tên phiên bản sản phẩm",
       "Khối lượng",
       "Ảnh đại diện",
       "Ảnh chính",
@@ -858,6 +862,7 @@ function downloadProductImageTemplate() {
       "ĐEN",
       "S",
       "SM936-DEN-S",
+      "Áo sơ mi kẻ SM936 - ĐEN - S",
       300,
       "https://res.cloudinary.com/demo/image/upload/main.jpg",
       "https://res.cloudinary.com/demo/image/upload/main.jpg",
@@ -2839,6 +2844,7 @@ export default function ProductsPageClient() {
       color: String(variant.color || ""),
       size: String(variant.size || ""),
       sku: String(variant.sku || ""),
+      variantName: String((variant as any).variantName || `${product.name || ""} - ${variant.color || ""} - ${variant.size || ""}`),
       weight: Number(product.weight || 0),
       imageUrl,
       productImageUrl,
@@ -2890,6 +2896,7 @@ export default function ProductsPageClient() {
       "Giá trị thuộc tính 1": row.color,
       "Giá trị thuộc tính 2": row.size,
       "Mã SKU*": row.sku,
+      "Tên phiên bản sản phẩm": row.variantName || `${row.productName} - ${row.color} - ${row.size}`,
       "Khối lượng": row.weight,
       "Ảnh đại diện": row.productImageUrl,
       "Ảnh chính": row.productImageUrl,
@@ -2952,7 +2959,16 @@ export default function ProductsPageClient() {
       if (category) currentCategory = normalizeCategoryNameForImport(category);
       if (brand) currentBrand = brand;
 
-      const color = findValue(row, [
+      const variantName = findValue(row, [
+        "Tên phiên bản sản phẩm",
+        "Tên phiên bản",
+        "ten phien ban san pham",
+        "ten phien ban",
+        "variant name",
+        "Tên biến thể",
+      ]);
+
+      let color = findValue(row, [
         "Giá trị thuộc tính 1",
         "gia tri thuoc tinh 1",
         "mau",
@@ -2960,11 +2976,20 @@ export default function ProductsPageClient() {
         "color",
       ]);
 
-      const size = findValue(row, [
+      let size = findValue(row, [
         "Giá trị thuộc tính 2",
         "gia tri thuoc tinh 2",
         "size",
       ]);
+
+      if ((!color || !size) && variantName) {
+        const parts = String(variantName)
+          .split("-")
+          .map((part) => part.trim())
+          .filter(Boolean);
+        if (!size && parts.length >= 2) size = parts[parts.length - 1];
+        if (!color && parts.length >= 3) color = parts[parts.length - 2];
+      }
 
       const sku = findValue(row, ["Mã SKU*", "Mã SKU", "ma sku", "sku"]);
       const productImageUrl = findValue(row, [
@@ -3036,6 +3061,7 @@ export default function ProductsPageClient() {
         currentBrand ||
         color ||
         size ||
+        variantName ||
         sku ||
         retailPrice ||
         importPrice ||
@@ -3110,6 +3136,7 @@ export default function ProductsPageClient() {
         color,
         size,
         sku,
+        variantName: variantName || (currentProductName && color && size ? `${currentProductName} - ${color} - ${size}` : ""),
         weight,
         imageUrl,
         productImageUrl,
@@ -5576,6 +5603,7 @@ export default function ProductsPageClient() {
                       <th className="px-4 py-3">Màu</th>
                       <th className="px-4 py-3">Size</th>
                       <th className="px-4 py-3">SKU</th>
+                      <th className="px-4 py-3">Tên phiên bản</th>
                       <th className="px-4 py-3">Giá bán</th>
                       <th className="px-4 py-3">Giá nhập</th>
                       <th className="px-4 py-3">Tồn đầu</th>
@@ -5604,6 +5632,7 @@ export default function ProductsPageClient() {
                         <td className="px-4 py-3">{row.color || "—"}</td>
                         <td className="px-4 py-3">{row.size || "—"}</td>
                         <td className="px-4 py-3">{row.sku || "—"}</td>
+                        <td className="px-4 py-3 min-w-[220px]">{row.variantName || "—"}</td>
                         <td className="px-4 py-3">
                           {currency(row.retailPrice || 0)}
                         </td>
