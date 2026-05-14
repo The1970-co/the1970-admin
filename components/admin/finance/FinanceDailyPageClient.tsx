@@ -34,6 +34,7 @@ type MoneyRow = {
   flowType?: string;
   type?: string;
   method?: string;
+  paymentSourceId?: string;
   sourceName?: string;
   sourceCode?: string;
   sourceType?: string;
@@ -71,6 +72,7 @@ type DailyLedgerRow = {
   note?: string | null;
   lockedAt?: string | null;
   lockedByName?: string | null;
+  isSyntheticLive?: boolean;
 };
 
 type LedgerCloseDialog = {
@@ -335,6 +337,41 @@ function safeRows(value: unknown): MoneyRow[] {
   return Array.isArray(value) ? (value as MoneyRow[]) : [];
 }
 
+function rowDateKey(row: MoneyRow) {
+  const raw = row.paidAt || row.createdAt || "";
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return String(raw).slice(0, 10);
+  return toDateInput(date);
+}
+
+function ledgerMatchKey(parts: {
+  date?: string | null;
+  branchId?: string | null;
+  branchName?: string | null;
+  paymentSourceId?: string | null;
+  paymentSourceName?: string | null;
+  paymentSourceCode?: string | null;
+  sourceName?: string | null;
+  sourceCode?: string | null;
+  method?: string | null;
+}) {
+  const source =
+    parts.paymentSourceId ||
+    parts.paymentSourceName ||
+    parts.paymentSourceCode ||
+    parts.sourceName ||
+    parts.sourceCode ||
+    parts.method ||
+    "NO_SOURCE";
+
+  return [
+    String(parts.date || "").slice(0, 10),
+    normalizeText(parts.branchId || parts.branchName || "NO_BRANCH"),
+    normalizeText(source),
+  ].join("|");
+}
+
 export default function FinanceDailyPageClient() {
   const initialRange = useMemo(() => getRange("today"), []);
   const initialLedgerRange = useMemo(() => getRange("today"), []);
@@ -502,7 +539,7 @@ export default function FinanceDailyPageClient() {
     rowsToClose: DailyLedgerRow[],
   ) => {
     const closeableRows = rowsToClose.filter(
-      (row) => row.branchId && row.paymentSourceId,
+      (row) => row.branchId && row.paymentSourceId && !row.isSyntheticLive,
     );
 
     if (!closeableRows.length) {
@@ -764,7 +801,155 @@ export default function FinanceDailyPageClient() {
   }, [rows]);
 
   const ledgerRows = useMemo(() => {
-    return safeLedgerRows(ledgerData).sort((a, b) => {
+    const baseRows = safeLedgerRows(ledgerData);
+
+    const liveByKey = new Map<string, any>();
+    const liveByDate = new Map<string, any>();
+
+    rows.forEach((row) => {
+      const dateKey = rowDateKey(row);
+      if (!dateKey) return;
+
+      const amount = Math.abs(Number(row.amount || 0));
+      if (!amount) return;
+
+      const key = ledgerMatchKey({
+        date: dateKey,
+        branchId: row.branchId,
+        branchName: row.branchName,
+        paymentSourceId: row.paymentSourceId,
+        sourceName: row.sourceName,
+        sourceCode: row.sourceCode,
+        method: row.method,
+      });
+
+      const current = liveByKey.get(key) || {
+        date: dateKey,
+        branchId: row.branchId,
+        branchName: row.branchName || row.branchId || "—",
+        paymentSourceId: row.paymentSourceId,
+        paymentSourceName: row.sourceName || row.method || row.sourceCode || "Chưa rõ nguồn tiền",
+        paymentSourceCode: row.sourceCode,
+        sourceType: sourceKind(row),
+        posReceiptAmount: 0,
+        manualReceiptAmount: 0,
+        manualPaymentAmount: 0,
+        totalReceipt: 0,
+        totalPayment: 0,
+        netAmount: 0,
+      };
+
+      if (isReceiptRow(row)) {
+        if (isPosRow(row) || String(row.recordType || "").toUpperCase() === "PAYMENT") {
+          current.posReceiptAmount += amount;
+        } else {
+          current.manualReceiptAmount += amount;
+        }
+        current.totalReceipt += amount;
+      } else {
+        current.manualPaymentAmount += amount;
+        current.totalPayment += amount;
+      }
+
+      current.netAmount = current.totalReceipt - current.totalPayment;
+      liveByKey.set(key, current);
+
+      const day = liveByDate.get(dateKey) || { receipt: 0, payment: 0 };
+      day.receipt += isReceiptRow(row) ? amount : 0;
+      day.payment += isReceiptRow(row) ? 0 : amount;
+      liveByDate.set(dateKey, day);
+    });
+
+    const ledgerByDate = new Map<string, any>();
+    baseRows.forEach((row) => {
+      const dateKey = String(row.date || "").slice(0, 10);
+      const day = ledgerByDate.get(dateKey) || { receipt: 0, payment: 0 };
+      day.receipt += Number(row.totalReceipt || 0);
+      day.payment += Number(row.totalPayment || 0);
+      ledgerByDate.set(dateKey, day);
+    });
+
+    const datesNeedLivePatch = new Set<string>();
+    liveByDate.forEach((live, dateKey) => {
+      const ledger = ledgerByDate.get(dateKey) || { receipt: 0, payment: 0 };
+      if ((Number(ledger.receipt || 0) + Number(ledger.payment || 0)) === 0 &&
+          (Number(live.receipt || 0) + Number(live.payment || 0)) > 0) {
+        datesNeedLivePatch.add(dateKey);
+      }
+    });
+
+    const usedLiveKeys = new Set<string>();
+
+    const patchedRows = baseRows.map((row) => {
+      const dateKey = String(row.date || "").slice(0, 10);
+      if (!datesNeedLivePatch.has(dateKey)) return row;
+
+      const keyCandidates = [
+        ledgerMatchKey({
+          date: dateKey,
+          branchId: row.branchId,
+          branchName: row.branchName,
+          paymentSourceId: row.paymentSourceId,
+          paymentSourceName: row.paymentSourceName,
+          paymentSourceCode: row.paymentSourceCode,
+        }),
+        ledgerMatchKey({
+          date: dateKey,
+          branchName: row.branchName,
+          paymentSourceName: row.paymentSourceName,
+          paymentSourceCode: row.paymentSourceCode,
+        }),
+      ];
+
+      const liveKey = keyCandidates.find((candidate) => liveByKey.has(candidate));
+      if (!liveKey) return row;
+
+      const live = liveByKey.get(liveKey);
+      usedLiveKeys.add(liveKey);
+
+      const openingBalance = Number(row.openingBalance || 0);
+      const totalReceipt = Number(live.totalReceipt || 0);
+      const totalPayment = Number(live.totalPayment || 0);
+      const netAmount = totalReceipt - totalPayment;
+
+      return {
+        ...row,
+        posReceiptAmount: Number(live.posReceiptAmount || 0),
+        manualReceiptAmount: Number(live.manualReceiptAmount || 0),
+        manualPaymentAmount: Number(live.manualPaymentAmount || 0),
+        totalReceipt,
+        totalPayment,
+        netAmount,
+        closingBalance: openingBalance + netAmount,
+      };
+    });
+
+    liveByKey.forEach((live, key) => {
+      if (!datesNeedLivePatch.has(live.date) || usedLiveKeys.has(key)) return;
+      patchedRows.push({
+        date: live.date,
+        branchId: live.branchId,
+        branchName: live.branchName,
+        paymentSourceId: live.paymentSourceId || live.paymentSourceName,
+        paymentSourceName: live.paymentSourceName,
+        paymentSourceCode: live.paymentSourceCode,
+        sourceType: live.sourceType,
+        openingBalance: 0,
+        posReceiptAmount: live.posReceiptAmount,
+        manualReceiptAmount: live.manualReceiptAmount,
+        manualPaymentAmount: live.manualPaymentAmount,
+        totalReceipt: live.totalReceipt,
+        totalPayment: live.totalPayment,
+        netAmount: live.netAmount,
+        closingBalance: live.netAmount,
+        countedAmount: null,
+        differenceAmount: null,
+        status: "OPEN",
+        isSyntheticLive: true,
+      });
+    });
+
+    return patchedRows.sort((a, b) => {
       const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
       if (dateDiff !== 0) return dateDiff;
       return String(a.branchName || a.branchId || "").localeCompare(
@@ -772,7 +957,7 @@ export default function FinanceDailyPageClient() {
         "vi",
       );
     });
-  }, [ledgerData]);
+  }, [ledgerData, rows]);
 
   const ledgerSummary = useMemo(() => {
     return ledgerRows.reduce(
@@ -1872,7 +2057,7 @@ export default function FinanceDailyPageClient() {
                                     <div className="flex flex-wrap gap-2">
                                       <button
                                         type="button"
-                                        disabled={savingLedger}
+                                        disabled={savingLedger || branchGroup.rows.every((item: DailyLedgerRow) => item.isSyntheticLive)}
                                         onClick={() =>
                                           void closeBranchLedgerRows(
                                             branchGroup.branchName,
@@ -2096,7 +2281,8 @@ export default function FinanceDailyPageClient() {
                                                   <div className="flex justify-end gap-2">
                                                     <button
                                                       type="button"
-                                                      disabled={savingLedger}
+                                                      disabled={savingLedger || detailRow.isSyntheticLive}
+                                                      title={detailRow.isSyntheticLive ? "Dòng live lấy từ giao dịch mới phát sinh, tải lại sổ hoặc đổi ngày để chốt" : undefined}
                                                       onClick={(event) => {
                                                         event.stopPropagation();
                                                         setCloseDialog({
@@ -2117,9 +2303,11 @@ export default function FinanceDailyPageClient() {
                                                       }}
                                                       className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-[11px] font-semibold hover:bg-neutral-50 disabled:opacity-50"
                                                     >
-                                                      {isLocked
-                                                        ? "Chốt lại"
-                                                        : "Chốt sổ"}
+                                                      {detailRow.isSyntheticLive
+                                                        ? "Live"
+                                                        : isLocked
+                                                          ? "Chốt lại"
+                                                          : "Chốt sổ"}
                                                     </button>
                                                     <button
                                                       type="button"
