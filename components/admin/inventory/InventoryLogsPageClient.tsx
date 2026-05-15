@@ -24,6 +24,10 @@ type DirectionFilter = "ALL" | "IN" | "OUT" | "ZERO";
 
 type InventoryMovementV2 = InventoryMovement & {
   created_at?: string | Date | null;
+  createdAtIso?: string | Date | null;
+  createdAtText?: string | Date | null;
+  loggedAt?: string | Date | null;
+  recordedAt?: string | Date | null;
   updatedAt?: string | Date | null;
   updated_at?: string | Date | null;
   movedAt?: string | Date | null;
@@ -196,7 +200,11 @@ function getMovementDateCandidates(row: InventoryMovementV2) {
 
   return [
     row.createdAt,
+    row.createdAtIso,
+    row.createdAtText,
     row.created_at,
+    row.loggedAt,
+    row.recordedAt,
     row.movedAt,
     row.movementAt,
     row.happenedAt,
@@ -221,6 +229,8 @@ function getMovementDateCandidates(row: InventoryMovementV2) {
       "stocktakeSession.createdAt",
       "stockTransfer.createdAt",
     ]),
+    // Fallback cuối: Prisma CUID có timestamp, dùng để cứu dữ liệu cũ nếu BE chưa trả createdAt.
+    row.id,
   ];
 }
 
@@ -241,6 +251,25 @@ function getRawTimeDebug(row: InventoryMovementV2) {
     .join(" | ");
 }
 
+function parseCuidDate(value?: string | null) {
+  const text = String(value || "").trim();
+  // CUID dạng c + timestamp base36 + phần random. VD: cmp6hjt... có thể suy ra thời điểm tạo log.
+  if (!/^c[a-z0-9]{8,}/i.test(text)) return null;
+
+  const timestampText = text.slice(1, 9);
+  const timestamp = Number.parseInt(timestampText, 36);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+
+  // Chặn giá trị vô lý để không hiển thị sai nếu ID không phải CUID chuẩn.
+  const year = date.getFullYear();
+  if (year < 2020 || year > 2100) return null;
+
+  return date;
+}
+
 function parseDate(value?: string | Date | number | null) {
   if (value === undefined || value === null || value === "") return null;
   if (value instanceof Date) {
@@ -254,6 +283,9 @@ function parseDate(value?: string | Date | number | null) {
 
   const text = String(value).trim();
   if (isBadDateText(text)) return null;
+
+  const cuidDate = parseCuidDate(text);
+  if (cuidDate) return cuidDate;
 
   if (/^\d+$/.test(text)) {
     const num = Number(text);
@@ -271,8 +303,9 @@ function parseDate(value?: string | Date | number | null) {
   const normalizedDate = new Date(normalized);
   if (!Number.isNaN(normalizedDate.getTime())) return normalizedDate;
 
-  // Hỗ trợ chuỗi dd/mm/yyyy hoặc dd/mm/yyyy hh:mm:ss.
-  const viMatch = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  // Hỗ trợ chuỗi dd/mm/yyyy, dd/mm/yyyy hh:mm:ss hoặc dd/mm/yyyy, hh:mm:ss từ BE cũ.
+  const cleanViText = text.replace(",", " ").replace(/\s+/g, " ").trim();
+  const viMatch = cleanViText.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
   if (viMatch) {
     const [, dd, mm, yyyy, hh = "0", min = "0", sec = "0"] = viMatch;
     const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), Number(sec));
@@ -371,6 +404,8 @@ function statusLabel(status?: string | null) {
     ADJUSTED: "Đã cân kho",
     RECEIVED: "Đã nhận",
     SENT: "Đã gửi",
+    RECORDED: "Đã ghi nhận",
+    SAVED: "Đã lưu",
   };
 
   return labels[key] || status || "—";
@@ -520,7 +555,7 @@ function getStatus(row: InventoryMovementV2) {
 
   const type = String(row.type || "").toUpperCase();
   if (["SALE", "CANCEL", "RETURN", "IMPORT", "TRANSFER_IN", "TRANSFER_OUT", "STOCKTAKE", "STOCKTAKE_ADJUSTMENT"].includes(type)) {
-    return "Ghi nhậnED";
+    return "RECORDED";
   }
 
   return "";
@@ -893,7 +928,7 @@ export default function InventoryLogsPageClient() {
         <div className="flex flex-col gap-5 p-6 text-white lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="mb-3 inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium text-neutral-200">
-              Lịch sử kho hàng V6 · Bộ lọc nâng cao
+              Lịch sử kho hàng V8 · Bộ lọc nâng cao
             </div>
             <h2 className="text-3xl font-semibold tracking-tight">Lịch sử kho hàng</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-300">
@@ -1108,7 +1143,7 @@ export default function InventoryLogsPageClient() {
               Dòng mới nhất ở trên cùng. Bấm vào một dòng để xem chi tiết chứng từ, tồn trước/sau và người thao tác.
             </p>
           </div>
-          <Badge tone="blue">V6 · Chi tiết kho</Badge>
+          <Badge tone="blue">V8 · Chi tiết kho</Badge>
         </div>
 
         <div className="overflow-auto">
@@ -1264,8 +1299,7 @@ export default function InventoryLogsPageClient() {
                                 <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Thông tin ghi nhận</p>
                                 <div className="mt-3 space-y-2 text-sm">
                                   <p><span className="text-neutral-500">Nhân viên:</span> {actor || "Chưa ghi nhận"}</p>
-                                  <p><span className="text-neutral-500">Thời gian:</span> {formatDateTime(getMovementDate(row))}</p>
-                                  <p><span className="text-neutral-500">Dữ liệu thời gian:</span> {getRawTimeDebug(row) || "Chưa ghi nhận"}</p>
+                                  <p><span className="text-neutral-500">Thời gian ghi nhận:</span> {formatDateTime(getMovementDate(row))}</p>
                                   <p><span className="text-neutral-500">Chi nhánh:</span> {getBranchText(row, branches) || "—"}</p>
                                   <p><span className="text-neutral-500">Ghi chú:</span> {row.note || meta.reason || "—"}</p>
                                 </div>

@@ -16,6 +16,10 @@ import {
   type ProductItem,
 } from "@/lib/products-api";
 import {
+  getInventoryMovementsByProduct,
+  type InventoryMovement,
+} from "@/lib/inventory-api";
+import {
   getCategories,
   type ProductCategoryItem,
 } from "@/lib/product-categories-api";
@@ -650,6 +654,225 @@ function getProductInventoryRows(
   );
 }
 
+
+function movementTypeLabel(type?: string) {
+  const key = String(type || "").trim().toUpperCase();
+  const labels: Record<string, string> = {
+    IMPORT: "Nhập kho",
+    SALE: "Bán hàng",
+    CANCEL: "Huỷ đơn / hoàn tồn",
+    RETURN: "Khách trả hàng",
+    ADJUSTMENT: "Điều chỉnh kho",
+    RESERVE: "Giữ hàng",
+    RELEASE: "Xả giữ hàng",
+    STOCKTAKE: "Kiểm kho",
+    TRANSFER_IN: "Nhận chuyển kho",
+    TRANSFER_OUT: "Xuất chuyển kho",
+  };
+  return labels[key] || key || "Biến động kho";
+}
+
+function movementToneByQty(qty: number): "gray" | "green" | "amber" | "red" | "blue" {
+  if (qty > 0) return "green";
+  if (qty < 0) return "red";
+  return "amber";
+}
+
+function formatMovementTime(row: InventoryMovement) {
+  if (row.createdAtText) return row.createdAtText;
+  const raw = row.createdAtIso || row.createdAt;
+  if (!raw) return "Chưa ghi nhận";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "Chưa ghi nhận";
+  return date.toLocaleString("vi-VN", {
+    hour12: false,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getMovementActor(row: InventoryMovement) {
+  return row.actorName || row.createdByName || row.actorEmail || row.createdByEmail || "Chưa ghi nhận";
+}
+
+function getMovementRefLabel(row: InventoryMovement) {
+  const refType = String(row.refType || "").toUpperCase();
+  const refLabels: Record<string, string> = {
+    ORDER: "Đơn hàng",
+    PURCHASE_RECEIPT: "Phiếu nhập",
+    STOCKTAKE: "Kiểm kho",
+    STOCKTAKE_SESSION: "Kiểm kho",
+    INVENTORY_TRANSFER: "Chuyển kho",
+    TRANSFER: "Chuyển kho",
+    INVENTORY: "Điều chỉnh kho",
+  };
+  const label = refLabels[refType] || row.refType || "Chứng từ";
+  const code = row.refCode || row.refId;
+  return code ? `${label} · ${code}` : label;
+}
+
+function ProductInventoryHistoryPanel({
+  rows,
+  branches,
+  compact = false,
+  scopeLabel = "chi nhánh được phép xem",
+}: {
+  rows: InventoryMovement[];
+  branches: BranchItem[];
+  compact?: boolean;
+  scopeLabel?: string;
+}) {
+  const branchName = (branchId?: string | null) =>
+    branches.find((branch) => String(branch.id) === String(branchId))?.name ||
+    branchId ||
+    "—";
+
+  const totalIn = rows
+    .filter((row) => Number(row.qty || 0) > 0)
+    .reduce((sum, row) => sum + Number(row.qty || 0), 0);
+  const totalOut = Math.abs(
+    rows
+      .filter((row) => Number(row.qty || 0) < 0)
+      .reduce((sum, row) => sum + Number(row.qty || 0), 0),
+  );
+  const visibleRows = rows.slice(0, compact ? 8 : 15);
+
+  return (
+    <Panel className="overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-neutral-100 px-4 py-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-[16px] font-semibold text-neutral-950">
+            Lịch sử kho của sản phẩm
+          </h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            Chỉ hiển thị biến động của sản phẩm này trong {scopeLabel}.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone="gray">{rows.length} dòng</Badge>
+          <Badge tone="green">+{totalIn}</Badge>
+          <Badge tone="red">-{totalOut}</Badge>
+        </div>
+      </div>
+
+      {!visibleRows.length ? (
+        <div className="p-4 text-sm text-neutral-500">
+          Chưa có lịch sử kho cho sản phẩm này.
+        </div>
+      ) : compact ? (
+        <div className="divide-y divide-neutral-100">
+          {visibleRows.map((row) => {
+            const qty = Number(row.qty || 0);
+            return (
+              <div key={row.id} className="px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={movementToneByQty(qty)}>
+                        {movementTypeLabel(row.type)}
+                      </Badge>
+                      <span className="text-xs text-neutral-500">
+                        {branchName(row.branchId)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-neutral-950">
+                      {row.sku || "SKU"} · {row.color || "—"} / {row.size || "—"}
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {formatMovementTime(row)} · {getMovementActor(row)}
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {getMovementRefLabel(row)}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 text-sm font-semibold ${qty >= 0 ? "text-emerald-600" : "text-red-600"}`}
+                  >
+                    {qty > 0 ? `+${qty}` : qty}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="overflow-auto">
+          <table className="min-w-[1050px] w-full text-sm">
+            <thead className="bg-neutral-50 text-left text-[11px] uppercase text-neutral-500">
+              <tr>
+                <th className="border-b px-4 py-3">Thời gian</th>
+                <th className="border-b px-4 py-3">Chi nhánh</th>
+                <th className="border-b px-4 py-3">SKU / phân loại</th>
+                <th className="border-b px-4 py-3">Loại</th>
+                <th className="border-b px-4 py-3">SL</th>
+                <th className="border-b px-4 py-3">Tồn trước → sau</th>
+                <th className="border-b px-4 py-3">Chứng từ</th>
+                <th className="border-b px-4 py-3">Nhân viên</th>
+                <th className="border-b px-4 py-3">Ghi chú</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => {
+                const qty = Number(row.qty || 0);
+                return (
+                  <tr key={row.id} className="hover:bg-neutral-50">
+                    <td className="border-b px-4 py-3 whitespace-nowrap">
+                      {formatMovementTime(row)}
+                    </td>
+                    <td className="border-b px-4 py-3 font-medium">
+                      {branchName(row.branchId)}
+                    </td>
+                    <td className="border-b px-4 py-3">
+                      <p className="font-medium text-neutral-950">
+                        {row.sku || "—"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-neutral-500">
+                        {row.color || "—"} / {row.size || "—"}
+                      </p>
+                    </td>
+                    <td className="border-b px-4 py-3">
+                      <Badge tone={movementToneByQty(qty)}>
+                        {movementTypeLabel(row.type)}
+                      </Badge>
+                    </td>
+                    <td className="border-b px-4 py-3">
+                      <span
+                        className={`font-semibold ${qty >= 0 ? "text-emerald-600" : "text-red-600"}`}
+                      >
+                        {qty > 0 ? `+${qty}` : qty}
+                      </span>
+                    </td>
+                    <td className="border-b px-4 py-3 text-neutral-600">
+                      {row.beforeQty === null || row.beforeQty === undefined
+                        ? "—"
+                        : row.beforeQty} {" → "}
+                      {row.afterQty === null || row.afterQty === undefined
+                        ? "—"
+                        : row.afterQty}
+                    </td>
+                    <td className="border-b px-4 py-3">
+                      {getMovementRefLabel(row)}
+                    </td>
+                    <td className="border-b px-4 py-3">
+                      {getMovementActor(row)}
+                    </td>
+                    <td className="border-b px-4 py-3 text-neutral-600">
+                      {row.note || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export default function ProductDetailPageClient({
   productId,
 }: {
@@ -666,6 +889,9 @@ export default function ProductDetailPageClient({
   const [product, setProduct] = useState<ProductItem | null>(null);
   const [inventoryRows, setInventoryRows] = useState<
     InventoryProductStockRow[]
+  >([]);
+  const [inventoryMovementRows, setInventoryMovementRows] = useState<
+    InventoryMovement[]
   >([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -795,12 +1021,13 @@ export default function ProductDetailPageClient({
     try {
       setLoading(true);
       setError("");
-      const [branchData, categoryData, productData, inventoryData] =
+      const [branchData, categoryData, productData, inventoryData, movementData] =
         await Promise.all([
           getBranches(),
           getCategories().catch(() => []),
           fetchProductById(productId),
           fetchInventoryByProduct(productId),
+          getInventoryMovementsByProduct(productId, 120).catch(() => []),
         ]);
 
       const nextBranches = Array.isArray(branchData) ? branchData : [];
@@ -816,6 +1043,7 @@ export default function ProductDetailPageClient({
       setCategories(nextCategories);
       setProduct(productData);
       setInventoryRows(nextInventoryRows);
+      setInventoryMovementRows(Array.isArray(movementData) ? movementData : []);
       setVariantBranchStocks(createEmptyBranchStocks(nextBranches));
 
       hydrateForm(productData, nextBranches, nextCategories, nextInventoryRows);
@@ -956,6 +1184,29 @@ export default function ProductDetailPageClient({
   const highBranchCount = branchStockAlerts.filter(
     (item) => item.tone === "blue",
   ).length;
+
+  const workingBranchId = normalizeId(currentUser?.branchId);
+
+  const inventoryHistoryBranches = useMemo(() => {
+    if (isOwner) return branches;
+    if (!workingBranchId) return [];
+    return branches.filter((branch) => normalizeId(branch.id) === workingBranchId);
+  }, [branches, isOwner, workingBranchId]);
+
+  const inventoryHistoryScopeLabel = useMemo(() => {
+    if (isOwner) return "toàn bộ chi nhánh";
+    const branchName =
+      inventoryHistoryBranches[0]?.name || currentUser?.branchId || "chi nhánh đang làm việc";
+    return `chi nhánh ${branchName}`;
+  }, [currentUser?.branchId, inventoryHistoryBranches, isOwner]);
+
+  const scopedInventoryMovementRows = useMemo(() => {
+    if (isOwner) return inventoryMovementRows;
+    if (!workingBranchId) return [];
+    return inventoryMovementRows.filter(
+      (row) => normalizeId(row.branchId) === workingBranchId,
+    );
+  }, [inventoryMovementRows, isOwner, workingBranchId]);
 
   const initialSnapshot = useMemo(() => {
     if (!product) return "";
@@ -1410,6 +1661,15 @@ export default function ProductDetailPageClient({
           ) : null}
         </Panel>
 
+        {canViewInventory ? (
+          <ProductInventoryHistoryPanel
+            rows={scopedInventoryMovementRows}
+            branches={inventoryHistoryBranches}
+            compact
+            scopeLabel={inventoryHistoryScopeLabel}
+          />
+        ) : null}
+
         <Panel className="overflow-hidden">
           <div className="border-b border-neutral-100 px-4 py-3">
             <h2 className="text-[17px] font-semibold text-neutral-950">
@@ -1844,6 +2104,14 @@ export default function ProductDetailPageClient({
                   </Button>
                 </Panel>
               </div>
+
+              {canViewInventory ? (
+                <ProductInventoryHistoryPanel
+                  rows={scopedInventoryMovementRows}
+                  branches={inventoryHistoryBranches}
+                  scopeLabel={inventoryHistoryScopeLabel}
+                />
+              ) : null}
 
               <Panel className="overflow-hidden">
                 <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">

@@ -294,6 +294,9 @@ export default function StockTransfersPageClient() {
   const variantSearchRef = useRef<HTMLInputElement | null>(null);
   const lastScanRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
   const scanTimerRef = useRef<number | null>(null);
+  const scanBackendTimerRef = useRef<number | null>(null);
+  const lastBackendLookupRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+  const hotScanVariantMapRef = useRef<Map<string, any>>(new Map());
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [fromBranchFilter, setFromBranchFilter] = useState("ALL");
@@ -468,12 +471,36 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
         rowId: variant.id,
         variantId: variant.id,
         sku: variant.sku,
+        barcode:
+          variant?.barcode ||
+          variant?.barCode ||
+          variant?.scanCode ||
+          variant?.code ||
+          variant?.sapoCode ||
+          variant?.sapoSku ||
+          "",
         productName: product.name,
         color: variant.color || "",
         size: variant.size || "",
       }))
     );
   }, [products]);
+
+  const scanVariantMap = useMemo(() => {
+    const map = new Map<string, any>();
+
+    for (const item of allVariants as any[]) {
+      const keys = [item.sku, item.variantId, item.barcode]
+        .map((value) => normalizeScanValue(value))
+        .filter(Boolean);
+
+      for (const key of keys) {
+        if (!map.has(key)) map.set(key, item);
+      }
+    }
+
+    return map;
+  }, [allVariants]);
 
   const dynamicCategories = useMemo(() => {
     const set = new Set<string>();
@@ -585,15 +612,67 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       .replace(/\s+/g, "");
   }
 
+  function putVariantIntoHotScanCache(option: any) {
+    if (!option) return;
+
+    const keys = [
+      option.sku,
+      option.variantId,
+      option.id,
+      option.barcode,
+      option.barCode,
+      option.scanCode,
+      option.code,
+    ]
+      .map((item) => normalizeScanValue(item))
+      .filter(Boolean);
+
+    for (const key of keys) {
+      hotScanVariantMapRef.current.set(key, option);
+    }
+  }
+
   function findExactVariantByScan(value: string) {
     const scan = normalizeScanValue(value);
     if (!scan) return null;
 
-    return (
-      allVariants.find((item: any) => normalizeScanValue(item.sku) === scan) ||
-      allVariants.find((item: any) => normalizeScanValue(item.variantId) === scan) ||
-      null
-    );
+    return scanVariantMap.get(scan) || hotScanVariantMapRef.current.get(scan) || null;
+  }
+
+  function findExactVariantInProductPayload(productsPayload: any[], value: string) {
+    const scan = normalizeScanValue(value);
+    if (!scan) return null;
+
+    for (const product of productsPayload || []) {
+      for (const variant of product?.variants || []) {
+        const keys = [
+          variant?.sku,
+          variant?.id,
+          variant?.barcode,
+          variant?.barCode,
+          variant?.scanCode,
+          variant?.code,
+          variant?.sapoCode,
+          variant?.sapoSku,
+        ]
+          .map((item) => normalizeScanValue(item))
+          .filter(Boolean);
+
+        if (!keys.includes(scan)) continue;
+
+        return {
+          rowId: variant.id,
+          variantId: variant.id,
+          sku: variant.sku,
+          barcode: variant?.barcode || variant?.barCode || variant?.scanCode || variant?.code || "",
+          productName: product.name,
+          color: variant.color || "",
+          size: variant.size || "",
+        };
+      }
+    }
+
+    return null;
   }
 
   const variantOptions = useMemo(() => {
@@ -1099,6 +1178,11 @@ useEffect(() => {
       window.clearTimeout(scanTimerRef.current);
       scanTimerRef.current = null;
     }
+
+    if (scanBackendTimerRef.current) {
+      window.clearTimeout(scanBackendTimerRef.current);
+      scanBackendTimerRef.current = null;
+    }
   };
 }, []);
 
@@ -1234,33 +1318,74 @@ useEffect(() => {
     return list;
   }, [items, draftSortBy]);
 
-  function commitVariantScan(value: string) {
+  function focusScanInputSoon() {
+    window.setTimeout(() => {
+      variantSearchRef.current?.focus();
+      variantSearchRef.current?.select();
+    }, 0);
+  }
+
+  async function lookupScanInBackend(value: string) {
+    const normalizedValue = normalizeScanValue(value);
+    if (!normalizedValue) return;
+
+    const now = Date.now();
+    const lastLookup = lastBackendLookupRef.current;
+    if (lastLookup.value === normalizedValue && now - lastLookup.at < 260) return;
+
+    lastBackendLookupRef.current = { value: normalizedValue, at: now };
+
+    try {
+      const res = await apiFetch(`/stock-transfers/scan-variant?code=${encodeURIComponent(value.trim())}`);
+      if (!res.ok) return;
+
+      const exact = await res.json();
+      if (!exact?.variantId) return;
+
+      putVariantIntoHotScanCache(exact);
+      commitVariantScan(value, exact);
+    } catch (err) {
+      console.error("background stock transfer scan lookup failed", err);
+    }
+  }
+
+  function scheduleBackendScanLookup(value: string, delayMs = 28) {
+    const cleaned = value.trim();
+    if (cleaned.length < 3) return;
+
+    if (scanBackendTimerRef.current) {
+      window.clearTimeout(scanBackendTimerRef.current);
+      scanBackendTimerRef.current = null;
+    }
+
+    scanBackendTimerRef.current = window.setTimeout(() => {
+      void lookupScanInBackend(cleaned);
+      scanBackendTimerRef.current = null;
+    }, delayMs);
+  }
+
+  function commitVariantScan(value: string, forcedExact?: any) {
     const normalizedValue = normalizeScanValue(value);
     if (!normalizedValue) return false;
 
     const now = Date.now();
     const last = lastScanRef.current;
 
-    if (last.value === normalizedValue && now - last.at < 800) {
+    // Chặn double event onChange + Enter của cùng một lần quét, nhưng vẫn đủ nhanh
+    // để nhân viên quét cùng SKU nhiều lần liên tiếp nếu thực sự có nhiều sản phẩm.
+    if (last.value === normalizedValue && now - last.at < 180) {
       setSearchVariant("");
-      window.setTimeout(() => {
-        variantSearchRef.current?.focus();
-        variantSearchRef.current?.select();
-      }, 0);
+      focusScanInputSoon();
       return true;
     }
 
-    const exact = findExactVariantByScan(value);
+    const exact = forcedExact || findExactVariantByScan(value);
     if (!exact) return false;
 
     lastScanRef.current = { value: normalizedValue, at: now };
     addVariantToDraft(exact, "scan");
     setSearchVariant("");
-
-    window.setTimeout(() => {
-      variantSearchRef.current?.focus();
-      variantSearchRef.current?.select();
-    }, 0);
+    focusScanInputSoon();
 
     return true;
   }
@@ -1276,10 +1401,17 @@ useEffect(() => {
     const cleaned = value.trim();
     if (!cleaned) return;
 
+    // Fast path: nếu mã đã có trong cache thì thêm ngay trong tick hiện tại, không đợi debounce.
+    if (commitVariantScan(cleaned)) return;
+
+    // Slow path: hỏi endpoint scan siêu nhẹ ở backend. UI không khóa, scanner vẫn focus liên tục.
+    scheduleBackendScanLookup(cleaned, 18);
+
+    // Fallback cực ngắn cho máy quét bắn ký tự hơi chậm hoặc browser gom event lệch nhịp.
     scanTimerRef.current = window.setTimeout(() => {
-      commitVariantScan(cleaned);
+      if (!commitVariantScan(cleaned)) scheduleBackendScanLookup(cleaned, 0);
       scanTimerRef.current = null;
-    }, 160);
+    }, 32);
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -3038,7 +3170,10 @@ useEffect(() => {
                 if (variantOptions.length === 1) {
                   addVariantToDraft(variantOptions[0], "scan");
                   setSearchVariant("");
+                  return;
                 }
+
+                scheduleBackendScanLookup(searchVariant, 0);
               }}
               placeholder="Quét mã vạch / SKU để thêm ngay..."
               autoComplete="off"
@@ -3047,7 +3182,7 @@ useEffect(() => {
 
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
               <div className="text-xs font-semibold text-blue-700">
-                Quét phát ăn ngay · SKU trùng sẽ tự cộng số lượng.
+                Quét phát ăn ngay · Có cache thì cộng tức thì, thiếu cache sẽ tìm backend ngầm.
               </div>
 
               {scanNotice ? (

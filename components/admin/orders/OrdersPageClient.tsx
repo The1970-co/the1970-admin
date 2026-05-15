@@ -981,6 +981,92 @@ function pushSearchValue(values: string[], value: any) {
   if (text) values.push(text);
 }
 
+function pushAllPrimitiveSearchValues(
+  values: string[],
+  value: any,
+  depth = 0,
+  seen = new WeakSet<object>(),
+) {
+  if (value === null || value === undefined || depth > 5) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => pushAllPrimitiveSearchValues(values, item, depth + 1, seen));
+    return;
+  }
+
+  if (typeof value === "object") {
+    if (seen.has(value)) return;
+    seen.add(value);
+
+    Object.entries(value).forEach(([key, child]) => {
+      // Bỏ qua blob/html dài để không làm chậm tìm kiếm.
+      if (["html", "rawHtml", "bodyHtml"].includes(key)) return;
+      pushAllPrimitiveSearchValues(values, child, depth + 1, seen);
+    });
+    return;
+  }
+
+  pushSearchValue(values, value);
+}
+
+function normalizeTrackingLikeText(value?: string | number | null) {
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "")
+    .trim();
+}
+
+function getShipmentExactSearchValues(order: NormalizedOrder) {
+  const anyOrder = order as any;
+  const shipment = anyOrder.shipment || {};
+  const values: string[] = [];
+
+  [
+    shipment?.trackingCode,
+    shipment?.tracking_code,
+    shipment?.orderCode,
+    shipment?.order_code,
+    shipment?.clientOrderCode,
+    shipment?.client_order_code,
+    shipment?.partnerOrderCode,
+    shipment?.partner_order_code,
+    shipment?.partnerCode,
+    shipment?.partner_code,
+    shipment?.labelCode,
+    shipment?.label_code,
+    shipment?.waybillCode,
+    shipment?.waybill_code,
+    shipment?.billCode,
+    shipment?.bill_code,
+    shipment?.carrierOrderCode,
+    shipment?.carrier_order_code,
+    anyOrder?.trackingCode,
+    anyOrder?.tracking_code,
+    anyOrder?.shipmentTrackingCode,
+    anyOrder?.shipment_tracking_code,
+    anyOrder?.deliveryCode,
+    anyOrder?.delivery_code,
+  ].forEach((value) => pushSearchValue(values, value));
+
+  // Fallback: gom toàn bộ primitive trong shipment vì mỗi hãng đặt tên field khác nhau.
+  pushAllPrimitiveSearchValues(values, shipment);
+
+  return Array.from(new Set(values.map(normalizeTrackingLikeText).filter(Boolean)));
+}
+
+function isLikelyExactCarrierCode(keyword: string) {
+  const normalized = normalizeTrackingLikeText(keyword);
+  // Mã GHN/VTP/Aha thường là chuỗi liền chữ+số, tối thiểu 6 ký tự.
+  return normalized.length >= 6 && !String(keyword || "").trim().includes(" ");
+}
+
+function orderMatchesExactCarrierCode(order: NormalizedOrder, keyword: string) {
+  const needle = normalizeTrackingLikeText(keyword);
+  if (!needle) return false;
+  return getShipmentExactSearchValues(order).some((value) => value === needle);
+}
+
+
 function getOrderSearchValues(order: NormalizedOrder) {
   const anyOrder = order as any;
   const values: string[] = [];
@@ -1038,7 +1124,12 @@ function getOrderSearchValues(order: NormalizedOrder) {
     });
   }
 
-  return values;
+  // Fallback quan trọng: gom toàn bộ primitive field trong object đơn hàng.
+  // Nhờ vậy tìm được mã GHN/VTP/Ahamove dù backend trả tên field khác
+  // như order_code, client_order_code, sort_code, tracking_code, partnerCode...
+  pushAllPrimitiveSearchValues(values, anyOrder);
+
+  return Array.from(new Set(values));
 }
 
 function orderMatchesKeyword(order: NormalizedOrder, keyword: string, branchName?: string) {
@@ -1050,11 +1141,14 @@ function orderMatchesKeyword(order: NormalizedOrder, keyword: string, branchName
 
   const haystackText = values.map(normalizeSearchText).filter(Boolean).join(" ");
   const haystackDigits = values.map(normalizeSearchDigits).filter(Boolean).join(" ");
+  const haystackTracking = values.map(normalizeTrackingLikeText).filter(Boolean).join(" ");
   const fullTextNeedle = normalizeSearchText(rawKeyword);
   const fullDigitNeedle = normalizeSearchDigits(rawKeyword);
+  const fullTrackingNeedle = normalizeTrackingLikeText(rawKeyword);
 
   if (fullTextNeedle && haystackText.includes(fullTextNeedle)) return true;
   if (fullDigitNeedle && haystackDigits.includes(fullDigitNeedle)) return true;
+  if (fullTrackingNeedle && haystackTracking.includes(fullTrackingNeedle)) return true;
 
   const terms = rawKeyword
     .split(/\s+/)
@@ -1066,10 +1160,12 @@ function orderMatchesKeyword(order: NormalizedOrder, keyword: string, branchName
   return terms.every((term) => {
     const textNeedle = normalizeSearchText(term);
     const digitNeedle = normalizeSearchDigits(term);
+    const trackingNeedle = normalizeTrackingLikeText(term);
 
     return (
       Boolean(textNeedle && haystackText.includes(textNeedle)) ||
-      Boolean(digitNeedle && haystackDigits.includes(digitNeedle))
+      Boolean(digitNeedle && haystackDigits.includes(digitNeedle)) ||
+      Boolean(trackingNeedle && haystackTracking.includes(trackingNeedle))
     );
   });
 }
@@ -1910,6 +2006,8 @@ export default function OrdersPageClient() {
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const ordersRequestSeqRef = useRef(0);
+  const ordersAbortRef = useRef<AbortController | null>(null);
   const dragStartXRef = useRef(0);
   const dragStartScrollRef = useRef(0);
   const isDraggingRef = useRef(false);
@@ -2163,8 +2261,12 @@ export default function OrdersPageClient() {
     }
 
     void loadBranches();
-    void loadStaffList();
   }, []);
+
+  useEffect(() => {
+    if (!assignOpen || staffList.length) return;
+    void loadStaffList();
+  }, [assignOpen, staffList.length]);
 
   useEffect(() => {
     try {
@@ -2255,6 +2357,12 @@ export default function OrdersPageClient() {
   }, []);
 
   const loadOrders = async () => {
+    const requestSeq = ordersRequestSeqRef.current + 1;
+    ordersRequestSeqRef.current = requestSeq;
+    ordersAbortRef.current?.abort();
+    const abortController = new AbortController();
+    ordersAbortRef.current = abortController;
+
     try {
       setLoading(true);
       setError(null);
@@ -2270,85 +2378,128 @@ export default function OrdersPageClient() {
         return;
       }
 
-      const params = new URLSearchParams();
-      params.set("page", String(page));
-      params.set("pageSize", String(pageSize));
+      const shouldLoadWideDataset = Boolean(
+        String(submittedQuery || "").trim() || String(freeTextFilter || "").trim(),
+      );
+      const requestPageSize = shouldLoadWideDataset ? 500 : pageSize;
+      const requestPage = shouldLoadWideDataset ? 1 : page;
 
-      // Không gửi q lên backend để tránh Internal server error.
-      // Enter xong mới cập nhật submittedQuery, sau đó lọc phía client.
+      const buildParams = (targetPage: number) => {
+        const params = new URLSearchParams();
+        params.set("page", String(targetPage));
+        params.set("pageSize", String(requestPageSize));
 
-      if (!canViewAllOrders && canViewOwnOrders) {
-        params.set("viewScope", "own");
-        if (currentUser?.id) params.set("createdByStaffId", currentUser.id);
-        if (currentUser?.code)
-          params.set("createdByStaffCode", currentUser.code);
-      }
+        // Không gửi q lên backend: mỗi bản core có shape search khác nhau,
+        // nên frontend tải rộng rồi lọc client để tìm được mã GHN/VTP/Ahamove,
+        // SĐT, địa chỉ, SKU, ghi chú và mọi field nested trả về trong đơn.
 
-      if (!canViewAllOrders && currentUser?.branchId) {
-        params.set("branchId", currentUser.branchId);
-      } else if (branchFilter !== "ALL") {
-        params.set("branchId", branchFilter);
-      }
+        if (!canViewAllOrders && canViewOwnOrders) {
+          params.set("viewScope", "own");
+          if (currentUser?.id) params.set("createdByStaffId", currentUser.id);
+          if (currentUser?.code) params.set("createdByStaffCode", currentUser.code);
+        }
 
-      if (orderFilter !== "ALL") params.set("orderStatus", orderFilter);
-      if (paymentFilter !== "ALL") params.set("paymentStatus", paymentFilter);
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo) params.set("dateTo", dateTo);
+        if (!canViewAllOrders && currentUser?.branchId) {
+          params.set("branchId", currentUser.branchId);
+        } else if (branchFilter !== "ALL") {
+          params.set("branchId", branchFilter);
+        }
 
-      const res = await apiFetch(`/orders?${params.toString()}`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-        cache: "no-store",
-      });
+        if (orderFilter !== "ALL") params.set("orderStatus", orderFilter);
+        if (paymentFilter !== "ALL") params.set("paymentStatus", paymentFilter);
+        if (dateFrom) params.set("dateFrom", dateFrom);
+        if (dateTo) params.set("dateTo", dateTo);
 
-      const raw = await res.json();
+        return params;
+      };
 
-      if (!res.ok) {
-        throw new Error(
-          raw?.message || `Tải /orders thất bại. Status ${res.status}`,
+      const fetchOrderPage = async (targetPage: number) => {
+        const res = await apiFetch(`/orders?${buildParams(targetPage).toString()}`, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+          cache: "no-store",
+          signal: abortController.signal,
+        });
+
+        const raw = await res.json();
+
+        if (!res.ok) {
+          throw new Error(
+            raw?.message || `Tải /orders thất bại. Status ${res.status}`,
+          );
+        }
+
+        const data = Array.isArray(raw)
+          ? raw
+          : Array.isArray(raw?.data)
+            ? raw.data
+            : [];
+
+        return {
+          data,
+          totalPages: Number(raw?.pagination?.totalPages || 1),
+          total: Number(raw?.pagination?.total || data.length || 0),
+        };
+      };
+
+      const firstPage = await fetchOrderPage(requestPage);
+      let data = firstPage.data;
+      let remoteTotalPages = firstPage.totalPages;
+      let remoteTotalItems = firstPage.total;
+
+      if (shouldLoadWideDataset && firstPage.totalPages > 1) {
+        const maxPagesToLoad = Math.min(firstPage.totalPages, 20);
+        const otherPages = await Promise.all(
+          Array.from({ length: maxPagesToLoad - 1 }, (_, index) =>
+            fetchOrderPage(index + 2),
+          ),
         );
+        data = [...data, ...otherPages.flatMap((item) => item.data)];
+        remoteTotalPages = 1;
+        remoteTotalItems = data.length;
       }
-
-      const data = Array.isArray(raw)
-        ? raw
-        : Array.isArray(raw?.data)
-          ? raw.data
-          : [];
 
       const scopedData =
         !canViewAllOrders && canViewOwnOrders
           ? data.filter((order: any) =>
-            isOrderCreatedByCurrentUser(order, currentUser),
-          )
+              isOrderCreatedByCurrentUser(order, currentUser),
+            )
           : data;
 
+      if (requestSeq !== ordersRequestSeqRef.current || abortController.signal.aborted) return;
+
       setOrders(scopedData as AdminOrder[]);
-      setTotalPages(Number(raw?.pagination?.totalPages || 1));
+      setTotalPages(shouldLoadWideDataset ? 1 : remoteTotalPages);
       setTotalItems(
-        !canViewAllOrders && canViewOwnOrders
+        shouldLoadWideDataset || (!canViewAllOrders && canViewOwnOrders)
           ? scopedData.length
-          : Number(raw?.pagination?.total || scopedData.length || 0),
+          : remoteTotalItems || scopedData.length || 0,
       );
     } catch (err) {
+      if (abortController.signal.aborted) return;
       const message =
         err instanceof Error ? err.message : "Không tải được đơn hàng.";
       setError(message);
-      setOrders([]);
+      // Giữ lại dữ liệu cũ nếu request mới bị lỗi mạng ngắn hạn, tránh màn hình trắng và cảm giác tải chậm.
+      setOrders((prev) => prev);
     } finally {
-      setLoading(false);
+      if (requestSeq === ordersRequestSeqRef.current && !abortController.signal.aborted) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     const t = setTimeout(() => {
       void loadOrders();
-    }, 250);
+    }, 60);
 
     return () => clearTimeout(t);
   }, [
     submittedQuery,
+    freeTextFilter,
     branchFilter,
     orderFilter,
     paymentFilter,
@@ -2358,6 +2509,12 @@ export default function OrdersPageClient() {
     pageSize,
     currentUser,
   ]);
+
+  useEffect(() => {
+    return () => {
+      ordersAbortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -2553,6 +2710,21 @@ export default function OrdersPageClient() {
       .filter(Boolean);
 
     if (keywords.length) {
+      // Nếu người dùng nhập mã vận đơn/GHN/VTP/Aha dạng mã liền, ưu tiên trả đúng mã vận đơn tuyệt đối.
+      // Tránh tình trạng search GYT7YBXA nhưng bảng vẫn xổ cả nhóm GYT7... rồi bắt người dùng tự dò.
+      const exactCarrierKeywords = keywords.filter(isLikelyExactCarrierCode);
+      if (exactCarrierKeywords.length) {
+        const exactCarrierMatches = result.filter((o) =>
+          exactCarrierKeywords.every((keyword) =>
+            orderMatchesExactCarrierCode(o, keyword),
+          ),
+        );
+
+        if (exactCarrierMatches.length > 0) {
+          return exactCarrierMatches;
+        }
+      }
+
       result = result.filter((o) => {
         const branchName = branchLabel(o.branchId);
         return keywords.every((keyword) =>
@@ -3937,7 +4109,7 @@ export default function OrdersPageClient() {
         <Panel className="p-3">
           <input
             className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-[15px] outline-none"
-            placeholder="Tìm mã đơn, khách hàng, SĐT..."
+            placeholder="Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -4333,7 +4505,7 @@ export default function OrdersPageClient() {
             <div className="mt-4 grid gap-3 md:grid-cols-[1.7fr_1fr_1fr_1fr_auto_auto]">
               <input
                 className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-                placeholder="Tìm mã đơn, khách hàng, SĐT, địa chỉ..."
+                placeholder="Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
