@@ -168,6 +168,73 @@ function sortSizeValue(value: any) {
   return Number.isFinite(number) ? 100 + number : 999;
 }
 
+function toInputDate(value: any) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateTime(value: any) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function getDateTime(value: any) {
+  if (!value) return 0;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function isDateInRange(value: any, from: string, to: string) {
+  if (!from && !to) return true;
+  const raw = getDateTime(value);
+  if (!raw) return false;
+
+  if (from) {
+    const start = new Date(`${from}T00:00:00`).getTime();
+    if (raw < start) return false;
+  }
+
+  if (to) {
+    const end = new Date(`${to}T23:59:59.999`).getTime();
+    if (raw > end) return false;
+  }
+
+  return true;
+}
+
+function getReceiptStatusLabel(status: any, isAdmin: boolean) {
+  if (status === "COMPLETED") return "Đã hoàn tất";
+  if (status === "STOCK_IMPORTED") return "Đã nhập kho";
+  if (status === "PAID") return isAdmin ? "Đã thanh toán đủ" : "Đã xác nhận đủ hàng";
+  if (status === "PARTIALLY_PAID") return isAdmin ? "Thanh toán một phần" : "Đã xác nhận đủ hàng";
+  if (status === "PAYMENT_REQUESTED") return isAdmin ? "Chờ thanh toán" : "Đã xác nhận đủ hàng";
+  if (status === "CANCELLED") return "Đã hủy";
+  return "Nháp";
+}
+
+function getReceiptStatusTone(status: any): "gray" | "green" | "amber" | "red" | "blue" {
+  if (status === "COMPLETED" || status === "PAID") return "green";
+  if (status === "STOCK_IMPORTED" || status === "PAYMENT_REQUESTED") return "blue";
+  if (status === "CANCELLED") return "red";
+  if (status === "PARTIALLY_PAID" || status === "DRAFT") return "amber";
+  return "gray";
+}
+
+function includesText(source: any, keyword: string) {
+  if (!keyword) return true;
+  return normalizeFilterText(source).includes(keyword);
+}
+
 export default function PurchaseReceiptsPageClient() {
   const [rows, setRows] = useState<PurchaseReceipt[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierItem[]>([]);
@@ -207,6 +274,24 @@ export default function PurchaseReceiptsPageClient() {
   const [bulkUnitCost, setBulkUnitCost] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [branchFilter, setBranchFilter] = useState("ALL");
+  const [supplierFilter, setSupplierFilter] = useState("ALL");
+  const [createdByFilter, setCreatedByFilter] = useState("ALL");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
+  const [colorFilter, setColorFilter] = useState("ALL");
+  const [sizeFilter, setSizeFilter] = useState("ALL");
+  const [paymentSourceFilter, setPaymentSourceFilter] = useState("ALL");
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState("ALL");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [importDateFrom, setImportDateFrom] = useState("");
+  const [importDateTo, setImportDateTo] = useState("");
+  const [qtyMin, setQtyMin] = useState("");
+  const [qtyMax, setQtyMax] = useState("");
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
+  const [sortBy, setSortBy] = useState("created_desc");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -348,6 +433,62 @@ export default function PurchaseReceiptsPageClient() {
     return total > 0 && getPaidAmount(receipt) >= total;
   }
 
+  function getCreatedByName(receipt: PurchaseReceipt) {
+    const raw = (receipt as any).createdBy;
+    return (
+      raw?.fullName ||
+      raw?.name ||
+      raw?.username ||
+      raw?.email ||
+      (receipt as any).createdByName ||
+      (receipt as any).createdById ||
+      "—"
+    );
+  }
+
+  function getReceiptCreatedAt(receipt: PurchaseReceipt) {
+    return (receipt as any).createdAt || (receipt as any).created_at || null;
+  }
+
+  function getReceiptImportedAt(receipt: PurchaseReceipt) {
+    return (
+      (receipt as any).confirmedAt ||
+      (receipt as any).importedAt ||
+      (receipt as any).completedAt ||
+      null
+    );
+  }
+
+  function getReceiptPaymentSourceIds(receipt: PurchaseReceipt) {
+    return getReceiptPayments(receipt)
+      .map((payment: any) => payment?.paymentSourceId || payment?.paymentSource?.id || "")
+      .filter(Boolean);
+  }
+
+  function getLineCategoryName(line: any) {
+    const fromLine =
+      line?.categoryName ||
+      line?.category?.name ||
+      line?.product?.categoryName ||
+      line?.product?.category?.name ||
+      "";
+
+    if (fromLine) return String(fromLine);
+
+    const found = allVariants.find(
+      (variant) =>
+        String(variant.variantId || "") === String(line?.variantId || "") ||
+        String(variant.sku || "") === String(line?.sku || ""),
+    );
+
+    return found?.categoryName || "";
+  }
+
+  function openReceiptInNewTab(receipt: PurchaseReceipt) {
+    if (typeof window === "undefined") return;
+    window.open(`/control/purchase-receipts/${receipt.id}`, "_blank", "noopener,noreferrer");
+  }
+
   function pickUnitCost(product: any, variant: any) {
     const rawValue =
       variant?.unitCost ??
@@ -462,25 +603,174 @@ export default function PurchaseReceiptsPageClient() {
     });
   }, [items, draftSortBy]);
 
-  const filteredRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
+  const receiptFilterOptions = useMemo(() => {
+    const createdBy = new Map<string, string>();
+    const categories = new Set<string>();
+    const colors = new Set<string>();
+    const sizes = new Set<string>();
 
-    return rows.filter((item) => {
-      const matchQuery =
-        !q ||
-        item.receiptCode.toLowerCase().includes(q) ||
-        String(item.branch?.name || "").toLowerCase().includes(q) ||
-        String(item.supplier?.name || "").toLowerCase().includes(q) ||
-        (item.items || []).some((line) => {
-          const label =
-            `${line.productName} ${line.sku} ${line.color || ""} ${line.size || ""}`.toLowerCase();
-          return label.includes(q);
-        });
+    rows.forEach((receipt) => {
+      const createdByIdValue = String((receipt as any).createdBy?.id || (receipt as any).createdById || "");
+      const createdByName = String(getCreatedByName(receipt) || "").trim();
+      if (createdByIdValue && createdByName && createdByName !== "—") {
+        createdBy.set(createdByIdValue, createdByName);
+      }
 
-      const matchStatus = statusFilter === "ALL" || item.status === statusFilter;
-      return matchQuery && matchStatus;
+      getReceiptItems(receipt).forEach((line: any) => {
+        const categoryName = getLineCategoryName(line);
+        if (categoryName) categories.add(categoryName);
+        if (line?.color) colors.add(String(line.color));
+        if (line?.size) sizes.add(String(line.size));
+      });
     });
-  }, [rows, query, statusFilter]);
+
+    return {
+      createdBy: Array.from(createdBy.entries()).sort((a, b) => a[1].localeCompare(b[1], "vi")),
+      categories: Array.from(categories).sort((a, b) => a.localeCompare(b, "vi")),
+      colors: Array.from(colors).sort((a, b) => a.localeCompare(b, "vi")),
+      sizes: Array.from(sizes).sort((a, b) => sortSizeValue(a) - sortSizeValue(b)),
+    };
+  }, [rows, allVariants]);
+
+  const filteredRows = useMemo(() => {
+    const q = normalizeFilterText(query);
+    const minQty = qtyMin === "" ? null : Number(qtyMin);
+    const maxQty = qtyMax === "" ? null : Number(qtyMax);
+    const minAmount = amountMin === "" ? null : Number(amountMin);
+    const maxAmount = amountMax === "" ? null : Number(amountMax);
+
+    return rows
+      .filter((item) => {
+        const receiptItems = getReceiptItems(item);
+        const receiptQty = receiptItems.reduce((sum, line) => sum + Number(line.qty || 0), 0);
+        const receiptAmount = getReceiptAmount(item);
+        const paidAmount = getPaidAmount(item);
+        const remainAmount = Math.max(receiptAmount - paidAmount, 0);
+        const createdByIdValue = String((item as any).createdBy?.id || (item as any).createdById || "");
+        const haystack = normalizeFilterText([
+          item.receiptCode,
+          item.status,
+          getReceiptStatusLabel(item.status, isAdmin),
+          item.branch?.name,
+          item.supplier?.name,
+          getCreatedByName(item),
+          (item as any).note,
+          receiptItems.map((line: any) => [
+            line.productName,
+            line.sku,
+            line.color,
+            line.size,
+            getLineCategoryName(line),
+          ].join(" ")).join(" "),
+          getReceiptPayments(item).map((payment: any) => payment?.paymentSource?.name || payment?.note || "").join(" "),
+        ].join(" "));
+
+        if (q && !haystack.includes(q)) return false;
+        if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+        if (branchFilter !== "ALL" && String(item.branchId || item.branch?.id || "") !== branchFilter) return false;
+        if (supplierFilter !== "ALL" && String(item.supplierId || item.supplier?.id || "") !== supplierFilter) return false;
+        if (createdByFilter !== "ALL" && createdByIdValue !== createdByFilter) return false;
+        if (paymentSourceFilter !== "ALL" && !getReceiptPaymentSourceIds(item).includes(paymentSourceFilter)) return false;
+
+        if (categoryFilter !== "ALL" && !receiptItems.some((line: any) => getLineCategoryName(line) === categoryFilter)) return false;
+        if (colorFilter !== "ALL" && !receiptItems.some((line: any) => String(line?.color || "") === colorFilter)) return false;
+        if (sizeFilter !== "ALL" && !receiptItems.some((line: any) => String(line?.size || "") === sizeFilter)) return false;
+
+        if (!isDateInRange(getReceiptCreatedAt(item), dateFrom, dateTo)) return false;
+        if (!isDateInRange(getReceiptImportedAt(item), importDateFrom, importDateTo)) return false;
+
+        if (minQty !== null && Number.isFinite(minQty) && receiptQty < minQty) return false;
+        if (maxQty !== null && Number.isFinite(maxQty) && receiptQty > maxQty) return false;
+        if (minAmount !== null && Number.isFinite(minAmount) && receiptAmount < minAmount) return false;
+        if (maxAmount !== null && Number.isFinite(maxAmount) && receiptAmount > maxAmount) return false;
+
+        if (paymentStatusFilter === "UNPAID" && paidAmount > 0) return false;
+        if (paymentStatusFilter === "PARTIAL" && !(paidAmount > 0 && paidAmount < receiptAmount)) return false;
+        if (paymentStatusFilter === "PAID_ENOUGH" && !(receiptAmount > 0 && paidAmount >= receiptAmount)) return false;
+        if (paymentStatusFilter === "HAS_DEBT" && !(receiptAmount > paidAmount && item.status !== "CANCELLED")) return false;
+        if (paymentStatusFilter === "OVERDUE_ACTION" && !(item.status === "PAYMENT_REQUESTED" || item.status === "PAID")) return false;
+
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === "created_asc") return getDateTime(getReceiptCreatedAt(a)) - getDateTime(getReceiptCreatedAt(b));
+        if (sortBy === "amount_desc") return getReceiptAmount(b) - getReceiptAmount(a);
+        if (sortBy === "amount_asc") return getReceiptAmount(a) - getReceiptAmount(b);
+        if (sortBy === "qty_desc") {
+          const aq = getReceiptItems(a).reduce((sum, line) => sum + Number(line.qty || 0), 0);
+          const bq = getReceiptItems(b).reduce((sum, line) => sum + Number(line.qty || 0), 0);
+          return bq - aq;
+        }
+        if (sortBy === "supplier_asc") return String(a.supplier?.name || "").localeCompare(String(b.supplier?.name || ""), "vi");
+        if (sortBy === "branch_asc") return String(a.branch?.name || "").localeCompare(String(b.branch?.name || ""), "vi");
+        return getDateTime(getReceiptCreatedAt(b)) - getDateTime(getReceiptCreatedAt(a));
+      });
+  }, [
+    rows,
+    query,
+    statusFilter,
+    branchFilter,
+    supplierFilter,
+    createdByFilter,
+    categoryFilter,
+    colorFilter,
+    sizeFilter,
+    paymentSourceFilter,
+    paymentStatusFilter,
+    dateFrom,
+    dateTo,
+    importDateFrom,
+    importDateTo,
+    qtyMin,
+    qtyMax,
+    amountMin,
+    amountMax,
+    sortBy,
+    isAdmin,
+    allVariants,
+  ]);
+
+  const receiptSummary = useMemo(() => {
+    const totalQty = filteredRows.reduce(
+      (sum, receipt) => sum + getReceiptItems(receipt).reduce((lineSum, line) => lineSum + Number(line.qty || 0), 0),
+      0,
+    );
+    const totalAmountValue = filteredRows.reduce((sum, receipt) => sum + getReceiptAmount(receipt), 0);
+    const paidAmountValue = filteredRows.reduce((sum, receipt) => sum + getPaidAmount(receipt), 0);
+    const waitingStock = filteredRows.filter((receipt) => receipt.status === "PAID").length;
+    const waitingPayment = filteredRows.filter((receipt) => receipt.status === "PAYMENT_REQUESTED" || receipt.status === "PARTIALLY_PAID").length;
+
+    return {
+      totalQty,
+      totalAmountValue,
+      paidAmountValue,
+      debtAmount: Math.max(totalAmountValue - paidAmountValue, 0),
+      waitingStock,
+      waitingPayment,
+    };
+  }, [filteredRows]);
+
+  function resetReceiptFilters() {
+    setQuery("");
+    setStatusFilter("ALL");
+    setBranchFilter("ALL");
+    setSupplierFilter("ALL");
+    setCreatedByFilter("ALL");
+    setCategoryFilter("ALL");
+    setColorFilter("ALL");
+    setSizeFilter("ALL");
+    setPaymentSourceFilter("ALL");
+    setPaymentStatusFilter("ALL");
+    setDateFrom("");
+    setDateTo("");
+    setImportDateFrom("");
+    setImportDateTo("");
+    setQtyMin("");
+    setQtyMax("");
+    setAmountMin("");
+    setAmountMax("");
+    setSortBy("created_desc");
+  }
 
   async function loadAll() {
     try {
@@ -951,37 +1241,90 @@ export default function PurchaseReceiptsPageClient() {
   }
 
   return (
-    <div className="space-y-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[28px] font-semibold tracking-tight">Phiếu nhập hàng</h2>
-          <p className="mt-1 text-sm text-neutral-500">
-            Kho tạo phiếu nhập, xác nhận đủ hàng và theo dõi quy trình nhập kho.
-          </p>
+    <div className="space-y-5 p-5">
+      <div className="overflow-hidden rounded-[28px] bg-neutral-950 p-5 text-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-neutral-400">
+              Inventory purchase V2
+            </p>
+            <h2 className="mt-2 text-[30px] font-semibold tracking-tight">Phiếu nhập hàng</h2>
+            <p className="mt-1 max-w-2xl text-sm text-neutral-300">
+              Theo dõi phiếu nhập, thanh toán NCC, nhập kho và lọc nhanh theo đầy đủ thông tin trong phiếu.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={resetReceiptFilters}
+              className="rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/15"
+            >
+              Xóa lọc
+            </button>
+            {canCreateReceipt ? (
+              <button
+                type="button"
+                onClick={openCreate}
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-neutral-950 hover:bg-neutral-100"
+              >
+                + Tạo phiếu nhập
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        {canCreateReceipt ? (
-          <button
-            type="button"
-            onClick={openCreate}
-            className="rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
-          >
-            + Tạo phiếu nhập
-          </button>
-        ) : null}
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Số phiếu</p>
+            <p className="mt-1 text-2xl font-semibold">{filteredRows.length}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Tổng SL nhập</p>
+            <p className="mt-1 text-2xl font-semibold">{receiptSummary.totalQty}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Chờ thanh toán</p>
+            <p className="mt-1 text-2xl font-semibold">{receiptSummary.waitingPayment}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Chờ nhập kho</p>
+            <p className="mt-1 text-2xl font-semibold">{receiptSummary.waitingStock}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Còn phải trả NCC</p>
+            <p className="mt-1 text-2xl font-semibold">{canViewCost ? currency(receiptSummary.debtAmount) : "—"}</p>
+          </div>
+        </div>
       </div>
 
       <Panel className="p-4">
-        <div className="grid gap-3 md:grid-cols-[1.4fr_0.75fr_auto]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+          <div>
+            <p className="text-sm font-semibold text-neutral-900">Bộ lọc phiếu nhập</p>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              Lọc theo mã phiếu, người nhập, nhà cung cấp, kho, ngày tạo, ngày nhập kho, danh mục, SKU, màu, size, nguồn tiền và công nợ.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFilters((prev) => !prev)}
+            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+          >
+            {showAdvancedFilters ? "Thu gọn bộ lọc" : "Mở rộng bộ lọc"}
+          </button>
+        </div>
+
+        <div className="mt-3 grid gap-3 xl:grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr]">
           <input
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm theo mã phiếu, kho, SKU, tên sản phẩm..."
+            placeholder="Tìm mã phiếu, SKU, sản phẩm, ghi chú, kho, NCC, người nhập..."
           />
 
           <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >
@@ -995,10 +1338,108 @@ export default function PurchaseReceiptsPageClient() {
             <option value="CANCELLED">Đã hủy</option>
           </select>
 
-          <div className="flex items-center justify-end text-sm text-neutral-500">
-            {filteredRows.length} phiếu
-          </div>
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900"
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả kho nhập</option>
+            {allowedBranches.map((branch) => (
+              <option key={branch.id} value={String(branch.id)}>{branch.name}</option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="created_desc">Mới nhất trước</option>
+            <option value="created_asc">Cũ nhất trước</option>
+            <option value="amount_desc">Tổng tiền cao → thấp</option>
+            <option value="amount_asc">Tổng tiền thấp → cao</option>
+            <option value="qty_desc">Số lượng nhiều → ít</option>
+            <option value="supplier_asc">Nhà cung cấp A → Z</option>
+            <option value="branch_asc">Kho nhập A → Z</option>
+          </select>
         </div>
+
+        {showAdvancedFilters ? (
+          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
+              <option value="ALL">Tất cả nhà cung cấp</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={String(supplier.id)}>{supplier.name}</option>
+              ))}
+            </select>
+
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={createdByFilter} onChange={(e) => setCreatedByFilter(e.target.value)}>
+              <option value="ALL">Tất cả người nhập</option>
+              {receiptFilterOptions.createdBy.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+              <option value="ALL">Tất cả danh mục sản phẩm</option>
+              {receiptFilterOptions.categories.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={paymentSourceFilter} onChange={(e) => setPaymentSourceFilter(e.target.value)}>
+              <option value="ALL">Tất cả nguồn tiền</option>
+              {paymentSources.map((source) => (
+                <option key={source.id} value={String(source.id)}>{source.name}</option>
+              ))}
+            </select>
+
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}>
+              <option value="ALL">Tất cả màu</option>
+              {receiptFilterOptions.colors.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={sizeFilter} onChange={(e) => setSizeFilter(e.target.value)}>
+              <option value="ALL">Tất cả size</option>
+              {receiptFilterOptions.sizes.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+
+            <select className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" value={paymentStatusFilter} onChange={(e) => setPaymentStatusFilter(e.target.value)}>
+              <option value="ALL">Tất cả trạng thái tiền</option>
+              <option value="UNPAID">Chưa thanh toán</option>
+              <option value="PARTIAL">Thanh toán một phần</option>
+              <option value="PAID_ENOUGH">Đã trả đủ</option>
+              <option value="HAS_DEBT">Còn công nợ</option>
+              <option value="OVERDUE_ACTION">Cần xử lý tiếp</option>
+            </select>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="number" min="0" value={qtyMin} onChange={(e) => setQtyMin(e.target.value)} placeholder="SL từ" />
+              <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="number" min="0" value={qtyMax} onChange={(e) => setQtyMax(e.target.value)} placeholder="SL đến" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="Ngày tạo từ" />
+              <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="Ngày tạo đến" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="date" value={importDateFrom} onChange={(e) => setImportDateFrom(e.target.value)} title="Ngày nhập kho từ" />
+              <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="date" value={importDateTo} onChange={(e) => setImportDateTo(e.target.value)} title="Ngày nhập kho đến" />
+            </div>
+
+            {canViewCost ? (
+              <div className="grid grid-cols-2 gap-2">
+                <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="number" min="0" value={amountMin} onChange={(e) => setAmountMin(e.target.value)} placeholder="Tiền từ" />
+                <input className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none" type="number" min="0" value={amountMax} onChange={(e) => setAmountMax(e.target.value)} placeholder="Tiền đến" />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Panel>
 
       {error ? (
@@ -1036,30 +1477,26 @@ export default function PurchaseReceiptsPageClient() {
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 p-3">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-neutral-900">
+                      <button
+                        type="button"
+                        onClick={() => openReceiptInNewTab(receipt)}
+                        className="text-left text-sm font-semibold text-neutral-900 underline-offset-4 hover:underline"
+                        title="Mở phiếu nhập ở tab mới"
+                      >
                         {receipt.receiptCode}
-                      </p>
+                      </button>
 
-                      {receipt.status === "COMPLETED" ? (
-                        <Badge tone="green">Đã hoàn tất</Badge>
-                      ) : receipt.status === "STOCK_IMPORTED" ? (
-                        <Badge tone="blue">Đã nhập kho</Badge>
-                      ) : receipt.status === "PAID" ? (
-                        <Badge tone="green">{isAdmin ? "Đã thanh toán đủ" : "Đã xác nhận đủ hàng"}</Badge>
-                      ) : receipt.status === "PARTIALLY_PAID" ? (
-                        <Badge tone="amber">{isAdmin ? "Thanh toán một phần" : "Đã xác nhận đủ hàng"}</Badge>
-                      ) : receipt.status === "PAYMENT_REQUESTED" ? (
-                        <Badge tone="blue">{isAdmin ? "Chờ thanh toán" : "Đã xác nhận đủ hàng"}</Badge>
-                      ) : receipt.status === "CANCELLED" ? (
-                        <Badge tone="red">Đã hủy</Badge>
-                      ) : (
-                        <Badge tone="amber">Nháp</Badge>
-                      )}
+                      <Badge tone={getReceiptStatusTone(receipt.status)}>
+                        {getReceiptStatusLabel(receipt.status, isAdmin)}
+                      </Badge>
                     </div>
 
                     <div className="mt-2 space-y-1 text-xs text-neutral-500">
                       <p>Kho nhập: {receipt.branch?.name || "—"}</p>
                       {canViewCost ? <p>Nhà cung cấp: {receipt.supplier?.name || "—"}</p> : null}
+                      <p>Người nhập: {getCreatedByName(receipt)}</p>
+                      <p>Ngày tạo: {formatDateTime(getReceiptCreatedAt(receipt))}</p>
+                      <p>Ngày nhập kho/hoàn tất: {formatDateTime(getReceiptImportedAt(receipt))}</p>
                       <p>Tổng số lượng: {receiptQty}</p>
                       <p>
                         Số dòng SKU: {receiptItems.length}
@@ -1072,6 +1509,7 @@ export default function PurchaseReceiptsPageClient() {
                       </p>
                       {canViewCost ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
                       {canViewCost ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
+                      {canViewCost ? <p>Còn phải trả: {currency(Math.max(receiptAmount - paidAmount, 0))}</p> : null}
                       {canImportStockReceipt && receipt.status === "PAID" ? (
                         <p className="font-medium text-green-700">Đã thanh toán đủ · chờ nhập kho</p>
                       ) : null}
@@ -1080,12 +1518,21 @@ export default function PurchaseReceiptsPageClient() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
+                      <a
+                        href={`/control/purchase-receipts/${receipt.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+                      >
+                        Mở tab mới
+                      </a>
+
                       <button
                         type="button"
                         onClick={() => toggleReceiptExpanded(receipt.id)}
                         className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
                       >
-                        {expanded ? "Thu gọn" : "Xem chi tiết"}
+                        {expanded ? "Thu gọn nhanh" : "Xem nhanh"}
                       </button>
 
                       {receipt.status === "DRAFT" &&

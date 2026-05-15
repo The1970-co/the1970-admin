@@ -205,6 +205,67 @@ function getProductCategoryName(product: any) {
   return categoryName;
 }
 
+function getStockTransferDetailHref(id: string) {
+  return `/control/stock-transfers/${encodeURIComponent(id)}`;
+}
+
+function getTransferItemCategoryName(item: any) {
+  const direct = String(item?.categoryName || item?.category || "").trim();
+  if (direct) return direct;
+
+  return getProductCategoryName(
+    item?.product ||
+      item?.variant?.product ||
+      item?.productSnapshot ||
+      item?.variantProduct ||
+      {},
+  );
+}
+
+function getTransferSearchText(transfer: any) {
+  const items = Array.isArray(transfer?.items) ? transfer.items : [];
+
+  return normalizeCategoryName(
+    [
+      transfer?.transferCode,
+      transfer?.code,
+      transfer?.sourceRefId,
+      transfer?.note,
+      transfer?.createdByName,
+      transfer?.confirmedByName,
+      transfer?.fromBranch?.name,
+      transfer?.fromBranchName,
+      transfer?.fromBranchId,
+      transfer?.toBranch?.name,
+      transfer?.toBranchName,
+      transfer?.toBranchId,
+      ...items.flatMap((item: any) => [
+        item?.sku,
+        item?.productName,
+        item?.color,
+        item?.size,
+        getTransferItemCategoryName(item),
+      ]),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function formatShortDateTime(value: any) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+
 export default function StockTransfersPageClient() {
   const [rows, setRows] = useState<StockTransfer[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -229,6 +290,8 @@ export default function StockTransfersPageClient() {
   const [scanNotice, setScanNotice] = useState("");
   const [recentScans, setRecentScans] = useState<string[]>([]);
   const variantSearchRef = useRef<HTMLInputElement | null>(null);
+  const lastScanRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+  const scanTimerRef = useRef<number | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [fromBranchFilter, setFromBranchFilter] = useState("ALL");
@@ -236,6 +299,21 @@ export default function StockTransfersPageClient() {
   const [sourceTypeFilter, setSourceTypeFilter] = useState("ALL");
   const [dateFromFilter, setDateFromFilter] = useState("");
   const [dateToFilter, setDateToFilter] = useState("");
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [autoConfigOpen, setAutoConfigOpen] = useState(false);
+  const [createdByFilter, setCreatedByFilter] = useState("ALL");
+  const [productFilter, setProductFilter] = useState("");
+  const [skuFilter, setSkuFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
+  const [colorFilter, setColorFilter] = useState("ALL");
+  const [sizeFilter, setSizeFilter] = useState("ALL");
+  const [noteFilter, setNoteFilter] = useState("");
+  const [sourceRefFilter, setSourceRefFilter] = useState("");
+  const [minQtyFilter, setMinQtyFilter] = useState("");
+  const [maxQtyFilter, setMaxQtyFilter] = useState("");
+  const [minLineFilter, setMinLineFilter] = useState("");
+  const [maxLineFilter, setMaxLineFilter] = useState("");
+  const [sortBy, setSortBy] = useState("created_desc");
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -542,35 +620,146 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     });
   }, [rows, canManageAutoTransfer, isQOWarehouseUser, userBranchId]);
 
+  const transferFilterOptions = useMemo(() => {
+    const createdBy = new Set<string>();
+    const categories = new Set<string>();
+    const colors = new Set<string>();
+    const sizes = new Set<string>();
+
+    visibleRows.forEach((transfer: any) => {
+      if (transfer.createdByName) createdBy.add(String(transfer.createdByName));
+      if (transfer.confirmedByName) createdBy.add(String(transfer.confirmedByName));
+
+      (transfer.items || []).forEach((item: any) => {
+        const categoryName = getTransferItemCategoryName(item);
+        if (categoryName) categories.add(categoryName);
+        if (item?.color) colors.add(String(item.color));
+        if (item?.size) sizes.add(String(item.size));
+      });
+    });
+
+    return {
+      createdBy: Array.from(createdBy).sort((a, b) => a.localeCompare(b, "vi")),
+      categories: Array.from(categories).sort((a, b) => a.localeCompare(b, "vi")),
+      colors: Array.from(colors).sort((a, b) => a.localeCompare(b, "vi")),
+      sizes: Array.from(sizes).sort((a, b) => a.localeCompare(b, "vi")),
+    };
+  }, [visibleRows]);
+
   const filteredRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = normalizeCategoryName(query);
+    const productQ = normalizeCategoryName(productFilter);
+    const skuQ = normalizeCategoryName(skuFilter);
+    const noteQ = normalizeCategoryName(noteFilter);
+    const sourceRefQ = normalizeCategoryName(sourceRefFilter);
     const fromDate = dateFromFilter ? new Date(`${dateFromFilter}T00:00:00`).getTime() : 0;
     const toDate = dateToFilter ? new Date(`${dateToFilter}T23:59:59`).getTime() : 0;
+    const minQty = minQtyFilter === "" ? null : Number(minQtyFilter);
+    const maxQty = maxQtyFilter === "" ? null : Number(maxQtyFilter);
+    const minLines = minLineFilter === "" ? null : Number(minLineFilter);
+    const maxLines = maxLineFilter === "" ? null : Number(maxLineFilter);
 
-    return visibleRows.filter((item) => {
-      const searchable =
-        item.transferCode.toLowerCase().includes(q) ||
-        String(item.fromBranch?.name || item.fromBranchName || item.fromBranchId || "").toLowerCase().includes(q) ||
-        String(item.toBranch?.name || item.toBranchName || item.toBranchId || "").toLowerCase().includes(q) ||
-        ((item.items || []).some((line) => {
-          const label = `${line.productName || ""} ${line.sku || ""} ${line.color || ""} ${line.size || ""}`.toLowerCase();
-          return label.includes(q);
-        }) ?? false);
+    const list = visibleRows.filter((item: any) => {
+      const items = Array.isArray(item.items) ? item.items : [];
+      const totalQtyValue = Number(
+        item.totalQty ?? items.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0),
+      );
+      const totalLinesValue = Number(item.totalLines ?? items.length ?? 0);
+      const searchable = getTransferSearchText(item);
+      const itemText = normalizeCategoryName(
+        items
+          .flatMap((line: any) => [
+            line?.productName,
+            line?.sku,
+            line?.color,
+            line?.size,
+            getTransferItemCategoryName(line),
+          ])
+          .join(" "),
+      );
 
-      if (q && !searchable) return false;
+      if (q && !searchable.includes(q)) return false;
       if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
       if (fromBranchFilter !== "ALL" && item.fromBranchId !== fromBranchFilter) return false;
       if (toBranchFilter !== "ALL" && item.toBranchId !== toBranchFilter) return false;
       if (sourceTypeFilter !== "ALL" && String(item.sourceType || "MANUAL") !== sourceTypeFilter) return false;
+      if (createdByFilter !== "ALL" && String(item.createdByName || item.confirmedByName || "") !== createdByFilter) return false;
+      if (productQ && !itemText.includes(productQ)) return false;
+      if (skuQ && !items.some((line: any) => normalizeCategoryName(line?.sku).includes(skuQ))) return false;
+      if (categoryFilter !== "ALL" && !items.some((line: any) => getTransferItemCategoryName(line) === categoryFilter)) return false;
+      if (colorFilter !== "ALL" && !items.some((line: any) => String(line?.color || "") === colorFilter)) return false;
+      if (sizeFilter !== "ALL" && !items.some((line: any) => String(line?.size || "") === sizeFilter)) return false;
+      if (noteQ && !normalizeCategoryName(item.note).includes(noteQ)) return false;
+      if (sourceRefQ && !normalizeCategoryName(item.sourceRefId).includes(sourceRefQ)) return false;
+      if (minQty !== null && Number.isFinite(minQty) && totalQtyValue < minQty) return false;
+      if (maxQty !== null && Number.isFinite(maxQty) && totalQtyValue > maxQty) return false;
+      if (minLines !== null && Number.isFinite(minLines) && totalLinesValue < minLines) return false;
+      if (maxLines !== null && Number.isFinite(maxLines) && totalLinesValue > maxLines) return false;
 
-      const rawDate = (item as any).createdAt || (item as any).createdAtText || (item as any).updatedAt || "";
+      const rawDate = item.createdAt || item.createdAtText || item.updatedAt || "";
       const createdTime = rawDate ? new Date(rawDate).getTime() : 0;
       if (fromDate && createdTime && createdTime < fromDate) return false;
       if (toDate && createdTime && createdTime > toDate) return false;
 
       return true;
     });
-  }, [visibleRows, query, statusFilter, fromBranchFilter, toBranchFilter, sourceTypeFilter, dateFromFilter, dateToFilter]);
+
+    return list.sort((a: any, b: any) => {
+      const aCreated = new Date(a.createdAt || a.updatedAt || 0).getTime();
+      const bCreated = new Date(b.createdAt || b.updatedAt || 0).getTime();
+      const aQty = Number(a.totalQty ?? a.items?.reduce?.((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
+      const bQty = Number(b.totalQty ?? b.items?.reduce?.((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
+      const aLines = Number(a.totalLines ?? a.items?.length ?? 0);
+      const bLines = Number(b.totalLines ?? b.items?.length ?? 0);
+
+      if (sortBy === "created_asc") return aCreated - bCreated;
+      if (sortBy === "qty_desc") return bQty - aQty;
+      if (sortBy === "qty_asc") return aQty - bQty;
+      if (sortBy === "lines_desc") return bLines - aLines;
+      if (sortBy === "lines_asc") return aLines - bLines;
+      if (sortBy === "code_asc") return String(a.transferCode || "").localeCompare(String(b.transferCode || ""), "vi");
+      if (sortBy === "code_desc") return String(b.transferCode || "").localeCompare(String(a.transferCode || ""), "vi");
+      return bCreated - aCreated;
+    });
+  }, [
+    visibleRows,
+    query,
+    statusFilter,
+    fromBranchFilter,
+    toBranchFilter,
+    sourceTypeFilter,
+    createdByFilter,
+    productFilter,
+    skuFilter,
+    categoryFilter,
+    colorFilter,
+    sizeFilter,
+    noteFilter,
+    sourceRefFilter,
+    minQtyFilter,
+    maxQtyFilter,
+    minLineFilter,
+    maxLineFilter,
+    dateFromFilter,
+    dateToFilter,
+    sortBy,
+  ]);
+
+  const transferStats = useMemo(() => {
+    const totalQty = filteredRows.reduce(
+      (sum, row: any) => sum + Number(row.totalQty ?? row.items?.reduce?.((itemSum: number, item: any) => itemSum + Number(item.qty || 0), 0) ?? 0),
+      0,
+    );
+
+    return {
+      total: filteredRows.length,
+      totalQty,
+      waitingConfirm: filteredRows.filter((row) => row.status === "DRAFT" || row.status === "PENDING").length,
+      waitingReceive: filteredRows.filter((row) => row.status === "CONFIRMED" || row.status === "IN_TRANSIT").length,
+      completed: filteredRows.filter((row) => row.status === "COMPLETED").length,
+    };
+  }, [filteredRows]);
+
 
   function resetTransferFilters() {
     setQuery("");
@@ -578,8 +767,21 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     setFromBranchFilter("ALL");
     setToBranchFilter("ALL");
     setSourceTypeFilter("ALL");
+    setCreatedByFilter("ALL");
+    setProductFilter("");
+    setSkuFilter("");
+    setCategoryFilter("ALL");
+    setColorFilter("ALL");
+    setSizeFilter("ALL");
+    setNoteFilter("");
+    setSourceRefFilter("");
+    setMinQtyFilter("");
+    setMaxQtyFilter("");
+    setMinLineFilter("");
+    setMaxLineFilter("");
     setDateFromFilter("");
     setDateToFilter("");
+    setSortBy("created_desc");
   }
 
   function formatTransferPrintDate(value: any) {
@@ -889,6 +1091,15 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [canManageAutoTransfer]);
 
+useEffect(() => {
+  return () => {
+    if (scanTimerRef.current) {
+      window.clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+  };
+}, []);
+
 
 useEffect(() => {
   if (!lockedSourceBranchId) return;
@@ -968,9 +1179,25 @@ useEffect(() => {
   }
 
   function commitVariantScan(value: string) {
+    const normalizedValue = normalizeScanValue(value);
+    if (!normalizedValue) return false;
+
+    const now = Date.now();
+    const last = lastScanRef.current;
+
+    if (last.value === normalizedValue && now - last.at < 800) {
+      setSearchVariant("");
+      window.setTimeout(() => {
+        variantSearchRef.current?.focus();
+        variantSearchRef.current?.select();
+      }, 0);
+      return true;
+    }
+
     const exact = findExactVariantByScan(value);
     if (!exact) return false;
 
+    lastScanRef.current = { value: normalizedValue, at: now };
     addVariantToDraft(exact, "scan");
     setSearchVariant("");
 
@@ -985,12 +1212,18 @@ useEffect(() => {
   function handleVariantSearchChange(value: string) {
     setSearchVariant(value);
 
+    if (scanTimerRef.current) {
+      window.clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+
     const cleaned = value.trim();
     if (!cleaned) return;
 
-    if (cleaned.length >= 4) {
+    scanTimerRef.current = window.setTimeout(() => {
       commitVariantScan(cleaned);
-    }
+      scanTimerRef.current = null;
+    }, 160);
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -1392,41 +1625,89 @@ useEffect(() => {
 
   return (
     <div className="space-y-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[28px] font-semibold tracking-tight">Phiếu chuyển kho</h2>
-          <p className="mt-1 text-sm text-neutral-500">
-            Điều phối hàng giữa QO, THÁI HÀ, XÃ ĐÀN, CHÙA LÁNG.
-          </p>
+      <div className="rounded-3xl bg-neutral-950 p-5 text-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">
+              THE 1970 WAREHOUSE
+            </p>
+            <h2 className="mt-2 text-[30px] font-semibold tracking-tight">Phiếu chuyển kho</h2>
+            <p className="mt-1 max-w-3xl text-sm text-neutral-300">
+              Điều phối hàng giữa QO, THÁI HÀ, XÃ ĐÀN, CHÙA LÁNG. Bấm vào mã phiếu để mở tab mới, trang danh sách giữ nguyên vị trí đang xem.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {canManageStockTransferAuto ? (
+              <button
+                onClick={() => void handlePreviewSuggestions()}
+                disabled={suggestionLoading}
+                className="rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {suggestionLoading ? "Đang quét..." : "Đề xuất cấp hàng"}
+              </button>
+            ) : null}
+
+            {canCreateStockTransfer ? (
+              <button
+                onClick={openCreate}
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-neutral-950 hover:bg-neutral-100"
+              >
+                + Tạo phiếu chuyển
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {canManageStockTransferAuto ? (
-            <button
-              onClick={() => void handlePreviewSuggestions()}
-              disabled={suggestionLoading}
-              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-blue-100"
-            >
-              {suggestionLoading ? "Đang quét..." : "Đề xuất cấp hàng"}
-            </button>
-          ) : null}
-
-          {canCreateStockTransfer ? (
-            <button
-              onClick={openCreate}
-              className="rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
-            >
-              + Tạo phiếu chuyển
-            </button>
-          ) : null}
+        <div className="mt-5 grid gap-3 md:grid-cols-5">
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Tổng phiếu</p>
+            <p className="mt-1 text-2xl font-semibold">{transferStats.total}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Tổng SL chuyển</p>
+            <p className="mt-1 text-2xl font-semibold">{transferStats.totalQty}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Chờ xác nhận</p>
+            <p className="mt-1 text-2xl font-semibold">{transferStats.waitingConfirm}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Chờ nhận hàng</p>
+            <p className="mt-1 text-2xl font-semibold">{transferStats.waitingReceive}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+            <p className="text-xs text-neutral-400">Hoàn tất</p>
+            <p className="mt-1 text-2xl font-semibold">{transferStats.completed}</p>
+          </div>
         </div>
       </div>
 
-      <Panel className="p-3">
-        <div className="grid gap-3 md:grid-cols-6">
+      <Panel className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+          <div>
+            <p className="text-sm font-semibold text-neutral-900">Bộ lọc phiếu chuyển kho</p>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              Lọc theo toàn bộ trường chính của phiếu: mã, người tạo, kho xuất/nhận, trạng thái, nguồn, sản phẩm, SKU, màu, size, danh mục, ghi chú, ngày tạo, số dòng và tổng số lượng.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-medium text-neutral-500">{filteredRows.length} phiếu</div>
+            <button
+              type="button"
+              onClick={() => setFilterPanelOpen((prev) => !prev)}
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
+            >
+              {filterPanelOpen ? "Thu gọn ▲" : "Mở lọc ▼"}
+            </button>
+          </div>
+        </div>
+
+        {filterPanelOpen ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-4 xl:grid-cols-6">
           <input
             className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none md:col-span-2"
-            placeholder="Tìm theo mã phiếu, chi nhánh, SKU..."
+            placeholder="Tìm mã phiếu, kho, SKU, sản phẩm, ghi chú..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -1477,11 +1758,117 @@ useEffect(() => {
               <option key={branch.id} value={branch.id}>{branch.name}</option>
             ))}
           </select>
-        </div>
 
-        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={createdByFilter}
+            onChange={(e) => setCreatedByFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả người tạo/xác nhận</option>
+            {transferFilterOptions.createdBy.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
+          <input
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="Mã SKU"
+            value={skuFilter}
+            onChange={(e) => setSkuFilter(e.target.value)}
+          />
+
+          <input
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="Tên sản phẩm"
+            value={productFilter}
+            onChange={(e) => setProductFilter(e.target.value)}
+          />
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả danh mục</option>
+            {transferFilterOptions.categories.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={colorFilter}
+            onChange={(e) => setColorFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả màu</option>
+            {transferFilterOptions.colors.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={sizeFilter}
+            onChange={(e) => setSizeFilter(e.target.value)}
+          >
+            <option value="ALL">Tất cả size</option>
+            {transferFilterOptions.sizes.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
+          <input
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="Ghi chú"
+            value={noteFilter}
+            onChange={(e) => setNoteFilter(e.target.value)}
+          />
+
+          <input
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="Mã nguồn / ref"
+            value={sourceRefFilter}
+            onChange={(e) => setSourceRefFilter(e.target.value)}
+          />
+
+          <input
+            type="number"
+            min="0"
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="SL từ"
+            value={minQtyFilter}
+            onChange={(e) => setMinQtyFilter(e.target.value)}
+          />
+
+          <input
+            type="number"
+            min="0"
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="SL đến"
+            value={maxQtyFilter}
+            onChange={(e) => setMaxQtyFilter(e.target.value)}
+          />
+
+          <input
+            type="number"
+            min="0"
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="Số dòng từ"
+            value={minLineFilter}
+            onChange={(e) => setMinLineFilter(e.target.value)}
+          />
+
+          <input
+            type="number"
+            min="0"
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            placeholder="Số dòng đến"
+            value={maxLineFilter}
+            onChange={(e) => setMaxLineFilter(e.target.value)}
+          />
+
           <label className="text-xs font-medium text-neutral-500">
-            Từ ngày
+            Từ ngày tạo
             <input
               type="date"
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
@@ -1491,7 +1878,7 @@ useEffect(() => {
           </label>
 
           <label className="text-xs font-medium text-neutral-500">
-            Đến ngày
+            Đến ngày tạo
             <input
               type="date"
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
@@ -1500,14 +1887,34 @@ useEffect(() => {
             />
           </label>
 
+          <select
+            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="created_desc">Mới nhất trước</option>
+            <option value="created_asc">Cũ nhất trước</option>
+            <option value="qty_desc">SL nhiều nhất</option>
+            <option value="qty_asc">SL ít nhất</option>
+            <option value="lines_desc">Nhiều dòng SKU nhất</option>
+            <option value="lines_asc">Ít dòng SKU nhất</option>
+            <option value="code_desc">Mã phiếu Z-A</option>
+            <option value="code_asc">Mã phiếu A-Z</option>
+          </select>
+
           <button
             type="button"
             onClick={resetTransferFilters}
-            className="self-end rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
           >
             Xóa lọc
           </button>
         </div>
+        ) : (
+          <div className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm text-neutral-500">
+            Bộ lọc đang thu gọn. Đang hiển thị {filteredRows.length} phiếu theo điều kiện hiện tại.
+          </div>
+        )}
       </Panel>
 
       {canDeleteStockTransfer ? (
@@ -1521,6 +1928,14 @@ useEffect(() => {
             </div>
 
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setAutoConfigOpen((prev) => !prev)}
+                className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+              >
+                {autoConfigOpen ? "Thu gọn ▲" : "Mở cấu hình ▼"}
+              </button>
+
               <button
                 type="button"
                 onClick={() => void handleSaveAutoConfig()}
@@ -1541,6 +1956,8 @@ useEffect(() => {
             </div>
           </div>
 
+          {autoConfigOpen ? (
+          <>
           <div className="grid gap-3 md:grid-cols-4">
             <label className="text-xs text-neutral-500">
               THÁI HÀ dưới
@@ -1869,6 +2286,12 @@ useEffect(() => {
               </p>
             )}
           </div>
+          </>
+          ) : (
+            <div className="rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm text-neutral-500">
+              Đề xuất cấp hàng đang thu gọn. Ngưỡng hiện tại: TH {branchTargets.TH}, XĐ {branchTargets.XD}, CL {branchTargets.CL}; tối đa {maxPerVariant} sản phẩm / mã.
+            </div>
+          )}
         </Panel>
       ) : null}
 
@@ -1950,11 +2373,31 @@ useEffect(() => {
               transfer.status === "CONFIRMED" &&
               (canManageAutoTransfer || transfer.toBranchId === currentBranchId);
 
+            const fromBranchName =
+              transfer.fromBranch?.name ||
+              transfer.fromBranchName ||
+              transfer.fromBranchId ||
+              "—";
+            const toBranchName =
+              transfer.toBranch?.name ||
+              transfer.toBranchName ||
+              transfer.toBranchId ||
+              "—";
+            const lineCount = transfer.totalLines ?? transfer.items?.length ?? 0;
+            const createdByName = (transfer as any).createdByName || "—";
+            const createdAtText = formatShortDateTime((transfer as any).createdAt);
+            const topItems = (transfer.items || []).slice(0, 3);
+            const skuPreview = topItems
+              .map((item: any) => item.sku || item.productName)
+              .filter(Boolean)
+              .join(", ");
+            const extraItemCount = Math.max(lineCount - topItems.length, 0);
+
             return (
-              <Panel key={transfer.id}>
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 p-3">
-                  <div>
-                    <div className="flex items-center gap-2">
+              <Panel key={transfer.id} className="overflow-hidden transition hover:border-neutral-300 hover:shadow-md">
+                <div className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
                       {canDeleteStockTransfer ? (
                         <input
                           type="checkbox"
@@ -1965,39 +2408,80 @@ useEffect(() => {
                           aria-label={`Chọn phiếu ${transfer.transferCode}`}
                         />
                       ) : null}
-                      <p className="text-sm font-semibold text-neutral-900">{transfer.transferCode}</p>
+
+                      <a
+                        href={getStockTransferDetailHref(transfer.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[15px] font-bold text-neutral-950 underline-offset-4 hover:underline"
+                        title="Mở trang chi tiết ở tab mới"
+                      >
+                        {transfer.transferCode}
+                      </a>
+
                       {renderTransferStatusBadge(transfer)}
                       {transfer.sourceType === "AUTO" ? <Badge tone="blue">Tự động</Badge> : null}
                       {transfer.sourceType === "MANUAL" ? <Badge tone="gray">Thủ công</Badge> : null}
                       {transfer.sourceType === "REQUEST" ? <Badge tone="green">Yêu cầu</Badge> : null}
                     </div>
-                    <div className="mt-1.5 space-y-0.5 text-xs text-neutral-500">
-                      <p>
-                        Xuất:{" "}
-                        {transfer.fromBranch?.name ||
-                          transfer.fromBranchName ||
-                          transfer.fromBranchId ||
-                          "—"}
-                      </p>
-                      <p>
-                        Nhận:{" "}
-                        {transfer.toBranch?.name ||
-                          transfer.toBranchName ||
-                          transfer.toBranchId ||
-                          "—"}
-                      </p>
-                      <p>Tổng SL: {total}</p>
-                      {transfer.note ? <p>Ghi chú: {transfer.note}</p> : null}
+
+                    <div className="mt-2 grid gap-2 text-xs text-neutral-600 md:grid-cols-4">
+                      <div className="rounded-xl bg-neutral-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Tuyến chuyển</p>
+                        <p className="mt-0.5 truncate font-bold text-neutral-950">
+                          {fromBranchName} → {toBranchName}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-neutral-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Tổng hàng</p>
+                        <p className="mt-0.5 font-bold text-neutral-950">
+                          {total} sản phẩm · {lineCount} SKU
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-neutral-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Người tạo</p>
+                        <p className="mt-0.5 truncate font-bold text-neutral-950">{createdByName}</p>
+                      </div>
+
+                      <div className="rounded-xl bg-neutral-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Thời gian</p>
+                        <p className="mt-0.5 truncate font-bold text-neutral-950">{createdAtText}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
+                      {skuPreview ? (
+                        <p className="min-w-0 truncate">
+                          SKU tiêu biểu: <span className="font-medium text-neutral-700">{skuPreview}</span>
+                          {extraItemCount > 0 ? <span> +{extraItemCount} dòng</span> : null}
+                        </p>
+                      ) : (
+                        <p>Bấm “Xem phiếu” để xem chi tiết sản phẩm.</p>
+                      )}
+                      {(transfer as any).sourceRefId ? <p>Mã nguồn: {(transfer as any).sourceRefId}</p> : null}
+                      {transfer.note ? <p className="truncate">Ghi chú: {transfer.note}</p> : null}
                     </div>
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
                     <button
+                      type="button"
                       onClick={() => void openDetail(transfer.id)}
-                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700"
+                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
                     >
                       Xem phiếu
                     </button>
+
+                    <a
+                      href={getStockTransferDetailHref(transfer.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                    >
+                      Mở tab mới
+                    </a>
 
                     <button
                       type="button"
@@ -2029,7 +2513,7 @@ useEffect(() => {
                       <button
                         onClick={() => void handleConfirm(transfer.id)}
                         disabled={confirmingId === transfer.id}
-                        className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700"
+                        className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {confirmingId === transfer.id ? "Đang xác nhận..." : "Xác nhận chuyển"}
                       </button>
@@ -2039,7 +2523,7 @@ useEffect(() => {
                       <button
                         onClick={() => void handleCancel(transfer.id)}
                         disabled={cancellingId === transfer.id}
-                        className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700"
+                        className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {cancellingId === transfer.id ? "Đang hủy..." : "Hủy"}
                       </button>
@@ -2056,41 +2540,9 @@ useEffect(() => {
                     ) : null}
                   </div>
                 </div>
-
-                <div className="overflow-auto">
-                  <table className="min-w-full text-[13px]">
-                    <thead className="bg-neutral-50 text-left text-neutral-500">
-                      <tr>
-                        <th className="px-3 py-2.5 font-medium">SKU</th>
-                        <th className="px-3 py-2.5 font-medium">Sản phẩm</th>
-                        <th className="px-3 py-2.5 font-medium">Màu</th>
-                        <th className="px-3 py-2.5 font-medium">Size</th>
-                        <th className="px-3 py-2.5 font-medium">SL</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(transfer.items || []).length > 0 ? (
-                        (transfer.items || []).map((item) => (
-                          <tr key={item.id} className="border-t border-neutral-200">
-                            <td className="px-3 py-2.5 font-medium">{item.sku || "—"}</td>
-                            <td className="px-3 py-2.5">{item.productName || "—"}</td>
-                            <td className="px-3 py-2.5">{item.color || "—"}</td>
-                            <td className="px-3 py-2.5">{item.size || "—"}</td>
-                            <td className="px-3 py-2.5">{item.qty}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={5} className="border-t border-neutral-200 px-3 py-3 text-sm text-neutral-500">
-                            Bấm “Xem phiếu” để xem chi tiết sản phẩm.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
               </Panel>
             );
+
           })
         )}
       </div>
@@ -2505,6 +2957,11 @@ useEffect(() => {
                 if (e.key !== "Enter") return;
 
                 e.preventDefault();
+
+                if (scanTimerRef.current) {
+                  window.clearTimeout(scanTimerRef.current);
+                  scanTimerRef.current = null;
+                }
 
                 if (commitVariantScan(searchVariant)) return;
 

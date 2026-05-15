@@ -391,7 +391,7 @@ function movementTone(type: string, qty: number): Tone {
 function statusTone(status?: string | null): Tone {
   const key = String(status || "").toUpperCase();
 
-  if (["COMPLETED", "CONFIRMED", "APPROVED", "IMPORTED", "RECEIVED", "RECORDED"].includes(key)) return "green";
+  if (["COMPLETED", "CONFIRMED", "APPROVED", "IMPORTED", "RECEIVED", "Ghi nhậnED"].includes(key)) return "green";
   if (["CANCELLED", "DELETED", "FAILED"].includes(key)) return "red";
   if (["PENDING", "PROCESSING", "DRAFT", "NEW"].includes(key)) return "amber";
 
@@ -520,7 +520,7 @@ function getStatus(row: InventoryMovementV2) {
 
   const type = String(row.type || "").toUpperCase();
   if (["SALE", "CANCEL", "RETURN", "IMPORT", "TRANSFER_IN", "TRANSFER_OUT", "STOCKTAKE", "STOCKTAKE_ADJUSTMENT"].includes(type)) {
-    return "RECORDED";
+    return "Ghi nhậnED";
   }
 
   return "";
@@ -837,9 +837,8 @@ export default function InventoryLogsPageClient() {
   const totalIn = filtered.filter((r) => r.qty > 0).reduce((sum, r) => sum + r.qty, 0);
   const totalOut = Math.abs(filtered.filter((r) => r.qty < 0).reduce((sum, r) => sum + r.qty, 0));
   const adjustmentRows = filtered.filter((r) => String(r.type || "").toUpperCase().includes("ADJUSTMENT")).length;
-  const missingTimeRows = filtered.filter((r) => !parseDate(getMovementDate(r))).length;
-  const mappedActorRows = filtered.filter((r) => Boolean(getActorLabel(r))).length;
-  const missingActorRows = filtered.length - mappedActorRows;
+  const uniqueSkuRows = Array.from(new Set(filtered.map((r) => String(r.sku || "").trim()).filter(Boolean))).length;
+  const missingActorRows = filtered.filter((r) => !getActorLabel(r)).length;
 
   const branchOptions = useMemo(() => {
     const scoped = visibleBranches.map((branch) => ({
@@ -894,12 +893,11 @@ export default function InventoryLogsPageClient() {
         <div className="flex flex-col gap-5 p-6 text-white lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="mb-3 inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium text-neutral-200">
-              Lịch sử kho hàng V5 · Lọc nhân viên
+              Lịch sử kho hàng V6 · Bộ lọc nâng cao
             </div>
             <h2 className="text-3xl font-semibold tracking-tight">Lịch sử kho hàng</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-300">
-              Theo dõi thời gian ghi nhận, trạng thái, chứng từ, tồn trước/sau và nhân viên thao tác của từng biến động kho.
-              Các dòng cũ chưa có actor sẽ được tách riêng để dễ kiểm tra backend.
+              Theo dõi đầy đủ nhập, xuất, hoàn, kiểm kho, chứng từ liên quan và nhân viên thao tác của từng biến động kho.
             </p>
           </div>
 
@@ -930,20 +928,24 @@ export default function InventoryLogsPageClient() {
 
         <div className="grid border-t border-white/10 bg-white/[0.03] text-white md:grid-cols-4">
           <div className="border-white/10 p-4 md:border-r">
-            <p className="text-xs uppercase tracking-wide text-neutral-400">Dòng đang xem</p>
+            <p className="text-xs uppercase tracking-wide text-neutral-400">Tổng biến động</p>
             <p className="mt-1 text-2xl font-semibold">{filtered.length}</p>
+            <p className="mt-1 text-xs text-neutral-500">Theo bộ lọc hiện tại</p>
           </div>
           <div className="border-white/10 p-4 md:border-r">
-            <p className="text-xs uppercase tracking-wide text-neutral-400">Đã map nhân viên</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-300">{mappedActorRows}</p>
+            <p className="text-xs uppercase tracking-wide text-neutral-400">Nhập / hoàn kho</p>
+            <p className="mt-1 text-2xl font-semibold text-emerald-300">+{totalIn}</p>
+            <p className="mt-1 text-xs text-neutral-500">Tổng số lượng cộng kho</p>
           </div>
           <div className="border-white/10 p-4 md:border-r">
-            <p className="text-xs uppercase tracking-wide text-neutral-400">Chưa map nhân viên</p>
-            <p className="mt-1 text-2xl font-semibold text-amber-300">{missingActorRows}</p>
+            <p className="text-xs uppercase tracking-wide text-neutral-400">Bán / xuất kho</p>
+            <p className="mt-1 text-2xl font-semibold text-red-300">-{totalOut}</p>
+            <p className="mt-1 text-xs text-neutral-500">Tổng số lượng trừ kho</p>
           </div>
           <div className="p-4">
-            <p className="text-xs uppercase tracking-wide text-neutral-400">Thiếu thời gian</p>
-            <p className="mt-1 text-2xl font-semibold text-red-300">{missingTimeRows}</p>
+            <p className="text-xs uppercase tracking-wide text-neutral-400">Điều chỉnh / kiểm kho</p>
+            <p className="mt-1 text-2xl font-semibold text-amber-300">{adjustmentRows}</p>
+            <p className="mt-1 text-xs text-neutral-500">Dòng xử lý thủ công</p>
           </div>
         </div>
       </div>
@@ -955,7 +957,7 @@ export default function InventoryLogsPageClient() {
           <p className="mt-2 text-xs text-neutral-500">
             {isOwner
               ? "Toàn hệ thống"
-              : `Scope: ${visibleBranches.map((b) => b.name).join(", ") || "Chưa gán chi nhánh"}`}
+              : `Chi nhánh: ${visibleBranches.map((b) => b.name).join(", ") || "Chưa gán chi nhánh"}`}
           </p>
         </Panel>
 
@@ -978,9 +980,9 @@ export default function InventoryLogsPageClient() {
         </Panel>
 
         <Panel className="p-5">
-          <p className="text-sm text-neutral-500">Thiếu thời gian</p>
-          <h3 className="mt-2 text-2xl font-semibold text-neutral-900">{missingTimeRows}</h3>
-          <p className="mt-2 text-xs text-neutral-500">BE cần trả createdAt chuẩn ISO nếu còn thiếu</p>
+          <p className="text-sm text-neutral-500">Mã hàng liên quan</p>
+          <h3 className="mt-2 text-2xl font-semibold text-neutral-900">{uniqueSkuRows}</h3>
+          <p className="mt-2 text-xs text-neutral-500">Số SKU phát sinh biến động</p>
         </Panel>
       </div>
 
@@ -1064,7 +1066,7 @@ export default function InventoryLogsPageClient() {
             onChange={(e) => setActorFilter(e.target.value)}
           >
             <option value={ALL_VALUE}>Tất cả nhân viên thao tác{loadingActors ? " · đang tải" : ""}</option>
-            <option value={UNMAPPED_ACTOR_VALUE}>Chưa map nhân viên ({missingActorRows})</option>
+            <option value={UNMAPPED_ACTOR_VALUE}>Chưa ghi nhận nhân viên ({missingActorRows})</option>
             {actorOptions.map((actor) => (
               <option key={actor.id || actor.label} value={actor.label}>
                 {actor.label}{actor.type ? ` · ${actor.type}` : ""}
@@ -1092,26 +1094,6 @@ export default function InventoryLogsPageClient() {
         </div>
       </Panel>
 
-      {missingTimeRows > 0 ? (
-        <Panel className="border-amber-200 bg-amber-50 p-4">
-          <div className="flex flex-col gap-1 text-sm text-amber-900">
-            <p className="font-semibold">Còn {missingTimeRows} dòng chưa có thời gian ghi nhận từ backend.</p>
-            <p>V4 đã bỏ qua giá trị rác như Invalid Date và dò thêm các trường createdAt / movementAt / movedAt / happenedAt trong metadata. Nếu vẫn hiện “Chưa ghi nhận” thì API đang không trả thời gian thật cho dòng đó.</p>
-          </div>
-        </Panel>
-      ) : null}
-
-
-      {missingActorRows > 0 ? (
-        <Panel className="border-orange-200 bg-orange-50 p-4">
-          <div className="flex flex-col gap-1 text-sm text-orange-900">
-            <p className="font-semibold">Còn {missingActorRows} dòng chưa map được nhân viên thao tác.</p>
-            <p>
-              V5 đã tách danh sách nhân viên thao tác thành API riêng để dropdown luôn có nhân viên cho chọn, kể cả khi log cũ chưa map actor. Các dòng chưa map vẫn lọc riêng được bằng lựa chọn “Chưa map nhân viên”.
-            </p>
-          </div>
-        </Panel>
-      ) : null}
       {error ? (
         <Panel className="p-4">
           <p className="text-sm text-red-600">{error}</p>
@@ -1123,10 +1105,10 @@ export default function InventoryLogsPageClient() {
           <div>
             <p className="font-medium text-neutral-900">Bảng lịch sử biến động chi tiết</p>
             <p className="mt-1 text-sm text-neutral-500">
-              Dòng mới nhất ở trên cùng. Bấm vào một dòng để mở chi tiết chứng từ, tồn trước/sau và người thao tác. Bộ lọc nhân viên hỗ trợ cả dòng chưa map.
+              Dòng mới nhất ở trên cùng. Bấm vào một dòng để xem chi tiết chứng từ, tồn trước/sau và người thao tác.
             </p>
           </div>
-          <Badge tone="blue">V5 · Audit view</Badge>
+          <Badge tone="blue">V6 · Chi tiết kho</Badge>
         </div>
 
         <div className="overflow-auto">
@@ -1179,7 +1161,7 @@ export default function InventoryLogsPageClient() {
                           {getBranchText(row, branches) ? (
                             getBranchText(row, branches)
                           ) : (
-                            <Badge tone="gray">Chưa map</Badge>
+                            <Badge tone="gray">Chưa ghi nhận</Badge>
                           )}
                         </td>
 
@@ -1235,7 +1217,7 @@ export default function InventoryLogsPageClient() {
                           {actor ? (
                             <div className="max-w-[190px] font-medium text-neutral-900">{actor}</div>
                           ) : (
-                            <Badge tone="amber">Chưa map</Badge>
+                            <Badge tone="amber">Chưa ghi nhận</Badge>
                           )}
                         </td>
 
@@ -1279,11 +1261,11 @@ export default function InventoryLogsPageClient() {
                               </div>
 
                               <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Audit</p>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Thông tin ghi nhận</p>
                                 <div className="mt-3 space-y-2 text-sm">
-                                  <p><span className="text-neutral-500">Nhân viên:</span> {actor || "Chưa map từ backend"}</p>
+                                  <p><span className="text-neutral-500">Nhân viên:</span> {actor || "Chưa ghi nhận"}</p>
                                   <p><span className="text-neutral-500">Thời gian:</span> {formatDateTime(getMovementDate(row))}</p>
-                                  <p><span className="text-neutral-500">Raw time BE:</span> {getRawTimeDebug(row) || "BE chưa trả"}</p>
+                                  <p><span className="text-neutral-500">Dữ liệu thời gian:</span> {getRawTimeDebug(row) || "Chưa ghi nhận"}</p>
                                   <p><span className="text-neutral-500">Chi nhánh:</span> {getBranchText(row, branches) || "—"}</p>
                                   <p><span className="text-neutral-500">Ghi chú:</span> {row.note || meta.reason || "—"}</p>
                                 </div>
