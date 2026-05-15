@@ -287,6 +287,8 @@ export default function StockTransfersPageClient() {
   const [note, setNote] = useState("");
   const [items, setItems] = useState<DraftItem[]>([]);
   const [searchVariant, setSearchVariant] = useState("");
+  const [draftSortBy, setDraftSortBy] = useState("added_desc");
+  const [bulkQty, setBulkQty] = useState("1");
   const [scanNotice, setScanNotice] = useState("");
   const [recentScans, setRecentScans] = useState<string[]>([]);
   const variantSearchRef = useRef<HTMLInputElement | null>(null);
@@ -1118,6 +1120,8 @@ useEffect(() => {
     setNote("");
     setItems([]);
     setSearchVariant("");
+    setDraftSortBy("added_desc");
+    setBulkQty("1");
   }
 
   function openCreate() {
@@ -1142,33 +1146,42 @@ useEffect(() => {
     source: "manual" | "scan" = "manual"
   ) {
     let existed = false;
+    const initialQty =
+      source === "manual" && Number(bulkQty || 0) > 0 ? String(Number(bulkQty || 1)) : "1";
 
     setItems((prev) => {
-      const next = prev.map((item) => {
-        if (item.variantId !== option.variantId) return item;
+      let updatedItem: DraftItem | null = null;
+      const rest: DraftItem[] = [];
 
-        existed = true;
+      for (const item of prev) {
+        if (item.variantId === option.variantId) {
+          existed = true;
+          updatedItem = {
+            ...item,
+            qty: String(Number(item.qty || 0) + 1),
+          };
+        } else {
+          rest.push(item);
+        }
+      }
 
-        return {
-          ...item,
-          qty: String(Number(item.qty || 0) + 1),
-        };
-      });
+      if (updatedItem) {
+        // Khi quét/thêm lại SKU đã có, đưa dòng vừa thao tác lên đầu để dễ kiểm soát số lượng.
+        return draftSortBy === "added_desc" ? [updatedItem, ...rest] : [...rest, updatedItem];
+      }
 
-      if (existed) return next;
+      const nextItem: DraftItem = {
+        rowId: makeRowId(),
+        variantId: option.variantId,
+        sku: option.sku,
+        productName: option.productName,
+        color: option.color || "",
+        size: option.size || "",
+        qty: initialQty,
+      };
 
-      return [
-        ...prev,
-        {
-          rowId: makeRowId(),
-          variantId: option.variantId,
-          sku: option.sku,
-          productName: option.productName,
-          color: option.color || "",
-          size: option.size || "",
-          qty: "1",
-        },
-      ];
+      // Mặc định giống phiếu nhập: dòng mới nhập/quét nằm trên đầu danh sách.
+      return draftSortBy === "added_asc" ? [...prev, nextItem] : [nextItem, ...prev];
     });
 
     if (source === "scan") {
@@ -1177,6 +1190,49 @@ useEffect(() => {
       setRecentScans((prev) => [message, ...prev].slice(0, 6));
     }
   }
+
+  function addVisibleVariantsToDraft() {
+    const existingIds = new Set(items.map((item) => item.variantId));
+    const qty = Number(bulkQty || 1) > 0 ? String(Number(bulkQty || 1)) : "1";
+    const nextItems = variantOptions
+      .filter((option) => !existingIds.has(option.variantId))
+      .map((option) => ({
+        rowId: makeRowId(),
+        variantId: option.variantId,
+        sku: option.sku,
+        productName: option.productName,
+        color: option.color || "",
+        size: option.size || "",
+        qty,
+      }));
+
+    if (!nextItems.length) return;
+    setItems((prev) => (draftSortBy === "added_asc" ? [...prev, ...nextItems] : [...nextItems, ...prev]));
+    setScanNotice(`Đã thêm ${nextItems.length} SKU đang lọc`);
+  }
+
+  function applyBulkQtyToDraft() {
+    const value = Number(bulkQty || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("Số lượng áp dụng phải lớn hơn 0.");
+      return;
+    }
+
+    setItems((prev) => prev.map((item) => ({ ...item, qty: String(value) })));
+    setNotice(`Đã áp dụng số lượng ${value} cho ${items.length} dòng.`);
+  }
+
+  const sortedDraftItems = useMemo(() => {
+    const list = [...items];
+
+    if (draftSortBy === "added_asc") return list.reverse();
+    if (draftSortBy === "sku_asc") return list.sort((a, b) => String(a.sku || "").localeCompare(String(b.sku || ""), "vi"));
+    if (draftSortBy === "name_asc") return list.sort((a, b) => String(a.productName || "").localeCompare(String(b.productName || ""), "vi"));
+    if (draftSortBy === "qty_desc") return list.sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0));
+    if (draftSortBy === "qty_asc") return list.sort((a, b) => Number(a.qty || 0) - Number(b.qty || 0));
+
+    return list;
+  }, [items, draftSortBy]);
 
   function commitVariantScan(value: string) {
     const normalizedValue = normalizeScanValue(value);
@@ -2944,9 +3000,23 @@ useEffect(() => {
           />
 
           <Panel className="p-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-              Thêm sản phẩm / variant
-            </p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                  Thêm sản phẩm / variant
+                </p>
+                <p className="mt-0.5 text-[11px] text-neutral-400">
+                  Quét mã, tìm SKU hoặc thêm tất cả dòng đang lọc. Dòng mới nhập sẽ nổi lên đầu.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={addVisibleVariantsToDraft}
+                className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+              >
+                Thêm tất cả đang lọc ({variantOptions.length})
+              </button>
+            </div>
 
             <input
               ref={variantSearchRef}
@@ -3027,6 +3097,38 @@ useEffect(() => {
           </Panel>
 
           <Panel className="overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-2.5">
+              <div className="text-xs text-neutral-500">
+                {items.length} SKU · Tổng SL {totalQty}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium outline-none"
+                  value={draftSortBy}
+                  onChange={(e) => setDraftSortBy(e.target.value)}
+                >
+                  <option value="added_desc">Mới nhập lên đầu</option>
+                  <option value="added_asc">Mới nhập xuống cuối</option>
+                  <option value="sku_asc">SKU A-Z</option>
+                  <option value="name_asc">Tên sản phẩm A-Z</option>
+                  <option value="qty_desc">Số lượng cao trước</option>
+                  <option value="qty_asc">Số lượng thấp trước</option>
+                </select>
+                <input
+                  className="w-24 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium outline-none"
+                  value={bulkQty}
+                  onChange={(e) => setBulkQty(e.target.value)}
+                  placeholder="SL"
+                />
+                <button
+                  type="button"
+                  onClick={applyBulkQtyToDraft}
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-100"
+                >
+                  Áp dụng SL
+                </button>
+              </div>
+            </div>
             <div className="overflow-auto">
               {items.length === 0 ? (
                 <div className="p-4 text-sm text-neutral-500">Chưa có dòng hàng nào.</div>
@@ -3043,7 +3145,7 @@ useEffect(() => {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
+                    {sortedDraftItems.map((item) => (
                       <tr key={item.rowId} className="border-t border-neutral-200">
                         <td className="px-3 py-2.5 font-medium">{item.sku}</td>
                         <td className="px-3 py-2.5">{item.productName}</td>
