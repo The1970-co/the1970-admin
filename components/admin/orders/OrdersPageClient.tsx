@@ -2,6 +2,31 @@
 import { apiFetch, apiJson } from "@/lib/api";
 import * as XLSX from "xlsx";
 import { getBranches, type BranchItem } from "@/lib/products-api";
+
+const ORDERS_BRANCH_CACHE_KEY = "the1970.orders.branches.v1";
+const ORDERS_BRANCH_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function readTimedCache<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || Date.now() - Number(parsed.ts || 0) > ORDERS_BRANCH_CACHE_TTL_MS) return null;
+    return parsed.value as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeTimedCache<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify({ ts: Date.now(), value }));
+  } catch {
+    // ignore storage quota/private mode
+  }
+}
 import ConfirmDialog from "@/components/admin/ui/ConfirmDialog";
 import { addWorkspaceTab } from "@/lib/workspace-tabs";
 import {
@@ -1931,11 +1956,20 @@ export default function OrdersPageClient() {
   const [exportingOrders, setExportingOrders] = useState(false);
 
   const loadBranches = async () => {
+    const cached = readTimedCache<BranchItem[]>(ORDERS_BRANCH_CACHE_KEY);
+    if (cached?.length) {
+      setBranches(cached);
+      return;
+    }
+
     try {
       const data = await getBranches();
-      setBranches(Array.isArray(data) ? data : []);
+      const normalized = Array.isArray(data) ? data : [];
+      setBranches(normalized);
+      if (normalized.length) writeTimedCache(ORDERS_BRANCH_CACHE_KEY, normalized);
     } catch {
-      setBranches([]);
+      // Nếu mất mạng ngắn hạn, giữ branch cũ để UI không trắng và không giật layout.
+      setBranches((prev) => prev);
     }
   };
 
@@ -2378,20 +2412,19 @@ export default function OrdersPageClient() {
         return;
       }
 
-      const shouldLoadWideDataset = Boolean(
-        String(submittedQuery || "").trim() || String(freeTextFilter || "").trim(),
-      );
-      const requestPageSize = shouldLoadWideDataset ? 500 : pageSize;
-      const requestPage = shouldLoadWideDataset ? 1 : page;
+      const serverKeyword = [submittedQuery, freeTextFilter]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .join(" ");
+
+      const requestPageSize = pageSize;
+      const requestPage = page;
 
       const buildParams = (targetPage: number) => {
         const params = new URLSearchParams();
         params.set("page", String(targetPage));
         params.set("pageSize", String(requestPageSize));
-
-        // Không gửi q lên backend: mỗi bản core có shape search khác nhau,
-        // nên frontend tải rộng rồi lọc client để tìm được mã GHN/VTP/Ahamove,
-        // SĐT, địa chỉ, SKU, ghi chú và mọi field nested trả về trong đơn.
+        if (serverKeyword) params.set("q", serverKeyword);
 
         if (!canViewAllOrders && canViewOwnOrders) {
           params.set("viewScope", "own");
@@ -2445,21 +2478,9 @@ export default function OrdersPageClient() {
       };
 
       const firstPage = await fetchOrderPage(requestPage);
-      let data = firstPage.data;
-      let remoteTotalPages = firstPage.totalPages;
-      let remoteTotalItems = firstPage.total;
-
-      if (shouldLoadWideDataset && firstPage.totalPages > 1) {
-        const maxPagesToLoad = Math.min(firstPage.totalPages, 20);
-        const otherPages = await Promise.all(
-          Array.from({ length: maxPagesToLoad - 1 }, (_, index) =>
-            fetchOrderPage(index + 2),
-          ),
-        );
-        data = [...data, ...otherPages.flatMap((item) => item.data)];
-        remoteTotalPages = 1;
-        remoteTotalItems = data.length;
-      }
+      const data = firstPage.data;
+      const remoteTotalPages = firstPage.totalPages;
+      const remoteTotalItems = firstPage.total;
 
       const scopedData =
         !canViewAllOrders && canViewOwnOrders
@@ -2471,9 +2492,9 @@ export default function OrdersPageClient() {
       if (requestSeq !== ordersRequestSeqRef.current || abortController.signal.aborted) return;
 
       setOrders(scopedData as AdminOrder[]);
-      setTotalPages(shouldLoadWideDataset ? 1 : remoteTotalPages);
+      setTotalPages(remoteTotalPages);
       setTotalItems(
-        shouldLoadWideDataset || (!canViewAllOrders && canViewOwnOrders)
+        !canViewAllOrders && canViewOwnOrders
           ? scopedData.length
           : remoteTotalItems || scopedData.length || 0,
       );
@@ -2494,7 +2515,7 @@ export default function OrdersPageClient() {
   useEffect(() => {
     const t = setTimeout(() => {
       void loadOrders();
-    }, 60);
+    }, 20);
 
     return () => clearTimeout(t);
   }, [
