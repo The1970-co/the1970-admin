@@ -535,6 +535,8 @@ function hasOrderPermission(user: any, permission: string) {
     if (permission === "orders.create") return !!row.canCreateOrder;
     if (permission === "orders.approve") return !!row.canApproveOrder;
     if (permission === "orders.cancel") return !!row.canCancelOrder;
+    if (permission === "returns.create") return !!row.canHandleReturn;
+    if (permission === "returns.view") return !!row.canHandleReturn;
     return false;
   });
 }
@@ -1733,6 +1735,7 @@ export default function OrderDetailPageClient({
   const canEditOrderPermission = hasOrderPermission(currentUser, "orders.edit");
   const canCancelOrderPermission = hasOrderPermission(currentUser, "orders.cancel");
   const canPackShipOrderPermission = hasOrderPermission(currentUser, "orders.pack_ship");
+  const canCreateReturnPermission = hasOrderPermission(currentUser, "returns.create");
 
   const [provinceOptions, setProvinceOptions] = useState<ProvinceOption[]>([]);
   const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
@@ -3301,12 +3304,14 @@ export default function OrderDetailPageClient({
                 </>
               ) : null}
 
-              <Link
-                href={`/returns/create?orderId=${viewOrder.id}`}
-                className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
-              >
-                Đổi / Trả hàng
-              </Link>
+              {canCreateReturnPermission ? (
+                <Link
+                  href={`/returns/create?orderId=${viewOrder.id}`}
+                  className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                >
+                  Đổi / Trả hàng
+                </Link>
+              ) : null}
 
               {!isEditing ? (
                 <ActionButton

@@ -606,10 +606,40 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
   function normalizeScanValue(value: unknown) {
     return String(value || "")
       .trim()
-      .toLowerCase()
+      .toUpperCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/\s+/g, "");
+  }
+
+  function isLikelyCompleteScanCode(value: unknown) {
+    const code = normalizeScanValue(value);
+
+    // Chặn lỗi máy quét/keyboard event mới bắn một phần mã như X, T, 3, 31...
+    // Mã thật của hệ thống/tem thường dài hơn và chỉ gồm A-Z, số, gạch ngang, gạch dưới, dấu chấm.
+    if (code.length < 5) return false;
+    if (!/^[A-Z0-9._-]+$/.test(code)) return false;
+
+    return true;
+  }
+
+  function variantMatchesScanCode(option: any, value: string) {
+    const code = normalizeScanValue(value);
+    if (!code) return false;
+
+    const keys = [
+      option?.sku,
+      option?.variantId,
+      option?.id,
+      option?.barcode,
+      option?.barCode,
+      option?.scanCode,
+      option?.code,
+    ]
+      .map((item) => normalizeScanValue(item))
+      .filter(Boolean);
+
+    return keys.includes(code);
   }
 
   function putVariantIntoHotScanCache(option: any) {
@@ -634,10 +664,25 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
   function findExactVariantByScan(value: string) {
     const scan = normalizeScanValue(value);
-    if (!scan) return null;
+    if (!isLikelyCompleteScanCode(scan)) return null;
 
     return scanVariantMap.get(scan) || hotScanVariantMapRef.current.get(scan) || null;
   }
+  function hasLongerScanCodePrefix(value: string) {
+    const scan = normalizeScanValue(value);
+    if (!isLikelyCompleteScanCode(scan)) return false;
+
+    for (const key of scanVariantMap.keys()) {
+      if (key !== scan && key.startsWith(scan)) return true;
+    }
+
+    for (const key of hotScanVariantMapRef.current.keys()) {
+      if (key !== scan && key.startsWith(scan)) return true;
+    }
+
+    return false;
+  }
+
 
   function findExactVariantInProductPayload(productsPayload: any[], value: string) {
     const scan = normalizeScanValue(value);
@@ -1327,31 +1372,38 @@ useEffect(() => {
 
   async function lookupScanInBackend(value: string) {
     const normalizedValue = normalizeScanValue(value);
-    if (!normalizedValue) return;
+    if (!isLikelyCompleteScanCode(normalizedValue)) return;
 
     const now = Date.now();
     const lastLookup = lastBackendLookupRef.current;
-    if (lastLookup.value === normalizedValue && now - lastLookup.at < 260) return;
+    if (lastLookup.value === normalizedValue && now - lastLookup.at < 220) return;
 
     lastBackendLookupRef.current = { value: normalizedValue, at: now };
 
     try {
-      const res = await apiFetch(`/stock-transfers/scan-variant?code=${encodeURIComponent(value.trim())}`);
-      if (!res.ok) return;
+      const res = await apiFetch(`/stock-transfers/scan-variant?code=${encodeURIComponent(normalizedValue)}`);
+      if (!res.ok) {
+        setScanNotice(`Không tìm thấy mã ${normalizedValue}`);
+        return;
+      }
 
       const exact = await res.json();
-      if (!exact?.variantId) return;
+      if (!exact?.variantId || !variantMatchesScanCode(exact, normalizedValue)) {
+        setScanNotice(`Không khớp chính xác mã ${normalizedValue}`);
+        return;
+      }
 
       putVariantIntoHotScanCache(exact);
-      commitVariantScan(value, exact);
+      commitVariantScan(normalizedValue, exact);
     } catch (err) {
       console.error("background stock transfer scan lookup failed", err);
+      setScanNotice(`Không quét được mã ${normalizedValue}`);
     }
   }
 
-  function scheduleBackendScanLookup(value: string, delayMs = 28) {
-    const cleaned = value.trim();
-    if (cleaned.length < 3) return;
+  function scheduleBackendScanLookup(value: string, delayMs = 90) {
+    const cleaned = normalizeScanValue(value);
+    if (!isLikelyCompleteScanCode(cleaned)) return;
 
     if (scanBackendTimerRef.current) {
       window.clearTimeout(scanBackendTimerRef.current);
@@ -1366,21 +1418,23 @@ useEffect(() => {
 
   function commitVariantScan(value: string, forcedExact?: any) {
     const normalizedValue = normalizeScanValue(value);
-    if (!normalizedValue) return false;
+    if (!isLikelyCompleteScanCode(normalizedValue)) return false;
 
     const now = Date.now();
     const last = lastScanRef.current;
 
-    // Chặn double event onChange + Enter của cùng một lần quét, nhưng vẫn đủ nhanh
-    // để nhân viên quét cùng SKU nhiều lần liên tiếp nếu thực sự có nhiều sản phẩm.
+    // Chặn double event onChange + Enter của cùng một lần quét.
+    // Không commit prefix như QKK896-R-3 khi scanner vẫn còn đang bắn tiếp số 1.
     if (last.value === normalizedValue && now - last.at < 180) {
       setSearchVariant("");
       focusScanInputSoon();
       return true;
     }
 
-    const exact = forcedExact || findExactVariantByScan(value);
+    const exact = forcedExact || findExactVariantByScan(normalizedValue);
     if (!exact) return false;
+
+    if (!variantMatchesScanCode(exact, normalizedValue)) return false;
 
     lastScanRef.current = { value: normalizedValue, at: now };
     addVariantToDraft(exact, "scan");
@@ -1398,20 +1452,22 @@ useEffect(() => {
       scanTimerRef.current = null;
     }
 
-    const cleaned = value.trim();
-    if (!cleaned) return;
+    if (scanBackendTimerRef.current) {
+      window.clearTimeout(scanBackendTimerRef.current);
+      scanBackendTimerRef.current = null;
+    }
 
-    // Fast path: nếu mã đã có trong cache thì thêm ngay trong tick hiện tại, không đợi debounce.
-    if (commitVariantScan(cleaned)) return;
+    const cleaned = normalizeScanValue(value);
+    if (!isLikelyCompleteScanCode(cleaned)) return;
 
-    // Slow path: hỏi endpoint scan siêu nhẹ ở backend. UI không khóa, scanner vẫn focus liên tục.
-    scheduleBackendScanLookup(cleaned, 18);
+    // Đợi scanner bắn đủ chuỗi rồi mới xử lý.
+    // Fix lỗi QKK896-R-31 bị ăn ở QKK896-R-3, SM927-S-TH bị ăn ở SM927-S-T.
+    const scanDelay = hasLongerScanCodePrefix(cleaned) ? 220 : 90;
 
-    // Fallback cực ngắn cho máy quét bắn ký tự hơi chậm hoặc browser gom event lệch nhịp.
     scanTimerRef.current = window.setTimeout(() => {
       if (!commitVariantScan(cleaned)) scheduleBackendScanLookup(cleaned, 0);
       scanTimerRef.current = null;
-    }, 32);
+    }, scanDelay);
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
@@ -3167,12 +3223,8 @@ useEffect(() => {
 
                 if (commitVariantScan(searchVariant)) return;
 
-                if (variantOptions.length === 1) {
-                  addVariantToDraft(variantOptions[0], "scan");
-                  setSearchVariant("");
-                  return;
-                }
-
+                // Enter từ máy quét chỉ được dùng exact scan, không tự add kết quả fuzzy.
+                // Nếu mã chưa có cache thì hỏi endpoint exact phía backend.
                 scheduleBackendScanLookup(searchVariant, 0);
               }}
               placeholder="Quét mã vạch / SKU để thêm ngay..."
@@ -3182,7 +3234,7 @@ useEffect(() => {
 
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
               <div className="text-xs font-semibold text-blue-700">
-                Quét phát ăn ngay · Có cache thì cộng tức thì, thiếu cache sẽ tìm backend ngầm.
+                Quét nhanh exact · Đợi đủ mã rồi mới cộng, không ăn nhầm mã ngắn.
               </div>
 
               {scanNotice ? (

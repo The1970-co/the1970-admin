@@ -179,7 +179,7 @@ export default function ReturnCreatePageClient({ orderId }: { orderId: string })
         }
 
         const [orderJson, branchJson, paymentJson] = await Promise.all([
-          apiGet(`/orders/${encodeURIComponent(orderId)}`),
+          apiGet(`/returns/source-order/${encodeURIComponent(orderId)}`),
           apiGet("/branches").catch(() => []),
           apiGet("/payment-sources").catch(() => []),
         ]);
