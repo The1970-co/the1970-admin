@@ -240,8 +240,60 @@ type OrderHistoryEntry = {
   tone?: "default" | "success" | "warning";
 };
 
+type ReturnExchangeSummary = {
+  id: string;
+  code?: string | null;
+  type?: string | null;
+  status?: string | null;
+  returnAmount?: number | string | null;
+  exchangeAmount?: number | string | null;
+  differenceAmount?: number | string | null;
+  refundAmount?: number | string | null;
+  extraChargeAmount?: number | string | null;
+  handledByStaffName?: string | null;
+  returnReceiveBranchId?: string | null;
+  createdAt?: string | null;
+  note?: string | null;
+  items?: Array<{
+    sku?: string | null;
+    productName?: string | null;
+    qty?: number | string | null;
+    itemType?: string | null;
+  }>;
+};
+
 function currency(n?: number | null) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
+}
+
+function returnExchangeTypeText(type?: string | null) {
+  const value = String(type || "").toUpperCase();
+  if (value === "RETURN_EXCHANGE") return "Đổi/trả hàng";
+  if (value === "EXCHANGE") return "Đổi hàng";
+  if (value === "RETURN") return "Trả hàng";
+  return type || "Đổi/trả";
+}
+
+function returnExchangeStatusText(status?: string | null) {
+  const value = String(status || "").toUpperCase();
+  if (value === "COMPLETED") return "Đã xử lý";
+  if (value === "DRAFT") return "Lưu nháp";
+  if (value === "CANCELLED") return "Đã huỷ";
+  if (value === "PENDING") return "Chờ xử lý";
+  return status || "—";
+}
+
+function summarizeReturnItems(items?: ReturnExchangeSummary["items"]) {
+  if (!Array.isArray(items) || !items.length) return "Chưa có dòng sản phẩm";
+
+  return items
+    .slice(0, 5)
+    .map((item) => {
+      const name = item.sku || item.productName || "Sản phẩm";
+      const qty = Number(item.qty || 0);
+      return `${name} x${qty}`;
+    })
+    .join(", ");
 }
 function codReconciliationLabel(status?: string | null) {
   if (status === "MATCHED") return "Đã đối soát";
@@ -1979,6 +2031,7 @@ export default function OrderDetailPageClient({
     items: [],
   });
   const [orderHistory, setOrderHistory] = useState<OrderHistoryEntry[]>([]);
+  const [relatedReturns, setRelatedReturns] = useState<ReturnExchangeSummary[]>([]);
   const [shipmentTimeline, setShipmentTimeline] = useState<ShipmentTimelineEntry[]>([]);
   const [trackingRefreshing, setTrackingRefreshing] = useState(false);
   const [trackingMessage, setTrackingMessage] = useState("");
@@ -2036,6 +2089,45 @@ export default function OrderDetailPageClient({
 
     void run();
   }, [orderId, created]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!order?.id) {
+        setRelatedReturns([]);
+        return;
+      }
+
+      try {
+        const res = await apiFetch(`/returns/by-order/${encodeURIComponent(order.id)}`, {
+          headers: {
+            Accept: "application/json",
+          },
+          cache: "no-store",
+        });
+
+        const json = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          setRelatedReturns([]);
+          return;
+        }
+
+        const rows = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json?.items)
+              ? json.items
+              : [];
+
+        setRelatedReturns(rows);
+      } catch {
+        setRelatedReturns([]);
+      }
+    };
+
+    void run();
+  }, [order?.id]);
 
   const refreshShipmentTracking = async (force = false) => {
     try {
@@ -2206,8 +2298,34 @@ export default function OrderDetailPageClient({
       });
     }
 
-    setOrderHistory(entries.reverse());
-  }, [order]);
+    const returnEntries: OrderHistoryEntry[] = relatedReturns.map((row) => {
+      const code = row.code || row.id || "";
+      const returnAmount = Number(row.returnAmount || row.refundAmount || 0);
+      const exchangeAmount = Number(row.exchangeAmount || 0);
+      const differenceAmount = Number(row.differenceAmount || 0);
+
+      return {
+        id: `return-${row.id || code}`,
+        title: `Phiếu đổi/trả ${code}`.trim(),
+        description: [
+          `Loại: ${returnExchangeTypeText(row.type)}`,
+          `Trạng thái: ${returnExchangeStatusText(row.status)}`,
+          `Tiền trả: ${currency(returnAmount)}`,
+          exchangeAmount > 0 ? `Tiền đổi: ${currency(exchangeAmount)}` : null,
+          differenceAmount !== 0 ? `Chênh lệch: ${currency(Math.abs(differenceAmount))}` : null,
+          row.handledByStaffName ? `Nhân viên xử lý: ${row.handledByStaffName}` : null,
+          summarizeReturnItems(row.items),
+          row.note || null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        createdAt: row.createdAt || order.updatedAt || order.createdAt,
+        tone: "warning",
+      };
+    });
+
+    setOrderHistory([...returnEntries, ...entries.reverse()]);
+  }, [order, relatedReturns]);
 
   const viewOrder = isEditing && draftOrder ? draftOrder : order;
 
@@ -4336,6 +4454,61 @@ export default function OrderDetailPageClient({
                 )}
               </div>
             </Panel>
+
+            {relatedReturns.length ? (
+              <Panel>
+                <SectionHeader
+                  title="Phiếu đổi/trả liên quan"
+                  subtitle="Các phiếu trả hàng, đổi hàng đã phát sinh từ đơn gốc này."
+                />
+                <div className="space-y-3 px-4 py-3">
+                  {relatedReturns.map((row) => {
+                    const returnAmount = Number(row.returnAmount || row.refundAmount || 0);
+                    const exchangeAmount = Number(row.exchangeAmount || 0);
+                    const differenceAmount = Number(row.differenceAmount || 0);
+
+                    return (
+                      <div
+                        key={row.id || row.code}
+                        className="rounded-2xl border border-amber-200 bg-amber-50 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <Link
+                              href={`/returns?returnId=${encodeURIComponent(row.id || row.code || "")}`}
+                              className="text-[13px] font-bold text-blue-600 hover:underline"
+                            >
+                              {row.code || "Phiếu đổi/trả"}
+                            </Link>
+                            <p className="mt-1 text-[12px] text-neutral-700">
+                              {returnExchangeTypeText(row.type)} · {returnExchangeStatusText(row.status)}
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-amber-700">
+                            Đổi/trả
+                          </span>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 text-[12px] text-neutral-700">
+                          <DataRow label="Tiền trả" value={currency(returnAmount)} />
+                          <DataRow label="Tiền đổi" value={currency(exchangeAmount)} />
+                          <DataRow
+                            label="Chênh lệch"
+                            value={differenceAmount ? currency(Math.abs(differenceAmount)) : "0đ"}
+                          />
+                          <DataRow
+                            label="Nhân viên xử lý"
+                            value={row.handledByStaffName || "—"}
+                          />
+                          <DataRow label="Sản phẩm" value={summarizeReturnItems(row.items)} />
+                          <DataRow label="Ngày tạo" value={row.createdAt || "—"} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Panel>
+            ) : null}
 
             <Panel>
               <SectionHeader

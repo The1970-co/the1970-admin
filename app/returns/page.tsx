@@ -548,7 +548,7 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 export default function ReturnsPage() {
   return (
     <AdminShell title="Đơn trả hàng">
-      <PagePermissionGuard permission="orders.view">
+      <PagePermissionGuard permissions={["menu.returns", "returns.view", "returns.create"]} fallbackPath="/orders">
         <ReturnsPageClient />
       </PagePermissionGuard>
     </AdminShell>
