@@ -453,6 +453,7 @@ export default function SettingsPage() {
     sortOrder: 0,
     note: "",
   });
+  const [editingPaymentSourceId, setEditingPaymentSourceId] = useState<string>("");
   const [savingPaymentSource, setSavingPaymentSource] = useState(false);
 
   const [salesChannels, setSalesChannels] = useState<SalesChannelItem[]>([]);
@@ -852,6 +853,67 @@ export default function SettingsPage() {
     }
   };
 
+  const resetPaymentSourceForm = () => {
+    setEditingPaymentSourceId("");
+    setPaymentSourceForm({
+      code: "",
+      name: "",
+      type: "CASH",
+      branchId: "",
+      sortOrder: 0,
+      note: "",
+    });
+  };
+
+  const startEditPaymentSource = (item: PaymentSourceItem) => {
+    setEditingPaymentSourceId(item.id);
+    setPaymentSourceForm({
+      code: item.code || "",
+      name: item.name || "",
+      type: item.type || "CASH",
+      branchId: item.branchId || "",
+      sortOrder: Number(item.sortOrder || 0),
+      note: item.note || "",
+    });
+    setMessage(`Đang sửa nguồn tiền: ${item.name || item.code}.`);
+  };
+
+  const updatePaymentSource = async () => {
+    if (!editingPaymentSourceId) return;
+
+    if (!paymentSourceForm.code.trim() || !paymentSourceForm.name.trim()) {
+      setMessage("Thiếu mã nguồn tiền hoặc tên hiển thị.");
+      return;
+    }
+
+    try {
+      setSavingPaymentSource(true);
+      setMessage("");
+
+      await apiJson(`/payment-sources/${editingPaymentSourceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          code: paymentSourceForm.code.trim(),
+          name: paymentSourceForm.name.trim(),
+          type: paymentSourceForm.type,
+          branchId: paymentSourceForm.branchId || null,
+          sortOrder: Number(paymentSourceForm.sortOrder || 0),
+          note: paymentSourceForm.note.trim() || null,
+        }),
+      });
+
+      await loadPaymentSources();
+      resetPaymentSourceForm();
+      setMessage("Đã cập nhật nguồn tiền.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Cập nhật nguồn tiền thất bại."
+      );
+    } finally {
+      setSavingPaymentSource(false);
+    }
+  };
+
   const createPaymentSource = async () => {
     if (!paymentSourceForm.code.trim() || !paymentSourceForm.name.trim()) {
       setMessage("Thiếu mã nguồn tiền hoặc tên hiển thị.");
@@ -874,14 +936,7 @@ export default function SettingsPage() {
         }),
       });
 
-      setPaymentSourceForm({
-        code: "",
-        name: "",
-        type: "CASH",
-        branchId: "",
-        sortOrder: 0,
-        note: "",
-      });
+      resetPaymentSourceForm();
 
       await loadPaymentSources();
       setMessage("Đã thêm nguồn tiền.");
@@ -2150,11 +2205,17 @@ const addWarehouse = async () => {
                       <th className="pb-3 font-medium">Loại</th>
                       <th className="pb-3 font-medium">Chi nhánh</th>
                       <th className="pb-3 font-medium">Trạng thái</th>
+                      <th className="pb-3 font-medium">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody>
                     {paymentSources.map((item) => (
-                      <tr key={item.id} className="border-b border-neutral-100">
+                      <tr
+                        key={item.id}
+                        className={`border-b border-neutral-100 ${
+                          editingPaymentSourceId === item.id ? "bg-neutral-50" : ""
+                        }`}
+                      >
                         <td className="py-4">
                           <div className="font-medium text-neutral-900">
                             {item.name}
@@ -2174,6 +2235,15 @@ const addWarehouse = async () => {
                             {item.isActive ? "ACTIVE" : "INACTIVE"}
                           </Badge>
                         </td>
+                        <td className="py-4">
+                          <Button
+                            variant="secondary"
+                            className="px-3 py-2 text-xs"
+                            onClick={() => startEditPaymentSource(item)}
+                          >
+                            Sửa
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2183,9 +2253,23 @@ const addWarehouse = async () => {
           </Panel>
 
           <Panel className="p-5">
-            <h3 className="text-xl font-semibold text-neutral-900">
-              Thêm nguồn tiền
-            </h3>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-semibold text-neutral-900">
+                  {editingPaymentSourceId ? "Sửa nguồn tiền" : "Thêm nguồn tiền"}
+                </h3>
+                {editingPaymentSourceId ? (
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Đang sửa nguồn đã chọn. Bấm lưu để cập nhật vào database.
+                  </p>
+                ) : null}
+              </div>
+              {editingPaymentSourceId ? (
+                <Button variant="secondary" onClick={resetPaymentSourceForm}>
+                  Huỷ sửa
+                </Button>
+              ) : null}
+            </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <input
@@ -2267,10 +2351,20 @@ const addWarehouse = async () => {
 
             <div className="mt-4">
               <Button
-                onClick={() => void createPaymentSource()}
+                onClick={() =>
+                  void (editingPaymentSourceId
+                    ? updatePaymentSource()
+                    : createPaymentSource())
+                }
                 disabled={savingPaymentSource}
               >
-                {savingPaymentSource ? "Đang thêm..." : "Thêm nguồn tiền"}
+                {savingPaymentSource
+                  ? editingPaymentSourceId
+                    ? "Đang lưu..."
+                    : "Đang thêm..."
+                  : editingPaymentSourceId
+                    ? "Lưu nguồn tiền"
+                    : "Thêm nguồn tiền"}
               </Button>
             </div>
           </Panel>

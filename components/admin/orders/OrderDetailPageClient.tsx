@@ -250,6 +250,13 @@ type ReturnExchangeSummary = {
   differenceAmount?: number | string | null;
   refundAmount?: number | string | null;
   extraChargeAmount?: number | string | null;
+  shippingFee?: number | string | null;
+  customerPayableAmount?: number | string | null;
+  exchangeOrderId?: string | null;
+  exchangeOrderCode?: string | null;
+  exchangeShipmentId?: string | null;
+  exchangeTrackingCode?: string | null;
+  exchangeCarrier?: string | null;
   handledByStaffName?: string | null;
   returnReceiveBranchId?: string | null;
   createdAt?: string | null;
@@ -2302,6 +2309,7 @@ export default function OrderDetailPageClient({
       const code = row.code || row.id || "";
       const returnAmount = Number(row.returnAmount || row.refundAmount || 0);
       const exchangeAmount = Number(row.exchangeAmount || 0);
+      const shippingFee = Number(row.shippingFee || 0);
       const differenceAmount = Number(row.differenceAmount || 0);
 
       return {
@@ -2312,7 +2320,12 @@ export default function OrderDetailPageClient({
           `Trạng thái: ${returnExchangeStatusText(row.status)}`,
           `Tiền trả: ${currency(returnAmount)}`,
           exchangeAmount > 0 ? `Tiền đổi: ${currency(exchangeAmount)}` : null,
+          shippingFee > 0 ? `Phí ship: ${currency(shippingFee)}` : null,
           differenceAmount !== 0 ? `Chênh lệch: ${currency(Math.abs(differenceAmount))}` : null,
+          row.customerPayableAmount ? `COD đơn đổi: ${currency(Number(row.customerPayableAmount || 0))}` : null,
+          row.exchangeOrderCode ? `Đơn đổi: ${row.exchangeOrderCode}` : null,
+          row.exchangeTrackingCode ? `Mã vận đơn: ${row.exchangeTrackingCode}` : null,
+          row.exchangeCarrier ? `HVC: ${row.exchangeCarrier}` : null,
           row.handledByStaffName ? `Nhân viên xử lý: ${row.handledByStaffName}` : null,
           summarizeReturnItems(row.items),
           row.note || null,
@@ -4465,6 +4478,7 @@ export default function OrderDetailPageClient({
                   {relatedReturns.map((row) => {
                     const returnAmount = Number(row.returnAmount || row.refundAmount || 0);
                     const exchangeAmount = Number(row.exchangeAmount || 0);
+                    const shippingFee = Number(row.shippingFee || 0);
                     const differenceAmount = Number(row.differenceAmount || 0);
 
                     return (
@@ -4492,10 +4506,30 @@ export default function OrderDetailPageClient({
                         <div className="mt-3 grid gap-2 text-[12px] text-neutral-700">
                           <DataRow label="Tiền trả" value={currency(returnAmount)} />
                           <DataRow label="Tiền đổi" value={currency(exchangeAmount)} />
+                          <DataRow label="Phí ship" value={currency(shippingFee)} />
                           <DataRow
                             label="Chênh lệch"
                             value={differenceAmount ? currency(Math.abs(differenceAmount)) : "0đ"}
                           />
+                          <DataRow
+                            label="COD đơn đổi"
+                            value={row.customerPayableAmount ? currency(Number(row.customerPayableAmount || 0)) : "—"}
+                          />
+                          <DataRow
+                            label="Đơn đổi"
+                            value={
+                              row.exchangeOrderId || row.exchangeOrderCode ? (
+                                <Link
+                                  href={`/orders/${encodeURIComponent(row.exchangeOrderId || row.exchangeOrderCode || "")}`}
+                                  className="font-semibold text-blue-600 hover:underline"
+                                >
+                                  {row.exchangeOrderCode || row.exchangeOrderId}
+                                </Link>
+                              ) : "—"
+                            }
+                          />
+                          <DataRow label="HVC đơn đổi" value={row.exchangeCarrier || "—"} />
+                          <DataRow label="Mã vận đơn" value={row.exchangeTrackingCode || "—"} />
                           <DataRow
                             label="Nhân viên xử lý"
                             value={row.handledByStaffName || "—"}
