@@ -25,6 +25,8 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/finance/local-delivery": PERMISSIONS.MENU_SHIPPING_RECONCILE,
   "/finance/revenue": PERMISSIONS.MENU_REPORTS,
   "/finance/supplier-payments": PERMISSIONS.MENU_SUPPLIER_PAYMENTS,
+  "/payroll": PERMISSIONS.MENU_PAYROLL,
+  "/payroll/config": PERMISSIONS.PAYROLL_CONFIG,
   "/control/autopilot": PERMISSIONS.MENU_AUTOPILOT,
   "/control/ai-content": PERMISSIONS.MENU_AI_CONTENT,
   "/permissions": PERMISSIONS.MENU_PERMISSIONS,

@@ -558,11 +558,18 @@ export default function FinanceDailyPageClient() {
   const [staffFilter, setStaffFilter] = useState("ALL");
   const [q, setQ] = useState("");
 
+  const [transactionBranchFilter, setTransactionBranchFilter] = useState("ALL");
+  const [transactionSourceFilter, setTransactionSourceFilter] = useState("ALL");
+  const [transactionStatusFilter, setTransactionStatusFilter] = useState("ALL");
+  const [transactionTypeFilter, setTransactionTypeFilter] = useState("ALL");
+  const [transactionAmountFrom, setTransactionAmountFrom] = useState("");
+  const [transactionAmountTo, setTransactionAmountTo] = useState("");
+
   const [branches, setBranches] = useState<any[]>([]);
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [data, setData] = useState<any>(null);
   const [ledgerData, setLedgerData] = useState<any>(null);
-  const [ledgerLiveData, setLedgerLiveData] = useState<any>(null);
+  const [, setLedgerLiveData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [savingLedger, setSavingLedger] = useState(false);
@@ -932,6 +939,15 @@ export default function FinanceDailyPageClient() {
   }, [dateFrom, dateTo, branchId, paymentSourceId, flow, q]);
 
   useEffect(() => {
+    // Khi đổi bộ lọc ngày tổng, đồng bộ luôn bảng chốt tiền để tránh tình trạng
+    // phần tổng quan đang xem 15/05 nhưng bảng chốt tiền lại đang lấy 16/05.
+    setLedgerQuickRange(quickRange);
+    setLedgerDateFrom(dateFrom);
+    setLedgerDateTo(dateTo);
+    setExpandedLedgerDate(dateTo);
+  }, [dateFrom, dateTo, quickRange]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadLedger();
       void loadLedgerLiveData();
@@ -964,14 +980,99 @@ export default function FinanceDailyPageClient() {
     cashHandoverDialog,
   ]);
 
+  const branchNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    branches.forEach((branch: any) => {
+      const name = canonicalBranchName(branch?.name || branch?.code || branch?.id);
+      if (branch?.id) map.set(String(branch.id), name);
+      if (branch?.code) map.set(String(branch.code), name);
+      if (branch?.name) map.set(String(branch.name), name);
+    });
+    return map;
+  }, [branches]);
+
+  const paymentSourceNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    paymentSources.forEach((source: any) => {
+      const label = String(source?.name || source?.code || source?.id || "").trim();
+      if (source?.id) map.set(String(source.id), label);
+      if (source?.code) map.set(String(source.code), label);
+      if (source?.name) map.set(String(source.name), label);
+    });
+    return map;
+  }, [paymentSources]);
+
+  const displayBranchName = (row: MoneyRow) => {
+    const direct = row.branchName || row.branchId || "";
+    const mapped = row.branchId ? branchNameById.get(String(row.branchId)) : "";
+    return canonicalBranchName(mapped || direct || "—");
+  };
+
+  const displaySourceName = (row: MoneyRow) => {
+    const mapped = row.paymentSourceId
+      ? paymentSourceNameById.get(String(row.paymentSourceId))
+      : "";
+    return (mapped || row.sourceName || row.method || row.sourceCode || "—").trim();
+  };
+
+  const rowMatchesSelectedBranch = (row: MoneyRow) => {
+    if (branchId === "ALL") return true;
+    const selected = branches.find((branch: any) => String(branch.id) === String(branchId));
+    const selectedName = canonicalBranchName(selected?.name || selected?.code || branchId);
+    return (
+      String(row.branchId || "") === String(branchId) ||
+      normalizeText(displayBranchName(row)) === normalizeText(selectedName)
+    );
+  };
+
+  const rowMatchesSelectedSource = (row: MoneyRow) => {
+    if (paymentSourceId === "ALL") return true;
+    return (
+      String(row.paymentSourceId || "") === String(paymentSourceId) ||
+      normalizeText(displaySourceName(row)) ===
+        normalizeText(paymentSourceNameById.get(String(paymentSourceId)) || paymentSourceId)
+    );
+  };
+
   const rows = useMemo(() => {
     const rawRows = safeRows(data?.payments);
 
+    const amountFrom = transactionAmountFrom.trim()
+      ? parseMoneyInput(transactionAmountFrom)
+      : null;
+    const amountTo = transactionAmountTo.trim()
+      ? parseMoneyInput(transactionAmountTo)
+      : null;
+
     return rawRows
+      .filter((row) => rowMatchesSelectedBranch(row))
+      .filter((row) => rowMatchesSelectedSource(row))
       .filter((row) => passFlowFilter(row, flow))
-      .filter(
-        (row) => staffFilter === "ALL" || creatorName(row) === staffFilter,
-      )
+      .filter((row) => {
+        if (transactionBranchFilter === "ALL") return true;
+        return normalizeText(displayBranchName(row)) === normalizeText(transactionBranchFilter);
+      })
+      .filter((row) => {
+        if (transactionSourceFilter === "ALL") return true;
+        return normalizeText(displaySourceName(row)) === normalizeText(transactionSourceFilter);
+      })
+      .filter((row) => {
+        if (transactionStatusFilter === "ALL") return true;
+        return normalizeText(rowStatusLabel(row)) === normalizeText(transactionStatusFilter);
+      })
+      .filter((row) => {
+        if (transactionTypeFilter === "ALL") return true;
+        if (transactionTypeFilter === "ORDER") return String(row.recordType || "").toUpperCase() === "PAYMENT" || Boolean(row.orderCode);
+        if (transactionTypeFilter === "VOUCHER") return String(row.recordType || "").toUpperCase() === "CASH_VOUCHER" || Boolean(row.voucherCode);
+        return true;
+      })
+      .filter((row) => staffFilter === "ALL" || creatorName(row) === staffFilter)
+      .filter((row) => {
+        const amount = Math.abs(rowAmountSigned(row));
+        if (amountFrom !== null && amount < amountFrom) return false;
+        if (amountTo !== null && amount > amountTo) return false;
+        return true;
+      })
       .filter((row) => {
         if (!q.trim()) return true;
         const keyword = normalizeText(q);
@@ -981,27 +1082,78 @@ export default function FinanceDailyPageClient() {
             row.orderCode,
             row.customerName,
             row.customerPhone,
+            displayBranchName(row),
             row.branchName,
             row.branchId,
+            displaySourceName(row),
             row.sourceName,
             row.sourceCode,
             row.method,
+            sourceKindLabel(sourceKind(row)),
+            rowStatusLabel(row),
+            creatorName(row),
             row.title,
             row.category,
             row.note,
+            row.recordType,
           ]
             .filter(Boolean)
             .join(" "),
         );
         return haystack.includes(keyword);
       });
-  }, [data, flow, staffFilter, q]);
+  }, [
+    data,
+    flow,
+    staffFilter,
+    q,
+    branchId,
+    paymentSourceId,
+    transactionBranchFilter,
+    transactionSourceFilter,
+    transactionStatusFilter,
+    transactionTypeFilter,
+    transactionAmountFrom,
+    transactionAmountTo,
+    branches,
+    branchNameById,
+    paymentSourceNameById,
+  ]);
 
   const staffOptions = useMemo(() => {
     const names = safeRows(data?.payments)
       .map((row) => creatorName(row))
       .filter((name) => name && name !== "—");
 
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [data]);
+
+  const transactionBranchOptions = useMemo(() => {
+    const names = safeRows(data?.payments)
+      .filter((row) => rowMatchesSelectedBranch(row))
+      .filter((row) => rowMatchesSelectedSource(row))
+      .map((row) => displayBranchName(row))
+      .filter((name) => name && name !== "—");
+    return Array.from(new Set(names)).sort((a, b) => {
+      const weightDiff = branchSortWeight(a) - branchSortWeight(b);
+      if (weightDiff !== 0) return weightDiff;
+      return a.localeCompare(b, "vi");
+    });
+  }, [data, branchId, paymentSourceId, branches, paymentSourceNameById, branchNameById]);
+
+  const transactionSourceOptions = useMemo(() => {
+    const names = safeRows(data?.payments)
+      .filter((row) => rowMatchesSelectedBranch(row))
+      .filter((row) => rowMatchesSelectedSource(row))
+      .map((row) => displaySourceName(row))
+      .filter((name) => name && name !== "—");
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [data, branchId, paymentSourceId, branches, branchNameById, paymentSourceNameById]);
+
+  const transactionStatusOptions = useMemo(() => {
+    const names = safeRows(data?.payments)
+      .map((row) => rowStatusLabel(row))
+      .filter((name) => name && name !== "—");
     return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
   }, [data]);
 
@@ -1073,7 +1225,7 @@ export default function FinanceDailyPageClient() {
     const map = new Map<string, any>();
 
     rows.forEach((row) => {
-      const key = canonicalBranchName(row.branchName || row.branchId || "Chưa rõ chi nhánh");
+      const key = displayBranchName(row);
       const current = map.get(key) || {
         branchName: key,
         receipt: 0,
@@ -1095,227 +1247,43 @@ export default function FinanceDailyPageClient() {
     );
   }, [rows]);
 
-  const ledgerLiveRows = useMemo(
-    () => safeRows(ledgerLiveData?.payments),
-    [ledgerLiveData],
-  );
-
   const ledgerRows = useMemo(() => {
-    const baseRows = safeLedgerRows(ledgerData).map((row) =>
-      closedLedgerKeys.has(ledgerRowKey(row))
-        ? {
-            ...row,
-            status: "LOCKED",
-            countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
-            differenceAmount: row.differenceAmount ?? 0,
-          }
-        : row,
-    );
+    // Backend /finance/daily-ledger là nguồn sự thật duy nhất cho sổ tiền.
+    // Không merge lại /finance/daily ở frontend nữa để tránh cộng trùng hoặc trộn nhầm chi nhánh/nguồn tiền.
+    return safeLedgerRows(ledgerData)
+      .map((row) => {
+        const patched = closedLedgerKeys.has(ledgerRowKey(row))
+          ? {
+              ...row,
+              status: "LOCKED",
+              countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
+              differenceAmount: row.differenceAmount ?? 0,
+            }
+          : row;
 
-    const liveByKey = new Map<string, any>();
-    const liveByDate = new Map<string, any>();
-
-    ledgerLiveRows.forEach((row) => {
-      const dateKey = rowDateKey(row);
-      if (!dateKey) return;
-
-      const amount = Math.abs(Number(row.amount || 0));
-      if (!amount) return;
-
-      const canonicalBranch = canonicalBranchName(row.branchName || row.branchId);
-      const key = ledgerBusinessKey(row, dateKey);
-
-      const current = liveByKey.get(key) || {
-        date: dateKey,
-        branchId: row.branchId,
-        branchName: canonicalBranch || row.branchName || row.branchId || "—",
-        paymentSourceId: row.paymentSourceId,
-        paymentSourceName:
-          row.sourceName ||
-          row.method ||
-          row.sourceCode ||
-          "Chưa rõ nguồn tiền",
-        paymentSourceCode: row.sourceCode,
-        sourceType: sourceKind(row),
-        posReceiptAmount: 0,
-        manualReceiptAmount: 0,
-        manualPaymentAmount: 0,
-        totalReceipt: 0,
-        totalPayment: 0,
-        netAmount: 0,
-      };
-
-      if (isReceiptRow(row)) {
-        if (
-          isPosRow(row) ||
-          String(row.recordType || "").toUpperCase() === "PAYMENT"
-        ) {
-          current.posReceiptAmount += amount;
-        } else {
-          current.manualReceiptAmount += amount;
-        }
-        current.totalReceipt += amount;
-      } else {
-        current.manualPaymentAmount += amount;
-        current.totalPayment += amount;
-      }
-
-      current.netAmount = current.totalReceipt - current.totalPayment;
-      liveByKey.set(key, current);
-
-      const day = liveByDate.get(dateKey) || { receipt: 0, payment: 0 };
-      day.receipt += isReceiptRow(row) ? amount : 0;
-      day.payment += isReceiptRow(row) ? 0 : amount;
-      liveByDate.set(dateKey, day);
-    });
-
-    const usedLiveKeys = new Set<string>();
-
-    const patchedRows = baseRows.map((row) => {
-      const dateKey = String(row.date || "").slice(0, 10);
-
-      const liveKey = ledgerBusinessKey(row, dateKey);
-      if (!liveByKey.has(liveKey)) return row;
-
-      const live = liveByKey.get(liveKey);
-      usedLiveKeys.add(liveKey);
-
-      const rowHasBreakdown =
-        Number(row.posReceiptAmount || 0) !== 0 ||
-        Number(row.manualReceiptAmount || 0) !== 0 ||
-        Number(row.manualPaymentAmount || 0) !== 0 ||
-        Number(row.totalReceipt || 0) !== 0 ||
-        Number(row.totalPayment || 0) !== 0;
-
-      const liveTotalReceipt = Number(live.totalReceipt || 0);
-      const liveTotalPayment = Number(live.totalPayment || 0);
-      const liveHasBreakdown = liveTotalReceipt !== 0 || liveTotalPayment !== 0;
-      const openingBalance = Number(row.openingBalance || 0);
-      const netAmount = liveTotalReceipt - liveTotalPayment;
-
-      const totalsMismatch =
-        liveHasBreakdown &&
-        rowHasBreakdown &&
-        (Number(row.totalReceipt || 0) !== liveTotalReceipt ||
-          Number(row.totalPayment || 0) !== liveTotalPayment ||
-          Number(row.posReceiptAmount || 0) !== Number(live.posReceiptAmount || 0) ||
-          Number(row.manualReceiptAmount || 0) !== Number(live.manualReceiptAmount || 0) ||
-          Number(row.manualPaymentAmount || 0) !== Number(live.manualPaymentAmount || 0));
-
-      // Nếu backend đã có breakdown và khớp live thì giữ nguyên.
-      // Nếu backend bị cộng trùng snapshot + live, dùng live làm nguồn sự thật cho phát sinh trong ngày.
-      if (rowHasBreakdown && !totalsMismatch) return row;
-      if (!liveHasBreakdown) return row;
-
-      const countedAmount = row.countedAmount;
-      const closingBalance = openingBalance + netAmount;
-      const shouldRecalcDifference = countedAmount !== null && countedAmount !== undefined;
-
-      return {
-        ...row,
-        branchName: canonicalBranchName(row.branchName || row.branchId),
-        posReceiptAmount: Number(live.posReceiptAmount || 0),
-        manualReceiptAmount: Number(live.manualReceiptAmount || 0),
-        manualPaymentAmount: Number(live.manualPaymentAmount || 0),
-        totalReceipt: liveTotalReceipt,
-        totalPayment: liveTotalPayment,
-        netAmount,
-        closingBalance,
-        differenceAmount: shouldRecalcDifference
-          ? Number(countedAmount || 0) - closingBalance
-          : row.differenceAmount,
-        isSyntheticLive: row.isSyntheticLive || false,
-      };
-    });
-
-    liveByKey.forEach((live, key) => {
-      if (usedLiveKeys.has(key)) return;
-      patchedRows.push({
-        date: live.date,
-        branchId: live.branchId,
-        branchName: live.branchName,
-        paymentSourceId: live.paymentSourceId || live.paymentSourceName,
-        paymentSourceName: live.paymentSourceName,
-        paymentSourceCode: live.paymentSourceCode,
-        sourceType: live.sourceType,
-        openingBalance: 0,
-        posReceiptAmount: live.posReceiptAmount,
-        manualReceiptAmount: live.manualReceiptAmount,
-        manualPaymentAmount: live.manualPaymentAmount,
-        totalReceipt: live.totalReceipt,
-        totalPayment: live.totalPayment,
-        netAmount: live.netAmount,
-        closingBalance: live.netAmount,
-        countedAmount: null,
-        differenceAmount: null,
-        status: "OPEN",
-        isSyntheticLive: true,
+        return {
+          ...patched,
+          branchName: canonicalBranchName(patched.branchName || patched.branchId),
+          totalReceipt: Number(patched.totalReceipt || 0),
+          totalPayment: Number(patched.totalPayment || 0),
+          netAmount: Number(patched.totalReceipt || 0) - Number(patched.totalPayment || 0),
+          closingBalance:
+            Number(patched.openingBalance || 0) +
+            Number(patched.totalReceipt || 0) -
+            Number(patched.totalPayment || 0),
+        };
+      })
+      .sort((a, b) => {
+        const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
+        if (dateDiff !== 0) return dateDiff;
+        const branchDiff = branchSortWeight(a.branchName || a.branchId) - branchSortWeight(b.branchName || b.branchId);
+        if (branchDiff !== 0) return branchDiff;
+        return String(a.paymentSourceName || a.paymentSourceCode || "").localeCompare(
+          String(b.paymentSourceName || b.paymentSourceCode || ""),
+          "vi",
+        );
       });
-    });
-
-    // Chặn double count: cùng ngày + cùng chi nhánh + cùng nguồn tiền chỉ giữ một dòng tổng.
-    // Trường hợp hay gặp: backend đã có ledger, UI fallback live lại tạo thêm một dòng synthetic
-    // do paymentSourceId/name không khớp tuyệt đối. Nếu dòng ledger thật đã có số, bỏ dòng live trùng.
-    const dedupedRows: DailyLedgerRow[] = [];
-    const byBusinessKey = new Map<string, DailyLedgerRow>();
-    const hasAmounts = (row: DailyLedgerRow) =>
-      Number(row.posReceiptAmount || 0) !== 0 ||
-      Number(row.manualReceiptAmount || 0) !== 0 ||
-      Number(row.manualPaymentAmount || 0) !== 0 ||
-      Number(row.totalReceipt || 0) !== 0 ||
-      Number(row.totalPayment || 0) !== 0 ||
-      Number(row.netAmount || 0) !== 0 ||
-      Number(row.closingBalance || 0) !== 0;
-
-    patchedRows.forEach((row) => {
-      const branchName = canonicalBranchName(row.branchName || row.branchId);
-      const businessKey = [
-        String(row.date || "").slice(0, 10),
-        branchName,
-        canonicalSourceKey(row, branchName),
-      ].join("|");
-
-      const existing = byBusinessKey.get(businessKey);
-      if (!existing) {
-        const next = { ...row, branchName };
-        byBusinessKey.set(businessKey, next);
-        dedupedRows.push(next);
-        return;
-      }
-
-      const existingHas = hasAmounts(existing);
-      const rowHas = hasAmounts(row);
-
-      // Dòng live synthetic chỉ dùng để bù khi ledger thật đang trắng.
-      if (row.isSyntheticLive && !existing.isSyntheticLive) {
-        if (!existingHas && rowHas) mergeLedgerAmount(existing, row);
-        return;
-      }
-
-      // Nếu trước đó là live nhưng giờ gặp ledger thật, ưu tiên ledger thật.
-      if (existing.isSyntheticLive && !row.isSyntheticLive) {
-        Object.assign(existing, { ...row, branchName });
-        return;
-      }
-
-      // Hai dòng thật cùng business key: cộng khi chúng là các mảnh khác nhau.
-      // Nếu một dòng chỉ là bản lặp số liệu đã có thì tránh cộng đôi bằng cách bỏ dòng có tổng giống nhau.
-      const sameNet =
-        Number(existing.netAmount || 0) === Number(row.netAmount || 0) &&
-        Number(existing.totalReceipt || 0) === Number(row.totalReceipt || 0) &&
-        Number(existing.totalPayment || 0) === Number(row.totalPayment || 0);
-      if (!sameNet) mergeLedgerAmount(existing, row);
-    });
-
-    return dedupedRows.sort((a, b) => {
-      const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
-      if (dateDiff !== 0) return dateDiff;
-      return String(a.branchName || a.branchId || "").localeCompare(
-        String(b.branchName || b.branchId || ""),
-        "vi",
-      );
-    });
-  }, [ledgerData, ledgerLiveRows, closedLedgerKeys]);
+  }, [ledgerData, closedLedgerKeys]);
 
   const ledgerSummary = useMemo(() => {
     const acc = {
@@ -2106,6 +2074,12 @@ export default function FinanceDailyPageClient() {
               setPaymentSourceId("ALL");
               setFlow("ALL");
               setStaffFilter("ALL");
+              setTransactionBranchFilter("ALL");
+              setTransactionSourceFilter("ALL");
+              setTransactionStatusFilter("ALL");
+              setTransactionTypeFilter("ALL");
+              setTransactionAmountFrom("");
+              setTransactionAmountTo("");
               setQ("");
               applyQuickRange("today");
             }}
@@ -3021,26 +2995,62 @@ export default function FinanceDailyPageClient() {
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-neutral-500">
             Bộ lọc nhanh bảng giao dịch
           </div>
-          <div className="grid gap-3 xl:grid-cols-[1fr_220px_220px_180px]">
+          <div className="grid gap-3 xl:grid-cols-[1.4fr_180px_190px_190px_190px_180px_120px_120px_160px]">
             <input
               value={q}
               onChange={(event) => setQ(event.target.value)}
-              placeholder="Tìm mã đơn, phiếu, khách, SĐT, nguồn tiền, ghi chú..."
+              placeholder="Tìm mã đơn, phiếu, khách, SĐT, chi nhánh, nguồn tiền, nhân viên, ghi chú..."
               className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
             />
+            <select
+              value={transactionBranchFilter}
+              onChange={(event) => setTransactionBranchFilter(event.target.value)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            >
+              <option value="ALL">Tất cả chi nhánh</option>
+              {transactionBranchOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={transactionSourceFilter}
+              onChange={(event) => setTransactionSourceFilter(event.target.value)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            >
+              <option value="ALL">Tất cả nguồn tiền</option>
+              {transactionSourceOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
             <select
               value={flow}
               onChange={(event) => setFlow(event.target.value as FlowFilter)}
               className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
             >
               <option value="ALL">Tất cả dòng tiền</option>
-              <option value="RECEIPT">Chỉ tiền vào</option>
-              <option value="PAYMENT">Chỉ tiền ra</option>
-              <option value="POS">Bán lẻ POS hoàn thành</option>
-              <option value="TRANSFER">Chuyển khoản / cọc</option>
+              <option value="RECEIPT">Tiền vào</option>
+              <option value="PAYMENT">Tiền ra</option>
+              <option value="POS">POS hoàn thành</option>
+              <option value="TRANSFER">Chuyển khoản/cọc</option>
               <option value="CASH">Tiền mặt</option>
               <option value="BANK">Ngân hàng</option>
               <option value="OTHER">Nguồn khác</option>
+            </select>
+            <select
+              value={transactionStatusFilter}
+              onChange={(event) => setTransactionStatusFilter(event.target.value)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            >
+              <option value="ALL">Tất cả trạng thái</option>
+              {transactionStatusOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
             </select>
             <select
               value={staffFilter}
@@ -3054,14 +3064,43 @@ export default function FinanceDailyPageClient() {
                 </option>
               ))}
             </select>
+            <select
+              value={transactionTypeFilter}
+              onChange={(event) => setTransactionTypeFilter(event.target.value)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            >
+              <option value="ALL">Tất cả loại</option>
+              <option value="ORDER">Đơn hàng</option>
+              <option value="VOUCHER">Phiếu thu/chi</option>
+            </select>
+            <input
+              value={transactionAmountFrom}
+              onChange={(event) => setTransactionAmountFrom(event.target.value.replace(/[^\d]/g, ""))}
+              placeholder="Từ tiền"
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            />
+            <input
+              value={transactionAmountTo}
+              onChange={(event) => setTransactionAmountTo(event.target.value.replace(/[^\d]/g, ""))}
+              placeholder="Đến tiền"
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
+            />
+          </div>
+          <div className="mt-3 flex justify-end">
             <button
               type="button"
               onClick={() => {
                 setFlow("ALL");
                 setStaffFilter("ALL");
+                setTransactionBranchFilter("ALL");
+                setTransactionSourceFilter("ALL");
+                setTransactionStatusFilter("ALL");
+                setTransactionTypeFilter("ALL");
+                setTransactionAmountFrom("");
+                setTransactionAmountTo("");
                 setQ("");
               }}
-              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold hover:bg-neutral-50"
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold hover:bg-neutral-50"
             >
               Xoá lọc giao dịch
             </button>
@@ -3110,15 +3149,15 @@ export default function FinanceDailyPageClient() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    {row.branchName || row.branchId || "—"}
+                    {displayBranchName(row)}
                   </td>
                   <td className="px-4 py-3">{creatorName(row)}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium">
-                      {row.sourceName || row.method || "—"}
+                      {displaySourceName(row)}
                     </div>
                     <div className="text-xs text-neutral-500">
-                      {sourceKind(row)}
+                      {sourceKindLabel(sourceKind(row))}
                     </div>
                   </td>
                   <td

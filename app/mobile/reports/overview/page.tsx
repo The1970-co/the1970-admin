@@ -3,105 +3,395 @@
 import { API_BASE } from "@/lib/api-base";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Boxes, RefreshCw, Truck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  ChevronRight,
+  Megaphone,
+  RefreshCw,
+  ShoppingBag,
+  Truck,
+  Wallet,
+} from "lucide-react";
 
-type HomeResponse = {
-  summary?: { revenueToday?: number; ordersToday?: number };
-  orders?: Record<string, number>;
-  inventory?: { lowStockCount?: number; outOfStockCount?: number };
-  topProducts?: Array<{ productName?: string; qty?: number; revenue?: number }>;
-  alerts?: string[];
-  finance?: { codPending?: number; codReceivedToday?: number };
+type AnyObj = Record<string, any>;
+
+type DashboardApi = {
+  cards?: AnyObj;
+  warRoom?: AnyObj;
+  today?: AnyObj;
+  dailyRows?: AnyObj[];
+  revenueRows?: AnyObj[];
+  rows?: AnyObj[];
 };
+
+const RANGE_OPTIONS = [
+  { key: "today", label: "Hôm nay" },
+  { key: "month", label: "Tháng này" },
+] as const;
 
 function getToken() {
   if (typeof window === "undefined") return "";
   return localStorage.getItem("token") || "";
 }
 
-async function fetchWithAuth<T>(path: string): Promise<T> {
-  const token = getToken();
-  if (!token) {
+async function fetchJson<T>(path: string): Promise<T> {
+  const accessToken = getToken();
+
+  if (!accessToken) {
     window.location.href = "/mobile/login";
     throw new Error("Thiếu token đăng nhập.");
   }
-  const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+
   if (res.status === 401) {
     localStorage.removeItem("token");
     window.location.href = "/mobile/login";
     throw new Error("Phiên đăng nhập hết hạn.");
   }
-  if (!res.ok) throw new Error((await res.text()) || "Không tải được báo cáo.");
+
+  if (!res.ok) {
+    throw new Error((await res.text()) || "Không tải được dữ liệu War Room.");
+  }
+
   return res.json();
 }
 
-function money(v?: number) {
-  const n = Number(v || 0);
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return new Intl.NumberFormat("vi-VN").format(n);
+async function optionalJson<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return await fetchJson<T>(path);
+  } catch {
+    return fallback;
+  }
 }
 
-function num(v?: number) {
-  return new Intl.NumberFormat("vi-VN").format(Number(v || 0));
+function dateInput(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
 }
 
-function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
-  return <section id={id} className="rounded-[1.75rem] bg-white p-5 shadow-sm"><h2 className="mb-4 text-lg font-bold">{title}</h2>{children}</section>;
+function todayInput() {
+  return dateInput(new Date());
+}
+
+function monthStartInput() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function n(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Number(String(value || "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function firstNumber(...values: unknown[]) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === "") continue;
+    const parsed = n(value);
+    if (parsed !== 0) return parsed;
+  }
+  return 0;
+}
+
+function compact(value: unknown) {
+  const amount = n(value);
+  const sign = amount < 0 ? "-" : "";
+  const abs = Math.abs(amount);
+
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${Math.round(abs / 1_000)}K`;
+
+  return `${sign}${new Intl.NumberFormat("vi-VN").format(Math.round(abs))}`;
+}
+
+function money(value: unknown) {
+  return `${new Intl.NumberFormat("vi-VN").format(Math.round(n(value)))}đ`;
+}
+
+function count(value: unknown) {
+  return new Intl.NumberFormat("vi-VN").format(Math.round(n(value)));
+}
+
+function getRows(data: DashboardApi | null) {
+  return data?.dailyRows || data?.revenueRows || data?.rows || [];
+}
+
+function getRowValue(row: AnyObj, keys: string[]) {
+  for (const key of keys) {
+    if (row?.[key] !== undefined && row?.[key] !== null && row?.[key] !== "") return row[key];
+  }
+  return 0;
+}
+
+function TinyBar({ value, max }: { value: number; max: number }) {
+  const width = Math.max(8, Math.min(100, Math.round((Math.abs(value) / Math.max(max, 1)) * 100)));
+  return (
+    <div className="mt-3 h-2 overflow-hidden rounded-full bg-neutral-100">
+      <div className="h-full rounded-full bg-neutral-950" style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+function KPI({
+  label,
+  value,
+  sub,
+  icon,
+  dark = false,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  icon: React.ReactNode;
+  dark?: boolean;
+}) {
+  return (
+    <div className={`${dark ? "bg-neutral-950 text-white" : "bg-white text-neutral-950"} rounded-[1.75rem] p-5 shadow-sm`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className={`text-xs font-black uppercase tracking-[0.18em] ${dark ? "text-white/45" : "text-neutral-400"}`}>
+            {label}
+          </div>
+          <div className="mt-4 text-4xl font-black tracking-tight">{value}</div>
+        </div>
+        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${dark ? "bg-white text-neutral-950" : "bg-neutral-100"}`}>
+          {icon}
+        </div>
+      </div>
+      <div className={`mt-3 text-sm leading-5 ${dark ? "text-white/55" : "text-neutral-500"}`}>{sub}</div>
+    </div>
+  );
 }
 
 export default function MobileReportOverviewPage() {
-  const [data, setData] = useState<HomeResponse | null>(null);
+  const [range, setRange] = useState<(typeof RANGE_OPTIONS)[number]["key"]>("today");
+  const [data, setData] = useState<DashboardApi | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  async function load(silent = false) {
+  const load = useCallback(async (silent = false) => {
     try {
-      silent ? setRefreshing(true) : setLoading(true);
+      if (silent) setRefreshing(true);
+      else setLoading(true);
       setError("");
-      setData(await fetchWithAuth<HomeResponse>("/mobile/home?branchId=all"));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Có lỗi xảy ra.");
+
+      const to = todayInput();
+      const from = range === "month" ? monthStartInput() : to;
+
+      const result = await optionalJson<DashboardApi>(
+        `/dashboard/overview?range=${range}&from=${from}&to=${to}&branchId=all`,
+        {},
+      );
+
+      setData(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Có lỗi xảy ra.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }
+  }, [range]);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const orderBlocks = useMemo(() => {
-    const o = data?.orders || {};
-    return [
-      ["Mới", o.NEW || 0, "NEW"],
-      ["Đã duyệt", o.APPROVED || 0, "APPROVED"],
-      ["Đóng gói", o.PACKING || 0, "PACKING"],
-      ["Đang giao", o.SHIPPED || 0, "SHIPPED"],
-    ] as const;
+  const model = useMemo(() => {
+    const cards = data?.cards || {};
+    const warRoom = data?.warRoom || {};
+    const today = data?.today || {};
+    const source = { ...cards, ...warRoom, ...today };
+
+    const revenue = firstNumber(
+      source.effectiveRevenue,
+      source.todayEffectiveRevenue,
+      source.completedRevenue,
+      source.codSuccessRevenue,
+      source.codDeliveredRevenue,
+      source.revenueToday,
+      source.revenue,
+      source.totalRevenue,
+    );
+
+    const exportedOrders = firstNumber(
+      source.effectiveOrders,
+      source.exportedOrders,
+      source.shippedOrders,
+      source.sentToCarrierOrders,
+      source.carrierCreatedOrders,
+      source.posCompletedOrders,
+      source.ordersToday,
+      source.totalOrders,
+    );
+
+    const cancelledOrders = firstNumber(source.cancelledOrders, source.cancelOrders, source.canceledOrders);
+    const effectiveOrders = Math.max(0, exportedOrders - cancelledOrders);
+
+    const adsCost = firstNumber(source.adsCostToday, source.totalAdsCost, source.adsCost, source.adSpend, source.marketingCost);
+    const cost = firstNumber(source.costToday, source.totalCost, source.cost, source.cogs, source.goodsCost);
+    const profit = source.profit !== undefined && source.profit !== null
+      ? n(source.profit)
+      : revenue - adsCost - cost;
+
+    return {
+      revenue,
+      exportedOrders,
+      cancelledOrders,
+      effectiveOrders,
+      adsCost,
+      cost,
+      profit,
+    };
   }, [data]);
+
+  const rows = getRows(data);
+  const maxRevenue = Math.max(
+    ...rows.map((row) => n(getRowValue(row, ["revenue", "totalRevenue", "effectiveRevenue"]))),
+    model.revenue,
+    1,
+  );
 
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-950">
       <div className="mx-auto min-h-screen w-full max-w-md px-4 pb-28 pt-5">
         <header className="mb-5 flex items-center justify-between">
-          <Link href="/mobile" className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"><ArrowLeft className="h-5 w-5" /></Link>
-          <div className="text-center"><div className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Báo cáo</div><div className="text-lg font-bold">Tổng quan vận hành</div></div>
-          <button type="button" onClick={() => void load(true)} className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"><RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} /></button>
-        </header>
-        {loading ? <div className="space-y-4">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-32 animate-pulse rounded-[1.75rem] bg-white" />)}</div> : error ? <div className="rounded-[1.75rem] border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div> : <div className="space-y-4">
-          <div className="rounded-[2rem] bg-neutral-950 p-6 text-white shadow-xl shadow-neutral-300">
-            <div className="text-sm text-white/55">Hôm nay · Tất cả chi nhánh</div><div className="mt-3 text-4xl font-black tracking-tight">{money(data?.summary?.revenueToday)}</div><div className="mt-2 text-sm text-white/60">Doanh thu ghi nhận</div>
-            <div className="mt-6 grid grid-cols-2 gap-3"><div className="rounded-2xl bg-white/10 p-4"><div className="text-xs text-white/50">Số đơn</div><div className="mt-2 text-2xl font-bold">{num(data?.summary?.ordersToday)}</div></div><div className="rounded-2xl bg-white/10 p-4"><div className="text-xs text-white/50">COD pending</div><div className="mt-2 text-2xl font-bold">{money(data?.finance?.codPending)}</div></div></div>
+          <Link href="/mobile" className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm">
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
+
+          <div className="text-center">
+            <div className="text-xs font-black uppercase tracking-[0.24em] text-neutral-400">War Room</div>
+            <div className="text-lg font-black">Hiệu quả hôm nay</div>
           </div>
-          <div className="grid grid-cols-2 gap-3"><div className="rounded-[1.75rem] bg-white p-5 shadow-sm"><AlertTriangle className="h-5 w-5 text-amber-600" /><div className="mt-4 text-3xl font-black">{num(data?.inventory?.lowStockCount)}</div><div className="mt-1 text-sm text-neutral-500">SKU sắp hết</div></div><div className="rounded-[1.75rem] bg-white p-5 shadow-sm"><Boxes className="h-5 w-5 text-rose-700" /><div className="mt-4 text-3xl font-black">{num(data?.inventory?.outOfStockCount)}</div><div className="mt-1 text-sm text-neutral-500">SKU hết hàng</div></div></div>
-          <Section title="Đơn hàng chờ xử lý"><div className="grid grid-cols-2 gap-3">{orderBlocks.map(([label, value, status]) => <Link key={status} href={`/mobile/orders?status=${status}`} className="rounded-2xl bg-neutral-50 p-4"><div className="text-sm text-neutral-500">{label}</div><div className="mt-2 text-3xl font-black">{value}</div></Link>)}</div></Section>
-          <Section title="Top sản phẩm"><div className="space-y-3">{(data?.topProducts || []).length === 0 ? <div className="rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-500">Chưa có dữ liệu sản phẩm bán chạy.</div> : (data?.topProducts || []).slice(0, 5).map((p, i) => <div key={`${p.productName}-${i}`} className="flex items-center gap-3 rounded-2xl bg-neutral-50 p-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white font-bold">{i + 1}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{p.productName || "Sản phẩm"}</div><div className="mt-1 text-xs text-neutral-500">{num(p.qty)} sản phẩm</div></div><div className="text-sm font-bold">{money(p.revenue)}</div></div>)}</div></Section>
-          <Section id="alerts" title="Cảnh báo nổi bật"><div className="space-y-2">{(data?.alerts || []).length === 0 ? <div className="rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-500">Không có cảnh báo mới.</div> : (data?.alerts || []).map((a, i) => <div key={`${a}-${i}`} className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-900">{a}</div>)}</div></Section>
-          <Link href="/mobile/orders" className="flex items-center justify-between rounded-[1.75rem] bg-white p-5 font-bold shadow-sm"><span className="flex items-center gap-3"><Truck className="h-5 w-5" />Mở danh sách đơn hàng</span></Link>
-        </div>}
+
+          <button type="button" onClick={() => void load(true)} className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm">
+            <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
+          </button>
+        </header>
+
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+          {RANGE_OPTIONS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setRange(item.key)}
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${
+                range === item.key ? "bg-neutral-950 text-white" : "bg-white text-neutral-600"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div className="space-y-4">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="h-32 animate-pulse rounded-[1.75rem] bg-white" />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="rounded-[1.75rem] border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
+        ) : (
+          <div className="space-y-4">
+            <KPI
+              dark
+              label="Doanh thu hôm nay"
+              value={compact(model.revenue)}
+              sub="Đơn hoàn thành hôm nay + COD giao thành công"
+              icon={<Wallet className="h-5 w-5" />}
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <KPI
+                label="Đơn xuất kho"
+                value={count(model.effectiveOrders)}
+                sub="Gửi HVC + POS thành công - huỷ"
+                icon={<Truck className="h-5 w-5" />}
+              />
+
+              <KPI
+                label="Chi phí ads"
+                value={compact(model.adsCost)}
+                sub="Tiền quảng cáo trong ngày"
+                icon={<Megaphone className="h-5 w-5" />}
+              />
+
+              <KPI
+                label="Lợi nhuận"
+                value={compact(model.profit)}
+                sub="Doanh thu - ads - giá vốn"
+                icon={<ShoppingBag className="h-5 w-5" />}
+                dark
+              />
+
+              <div className="rounded-[1.75rem] bg-white p-5 shadow-sm">
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-neutral-400">Giá vốn</div>
+                <div className="mt-4 text-3xl font-black">{compact(model.cost)}</div>
+                <div className="mt-3 text-sm text-neutral-500">Chỉ để tính lợi nhuận</div>
+              </div>
+            </div>
+
+            <section className="rounded-[1.75rem] bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-black">Doanh thu 10 ngày gần nhất</h2>
+                  <p className="mt-1 text-sm text-neutral-500">Bấm tháng này để xem rộng hơn.</p>
+                </div>
+                <CalendarDays className="h-5 w-5 text-neutral-400" />
+              </div>
+
+              <div className="space-y-3">
+                {rows.length === 0 ? (
+                  <div className="rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-500">
+                    Chưa có bảng doanh thu ngày từ API mobile.
+                  </div>
+                ) : (
+                  rows.slice(0, 10).map((row, index) => {
+                    const revenue = getRowValue(row, ["revenue", "totalRevenue", "effectiveRevenue"]);
+                    const cost = getRowValue(row, ["cost", "totalCost", "cogs"]);
+                    const ads = getRowValue(row, ["adsCost", "totalAdsCost", "adSpend"]);
+                    const profit = getRowValue(row, ["profit", "netProfit"]);
+                    const orders = getRowValue(row, ["orders", "totalOrders", "effectiveOrders"]);
+
+                    return (
+                      <div key={`${row.day || row.date || index}`} className="rounded-2xl bg-neutral-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-black">{row.note || row.date || `Ngày ${row.day || index + 1}`}</div>
+                            <div className="mt-1 text-xs text-neutral-500">
+                              {orders} đơn · vốn {typeof cost === "string" ? cost : compact(cost)} · ads {typeof ads === "string" ? ads : compact(ads)}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-black">{typeof revenue === "string" ? revenue : compact(revenue)}</div>
+                            <div className="mt-1 text-xs text-emerald-700">Lãi {typeof profit === "string" ? profit : compact(profit)}</div>
+                          </div>
+                        </div>
+                        <TinyBar value={n(revenue)} max={maxRevenue} />
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+
+            <Link href="/mobile/finance/daily" className="flex items-center justify-between rounded-[1.75rem] bg-white p-5 font-bold shadow-sm">
+              <span>Mở tổng quan nguồn tiền</span>
+              <ChevronRight className="h-5 w-5" />
+            </Link>
+          </div>
+        )}
+
         <MobileBottomNav />
       </div>
     </div>

@@ -1458,6 +1458,21 @@ function getCreatedByName(order: any) {
   );
 }
 
+function getAssignedStaffName(order: any) {
+  return String(
+    order?.assignedStaffName ||
+      order?.assignedStaff?.name ||
+      order?.assignedStaff?.fullName ||
+      order?.assignedToStaffName ||
+      order?.assignedToStaff?.name ||
+      order?.assignedToStaff?.fullName ||
+      order?.assigneeName ||
+      order?.assignee?.name ||
+      order?.assignee?.fullName ||
+      "",
+  ).trim();
+}
+
 function getQuickDateRange(key: QuickDateKey) {
   const now = new Date();
   const todayStart = new Date(
@@ -1515,6 +1530,186 @@ function toInputDateValue(date: Date | null) {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+type SmartOrderSearch = {
+  raw: string;
+  terms: string[];
+  hasMultiTerms: boolean;
+  staffName: string;
+  staffScope: "created" | "assigned" | "any";
+  completedOnly: boolean;
+  monthMode: "this_month" | "last_month" | "none";
+  dateFrom: Date | null;
+  dateTo: Date | null;
+};
+
+function smartDateRangeForMonth(mode: SmartOrderSearch["monthMode"]) {
+  const now = new Date();
+
+  if (mode === "this_month") {
+    return {
+      from: new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0),
+      to: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+    };
+  }
+
+  if (mode === "last_month") {
+    return {
+      from: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0),
+      to: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
+    };
+  }
+
+  return { from: null, to: null };
+}
+
+function isLikelyOrderLookupTerm(value?: string | null) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeTrackingLikeText(raw);
+  return normalized.length >= 4 && /\d/.test(normalized);
+}
+
+function splitSmartOrderSearchTerms(raw: string) {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+
+  const hardSplit = text
+    .split(/[\n,;|]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (hardSplit.length > 1) return Array.from(new Set(hardSplit));
+
+  const looseParts = text
+    .split(/\s+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (looseParts.length > 1 && looseParts.every(isLikelyOrderLookupTerm)) {
+    return Array.from(new Set(looseParts));
+  }
+
+  return [text];
+}
+
+function parseSmartOrderSearch(raw: string, staffNames: string[]): SmartOrderSearch {
+  const text = String(raw || "").trim();
+  const normalized = normalizeSearchText(text);
+  const terms = splitSmartOrderSearchTerms(text);
+  const hasMultiTerms = terms.length > 1 && terms.every(isLikelyOrderLookupTerm);
+
+  const sortedStaffNames = [...staffNames]
+    .map((name) => String(name || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  const staffName =
+    sortedStaffNames.find((name) => {
+      const normalizedName = normalizeSearchText(name);
+      return normalizedName && normalized.includes(normalizedName);
+    }) || "";
+
+  const staffScope = normalized.includes("gan") || normalized.includes("phu trach") || normalized.includes("assigned") || normalized.includes("assignee")
+    ? "assigned"
+    : normalized.includes("tao") || normalized.includes("created") || normalized.includes("luong") || normalized.includes("kpi") || normalized.includes("hoa hong")
+      ? "created"
+      : "any";
+
+  let monthMode: SmartOrderSearch["monthMode"] = "none";
+  if (normalized.includes("thang nay") || normalized.includes("this month")) monthMode = "this_month";
+  if (normalized.includes("thang truoc") || normalized.includes("last month")) monthMode = "last_month";
+
+  const dateRange = smartDateRangeForMonth(monthMode);
+
+  const completedOnly =
+    normalized.includes("thanh cong") ||
+    normalized.includes("hoan thanh") ||
+    normalized.includes("completed") ||
+    normalized.includes("fulfilled") ||
+    normalized.includes("giao thanh cong");
+
+  return {
+    raw: text,
+    terms,
+    hasMultiTerms,
+    staffName,
+    staffScope,
+    completedOnly,
+    monthMode,
+    dateFrom: dateRange.from,
+    dateTo: dateRange.to,
+  };
+}
+
+function getSmartSearchServerDateRange(raw: string) {
+  const normalized = normalizeSearchText(raw);
+  if (normalized.includes("thang nay") || normalized.includes("this month")) {
+    return smartDateRangeForMonth("this_month");
+  }
+  if (normalized.includes("thang truoc") || normalized.includes("last month")) {
+    return smartDateRangeForMonth("last_month");
+  }
+  return { from: null, to: null };
+}
+
+function orderMatchesSmartSearch(
+  order: NormalizedOrder,
+  smart: SmartOrderSearch,
+  branchName?: string,
+) {
+  if (!smart.raw) return true;
+
+  let matchedStructuredPart = false;
+
+  if (smart.hasMultiTerms) {
+    matchedStructuredPart = true;
+    const matchedAnyTerm = smart.terms.some((term) => {
+      if (isLikelyExactCarrierCode(term) && orderMatchesExactCarrierCode(order, term)) {
+        return true;
+      }
+      return orderMatchesKeyword(order, term, branchName);
+    });
+
+    if (!matchedAnyTerm) return false;
+  }
+
+  if (smart.staffName) {
+    matchedStructuredPart = true;
+    const createdName = normalizeComparableText(order._createdByName);
+    const assignedName = normalizeComparableText(order._assignedStaffName);
+    const targetName = normalizeComparableText(smart.staffName);
+
+    if (smart.staffScope === "created" && createdName !== targetName) return false;
+    if (smart.staffScope === "assigned" && assignedName !== targetName) return false;
+    if (smart.staffScope === "any" && createdName !== targetName && assignedName !== targetName) {
+      return false;
+    }
+  }
+
+  if (smart.dateFrom || smart.dateTo) {
+    matchedStructuredPart = true;
+    const createdAt = order._createdAtDate;
+    if (!createdAt) return false;
+    if (smart.dateFrom && createdAt < smart.dateFrom) return false;
+    if (smart.dateTo && createdAt > smart.dateTo) return false;
+  }
+
+  if (smart.completedOnly) {
+    matchedStructuredPart = true;
+    const deliveryLabel = shipmentDisplayStatusLabel(order);
+    const isCompleted =
+      order.status === "COMPLETED" ||
+      order.fulfillmentStatus === "FULFILLED" ||
+      deliveryLabel === "Giao thành công";
+    if (!isCompleted) return false;
+  }
+
+  if (!matchedStructuredPart) {
+    return orderMatchesKeyword(order, smart.raw, branchName);
+  }
+
+  return true;
 }
 
 function defaultVisibleColumns(canSeeMoney: boolean) {
@@ -2020,12 +2215,21 @@ export default function OrdersPageClient() {
   const [quickStatus, setQuickStatus] = useState<QuickStatusKey>("ALL");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [createdByFilter, setCreatedByFilter] = useState("ALL");
+  const [assignedStaffFilter, setAssignedStaffFilter] = useState("ALL");
   const [fulfillmentFilter, setFulfillmentFilter] = useState("ALL");
+  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState("ALL");
   const [salesChannelFilter, setSalesChannelFilter] = useState("ALL");
   const [shippingModeFilter, setShippingModeFilter] = useState("ALL");
   const [shippingPartnerFilter, setShippingPartnerFilter] = useState("ALL");
   const [trackingFilter, setTrackingFilter] = useState("ALL");
+  const [printStatusFilter, setPrintStatusFilter] = useState("ALL");
+  const [codFilter, setCodFilter] = useState("ALL");
+  const [amountDueFilter, setAmountDueFilter] = useState("ALL");
+  const [itemCountFilter, setItemCountFilter] = useState("ALL");
   const [freeTextFilter, setFreeTextFilter] = useState("");
+  const [smartSearchInput, setSmartSearchInput] = useState("");
+  const [smartSearch, setSmartSearch] = useState("");
+  const [showSmartSearchHelp, setShowSmartSearchHelp] = useState(false);
 
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
@@ -2417,8 +2621,9 @@ export default function OrdersPageClient() {
         .filter(Boolean)
         .join(" ");
 
-      const requestPageSize = pageSize;
-      const requestPage = page;
+      const hasSmartSearch = Boolean(String(smartSearch || "").trim());
+      const requestPageSize = hasSmartSearch ? Math.max(pageSize, 1000) : pageSize;
+      const requestPage = hasSmartSearch ? 1 : page;
 
       const buildParams = (targetPage: number) => {
         const params = new URLSearchParams();
@@ -2442,6 +2647,14 @@ export default function OrdersPageClient() {
         if (paymentFilter !== "ALL") params.set("paymentStatus", paymentFilter);
         if (dateFrom) params.set("dateFrom", dateFrom);
         if (dateTo) params.set("dateTo", dateTo);
+
+        const smartDateRange = getSmartSearchServerDateRange(smartSearch);
+        if (!dateFrom && smartDateRange.from) {
+          params.set("dateFrom", toInputDateValue(smartDateRange.from));
+        }
+        if (!dateTo && smartDateRange.to) {
+          params.set("dateTo", toInputDateValue(smartDateRange.to));
+        }
 
         return params;
       };
@@ -2521,6 +2734,7 @@ export default function OrdersPageClient() {
   }, [
     submittedQuery,
     freeTextFilter,
+    smartSearch,
     branchFilter,
     orderFilter,
     paymentFilter,
@@ -2547,12 +2761,19 @@ export default function OrdersPageClient() {
     dateFrom,
     dateTo,
     createdByFilter,
+    assignedStaffFilter,
     fulfillmentFilter,
+    deliveryStatusFilter,
     salesChannelFilter,
     shippingModeFilter,
     shippingPartnerFilter,
     trackingFilter,
+    printStatusFilter,
+    codFilter,
+    amountDueFilter,
+    itemCountFilter,
     freeTextFilter,
+    smartSearch,
   ]);
 
   const normalizedOrders = useMemo<NormalizedOrder[]>(() => {
@@ -2562,13 +2783,7 @@ export default function OrdersPageClient() {
         ...order,
         _meta: meta,
         _createdByName: getCreatedByName(order),
-        _assignedStaffName: String(
-          (order as any).assignedStaffName ||
-          (order as any).assignedStaff?.name ||
-          (order as any).assignedToStaffName ||
-          getCreatedByName(order) ||
-          "",
-        ).trim(),
+        _assignedStaffName: getAssignedStaffName(order),
         _shippingFee: Number(order.shippingFee || 0),
         _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
         _codAmount: Number(order.shipment?.codAmount || 0),
@@ -2603,6 +2818,26 @@ export default function OrdersPageClient() {
     [normalizedOrders],
   );
 
+  const assignedStaffOptions = useMemo(
+    () => uniqueOptions(normalizedOrders.map((o) => o._assignedStaffName)),
+    [normalizedOrders],
+  );
+
+  const smartStaffNameOptions = useMemo(
+    () => uniqueOptions([...createdByOptions, ...assignedStaffOptions]),
+    [createdByOptions, assignedStaffOptions],
+  );
+
+  const parsedSmartSearch = useMemo(
+    () => parseSmartOrderSearch(smartSearch, smartStaffNameOptions),
+    [smartSearch, smartStaffNameOptions],
+  );
+
+  const deliveryStatusOptions = useMemo(
+    () => uniqueOptions(normalizedOrders.map((o) => shipmentDisplayStatusLabel(o))),
+    [normalizedOrders],
+  );
+
   const salesChannelOptions = useMemo(
     () => uniqueOptions(normalizedOrders.map((o) => o.salesChannel)),
     [normalizedOrders],
@@ -2626,24 +2861,50 @@ export default function OrdersPageClient() {
   const activeAdvancedFilterCount =
     [
       createdByFilter,
+      assignedStaffFilter,
       fulfillmentFilter,
+      deliveryStatusFilter,
       salesChannelFilter,
       shippingModeFilter,
       shippingPartnerFilter,
       trackingFilter,
+      printStatusFilter,
+      codFilter,
+      amountDueFilter,
+      itemCountFilter,
     ].filter((value) => value !== "ALL").length +
-    (freeTextFilter.trim() ? 1 : 0);
+    (freeTextFilter.trim() ? 1 : 0) +
+    (smartSearch.trim() ? 1 : 0);
 
   const clearAdvancedFilters = () => {
     setCreatedByFilter("ALL");
+    setAssignedStaffFilter("ALL");
     setFulfillmentFilter("ALL");
+    setDeliveryStatusFilter("ALL");
     setSalesChannelFilter("ALL");
     setShippingModeFilter("ALL");
     setShippingPartnerFilter("ALL");
     setTrackingFilter("ALL");
+    setPrintStatusFilter("ALL");
+    setCodFilter("ALL");
+    setAmountDueFilter("ALL");
+    setItemCountFilter("ALL");
     setFreeTextFilter("");
+    setSmartSearchInput("");
+    setSmartSearch("");
   };
 
+  const submitSmartSearch = () => {
+    const nextSmartSearch = smartSearchInput.trim();
+    setSmartSearch(nextSmartSearch);
+    setPage(1);
+  };
+
+  const clearSmartSearch = () => {
+    setSmartSearchInput("");
+    setSmartSearch("");
+    setPage(1);
+  };
 
   const submitOrderSearch = () => {
     const nextQuery = query.trim();
@@ -2691,9 +2952,23 @@ export default function OrdersPageClient() {
       result = result.filter((o) => o._createdByName === createdByFilter);
     }
 
+    if (assignedStaffFilter !== "ALL") {
+      result = result.filter((o) => {
+        const assignedName = String(o._assignedStaffName || "").trim();
+        if (assignedStaffFilter === "UNASSIGNED") return !assignedName;
+        return assignedName === assignedStaffFilter;
+      });
+    }
+
     if (fulfillmentFilter !== "ALL") {
       result = result.filter(
         (o) => String(o.fulfillmentStatus || "") === fulfillmentFilter,
+      );
+    }
+
+    if (deliveryStatusFilter !== "ALL") {
+      result = result.filter(
+        (o) => shipmentDisplayStatusLabel(o) === deliveryStatusFilter,
       );
     }
 
@@ -2726,6 +3001,34 @@ export default function OrdersPageClient() {
       });
     }
 
+    if (printStatusFilter !== "ALL") {
+      result = result.filter((o) => {
+        const printed = getOrderPrintCount(o.id) > 0;
+        return printStatusFilter === "PRINTED" ? printed : !printed;
+      });
+    }
+
+    if (codFilter !== "ALL") {
+      result = result.filter((o) => {
+        const hasCod = Number(o._codAmount || 0) > 0;
+        return codFilter === "HAS_COD" ? hasCod : !hasCod;
+      });
+    }
+
+    if (amountDueFilter !== "ALL") {
+      result = result.filter((o) => {
+        const hasDue = Number(o._amountDue || 0) > 0;
+        return amountDueFilter === "HAS_DUE" ? hasDue : !hasDue;
+      });
+    }
+
+    if (itemCountFilter !== "ALL") {
+      result = result.filter((o) => {
+        const itemCount = getOrderItemCount(o);
+        return itemCountFilter === "HAS_ITEMS" ? itemCount > 0 : itemCount <= 0;
+      });
+    }
+
     const keywords = [submittedQuery, freeTextFilter]
       .map((item) => String(item || "").trim())
       .filter(Boolean);
@@ -2742,15 +3045,29 @@ export default function OrdersPageClient() {
         );
 
         if (exactCarrierMatches.length > 0) {
-          return exactCarrierMatches;
+          result = exactCarrierMatches;
+        } else {
+          result = result.filter((o) => {
+            const branchName = branchLabel(o.branchId);
+            return keywords.every((keyword) =>
+              orderMatchesKeyword(o, keyword, branchName),
+            );
+          });
         }
+      } else {
+        result = result.filter((o) => {
+          const branchName = branchLabel(o.branchId);
+          return keywords.every((keyword) =>
+            orderMatchesKeyword(o, keyword, branchName),
+          );
+        });
       }
+    }
 
+    if (parsedSmartSearch.raw) {
       result = result.filter((o) => {
         const branchName = branchLabel(o.branchId);
-        return keywords.every((keyword) =>
-          orderMatchesKeyword(o, keyword, branchName),
-        );
+        return orderMatchesSmartSearch(o, parsedSmartSearch, branchName);
       });
     }
 
@@ -2760,12 +3077,19 @@ export default function OrdersPageClient() {
     quickStatus,
     submittedQuery,
     createdByFilter,
+    assignedStaffFilter,
     fulfillmentFilter,
+    deliveryStatusFilter,
     salesChannelFilter,
     shippingModeFilter,
     shippingPartnerFilter,
     trackingFilter,
+    printStatusFilter,
+    codFilter,
+    amountDueFilter,
+    itemCountFilter,
     freeTextFilter,
+    parsedSmartSearch,
     branches,
   ]);
 
@@ -4758,6 +5082,44 @@ export default function OrdersPageClient() {
                     onChange={(e) => setFreeTextFilter(e.target.value)}
                   />
 
+                  <div className="md:col-span-2 xl:col-span-2">
+                    <div className="flex gap-2">
+                      <textarea
+                        className="min-h-[48px] flex-1 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                        placeholder="Tìm thông minh..."
+                        value={smartSearchInput}
+                        onChange={(e) => setSmartSearchInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            submitSmartSearch();
+                          }
+                        }}
+                      />
+                      <div className="flex shrink-0 flex-col gap-2">
+                        <Button size="sm" variant="primary" onClick={submitSmartSearch}>
+                          Tìm
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => setShowSmartSearchHelp((v) => !v)}
+                        >
+                          Hướng dẫn
+                        </Button>
+                      </div>
+                    </div>
+
+                    {showSmartSearchHelp ? (
+                      <div className="mt-2 rounded-2xl border border-neutral-200 bg-white p-3 text-xs leading-5 text-neutral-600 shadow-sm">
+                        <p className="font-semibold text-neutral-900">Hướng dẫn tìm kiếm thông minh</p>
+                        <p className="mt-1">Tìm nhiều đơn cùng lúc: nhập <b>ORD-A, ORD-B, ORD-C</b> hoặc mỗi mã một dòng.</p>
+                        <p>Tìm theo vận đơn: nhập mã GHN / Viettel Post / AhaMove.</p>
+                        <p>Tìm theo nhân viên + thời gian + trạng thái: nhập <b>Nguyễn Văn A tháng này hoàn thành</b>.</p>
+                        <p>Nhấn <b>Enter</b> hoặc nút <b>Tìm</b> để áp dụng. Giữ <b>Shift + Enter</b> để xuống dòng.</p>
+                      </div>
+                    ) : null}
+                  </div>
+
                   <select
                     className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
                     value={createdByFilter}
@@ -4765,6 +5127,20 @@ export default function OrdersPageClient() {
                   >
                     <option value="ALL">Tất cả nhân viên tạo đơn</option>
                     {createdByOptions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={assignedStaffFilter}
+                    onChange={(e) => setAssignedStaffFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả nhân viên phụ trách</option>
+                    <option value="UNASSIGNED">Chưa gán nhân viên</option>
+                    {assignedStaffOptions.map((name) => (
                       <option key={name} value={name}>
                         {name}
                       </option>
@@ -4782,6 +5158,19 @@ export default function OrdersPageClient() {
                     <option value="PARTIAL">Một phần</option>
                     <option value="FULFILLED">Đã giao vận</option>
                     <option value="RETURNED">Trả hàng</option>
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={deliveryStatusFilter}
+                    onChange={(e) => setDeliveryStatusFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả trạng thái giao hàng</option>
+                    {deliveryStatusOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
                   </select>
 
                   <select
@@ -4832,7 +5221,63 @@ export default function OrdersPageClient() {
                     <option value="HAS">Có mã vận đơn</option>
                     <option value="NONE">Chưa có mã vận đơn</option>
                   </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={printStatusFilter}
+                    onChange={(e) => setPrintStatusFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả trạng thái in tem</option>
+                    <option value="PRINTED">Đã in tem</option>
+                    <option value="NOT_PRINTED">Chưa in tem</option>
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={codFilter}
+                    onChange={(e) => setCodFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả COD</option>
+                    <option value="HAS_COD">Có thu hộ COD</option>
+                    <option value="NO_COD">Không COD</option>
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={amountDueFilter}
+                    onChange={(e) => setAmountDueFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả công nợ khách</option>
+                    <option value="HAS_DUE">Còn phải thu</option>
+                    <option value="NO_DUE">Không còn phải thu</option>
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={itemCountFilter}
+                    onChange={(e) => setItemCountFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả dòng sản phẩm</option>
+                    <option value="HAS_ITEMS">Có sản phẩm</option>
+                    <option value="NO_ITEMS">Thiếu sản phẩm</option>
+                  </select>
                 </div>
+
+                {smartSearch.trim() ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+                    <p className="text-xs font-medium text-neutral-600">
+                      Đang áp dụng tìm thông minh
+                      {parsedSmartSearch.hasMultiTerms
+                        ? `: ${parsedSmartSearch.terms.length} mã`
+                        : parsedSmartSearch.staffName
+                          ? `: ${parsedSmartSearch.staffName}`
+                          : ""}
+                    </p>
+                    <Button size="sm" onClick={clearSmartSearch}>
+                      Xóa tìm thông minh
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

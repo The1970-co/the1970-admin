@@ -15,6 +15,7 @@ type MenuItem = {
   label: string;
   permission: string;
   children?: MenuItem[];
+  adminOnly?: boolean;
 };
 
 const MENU: MenuItem[] = [
@@ -62,6 +63,16 @@ const MENU: MenuItem[] = [
       { href: "/finance/local-delivery", label: "Đối soát nội thành", permission: PERMISSIONS.MENU_FINANCE_LOCAL_DELIVERY },
       { href: "/finance/revenue", label: "Báo cáo doanh thu", permission: PERMISSIONS.MENU_REPORTS },
       { href: "/finance/supplier-payments", label: "Thanh toán nhà cung cấp", permission: PERMISSIONS.MENU_SUPPLIER_PAYMENTS },
+    ],
+  },
+
+  {
+    label: "Nhân sự",
+    permission: PERMISSIONS.MENU_PAYROLL,
+    adminOnly: true,
+    children: [
+      { href: "/payroll", label: "Tính lương", permission: PERMISSIONS.MENU_PAYROLL, adminOnly: true },
+      { href: "/payroll/config", label: "Cấu hình lương", permission: PERMISSIONS.MENU_PAYROLL_CONFIG, adminOnly: true },
     ],
   },
   {
@@ -129,11 +140,16 @@ function getHeaderStaffName(user: any) {
   return branchCode ? `${name} - ${branchCode}` : name;
 }
 
-function filterMenu(items: MenuItem[], can: (permission?: string | null) => boolean): MenuItem[] {
+function filterMenu(
+  items: MenuItem[],
+  can: (permission?: string | null) => boolean,
+  isAdminUser = false,
+): MenuItem[] {
   return items
     .map((item) => {
+      if (item.adminOnly && !isAdminUser) return null;
       if (item.children?.length) {
-        const children = filterMenu(item.children, can);
+        const children = filterMenu(item.children, can, isAdminUser);
         if (!children.length) return null;
         return { ...item, children };
       }
@@ -213,9 +229,11 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     setMounted(true);
   }, []);
 
-  const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
+  const isAdminUser = useMemo(() => userRoles(user).some((role) => role === "owner" || role === "admin"), [user]);
+  const visibleMenu = useMemo(() => filterMenu(MENU, can, isAdminUser), [can, isAdminUser]);
   const requiredPermission = useMemo(() => getRequiredPermissionForPath(pathname), [pathname]);
-  const canAccessCurrentRoute = !requiredPermission || can(requiredPermission);
+  const isPayrollRoute = pathname === "/payroll" || pathname.startsWith("/payroll/");
+  const canAccessCurrentRoute = (!isPayrollRoute || isAdminUser) && (!requiredPermission || can(requiredPermission));
 
   useEffect(() => {
     if (!checked || loading || !user || canAccessCurrentRoute) return;

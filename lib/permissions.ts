@@ -27,6 +27,17 @@ export const PERMISSIONS = {
   MENU_PERMISSIONS: "menu.permissions",
   MENU_SETTINGS: "menu.settings",
   MENU_PRINT_CENTER: "menu.print_center",
+  MENU_PAYROLL: "menu.payroll",
+  MENU_PAYROLL_CONFIG: "menu.payroll_config",
+
+  PAYROLL_VIEW: "payroll.view",
+  PAYROLL_CREATE: "payroll.create",
+  PAYROLL_CALCULATE: "payroll.calculate",
+  PAYROLL_EDIT: "payroll.edit",
+  PAYROLL_LOCK: "payroll.lock",
+  PAYROLL_MARK_PAID: "payroll.mark_paid",
+  PAYROLL_CONFIG: "payroll.config",
+  PAYROLL_EXPORT: "payroll.export",
 
   ORDERS_VIEW: "orders.view",
   ORDERS_VIEW_OWN: "orders.view_own",
