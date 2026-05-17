@@ -149,7 +149,14 @@ type NormalizedOrder = AdminOrder & {
   _createdByName: string;
   _shippingFee: number;
   _carrierShippingFee: number;
+  /**
+   * Nhân viên phụ trách hiển thị để chốt lương:
+   * - Nếu đơn đã được gán: lấy nhân viên được gán.
+   * - Nếu chưa gán: fallback về nhân viên tạo đơn.
+   */
   _assignedStaffName: string;
+  /** Tên nhân viên được gán thật sự, dùng riêng cho filter "chưa gán". */
+  _assignedStaffRawName: string;
   _codAmount: number;
   _amountDue: number;
   _createdAtDate: Date | null;
@@ -803,6 +810,27 @@ function fulfillmentStatusTone(status?: string | null) {
       return "bg-neutral-100 text-neutral-700 border-neutral-200";
   }
 }
+
+const ORDER_STATUS_FILTER_OPTIONS: Array<{ value: "ALL" | OrderStatus; label: string }> = [
+  { value: "ALL", label: "Tất cả trạng thái đơn" },
+  { value: "NEW", label: "Mới tạo" },
+  { value: "APPROVED", label: "Đã duyệt" },
+  { value: "PACKING", label: "Đang xử lý / đóng gói" },
+  { value: "SHIPPED", label: "Đã xuất kho / đang giao" },
+  { value: "COMPLETED", label: "Hoàn thành / thành công" },
+  { value: "CANCELLED", label: "Đã hủy" },
+];
+
+const DELIVERY_STATUS_FILTER_OPTIONS = [
+  "Chờ lấy hàng",
+  "Đang lấy hàng",
+  "Đang giao hàng",
+  "Giao thành công",
+  "Đang hoàn hàng",
+  "Đã hoàn hàng",
+  "Đã huỷ vận đơn",
+  "Có sự cố",
+];
 
 function shipmentDisplayStatusTone(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
@@ -1458,7 +1486,7 @@ function getCreatedByName(order: any) {
   );
 }
 
-function getAssignedStaffName(order: any) {
+function getAssignedStaffRawName(order: any) {
   return String(
     order?.assignedStaffName ||
       order?.assignedStaff?.name ||
@@ -1471,6 +1499,12 @@ function getAssignedStaffName(order: any) {
       order?.assignee?.fullName ||
       "",
   ).trim();
+}
+
+function getAssignedStaffDisplayName(order: any) {
+  // Cột NV phụ trách dùng để chốt lương:
+  // nếu chưa gán nhân viên phụ trách thì lấy nhân viên tạo đơn.
+  return getAssignedStaffRawName(order) || getCreatedByName(order);
 }
 
 function getQuickDateRange(key: QuickDateKey) {
@@ -2205,28 +2239,50 @@ export default function OrdersPageClient() {
   const [totalItems, setTotalItems] = useState(0);
 
   const [orderFilter, setOrderFilter] = useState<"ALL" | OrderStatus>("ALL");
+  const [appliedOrderFilter, setAppliedOrderFilter] = useState<"ALL" | OrderStatus>("ALL");
   const [paymentFilter, setPaymentFilter] = useState<
     "ALL" | OrderPaymentStatus
   >("ALL");
+  const [appliedPaymentFilter, setAppliedPaymentFilter] = useState<
+    "ALL" | OrderPaymentStatus
+  >("ALL");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
+  const [appliedBranchFilter, setAppliedBranchFilter] = useState<string>("ALL");
   const [dateFrom, setDateFrom] = useState("");
+  const [appliedDateFrom, setAppliedDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [appliedDateTo, setAppliedDateTo] = useState("");
   const [quickDate, setQuickDate] = useState<QuickDateKey>("all");
+  const [appliedQuickDate, setAppliedQuickDate] = useState<QuickDateKey>("all");
   const [quickStatus, setQuickStatus] = useState<QuickStatusKey>("ALL");
+  const [appliedQuickStatus, setAppliedQuickStatus] = useState<QuickStatusKey>("ALL");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [createdByFilter, setCreatedByFilter] = useState("ALL");
+  const [appliedCreatedByFilter, setAppliedCreatedByFilter] = useState("ALL");
   const [assignedStaffFilter, setAssignedStaffFilter] = useState("ALL");
+  const [appliedAssignedStaffFilter, setAppliedAssignedStaffFilter] = useState("ALL");
   const [fulfillmentFilter, setFulfillmentFilter] = useState("ALL");
+  const [appliedFulfillmentFilter, setAppliedFulfillmentFilter] = useState("ALL");
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState("ALL");
+  const [appliedDeliveryStatusFilter, setAppliedDeliveryStatusFilter] = useState("ALL");
   const [salesChannelFilter, setSalesChannelFilter] = useState("ALL");
+  const [appliedSalesChannelFilter, setAppliedSalesChannelFilter] = useState("ALL");
   const [shippingModeFilter, setShippingModeFilter] = useState("ALL");
+  const [appliedShippingModeFilter, setAppliedShippingModeFilter] = useState("ALL");
   const [shippingPartnerFilter, setShippingPartnerFilter] = useState("ALL");
+  const [appliedShippingPartnerFilter, setAppliedShippingPartnerFilter] = useState("ALL");
   const [trackingFilter, setTrackingFilter] = useState("ALL");
+  const [appliedTrackingFilter, setAppliedTrackingFilter] = useState("ALL");
   const [printStatusFilter, setPrintStatusFilter] = useState("ALL");
+  const [appliedPrintStatusFilter, setAppliedPrintStatusFilter] = useState("ALL");
   const [codFilter, setCodFilter] = useState("ALL");
+  const [appliedCodFilter, setAppliedCodFilter] = useState("ALL");
   const [amountDueFilter, setAmountDueFilter] = useState("ALL");
+  const [appliedAmountDueFilter, setAppliedAmountDueFilter] = useState("ALL");
   const [itemCountFilter, setItemCountFilter] = useState("ALL");
+  const [appliedItemCountFilter, setAppliedItemCountFilter] = useState("ALL");
   const [freeTextFilter, setFreeTextFilter] = useState("");
+  const [appliedFreeTextFilter, setAppliedFreeTextFilter] = useState("");
   const [smartSearchInput, setSmartSearchInput] = useState("");
   const [smartSearch, setSmartSearch] = useState("");
   const [showSmartSearchHelp, setShowSmartSearchHelp] = useState(false);
@@ -2496,6 +2552,7 @@ export default function OrdersPageClient() {
       storedUser?.branchId
     ) {
       setBranchFilter(storedUser.branchId);
+      setAppliedBranchFilter(storedUser.branchId);
     }
 
     void loadBranches();
@@ -2616,7 +2673,7 @@ export default function OrdersPageClient() {
         return;
       }
 
-      const serverKeyword = [submittedQuery, freeTextFilter]
+      const serverKeyword = [submittedQuery, appliedFreeTextFilter]
         .map((item) => String(item || "").trim())
         .filter(Boolean)
         .join(" ");
@@ -2639,20 +2696,20 @@ export default function OrdersPageClient() {
 
         if (!canViewAllOrders && currentUser?.branchId) {
           params.set("branchId", currentUser.branchId);
-        } else if (branchFilter !== "ALL") {
-          params.set("branchId", branchFilter);
+        } else if (appliedBranchFilter !== "ALL") {
+          params.set("branchId", appliedBranchFilter);
         }
 
-        if (orderFilter !== "ALL") params.set("orderStatus", orderFilter);
-        if (paymentFilter !== "ALL") params.set("paymentStatus", paymentFilter);
-        if (dateFrom) params.set("dateFrom", dateFrom);
-        if (dateTo) params.set("dateTo", dateTo);
+        if (appliedOrderFilter !== "ALL") params.set("orderStatus", appliedOrderFilter);
+        if (appliedPaymentFilter !== "ALL") params.set("paymentStatus", appliedPaymentFilter);
+        if (appliedDateFrom) params.set("dateFrom", appliedDateFrom);
+        if (appliedDateTo) params.set("dateTo", appliedDateTo);
 
         const smartDateRange = getSmartSearchServerDateRange(smartSearch);
-        if (!dateFrom && smartDateRange.from) {
+        if (!appliedDateFrom && smartDateRange.from) {
           params.set("dateFrom", toInputDateValue(smartDateRange.from));
         }
-        if (!dateTo && smartDateRange.to) {
+        if (!appliedDateTo && smartDateRange.to) {
           params.set("dateTo", toInputDateValue(smartDateRange.to));
         }
 
@@ -2733,13 +2790,13 @@ export default function OrdersPageClient() {
     return () => clearTimeout(t);
   }, [
     submittedQuery,
-    freeTextFilter,
+    appliedFreeTextFilter,
     smartSearch,
-    branchFilter,
-    orderFilter,
-    paymentFilter,
-    dateFrom,
-    dateTo,
+    appliedBranchFilter,
+    appliedOrderFilter,
+    appliedPaymentFilter,
+    appliedDateFrom,
+    appliedDateTo,
     page,
     pageSize,
     currentUser,
@@ -2755,24 +2812,24 @@ export default function OrdersPageClient() {
     setPage(1);
   }, [
     submittedQuery,
-    branchFilter,
-    orderFilter,
-    paymentFilter,
-    dateFrom,
-    dateTo,
-    createdByFilter,
-    assignedStaffFilter,
-    fulfillmentFilter,
-    deliveryStatusFilter,
-    salesChannelFilter,
-    shippingModeFilter,
-    shippingPartnerFilter,
-    trackingFilter,
-    printStatusFilter,
-    codFilter,
-    amountDueFilter,
-    itemCountFilter,
-    freeTextFilter,
+    appliedBranchFilter,
+    appliedOrderFilter,
+    appliedPaymentFilter,
+    appliedDateFrom,
+    appliedDateTo,
+    appliedCreatedByFilter,
+    appliedAssignedStaffFilter,
+    appliedFulfillmentFilter,
+    appliedDeliveryStatusFilter,
+    appliedSalesChannelFilter,
+    appliedShippingModeFilter,
+    appliedShippingPartnerFilter,
+    appliedTrackingFilter,
+    appliedPrintStatusFilter,
+    appliedCodFilter,
+    appliedAmountDueFilter,
+    appliedItemCountFilter,
+    appliedFreeTextFilter,
     smartSearch,
   ]);
 
@@ -2783,7 +2840,8 @@ export default function OrdersPageClient() {
         ...order,
         _meta: meta,
         _createdByName: getCreatedByName(order),
-        _assignedStaffName: getAssignedStaffName(order),
+        _assignedStaffName: getAssignedStaffDisplayName(order),
+        _assignedStaffRawName: getAssignedStaffRawName(order),
         _shippingFee: Number(order.shippingFee || 0),
         _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
         _codAmount: Number(order.shipment?.codAmount || 0),
@@ -2833,10 +2891,15 @@ export default function OrdersPageClient() {
     [smartSearch, smartStaffNameOptions],
   );
 
-  const deliveryStatusOptions = useMemo(
-    () => uniqueOptions(normalizedOrders.map((o) => shipmentDisplayStatusLabel(o))),
-    [normalizedOrders],
-  );
+  const deliveryStatusOptions = useMemo(() => {
+    const dynamicOptions = uniqueOptions(
+      normalizedOrders.map((o) => shipmentDisplayStatusLabel(o)),
+    );
+
+    return Array.from(
+      new Set([...DELIVERY_STATUS_FILTER_OPTIONS, ...dynamicOptions]),
+    );
+  }, [normalizedOrders]);
 
   const salesChannelOptions = useMemo(
     () => uniqueOptions(normalizedOrders.map((o) => o.salesChannel)),
@@ -2860,20 +2923,20 @@ export default function OrdersPageClient() {
 
   const activeAdvancedFilterCount =
     [
-      createdByFilter,
-      assignedStaffFilter,
-      fulfillmentFilter,
-      deliveryStatusFilter,
-      salesChannelFilter,
-      shippingModeFilter,
-      shippingPartnerFilter,
-      trackingFilter,
-      printStatusFilter,
-      codFilter,
-      amountDueFilter,
-      itemCountFilter,
+      appliedCreatedByFilter,
+      appliedAssignedStaffFilter,
+      appliedFulfillmentFilter,
+      appliedDeliveryStatusFilter,
+      appliedSalesChannelFilter,
+      appliedShippingModeFilter,
+      appliedShippingPartnerFilter,
+      appliedTrackingFilter,
+      appliedPrintStatusFilter,
+      appliedCodFilter,
+      appliedAmountDueFilter,
+      appliedItemCountFilter,
     ].filter((value) => value !== "ALL").length +
-    (freeTextFilter.trim() ? 1 : 0) +
+    (appliedFreeTextFilter.trim() ? 1 : 0) +
     (smartSearch.trim() ? 1 : 0);
 
   const clearAdvancedFilters = () => {
@@ -2891,13 +2954,56 @@ export default function OrdersPageClient() {
     setItemCountFilter("ALL");
     setFreeTextFilter("");
     setSmartSearchInput("");
+
+    setAppliedCreatedByFilter("ALL");
+    setAppliedAssignedStaffFilter("ALL");
+    setAppliedFulfillmentFilter("ALL");
+    setAppliedDeliveryStatusFilter("ALL");
+    setAppliedSalesChannelFilter("ALL");
+    setAppliedShippingModeFilter("ALL");
+    setAppliedShippingPartnerFilter("ALL");
+    setAppliedTrackingFilter("ALL");
+    setAppliedPrintStatusFilter("ALL");
+    setAppliedCodFilter("ALL");
+    setAppliedAmountDueFilter("ALL");
+    setAppliedItemCountFilter("ALL");
+    setAppliedFreeTextFilter("");
     setSmartSearch("");
+    setPage(1);
+  };
+
+  const applySearchAndFilters = (overrideQuery?: string) => {
+    const nextQuery = (overrideQuery ?? query).trim();
+    const nextSmartSearch = smartSearchInput.trim();
+
+    setSubmittedQuery(nextQuery);
+    setAppliedBranchFilter(branchFilter);
+    setAppliedOrderFilter(orderFilter);
+    setAppliedPaymentFilter(paymentFilter);
+    setAppliedDateFrom(dateFrom);
+    setAppliedDateTo(dateTo);
+    setAppliedQuickDate(quickDate);
+    setAppliedQuickStatus(quickStatus);
+
+    setAppliedCreatedByFilter(createdByFilter);
+    setAppliedAssignedStaffFilter(assignedStaffFilter);
+    setAppliedFulfillmentFilter(fulfillmentFilter);
+    setAppliedDeliveryStatusFilter(deliveryStatusFilter);
+    setAppliedSalesChannelFilter(salesChannelFilter);
+    setAppliedShippingModeFilter(shippingModeFilter);
+    setAppliedShippingPartnerFilter(shippingPartnerFilter);
+    setAppliedTrackingFilter(trackingFilter);
+    setAppliedPrintStatusFilter(printStatusFilter);
+    setAppliedCodFilter(codFilter);
+    setAppliedAmountDueFilter(amountDueFilter);
+    setAppliedItemCountFilter(itemCountFilter);
+    setAppliedFreeTextFilter(freeTextFilter.trim());
+    setSmartSearch(nextSmartSearch);
+    setPage(1);
   };
 
   const submitSmartSearch = () => {
-    const nextSmartSearch = smartSearchInput.trim();
-    setSmartSearch(nextSmartSearch);
-    setPage(1);
+    applySearchAndFilters();
   };
 
   const clearSmartSearch = () => {
@@ -2907,9 +3013,7 @@ export default function OrdersPageClient() {
   };
 
   const submitOrderSearch = () => {
-    const nextQuery = query.trim();
-    setSubmittedQuery(nextQuery);
-    setPage(1);
+    applySearchAndFilters();
   };
 
   const clearOrderSearch = () => {
@@ -2918,12 +3022,36 @@ export default function OrdersPageClient() {
     setPage(1);
   };
 
+  const hasPendingFilterChanges =
+    query.trim() !== submittedQuery ||
+    branchFilter !== appliedBranchFilter ||
+    orderFilter !== appliedOrderFilter ||
+    paymentFilter !== appliedPaymentFilter ||
+    dateFrom !== appliedDateFrom ||
+    dateTo !== appliedDateTo ||
+    quickDate !== appliedQuickDate ||
+    quickStatus !== appliedQuickStatus ||
+    createdByFilter !== appliedCreatedByFilter ||
+    assignedStaffFilter !== appliedAssignedStaffFilter ||
+    fulfillmentFilter !== appliedFulfillmentFilter ||
+    deliveryStatusFilter !== appliedDeliveryStatusFilter ||
+    salesChannelFilter !== appliedSalesChannelFilter ||
+    shippingModeFilter !== appliedShippingModeFilter ||
+    shippingPartnerFilter !== appliedShippingPartnerFilter ||
+    trackingFilter !== appliedTrackingFilter ||
+    printStatusFilter !== appliedPrintStatusFilter ||
+    codFilter !== appliedCodFilter ||
+    amountDueFilter !== appliedAmountDueFilter ||
+    itemCountFilter !== appliedItemCountFilter ||
+    freeTextFilter.trim() !== appliedFreeTextFilter ||
+    smartSearchInput.trim() !== smartSearch;
+
   const filteredOrders = useMemo(() => {
     let result = normalizedOrders;
 
-    if (quickStatus !== "ALL") {
+    if (appliedQuickStatus !== "ALL") {
       result = result.filter((o) => {
-        switch (quickStatus) {
+        switch (appliedQuickStatus) {
           case "WAITING_APPROVE":
             return o.status === "NEW";
           case "WAITING_PAYMENT":
@@ -2942,94 +3070,97 @@ export default function OrdersPageClient() {
             return isFailedOrder(o);
           case "REDELIVERY":
             return isRedeliveryOrder(o);
+          case "LOCAL_DELIVERY":
+            return isLocalDeliveryCarrier(o.shipment?.carrier || o._meta.shippingPartner);
           default:
             return true;
         }
       });
     }
 
-    if (createdByFilter !== "ALL") {
-      result = result.filter((o) => o._createdByName === createdByFilter);
+    if (appliedCreatedByFilter !== "ALL") {
+      result = result.filter((o) => o._createdByName === appliedCreatedByFilter);
     }
 
-    if (assignedStaffFilter !== "ALL") {
+    if (appliedAssignedStaffFilter !== "ALL") {
       result = result.filter((o) => {
-        const assignedName = String(o._assignedStaffName || "").trim();
-        if (assignedStaffFilter === "UNASSIGNED") return !assignedName;
-        return assignedName === assignedStaffFilter;
+        const assignedRawName = String(o._assignedStaffRawName || "").trim();
+        const assignedDisplayName = String(o._assignedStaffName || "").trim();
+        if (appliedAssignedStaffFilter === "UNASSIGNED") return !assignedRawName;
+        return assignedDisplayName === appliedAssignedStaffFilter;
       });
     }
 
-    if (fulfillmentFilter !== "ALL") {
+    if (appliedFulfillmentFilter !== "ALL") {
       result = result.filter(
-        (o) => String(o.fulfillmentStatus || "") === fulfillmentFilter,
+        (o) => String(o.fulfillmentStatus || "") === appliedFulfillmentFilter,
       );
     }
 
-    if (deliveryStatusFilter !== "ALL") {
+    if (appliedDeliveryStatusFilter !== "ALL") {
       result = result.filter(
-        (o) => shipmentDisplayStatusLabel(o) === deliveryStatusFilter,
+        (o) => shipmentDisplayStatusLabel(o) === appliedDeliveryStatusFilter,
       );
     }
 
-    if (salesChannelFilter !== "ALL") {
+    if (appliedSalesChannelFilter !== "ALL") {
       result = result.filter(
-        (o) => String(o.salesChannel || "") === salesChannelFilter,
+        (o) => String(o.salesChannel || "") === appliedSalesChannelFilter,
       );
     }
 
-    if (shippingModeFilter !== "ALL") {
+    if (appliedShippingModeFilter !== "ALL") {
       result = result.filter(
-        (o) => o._meta.shippingMode === shippingModeFilter,
+        (o) => o._meta.shippingMode === appliedShippingModeFilter,
       );
     }
 
-    if (shippingPartnerFilter !== "ALL") {
+    if (appliedShippingPartnerFilter !== "ALL") {
       result = result.filter(
         (o) =>
           (o.shipment?.carrier || o._meta.shippingPartner || "") ===
-          shippingPartnerFilter,
+          appliedShippingPartnerFilter,
       );
     }
 
-    if (trackingFilter !== "ALL") {
+    if (appliedTrackingFilter !== "ALL") {
       result = result.filter((o) => {
         const hasTracking = Boolean(
           String(o.shipment?.trackingCode || "").trim(),
         );
-        return trackingFilter === "HAS" ? hasTracking : !hasTracking;
+        return appliedTrackingFilter === "HAS" ? hasTracking : !hasTracking;
       });
     }
 
-    if (printStatusFilter !== "ALL") {
+    if (appliedPrintStatusFilter !== "ALL") {
       result = result.filter((o) => {
         const printed = getOrderPrintCount(o.id) > 0;
-        return printStatusFilter === "PRINTED" ? printed : !printed;
+        return appliedPrintStatusFilter === "PRINTED" ? printed : !printed;
       });
     }
 
-    if (codFilter !== "ALL") {
+    if (appliedCodFilter !== "ALL") {
       result = result.filter((o) => {
         const hasCod = Number(o._codAmount || 0) > 0;
-        return codFilter === "HAS_COD" ? hasCod : !hasCod;
+        return appliedCodFilter === "HAS_COD" ? hasCod : !hasCod;
       });
     }
 
-    if (amountDueFilter !== "ALL") {
+    if (appliedAmountDueFilter !== "ALL") {
       result = result.filter((o) => {
         const hasDue = Number(o._amountDue || 0) > 0;
-        return amountDueFilter === "HAS_DUE" ? hasDue : !hasDue;
+        return appliedAmountDueFilter === "HAS_DUE" ? hasDue : !hasDue;
       });
     }
 
-    if (itemCountFilter !== "ALL") {
+    if (appliedItemCountFilter !== "ALL") {
       result = result.filter((o) => {
         const itemCount = getOrderItemCount(o);
-        return itemCountFilter === "HAS_ITEMS" ? itemCount > 0 : itemCount <= 0;
+        return appliedItemCountFilter === "HAS_ITEMS" ? itemCount > 0 : itemCount <= 0;
       });
     }
 
-    const keywords = [submittedQuery, freeTextFilter]
+    const keywords = [submittedQuery, appliedFreeTextFilter]
       .map((item) => String(item || "").trim())
       .filter(Boolean);
 
@@ -3074,21 +3205,21 @@ export default function OrdersPageClient() {
     return result;
   }, [
     normalizedOrders,
-    quickStatus,
+    appliedQuickStatus,
     submittedQuery,
-    createdByFilter,
-    assignedStaffFilter,
-    fulfillmentFilter,
-    deliveryStatusFilter,
-    salesChannelFilter,
-    shippingModeFilter,
-    shippingPartnerFilter,
-    trackingFilter,
-    printStatusFilter,
-    codFilter,
-    amountDueFilter,
-    itemCountFilter,
-    freeTextFilter,
+    appliedCreatedByFilter,
+    appliedAssignedStaffFilter,
+    appliedFulfillmentFilter,
+    appliedDeliveryStatusFilter,
+    appliedSalesChannelFilter,
+    appliedShippingModeFilter,
+    appliedShippingPartnerFilter,
+    appliedTrackingFilter,
+    appliedPrintStatusFilter,
+    appliedCodFilter,
+    appliedAmountDueFilter,
+    appliedItemCountFilter,
+    appliedFreeTextFilter,
     parsedSmartSearch,
     branches,
   ]);
@@ -4462,8 +4593,7 @@ export default function OrdersPageClient() {
                 e.preventDefault();
                 const value = e.currentTarget.value.trim();
                 setQuery(value);
-                setSubmittedQuery(value);
-                setPage(1);
+                applySearchAndFilters(value);
               }
             }}
           />
@@ -4519,17 +4649,32 @@ export default function OrdersPageClient() {
             </select>
           </div>
 
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={submitOrderSearch}
+              className="rounded-2xl bg-neutral-900 px-4 py-3 text-xs font-semibold text-white"
+            >
+              Tìm / Áp dụng lọc
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadOrders()}
+              className="rounded-2xl border border-neutral-300 px-4 py-3 text-xs font-semibold text-neutral-700"
+            >
+              Làm mới
+            </button>
+          </div>
+
           <div className="mt-3 flex items-center justify-between gap-2 text-xs text-neutral-500">
             <span>
               Trang {page}/{totalPages} · {totalItems} đơn
             </span>
-            <button
-              type="button"
-              onClick={() => void loadOrders()}
-              className="rounded-full border border-neutral-300 px-3 py-1.5 font-semibold text-neutral-700"
-            >
-              Làm mới
-            </button>
+            {hasPendingFilterChanges ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
+                Chưa áp dụng
+              </span>
+            ) : null}
           </div>
         </Panel>
 
@@ -4864,7 +5009,7 @@ export default function OrdersPageClient() {
                 }}
               />
               <Button onClick={submitOrderSearch} variant="primary">
-                Tìm
+                Tìm / Áp dụng lọc
               </Button>
               {submittedQuery ? (
                 <Button onClick={clearOrderSearch}>
@@ -4896,13 +5041,11 @@ export default function OrdersPageClient() {
                   setOrderFilter(e.target.value as "ALL" | OrderStatus)
                 }
               >
-                <option value="ALL">Tất cả trạng thái đơn</option>
-                <option value="NEW">Mới tạo</option>
-                <option value="APPROVED">Đã duyệt</option>
-                <option value="PACKING">Đang xử lý</option>
-                <option value="SHIPPED">Đã xuất kho</option>
-                <option value="COMPLETED">Hoàn thành</option>
-                <option value="CANCELLED">Đã hủy</option>
+                {ORDER_STATUS_FILTER_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
               </select>
 
               <select
@@ -5068,8 +5211,14 @@ export default function OrdersPageClient() {
 
               <p className="text-xs text-neutral-500">
                 Đang hiển thị {visibleOrders.length} / {totalItems} đơn theo bộ
-                lọc hiện tại
+                lọc đã áp dụng
               </p>
+
+              {hasPendingFilterChanges ? (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
+                  Có thay đổi chưa áp dụng · bấm Tìm hoặc Enter
+                </span>
+              ) : null}
             </div>
 
             {showAdvancedFilters ? (
@@ -5080,6 +5229,12 @@ export default function OrdersPageClient() {
                     placeholder="Lọc mọi thông tin trong bảng..."
                     value={freeTextFilter}
                     onChange={(e) => setFreeTextFilter(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        applySearchAndFilters();
+                      }
+                    }}
                   />
 
                   <div className="md:col-span-2 xl:col-span-2">
@@ -5122,6 +5277,20 @@ export default function OrdersPageClient() {
 
                   <select
                     className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={orderFilter}
+                    onChange={(e) =>
+                      setOrderFilter(e.target.value as "ALL" | OrderStatus)
+                    }
+                  >
+                    {ORDER_STATUS_FILTER_OPTIONS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
                     value={createdByFilter}
                     onChange={(e) => setCreatedByFilter(e.target.value)}
                   >
@@ -5156,7 +5325,7 @@ export default function OrdersPageClient() {
                     <option value="UNFULFILLED">Chưa giao</option>
                     <option value="PROCESSING">Đang chuẩn bị</option>
                     <option value="PARTIAL">Một phần</option>
-                    <option value="FULFILLED">Đã giao vận</option>
+                    <option value="FULFILLED">Đã giao vận / hoàn tất</option>
                     <option value="RETURNED">Trả hàng</option>
                   </select>
 
@@ -5165,7 +5334,7 @@ export default function OrdersPageClient() {
                     value={deliveryStatusFilter}
                     onChange={(e) => setDeliveryStatusFilter(e.target.value)}
                   >
-                    <option value="ALL">Tất cả trạng thái giao hàng</option>
+                    <option value="ALL">Tất cả trạng thái giao hàng / vận đơn</option>
                     {deliveryStatusOptions.map((status) => (
                       <option key={status} value={status}>
                         {status}

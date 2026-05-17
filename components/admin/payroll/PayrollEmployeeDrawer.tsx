@@ -59,6 +59,13 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <Row label="Lương cứng theo công" value={money(line.proratedSalary)} />
               <Row label="Ngày công / chuẩn" value={`${num(line.workingDays)} / ${num(line.standardDays)}`} />
+              <Row label="Giờ quy đổi" value={`${num(line.convertedWorkingHours)} giờ · ${money(line.hourlyAmount)}`} />
+              <Row label="CT1 / CT2" value={`${num(line.overtimeHours)}h x ${num(line.overtimeRate)} · ${num(line.holidayHours)}h x ${num(line.holidayRate)}`} />
+              <Row label="Nghỉ có lương" value={`${num(line.paidLeaveDays)} ngày · ${money(line.paidLeaveAmount)}`} />
+              <Row label="SP gắn tên" value={`${num(line.taggedProductQty)} sp · ${money(line.taggedProductAmount)}`} />
+              <Row label="Thưởng COD GHN" value={`${num(line.ghnCodOrderCount)} đơn · ${money(line.ghnCodBonusAmount)}`} />
+              <Row label="Ăn trưa / BH" value={`${money(line.mealAllowanceAmount)} / -${money(line.insuranceDeduction)}`} />
+              <Row label="Nguồn đơn" value={attributionLabel(line.orderAttributionMode)} />
               <Row label="Đơn thành công" value={`${num(line.successOrderCount)} đơn · ${money(line.commissionByOrder)}`} />
               <Row label="Sản phẩm thành công" value={`${num(line.successItemQty)} sp · ${money(line.commissionByItem)}`} />
               <Row label="% doanh thu" value={`${money(line.revenueAmount)} · ${money(line.commissionByPercent)}`} />
@@ -91,10 +98,11 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
                       <td className="px-3 py-3 text-neutral-600">{dateText(order.orderDate)}</td>
                       <td className="px-3 py-3 text-right text-neutral-700">{money(order.revenueAmount)}</td>
                       <td className="px-3 py-3 text-right text-neutral-700">{num(order.itemQty)}</td>
-                      <td className="px-3 py-3 text-right font-semibold text-neutral-900">{money(order.commission)}</td>
+                      <td className="px-3 py-3 text-neutral-600">{order.reason || attributionLabel(order.attributionSource)}</td>
+                      <td className="px-3 py-3 text-right font-semibold text-neutral-900">{money(order.commissionTotal || order.commission)}</td>
                     </tr>
                   ))}
-                  {!orders.length ? <tr><td className="px-3 py-8 text-center text-neutral-500" colSpan={5}>Chưa có đơn hợp lệ trong kỳ.</td></tr> : null}
+                  {!orders.length ? <tr><td className="px-3 py-8 text-center text-neutral-500" colSpan={6}>Chưa có đơn hợp lệ trong kỳ.</td></tr> : null}
                 </tbody>
               </table>
             </div>
@@ -118,6 +126,14 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
       </aside>
     </div>
   );
+}
+
+function attributionLabel(mode?: string | null) {
+  if (mode === "CREATED_BY") return "Người tạo đơn";
+  if (mode === "ASSIGNED_ONLY") return "Chỉ NV phụ trách";
+  if (mode === "ASSIGNED_STAFF") return "NV phụ trách";
+  if (mode === "CREATED_BY_FALLBACK") return "Người tạo do chưa gán";
+  return "NV phụ trách / người tạo";
 }
 
 function Card({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {

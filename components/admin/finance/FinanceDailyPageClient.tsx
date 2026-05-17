@@ -95,6 +95,28 @@ type ConfirmDialog = {
   onConfirm: () => Promise<void> | void;
 } | null;
 
+type FinanceAuditIssue = {
+  level?: "ERROR" | "WARNING" | string;
+  date?: string;
+  branchName?: string;
+  paymentSourceName?: string;
+  field?: string;
+  expected?: number;
+  actual?: number;
+  diff?: number;
+  message?: string;
+};
+
+type FinanceAuditResult = {
+  ok: boolean;
+  checkedAt?: string;
+  range?: { fromDate?: string; toDate?: string };
+  summary?: { checkedDays?: number; checkedRows?: number; issueCount?: number };
+  issues?: FinanceAuditIssue[];
+};
+
+type ToastTone = "success" | "error" | "warning";
+
 function currency(value: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(value || 0)) + "đ";
 }
@@ -576,6 +598,9 @@ export default function FinanceDailyPageClient() {
   const [error, setError] = useState("");
   const [ledgerMessage, setLedgerMessage] = useState("");
   const [ledgerMessageTitle, setLedgerMessageTitle] = useState("Đã cập nhật");
+  const [ledgerMessageTone, setLedgerMessageTone] = useState<ToastTone>("success");
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditResult, setAuditResult] = useState<FinanceAuditResult | null>(null);
   const [closeDialog, setCloseDialog] = useState<LedgerCloseDialog>(null);
   const [cashHandoverDialog, setCashHandoverDialog] =
     useState<CashHandoverDialog>(null);
@@ -585,9 +610,10 @@ export default function FinanceDailyPageClient() {
     toDateInput(new Date()),
   );
 
-  const showToast = (title: string, message: string) => {
+  const showToast = (title: string, message: string, tone: ToastTone = "success") => {
     setLedgerMessageTitle(title);
     setLedgerMessage(message);
+    setLedgerMessageTone(tone);
   };
 
   const applyQuickRange = (range: QuickRange) => {
@@ -677,6 +703,48 @@ export default function FinanceDailyPageClient() {
       setLedgerLiveData(result);
     } catch {
       // Dữ liệu live chỉ dùng để bù giao dịch mới phát sinh; lỗi thì vẫn giữ ledger chính.
+    }
+  };
+
+  const checkFinanceLogic = async () => {
+    setAuditLoading(true);
+    setError("");
+
+    try {
+      const params = new URLSearchParams({
+        dateFrom: ledgerDateFrom,
+        dateTo: ledgerDateTo,
+        branchId,
+        paymentSourceId,
+      });
+
+      const result = await apiJson<FinanceAuditResult>(
+        `/finance/daily-ledger/audit?${params.toString()}`,
+      );
+
+      setAuditResult(result);
+
+      if (result?.ok) {
+        showToast(
+          "Đã kiểm tra logic khớp",
+          `Core đã đối chiếu ${result.summary?.checkedRows || 0} dòng sổ, không phát hiện lệch công thức.`,
+          "success",
+        );
+      } else {
+        const count = result?.summary?.issueCount || result?.issues?.length || 0;
+        showToast(
+          "Phát hiện lệch logic tiền",
+          `Core phát hiện ${count} điểm cần kiểm tra. Xem cảnh báo trong Bảng chốt tiền từng ngày.`,
+          "error",
+        );
+      }
+    } catch (err: any) {
+      setAuditResult(null);
+      const message = err?.message || "Không kiểm tra được logic tiền từ core.";
+      setError(message);
+      showToast("Không kiểm tra được logic tiền", message, "error");
+    } finally {
+      setAuditLoading(false);
     }
   };
 
@@ -930,6 +998,11 @@ export default function FinanceDailyPageClient() {
     void loadMeta();
   }, []);
 
+
+  useEffect(() => {
+    setAuditResult(null);
+  }, [ledgerDateFrom, ledgerDateTo, branchId, paymentSourceId]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadData();
@@ -937,15 +1010,6 @@ export default function FinanceDailyPageClient() {
 
     return () => window.clearTimeout(timer);
   }, [dateFrom, dateTo, branchId, paymentSourceId, flow, q]);
-
-  useEffect(() => {
-    // Khi đổi bộ lọc ngày tổng, đồng bộ luôn bảng chốt tiền để tránh tình trạng
-    // phần tổng quan đang xem 15/05 nhưng bảng chốt tiền lại đang lấy 16/05.
-    setLedgerQuickRange(quickRange);
-    setLedgerDateFrom(dateFrom);
-    setLedgerDateTo(dateTo);
-    setExpandedLedgerDate(dateTo);
-  }, [dateFrom, dateTo, quickRange]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1248,42 +1312,124 @@ export default function FinanceDailyPageClient() {
   }, [rows]);
 
   const ledgerRows = useMemo(() => {
-    // Backend /finance/daily-ledger là nguồn sự thật duy nhất cho sổ tiền.
-    // Không merge lại /finance/daily ở frontend nữa để tránh cộng trùng hoặc trộn nhầm chi nhánh/nguồn tiền.
-    return safeLedgerRows(ledgerData)
-      .map((row) => {
-        const patched = closedLedgerKeys.has(ledgerRowKey(row))
-          ? {
-              ...row,
-              status: "LOCKED",
-              countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
-              differenceAmount: row.differenceAmount ?? 0,
-            }
-          : row;
+    // Backend là nguồn sự thật duy nhất cho sổ tiền.
+    // Ưu tiên /finance/daily-ledger; nếu online trả rỗng thì dùng ledgerRows kèm theo /finance/daily.
+    // Chỉ khi cả hai core đều rỗng mới dùng fallback giao dịch để tránh màn trắng.
+    const coreRows = safeLedgerRows(ledgerData);
+    const dailyCoreRows = safeLedgerRows(
+      data?.ledgerRows || data?.dailyRows || data?.ledger?.rows,
+    );
+    const sourceRows = coreRows.length > 0 ? coreRows : dailyCoreRows;
 
-        return {
-          ...patched,
-          branchName: canonicalBranchName(patched.branchName || patched.branchId),
-          totalReceipt: Number(patched.totalReceipt || 0),
-          totalPayment: Number(patched.totalPayment || 0),
-          netAmount: Number(patched.totalReceipt || 0) - Number(patched.totalPayment || 0),
-          closingBalance:
-            Number(patched.openingBalance || 0) +
-            Number(patched.totalReceipt || 0) -
-            Number(patched.totalPayment || 0),
-        };
-      })
-      .sort((a, b) => {
-        const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
-        if (dateDiff !== 0) return dateDiff;
-        const branchDiff = branchSortWeight(a.branchName || a.branchId) - branchSortWeight(b.branchName || b.branchId);
-        if (branchDiff !== 0) return branchDiff;
-        return String(a.paymentSourceName || a.paymentSourceCode || "").localeCompare(
-          String(b.paymentSourceName || b.paymentSourceCode || ""),
-          "vi",
-        );
-      });
-  }, [ledgerData, closedLedgerKeys]);
+    if (sourceRows.length > 0) {
+      return sourceRows
+        .map((row) => {
+          const patched = closedLedgerKeys.has(ledgerRowKey(row))
+            ? {
+                ...row,
+                status: "LOCKED",
+                countedAmount: row.countedAmount ?? row.closingBalance ?? 0,
+                differenceAmount: row.differenceAmount ?? 0,
+              }
+            : row;
+
+          const totalReceipt = Number(patched.totalReceipt || 0);
+          const totalPayment = Number(patched.totalPayment || 0);
+          const netAmount = totalReceipt - totalPayment;
+          const openingBalance = Number(patched.openingBalance || 0);
+
+          return {
+            ...patched,
+            branchName: canonicalBranchName(patched.branchName || patched.branchId),
+            openingBalance,
+            posReceiptAmount: Number(patched.posReceiptAmount || 0),
+            manualReceiptAmount: Number(patched.manualReceiptAmount || 0),
+            manualPaymentAmount: Number(patched.manualPaymentAmount || 0),
+            totalReceipt,
+            totalPayment,
+            netAmount,
+            closingBalance: openingBalance + netAmount,
+          };
+        })
+        .sort((a, b) => {
+          const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
+          if (dateDiff !== 0) return dateDiff;
+          const branchDiff = branchSortWeight(a.branchName || a.branchId) - branchSortWeight(b.branchName || b.branchId);
+          if (branchDiff !== 0) return branchDiff;
+          return String(a.paymentSourceName || a.paymentSourceCode || "").localeCompare(
+            String(b.paymentSourceName || b.paymentSourceCode || ""),
+            "vi",
+          );
+        });
+    }
+
+    const liveRows = safeRows(data?.payments);
+    const map = new Map<string, DailyLedgerRow>();
+
+    liveRows.forEach((row) => {
+      const dateKey = rowDateKey(row);
+      if (!dateKey) return;
+
+      const amount = Math.abs(Number(row.amount || 0));
+      if (!amount) return;
+
+      const branchName = displayBranchName(row);
+      const sourceName = displaySourceName(row);
+      const sourceType = sourceKind(row);
+      const sourceCode = row.sourceCode;
+      const sourceId = row.paymentSourceId || sourceName;
+      const key = [dateKey, normalizeText(branchName), normalizeText(sourceId || sourceName)].join("|");
+
+      const current = map.get(key) || {
+        date: dateKey,
+        branchId: row.branchId,
+        branchName,
+        paymentSourceId: sourceId,
+        paymentSourceName: sourceName,
+        paymentSourceCode: sourceCode,
+        sourceType,
+        openingBalance: 0,
+        posReceiptAmount: 0,
+        manualReceiptAmount: 0,
+        manualPaymentAmount: 0,
+        totalReceipt: 0,
+        totalPayment: 0,
+        netAmount: 0,
+        closingBalance: 0,
+        countedAmount: null,
+        differenceAmount: null,
+        status: "OPEN",
+        isSyntheticLive: true,
+      } as DailyLedgerRow;
+
+      if (isReceiptRow(row)) {
+        if (isPosRow(row) || String(row.recordType || "").toUpperCase() === "PAYMENT") {
+          current.posReceiptAmount = Number(current.posReceiptAmount || 0) + amount;
+        } else {
+          current.manualReceiptAmount = Number(current.manualReceiptAmount || 0) + amount;
+        }
+        current.totalReceipt = Number(current.totalReceipt || 0) + amount;
+      } else {
+        current.manualPaymentAmount = Number(current.manualPaymentAmount || 0) + amount;
+        current.totalPayment = Number(current.totalPayment || 0) + amount;
+      }
+
+      current.netAmount = Number(current.totalReceipt || 0) - Number(current.totalPayment || 0);
+      current.closingBalance = Number(current.openingBalance || 0) + Number(current.netAmount || 0);
+      map.set(key, current);
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
+      if (dateDiff !== 0) return dateDiff;
+      const branchDiff = branchSortWeight(a.branchName || a.branchId) - branchSortWeight(b.branchName || b.branchId);
+      if (branchDiff !== 0) return branchDiff;
+      return String(a.paymentSourceName || a.paymentSourceCode || "").localeCompare(
+        String(b.paymentSourceName || b.paymentSourceCode || ""),
+        "vi",
+      );
+    });
+  }, [ledgerData, closedLedgerKeys, data, branches, branchNameById, paymentSourceNameById]);
 
   const ledgerSummary = useMemo(() => {
     const acc = {
@@ -1848,13 +1994,39 @@ export default function FinanceDailyPageClient() {
       ) : null}
 
       {ledgerMessage ? (
-        <div className="fixed right-6 top-24 z-[80] max-w-md rounded-3xl border border-emerald-200 bg-white p-4 text-sm shadow-2xl shadow-emerald-950/10">
+        <div
+          className={`fixed right-6 top-24 z-[80] max-w-md rounded-3xl border bg-white p-4 text-sm shadow-2xl ${
+            ledgerMessageTone === "error"
+              ? "border-red-200 shadow-red-950/10"
+              : ledgerMessageTone === "warning"
+                ? "border-amber-200 shadow-amber-950/10"
+                : "border-emerald-200 shadow-emerald-950/10"
+          }`}
+        >
           <div className="flex items-start gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 font-black text-emerald-800">
-              ✓
+            <div
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-black ${
+                ledgerMessageTone === "error"
+                  ? "bg-red-100 text-red-800"
+                  : ledgerMessageTone === "warning"
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-emerald-100 text-emerald-800"
+              }`}
+            >
+              {ledgerMessageTone === "error" ? "!" : "✓"}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="font-bold text-emerald-800">{ledgerMessageTitle}</p>
+              <p
+                className={`font-bold ${
+                  ledgerMessageTone === "error"
+                    ? "text-red-800"
+                    : ledgerMessageTone === "warning"
+                      ? "text-amber-800"
+                      : "text-emerald-800"
+                }`}
+              >
+                {ledgerMessageTitle}
+              </p>
               <p className="mt-1 text-neutral-700">{ledgerMessage}</p>
             </div>
             <button
@@ -1884,7 +2056,7 @@ export default function FinanceDailyPageClient() {
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[520px]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:min-w-[680px] xl:grid-cols-4">
             <div className="rounded-3xl bg-white px-5 py-4 text-neutral-950">
               <p className="text-xs font-bold uppercase tracking-wide text-neutral-500">
                 Tiền mặt còn
@@ -1911,10 +2083,51 @@ export default function FinanceDailyPageClient() {
                 {numberText(summary.count)}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => void checkFinanceLogic()}
+              disabled={auditLoading}
+              className={`rounded-3xl px-5 py-4 text-left ring-1 transition disabled:cursor-not-allowed disabled:opacity-70 ${
+                !auditResult
+                  ? "bg-white/10 text-white ring-white/10 hover:bg-white/15"
+                  : auditResult.ok
+                    ? "bg-emerald-500/15 text-emerald-50 ring-emerald-300/30 hover:bg-emerald-500/20"
+                    : "bg-red-500/15 text-red-50 ring-red-300/30 hover:bg-red-500/20"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    !auditResult
+                      ? "bg-white/35"
+                      : auditResult.ok
+                        ? "bg-emerald-300"
+                        : "bg-red-300"
+                  }`}
+                />
+                <p className="text-xs font-bold uppercase tracking-wide text-white/55">
+                  Kiểm tra logic
+                </p>
+              </div>
+              <p className="mt-2 text-sm font-black leading-5">
+                {auditLoading
+                  ? "Đang kiểm tra..."
+                  : !auditResult
+                    ? "Bấm để kiểm tra"
+                    : auditResult.ok
+                      ? "Đã kiểm tra logic khớp"
+                      : `Lệch ${auditResult.summary?.issueCount || auditResult.issues?.length || 0} điểm`}
+              </p>
+              <p className="mt-1 text-[11px] font-semibold text-white/45">
+                {auditResult?.checkedAt
+                  ? dateText(auditResult.checkedAt)
+                  : "Core backend đối chiếu số liệu"}
+              </p>
+            </button>
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => (window.location.href = "/finance/cash-receipts")}
@@ -2312,6 +2525,14 @@ export default function FinanceDailyPageClient() {
                 className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
                 {ledgerLoading ? "Đang tải..." : "Tải lại sổ"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void checkFinanceLogic()}
+                disabled={auditLoading}
+                className="rounded-xl border border-neutral-950 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+              >
+                {auditLoading ? "Đang kiểm tra..." : "Kiểm tra logic tiền"}
               </button>
             </div>
           </div>

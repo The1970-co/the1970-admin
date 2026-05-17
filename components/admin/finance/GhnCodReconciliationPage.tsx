@@ -14,10 +14,23 @@ const ISSUE_LABELS: Record<string, string> = {
   FEE_MISMATCH: "Lệch phí",
 };
 
+const ACTION_ISSUES = new Set([
+  "BATCH_SAVED",
+  "USER_CONFIRMED",
+  "COD_RECONCILIATION_PAID",
+]);
+
+const ACTION_LABELS: Record<string, string> = {
+  BATCH_SAVED: "Đã lưu",
+  USER_CONFIRMED: "Đã xác nhận",
+  COD_RECONCILIATION_PAID: "Đã thanh toán",
+};
+
 const ALL_GHN_STATUSES = "__ALL_GHN_STATUSES__";
 const DELIVERED_ONLY = "__DELIVERED_ONLY__";
 
 type Row = {
+  reconciliationRowId?: string;
   rowNumber: number;
   ghnOrderCode?: string;
   customerOrderCode?: string;
@@ -42,10 +55,31 @@ type Row = {
   partialReturnReceivedAt?: string | null;
 
   issueTypes: string[];
+
+  sourceType?: string | null;
+  inputCode?: string | null;
+  actionStatus?: string | null;
+  actionNote?: string | null;
+  savedAt?: string | null;
+  confirmedAt?: string | null;
+  paidAt?: string | null;
+  paymentSourceId?: string | null;
+  paymentAmount?: number | null;
+  paymentNote?: string | null;
 };
+
+type BatchAction = "save" | "confirm" | "payment" | "delete";
+type ActionScope =
+  | "selected"
+  | "filtered"
+  | "all"
+  | "matched"
+  | "problem"
+  | "not_found";
 
 type Result = {
   batch: {
+    id?: string;
     fileName: string;
     transferCode?: string;
     transferDate?: string;
@@ -56,6 +90,11 @@ type Result = {
     totalFeeAmount: number;
     totalNetAmount: number;
     parserMode?: string;
+    sourceType?: string | null;
+    status?: string | null;
+    savedAt?: string | null;
+    confirmedAt?: string | null;
+    paidAt?: string | null;
   };
   rows: Row[];
   summary: {
@@ -90,6 +129,7 @@ export default function GhnCodReconciliationPage() {
   const [transferDate, setTransferDate] = useState("");
   const [transferCode, setTransferCode] = useState("");
   const [note, setNote] = useState("");
+  const [manualCodes, setManualCodes] = useState("");
   const [loading, setLoading] = useState(false);
   const [parsingExcel, setParsingExcel] = useState(false);
   const [excelPreview, setExcelPreview] = useState<ExcelPreview | null>(null);
@@ -97,6 +137,12 @@ export default function GhnCodReconciliationPage() {
   const [uploadStatusFilter, setUploadStatusFilter] = useState(DELIVERED_ONLY);
   const [result, setResult] = useState<Result | null>(null);
   const [filter, setFilter] = useState("ALL");
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  const [deletedRowIds, setDeletedRowIds] = useState<string[]>([]);
+  const [batchActionLoading, setBatchActionLoading] =
+    useState<BatchAction | null>(null);
+  const [batchActionMessage, setBatchActionMessage] = useState("");
+  const [actionScope, setActionScope] = useState<ActionScope>("selected");
 
   const uploadFilterSummary = useMemo(() => {
     if (!excelPreview) {
@@ -128,7 +174,7 @@ export default function GhnCodReconciliationPage() {
     }
 
     const selectedOption = excelPreview.statusOptions.find(
-      (item) => item.value === uploadStatusFilter
+      (item) => item.value === uploadStatusFilter,
     );
 
     return {
@@ -138,22 +184,54 @@ export default function GhnCodReconciliationPage() {
     };
   }, [excelPreview, uploadStatusFilter]);
 
+  const visibleRows = useMemo(() => {
+    if (!result) return [];
+    const deletedSet = new Set(deletedRowIds);
+    return result.rows.filter((row) => {
+      const rowId = getRowKey(row);
+      return !deletedSet.has(rowId);
+    });
+  }, [result, deletedRowIds]);
+
   const rows = useMemo(() => {
     if (!result) return [];
 
-    if (filter === "ALL") return result.rows;
+    if (filter === "ALL") return visibleRows;
 
     if (filter === "MATCHED") {
-      return result.rows.filter((r) => r.issueTypes.length === 0);
+      return visibleRows.filter((r) => getBlockingIssues(r).length === 0);
     }
 
-    return result.rows.filter((r) => r.issueTypes.includes(filter));
-  }, [result, filter]);
+    return visibleRows.filter((r) => getBusinessIssues(r).includes(filter));
+  }, [result, visibleRows, filter]);
+
+  const selectedRows = useMemo(() => {
+    const selected = new Set(selectedRowIds);
+    return visibleRows.filter((row) => selected.has(getRowKey(row)));
+  }, [visibleRows, selectedRowIds]);
+
+  const selectedPersistedRowIds = useMemo(() => {
+    return selectedRows
+      .map((row) => row.reconciliationRowId)
+      .filter((id): id is string => Boolean(id));
+  }, [selectedRows]);
+
+  const currentSummary = useMemo(
+    () => buildClientSummary(visibleRows),
+    [visibleRows],
+  );
+
+  const allFilteredSelected =
+    rows.length > 0 &&
+    rows.every((row) => selectedRowIds.includes(getRowKey(row)));
 
   async function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
     setResult(null);
     setFilter("ALL");
+    setSelectedRowIds([]);
+    setDeletedRowIds([]);
+    setBatchActionMessage("");
     setExcelPreview(null);
     setExcelPreviewError("");
     setUploadStatusFilter(DELIVERED_ONLY);
@@ -165,13 +243,17 @@ export default function GhnCodReconciliationPage() {
       const preview = await readGhnExcelPreview(nextFile);
       setExcelPreview(preview);
 
-      const hasDeliveredStatus = preview.statusOptions.some((item) => item.delivered);
-      setUploadStatusFilter(hasDeliveredStatus ? DELIVERED_ONLY : ALL_GHN_STATUSES);
+      const hasDeliveredStatus = preview.statusOptions.some(
+        (item) => item.delivered,
+      );
+      setUploadStatusFilter(
+        hasDeliveredStatus ? DELIVERED_ONLY : ALL_GHN_STATUSES,
+      );
     } catch (err) {
       setExcelPreviewError(
         err instanceof Error
           ? err.message
-          : "Không đọc được trạng thái GHN trong file Excel."
+          : "Không đọc được trạng thái GHN trong file Excel.",
       );
       setUploadStatusFilter(ALL_GHN_STATUSES);
     } finally {
@@ -186,16 +268,26 @@ export default function GhnCodReconciliationPage() {
     }
 
     if (uploadStatusFilter !== ALL_GHN_STATUSES && excelPreviewError) {
-      alert("Chưa đọc được danh sách trạng thái trong file. Chọn lại file hoặc đổi bộ lọc thành Tất cả trạng thái.");
+      alert(
+        "Chưa đọc được danh sách trạng thái trong file. Chọn lại file hoặc đổi bộ lọc thành Tất cả trạng thái.",
+      );
       return;
     }
 
-    if (uploadStatusFilter !== ALL_GHN_STATUSES && excelPreview && uploadFilterSummary.selectedRows <= 0) {
+    if (
+      uploadStatusFilter !== ALL_GHN_STATUSES &&
+      excelPreview &&
+      uploadFilterSummary.selectedRows <= 0
+    ) {
       alert("Bộ lọc hiện tại không có dòng nào để gửi đối soát.");
       return;
     }
 
-    const uploadFile = await buildFilteredGhnExcelFile(file, uploadStatusFilter, excelPreview);
+    const uploadFile = await buildFilteredGhnExcelFile(
+      file,
+      uploadStatusFilter,
+      excelPreview,
+    );
 
     const fd = new FormData();
     fd.append("file", uploadFile);
@@ -211,11 +303,14 @@ export default function GhnCodReconciliationPage() {
     try {
       const token = localStorage.getItem("token");
 
-      const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/upload`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body: fd,
-      });
+      const res = await fetch(
+        `${API_BASE}/finance/ghn-cod-reconciliation/upload`,
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          body: fd,
+        },
+      );
 
       const json = await res.json();
 
@@ -225,10 +320,262 @@ export default function GhnCodReconciliationPage() {
 
       setResult(json);
       setFilter("ALL");
+      setSelectedRowIds([]);
+      setDeletedRowIds([]);
+      setBatchActionMessage("Đã chạy và lưu phiên đối soát vào hệ thống.");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Upload thất bại.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runManualReconciliation() {
+    const text = manualCodes.trim();
+
+    if (!text) {
+      alert("Dán 1 hoặc nhiều mã đơn / mã vận đơn vào ô đối soát nhanh trước.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/finance/ghn-cod-reconciliation/manual`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          codesText: text,
+          transferDate,
+          transferCode,
+          note,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.message || "Đối soát nhanh thất bại.");
+      }
+
+      setResult(json);
+      setFilter("ALL");
+      setSelectedRowIds([]);
+      setDeletedRowIds([]);
+      setBatchActionMessage(
+        `Đã đối soát nhanh ${json?.batch?.totalRows || 0} mã và lưu phiên vào database.`,
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Đối soát nhanh thất bại.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleRow(row: Row) {
+    const key = getRowKey(row);
+    setSelectedRowIds((prev) =>
+      prev.includes(key) ? prev.filter((id) => id !== key) : [...prev, key],
+    );
+  }
+
+  function toggleAllFilteredRows() {
+    const rowKeys = rows.map(getRowKey);
+    setSelectedRowIds((prev) => {
+      if (rowKeys.length > 0 && rowKeys.every((key) => prev.includes(key))) {
+        return prev.filter((key) => !rowKeys.includes(key));
+      }
+      return Array.from(new Set([...prev, ...rowKeys]));
+    });
+  }
+
+  async function deleteRowsClient(rowKeys: string[]) {
+    if (!rowKeys.length) return;
+
+    const persistedIds = visibleRows
+      .filter((row) => rowKeys.includes(getRowKey(row)))
+      .map((row) => row.reconciliationRowId)
+      .filter((id): id is string => Boolean(id));
+
+    if (!confirm(`Xóa ${rowKeys.length} dòng khỏi phiên đối soát?`)) return;
+
+    if (persistedIds.length) {
+      await runBatchAction("delete", { rowIds: persistedIds }, false);
+    }
+
+    setDeletedRowIds((prev) => Array.from(new Set([...prev, ...rowKeys])));
+    setSelectedRowIds((prev) => prev.filter((key) => !rowKeys.includes(key)));
+    setBatchActionMessage(
+      `Đã xóa ${rowKeys.length} dòng khỏi danh sách đối soát.`,
+    );
+  }
+
+  function resolveRowsForAction(action: BatchAction) {
+    if (action === "delete") return [];
+
+    if (actionScope === "selected") return selectedRows;
+    if (actionScope === "filtered") return rows;
+    if (actionScope === "matched") {
+      return visibleRows.filter((row) => getBlockingIssues(row).length === 0);
+    }
+    if (actionScope === "problem") {
+      return visibleRows.filter((row) => getBlockingIssues(row).length > 0);
+    }
+    if (actionScope === "not_found") {
+      return visibleRows.filter((row) =>
+        getBusinessIssues(row).includes("NOT_FOUND_INTERNAL_ORDER"),
+      );
+    }
+
+    return visibleRows;
+  }
+
+  function patchRowsAfterAction(rowIds: string[], action: BatchAction, json?: any) {
+    if (!rowIds.length || action === "delete") return;
+
+    const now = new Date().toISOString();
+    const idSet = new Set(rowIds);
+    const nextStatus =
+      action === "payment" ? "PAID" : action === "confirm" ? "CONFIRMED" : "SAVED";
+
+    setResult((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        batch: {
+          ...prev.batch,
+          status: nextStatus,
+          savedAt: json?.savedAt || prev.batch.savedAt || now,
+          confirmedAt:
+            action === "confirm" || action === "payment"
+              ? json?.confirmedAt || prev.batch.confirmedAt || now
+              : prev.batch.confirmedAt || null,
+          paidAt: action === "payment" ? json?.paidAt || prev.batch.paidAt || now : prev.batch.paidAt || null,
+        } as Result["batch"],
+        rows: prev.rows.map((row) => {
+          if (!row.reconciliationRowId || !idSet.has(row.reconciliationRowId)) {
+            return row;
+          }
+
+          return {
+            ...row,
+            actionStatus: nextStatus,
+            savedAt: row.savedAt || json?.savedAt || now,
+            confirmedAt:
+              action === "confirm" || action === "payment"
+                ? row.confirmedAt || json?.confirmedAt || now
+                : row.confirmedAt || null,
+            paidAt: action === "payment" ? json?.paidAt || now : row.paidAt || null,
+            paymentAmount:
+              action === "payment" ? row.totalReconcileAmount : row.paymentAmount || 0,
+          };
+        }),
+      };
+    });
+  }
+
+  async function runBatchAction(
+    action: BatchAction,
+    extraBody: Record<string, unknown> = {},
+    showAlert = true,
+  ) {
+    if (!result?.batch?.id) {
+      if (showAlert) alert("Chưa có phiên đối soát để xử lý.");
+      return;
+    }
+
+    if (
+      action === "delete" &&
+      !extraBody.rowIds &&
+      !confirm("Xóa toàn bộ phiên đối soát này?")
+    ) {
+      return;
+    }
+
+    const targetRows =
+      action === "delete"
+        ? []
+        : resolveRowsForAction(action).filter((row) => row.reconciliationRowId);
+    const targetRowIds = targetRows
+      .map((row) => row.reconciliationRowId)
+      .filter((id): id is string => Boolean(id));
+
+    if (action !== "delete" && !targetRowIds.length) {
+      alert(
+        actionScope === "selected"
+          ? "Chưa tích dòng nào để xử lý. Tích dòng cần làm hoặc đổi phạm vi thao tác."
+          : "Phạm vi đang chọn không có dòng nào để xử lý.",
+      );
+      return;
+    }
+
+    if (
+      (action === "confirm" || action === "payment") &&
+      !confirm(
+        `${action === "confirm" ? "Xác nhận" : "Thanh toán"} ${targetRowIds.length} dòng đối soát theo phạm vi đang chọn?`,
+      )
+    ) {
+      return;
+    }
+
+    setBatchActionLoading(action);
+    try {
+      const token = localStorage.getItem("token");
+      const endpoint =
+        action === "delete" && extraBody.rowIds
+          ? `${API_BASE}/finance/ghn-cod-reconciliation/rows/delete`
+          : `${API_BASE}/finance/ghn-cod-reconciliation/${result.batch.id}/${action}`;
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          batchId: result.batch.id,
+          rowIds: targetRowIds,
+          scope: actionScope,
+          note: note || undefined,
+          ...extraBody,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(json?.message || "Thao tác đối soát thất bại.");
+
+      if (action === "delete" && !extraBody.rowIds) {
+        setResult(null);
+        setSelectedRowIds([]);
+        setDeletedRowIds([]);
+        setBatchActionMessage("Đã xóa phiên đối soát.");
+        return;
+      }
+
+      const affectedRowIds = Array.isArray(json?.affectedRowIds)
+        ? json.affectedRowIds.map((x: unknown) => String(x))
+        : targetRowIds;
+      patchRowsAfterAction(affectedRowIds, action, json);
+
+      const labels: Record<BatchAction, string> = {
+        save: `Đã lưu ${affectedRowIds.length} dòng đối soát vào database.`,
+        confirm: `Đã xác nhận ${affectedRowIds.length} dòng đối soát và lưu database.`,
+        payment: `Đã thanh toán ${affectedRowIds.length} dòng đối soát và lưu database.`,
+        delete: "Đã xóa dòng đối soát.",
+      };
+      setBatchActionMessage(json?.message || labels[action]);
+    } catch (err) {
+      if (showAlert)
+        alert(
+          err instanceof Error ? err.message : "Thao tác đối soát thất bại.",
+        );
+      throw err;
+    } finally {
+      setBatchActionLoading(null);
     }
   }
 
@@ -240,7 +587,8 @@ export default function GhnCodReconciliationPage() {
           Đối soát COD GHN
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Upload file phiên chuyển tiền từ GHN, đọc tổng tiền đầu file và đối chiếu với đơn nội bộ.
+          Upload file phiên chuyển tiền từ GHN hoặc dán nhanh 1/nhiều mã đơn để đối
+          chiếu với đơn nội bộ.
         </p>
       </div>
 
@@ -311,8 +659,12 @@ export default function GhnCodReconciliationPage() {
                     disabled={!file || parsingExcel}
                     className="min-w-[280px] rounded-2xl border bg-white px-4 py-3 text-sm font-semibold text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <option value={DELIVERED_ONLY}>Chỉ đơn giao thành công</option>
-                    <option value={ALL_GHN_STATUSES}>Tất cả trạng thái trong file</option>
+                    <option value={DELIVERED_ONLY}>
+                      Chỉ đơn giao thành công
+                    </option>
+                    <option value={ALL_GHN_STATUSES}>
+                      Tất cả trạng thái trong file
+                    </option>
                     {excelPreview?.statusOptions.map((item) => (
                       <option key={item.value} value={item.value}>
                         {item.label} ({item.count})
@@ -322,7 +674,9 @@ export default function GhnCodReconciliationPage() {
                 </Field>
 
                 <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm">
-                  <div className="text-xs font-semibold text-neutral-500">Sẽ gửi đối soát</div>
+                  <div className="text-xs font-semibold text-neutral-500">
+                    Sẽ gửi đối soát
+                  </div>
                   <div className="mt-1 font-bold text-neutral-950">
                     {parsingExcel
                       ? "Đang đọc file..."
@@ -332,9 +686,12 @@ export default function GhnCodReconciliationPage() {
 
                 {excelPreview ? (
                   <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm">
-                    <div className="text-xs font-semibold text-neutral-500">Sheet / dòng tiêu đề</div>
+                    <div className="text-xs font-semibold text-neutral-500">
+                      Sheet / dòng tiêu đề
+                    </div>
                     <div className="mt-1 font-semibold text-neutral-950">
-                      {excelPreview.sheetName} · dòng {excelPreview.headerRowIndex + 1}
+                      {excelPreview.sheetName} · dòng{" "}
+                      {excelPreview.headerRowIndex + 1}
                     </div>
                   </div>
                 ) : null}
@@ -342,19 +699,23 @@ export default function GhnCodReconciliationPage() {
 
               {excelPreviewError ? (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-                  {excelPreviewError} File sẽ được gửi nguyên bản nếu chọn “Tất cả trạng thái”.
+                  {excelPreviewError} File sẽ được gửi nguyên bản nếu chọn “Tất
+                  cả trạng thái”.
                 </div>
               ) : null}
 
               {uploadStatusFilter === ALL_GHN_STATUSES && file ? (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-                  Đang chọn tất cả trạng thái, hệ thống sẽ gửi cả đơn đang trung chuyển / nhập kho / hoàn lên đối soát. Chỉ dùng khi cần kiểm tra toàn bộ file.
+                  Đang chọn tất cả trạng thái, hệ thống sẽ gửi cả đơn đang trung
+                  chuyển / nhập kho / hoàn lên đối soát. Chỉ dùng khi cần kiểm
+                  tra toàn bộ file.
                 </div>
               ) : null}
 
               {uploadStatusFilter === DELIVERED_ONLY && file ? (
                 <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-                  Mặc định chỉ gửi các dòng GHN có trạng thái giao thành công. Core giữ nguyên, FE sẽ tạo file Excel đã lọc rồi mới upload.
+                  Mặc định chỉ gửi các dòng GHN có trạng thái giao thành công.
+                  Core giữ nguyên, FE sẽ tạo file Excel đã lọc rồi mới upload.
                 </div>
               ) : null}
             </div>
@@ -366,7 +727,11 @@ export default function GhnCodReconciliationPage() {
               disabled={loading || parsingExcel}
               className="rounded-2xl bg-neutral-950 px-6 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {loading ? "Đang đối soát..." : parsingExcel ? "Đang đọc file..." : "Chạy đối soát"}
+              {loading
+                ? "Đang đối soát..."
+                : parsingExcel
+                  ? "Đang đọc file..."
+                  : "Chạy đối soát"}
             </button>
 
             <button
@@ -376,7 +741,11 @@ export default function GhnCodReconciliationPage() {
                 setTransferCode("");
                 setTransferDate("");
                 setNote("");
+                setManualCodes("");
                 setFilter("ALL");
+                setSelectedRowIds([]);
+                setDeletedRowIds([]);
+                setBatchActionMessage("");
                 setExcelPreview(null);
                 setExcelPreviewError("");
                 setUploadStatusFilter(DELIVERED_ONLY);
@@ -387,36 +756,79 @@ export default function GhnCodReconciliationPage() {
             </button>
           </div>
         </div>
+
+        <div className="mt-5 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-semibold text-neutral-950">
+                Đối soát nhanh bằng mã đơn
+              </h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                Dán 1 hoặc nhiều mã đơn nội bộ / mã vận đơn GHN. Có thể xuống dòng,
+                cách nhau bằng dấu phẩy, dấu cách hoặc paste nguyên đoạn từ Excel.
+              </p>
+            </div>
+            <button
+              onClick={runManualReconciliation}
+              disabled={loading || parsingExcel || !manualCodes.trim()}
+              className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {loading ? "Đang chạy..." : "Chạy đối soát mã đã paste"}
+            </button>
+          </div>
+
+          <textarea
+            value={manualCodes}
+            onChange={(e) => setManualCodes(e.target.value)}
+            placeholder={'Ví dụ:\nORD-1778494005942\nGYWCK8AN\nORD-1778909171401, GYWC8T4'}
+            className="mt-3 min-h-[110px] w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+          />
+
+          <div className="mt-2 text-xs text-neutral-500">
+            Cách này tạo một phiên đối soát nhập tay, lưu DB như upload Excel. Nếu chỉ dán mã đơn,
+            hệ thống tự lấy COD/phí từ shipment nội bộ để kiểm nhanh.
+          </div>
+        </div>
       </section>
 
       <div className="grid gap-4 md:grid-cols-5">
         <Stat
           title="Tổng đối soát GHN"
-          value={money(result?.batch.totalCodAmount)}
-          sub={result ? "Lấy từ summary file GHN" : "Chưa upload file"}
+          value={money(currentSummary.totalCodAmount)}
+          sub={result?.batch?.parserMode === "MANUAL_INPUT" ? "Đối soát nhập tay" : result ? "Lấy từ summary file GHN" : "Chưa upload file"}
         />
         <Stat
           title="Phí chuyển khoản"
-          value={money(result?.batch.totalFeeAmount)}
+          value={money(currentSummary.totalFeeAmount)}
           sub="Theo file GHN"
-          danger={(result?.batch.totalFeeAmount || 0) < 0}
+          danger={currentSummary.totalFeeAmount < 0}
         />
         <Stat
           title="Thực nhận"
-          value={money(result?.batch.totalNetAmount)}
+          value={money(currentSummary.totalNetAmount)}
           sub="Sau phí chuyển khoản"
         />
         <Stat
           title="Không tìm thấy đơn"
-          value={String(result?.summary.notFoundOrder || 0)}
+          value={String(currentSummary.notFoundOrder)}
           sub="Chưa có trong nội bộ"
-          danger={(result?.summary.notFoundOrder || 0) > 0}
+          danger={currentSummary.notFoundOrder > 0}
         />
         <Stat
           title="Trạng thái"
-          value={result ? (result.batch.mismatchRows > 0 ? "Cần kiểm tra" : "Khớp") : "-"}
-          sub={result ? `${result.batch.mismatchRows} dòng cần xử lý` : "Chưa có dữ liệu"}
-          danger={(result?.batch.mismatchRows || 0) > 0}
+          value={
+            result
+              ? currentSummary.mismatchRows > 0
+                ? "Cần kiểm tra"
+                : "Khớp"
+              : "-"
+          }
+          sub={
+            result
+              ? `${currentSummary.mismatchRows} dòng cần xử lý`
+              : "Chưa có dữ liệu"
+          }
+          danger={currentSummary.mismatchRows > 0}
         />
       </div>
 
@@ -424,14 +836,22 @@ export default function GhnCodReconciliationPage() {
         <h2 className="text-lg font-semibold">2. Tổng quan đối soát</h2>
 
         <div className="mt-4 grid gap-3 md:grid-cols-8">
-          <Mini label="Tổng dòng" value={result?.batch.totalRows || 0} />
-          <Mini label="Khớp" value={result?.batch.matchedRows || 0} ok />
-          <Mini label="Chưa khớp" value={result?.batch.mismatchRows || 0} danger />
-          <Mini label="Không tìm thấy đơn" value={result?.summary.notFoundOrder || 0} danger />
-          <Mini label="Lệch COD" value={result?.summary.codMismatch || 0} warn />
-          <Mini label="Lệch phí" value={result?.summary.feeMismatch || 0} warn />
-          <Mini label="Giao 1 phần" value={result?.summary.partialReturn || 0} warn />
-          <Mini label="Chưa nhập kho hoàn" value={result?.summary.partialReturnNotReceived || 0} warn />
+          <Mini label="Tổng dòng" value={currentSummary.totalRows} />
+          <Mini label="Khớp" value={currentSummary.matchedRows} ok />
+          <Mini label="Chưa khớp" value={currentSummary.mismatchRows} danger />
+          <Mini
+            label="Không tìm thấy đơn"
+            value={currentSummary.notFoundOrder}
+            danger
+          />
+          <Mini label="Lệch COD" value={currentSummary.codMismatch} warn />
+          <Mini label="Lệch phí" value={currentSummary.feeMismatch} warn />
+          <Mini label="Giao 1 phần" value={currentSummary.partialReturn} warn />
+          <Mini
+            label="Chưa nhập kho hoàn"
+            value={currentSummary.partialReturnNotReceived}
+            warn
+          />
         </div>
       </section>
 
@@ -443,7 +863,10 @@ export default function GhnCodReconciliationPage() {
             <Filter active={filter === "ALL"} onClick={() => setFilter("ALL")}>
               Tất cả
             </Filter>
-            <Filter active={filter === "MATCHED"} onClick={() => setFilter("MATCHED")}>
+            <Filter
+              active={filter === "MATCHED"}
+              onClick={() => setFilter("MATCHED")}
+            >
               Khớp
             </Filter>
             <Filter
@@ -452,13 +875,22 @@ export default function GhnCodReconciliationPage() {
             >
               Không tìm thấy đơn
             </Filter>
-            <Filter active={filter === "COD_MISMATCH"} onClick={() => setFilter("COD_MISMATCH")}>
+            <Filter
+              active={filter === "COD_MISMATCH"}
+              onClick={() => setFilter("COD_MISMATCH")}
+            >
               Lệch COD
             </Filter>
-            <Filter active={filter === "FEE_MISMATCH"} onClick={() => setFilter("FEE_MISMATCH")}>
+            <Filter
+              active={filter === "FEE_MISMATCH"}
+              onClick={() => setFilter("FEE_MISMATCH")}
+            >
               Lệch phí
             </Filter>
-            <Filter active={filter === "PARTIAL_RETURN"} onClick={() => setFilter("PARTIAL_RETURN")}>
+            <Filter
+              active={filter === "PARTIAL_RETURN"}
+              onClick={() => setFilter("PARTIAL_RETURN")}
+            >
               Giao 1 phần
             </Filter>
             <Filter
@@ -476,10 +908,94 @@ export default function GhnCodReconciliationPage() {
           </div>
         </div>
 
+        <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-neutral-600">
+              Đã chọn <b>{selectedRows.length}</b> dòng · Đang hiển thị{" "}
+              <b>{rows.length}</b> dòng · Tổng phiên còn{" "}
+              <b>{visibleRows.length}</b> dòng
+              {batchActionMessage ? (
+                <span className="ml-3 font-medium text-emerald-700">
+                  {batchActionMessage}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={actionScope}
+                onChange={(e) => setActionScope(e.target.value as ActionScope)}
+                className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-medium"
+                title="Phạm vi thao tác"
+              >
+                <option value="selected">Chỉ dòng đã tích</option>
+                <option value="filtered">Tất cả dòng đang lọc</option>
+                <option value="all">Toàn bộ phiên còn lại</option>
+                <option value="matched">Chỉ dòng khớp</option>
+                <option value="problem">Chỉ dòng cần kiểm tra</option>
+                <option value="not_found">Chỉ dòng không tìm thấy đơn</option>
+              </select>
+
+              <button
+                onClick={() => runBatchAction("save")}
+                disabled={!result || Boolean(batchActionLoading)}
+                className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+              >
+                {batchActionLoading === "save" ? "Đang lưu..." : "Lưu phạm vi"}
+              </button>
+              <button
+                onClick={() => runBatchAction("confirm")}
+                disabled={!result || Boolean(batchActionLoading)}
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {batchActionLoading === "confirm"
+                  ? "Đang xác nhận..."
+                  : "Xác nhận phạm vi"}
+              </button>
+              <button
+                onClick={() => runBatchAction("payment")}
+                disabled={!result || Boolean(batchActionLoading)}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {batchActionLoading === "payment"
+                  ? "Đang thanh toán..."
+                  : "Thanh toán phạm vi"}
+              </button>
+              <button
+                onClick={() => deleteRowsClient(selectedRowIds)}
+                disabled={!selectedRowIds.length || Boolean(batchActionLoading)}
+                className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 disabled:opacity-50"
+              >
+                Xóa dòng chọn
+              </button>
+              <button
+                onClick={() => runBatchAction("delete")}
+                disabled={!result || Boolean(batchActionLoading)}
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                Xóa phiên
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-2 text-xs text-neutral-500">
+            Xác nhận / thanh toán sẽ lưu marker vào bảng dòng đối soát trong
+            database. Dòng không tìm thấy đơn nội bộ vẫn được lưu trạng thái xác
+            nhận để kế toán biết đã kiểm tra thủ công.
+          </div>
+        </div>
+
         <div className="mt-4 overflow-auto rounded-2xl border">
-          <table className="min-w-[1550px] w-full text-sm">
+          <table className="min-w-[1700px] w-full text-sm">
             <thead className="bg-neutral-50 text-left text-neutral-500">
               <tr>
+                <th className="px-4 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleAllFilteredRows}
+                  />
+                </th>
                 <th className="px-4 py-3">STT</th>
                 <th className="px-4 py-3">Đơn nội bộ</th>
                 <th className="px-4 py-3">Mã đơn KH trong file</th>
@@ -492,6 +1008,7 @@ export default function GhnCodReconciliationPage() {
                 <th className="px-4 py-3">Tình trạng</th>
                 <th className="px-4 py-3">Vấn đề</th>
                 <th className="px-4 py-3">Hoàn / giao 1 phần</th>
+                <th className="px-4 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
 
@@ -499,14 +1016,22 @@ export default function GhnCodReconciliationPage() {
               {rows.length ? (
                 rows.map((row, index) => {
                   const fee = Number(row.serviceFee || 0);
-                  const isMatchedByPartial = row.issueTypes.includes("MATCHED_BY_PARTIAL_DELIVERY");
-                  const blockingIssues = row.issueTypes.filter(
-                    (x) => x !== "MATCHED_BY_PARTIAL_DELIVERY"
+                  const isMatchedByPartial = getBusinessIssues(row).includes(
+                    "MATCHED_BY_PARTIAL_DELIVERY",
                   );
-                  const hasIssue = blockingIssues.length > 0;
+                  const hasIssue = getBlockingIssues(row).length > 0;
+
+                  const rowKey = getRowKey(row);
 
                   return (
-                    <tr key={`${row.rowNumber}-${index}`} className="border-t align-top">
+                    <tr key={rowKey} className="border-t align-top">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedRowIds.includes(rowKey)}
+                          onChange={() => toggleRow(row)}
+                        />
+                      </td>
                       <td className="px-4 py-3">{index + 1}</td>
 
                       <td className="px-4 py-3">
@@ -520,8 +1045,12 @@ export default function GhnCodReconciliationPage() {
                         ) : null}
                       </td>
 
-                      <td className="px-4 py-3">{row.customerOrderCode || "-"}</td>
-                      <td className="px-4 py-3 font-medium">{row.ghnOrderCode || "-"}</td>
+                      <td className="px-4 py-3">
+                        {row.customerOrderCode || "-"}
+                      </td>
+                      <td className="px-4 py-3 font-medium">
+                        {row.ghnOrderCode || "-"}
+                      </td>
                       <td className="px-4 py-3">{row.storeName || "-"}</td>
 
                       <td className="px-4 py-3">
@@ -530,7 +1059,9 @@ export default function GhnCodReconciliationPage() {
                         </span>
                       </td>
 
-                      <td className="px-4 py-3 text-right">{money(row.codAmount)}</td>
+                      <td className="px-4 py-3 text-right">
+                        {money(row.codAmount)}
+                      </td>
                       <td className="px-4 py-3 text-right">{money(fee)}</td>
                       <td className="px-4 py-3 text-right">
                         {money(row.totalReconcileAmount)}
@@ -540,19 +1071,42 @@ export default function GhnCodReconciliationPage() {
                         <StatusBadge
                           isMatchedByPartial={isMatchedByPartial}
                           hasIssue={hasIssue}
+                          isConfirmed={isRowConfirmed(row)}
+                          isPaid={isRowPaid(row)}
                         />
                       </td>
 
                       <td className="px-4 py-3">
-                        {row.issueTypes.length
-                          ? row.issueTypes.map((x) => ISSUE_LABELS[x] || x).join(", ")
-                          : "Khớp"}
+                        <div className="space-y-1">
+                          <div>
+                            {getBusinessIssues(row).length
+                              ? getBusinessIssues(row)
+                                  .map((x) => ISSUE_LABELS[x] || x)
+                                  .join(", ")
+                              : "Khớp"}
+                          </div>
+                          {getActionIssues(row).length ? (
+                            <div className="flex flex-wrap gap-1">
+                              {getActionIssues(row).map((x) => (
+                                <span
+                                  key={x}
+                                  className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
+                                >
+                                  {ACTION_LABELS[x] || x}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3">
-                        {row.issueTypes.includes("PARTIAL_RETURN") || row.hasPrInFile ? (
+                        {getBusinessIssues(row).includes("PARTIAL_RETURN") ||
+                        row.hasPrInFile ? (
                           <div className="space-y-1">
-                            <div className="font-medium text-amber-700">Có mã _PR</div>
+                            <div className="font-medium text-amber-700">
+                              Có mã _PR
+                            </div>
 
                             {row.partialDeliveryRecordId ? (
                               <div className="text-xs text-neutral-600">
@@ -566,7 +1120,8 @@ export default function GhnCodReconciliationPage() {
 
                             {row.partialDeliveryAdjustedCod ? (
                               <div className="text-xs text-neutral-600">
-                                Tiền phiếu: {money(row.partialDeliveryAdjustedCod)}
+                                Tiền phiếu:{" "}
+                                {money(row.partialDeliveryAdjustedCod)}
                               </div>
                             ) : null}
 
@@ -584,12 +1139,25 @@ export default function GhnCodReconciliationPage() {
                           "-"
                         )}
                       </td>
+
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => deleteRowsClient([rowKey])}
+                          className="rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+                          title="Xóa dòng đối soát này"
+                        >
+                          × Xóa
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-neutral-500">
+                  <td
+                    colSpan={14}
+                    className="px-4 py-8 text-center text-neutral-500"
+                  >
                     Chưa có dữ liệu. Upload file GHN để chạy đối soát.
                   </td>
                 </tr>
@@ -605,10 +1173,30 @@ export default function GhnCodReconciliationPage() {
 function StatusBadge({
   isMatchedByPartial,
   hasIssue,
+  isConfirmed,
+  isPaid,
 }: {
   isMatchedByPartial: boolean;
   hasIssue: boolean;
+  isConfirmed: boolean;
+  isPaid: boolean;
 }) {
+  if (isPaid) {
+    return (
+      <span className="rounded-full bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">
+        Đã thanh toán
+      </span>
+    );
+  }
+
+  if (isConfirmed) {
+    return (
+      <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+        Đã xác nhận
+      </span>
+    );
+  }
+
   if (isMatchedByPartial && !hasIssue) {
     return (
       <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
@@ -630,6 +1218,84 @@ function StatusBadge({
       Khớp
     </span>
   );
+}
+
+function getRowKey(row: Row) {
+  return (
+    row.reconciliationRowId ||
+    `${row.rowNumber}-${row.ghnOrderCode || row.customerOrderCode || "row"}`
+  );
+}
+
+function getBusinessIssues(row: Row) {
+  return (row.issueTypes || []).filter((x) => !ACTION_ISSUES.has(x));
+}
+
+function getActionIssues(row: Row) {
+  const legacy = (row.issueTypes || []).filter((x) => ACTION_ISSUES.has(x));
+  const status = String(row.actionStatus || "").toUpperCase();
+  const next = [...legacy];
+
+  if (row.savedAt || ["SAVED", "CONFIRMED", "PAID"].includes(status)) next.push("BATCH_SAVED");
+  if (row.confirmedAt || ["CONFIRMED", "PAID"].includes(status)) next.push("USER_CONFIRMED");
+  if (row.paidAt || status === "PAID") next.push("COD_RECONCILIATION_PAID");
+
+  return Array.from(new Set(next));
+}
+
+function getBlockingIssues(row: Row) {
+  return getBusinessIssues(row).filter(
+    (x) => x !== "MATCHED_BY_PARTIAL_DELIVERY",
+  );
+}
+
+function isRowConfirmed(row: Row) {
+  return Boolean(row.confirmedAt) || ["CONFIRMED", "PAID"].includes(String(row.actionStatus || "").toUpperCase()) || getActionIssues(row).includes("USER_CONFIRMED");
+}
+
+function isRowPaid(row: Row) {
+  return Boolean(row.paidAt) || String(row.actionStatus || "").toUpperCase() === "PAID" || getActionIssues(row).includes("COD_RECONCILIATION_PAID");
+}
+
+function buildClientSummary(rows: Row[]) {
+  const totalRows = rows.length;
+  const matchedRows = rows.filter((row) => {
+    return getBlockingIssues(row).length === 0;
+  }).length;
+  const mismatchRows = totalRows - matchedRows;
+
+  return {
+    totalRows,
+    matchedRows,
+    mismatchRows,
+    totalCodAmount: rows.reduce(
+      (sum, row) => sum + Number(row.codAmount || 0),
+      0,
+    ),
+    totalFeeAmount: rows.reduce(
+      (sum, row) => sum + Number(row.serviceFee || 0),
+      0,
+    ),
+    totalNetAmount: rows.reduce(
+      (sum, row) => sum + Number(row.totalReconcileAmount || 0),
+      0,
+    ),
+    notFoundOrder: rows.filter((row) =>
+      getBusinessIssues(row).includes("NOT_FOUND_INTERNAL_ORDER"),
+    ).length,
+    codMismatch: rows.filter((row) =>
+      getBusinessIssues(row).includes("COD_MISMATCH"),
+    ).length,
+    feeMismatch: rows.filter((row) =>
+      getBusinessIssues(row).includes("FEE_MISMATCH"),
+    ).length,
+    partialReturn: rows.filter((row) =>
+      getBusinessIssues(row).includes("PARTIAL_RETURN"),
+    ).length,
+    partialReturnNotReceived: rows.filter((row) =>
+      getBusinessIssues(row).includes("PARTIAL_RETURN_NOT_RECEIVED"),
+    ).length,
+  };
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -655,7 +1321,9 @@ function Stat({
   return (
     <div className="rounded-[24px] border bg-white p-5 shadow-sm">
       <div className="text-sm text-neutral-500">{title}</div>
-      <div className={`mt-3 text-2xl font-semibold ${danger ? "text-red-600" : "text-neutral-950"}`}>
+      <div
+        className={`mt-3 text-2xl font-semibold ${danger ? "text-red-600" : "text-neutral-950"}`}
+      >
         {value}
       </div>
       <div className="mt-1 text-sm text-neutral-500">{sub}</div>
@@ -705,7 +1373,9 @@ function Filter({
     <button
       onClick={onClick}
       className={`rounded-xl px-4 py-2 text-sm ${
-        active ? "bg-neutral-950 text-white" : "border bg-white text-neutral-700"
+        active
+          ? "bg-neutral-950 text-white"
+          : "border bg-white text-neutral-700"
       }`}
     >
       {children}
@@ -742,7 +1412,11 @@ async function readGhnExcelPreview(file: File): Promise<ExcelPreview> {
 
   const statusCount = new Map<string, number>();
 
-  for (let index = headerInfo.headerRowIndex + 1; index < matrix.length; index += 1) {
+  for (
+    let index = headerInfo.headerRowIndex + 1;
+    index < matrix.length;
+    index += 1
+  ) {
     const row = matrix[index] || [];
     const status = cleanCell(row[headerInfo.statusColumnIndex]);
 
@@ -773,7 +1447,7 @@ async function readGhnExcelPreview(file: File): Promise<ExcelPreview> {
 async function buildFilteredGhnExcelFile(
   file: File,
   statusFilter: string,
-  preview: ExcelPreview | null
+  preview: ExcelPreview | null,
 ): Promise<File> {
   if (statusFilter === ALL_GHN_STATUSES || !preview) {
     return file;
@@ -823,11 +1497,17 @@ async function buildFilteredGhnExcelFile(
 }
 
 function findGhnStatusHeader(matrix: unknown[][]) {
-  let bestMatch: { headerRowIndex: number; statusColumnIndex: number; score: number } | null = null;
+  let bestMatch: {
+    headerRowIndex: number;
+    statusColumnIndex: number;
+    score: number;
+  } | null = null;
 
   matrix.forEach((row, rowIndex) => {
     const cells = row.map((cell) => normalizeText(cell));
-    const statusColumnIndex = cells.findIndex((cell) => isLikelyGhnStatusHeader(cell));
+    const statusColumnIndex = cells.findIndex((cell) =>
+      isLikelyGhnStatusHeader(cell),
+    );
 
     if (statusColumnIndex < 0) return;
 
@@ -886,7 +1566,9 @@ function isDeliveredGhnStatus(value: unknown) {
 }
 
 function cleanCell(value: unknown) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeText(value: unknown) {
@@ -900,13 +1582,16 @@ function getFilteredFileName(fileName: string, statusFilter: string) {
   const dotIndex = fileName.lastIndexOf(".");
   const baseName = dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName;
 
-  const suffix = statusFilter === DELIVERED_ONLY ? "giao-thanh-cong" : slugify(statusFilter);
+  const suffix =
+    statusFilter === DELIVERED_ONLY ? "giao-thanh-cong" : slugify(statusFilter);
 
   return `${baseName}-filtered-${suffix}.xlsx`;
 }
 
 function slugify(value: string) {
-  return normalizeText(value)
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "ghn-status";
+  return (
+    normalizeText(value)
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "ghn-status"
+  );
 }

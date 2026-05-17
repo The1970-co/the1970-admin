@@ -108,6 +108,20 @@ export default function PayrollPeriodDetailPageClient({ periodId }: { periodId: 
     if (!editLine) return;
     await run("edit-line", () => updatePayrollLine(editLine.id, {
       workingDays: n(editLine.workingDays),
+      normalHours: n(editLine.normalHours),
+      overtimeHours: n(editLine.overtimeHours),
+      overtimeRate: n(editLine.overtimeRate || 1),
+      holidayHours: n(editLine.holidayHours),
+      holidayRate: n(editLine.holidayRate || 2),
+      hourlyRate: n(editLine.hourlyRate),
+      paidLeaveDays: n(editLine.paidLeaveDays),
+      paidLeaveHoursPerDay: n(editLine.paidLeaveHoursPerDay),
+      mealAllowanceAmount: n(editLine.mealAllowanceAmount),
+      insuranceDeduction: n(editLine.insuranceDeduction),
+      taggedProductQty: n(editLine.taggedProductQty),
+      taggedProductRate: n(editLine.taggedProductRate),
+      ghnCodOrderCount: n(editLine.ghnCodOrderCount),
+      ghnCodBonusPerOrder: n(editLine.ghnCodBonusPerOrder),
       bonus: n(editLine.bonus),
       allowance: n(editLine.allowance),
       advance: n(editLine.advance),
@@ -167,6 +181,8 @@ export default function PayrollPeriodDetailPageClient({ periodId }: { periodId: 
                 <th className="px-4 py-3">Chi nhánh</th>
                 <th className="px-4 py-3 text-right">Công</th>
                 <th className="px-4 py-3 text-right">Lương cứng</th>
+                <th className="px-4 py-3 text-right">Giờ QĐ</th>
+                <th className="px-4 py-3 text-right">Lương giờ</th>
                 <th className="px-4 py-3 text-right">Đơn</th>
                 <th className="px-4 py-3 text-right">SP</th>
                 <th className="px-4 py-3 text-right">Hoa hồng</th>
@@ -187,11 +203,13 @@ export default function PayrollPeriodDetailPageClient({ periodId }: { periodId: 
                   <td className="px-4 py-4 text-neutral-600">{line.branchName || line.branchId || "—"}</td>
                   <td className="px-4 py-4 text-right">{num(line.workingDays)}</td>
                   <td className="px-4 py-4 text-right">{money(line.proratedSalary)}</td>
+                  <td className="px-4 py-4 text-right">{num(line.convertedWorkingHours)}</td>
+                  <td className="px-4 py-4 text-right">{money(line.hourlyAmount)}</td>
                   <td className="px-4 py-4 text-right">{num(line.successOrderCount)}</td>
                   <td className="px-4 py-4 text-right">{num(line.successItemQty)}</td>
                   <td className="px-4 py-4 text-right font-medium text-neutral-900">{money(line.commissionTotal)}</td>
                   <td className="px-4 py-4 text-right">{money(n(line.bonus) + n(line.allowance))}</td>
-                  <td className="px-4 py-4 text-right">{money(n(line.advance) + n(line.deduction))}</td>
+                  <td className="px-4 py-4 text-right">{money(n(line.advance) + n(line.deduction) + n(line.insuranceDeduction))}</td>
                   <td className="px-4 py-4 text-right font-semibold text-neutral-950">{money(line.netPay)}</td>
                   <td className="px-4 py-4"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(line.status)}`}>{line.status || "DRAFT"}</span></td>
                   <td className="px-4 py-4">
@@ -204,7 +222,7 @@ export default function PayrollPeriodDetailPageClient({ periodId }: { periodId: 
                   </td>
                 </tr>
               ))}
-              {!lines.length ? <tr><td colSpan={12} className="px-4 py-12 text-center text-neutral-500">Chưa có dòng lương. Bấm “Tính lại” sau khi cấu hình lương nhân viên.</td></tr> : null}
+              {!lines.length ? <tr><td colSpan={14} className="px-4 py-12 text-center text-neutral-500">Chưa có dòng lương. Bấm “Tính lại” sau khi cấu hình lương nhân viên.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -215,9 +233,43 @@ export default function PayrollPeriodDetailPageClient({ periodId }: { periodId: 
 
       {editLine ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between"><div><p className="text-xs uppercase tracking-[0.24em] text-neutral-400">Sửa dòng lương</p><h3 className="mt-2 text-xl font-semibold">{editLine.staffName}</h3></div><button onClick={() => setEditLine(null)} className="rounded-full border px-3 py-1 text-sm">Đóng</button></div>
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {(["workingDays","bonus","allowance","advance","deduction"] as const).map((key) => <label key={key}><span className="text-sm font-medium text-neutral-700">{key}</span><input value={String((editLine as any)[key] || 0)} onChange={(e) => setEditLine((s) => s ? ({ ...s, [key]: e.target.value }) : s)} className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm" /></label>)}
-          <label className="md:col-span-2"><span className="text-sm font-medium text-neutral-700">Ghi chú</span><textarea value={editLine.note || ""} onChange={(e) => setEditLine((s) => s ? ({ ...s, note: e.target.value }) : s)} className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm" /></label>
+        <div className="mt-5 max-h-[72vh] overflow-y-auto pr-1">
+          <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
+            <div className="font-semibold text-neutral-950">Giờ công / lễ / tăng ca</div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {([
+                ["workingDays", "Công"],
+                ["normalHours", "Giờ thường"],
+                ["overtimeHours", "CT1 tăng ca"],
+                ["overtimeRate", "Hệ số CT1"],
+                ["holidayHours", "CT2 ngày lễ"],
+                ["holidayRate", "Hệ số CT2"],
+                ["hourlyRate", "Lương 1 giờ"],
+                ["paidLeaveDays", "Ngày nghỉ có lương"],
+                ["paidLeaveHoursPerDay", "Giờ / ngày nghỉ"],
+              ] as const).map(([key, label]) => <label key={key}><span className="text-sm font-medium text-neutral-700">{label}</span><input value={String((editLine as any)[key] || 0)} onChange={(e) => setEditLine((s) => s ? ({ ...s, [key]: e.target.value }) : s)} className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></label>)}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
+            <div className="font-semibold text-neutral-950">Sản phẩm gắn tên / phụ cấp / trừ</div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {([
+                ["taggedProductQty", "SP gắn tên"],
+                ["taggedProductRate", "Tiền / SP gắn"],
+                ["ghnCodOrderCount", "Đơn COD GHN"],
+                ["ghnCodBonusPerOrder", "Thưởng / đơn GHN"],
+                ["mealAllowanceAmount", "Ăn trưa"],
+                ["insuranceDeduction", "Bảo hiểm trừ"],
+                ["bonus", "Thưởng"],
+                ["allowance", "Phụ cấp"],
+                ["advance", "Tạm ứng"],
+                ["deduction", "Phạt / khấu trừ"],
+              ] as const).map(([key, label]) => <label key={key}><span className="text-sm font-medium text-neutral-700">{label}</span><input value={String((editLine as any)[key] || 0)} onChange={(e) => setEditLine((s) => s ? ({ ...s, [key]: e.target.value }) : s)} className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></label>)}
+            </div>
+          </div>
+
+          <label className="mt-4 block"><span className="text-sm font-medium text-neutral-700">Ghi chú</span><textarea value={editLine.note || ""} onChange={(e) => setEditLine((s) => s ? ({ ...s, note: e.target.value }) : s)} className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm" /></label>
         </div>
         <div className="mt-6 flex justify-end gap-3"><button onClick={() => setEditLine(null)} className="rounded-2xl border px-4 py-2.5 text-sm">Hủy</button><button onClick={() => void saveLineEdit()} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Lưu</button></div>
       </div></div> : null}
