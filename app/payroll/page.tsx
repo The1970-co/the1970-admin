@@ -1,11 +1,10 @@
 import AdminShell from "@/components/admin/AdminShell";
-import PayrollPeriodDetailPageClient from "@/components/admin/payroll/PayrollPeriodDetailPageClient";
+import PayrollPageClient from "@/components/admin/payroll/PayrollPageClient";
 
-export default async function PayrollPeriodDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default function PayrollPage() {
   return (
-    <AdminShell title="Chi tiết kỳ lương">
-      <PayrollPeriodDetailPageClient periodId={id} />
+    <AdminShell title="Sổ lương">
+      <PayrollPageClient />
     </AdminShell>
   );
 }

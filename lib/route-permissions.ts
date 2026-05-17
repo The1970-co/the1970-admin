@@ -21,8 +21,8 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/finance/daily": PERMISSIONS.MENU_FINANCE,
   "/finance/cash-receipts": PERMISSIONS.MENU_CASH_VOUCHER,
   "/finance/cash-payments": PERMISSIONS.MENU_CASH_VOUCHER,
-  "/finance/ghn-reconciliation": PERMISSIONS.MENU_SHIPPING_RECONCILE,
-  "/finance/local-delivery": PERMISSIONS.MENU_SHIPPING_RECONCILE,
+  "/finance/ghn-reconciliation": PERMISSIONS.MENU_SHIPPING_RECONCILE || PERMISSIONS.MENU_FINANCE_GHN_RECONCILIATION,
+  "/finance/local-delivery": PERMISSIONS.MENU_SHIPPING_RECONCILE || PERMISSIONS.MENU_FINANCE,
   "/finance/revenue": PERMISSIONS.MENU_REPORTS,
   "/finance/supplier-payments": PERMISSIONS.MENU_SUPPLIER_PAYMENTS,
   "/payroll": PERMISSIONS.MENU_PAYROLL,
@@ -41,10 +41,7 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
 };
 
 export function getRequiredPermissionForPath(pathname: string) {
-  const entries = Object.entries(ROUTE_PERMISSION_MAP).sort(
-    ([a], [b]) => b.length - a.length,
-  );
-
+  const entries = Object.entries(ROUTE_PERMISSION_MAP).sort(([a], [b]) => b.length - a.length);
   const found = entries.find(([path]) => pathname === path || pathname.startsWith(`${path}/`));
   return found?.[1] || null;
 }

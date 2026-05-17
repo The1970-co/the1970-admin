@@ -15,7 +15,6 @@ type MenuItem = {
   label: string;
   permission: string;
   children?: MenuItem[];
-  adminOnly?: boolean;
 };
 
 const MENU: MenuItem[] = [
@@ -69,10 +68,10 @@ const MENU: MenuItem[] = [
   {
     label: "Nhân sự",
     permission: PERMISSIONS.MENU_PAYROLL,
-    adminOnly: true,
     children: [
-      { href: "/payroll", label: "Tính lương", permission: PERMISSIONS.MENU_PAYROLL, adminOnly: true },
-      { href: "/payroll/config", label: "Cấu hình lương", permission: PERMISSIONS.MENU_PAYROLL_CONFIG, adminOnly: true },
+      { href: "/payroll", label: "Sổ lương", permission: PERMISSIONS.MENU_PAYROLL },
+      { href: "/payroll/config", label: "Cấu hình lương", permission: PERMISSIONS.PAYROLL_CONFIG },
+      { href: "/payroll/settings", label: "Cài đặt tự động", permission: PERMISSIONS.PAYROLL_CONFIG },
     ],
   },
   {
@@ -140,16 +139,11 @@ function getHeaderStaffName(user: any) {
   return branchCode ? `${name} - ${branchCode}` : name;
 }
 
-function filterMenu(
-  items: MenuItem[],
-  can: (permission?: string | null) => boolean,
-  isAdminUser = false,
-): MenuItem[] {
+function filterMenu(items: MenuItem[], can: (permission?: string | null) => boolean): MenuItem[] {
   return items
     .map((item) => {
-      if (item.adminOnly && !isAdminUser) return null;
       if (item.children?.length) {
-        const children = filterMenu(item.children, can, isAdminUser);
+        const children = filterMenu(item.children, can);
         if (!children.length) return null;
         return { ...item, children };
       }
@@ -166,6 +160,18 @@ function getFirstHref(items: MenuItem[]): string {
     if (child) return child;
   }
   return "";
+}
+
+function isMenuActive(pathname: string, href?: string) {
+  if (!href) return false;
+
+  // /payroll là sổ lương và chi tiết kỳ lương thật.
+  // Không để /payroll active ké khi đang ở /payroll/config hoặc /payroll/settings.
+  if (href === "/payroll") {
+    return pathname === "/payroll" || /^\/payroll\/[^/]+$/.test(pathname);
+  }
+
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function SidebarContent({
@@ -188,13 +194,13 @@ function SidebarContent({
       <nav className="mt-8 space-y-3">
         {visibleMenu.map((item) => {
           if (item.children?.length) {
-            const parentActive = item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
+            const parentActive = item.children.some((child) => isMenuActive(pathname, child.href));
             return (
               <div key={item.label} className={`rounded-[26px] border px-3 py-3 transition ${parentActive ? "border-neutral-300 bg-neutral-50" : "border-neutral-200 bg-white"}`}>
                 <div className="px-2 pb-2 text-sm font-semibold text-neutral-950">{item.label}</div>
                 <div className="space-y-1">
                   {item.children.map((child) => {
-                    const isActive = pathname === child.href || pathname.startsWith(`${child.href}/`);
+                    const isActive = isMenuActive(pathname, child.href);
                     return (
                       <Link key={child.href} href={child.href!} onClick={onNavigate} className={`block rounded-2xl px-3 py-2.5 text-sm transition ${isActive ? "bg-neutral-900 font-medium text-white shadow-sm" : "text-neutral-700 hover:bg-neutral-100"}`}>
                         {child.label}
@@ -206,7 +212,7 @@ function SidebarContent({
             );
           }
 
-          const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const isActive = isMenuActive(pathname, item.href);
           return (
             <Link key={item.href} href={item.href!} onClick={onNavigate} className={`block rounded-2xl px-4 py-3 text-sm transition ${isActive ? "bg-neutral-900 font-medium text-white shadow-sm" : "text-neutral-800 hover:bg-neutral-100"}`}>
               {item.label}
@@ -229,11 +235,9 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     setMounted(true);
   }, []);
 
-  const isAdminUser = useMemo(() => userRoles(user).some((role) => role === "owner" || role === "admin"), [user]);
-  const visibleMenu = useMemo(() => filterMenu(MENU, can, isAdminUser), [can, isAdminUser]);
+  const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
   const requiredPermission = useMemo(() => getRequiredPermissionForPath(pathname), [pathname]);
-  const isPayrollRoute = pathname === "/payroll" || pathname.startsWith("/payroll/");
-  const canAccessCurrentRoute = (!isPayrollRoute || isAdminUser) && (!requiredPermission || can(requiredPermission));
+  const canAccessCurrentRoute = !requiredPermission || can(requiredPermission);
 
   useEffect(() => {
     if (!checked || loading || !user || canAccessCurrentRoute) return;

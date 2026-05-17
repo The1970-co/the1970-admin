@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { getPayrollSettings, updatePayrollSettings } from "@/lib/payroll-api";
@@ -63,6 +64,7 @@ export default function PayrollSettingsPageClient() {
   return (
     <div className="space-y-6">
       <div className="rounded-[30px] border border-neutral-900 bg-neutral-950 p-6 text-white shadow-sm">
+        <Link href="/payroll" className="mb-4 inline-flex rounded-full border border-white/15 px-3 py-1.5 text-xs font-medium text-white/80 hover:bg-white/10">← Quay lại sổ lương</Link>
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-neutral-400">Payroll Automation</p>
         <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
