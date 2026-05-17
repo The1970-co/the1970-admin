@@ -706,7 +706,8 @@ export default function FinanceDailyPageClient() {
     }
   };
 
-  const checkFinanceLogic = async () => {
+  const checkFinanceLogic = async (options?: { silent?: boolean }) => {
+    const silent = Boolean(options?.silent);
     setAuditLoading(true);
     setError("");
 
@@ -724,17 +725,11 @@ export default function FinanceDailyPageClient() {
 
       setAuditResult(result);
 
-      if (result?.ok) {
-        showToast(
-          "Đã kiểm tra logic khớp",
-          `Core đã đối chiếu ${result.summary?.checkedRows || 0} dòng sổ, không phát hiện lệch công thức.`,
-          "success",
-        );
-      } else {
+      if (!result?.ok && !silent) {
         const count = result?.summary?.issueCount || result?.issues?.length || 0;
         showToast(
           "Phát hiện lệch logic tiền",
-          `Core phát hiện ${count} điểm cần kiểm tra. Xem cảnh báo trong Bảng chốt tiền từng ngày.`,
+          `Core phát hiện ${count} điểm cần kiểm tra. Xem trạng thái ở ô Kiểm tra logic trên đầu trang.`,
           "error",
         );
       }
@@ -742,7 +737,9 @@ export default function FinanceDailyPageClient() {
       setAuditResult(null);
       const message = err?.message || "Không kiểm tra được logic tiền từ core.";
       setError(message);
-      showToast("Không kiểm tra được logic tiền", message, "error");
+      if (!silent) {
+        showToast("Không kiểm tra được logic tiền", message, "error");
+      }
     } finally {
       setAuditLoading(false);
     }
@@ -1001,6 +998,11 @@ export default function FinanceDailyPageClient() {
 
   useEffect(() => {
     setAuditResult(null);
+    const timer = window.setTimeout(() => {
+      void checkFinanceLogic({ silent: true });
+    }, 450);
+
+    return () => window.clearTimeout(timer);
   }, [ledgerDateFrom, ledgerDateTo, branchId, paymentSourceId]);
 
   useEffect(() => {
@@ -2120,8 +2122,8 @@ export default function FinanceDailyPageClient() {
               </p>
               <p className="mt-1 text-[11px] font-semibold text-white/45">
                 {auditResult?.checkedAt
-                  ? dateText(auditResult.checkedAt)
-                  : "Core backend đối chiếu số liệu"}
+                  ? `${auditResult.summary?.checkedRows || 0} dòng · ${dateText(auditResult.checkedAt)}`
+                  : "Core backend đối chiếu toàn bộ bảng"}
               </p>
             </button>
           </div>
@@ -2526,14 +2528,7 @@ export default function FinanceDailyPageClient() {
               >
                 {ledgerLoading ? "Đang tải..." : "Tải lại sổ"}
               </button>
-              <button
-                type="button"
-                onClick={() => void checkFinanceLogic()}
-                disabled={auditLoading}
-                className="rounded-xl border border-neutral-950 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
-              >
-                {auditLoading ? "Đang kiểm tra..." : "Kiểm tra logic tiền"}
-              </button>
+
             </div>
           </div>
 
