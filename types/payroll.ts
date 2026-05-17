@@ -50,6 +50,49 @@ export type PayrollConfig = {
   applyPos?: boolean; applyOnline?: boolean; applyFacebook?: boolean; applyCod?: boolean; allowanceDefault?: number | string | null; effectiveFrom?: string; effectiveTo?: string | null; isActive?: boolean; note?: string | null;
 };
 
+
+export type PayrollBranchConfigTemplate = {
+  id: string;
+  branchId: string;
+  branchName?: string | null;
+  name?: string | null;
+  isActive?: boolean;
+  salaryType?: SalaryType;
+  baseSalary?: number | string | null;
+  dailyRate?: number | string | null;
+  standardWorkingDays?: number | string | null;
+  orderAttributionMode?: string | null;
+  commissionPerOrderEnabled?: boolean;
+  commissionPerOrderAmount?: number | string | null;
+  commissionPerItemEnabled?: boolean;
+  commissionPerItemAmount?: number | string | null;
+  commissionPercentEnabled?: boolean;
+  commissionRate?: number | string | null;
+  hourlyEnabled?: boolean;
+  hourlyRate?: number | string | null;
+  standardHoursPerDay?: number | string | null;
+  overtimeRate?: number | string | null;
+  holidayRate?: number | string | null;
+  paidLeaveEnabled?: boolean;
+  paidLeaveHoursPerDay?: number | string | null;
+  mealAllowanceEnabled?: boolean;
+  mealHoursPerUnit?: number | string | null;
+  mealAmountPerUnit?: number | string | null;
+  insuranceDeductionAmount?: number | string | null;
+  taggedProductEnabled?: boolean;
+  taggedProductRate?: number | string | null;
+  ghnCodBonusEnabled?: boolean;
+  ghnCodBonusPerOrder?: number | string | null;
+  applyPos?: boolean;
+  applyOnline?: boolean;
+  applyFacebook?: boolean;
+  applyCod?: boolean;
+  allowanceDefault?: number | string | null;
+  note?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type AttendancePreviewRow = {
   attendanceCode: string; staffName: string; branchName?: string | null; normalHours?: number; overtimeHours?: number; holidayHours?: number; overtime3Hours?: number; totalWorkHours?: number;
   lateCount?: number; lateMinutes?: number; earlyCount?: number; earlyMinutes?: number; matched?: boolean; matchedBy?: string | null; staffId?: string | null; staffCode?: string | null; systemStaffName?: string | null; systemBranchId?: string | null; systemBranchName?: string | null;

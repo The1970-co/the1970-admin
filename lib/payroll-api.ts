@@ -1,5 +1,5 @@
 import { apiFetch, apiJson } from "@/lib/api";
-import type { AttendancePreviewRow, PayrollConfig, PayrollPeriod, PayrollSettings } from "@/types/payroll";
+import type { AttendancePreviewRow, PayrollBranchConfigTemplate, PayrollConfig, PayrollPeriod, PayrollSettings } from "@/types/payroll";
 
 function qs(params: Record<string, any>) {
   const search = new URLSearchParams();
@@ -27,6 +27,11 @@ export function updatePayrollLine(id: string, body: any) { return apiJson(`/payr
 export function addPayrollAdjustment(id: string, body: any) { return apiJson(`/payroll/lines/${id}/adjustments`, { method: "POST", body: JSON.stringify(body) }); }
 export function markPayrollLinePaid(id: string, body: any = {}) { return apiJson(`/payroll/lines/${id}/mark-paid`, { method: "POST", body: JSON.stringify(body) }); }
 export function listPayrollConfigs(params: Record<string, any> = {}) { return apiJson<PayrollConfig[]>(`/payroll/configs${qs(params)}`); }
+
+export function listPayrollBranchTemplates(params: Record<string, any> = {}) { return apiJson<PayrollBranchConfigTemplate[]>(`/payroll/branch-config-templates${qs(params)}`); }
+export function createPayrollBranchTemplate(body: any) { return apiJson<PayrollBranchConfigTemplate>("/payroll/branch-config-templates", { method: "POST", body: JSON.stringify(body) }); }
+export function updatePayrollBranchTemplate(id: string, body: any) { return apiJson<PayrollBranchConfigTemplate>(`/payroll/branch-config-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) }); }
+export function applyPayrollBranchTemplate(body: any) { return apiJson<any>("/payroll/branch-config-templates/apply", { method: "POST", body: JSON.stringify(body) }); }
 export function createPayrollConfig(body: any) { return apiJson<PayrollConfig>("/payroll/configs", { method: "POST", body: JSON.stringify(body) }); }
 export function updatePayrollConfig(id: string, body: any) { return apiJson<PayrollConfig>(`/payroll/configs/${id}`, { method: "PATCH", body: JSON.stringify(body) }); }
 

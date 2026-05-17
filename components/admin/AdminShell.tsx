@@ -64,14 +64,13 @@ const MENU: MenuItem[] = [
       { href: "/finance/supplier-payments", label: "Thanh toán nhà cung cấp", permission: PERMISSIONS.MENU_SUPPLIER_PAYMENTS },
     ],
   },
-
   {
     label: "Nhân sự",
-    permission: PERMISSIONS.MENU_PAYROLL,
+    permission: "menu.payroll",
     children: [
-      { href: "/payroll", label: "Sổ lương", permission: PERMISSIONS.MENU_PAYROLL },
-      { href: "/payroll/config", label: "Cấu hình lương", permission: PERMISSIONS.PAYROLL_CONFIG },
-      { href: "/payroll/settings", label: "Cài đặt tự động", permission: PERMISSIONS.PAYROLL_CONFIG },
+      { href: "/payroll", label: "Sổ lương", permission: "menu.payroll" },
+      { href: "/payroll/config", label: "Cấu hình lương", permission: "payroll.config" },
+      { href: "/payroll/settings", label: "Cài đặt tự động", permission: "payroll.config" },
     ],
   },
   {
@@ -165,10 +164,16 @@ function getFirstHref(items: MenuItem[]): string {
 function isMenuActive(pathname: string, href?: string) {
   if (!href) return false;
 
-  // /payroll là sổ lương và chi tiết kỳ lương thật.
-  // Không để /payroll active ké khi đang ở /payroll/config hoặc /payroll/settings.
+  // Payroll special-case:
+  // /payroll is the list/detail area. It should NOT stay active when user is in
+  // /payroll/config or /payroll/settings.
   if (href === "/payroll") {
-    return pathname === "/payroll" || /^\/payroll\/[^/]+$/.test(pathname);
+    return (
+      pathname === "/payroll" ||
+      (pathname.startsWith("/payroll/") &&
+        !pathname.startsWith("/payroll/config") &&
+        !pathname.startsWith("/payroll/settings"))
+    );
   }
 
   return pathname === href || pathname.startsWith(`${href}/`);
