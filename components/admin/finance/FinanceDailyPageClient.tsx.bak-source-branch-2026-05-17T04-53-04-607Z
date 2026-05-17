@@ -220,73 +220,27 @@ function branchCodeFromName(value: unknown) {
   return "";
 }
 
-function sourceAliasHit(text: string, alias: string) {
-  const safe = alias.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[\\s\\-_/])${safe}($|[\\s\\-_/])`, "i").test(text);
-}
-
-function explicitSourceBranchCode(source: any) {
-  const text = normalizeText(
-    [
-      source?.branchName,
-      source?.branch?.name,
-      source?.branchCode,
-      source?.branch?.code,
-      source?.name,
-      source?.code,
-      source?.paymentSourceName,
-      source?.paymentSourceCode,
-    ]
-      .filter(Boolean)
-      .join(" "),
-  ).replace(/[_]+/g, " ").replace(/\s+/g, " ");
-
-  if (sourceAliasHit(text, "th") || text.includes("thai ha")) return "TH";
-  if (sourceAliasHit(text, "qo") || text.includes("quoc oai")) return "QO";
-  if (sourceAliasHit(text, "cl") || text.includes("chua lang")) return "CL";
-  if (sourceAliasHit(text, "xd") || text.includes("xa dan")) return "XD";
-
-  return "";
-}
-
 function sourceBelongsToBranch(source: any, branchName: string) {
   const canonical = canonicalBranchName(branchName);
-  const expectedCode = branchCodeFromName(canonical);
-
-  const sourceBranchId = String(source?.branchId || source?.branch?.id || "").trim();
-  if (sourceBranchId) {
-    const sourceBranchName = canonicalBranchName(
-      source?.branchName || source?.branch?.name || source?.branchCode || source?.branch?.code || sourceBranchId,
-    );
-    const sourceCode = explicitSourceBranchCode(source);
-    return sourceBranchName === canonical || (!!expectedCode && sourceCode === expectedCode);
-  }
-
-  const explicitCode = explicitSourceBranchCode(source);
-  if (explicitCode) return explicitCode === expectedCode;
-
-  const text = normalizeText(
-    [
-      source?.branchName,
-      source?.branch?.name,
-      source?.branchCode,
-      source?.branch?.code,
-      source?.name,
-      source?.code,
-      source?.paymentSourceName,
-      source?.paymentSourceCode,
-    ]
-      .filter(Boolean)
-      .join(" "),
-  ).replace(/[_]+/g, " ").replace(/\s+/g, " ");
+  const code = branchCodeFromName(canonical);
+  const text = normalizeText([
+    source?.branchName,
+    source?.branch?.name,
+    source?.branchCode,
+    source?.branch?.code,
+    source?.branchId,
+    source?.name,
+    source?.code,
+    source?.paymentSourceName,
+    source?.paymentSourceCode,
+  ].filter(Boolean).join(" "));
 
   if (!text) return false;
   if (normalizeText(canonical) && text.includes(normalizeText(canonical))) return true;
-
-  // Alias phải match đúng token. Không dùng includes(" th") vì "QUẸT THẺ CL"
-  // normalize thành "quet the cl" sẽ chứa " th" trong chữ "the", làm lẫn CL/XD vào THÁI HÀ.
-  if (expectedCode) return sourceAliasHit(text, normalizeText(expectedCode));
-
+  if (code) {
+    const lowerCode = normalizeText(code);
+    if (text.includes(`-${lowerCode}`) || text.includes(` ${lowerCode}`) || text.endsWith(lowerCode)) return true;
+  }
   return false;
 }
 
@@ -1712,8 +1666,7 @@ export default function FinanceDailyPageClient() {
       const date = detailRows[0]?.date || expandedLedgerDate || dateTo;
 
       const sourcesForBranch = paymentSourcesByBranch.get(branchName) || [];
-      const validSourcesForBranch = sourcesForBranch.filter((source) => sourceBelongsToBranch(source, branchName));
-      validSourcesForBranch.forEach((source) => {
+      sourcesForBranch.forEach((source) => {
         const sourceType = sourceKind({
           sourceType: source?.type || source?.sourceType,
           sourceName: source?.name,

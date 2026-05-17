@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   createPayrollConfig,
   listBranchOptions,
@@ -29,6 +30,7 @@ const emptyForm = {
   id: "",
   staffId: "",
   branchId: "",
+  attendanceCode: "",
   salaryType: "MONTHLY",
   baseSalary: "0",
   dailyRate: "0",
@@ -109,6 +111,7 @@ export default function PayrollConfigPageClient() {
       id: config.id,
       staffId: config.staffId || "",
       branchId: config.branchId || "",
+      attendanceCode: config.attendanceCode || "",
       salaryType: config.salaryType || "MONTHLY",
       baseSalary: String(config.baseSalary || 0),
       dailyRate: String(config.dailyRate || 0),
@@ -158,6 +161,7 @@ export default function PayrollConfigPageClient() {
         staffName: selectedStaff?.name || undefined,
         branchId: form.branchId || undefined,
         branchName: selectedBranch?.name || undefined,
+        attendanceCode: form.attendanceCode || undefined,
         salaryType: form.salaryType,
         baseSalary: parseMoney(form.baseSalary),
         dailyRate: parseMoney(form.dailyRate),
@@ -255,13 +259,13 @@ export default function PayrollConfigPageClient() {
 
           <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
             <div className="font-semibold text-neutral-950">Lương theo giờ / tăng ca / ngày lễ</div>
-            <p className="mt-1 text-xs text-neutral-500">Dùng để thay bảng Excel: giờ thường + CT1 + CT2 ngày lễ x hệ số.</p>
+            <p className="mt-1 text-xs text-neutral-500">Chỉ set mức mặc định. Số giờ thực tế từng tháng nhập ở chi tiết kỳ lương bằng nút “Nhập giờ/SP”.</p>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 text-sm"><input type="checkbox" checked={Boolean(form.hourlyEnabled)} onChange={(e) => setForm((s: any) => ({ ...s, hourlyEnabled: e.target.checked }))} /> Bật tính lương theo giờ</label>
-              <Field label="Lương 1 giờ"><input value={form.hourlyRate} onChange={(e) => setForm((s: any) => ({ ...s, hourlyRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
+              <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 text-sm"><input type="checkbox" checked={Boolean(form.hourlyEnabled)} onChange={(e) => setForm((s: any) => ({ ...s, hourlyEnabled: e.target.checked }))} /> Bật lương theo giờ</label>
+              <Field label="Giá 1 giờ"><input value={form.hourlyRate} onChange={(e) => setForm((s: any) => ({ ...s, hourlyRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
               <Field label="Giờ chuẩn / ngày"><input value={form.standardHoursPerDay} onChange={(e) => setForm((s: any) => ({ ...s, standardHoursPerDay: e.target.value, paidLeaveHoursPerDay: s.paidLeaveHoursPerDay || e.target.value, mealHoursPerUnit: s.mealHoursPerUnit || e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
               <Field label="Hệ số CT1 tăng ca"><input value={form.overtimeRate} onChange={(e) => setForm((s: any) => ({ ...s, overtimeRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
-              <Field label="Hệ số CT2 ngày lễ"><input value={form.holidayRate} onChange={(e) => setForm((s: any) => ({ ...s, holidayRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
+              <Field label="Hệ số CT2 ngày lễ (x2)"><input value={form.holidayRate} onChange={(e) => setForm((s: any) => ({ ...s, holidayRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
             </div>
           </div>
 
@@ -278,10 +282,11 @@ export default function PayrollConfigPageClient() {
           </div>
 
           <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
-            <div className="font-semibold text-neutral-950">Sản phẩm gắn tên / thưởng vận hành</div>
+            <div className="font-semibold text-neutral-950">Thưởng sản phẩm / thưởng vận hành</div>
+            <p className="mt-1 text-xs text-neutral-500">Set giá 1 SP theo từng nhân viên/chi nhánh. Số lượng SP thực tế nhập ở kỳ lương tháng.</p>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 text-sm"><input type="checkbox" checked={Boolean(form.taggedProductEnabled)} onChange={(e) => setForm((s: any) => ({ ...s, taggedProductEnabled: e.target.checked }))} /> SP gắn tên nhập tay</label>
-              <Field label="Tiền / SP gắn tên"><input value={form.taggedProductRate} onChange={(e) => setForm((s: any) => ({ ...s, taggedProductRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
+              <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 text-sm"><input type="checkbox" checked={Boolean(form.taggedProductEnabled)} onChange={(e) => setForm((s: any) => ({ ...s, taggedProductEnabled: e.target.checked }))} /> Bật thưởng theo số SP nhập tay</label>
+              <Field label="Giá 1 SP thưởng"><input value={form.taggedProductRate} onChange={(e) => setForm((s: any) => ({ ...s, taggedProductRate: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
               <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 text-sm"><input type="checkbox" checked={Boolean(form.ghnCodBonusEnabled)} onChange={(e) => setForm((s: any) => ({ ...s, ghnCodBonusEnabled: e.target.checked }))} /> Thưởng đơn COD GHN</label>
               <Field label="Tiền / đơn COD GHN"><input value={form.ghnCodBonusPerOrder} onChange={(e) => setForm((s: any) => ({ ...s, ghnCodBonusPerOrder: e.target.value }))} className="w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm" /></Field>
             </div>
@@ -345,7 +350,7 @@ export default function PayrollConfigPageClient() {
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {configs.map((config) => <tr key={config.id} className="hover:bg-neutral-50">
-                  <td className="px-4 py-4"><div className="font-semibold text-neutral-950">{config.staffName || config.staffId}</div><div className="mt-1 text-xs text-neutral-500">{config.staffCode || "—"}</div></td>
+                  <td className="px-4 py-4"><div className="font-semibold text-neutral-950">{config.staffName || config.staffId}</div><div className="mt-1 text-xs text-neutral-500">{config.staffCode || "—"} · MCC: {config.attendanceCode || "—"}</div></td>
                   <td className="px-4 py-4 text-neutral-600">{config.branchName || config.branchId || "Theo nhân viên"}</td>
                   <td className="px-4 py-4 text-xs text-neutral-600">{attributionLabel(config.orderAttributionMode)}</td>
                   <td className="px-4 py-4 text-right">{money(config.baseSalary)}</td>
@@ -373,7 +378,7 @@ function attributionLabel(mode?: string | null) {
   return "NV phụ trách / fallback người tạo";
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="block"><span className="mb-2 block text-sm font-medium text-neutral-700">{label}</span>{children}</label>;
 }
 function ToggleMoney({ label, checked, value, suffix, onCheck, onValue }: { label: string; checked: boolean; value: string; suffix: string; onCheck: (v: boolean) => void; onValue: (v: string) => void }) {
