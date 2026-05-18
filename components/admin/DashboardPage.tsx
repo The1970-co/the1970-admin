@@ -50,6 +50,8 @@ type ProductOrderReportItem = {
   orderCodes?: string[];
   customerNames?: string[];
   sources?: string[];
+  orderStatuses?: string[];
+  cancelledOrderCount?: number;
   orderDetails?: ProductReportOrderDetail[];
 };
 
@@ -469,6 +471,65 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeStatusText(value?: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[\s_-]+/g, " ")
+    .trim();
+}
+
+function isCancelledStatusValue(value?: unknown) {
+  const text = normalizeStatusText(value);
+  if (!text) return false;
+  return (
+    text === "cancelled" ||
+    text === "canceled" ||
+    text === "cancel" ||
+    text.includes("da huy") ||
+    text.includes("huy don") ||
+    text.includes("huy")
+  );
+}
+
+function isCancelledOrder(order: DashboardOrderRow) {
+  return (
+    isCancelledStatusValue(order.status) ||
+    isCancelledStatusValue(order.fulfillmentStatus) ||
+    isCancelledStatusValue(order.deliveryStatus) ||
+    isCancelledStatusValue(order.shippingStatus) ||
+    isCancelledStatusValue(order.shipmentStatus) ||
+    isCancelledStatusValue(order.shipment?.shippingStatus) ||
+    isCancelledStatusValue(order.shipment?.partnerStatus)
+  );
+}
+
+function orderStatusLabel(value?: unknown) {
+  const raw = String(value || "").trim();
+  const text = normalizeStatusText(raw);
+  if (!text) return "Chưa rõ";
+  if (isCancelledStatusValue(text)) return "Đã huỷ";
+  if (text.includes("completed") || text.includes("complete") || text.includes("hoan thanh")) return "Hoàn thành";
+  if (text.includes("delivered") || text.includes("giao thanh cong") || text.includes("da giao")) return "Đã giao";
+  if (text.includes("fulfilled") || text.includes("fulfill")) return "Đã xử lý";
+  if (text.includes("shipped") || text.includes("shipping") || text.includes("dang giao")) return "Đang giao";
+  if (text.includes("approved") || text.includes("duyet")) return "Đã duyệt";
+  if (text.includes("new") || text.includes("created") || text.includes("pending") || text.includes("moi")) return "Mới tạo";
+  if (text.includes("processing") || text.includes("packing") || text.includes("xu ly")) return "Đang xử lý";
+  return raw || "Chưa rõ";
+}
+
+function orderStatusBadgeTone(value?: unknown): Tone | "dark" | "muted" {
+  const text = normalizeStatusText(value);
+  if (isCancelledStatusValue(text)) return "critical";
+  if (text.includes("completed") || text.includes("delivered") || text.includes("hoan thanh") || text.includes("da giao")) return "safe";
+  if (text.includes("new") || text.includes("created") || text.includes("pending") || text.includes("moi")) return "muted";
+  return "warning";
+}
+
 function formatMoneyShort(value: unknown) {
   const amount = toNumber(value);
   if (!Number.isFinite(amount)) return "0";
@@ -566,6 +627,45 @@ function normalizeProductOrderReportRows(
           row.totalRevenue ??
           row.revenue,
       );
+      const rawDetails = Array.isArray(row.orderDetails)
+        ? (row.orderDetails as ProductReportOrderDetail[])
+        : [];
+      const activeDetails = rawDetails.filter(
+        (detail) => !isCancelledStatusValue(detail.status),
+      );
+      const cancelledOrderCount = rawDetails.length - activeDetails.length;
+      const detailOrderIds = new Set(
+        activeDetails
+          .map((detail) => detail.orderId || detail.orderCode)
+          .filter(Boolean),
+      );
+      const detailQuantity = activeDetails.reduce(
+        (sum, detail) => sum + toNumber(detail.quantity),
+        0,
+      );
+      const detailRevenue = activeDetails.reduce(
+        (sum, detail) => sum + toNumber(detail.revenue),
+        0,
+      );
+      const detailStatuses = Array.from(
+        new Set(
+          activeDetails
+            .map((detail) => orderStatusLabel(detail.status))
+            .filter(Boolean),
+        ),
+      );
+      const rowStatuses = Array.isArray(row.orderStatuses)
+        ? row.orderStatuses.map(orderStatusLabel)
+        : Array.isArray(row.statuses)
+          ? row.statuses.map(orderStatusLabel)
+          : [row.status, row.orderStatus, row.fulfillmentStatus]
+              .filter(Boolean)
+              .map(orderStatusLabel);
+
+      const activeOrderCount = detailOrderIds.size || orderCount;
+      const activeQuantity = activeDetails.length ? detailQuantity : quantity;
+      const activeRevenue = activeDetails.length ? detailRevenue : revenue;
+
       const productName = String(
         row.productName || row.parentProductName || name,
       );
@@ -589,16 +689,28 @@ function normalizeProductOrderReportRows(
           row.variantLabel ||
           row.branchName ||
           null,
-        orderCount,
-        quantity,
-        revenue,
-        avgOrderValue: orderCount ? Math.round(revenue / orderCount) : 0,
-        orderCodes: Array.isArray(row.orderCodes) ? row.orderCodes : [],
-        customerNames: Array.isArray(row.customerNames)
-          ? row.customerNames
-          : [],
-        sources: Array.isArray(row.sources) ? row.sources : [],
-        orderDetails: Array.isArray(row.orderDetails) ? row.orderDetails : [],
+        orderCount: activeOrderCount,
+        quantity: activeQuantity,
+        revenue: activeRevenue,
+        avgOrderValue: activeOrderCount ? Math.round(activeRevenue / activeOrderCount) : 0,
+        orderCodes: activeDetails.length
+          ? activeDetails.map((detail) => detail.orderCode).filter(Boolean)
+          : Array.isArray(row.orderCodes)
+            ? row.orderCodes
+            : [],
+        customerNames: activeDetails.length
+          ? activeDetails.map((detail) => detail.customerName).filter(Boolean)
+          : Array.isArray(row.customerNames)
+            ? row.customerNames
+            : [],
+        sources: activeDetails.length
+          ? activeDetails.map((detail) => detail.source).filter(Boolean)
+          : Array.isArray(row.sources)
+            ? row.sources
+            : [],
+        orderStatuses: detailStatuses.length ? detailStatuses : rowStatuses,
+        cancelledOrderCount,
+        orderDetails: activeDetails,
         shippedQty,
         unshippedQty,
         shippedOrderCount: toNumber(
@@ -645,6 +757,8 @@ function productReportFallbackFromTopProducts(
       orderCodes: [],
       customerNames: [],
       sources: [],
+      orderStatuses: [],
+      cancelledOrderCount: 0,
       orderDetails: [],
       shippedQty: fallbackQty,
       unshippedQty: 0,
@@ -933,8 +1047,10 @@ async function fetchOrdersForDashboardReport(params: {
 
   for (const path of candidates) {
     const payload = await dashboardFetchJson<any>(path);
-    const rows = normalizeOrdersPayload(payload).filter((order) =>
-      isOrderInDateRange(order, params.fromDate, params.toDate),
+    const rows = normalizeOrdersPayload(payload).filter(
+      (order) =>
+        isOrderInDateRange(order, params.fromDate, params.toDate) &&
+        !isCancelledOrder(order),
     );
     if (rows.length) return rows;
   }
@@ -1075,6 +1191,7 @@ function buildOrderBreakdownFromWarRoomPayload(
 function productReportFromOrders(
   orders: DashboardOrderRow[],
 ): ProductOrderReportItem[] {
+  const activeOrders = orders.filter((order) => !isCancelledOrder(order));
   const map = new Map<
     string,
     ProductOrderReportItem & {
@@ -1082,11 +1199,12 @@ function productReportFromOrders(
       orderCodeSet: Set<string>;
       customerSet: Set<string>;
       sourceSet: Set<string>;
+      orderStatusSet: Set<string>;
       orderDetails: ProductReportOrderDetail[];
     }
   >();
 
-  orders.forEach((order, orderIndex) => {
+  activeOrders.forEach((order, orderIndex) => {
     const orderId = String(
       order.id || order.code || order.orderCode || orderIndex,
     );
@@ -1159,11 +1277,14 @@ function productReportFromOrders(
           orderCodes: [],
           customerNames: [],
           sources: [],
+          orderStatuses: [],
+          cancelledOrderCount: 0,
           orderDetails: [],
           orderIds: new Set<string>(),
           orderCodeSet: new Set<string>(),
           customerSet: new Set<string>(),
           sourceSet: new Set<string>(),
+          orderStatusSet: new Set<string>(),
         });
       }
 
@@ -1173,6 +1294,9 @@ function productReportFromOrders(
       if (customerName && customerName !== "—")
         target.customerSet.add(customerName);
       if (source && source !== "—") target.sourceSet.add(source);
+      target.orderStatusSet.add(
+        orderStatusLabel(order.status || order.fulfillmentStatus || order.deliveryStatus),
+      );
       target.orderDetails.push({
         orderId,
         orderCode,
@@ -1206,11 +1330,13 @@ function productReportFromOrders(
       orderCodes: Array.from(item.orderCodeSet).slice(0, 12),
       customerNames: Array.from(item.customerSet).slice(0, 12),
       sources: Array.from(item.sourceSet).slice(0, 12),
+      orderStatuses: Array.from(item.orderStatusSet).slice(0, 8),
       orderDetails: item.orderDetails.slice(0, 200),
       orderIds: undefined,
       orderCodeSet: undefined,
       customerSet: undefined,
       sourceSet: undefined,
+      orderStatusSet: undefined,
     }))
     .sort(
       (a, b) =>
@@ -1816,6 +1942,7 @@ export default function DashboardPage() {
     source: false,
     customer: false,
     orderCode: false,
+    orderStatus: true,
   });
   const [productReportRows, setProductReportRows] = useState<
     ProductOrderReportItem[]
@@ -2869,10 +2996,10 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <h2 className="font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
-              Bảng P&L tạm tính theo ngày
+              Bảng lãi lỗ tạm tính theo ngày
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-neutral-600">
-              Tách rõ lãi gộp trước ads, lãi sau ads và lãi sau vận hành. Ads lấy theo ngày phát sinh từ Meta, còn doanh thu là doanh thu ghi nhận trong hệ thống.
+              Tách rõ doanh thu, giá vốn, lãi gộp, chi phí ads, chi phí vận hành và lãi sau vận hành theo từng ngày.
             </p>
           </div>
           <div className="flex flex-col gap-2 xl:items-end">
@@ -3099,7 +3226,7 @@ export default function DashboardPage() {
             </h2>
             <p className="mt-2 text-sm text-neutral-600">
               {productReportRows.length
-                ? `Gom theo sản phẩm/SKU đã phát sinh đơn trong ${productReportRangeText.toLowerCase()}. Mặc định đang xem hàng đã xuất kho để tính ads theo mẫu bán thật.`
+                ? `Gom theo sản phẩm/SKU đã phát sinh đơn trong ${productReportRangeText.toLowerCase()}. Báo cáo tự loại đơn đã huỷ; có thể bật cột trạng thái đơn để kiểm tra đơn mới tạo/hoàn thành.`
                 : `Luôn hiển thị báo cáo sản phẩm. Nếu core chưa có product-order-report, dashboard sẽ tự lấy danh sách đơn trong khoảng lọc để gom theo sản phẩm/SKU.`}
             </p>
           </div>
@@ -3170,6 +3297,7 @@ export default function DashboardPage() {
                 ["source", "Hiện nguồn đơn"],
                 ["customer", "Hiện tên khách"],
                 ["orderCode", "Hiện mã đơn"],
+                ["orderStatus", "Hiện trạng thái đơn hàng"],
                 ["mainProduct", "Hiện sản phẩm chính"],
                 ["variant", "Hiện phiên bản sản phẩm"],
                 ["sku", "Hiện SKU / phân loại"],
@@ -3244,6 +3372,9 @@ export default function DashboardPage() {
                 ) : null}
                 {productColumns.orderCode ? (
                   <th className="px-4 py-4 font-medium">Mã đơn</th>
+                ) : null}
+                {productColumns.orderStatus ? (
+                  <th className="px-4 py-4 font-medium">Trạng thái đơn</th>
                 ) : null}
                 <th className="px-4 py-4 font-medium">
                   <button
@@ -3400,6 +3531,27 @@ export default function DashboardPage() {
                           {shortListText(item.orderCodes)}
                         </td>
                       ) : null}
+                      {productColumns.orderStatus ? (
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {(item.orderStatuses && item.orderStatuses.length
+                              ? item.orderStatuses
+                              : ["Mới tạo"]
+                            )
+                              .slice(0, 3)
+                              .map((status) => (
+                                <Badge key={status} tone={orderStatusBadgeTone(status)}>
+                                  {status}
+                                </Badge>
+                              ))}
+                          </div>
+                          {item.cancelledOrderCount ? (
+                            <div className="mt-1 text-[11px] text-rose-500">
+                              Đã loại {formatQty(item.cancelledOrderCount)} đơn huỷ
+                            </div>
+                          ) : null}
+                        </td>
+                      ) : null}
                       <td className="px-4 py-4">
                         {formatQty(item.orderCount)}
                       </td>
@@ -3469,6 +3621,7 @@ export default function DashboardPage() {
                       (productColumns.source ? 1 : 0) +
                       (productColumns.customer ? 1 : 0) +
                       (productColumns.orderCode ? 1 : 0) +
+                      (productColumns.orderStatus ? 1 : 0) +
                       (productColumns.fulfillment ? 2 : 0) +
                       (productColumns.money ? 1 : 0) +
                       (productColumns.avg ? 1 : 0)
