@@ -148,6 +148,12 @@ type OrderChannelBreakdown = {
   codAmount: number;
   otherAmount: number;
   shippedSuccessAmount: number;
+  successPos: number;
+  successCod: number;
+  successOther: number;
+  successPosAmount: number;
+  successCodAmount: number;
+  successOtherAmount: number;
   orders: DashboardOrderRow[];
 };
 
@@ -947,6 +953,13 @@ function buildOrderBreakdown(
     (order) => !isPosOrder(order) && !isCodOrder(order),
   );
   const shippedOrders = orders.filter(isShippingSuccess);
+  const successPosOrders = shippedOrders.filter(isPosOrder);
+  const successCodOrders = shippedOrders.filter(
+    (order) => !isPosOrder(order) && isCodOrder(order),
+  );
+  const successOtherOrders = shippedOrders.filter(
+    (order) => !isPosOrder(order) && !isCodOrder(order),
+  );
   const sumAmount = (rows: DashboardOrderRow[]) =>
     rows.reduce((sum, order) => sum + getOrderAmount(order), 0);
 
@@ -961,6 +974,12 @@ function buildOrderBreakdown(
     codAmount: sumAmount(codOrders),
     otherAmount: sumAmount(otherOrders),
     shippedSuccessAmount: sumAmount(shippedOrders),
+    successPos: successPosOrders.length,
+    successCod: successCodOrders.length,
+    successOther: successOtherOrders.length,
+    successPosAmount: sumAmount(successPosOrders),
+    successCodAmount: sumAmount(successCodOrders),
+    successOtherAmount: sumAmount(successOtherOrders),
     orders,
   };
 }
@@ -1009,6 +1028,28 @@ function buildOrderBreakdownFromWarRoomPayload(
   const created = payload.orderCreated || {};
   const success = payload.revenueSuccess || {};
 
+  const successPosOrders = toNumber(success.pos?.orders);
+  const successFacebookOrders = toNumber(success.facebookDelivered?.orders);
+  const successOtherOrders = toNumber(success.otherDelivered?.orders);
+
+  const successPosAmount = toNumber(success.pos?.amount);
+  const successFacebookAmount = toNumber(success.facebookDelivered?.amount);
+  const successOtherAmount = toNumber(success.otherDelivered?.amount);
+
+  const calculatedSuccessOrders =
+    successPosOrders + successFacebookOrders + successOtherOrders;
+  const calculatedSuccessAmount =
+    successPosAmount + successFacebookAmount + successOtherAmount;
+
+  const successTotalOrders = toNumber(
+    success.totalOrders ??
+      (calculatedSuccessOrders || fallback.shippedSuccess),
+  );
+  const successTotalAmount = toNumber(
+    success.totalAmount ??
+      (calculatedSuccessAmount || fallback.shippedSuccessAmount),
+  );
+
   return {
     ...fallback,
     total: toNumber(created.total ?? fallback.total),
@@ -1019,10 +1060,14 @@ function buildOrderBreakdownFromWarRoomPayload(
     posAmount: toNumber(created.pos?.amount ?? fallback.posAmount),
     codAmount: toNumber(created.facebook?.amount ?? fallback.codAmount),
     otherAmount: toNumber(created.other?.amount ?? fallback.otherAmount),
-    shippedSuccess: toNumber(success.totalOrders ?? fallback.shippedSuccess),
-    shippedSuccessAmount: toNumber(
-      success.totalAmount ?? fallback.shippedSuccessAmount,
-    ),
+    shippedSuccess: successTotalOrders,
+    shippedSuccessAmount: successTotalAmount,
+    successPos: successPosOrders || fallback.successPos,
+    successCod: successFacebookOrders || fallback.successCod,
+    successOther: successOtherOrders || fallback.successOther,
+    successPosAmount: successPosAmount || fallback.successPosAmount,
+    successCodAmount: successFacebookAmount || fallback.successCodAmount,
+    successOtherAmount: successOtherAmount || fallback.successOtherAmount,
     orders: combinedOrders,
   };
 }
@@ -1787,6 +1832,12 @@ export default function DashboardPage() {
     codAmount: 0,
     otherAmount: 0,
     shippedSuccessAmount: 0,
+    successPos: 0,
+    successCod: 0,
+    successOther: 0,
+    successPosAmount: 0,
+    successCodAmount: 0,
+    successOtherAmount: 0,
     orders: [],
   });
 
@@ -1960,6 +2011,12 @@ export default function DashboardPage() {
             codAmount: 0,
             otherAmount: 0,
             shippedSuccessAmount: 0,
+            successPos: 0,
+            successCod: 0,
+            successOther: 0,
+            successPosAmount: 0,
+            successCodAmount: 0,
+            successOtherAmount: 0,
             orders: [],
           });
         }
@@ -2251,15 +2308,17 @@ export default function DashboardPage() {
   );
   const sumOrderAmount = (orders: DashboardOrderRow[]) =>
     orders.reduce((sum, order) => sum + getOrderAmount(order), 0);
-  const liveSuccessPosOrders = successfulPosOrders.length;
-  const liveSuccessFacebookOrders = successfulFacebookOrders.length;
-  const liveSuccessOtherOrders = successfulOtherOrders.length;
-  const liveSuccessPosAmount = sumOrderAmount(successfulPosOrders);
-  const liveSuccessFacebookAmount = sumOrderAmount(successfulFacebookOrders);
-  const liveSuccessOtherAmount = sumOrderAmount(successfulOtherOrders);
+  const liveSuccessPosOrders = orderBreakdown.successPos;
+  const liveSuccessFacebookOrders = orderBreakdown.successCod;
+  const liveSuccessOtherOrders = orderBreakdown.successOther;
+  const liveSuccessPosAmount = orderBreakdown.successPosAmount;
+  const liveSuccessFacebookAmount = orderBreakdown.successCodAmount;
+  const liveSuccessOtherAmount = orderBreakdown.successOtherAmount;
   const liveSuccessOrderCount =
+    orderBreakdown.shippedSuccess ||
     liveSuccessPosOrders + liveSuccessFacebookOrders + liveSuccessOtherOrders;
   const liveSuccessRevenueAmount =
+    orderBreakdown.shippedSuccessAmount ||
     liveSuccessPosAmount + liveSuccessFacebookAmount + liveSuccessOtherAmount;
   const revenueCardAmount = liveSuccessRevenueAmount;
   const revenueCardOrderCount = liveSuccessOrderCount;
@@ -2585,27 +2644,22 @@ export default function DashboardPage() {
 
             <div className="px-4 py-2">
               <div className="h-[116px] rounded-[18px] bg-neutral-950 p-2.5 text-white">
-                <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
-                    Nguồn doanh thu thành công
-                  </div>
-                  <div className="text-xs font-medium text-neutral-300">
-                    {formatQty(revenueCardOrderCount)} đơn thành công
-                  </div>
+                <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-medium uppercase tracking-[0.18em] text-neutral-500">
+                  <span>Tổng đơn thành công</span>
+                  <span>{formatQty(revenueCardOrderCount)} đơn</span>
                 </div>
-
-                <div className="mt-2 space-y-1.5">
+                <div className="space-y-1">
                   <div>
-                    <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-neutral-200">
+                    <div className="mb-1 flex items-center justify-between gap-3 text-xs font-medium text-neutral-200">
                       <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
                         <span className="h-2 w-2 rounded-full bg-emerald-400" />{" "}
                         POS THÀNH CÔNG
                       </span>
-                      <span>{formatMoneyFull(liveSuccessPosAmount)}</span>
+                      <span>{formatQty(liveSuccessPosOrders)} đơn · {formatMoneyFull(liveSuccessPosAmount)}</span>
                     </div>
-                    <div className="h-1.5 rounded-full bg-white/10">
+                    <div className="h-1 rounded-full bg-white/10">
                       <div
-                        className="h-1.5 rounded-full bg-white"
+                        className="h-1 rounded-full bg-white"
                         style={{
                           width: `${Math.min(
                             100,
@@ -2624,17 +2678,17 @@ export default function DashboardPage() {
                   </div>
 
                   <div>
-                    <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-neutral-200">
+                    <div className="mb-1 flex items-center justify-between gap-3 text-xs font-medium text-neutral-200">
                       <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
                         <span className="h-2 w-2 rounded-full bg-emerald-400" />{" "}
                         FACEBOOK GIAO THÀNH CÔNG
                       </span>
-                      <span>{formatMoneyFull(liveSuccessFacebookAmount)}</span>
+                      <span>{formatQty(liveSuccessFacebookOrders)} đơn · {formatMoneyFull(liveSuccessFacebookAmount)}</span>
                     </div>
                     {false ? null : null}
-                    <div className="h-1.5 rounded-full bg-white/10">
+                    <div className="h-1 rounded-full bg-white/10">
                       <div
-                        className="h-1.5 rounded-full bg-white"
+                        className="h-1 rounded-full bg-white"
                         style={{
                           width: `${Math.min(
                             100,
@@ -2652,35 +2706,33 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {liveSuccessOtherAmount > 0 ? (
-                    <div>
-                      <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-neutral-300">
-                        <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
-                          <span className="h-2 w-2 rounded-full bg-neutral-500" />{" "}
-                          KHÁC
-                        </span>
-                        <span>{formatMoneyFull(liveSuccessOtherAmount)}</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-white/10">
-                        <div
-                          className="h-1.5 rounded-full bg-neutral-500"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.max(
-                                0,
-                                revenueCardSourceTotal > 0
-                                  ? (liveSuccessOtherAmount /
-                                      revenueCardSourceTotal) *
-                                      100
-                                  : 0,
-                              ),
-                            )}%`,
-                          }}
-                        />
-                      </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between gap-3 text-xs font-medium text-neutral-300">
+                      <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
+                        <span className="h-2 w-2 rounded-full bg-neutral-500" />{" "}
+                        KHÁC THÀNH CÔNG
+                      </span>
+                      <span>{formatQty(liveSuccessOtherOrders)} đơn · {formatMoneyFull(liveSuccessOtherAmount)}</span>
                     </div>
-                  ) : null}
+                    <div className="h-1 rounded-full bg-white/10">
+                      <div
+                        className="h-1 rounded-full bg-neutral-500"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.max(
+                              0,
+                              revenueCardSourceTotal > 0
+                                ? (liveSuccessOtherAmount /
+                                    revenueCardSourceTotal) *
+                                    100
+                                : 0,
+                            ),
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

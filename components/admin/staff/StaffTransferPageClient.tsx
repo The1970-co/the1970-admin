@@ -138,17 +138,6 @@ function getStaffCurrentBranchId(staff?: StaffOption | null) {
   return staff?.branchId || staff?.branchRoles?.[0]?.branchId || "";
 }
 
-function getStaffCurrentRole(staff?: StaffOption | null, branchId?: string) {
-  if (!staff) return "retail-staff";
-
-  return (
-    staff.branchRoles?.find((row) => row.branchId === branchId)?.roleCode ||
-    staff.branchRoles?.[0]?.roleCode ||
-    staff.role ||
-    "retail-staff"
-  );
-}
-
 function getStaffRoleChips(staff?: StaffOption | null) {
   if (!staff) return [];
 
@@ -268,10 +257,9 @@ export default function StaffTransferPageClient() {
     }
 
     const currentBranchId = getStaffCurrentBranchId(selectedStaff);
-    const currentRole = getStaffCurrentRole(selectedStaff, currentBranchId);
 
     setFromBranchId(currentBranchId);
-    setRoleCode(String(currentRole || "retail-staff"));
+    setRoleCode("retail-staff");
     setToBranchId((prev) => (prev === currentBranchId ? "" : prev));
   }, [selectedStaff]);
 
@@ -315,7 +303,7 @@ export default function StaffTransferPageClient() {
         "",
         `Từ: ${formatBranch(sourceBranch)}`,
         `Đến: ${formatBranch(targetBranch)}`,
-        `Vai trò mới: ${formatRoleLabel(roleCode)}`,
+        `Vai trò mới: ${formatRoleLabel("retail-staff")}`,
         "",
         "Sau khi chuyển, nhân viên sẽ bị đăng xuất để nhận quyền mới.",
       ].join("\n"),
@@ -333,7 +321,7 @@ export default function StaffTransferPageClient() {
           staffId,
           fromBranchId,
           toBranchId,
-          roleCode,
+          roleCode: "retail-staff",
           reason,
         }),
       });
@@ -568,20 +556,15 @@ export default function StaffTransferPageClient() {
               </select>
             </label>
 
-            <label className="block text-sm font-bold text-neutral-700">
+            <div className="block text-sm font-bold text-neutral-700">
               Vai trò tại chi nhánh mới
-              <select
-                value={roleCode}
-                onChange={(event) => setRoleCode(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm font-semibold outline-none focus:border-neutral-500"
-              >
-                <option value="retail-staff">Nhân viên bán lẻ</option>
-                <option value="fulltime">Nhân viên fulltime</option>
-                <option value="branch-manager">Quản lý chi nhánh</option>
-                <option value="stock-staff">Nhân viên kho</option>
-                <option value="stock-auditor">Nhân viên kiểm kho</option>
-              </select>
-            </label>
+              <div className="mt-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-extrabold text-neutral-900">
+                Nhân viên bán lẻ
+              </div>
+              <p className="mt-2 text-xs font-semibold text-neutral-500">
+                Trang này chỉ dùng để chuyển chi nhánh và tự gán quyền Nhân viên bán lẻ.
+              </p>
+            </div>
 
             <label className="block text-sm font-bold text-neutral-700">
               Lý do chuyển
