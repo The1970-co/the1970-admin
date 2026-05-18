@@ -302,21 +302,33 @@ function summarizeReturnItems(items?: ReturnExchangeSummary["items"]) {
     })
     .join(", ");
 }
+function normalizedCodReconciliationStatus(status?: string | null) {
+  return String(status || "").trim().toUpperCase();
+}
+
+function isCodReconciled(status?: string | null) {
+  const value = normalizedCodReconciliationStatus(status);
+  return ["PAID", "CONFIRMED", "MATCHED", "MATCHED_BY_PARTIAL_DELIVERY"].includes(value);
+}
+
 function codReconciliationLabel(status?: string | null) {
-  if (status === "MATCHED") return "Đã đối soát";
-  if (status === "MATCHED_BY_PARTIAL_DELIVERY")
-    return "Đã đối soát qua giao 1 phần";
-  if (status === "MISMATCH") return "Đối soát lệch";
-  if (status === "NOT_FOUND") return "Không tìm thấy trong phiên GHN";
+  const value = normalizedCodReconciliationStatus(status);
+  if (value === "PAID" || value === "CONFIRMED" || value === "MATCHED") return "✓ Đã đối soát COD";
+  if (value === "MATCHED_BY_PARTIAL_DELIVERY") return "✓ Đã đối soát COD qua giao 1 phần";
+  if (value === "SAVED") return "Đã lưu đối soát";
+  if (value === "MISMATCH") return "Đối soát lệch";
+  if (value === "NOT_FOUND") return "Không tìm thấy trong phiên GHN";
   return "Chưa đối soát";
 }
 
 function codReconciliationTone(
   status?: string | null,
 ): "gray" | "green" | "amber" | "red" | "blue" {
-  if (status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY")
+  const value = normalizedCodReconciliationStatus(status);
+  if (["PAID", "CONFIRMED", "MATCHED", "MATCHED_BY_PARTIAL_DELIVERY"].includes(value))
     return "green";
-  if (status === "MISMATCH" || status === "NOT_FOUND") return "red";
+  if (value === "SAVED") return "blue";
+  if (value === "MISMATCH" || value === "NOT_FOUND") return "red";
   return "gray";
 }
 
@@ -452,7 +464,7 @@ function paymentStatusText(status?: string | null) {
     case "PARTIAL":
       return "Một phần";
     case "PENDING_COD":
-      return "Chờ COD";
+      return "Chờ đối soát COD";
     case "REFUNDED":
       return "Đã hoàn";
     case "FAILED":
@@ -1616,10 +1628,12 @@ function MobileOrderDetailView({
               value={currency(viewOrder.shipment?.shippingFee)}
             />
             <MobileInfoLine
-              label="Đối soát"
-              value={codReconciliationLabel(
-                viewOrder.shipment?.codReconciliationStatus,
-              )}
+              label="Đối soát COD"
+              value={
+                <Badge tone={codReconciliationTone(viewOrder.shipment?.codReconciliationStatus)}>
+                  {codReconciliationLabel(viewOrder.shipment?.codReconciliationStatus)}
+                </Badge>
+              }
             />
           </MobileOrderCard>
         ) : null}

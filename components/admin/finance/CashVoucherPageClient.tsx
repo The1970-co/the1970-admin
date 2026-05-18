@@ -310,6 +310,7 @@ export default function CashVoucherPageClient({ type }: Props) {
   const canCancel = hasPermission(currentUser, cancelPermission) || isPowerFinanceUser;
   const canDelete = hasPermission(currentUser, deletePermission) || canCancel || isPowerFinanceUser;
   const canExport = hasPermission(currentUser, "cash_voucher.export") || isPowerFinanceUser;
+  const canChooseAnyPaymentSource = isGlobalFinanceUser || isPowerFinanceUser;
 
   const initialRange = useMemo(() => getRange("today"), []);
   const [quickRange, setQuickRange] = useState<QuickRange>("today");
@@ -370,11 +371,32 @@ export default function CashVoucherPageClient({ type }: Props) {
     [paymentSources, selectedFormBranch, currentUser]
   );
 
+  const formPaymentSourceOptions = useMemo(() => {
+    if (!canChooseAnyPaymentSource) return cashSourceOptions;
+
+    const selectedBranchSources = paymentSources.filter((source) =>
+      sourceMatchesBranch(source, selectedFormBranch, currentUser),
+    );
+    const otherSources = paymentSources.filter(
+      (source) => !selectedBranchSources.some((item) => String(item.id) === String(source.id)),
+    );
+
+    // Admin/owner được chọn đủ nguồn tiền. Nguồn cùng chi nhánh được đẩy lên trước,
+    // nhưng vẫn giữ toàn bộ nguồn khác để có thể tạo phiếu chuyển/điều chỉnh đúng quỹ.
+    return [...selectedBranchSources, ...otherSources];
+  }, [canChooseAnyPaymentSource, cashSourceOptions, currentUser, paymentSources, selectedFormBranch]);
+
+  const effectiveFormPaymentSourceId = canChooseAnyPaymentSource
+    ? form.paymentSourceId
+    : cashPaymentSource?.id || form.paymentSourceId;
+
   const resetForm = () => {
     setEditing(null);
     setForm({
       branchId: allowedBranches[0]?.id || currentBranchId || branches[0]?.id || "",
-      paymentSourceId: cashPaymentSource?.id || paymentSources[0]?.id || "",
+      paymentSourceId: canChooseAnyPaymentSource
+        ? formPaymentSourceOptions[0]?.id || paymentSources[0]?.id || ""
+        : cashPaymentSource?.id || "",
       amount: "",
       category: isReceipt ? "Thu khác" : "Chi khác",
       title: "",
@@ -407,6 +429,9 @@ export default function CashVoucherPageClient({ type }: Props) {
     const defaultCashSource =
       findCashSourceForBranch(nextSources, branchForDefault, currentUser) ||
       null;
+    const defaultPaymentSource = canChooseAnyPaymentSource
+      ? nextSources.find((source) => sourceMatchesBranch(source, branchForDefault, currentUser)) || nextSources[0] || null
+      : defaultCashSource;
 
     setBranches(nextBranches);
     setPaymentSources(nextSources);
@@ -417,14 +442,14 @@ export default function CashVoucherPageClient({ type }: Props) {
       setForm((prev) => ({
         ...prev,
         branchId: prev.branchId || currentBranchId,
-        paymentSourceId: prev.paymentSourceId || defaultCashSource?.id || "",
+        paymentSourceId: prev.paymentSourceId || defaultPaymentSource?.id || "",
       }));
     } else {
       setPaymentSourceId((prev) => prev || "ALL");
       setForm((prev) => ({
         ...prev,
         branchId: prev.branchId || nextBranches[0]?.id || "",
-        paymentSourceId: prev.paymentSourceId || defaultCashSource?.id || "",
+        paymentSourceId: prev.paymentSourceId || defaultPaymentSource?.id || "",
       }));
     }
   };
@@ -478,18 +503,23 @@ export default function CashVoucherPageClient({ type }: Props) {
       }
     }
 
-    if (cashPaymentSource?.id && form.paymentSourceId !== cashPaymentSource.id) {
+    if (!canChooseAnyPaymentSource && cashPaymentSource?.id && form.paymentSourceId !== cashPaymentSource.id) {
       setForm((prev) => ({ ...prev, paymentSourceId: cashPaymentSource.id }));
+    }
+
+    if (canChooseAnyPaymentSource && !form.paymentSourceId && formPaymentSourceOptions[0]?.id) {
+      setForm((prev) => ({ ...prev, paymentSourceId: formPaymentSourceOptions[0].id }));
     }
   }, [
     allowedBranches,
     branches,
     branchId,
+    canChooseAnyPaymentSource,
     cashPaymentSource,
-    cashSourceOptions,
     currentBranchId,
     form.branchId,
     form.paymentSourceId,
+    formPaymentSourceOptions,
     isGlobalFinanceUser,
   ]);
 
@@ -525,7 +555,7 @@ export default function CashVoucherPageClient({ type }: Props) {
       const payload = {
         type,
         branchId: (!isGlobalFinanceUser && currentBranchId ? currentBranchId : form.branchId) || undefined,
-        paymentSourceId: form.paymentSourceId || cashPaymentSource?.id || undefined,
+        paymentSourceId: effectiveFormPaymentSourceId || undefined,
         amount: Number(String(form.amount || "").replace(/[^\d]/g, "")),
         category: form.category.trim() || undefined,
         title: form.title.trim(),
@@ -542,7 +572,7 @@ export default function CashVoucherPageClient({ type }: Props) {
       }
 
       if (!payload.paymentSourceId) {
-        setActionError("Chưa tìm thấy nguồn tiền mặt đúng với chi nhánh đang làm việc.");
+        setActionError(canChooseAnyPaymentSource ? "Chọn nguồn tiền cho phiếu." : "Chưa tìm thấy nguồn tiền mặt đúng với chi nhánh đang làm việc.");
         return;
       }
 
@@ -932,23 +962,24 @@ export default function CashVoucherPageClient({ type }: Props) {
             </Field>
             <Field label="Nguồn tiền">
               <select
-                value={cashPaymentSource?.id || ""}
+                value={effectiveFormPaymentSourceId || ""}
                 onChange={(e) => setForm({ ...form, paymentSourceId: e.target.value })}
-                disabled
+                disabled={!canChooseAnyPaymentSource}
                 className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-medium text-neutral-950 placeholder:text-neutral-500 disabled:opacity-100 disabled:bg-neutral-50 disabled:text-neutral-950"
               >
-                {cashPaymentSource ? (
-                  <option value={cashPaymentSource.id}>
-                    {cashPaymentSource.name || cashPaymentSource.code || cashPaymentSource.id}
+                <option value="">Chọn nguồn tiền</option>
+                {formPaymentSourceOptions.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name || source.code || source.id}
                   </option>
-                ) : (
-                  <option value="">
-                    Chưa có nguồn tiền mặt {selectedFormBranch?.code || selectedFormBranch?.name || ""}
-                  </option>
-                )}
+                ))}
               </select>
 
-              {cashPaymentSource ? (
+              {canChooseAnyPaymentSource ? (
+                <p className="mt-1 text-xs text-neutral-500">
+                  Admin/owner được chọn tất cả nguồn tiền: tiền mặt, chuyển khoản, ví, COD hoặc nguồn nội bộ đã cấu hình.
+                </p>
+              ) : cashPaymentSource ? (
                 <p className="mt-1 text-xs text-neutral-500">
                   Đã tự khoá đúng quỹ tiền mặt theo chi nhánh {selectedFormBranch?.name || selectedFormBranch?.code || "làm việc"}.
                 </p>
@@ -981,7 +1012,7 @@ export default function CashVoucherPageClient({ type }: Props) {
 
             <div className="flex flex-wrap gap-2">
               <button
-                disabled={saving || !cashPaymentSource?.id || (!editing && !canCreate) || (editing && !canEdit)}
+                disabled={saving || !effectiveFormPaymentSourceId || (!editing && !canCreate) || (editing && !canEdit)}
                 onClick={saveVoucher}
                 className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >

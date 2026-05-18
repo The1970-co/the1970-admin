@@ -117,6 +117,19 @@ type DashboardOrderRow = {
   finalAmount?: number | string | null;
   totalAmount?: number | string | null;
   createdAt?: string | null;
+  updatedAt?: string | null;
+  shipment?: {
+    id?: string | null;
+    carrier?: string | null;
+    trackingCode?: string | null;
+    shippingStatus?: string | null;
+    partnerStatus?: string | null;
+    ahamoveStatus?: string | null;
+    ahamoveSubStatus?: string | null;
+    updatedAt?: string | null;
+  } | null;
+  ahamoveStatus?: string | null;
+  ahamoveSubStatus?: string | null;
   items?: DashboardOrderLine[];
   orderItems?: DashboardOrderLine[];
   lines?: DashboardOrderLine[];
@@ -136,6 +149,26 @@ type OrderChannelBreakdown = {
   otherAmount: number;
   shippedSuccessAmount: number;
   orders: DashboardOrderRow[];
+};
+
+type WarRoomDeliveryRevenueApi = {
+  orderCreated?: {
+    total?: number;
+    amount?: number;
+    pos?: { orders?: number; amount?: number };
+    facebook?: { orders?: number; amount?: number };
+    other?: { orders?: number; amount?: number };
+  };
+  revenueSuccess?: {
+    totalOrders?: number;
+    totalAmount?: number;
+    pos?: { orders?: number; amount?: number };
+    facebookDelivered?: { orders?: number; amount?: number };
+    otherDelivered?: { orders?: number; amount?: number };
+  };
+  createdOrders?: DashboardOrderRow[];
+  successOrders?: DashboardOrderRow[];
+  orders?: DashboardOrderRow[];
 };
 
 type DashboardData = {
@@ -199,11 +232,15 @@ type DashboardData = {
   kpis: Array<{ id: string; label: string; value: string; delta: string }>;
   dailyRows: Array<{
     day: string;
+    date?: string;
+    displayDate?: string;
     note: string;
     revenue: string;
     cost?: string;
     adsCost?: string;
     profit: string;
+    operatingCost?: string;
+    netProfit?: string;
     orders: string;
     roas: string;
     compare: string;
@@ -211,6 +248,16 @@ type DashboardData = {
     isToday?: boolean;
     posOrders?: number;
     codOrders?: number;
+    raw?: {
+      revenue?: number;
+      cost?: number;
+      grossProfit?: number;
+      adsCost?: number;
+      profit?: number;
+      operatingCost?: number;
+      netProfit?: number;
+      orders?: number;
+    };
   }>;
   drilldown: Array<{ label: string; value: string; tone?: "dark" | "mint" }>;
   funnel: Array<{ label: string; value: string; width: string }>;
@@ -340,6 +387,19 @@ function formatDateInputValue(date: Date) {
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
 }
 
+function formatDateDisplay(value?: string) {
+  if (!value) return "—";
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${padDatePart(date.getDate())}/${padDatePart(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+function dailyRowDateKey(row: { date?: string; day: string }) {
+  if (row.date) return row.date.slice(0, 10);
+  const now = new Date();
+  return `${now.getFullYear()}-${padDatePart(now.getMonth() + 1)}-${String(row.day).padStart(2, "0")}`;
+}
+
 function getDefaultDateRange(range: DashboardRange) {
   const end = new Date();
   const start = new Date();
@@ -405,10 +465,25 @@ function toNumber(value: unknown) {
 
 function formatMoneyShort(value: unknown) {
   const amount = toNumber(value);
-  if (amount >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(1)}B`;
-  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)}M`;
-  if (amount >= 1_000) return `${Math.round(amount / 1_000)}K`;
-  return String(Math.round(amount));
+  if (!Number.isFinite(amount)) return "0";
+
+  const sign = amount < 0 ? "-" : "";
+  const abs = Math.abs(amount);
+
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${Math.round(abs / 1_000)}K`;
+  return `${sign}${Math.round(abs)}`;
+}
+
+function moneyTone(value: unknown) {
+  return toNumber(value) >= 0 ? "text-emerald-700" : "text-rose-600";
+}
+
+function moneyBadgeTone(value: unknown) {
+  return toNumber(value) >= 0
+    ? "border-emerald-200 bg-emerald-50"
+    : "border-rose-200 bg-rose-50";
 }
 
 function formatQty(value: unknown) {
@@ -513,7 +588,9 @@ function normalizeProductOrderReportRows(
         revenue,
         avgOrderValue: orderCount ? Math.round(revenue / orderCount) : 0,
         orderCodes: Array.isArray(row.orderCodes) ? row.orderCodes : [],
-        customerNames: Array.isArray(row.customerNames) ? row.customerNames : [],
+        customerNames: Array.isArray(row.customerNames)
+          ? row.customerNames
+          : [],
         sources: Array.isArray(row.sources) ? row.sources : [],
         orderDetails: Array.isArray(row.orderDetails) ? row.orderDetails : [],
         shippedQty,
@@ -640,6 +717,74 @@ function isOrderInDateRange(
   return created >= start && created <= end;
 }
 
+function getOrderReliableSuccessDate(order: DashboardOrderRow) {
+  const expanded = order as DashboardOrderRow & Record<string, any>;
+  const shipment = (expanded.shipment || {}) as Record<string, any>;
+
+  return (
+    expanded.deliveredAt ||
+    expanded.deliveryCompletedAt ||
+    expanded.completedAt ||
+    expanded.fulfilledAt ||
+    expanded.shippedSuccessAt ||
+    shipment.deliveredAt ||
+    shipment.deliveryCompletedAt ||
+    shipment.completedAt ||
+    null
+  );
+}
+
+function getShippingSuccessDate(order: DashboardOrderRow) {
+  const expanded = order as DashboardOrderRow & Record<string, any>;
+  const shipment = (expanded.shipment || {}) as Record<string, any>;
+
+  // Không dùng order.completedAt/fulfilledAt cho Facebook, vì đó có thể là trạng thái đơn nội bộ.
+  // Doanh thu Facebook giao thành công chỉ được nhận khi có mốc giao hàng/tracking thật.
+  return (
+    expanded.deliveredAt ||
+    expanded.deliveryCompletedAt ||
+    expanded.shippedSuccessAt ||
+    shipment.deliveredAt ||
+    shipment.deliveryCompletedAt ||
+    shipment.completedAt ||
+    shipment.deliveredTime ||
+    shipment.completedTime ||
+    null
+  );
+}
+
+function isDateValueInRange(value: unknown, fromDate: string, toDate: string) {
+  if (!value) return false;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return false;
+  const start = new Date(`${fromDate}T00:00:00`);
+  const end = new Date(`${toDate}T23:59:59.999`);
+  return date >= start && date <= end;
+}
+
+function isSuccessOrderInWarRoomRange(
+  order: DashboardOrderRow,
+  fromDate: string,
+  toDate: string,
+) {
+  if (!isShippingSuccess(order)) return false;
+
+  // POS: được tính theo ngày tạo/hoàn tất vì bán tại quầy thanh toán xong là thành công.
+  if (isPosOrder(order)) {
+    const successDate = getOrderReliableSuccessDate(order);
+    return successDate
+      ? isDateValueInRange(successDate, fromDate, toDate)
+      : isOrderInDateRange(order, fromDate, toDate);
+  }
+
+  // Facebook/COD: tuyệt đối không fallback sang tiền đơn tạo.
+  // Chỉ tính doanh thu giao thành công khi có mốc giao hàng/tracking thật nằm trong range.
+  const shippingSuccessDate = getShippingSuccessDate(order);
+  return shippingSuccessDate
+    ? isDateValueInRange(shippingSuccessDate, fromDate, toDate)
+    : false;
+}
+
 function getDeliveryStatusSignal(order: DashboardOrderRow) {
   const expanded = order as DashboardOrderRow & Record<string, unknown>;
   return [
@@ -657,6 +802,12 @@ function getDeliveryStatusSignal(order: DashboardOrderRow) {
     expanded.carrierState,
     expanded.shippingState,
     expanded.trackingState,
+    expanded.shipment?.shippingStatus,
+    expanded.shipment?.partnerStatus,
+    expanded.shipment?.ahamoveStatus,
+    expanded.shipment?.ahamoveSubStatus,
+    expanded.ahamoveStatus,
+    expanded.ahamoveSubStatus,
   ]
     .filter(Boolean)
     .join(" ")
@@ -687,17 +838,23 @@ function hasExplicitDeliverySignal(order: DashboardOrderRow) {
   const expanded = order as DashboardOrderRow & Record<string, unknown>;
   return Boolean(
     expanded.deliveryStatus ||
-      expanded.shippingStatus ||
-      expanded.shipmentStatus ||
-      expanded.trackingStatus ||
-      expanded.carrierStatus ||
-      expanded.carrierStatusName ||
-      expanded.ghnStatus ||
-      expanded.codStatus ||
-      expanded.deliveryResult ||
-      expanded.carrierState ||
-      expanded.shippingState ||
-      expanded.trackingState,
+    expanded.shippingStatus ||
+    expanded.shipmentStatus ||
+    expanded.trackingStatus ||
+    expanded.carrierStatus ||
+    expanded.carrierStatusName ||
+    expanded.ghnStatus ||
+    expanded.codStatus ||
+    expanded.deliveryResult ||
+    expanded.carrierState ||
+    expanded.shippingState ||
+    expanded.trackingState ||
+    expanded.shipment?.shippingStatus ||
+    expanded.shipment?.partnerStatus ||
+    expanded.shipment?.ahamoveStatus ||
+    expanded.shipment?.ahamoveSubStatus ||
+    expanded.ahamoveStatus ||
+    expanded.ahamoveSubStatus,
   );
 }
 
@@ -808,6 +965,68 @@ function buildOrderBreakdown(
   };
 }
 
+async function fetchWarRoomDeliveryRevenue(params: {
+  range: DashboardRange;
+  fromDate: string;
+  toDate: string;
+}) {
+  const query = new URLSearchParams({
+    range: params.range,
+    fromDate: params.fromDate,
+    toDate: params.toDate,
+    dateFrom: params.fromDate,
+    dateTo: params.toDate,
+  });
+
+  return dashboardFetchJson<WarRoomDeliveryRevenueApi>(
+    `/shipments/war-room/delivery-revenue?${query.toString()}`,
+  );
+}
+
+function buildOrderBreakdownFromWarRoomPayload(
+  payload: WarRoomDeliveryRevenueApi | null,
+): OrderChannelBreakdown | null {
+  if (!payload?.orderCreated && !payload?.revenueSuccess) return null;
+
+  const createdOrders = Array.isArray(payload.createdOrders)
+    ? payload.createdOrders
+    : [];
+  const successOrders = Array.isArray(payload.successOrders)
+    ? payload.successOrders
+    : [];
+  const seen = new Set<string>();
+  const combinedOrders = [...createdOrders, ...successOrders].filter(
+    (order) => {
+      const key = String(
+        order.id || order.orderCode || order.code || Math.random(),
+      );
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    },
+  );
+  const fallback = buildOrderBreakdown(combinedOrders);
+  const created = payload.orderCreated || {};
+  const success = payload.revenueSuccess || {};
+
+  return {
+    ...fallback,
+    total: toNumber(created.total ?? fallback.total),
+    pos: toNumber(created.pos?.orders ?? fallback.pos),
+    cod: toNumber(created.facebook?.orders ?? fallback.cod),
+    other: toNumber(created.other?.orders ?? fallback.other),
+    totalAmount: toNumber(created.amount ?? fallback.totalAmount),
+    posAmount: toNumber(created.pos?.amount ?? fallback.posAmount),
+    codAmount: toNumber(created.facebook?.amount ?? fallback.codAmount),
+    otherAmount: toNumber(created.other?.amount ?? fallback.otherAmount),
+    shippedSuccess: toNumber(success.totalOrders ?? fallback.shippedSuccess),
+    shippedSuccessAmount: toNumber(
+      success.totalAmount ?? fallback.shippedSuccessAmount,
+    ),
+    orders: combinedOrders,
+  };
+}
+
 function productReportFromOrders(
   orders: DashboardOrderRow[],
 ): ProductOrderReportItem[] {
@@ -827,8 +1046,12 @@ function productReportFromOrders(
       order.id || order.code || order.orderCode || orderIndex,
     );
     const orderCode = String(order.code || order.orderCode || order.id || "—");
-    const customerName = String(order.customerName || order.customer?.name || "—");
-    const source = String(order.salesChannel || order.channel || order.orderType || "—");
+    const customerName = String(
+      order.customerName || order.customer?.name || "—",
+    );
+    const source = String(
+      order.salesChannel || order.channel || order.orderType || "—",
+    );
     const group: "POS" | "Facebook" | "Khác" = isPosOrder(order)
       ? "POS"
       : isCodOrder(order)
@@ -902,7 +1125,8 @@ function productReportFromOrders(
       const target = map.get(key)!;
       target.orderIds.add(orderId);
       if (orderCode && orderCode !== "—") target.orderCodeSet.add(orderCode);
-      if (customerName && customerName !== "—") target.customerSet.add(customerName);
+      if (customerName && customerName !== "—")
+        target.customerSet.add(customerName);
       if (source && source !== "—") target.sourceSet.add(source);
       target.orderDetails.push({
         orderId,
@@ -911,7 +1135,12 @@ function productReportFromOrders(
         source,
         group,
         status: String(order.status || order.fulfillmentStatus || "—"),
-        paymentStatus: String(order.paymentStatus || order.paymentMethod || order.paymentType || "—"),
+        paymentStatus: String(
+          order.paymentStatus ||
+            order.paymentMethod ||
+            order.paymentType ||
+            "—",
+        ),
         quantity: qty,
         revenue,
       });
@@ -1561,6 +1790,38 @@ export default function DashboardPage() {
     orders: [],
   });
 
+  const [dailyTableRange, setDailyTableRange] = useState<DashboardRange>("10d");
+  const dailyTableDefaultRange = getDefaultDateRange("10d");
+  const [dailyTableCustomFrom, setDailyTableCustomFrom] = useState(
+    dailyTableDefaultRange.fromDate,
+  );
+  const [dailyTableCustomTo, setDailyTableCustomTo] = useState(
+    dailyTableDefaultRange.toDate,
+  );
+  const [dailyOperatingCost, setDailyOperatingCost] = useState(0);
+  const [operatingCostMode, setOperatingCostMode] = useState<"daily" | "monthly">("daily");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("dashboard_daily_operating_cost");
+    const savedMode = window.localStorage.getItem("dashboard_operating_cost_mode");
+    if (saved) setDailyOperatingCost(toNumber(saved));
+    if (savedMode === "daily" || savedMode === "monthly") setOperatingCostMode(savedMode);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      "dashboard_daily_operating_cost",
+      String(dailyOperatingCost || 0),
+    );
+  }, [dailyOperatingCost]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("dashboard_operating_cost_mode", operatingCostMode);
+  }, [operatingCostMode]);
+
   const [actionLog, setActionLog] = useState<
     Array<{ id: string; title: string; desc: string; time: string }>
   >([]);
@@ -1668,6 +1929,18 @@ export default function DashboardPage() {
           warRoomRange === "custom"
             ? { fromDate: warRoomCustomFrom, toDate: warRoomCustomTo }
             : getDefaultDateRange(warRoomRange);
+        const warRoomPayload = await fetchWarRoomDeliveryRevenue({
+          range: warRoomRange,
+          fromDate: dateRange.fromDate,
+          toDate: dateRange.toDate,
+        });
+        const summaryBreakdown =
+          buildOrderBreakdownFromWarRoomPayload(warRoomPayload);
+        if (!ignore && summaryBreakdown) {
+          setOrderBreakdown(summaryBreakdown);
+          return;
+        }
+
         const orders = await fetchOrdersForDashboardReport({
           range: warRoomRange,
           fromDate: dateRange.fromDate,
@@ -1716,9 +1989,117 @@ export default function DashboardPage() {
   const selectedDailyRow =
     data.dailyRows.find((row) => row.day === selectedDay) || data.dailyRows[0];
 
+  const dailyRowsForTableRange = useMemo(() => {
+    const sortedRows = [...data.dailyRows].sort((a, b) =>
+      dailyRowDateKey(a) < dailyRowDateKey(b) ? 1 : -1,
+    );
+
+    if (dailyTableRange === "today") {
+      const todayKey = formatDateInputValue(new Date());
+      return sortedRows.filter((row) => dailyRowDateKey(row) === todayKey);
+    }
+    if (dailyTableRange === "yesterday") {
+      const date = new Date();
+      date.setDate(date.getDate() - 1);
+      const yesterdayKey = formatDateInputValue(date);
+      return sortedRows.filter((row) => dailyRowDateKey(row) === yesterdayKey);
+    }
+    if (dailyTableRange === "7d") return sortedRows.slice(0, 7);
+    if (dailyTableRange === "10d") return sortedRows.slice(0, 10);
+    if (dailyTableRange === "30d") return sortedRows.slice(0, 30);
+
+    const from = new Date(`${dailyTableCustomFrom}T00:00:00`);
+    const to = new Date(`${dailyTableCustomTo}T23:59:59.999`);
+    return sortedRows.filter((row) => {
+      const date = new Date(`${dailyRowDateKey(row)}T00:00:00`);
+      return date >= from && date <= to;
+    });
+  }, [
+    data.dailyRows,
+    dailyTableRange,
+    dailyTableCustomFrom,
+    dailyTableCustomTo,
+  ]);
+
   const dailyRowsToShow = showAllDailyRows
-    ? data.dailyRows
-    : data.dailyRows.slice(0, 10);
+    ? dailyRowsForTableRange
+    : dailyRowsForTableRange.slice(0, 10);
+
+  const dailyOperatingCostPerDay =
+    operatingCostMode === "monthly"
+      ? Math.round(dailyOperatingCost / 30)
+      : dailyOperatingCost;
+
+  const dailyRowsWithOperatingCost = dailyRowsToShow.map((row) => {
+    const revenueValue = toNumber(
+      row.raw?.revenue ?? parseCompactMetric(row.revenue),
+    );
+    const costValue = toNumber(row.raw?.cost ?? parseCompactMetric(row.cost));
+    const adsCostValue = toNumber(
+      row.raw?.adsCost ?? parseCompactMetric(row.adsCost || 0),
+    );
+    const grossProfit = revenueValue - costValue;
+    const profitAfterAds =
+      row.raw?.profit != null
+        ? toNumber(row.raw.profit)
+        : grossProfit - adsCostValue;
+    const netProfit = profitAfterAds - dailyOperatingCostPerDay;
+
+    return {
+      ...row,
+      date: dailyRowDateKey(row),
+      displayDate: formatDateDisplay(dailyRowDateKey(row)),
+      grossProfit: formatMoneyShort(grossProfit),
+      profit: formatMoneyShort(profitAfterAds),
+      operatingCost:
+        dailyOperatingCostPerDay > 0
+          ? formatMoneyShort(dailyOperatingCostPerDay)
+          : "0",
+      netProfit: formatMoneyShort(netProfit),
+      raw: {
+        ...(row.raw || {}),
+        revenue: revenueValue,
+        cost: costValue,
+        grossProfit,
+        adsCost: adsCostValue,
+        profit: profitAfterAds,
+        operatingCost: dailyOperatingCostPerDay,
+        netProfit,
+      },
+    };
+  });
+
+  const dailyTableSummary = dailyRowsWithOperatingCost.reduce(
+    (acc, row) => {
+      const raw = (row.raw || {}) as NonNullable<DashboardData["dailyRows"][number]["raw"]>;
+      const revenueValue = toNumber(raw.revenue ?? parseCompactMetric(row.revenue));
+      const costValue = toNumber(raw.cost ?? parseCompactMetric(row.cost));
+      const adsValue = toNumber(raw.adsCost ?? parseCompactMetric(row.adsCost || 0));
+      const grossValue = toNumber(raw.grossProfit ?? revenueValue - costValue);
+      const profitValue = toNumber(raw.profit ?? grossValue - adsValue);
+      const operatingValue = toNumber(raw.operatingCost || 0);
+
+      acc.revenue += revenueValue;
+      acc.cost += costValue;
+      acc.gross += grossValue;
+      acc.ads += adsValue;
+      acc.profit += profitValue;
+      acc.operating += operatingValue;
+      acc.net += toNumber(raw.netProfit ?? profitValue - operatingValue);
+      acc.orders += toNumber(raw.orders ?? parseQtyMetric(row.orders));
+      return acc;
+    },
+    {
+      revenue: 0,
+      cost: 0,
+      gross: 0,
+      ads: 0,
+      profit: 0,
+      operating: 0,
+      net: 0,
+      orders: 0,
+    },
+  );
 
   const productReportRowsToShow = productReportRows
     .filter((item) => {
@@ -1789,15 +2170,23 @@ export default function DashboardPage() {
   const warRoomRevenueText = warRoomRevenueAmount
     ? formatMoneyShort(warRoomRevenueAmount)
     : selectedDailyRow?.revenue || data.realtime.delta;
+  const warRoomOperatingAmount =
+    rowsForCurrentWarRoomRange.length * dailyOperatingCost;
+  const warRoomNetProfitAmount = warRoomProfitAmount - warRoomOperatingAmount;
   const warRoomProfitText = warRoomProfitAmount
-    ? formatMoneyShort(warRoomProfitAmount)
+    ? formatMoneyShort(warRoomNetProfitAmount)
     : "—";
   const warRoomAdsText = warRoomAdsAmount
     ? formatMoneyShort(warRoomAdsAmount)
     : "0";
-  const warRoomAdsRoas = warRoomAdsAmount > 0 ? warRoomRevenueAmount / warRoomAdsAmount : 0;
-  const warRoomAdsPerOrder = warRoomOrderCount > 0 ? warRoomAdsAmount / warRoomOrderCount : 0;
-  const warRoomAdsRate = warRoomRevenueAmount > 0 ? (warRoomAdsAmount / warRoomRevenueAmount) * 100 : 0;
+  const warRoomAdsRoas =
+    warRoomAdsAmount > 0 ? warRoomRevenueAmount / warRoomAdsAmount : 0;
+  const warRoomAdsPerOrder =
+    warRoomOrderCount > 0 ? warRoomAdsAmount / warRoomOrderCount : 0;
+  const warRoomAdsRate =
+    warRoomRevenueAmount > 0
+      ? (warRoomAdsAmount / warRoomRevenueAmount) * 100
+      : 0;
   const warRoomAdsLastUpdated = new Date().toLocaleTimeString("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -1813,21 +2202,52 @@ export default function DashboardPage() {
   const livePosAmount = orderBreakdown.posAmount;
   const liveCodAmount = orderBreakdown.codAmount;
   const liveOtherAmount = orderBreakdown.otherAmount;
+  const activeWarRoomDateRange =
+    warRoomRange === "custom"
+      ? { fromDate: warRoomCustomFrom, toDate: warRoomCustomTo }
+      : getDefaultDateRange(warRoomRange);
   const successfulPosOrders = orderBreakdown.orders.filter(
-    (order) => isPosOrder(order) && isShippingSuccess(order),
+    (order) =>
+      isPosOrder(order) &&
+      isSuccessOrderInWarRoomRange(
+        order,
+        activeWarRoomDateRange.fromDate,
+        activeWarRoomDateRange.toDate,
+      ),
   );
   const facebookOrdersInRange = orderBreakdown.orders.filter(
-    (order) => !isPosOrder(order) && isCodOrder(order),
+    (order) =>
+      !isPosOrder(order) &&
+      isCodOrder(order) &&
+      isOrderInDateRange(
+        order,
+        activeWarRoomDateRange.fromDate,
+        activeWarRoomDateRange.toDate,
+      ),
   );
-  const successfulFacebookOrders = facebookOrdersInRange.filter((order) =>
-    isShippingSuccess(order),
+  const successfulFacebookOrders = orderBreakdown.orders.filter(
+    (order) =>
+      !isPosOrder(order) &&
+      isCodOrder(order) &&
+      isSuccessOrderInWarRoomRange(
+        order,
+        activeWarRoomDateRange.fromDate,
+        activeWarRoomDateRange.toDate,
+      ),
   );
   const facebookDeliverySignalMissing =
     facebookOrdersInRange.length > 0 &&
     successfulFacebookOrders.length === 0 &&
     !facebookOrdersInRange.some((order) => hasExplicitDeliverySignal(order));
   const successfulOtherOrders = orderBreakdown.orders.filter(
-    (order) => !isPosOrder(order) && !isCodOrder(order) && isShippingSuccess(order),
+    (order) =>
+      !isPosOrder(order) &&
+      !isCodOrder(order) &&
+      isSuccessOrderInWarRoomRange(
+        order,
+        activeWarRoomDateRange.fromDate,
+        activeWarRoomDateRange.toDate,
+      ),
   );
   const sumOrderAmount = (orders: DashboardOrderRow[]) =>
     orders.reduce((sum, order) => sum + getOrderAmount(order), 0);
@@ -1841,15 +2261,9 @@ export default function DashboardPage() {
     liveSuccessPosOrders + liveSuccessFacebookOrders + liveSuccessOtherOrders;
   const liveSuccessRevenueAmount =
     liveSuccessPosAmount + liveSuccessFacebookAmount + liveSuccessOtherAmount;
-  const revenueCardAmount = orderBreakdown.orders.length
-    ? liveSuccessRevenueAmount
-    : warRoomRevenueAmount;
-  const revenueCardOrderCount = orderBreakdown.orders.length
-    ? liveSuccessOrderCount
-    : warRoomOrderCount;
-  const revenueCardSourceTotal = orderBreakdown.orders.length
-    ? liveSuccessRevenueAmount
-    : liveOrderAmount;
+  const revenueCardAmount = liveSuccessRevenueAmount;
+  const revenueCardOrderCount = liveSuccessOrderCount;
+  const revenueCardSourceTotal = liveSuccessRevenueAmount;
   const liveShippingSuccess = orderBreakdown.shippedSuccess;
   const selectedRangeCompletedText = formatQty(liveShippingSuccess);
   const selectedRangeCompletedNote = `${formatQty(liveShippingSuccess)} đơn giao hàng thành công trên ${formatQty(liveOrderTotal)} đơn tạo trong ${warRoomRangeText.toLowerCase()}.`;
@@ -2073,16 +2487,16 @@ export default function DashboardPage() {
   return (
     <div className="relative space-y-4 pb-20 text-[12px]">
       <Panel className="overflow-hidden p-0">
-        <div className="rounded-[28px] bg-neutral-950 p-5 text-white md:p-6">
+        <div className="rounded-[28px] bg-neutral-950 p-4 text-white md:p-5">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="max-w-3xl">
               <div className="text-[10px] font-semibold uppercase tracking-[0.34em] text-neutral-400">
                 WAR ROOM
               </div>
-              <h2 className="mt-3 font-serif text-[22px] font-medium tracking-tight text-white xl:text-[32px]">
+              <h2 className="mt-2 font-serif text-[22px] font-medium tracking-tight text-white xl:text-[30px]">
                 War Room · Theo dõi vận hành
               </h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-neutral-300">
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-300">
                 {`Realtime theo bộ lọc ${warRoomRangeText}: doanh thu, đơn tạo mới, POS/Facebook, chi phí ads và lợi nhuận.`}
               </p>
             </div>
@@ -2129,9 +2543,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[0.95fr_1.25fr_0.9fr_0.95fr]">
-          <div className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white p-0">
-            <div className="border-b border-neutral-100 px-5 py-4">
+        <div className="grid items-stretch gap-3 p-3 md:p-4 xl:grid-cols-4">
+          <div className="h-[246px] overflow-hidden rounded-[26px] border border-neutral-200 bg-white p-0">
+            <div className="border-b border-neutral-100 px-4 py-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
@@ -2150,8 +2564,8 @@ export default function DashboardPage() {
                 </span>
               </div>
 
-              <div className="mt-4 flex items-end justify-between gap-3">
-                <p className="text-[28px] font-semibold leading-none tracking-tight text-neutral-950 xl:text-[36px]">
+              <div className="mt-3 flex items-end justify-between gap-3">
+                <p className="text-[24px] font-semibold leading-none tracking-tight text-neutral-950 xl:text-[30px]">
                   {formatMoneyFull(revenueCardAmount)}
                 </p>
                 <div className="text-right">
@@ -2160,16 +2574,18 @@ export default function DashboardPage() {
                   </p>
                   <p className="mt-1 text-[15px] font-semibold text-neutral-950">
                     {revenueCardOrderCount > 0
-                      ? formatMoneyFull(revenueCardAmount / revenueCardOrderCount)
+                      ? formatMoneyFull(
+                          revenueCardAmount / revenueCardOrderCount,
+                        )
                       : "—"}
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="px-5 py-4">
-              <div className="rounded-[22px] bg-neutral-950 p-4 text-white">
-                <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+            <div className="px-4 py-2">
+              <div className="h-[116px] rounded-[18px] bg-neutral-950 p-2.5 text-white">
+                <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
                     Nguồn doanh thu thành công
                   </div>
@@ -2178,13 +2594,14 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="mt-3 space-y-3">
+                <div className="mt-2 space-y-1.5">
                   <div>
                     <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-neutral-200">
                       <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" /> POS THÀNH CÔNG
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />{" "}
+                        POS THÀNH CÔNG
                       </span>
-                      <span>{formatMoneyFull(orderBreakdown.orders.length ? liveSuccessPosAmount : livePosAmount)}</span>
+                      <span>{formatMoneyFull(liveSuccessPosAmount)}</span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/10">
                       <div
@@ -2195,7 +2612,9 @@ export default function DashboardPage() {
                             Math.max(
                               0,
                               revenueCardSourceTotal > 0
-                                ? ((orderBreakdown.orders.length ? liveSuccessPosAmount : livePosAmount) / revenueCardSourceTotal) * 100
+                                ? (liveSuccessPosAmount /
+                                    revenueCardSourceTotal) *
+                                    100
                                 : 0,
                             ),
                           )}%`,
@@ -2207,15 +2626,12 @@ export default function DashboardPage() {
                   <div>
                     <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-neutral-200">
                       <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" /> FACEBOOK GIAO THÀNH CÔNG
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />{" "}
+                        FACEBOOK GIAO THÀNH CÔNG
                       </span>
-                      <span>{formatMoneyFull(orderBreakdown.orders.length ? liveSuccessFacebookAmount : liveCodAmount)}</span>
+                      <span>{formatMoneyFull(liveSuccessFacebookAmount)}</span>
                     </div>
-                    {facebookDeliverySignalMissing ? (
-                      <div className="mb-2 rounded-xl bg-white/[0.06] px-3 py-2 text-[11px] leading-4 text-neutral-400">
-                        Chưa có trạng thái giao thành công từ vận chuyển/tracking cho đơn Facebook.
-                      </div>
-                    ) : null}
+                    {false ? null : null}
                     <div className="h-1.5 rounded-full bg-white/10">
                       <div
                         className="h-1.5 rounded-full bg-white"
@@ -2225,7 +2641,9 @@ export default function DashboardPage() {
                             Math.max(
                               0,
                               revenueCardSourceTotal > 0
-                                ? ((orderBreakdown.orders.length ? liveSuccessFacebookAmount : liveCodAmount) / revenueCardSourceTotal) * 100
+                                ? (liveSuccessFacebookAmount /
+                                    revenueCardSourceTotal) *
+                                    100
                                 : 0,
                             ),
                           )}%`,
@@ -2234,13 +2652,14 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {(orderBreakdown.orders.length ? liveSuccessOtherAmount : liveOtherAmount) > 0 ? (
+                  {liveSuccessOtherAmount > 0 ? (
                     <div>
                       <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-neutral-300">
                         <span className="inline-flex items-center gap-2 uppercase tracking-[0.18em]">
-                          <span className="h-2 w-2 rounded-full bg-neutral-500" /> KHÁC
+                          <span className="h-2 w-2 rounded-full bg-neutral-500" />{" "}
+                          KHÁC
                         </span>
-                        <span>{formatMoneyFull(orderBreakdown.orders.length ? liveSuccessOtherAmount : liveOtherAmount)}</span>
+                        <span>{formatMoneyFull(liveSuccessOtherAmount)}</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-white/10">
                         <div
@@ -2251,7 +2670,9 @@ export default function DashboardPage() {
                               Math.max(
                                 0,
                                 revenueCardSourceTotal > 0
-                                  ? ((orderBreakdown.orders.length ? liveSuccessOtherAmount : liveOtherAmount) / revenueCardSourceTotal) * 100
+                                  ? (liveSuccessOtherAmount /
+                                      revenueCardSourceTotal) *
+                                      100
                                   : 0,
                               ),
                             )}%`,
@@ -2268,12 +2689,12 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={openOrderCreatedBreakdown}
-            className="rounded-[26px] border border-neutral-200 bg-white p-5 text-left transition hover:-translate-y-[1px] hover:shadow-sm"
+            className="flex h-[246px] flex-col rounded-[26px] border border-neutral-200 bg-white p-4 text-left transition hover:-translate-y-[1px] hover:shadow-sm"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm text-neutral-500">{`Đơn tạo ${warRoomRangeText.toLowerCase()}`}</p>
-                <p className="mt-3 text-[34px] font-semibold tracking-tight text-neutral-950 xl:text-[42px]">
+                <p className="mt-3 text-[30px] font-semibold tracking-tight text-neutral-950 xl:text-[38px]">
                   {formatQty(warRoomOrderCount)}
                 </p>
               </div>
@@ -2282,30 +2703,30 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            <div className="mt-5 rounded-[22px] bg-neutral-950 p-4 text-white">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">
+            <div className="mt-auto h-[106px] rounded-[20px] bg-neutral-950 p-2.5 text-white">
+              <div className="grid h-full grid-cols-2 gap-2">
+                <div className="flex h-full min-h-0 flex-col justify-between rounded-[16px] border border-white/10 bg-white/[0.04] p-2.5">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
                     <span className="h-2 w-2 rounded-full bg-emerald-400" />
                     POS
                   </div>
-                  <div className="mt-3 text-[26px] font-semibold leading-none tracking-tight text-white">
+                  <div className="mt-1 text-[20px] font-semibold leading-none tracking-tight text-white">
                     {livePosOrders == null ? "—" : formatQty(livePosOrders)}
                   </div>
-                  <div className="mt-2 text-sm font-medium text-neutral-300">
+                  <div className="mt-1 text-xs font-medium text-neutral-300">
                     {formatMoneyFull(livePosAmount)}
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">
+                <div className="flex h-full min-h-0 flex-col justify-between rounded-[16px] border border-white/10 bg-white/[0.04] p-2.5">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
                     <span className="h-2 w-2 rounded-full bg-emerald-400" />
                     FACEBOOK
                   </div>
-                  <div className="mt-3 text-[26px] font-semibold leading-none tracking-tight text-white">
+                  <div className="mt-1 text-[20px] font-semibold leading-none tracking-tight text-white">
                     {liveCodOrders == null ? "—" : formatQty(liveCodOrders)}
                   </div>
-                  <div className="mt-2 text-sm font-medium text-neutral-300">
+                  <div className="mt-1 text-xs font-medium text-neutral-300">
                     {formatMoneyFull(liveCodAmount)}
                   </div>
                 </div>
@@ -2313,8 +2734,8 @@ export default function DashboardPage() {
             </div>
           </button>
 
-          <div className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white p-0">
-            <div className="border-b border-neutral-100 px-5 py-4">
+          <div className="h-[246px] overflow-hidden rounded-[26px] border border-neutral-200 bg-white p-0">
+            <div className="border-b border-neutral-100 px-4 py-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
@@ -2322,13 +2743,14 @@ export default function DashboardPage() {
                   </p>
                   <p className="mt-1 text-sm text-neutral-500">{`Chi phí ads ${warRoomRangeText.toLowerCase()}`}</p>
                 </div>
-                <span className="rounded-full bg-neutral-950 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-950 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]" />
                   Live
                 </span>
               </div>
 
               <div className="mt-4 flex items-end justify-between gap-3">
-                <p className="text-[34px] font-semibold leading-none tracking-tight text-neutral-950 xl:text-[44px]">
+                <p className="text-[30px] font-semibold leading-none tracking-tight text-neutral-950 xl:text-[38px]">
                   {warRoomAdsText}
                 </p>
                 <div className="text-right">
@@ -2343,15 +2765,17 @@ export default function DashboardPage() {
             </div>
 
             <div className="grid grid-cols-3 divide-x divide-neutral-100 bg-neutral-50/70">
-              <div className="p-4">
+              <div className="p-3">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-neutral-400">
                   / đơn
                 </p>
                 <p className="mt-2 text-[15px] font-semibold text-neutral-950">
-                  {warRoomAdsPerOrder ? formatMoneyFull(warRoomAdsPerOrder) : "—"}
+                  {warRoomAdsPerOrder
+                    ? formatMoneyFull(warRoomAdsPerOrder)
+                    : "—"}
                 </p>
               </div>
-              <div className="p-4">
+              <div className="p-3">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-neutral-400">
                   % DT
                 </p>
@@ -2359,7 +2783,7 @@ export default function DashboardPage() {
                   {warRoomAdsRate ? `${warRoomAdsRate.toFixed(1)}%` : "—"}
                 </p>
               </div>
-              <div className="p-4">
+              <div className="p-3">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-neutral-400">
                   Cập nhật
                 </p>
@@ -2369,12 +2793,13 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="px-5 py-3 text-xs text-neutral-500">
-              Theo bộ lọc đang chọn · ưu tiên nối Meta Ads live để tách chiến dịch.
+            <div className="px-5 py-2 text-xs text-neutral-500">
+              Theo bộ lọc đang chọn · ưu tiên nối Meta Ads live để tách chiến
+              dịch.
             </div>
           </div>
 
-          <div className="rounded-[26px] border border-emerald-100 bg-emerald-50/70 p-5">
+          <div className="flex h-[246px] flex-col justify-between rounded-[26px] border border-emerald-100 bg-emerald-50/70 p-4">
             <p className="text-sm text-emerald-800">
               {`Lợi nhuận ước tính ${warRoomRangeText.toLowerCase()}`}
             </p>
@@ -2382,45 +2807,176 @@ export default function DashboardPage() {
               {warRoomProfitText}
             </p>
             <p className="mt-3 text-sm text-emerald-700">
-              Doanh thu - giá vốn - ads
+              Doanh thu - giá vốn - ads - vận hành
             </p>
           </div>
         </div>
       </Panel>
 
       <Panel className="overflow-hidden p-4 md:p-5">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <h2 className="font-serif text-[18px] font-medium tracking-tight text-neutral-900 xl:text-[26px]">
-              Doanh thu 10 ngày gần nhất
+              Bảng P&L tạm tính theo ngày
             </h2>
-            <p className="mt-2 text-sm text-neutral-600">
-              Hiển thị nhanh 10 ngày gần nhất trong tháng hiện tại. Bấm xem toàn
-              bộ để mở rộng đủ dữ liệu.
+            <p className="mt-2 max-w-3xl text-sm text-neutral-600">
+              Tách rõ lãi gộp trước ads, lãi sau ads và lãi sau vận hành. Ads lấy theo ngày phát sinh từ Meta, còn doanh thu là doanh thu ghi nhận trong hệ thống.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="muted">Tháng hiện tại</Badge>
-            <button
-              type="button"
-              onClick={() => setShowAllDailyRows((prev) => !prev)}
-              className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700"
-            >
-              {showAllDailyRows ? "Thu gọn 10 ngày" : "Xem toàn bộ"}
-            </button>
+          <div className="flex flex-col gap-2 xl:items-end">
+            <div className="flex flex-wrap items-center gap-2">
+              {DASHBOARD_RANGE_OPTIONS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setDailyTableRange(item.id);
+                    if (item.id !== "custom") setShowAllDailyRows(false);
+                  }}
+                  className={`rounded-full border px-4 py-2 text-sm transition ${
+                    dailyTableRange === item.id
+                      ? "border-neutral-950 bg-neutral-950 text-white"
+                      : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setShowAllDailyRows((prev) => !prev)}
+                className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700"
+              >
+                {showAllDailyRows ? "Thu gọn" : "Xem toàn bộ"}
+              </button>
+            </div>
+            {dailyTableRange === "custom" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={dailyTableCustomFrom}
+                  onChange={(e) => setDailyTableCustomFrom(e.target.value)}
+                  className="rounded-full border border-neutral-200 px-3 py-2 text-sm outline-none"
+                />
+                <input
+                  type="date"
+                  value={dailyTableCustomTo}
+                  onChange={(e) => setDailyTableCustomTo(e.target.value)}
+                  className="rounded-full border border-neutral-200 px-3 py-2 text-sm outline-none"
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+          <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-400">
+              Doanh thu
+            </div>
+            <div className="mt-2 text-lg font-semibold">
+              {formatMoneyShort(dailyTableSummary.revenue)}
+            </div>
+          </div>
+          <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-400">
+              Giá vốn
+            </div>
+            <div className="mt-2 text-lg font-semibold">
+              {formatMoneyShort(dailyTableSummary.cost)}
+            </div>
+          </div>
+          <div className={`rounded-[18px] border px-4 py-3 ${moneyBadgeTone(dailyTableSummary.gross)}`}>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+              Lãi gộp trước ads
+            </div>
+            <div className={`mt-2 text-lg font-semibold ${moneyTone(dailyTableSummary.gross)}`}>
+              {formatMoneyShort(dailyTableSummary.gross)}
+            </div>
+          </div>
+          <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-400">
+              Ads Meta
+            </div>
+            <div className="mt-2 text-lg font-semibold">
+              {formatMoneyShort(dailyTableSummary.ads)}
+            </div>
+          </div>
+          <div className={`rounded-[18px] border px-4 py-3 ${moneyBadgeTone(dailyTableSummary.profit)}`}>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+              Lãi sau ads
+            </div>
+            <div className={`mt-2 text-lg font-semibold ${moneyTone(dailyTableSummary.profit)}`}>
+              {formatMoneyShort(dailyTableSummary.profit)}
+            </div>
+          </div>
+          <div className="rounded-[18px] border border-neutral-200 bg-white px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-400">
+                Chi phí vận hành
+              </div>
+              <div className="flex rounded-full bg-neutral-100 p-0.5 text-[10px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => setOperatingCostMode("daily")}
+                  className={`rounded-full px-2 py-1 ${operatingCostMode === "daily" ? "bg-neutral-950 text-white" : "text-neutral-500"}`}
+                >
+                  Ngày
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOperatingCostMode("monthly")}
+                  className={`rounded-full px-2 py-1 ${operatingCostMode === "monthly" ? "bg-neutral-950 text-white" : "text-neutral-500"}`}
+                >
+                  Tháng
+                </button>
+              </div>
+            </div>
+            <input
+              value={
+                dailyOperatingCost
+                  ? new Intl.NumberFormat("vi-VN").format(dailyOperatingCost)
+                  : ""
+              }
+              onChange={(e) =>
+                setDailyOperatingCost(parseQtyMetric(e.target.value))
+              }
+              placeholder={operatingCostMode === "daily" ? "VD 2.000.000/ngày" : "VD 60.000.000/tháng"}
+              className="mt-2 w-full bg-transparent text-lg font-semibold outline-none"
+            />
+            <div className="mt-1 text-[11px] text-neutral-400">
+              {operatingCostMode === "monthly"
+                ? `Đang phân bổ ${formatMoneyShort(dailyOperatingCostPerDay)}/ngày`
+                : "Trừ trực tiếp từng ngày"}
+            </div>
+          </div>
+          <div className={`rounded-[18px] border px-4 py-3 ${moneyBadgeTone(dailyTableSummary.net)}`}>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+              Lãi sau vận hành
+            </div>
+            <div className={`mt-2 text-lg font-semibold ${moneyTone(dailyTableSummary.net)}`}>
+              {formatMoneyShort(dailyTableSummary.net)}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-[18px] border border-dashed border-neutral-200 bg-neutral-50 px-4 py-3 text-[12px] leading-5 text-neutral-500">
+          Công thức: <span className="font-medium text-neutral-800">Lãi gộp trước ads = Doanh thu - Giá vốn</span> · <span className="font-medium text-neutral-800">Lãi sau ads = Lãi gộp - Ads Meta</span> · <span className="font-medium text-neutral-800">Lãi sau vận hành = Lãi sau ads - Chi phí vận hành phân bổ</span>. Dòng hôm nay là tạm tính trong ngày.
+        </div>
+
         <div className="mt-4 overflow-x-auto rounded-[24px] border border-neutral-200">
-          <table className="min-w-[1080px] w-full text-left">
+          <table className="min-w-[1520px] w-full text-left">
             <thead className="bg-neutral-950 text-sm text-white">
               <tr>
                 <th className="px-4 py-4 font-medium">Ngày</th>
                 <th className="px-4 py-4 font-medium">Ghi chú</th>
                 <th className="px-4 py-4 font-medium">Doanh thu</th>
                 <th className="px-4 py-4 font-medium">Giá vốn</th>
+                <th className="px-4 py-4 font-medium">Lãi gộp trước ads</th>
                 <th className="px-4 py-4 font-medium">Chi phí ads</th>
-                <th className="px-4 py-4 font-medium">Lợi nhuận</th>
+                <th className="px-4 py-4 font-medium">Lãi sau ads</th>
+                <th className="px-4 py-4 font-medium">Chi phí vận hành</th>
+                <th className="px-4 py-4 font-medium">Lãi sau vận hành</th>
                 <th className="px-4 py-4 font-medium">Đơn</th>
                 <th className="px-4 py-4 font-medium">ROAS</th>
                 <th className="px-4 py-4 text-right font-medium">
@@ -2429,35 +2985,54 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {dailyRowsToShow.map((row) => (
-                <tr
-                  key={row.day}
-                  onClick={() => setSelectedDay(row.day)}
-                  className={`border-t border-neutral-200 text-sm cursor-pointer ${
-                    selectedDay === row.day ? "bg-neutral-50" : ""
-                  }`}
-                >
-                  <td className="px-4 py-4 font-medium">{row.day}</td>
-                  <td className="px-4 py-4">
-                    <Badge tone={row.isToday ? "dark" : "muted"}>
-                      {row.note}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-4">{row.revenue}</td>
-                  <td className="px-4 py-4">{row.cost || "—"}</td>
-                  <td className="px-4 py-4">{row.adsCost || "0"}</td>
-                  <td className="px-4 py-4">{row.profit}</td>
-                  <td className="px-4 py-4">{row.orders}</td>
-                  <td className="px-4 py-4">{row.roas}</td>
-                  <td
-                    className={`px-4 py-4 text-right font-medium ${
-                      row.positive ? "text-emerald-600" : "text-rose-500"
+              {dailyRowsWithOperatingCost.map((row) => {
+                const net = toNumber(row.raw?.netProfit);
+                return (
+                  <tr
+                    key={row.date || row.day}
+                    onClick={() => setSelectedDay(row.day)}
+                    className={`border-t border-neutral-200 text-sm cursor-pointer ${
+                      selectedDay === row.day ? "bg-neutral-50" : ""
                     }`}
                   >
-                    {row.compare}
-                  </td>
-                </tr>
-              ))}
+                    <td className="px-4 py-4 font-medium">
+                      <div>
+                        {row.displayDate || formatDateDisplay(row.date)}
+                      </div>
+                      <div className="mt-1 text-[11px] text-neutral-400">
+                        {row.date}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <Badge tone={row.isToday ? "dark" : "muted"}>
+                        {row.note}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-4">{row.revenue}</td>
+                    <td className="px-4 py-4">{row.cost || "—"}</td>
+                    <td className={`px-4 py-4 font-medium ${moneyTone(row.raw?.grossProfit)}`}>
+                      {(row as any).grossProfit || formatMoneyShort(row.raw?.grossProfit)}
+                    </td>
+                    <td className="px-4 py-4">{row.adsCost || "0"}</td>
+                    <td className={`px-4 py-4 font-medium ${moneyTone(row.raw?.profit)}`}>
+                      {formatMoneyShort(row.raw?.profit)}
+                    </td>
+                    <td className="px-4 py-4">{row.operatingCost}</td>
+                    <td className={`px-4 py-4 font-semibold ${moneyTone(net)}`}>
+                      {formatMoneyShort(net)}
+                    </td>
+                    <td className="px-4 py-4">{row.orders}</td>
+                    <td className="px-4 py-4">{row.roas}</td>
+                    <td
+                      className={`px-4 py-4 text-right font-medium ${
+                        row.positive ? "text-emerald-600" : "text-rose-500"
+                      }`}
+                    >
+                      {row.compare}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -2876,8 +3451,12 @@ export default function DashboardPage() {
             Điểm cần xử lý ngay
           </p>
           <div className="mt-4 space-y-2 text-sm text-neutral-700">
-            <div className="rounded-2xl bg-neutral-50 px-4 py-3">{data.warningSummary.subtitle}</div>
-            <div className="rounded-2xl bg-neutral-50 px-4 py-3">{data.commandCenter.subtitle}</div>
+            <div className="rounded-2xl bg-neutral-50 px-4 py-3">
+              {data.warningSummary.subtitle}
+            </div>
+            <div className="rounded-2xl bg-neutral-50 px-4 py-3">
+              {data.commandCenter.subtitle}
+            </div>
           </div>
         </div>
       </div>
@@ -3380,7 +3959,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="mt-3 space-y-3">
+                  <div className="mt-2 space-y-1.5">
                     {actionLog.map((item) => (
                       <div key={item.id} className="rounded-2xl bg-white/5 p-4">
                         <div className="flex items-center justify-between">

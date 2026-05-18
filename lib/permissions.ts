@@ -29,6 +29,7 @@ export const PERMISSIONS = {
   MENU_PRINT_CENTER: "menu.print_center",
   MENU_PAYROLL: "menu.payroll",
   MENU_PAYROLL_CONFIG: "menu.payroll_config",
+  MENU_STAFF_TRANSFER: "menu.staff_transfer",
 
   PAYROLL_VIEW: "payroll.view",
   PAYROLL_CREATE: "payroll.create",

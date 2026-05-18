@@ -536,6 +536,18 @@ const PERMISSION_MODULES: PermissionModule[] = [
     ],
   },
   {
+    id: "staff_transfer",
+    title: "Chuyển chi nhánh nhân viên",
+    subtitle: "Trang riêng cho nhân viên quản lí, chỉ cho điều chuyển nhân viên giữa các chi nhánh.",
+    icon: "🔀",
+    tone: "indigo",
+    actions: [
+      { key: "menu.staff_transfer", label: "Mở trang Chuyển chi nhánh nhân viên", risk: "low" },
+      { key: "staff.transfer_branch.view", label: "Xem trang chuyển chi nhánh", risk: "medium" },
+      { key: "staff.transfer_branch", label: "Thực hiện chuyển chi nhánh", risk: "critical" },
+    ],
+  },
+  {
     id: "system",
     title: "Hệ thống",
     subtitle: "Phân quyền, cấu hình, chi nhánh, audit, tích hợp và autopilot.",
@@ -550,6 +562,9 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "system.manage", label: "Quản lý hệ thống", risk: "critical" },
       { key: "branches.manage", label: "Quản lý chi nhánh", risk: "critical" },
       { key: "staff.manage", label: "Quản lý nhân viên", risk: "critical" },
+      { key: "menu.staff_transfer", label: "Mở trang Chuyển chi nhánh nhân viên", risk: "medium" },
+      { key: "staff.transfer_branch.view", label: "Xem trang chuyển chi nhánh", risk: "medium" },
+      { key: "staff.transfer_branch", label: "Thực hiện chuyển chi nhánh", risk: "critical" },
       { key: "audit.view", label: "Xem audit log", risk: "high" },
       { key: "carriers.manage", label: "Cấu hình hãng vận chuyển", risk: "high" },
       { key: "autopilot.view", label: "Xem Autopilot", risk: "medium" },

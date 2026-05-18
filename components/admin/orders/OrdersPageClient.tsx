@@ -77,6 +77,9 @@ type ColumnKey =
   | "orderStatus"
   | "paymentDotStatus"
   | "paymentStatus"
+  | "codReconciliation"
+  | "partialReturnOrder"
+  | "partialDeliveryOrder"
   | "stockOutStatus"
   | "fulfillmentStatus"
   | "branch"
@@ -162,7 +165,7 @@ type NormalizedOrder = AdminOrder & {
   _createdAtDate: Date | null;
 };
 
-const TABLE_MIN_WIDTH = 2900;
+const TABLE_MIN_WIDTH = 3240;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
@@ -175,6 +178,9 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "orderStatus", label: "Trạng thái đơn", defaultVisible: true },
   { key: "paymentDotStatus", label: "TT thanh toán", defaultVisible: true },
   { key: "paymentStatus", label: "Thanh toán", defaultVisible: true },
+  { key: "codReconciliation", label: "Đối soát", defaultVisible: true },
+  { key: "partialReturnOrder", label: "Đơn trả hàng", defaultVisible: true },
+  { key: "partialDeliveryOrder", label: "Đơn giao 1 phần", defaultVisible: true },
   { key: "stockOutStatus", label: "TT xuất kho", defaultVisible: true },
   { key: "fulfillmentStatus", label: "Giao vận", defaultVisible: true },
   { key: "branch", label: "Chi nhánh", defaultVisible: true },
@@ -451,6 +457,229 @@ function bumpOrderPrintCount(orderId: string) {
   saveOrderPrintCount(orderId, getOrderPrintCount(orderId) + 1);
 }
 
+function normalizedCodReconciliationStatusFromOrder(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+
+  const directStatusCandidates = [
+    shipment.codReconciliationStatus,
+    shipment.cod_reconciliation_status,
+    shipment.codStatus,
+    shipment.reconciliationStatus,
+    anyOrder.codReconciliationStatus,
+    anyOrder.cod_reconciliation_status,
+    anyOrder.codStatus,
+    anyOrder.reconciliationStatus,
+    anyOrder.shipmentCodReconciliationStatus,
+    anyOrder.shipment_cod_reconciliation_status,
+  ];
+
+  for (const raw of directStatusCandidates) {
+    const status = String(raw || "").trim().toUpperCase();
+    if (status) return status;
+  }
+
+  const issue = [
+    shipment.codReconciliationIssue,
+    shipment.cod_reconciliation_issue,
+    anyOrder.codReconciliationIssue,
+    anyOrder.cod_reconciliation_issue,
+  ]
+    .map((item) => String(item || "").trim().toUpperCase())
+    .filter(Boolean)
+    .join(" ");
+
+  if (issue.includes("PAID") || issue.includes("CONFIRMED") || issue.includes("MATCHED")) {
+    return "MATCHED";
+  }
+
+  const reconciledAt = [
+    shipment.codReconciledAt,
+    shipment.cod_reconciled_at,
+    shipment.codReconciliationPaidAt,
+    shipment.cod_reconciliation_paid_at,
+    shipment.codReconciliationConfirmedAt,
+    shipment.cod_reconciliation_confirmed_at,
+    anyOrder.codReconciledAt,
+    anyOrder.cod_reconciled_at,
+    anyOrder.codReconciliationPaidAt,
+    anyOrder.cod_reconciliation_paid_at,
+    anyOrder.codReconciliationConfirmedAt,
+    anyOrder.cod_reconciliation_confirmed_at,
+  ].some(Boolean);
+
+  if (reconciledAt) return "PAID";
+
+  const payments = Array.isArray(anyOrder.payments) ? anyOrder.payments : [];
+  const hasGhnCodPayment = payments.some((payment: any) => {
+    const paymentText = [
+      payment?.method,
+      payment?.transactionRef,
+      payment?.note,
+      payment?.paymentSourceId,
+      payment?.paymentSource?.code,
+      payment?.paymentSource?.name,
+      payment?.sourceCode,
+      payment?.sourceName,
+    ]
+      .map((item) => String(item || "").toUpperCase())
+      .join(" ");
+
+    return (
+      paymentText.includes("COD_GHN") ||
+      paymentText.includes("GHN_COD") ||
+      paymentText.includes("COD GHN") ||
+      paymentText.includes("ĐỐI SOÁT COD")
+    );
+  });
+
+  if (hasGhnCodPayment) return "PAID";
+
+  // Fallback cho list /orders: nhiều endpoint chỉ trả paymentStatus + shipment cơ bản,
+  // không include các cột codReconciliation*. Với đơn GHN đã chuyển PAID sau khi xác nhận
+  // đối soát, vẫn cần hiện tích đen ở cột Đối soát.
+  const carrier = String(shipment.carrier || anyOrder.carrier || anyOrder.shippingPartner || "").toUpperCase();
+  const hasTracking = Boolean(shipment.trackingCode || anyOrder.trackingCode || anyOrder.shipmentTrackingCode);
+  const isGhnCodPaidOrder =
+    String(anyOrder.paymentStatus || "").toUpperCase() === "PAID" &&
+    carrier.includes("GHN") &&
+    hasTracking;
+
+  if (isGhnCodPaidOrder) return "PAID";
+
+  return "";
+}
+
+function isOrderCodReconciled(order: AdminOrder) {
+  const status = normalizedCodReconciliationStatusFromOrder(order);
+  return [
+    "PAID",
+    "CONFIRMED",
+    "MATCHED",
+    "MATCHED_BY_PARTIAL_DELIVERY",
+    "RECONCILED",
+    "COD_RECONCILED",
+  ].includes(status);
+}
+
+function codReconciliationListLabel(order: AdminOrder) {
+  const status = normalizedCodReconciliationStatusFromOrder(order);
+  if (["PAID", "CONFIRMED", "MATCHED", "RECONCILED", "COD_RECONCILED"].includes(status)) {
+    return "Đã đối soát COD";
+  }
+  if (status === "MATCHED_BY_PARTIAL_DELIVERY") return "Đối soát giao 1 phần";
+  if (status === "MISMATCH") return "Lệch đối soát";
+  if (status === "NOT_FOUND") return "Không tìm thấy";
+  if (status === "SAVED") return "Đã lưu";
+  return "Chưa đối soát";
+}
+
+function CodReconciliationDot({ order }: { order: AdminOrder }) {
+  const done = isOrderCodReconciled(order);
+  const label = codReconciliationListLabel(order);
+
+  if (done) {
+    return (
+      <span
+        title={label}
+        className="mx-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-neutral-950 text-[12px] font-bold leading-none text-white"
+        aria-label={label}
+      >
+        ✓
+      </span>
+    );
+  }
+
+  return (
+    <span
+      title={label}
+      className="mx-auto inline-flex h-5 w-5 rounded-full border-2 border-neutral-300 bg-white"
+      aria-label={label}
+    />
+  );
+}
+
+
+function normalizePartialOrderCode(value?: string | null) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function getExplicitPartialReturnOrderCode(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const partialRows = Array.isArray(anyOrder.partialDeliveries)
+    ? anyOrder.partialDeliveries
+    : [];
+
+  for (const row of partialRows) {
+    const code = String(
+      row?.returnOrderCode ||
+        row?.returnTrackingCode ||
+        row?.returnOrder?.orderCode ||
+        row?.returnOrder?.shipment?.trackingCode ||
+        "",
+    ).trim();
+
+    if (code) return code;
+  }
+
+  return "";
+}
+
+function isPartialDeliveryListOrder(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const noteText = String(anyOrder.note || "").toUpperCase();
+  const statusText = String(anyOrder.fulfillmentStatus || "").toUpperCase();
+
+  return Boolean(
+    anyOrder.isPartialDelivery ||
+      anyOrder.partialReason ||
+      statusText === "PARTIAL" ||
+      (Array.isArray(anyOrder.partialDeliveries) && anyOrder.partialDeliveries.length > 0) ||
+      noteText.includes("PHIEU_GIAO_HANG_1_PHAN") ||
+      noteText.includes("GIAO HANG 1 PHAN") ||
+      noteText.includes("GIAO HÀNG 1 PHẦN"),
+  );
+}
+
+function hasPartialReturnOrderInList(
+  order: AdminOrder,
+  returnOrderCodeSet: Set<string>,
+) {
+  const anyOrder: any = order || {};
+  const orderCode = normalizePartialOrderCode(anyOrder.orderCode);
+  if (!orderCode || orderCode.endsWith("_PR")) return false;
+
+  const explicitReturnCode = normalizePartialOrderCode(
+    getExplicitPartialReturnOrderCode(order),
+  );
+
+  if (explicitReturnCode && returnOrderCodeSet.has(explicitReturnCode)) {
+    return true;
+  }
+
+  return returnOrderCodeSet.has(`${orderCode}_PR`);
+}
+
+function ListDot({ active, title }: { active: boolean; title: string }) {
+  if (active) {
+    return (
+      <span
+        title={title}
+        className="mx-auto inline-flex h-4 w-4 rounded-full border border-neutral-900 bg-neutral-900"
+        aria-label={title}
+      />
+    );
+  }
+
+  return (
+    <span
+      title={title}
+      className="mx-auto inline-flex h-4 w-4 rounded-full border-2 border-neutral-300 bg-white"
+      aria-label={title}
+    />
+  );
+}
+
 function PrintStatusBadge({ orderId }: { orderId: string }) {
   const count = getOrderPrintCount(orderId);
 
@@ -657,7 +886,7 @@ function paymentStatusLabel(status?: string) {
     case "PAID":
       return "Đã thanh toán";
     case "PENDING_COD":
-      return "Chờ thu COD";
+      return "Chờ đối soát COD";
     case "REFUNDED":
       return "Đã hoàn tiền";
     case "FAILED":
@@ -665,6 +894,59 @@ function paymentStatusLabel(status?: string) {
     default:
       return status || "—";
   }
+}
+
+function isDeliveredForCodReconciliation(order: AdminOrder) {
+  const shipment = order.shipment || ({} as any);
+  const statusText = [
+    shipment.shippingStatus,
+    shipment.partnerStatus,
+    (shipment as any).ahamoveStatus,
+    (shipment as any).status,
+    (order as any).shippingStatus,
+    (order as any).partnerStatus,
+    (order as any).deliveryStatus,
+    (order as any).shipmentStatus,
+  ]
+    .map((item) => String(item || "").toUpperCase())
+    .join(" ");
+
+  return (
+    statusText.includes("DELIVERED") ||
+    statusText.includes("DELIVERY_SUCCESS") ||
+    statusText.includes("COMPLETED") ||
+    statusText.includes("SUCCESS") ||
+    statusText.includes("GIAO_THANH_CONG") ||
+    statusText.includes("GIAO HANG THANH CONG") ||
+    statusText.includes("GIAO THÀNH CÔNG")
+  );
+}
+
+function shouldShowPendingCodReconciliation(order: AdminOrder) {
+  return (
+    String(order.paymentStatus || "").toUpperCase() === "PENDING_COD" &&
+    isDeliveredForCodReconciliation(order)
+  );
+}
+
+function orderPaymentStatusLabel(order: AdminOrder) {
+  if (String(order.paymentStatus || "").toUpperCase() === "PENDING_COD") {
+    return shouldShowPendingCodReconciliation(order)
+      ? "Chờ đối soát COD"
+      : "COD chưa thu";
+  }
+
+  return paymentStatusLabel(order.paymentStatus);
+}
+
+function orderPaymentStatusTone(order: AdminOrder) {
+  if (String(order.paymentStatus || "").toUpperCase() === "PENDING_COD") {
+    return shouldShowPendingCodReconciliation(order)
+      ? paymentStatusTone(order.paymentStatus)
+      : "bg-neutral-100 text-neutral-700 border-neutral-200";
+  }
+
+  return paymentStatusTone(order.paymentStatus);
 }
 
 function fulfillmentStatusLabel(status?: string | null) {
@@ -1801,6 +2083,9 @@ type OrderExportColumnKey =
   | "orderStatus"
   | "paymentDotStatus"
   | "paymentStatus"
+  | "codReconciliation"
+  | "partialReturnOrder"
+  | "partialDeliveryOrder"
   | "stockOutStatus"
   | "fulfillmentStatus"
   | "branch"
@@ -1830,6 +2115,9 @@ const defaultOrderExportColumns: OrderExportColumnState = {
   orderStatus: true,
   paymentDotStatus: true,
   paymentStatus: true,
+  codReconciliation: true,
+  partialReturnOrder: true,
+  partialDeliveryOrder: true,
   stockOutStatus: true,
   fulfillmentStatus: true,
   branch: true,
@@ -1858,6 +2146,9 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   orderStatus: "Trạng thái đơn",
   paymentDotStatus: "Trạng thái thanh toán",
   paymentStatus: "Thanh toán",
+  codReconciliation: "Đối soát COD",
+  partialReturnOrder: "Đơn trả hàng",
+  partialDeliveryOrder: "Đơn giao 1 phần",
   stockOutStatus: "Trạng thái xuất kho",
   fulfillmentStatus: "Giao vận",
   branch: "Chi nhánh",
@@ -1916,6 +2207,12 @@ function getOrderExportRows(
   branches: BranchItem[],
   columns: OrderExportColumnState,
 ) {
+  const partialReturnOrderCodeSet = new Set(
+    exportOrders
+      .map((order) => normalizePartialOrderCode(order.orderCode))
+      .filter((code) => code.endsWith("_PR")),
+  );
+
   return exportOrders.map((order) => {
     const meta = order._meta;
     const row: Record<string, any> = {};
@@ -1940,7 +2237,15 @@ function getOrderExportRows(
         paymentDotState(order.paymentStatus),
       );
     if (columns.paymentStatus)
-      row["Thanh toán"] = paymentStatusLabel(order.paymentStatus);
+      row["Thanh toán"] = orderPaymentStatusLabel(order);
+    if ((columns as any).codReconciliation)
+      row["Đối soát COD"] = codReconciliationListLabel(order);
+    if ((columns as any).partialReturnOrder)
+      row["Đơn trả hàng"] = hasPartialReturnOrderInList(order, partialReturnOrderCodeSet)
+        ? "Có"
+        : "Không";
+    if ((columns as any).partialDeliveryOrder)
+      row["Đơn giao 1 phần"] = isPartialDeliveryListOrder(order) ? "Có" : "Không";
     if (columns.stockOutStatus)
       row["Trạng thái xuất kho"] = dotStateLabel(
         stockOutDotState(order.status),
@@ -2063,7 +2368,7 @@ function exportOrdersExcel({
       SĐT: o.customerPhone,
       "Chi nhánh":
         branches.find((b) => b.id === o.branchId)?.name || o.branchId || "",
-      "Thanh toán": paymentStatusLabel(o.paymentStatus),
+      "Thanh toán": orderPaymentStatusLabel(o),
       COD: o._codAmount,
       "Còn phải trả": o._amountDue,
       "Tổng tiền": Number(o.finalAmount || 0),
@@ -2277,6 +2582,8 @@ export default function OrdersPageClient() {
   const [appliedPrintStatusFilter, setAppliedPrintStatusFilter] = useState("ALL");
   const [codFilter, setCodFilter] = useState("ALL");
   const [appliedCodFilter, setAppliedCodFilter] = useState("ALL");
+  const [codReconciliationFilter, setCodReconciliationFilter] = useState("ALL");
+  const [appliedCodReconciliationFilter, setAppliedCodReconciliationFilter] = useState("ALL");
   const [amountDueFilter, setAmountDueFilter] = useState("ALL");
   const [appliedAmountDueFilter, setAppliedAmountDueFilter] = useState("ALL");
   const [itemCountFilter, setItemCountFilter] = useState("ALL");
@@ -2827,6 +3134,7 @@ export default function OrdersPageClient() {
     appliedTrackingFilter,
     appliedPrintStatusFilter,
     appliedCodFilter,
+    appliedCodReconciliationFilter,
     appliedAmountDueFilter,
     appliedItemCountFilter,
     appliedFreeTextFilter,
@@ -2850,6 +3158,14 @@ export default function OrdersPageClient() {
       };
     });
   }, [orders]);
+
+  const partialReturnOrderCodeSet = useMemo(() => {
+    return new Set(
+      normalizedOrders
+        .map((order) => normalizePartialOrderCode(order.orderCode))
+        .filter((code) => code.endsWith("_PR")),
+    );
+  }, [normalizedOrders]);
 
   const branchOptions = useMemo(() => {
     return [
@@ -2995,6 +3311,7 @@ export default function OrdersPageClient() {
     setAppliedTrackingFilter(trackingFilter);
     setAppliedPrintStatusFilter(printStatusFilter);
     setAppliedCodFilter(codFilter);
+    setAppliedCodReconciliationFilter(codReconciliationFilter);
     setAppliedAmountDueFilter(amountDueFilter);
     setAppliedItemCountFilter(itemCountFilter);
     setAppliedFreeTextFilter(freeTextFilter.trim());
@@ -3041,6 +3358,7 @@ export default function OrdersPageClient() {
     trackingFilter !== appliedTrackingFilter ||
     printStatusFilter !== appliedPrintStatusFilter ||
     codFilter !== appliedCodFilter ||
+    codReconciliationFilter !== appliedCodReconciliationFilter ||
     amountDueFilter !== appliedAmountDueFilter ||
     itemCountFilter !== appliedItemCountFilter ||
     freeTextFilter.trim() !== appliedFreeTextFilter ||
@@ -3055,8 +3373,9 @@ export default function OrdersPageClient() {
           case "WAITING_APPROVE":
             return o.status === "NEW";
           case "WAITING_PAYMENT":
-            return ["UNPAID", "PARTIAL", "PENDING_COD"].includes(
-              o.paymentStatus,
+            return (
+              ["UNPAID", "PARTIAL"].includes(o.paymentStatus) ||
+              (o.paymentStatus === "PENDING_COD" && !shouldShowPendingCodReconciliation(o))
             );
           case "WAITING_PACKING":
             return o.status === "PACKING";
@@ -3075,6 +3394,16 @@ export default function OrdersPageClient() {
           default:
             return true;
         }
+      });
+    }
+
+    if (appliedPaymentFilter !== "ALL") {
+      result = result.filter((o) => {
+        if (appliedPaymentFilter === "PENDING_COD") {
+          return shouldShowPendingCodReconciliation(o);
+        }
+
+        return String(o.paymentStatus || "") === appliedPaymentFilter;
       });
     }
 
@@ -3143,6 +3472,21 @@ export default function OrdersPageClient() {
       result = result.filter((o) => {
         const hasCod = Number(o._codAmount || 0) > 0;
         return appliedCodFilter === "HAS_COD" ? hasCod : !hasCod;
+      });
+    }
+
+    if (appliedCodReconciliationFilter !== "ALL") {
+      result = result.filter((o) => {
+        const status = normalizedCodReconciliationStatusFromOrder(o);
+        const done = isOrderCodReconciled(o);
+
+        if (appliedCodReconciliationFilter === "RECONCILED") return done;
+        if (appliedCodReconciliationFilter === "NOT_RECONCILED") return !done;
+        if (appliedCodReconciliationFilter === "MISMATCH") return status === "MISMATCH";
+        if (appliedCodReconciliationFilter === "NOT_FOUND") return status === "NOT_FOUND";
+        if (appliedCodReconciliationFilter === "SAVED") return status === "SAVED";
+
+        return true;
       });
     }
 
@@ -3217,6 +3561,7 @@ export default function OrdersPageClient() {
     appliedTrackingFilter,
     appliedPrintStatusFilter,
     appliedCodFilter,
+    appliedCodReconciliationFilter,
     appliedAmountDueFilter,
     appliedItemCountFilter,
     appliedFreeTextFilter,
@@ -3968,6 +4313,9 @@ export default function OrdersPageClient() {
     orderStatus: "w-[140px]",
     paymentDotStatus: "w-[120px]",
     paymentStatus: "w-[150px]",
+    codReconciliation: "w-[105px]",
+    partialReturnOrder: "w-[120px]",
+    partialDeliveryOrder: "w-[135px]",
     stockOutStatus: "w-[115px]",
     fulfillmentStatus: "w-[135px]",
     branch: "w-[120px]",
@@ -4039,7 +4387,7 @@ export default function OrdersPageClient() {
     if (!column) return null;
     const align = column.money
       ? "text-right"
-      : key === "itemCount"
+      : key === "itemCount" || key === "codReconciliation" || key === "partialReturnOrder" || key === "partialDeliveryOrder"
         ? "text-center"
         : "text-left";
     return (
@@ -4118,7 +4466,7 @@ export default function OrdersPageClient() {
           >
             <DotStatus
               state={paymentDotState(order.paymentStatus)}
-              title={`Thanh toán: ${paymentStatusLabel(order.paymentStatus)}`}
+              title={`Thanh toán: ${orderPaymentStatusLabel(order)}`}
             />
           </td>
         );
@@ -4129,8 +4477,41 @@ export default function OrdersPageClient() {
             className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
           >
             <StatusBadge
-              label={paymentStatusLabel(order.paymentStatus)}
-              tone={paymentStatusTone(order.paymentStatus)}
+              label={orderPaymentStatusLabel(order)}
+              tone={orderPaymentStatusTone(order)}
+            />
+          </td>
+        );
+      case "codReconciliation":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center"
+          >
+            <CodReconciliationDot order={order} />
+          </td>
+        );
+      case "partialReturnOrder":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center"
+          >
+            <ListDot
+              active={hasPartialReturnOrderInList(order, partialReturnOrderCodeSet)}
+              title={hasPartialReturnOrderInList(order, partialReturnOrderCodeSet) ? "Có đơn trả hàng _PR" : "Chưa có đơn trả hàng _PR"}
+            />
+          </td>
+        );
+      case "partialDeliveryOrder":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-center"
+          >
+            <ListDot
+              active={isPartialDeliveryListOrder(order)}
+              title={isPartialDeliveryListOrder(order) ? "Đơn giao hàng 1 phần" : "Không phải đơn giao hàng 1 phần"}
             />
           </td>
         );
@@ -4643,7 +5024,7 @@ export default function OrdersPageClient() {
               <option value="UNPAID">Chưa thanh toán</option>
               <option value="PARTIAL">Một phần</option>
               <option value="PAID">Đã thanh toán</option>
-              <option value="PENDING_COD">Chờ COD</option>
+              <option value="PENDING_COD">Chờ đối soát COD</option>
               <option value="REFUNDED">Hoàn tiền</option>
               <option value="FAILED">Lỗi thanh toán</option>
             </select>
@@ -4745,13 +5126,13 @@ export default function OrdersPageClient() {
                           </span>
                         </span>
                         <StatusBadge
-                          label={paymentStatusLabel(order.paymentStatus)}
-                          tone={paymentStatusTone(order.paymentStatus)}
+                          label={orderPaymentStatusLabel(order)}
+                          tone={orderPaymentStatusTone(order)}
                         />
                         <span className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1">
                           <DotStatus
                             state={paymentDotState(order.paymentStatus)}
-                            title={`Thanh toán: ${paymentStatusLabel(order.paymentStatus)}`}
+                            title={`Thanh toán: ${orderPaymentStatusLabel(order)}`}
                           />
                           <span className="text-[10px] font-semibold text-neutral-500">
                             TT
@@ -5059,7 +5440,7 @@ export default function OrdersPageClient() {
                 <option value="UNPAID">Chưa thanh toán</option>
                 <option value="PARTIAL">Thanh toán một phần</option>
                 <option value="PAID">Đã thanh toán</option>
-                <option value="PENDING_COD">Chờ thu COD</option>
+                <option value="PENDING_COD">Chờ đối soát COD</option>
                 <option value="REFUNDED">Đã hoàn tiền</option>
                 <option value="FAILED">Thanh toán lỗi</option>
               </select>
@@ -5409,6 +5790,19 @@ export default function OrdersPageClient() {
                     <option value="ALL">Tất cả COD</option>
                     <option value="HAS_COD">Có thu hộ COD</option>
                     <option value="NO_COD">Không COD</option>
+                  </select>
+
+                  <select
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                    value={codReconciliationFilter}
+                    onChange={(e) => setCodReconciliationFilter(e.target.value)}
+                  >
+                    <option value="ALL">Tất cả đối soát COD</option>
+                    <option value="RECONCILED">Đã đối soát COD</option>
+                    <option value="NOT_RECONCILED">Chưa đối soát COD</option>
+                    <option value="MISMATCH">Lệch đối soát</option>
+                    <option value="NOT_FOUND">Không tìm thấy trong phiên GHN</option>
+                    <option value="SAVED">Đã lưu đối soát</option>
                   </select>
 
                   <select
@@ -6396,10 +6790,8 @@ export default function OrdersPageClient() {
                       <p className="text-xs text-neutral-500">Thanh toán</p>
                       <div className="mt-2">
                         <StatusBadge
-                          label={paymentStatusLabel(
-                            quickViewOrder.paymentStatus,
-                          )}
-                          tone={paymentStatusTone(quickViewOrder.paymentStatus)}
+                          label={orderPaymentStatusLabel(quickViewOrder)}
+                          tone={orderPaymentStatusTone(quickViewOrder)}
                         />
                       </div>
                     </Panel>

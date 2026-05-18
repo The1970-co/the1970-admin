@@ -71,6 +71,7 @@ const MENU: MenuItem[] = [
       { href: "/payroll", label: "Sổ lương", permission: "menu.payroll" },
       { href: "/payroll/config", label: "Cấu hình lương", permission: "payroll.config" },
       { href: "/payroll/settings", label: "Cài đặt tự động", permission: "payroll.config" },
+      { href: "/staff-transfer", label: "Chuyển chi nhánh nhân viên", permission: PERMISSIONS.MENU_STAFF_TRANSFER },
     ],
   },
   {
@@ -218,8 +219,26 @@ function SidebarContent({
           }
 
           const isActive = isMenuActive(pathname, item.href);
+          const isDashboard = item.href === "/control";
           return (
-            <Link key={item.href} href={item.href!} onClick={onNavigate} className={`block rounded-2xl px-4 py-3 text-sm transition ${isActive ? "bg-neutral-900 font-medium text-white shadow-sm" : "text-neutral-800 hover:bg-neutral-100"}`}>
+            <Link
+              key={item.href}
+              href={item.href!}
+              onClick={onNavigate}
+              className={
+                isDashboard
+                  ? `block rounded-[26px] border px-4 py-4 text-sm transition ${
+                      isActive
+                        ? "border-neutral-900 bg-neutral-900 font-semibold text-white shadow-sm"
+                        : "border-neutral-200 bg-white font-semibold text-neutral-950 hover:bg-neutral-50"
+                    }`
+                  : `block rounded-2xl px-4 py-3 text-sm transition ${
+                      isActive
+                        ? "bg-neutral-900 font-medium text-white shadow-sm"
+                        : "text-neutral-800 hover:bg-neutral-100"
+                    }`
+              }
+            >
               {item.label}
             </Link>
           );

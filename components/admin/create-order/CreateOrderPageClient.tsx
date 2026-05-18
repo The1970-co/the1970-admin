@@ -203,6 +203,16 @@ type BranchOption = {
   isActive?: boolean;
 };
 
+type StaffAssignOption = {
+  value: string;
+  label: string;
+  name: string;
+  code?: string;
+  branchId?: string;
+  branchName?: string;
+  isActive?: boolean;
+};
+
 type PromotionRow = {
   id: string;
   name: string;
@@ -1184,6 +1194,41 @@ function getApiBaseUrl() {
   ).replace(/\/$/, "");
 }
 
+function normalizeStaffAssignName(row: any) {
+  return normalizeSpaces(
+    row?.name ||
+      row?.fullName ||
+      row?.staffName ||
+      row?.displayName ||
+      row?.username ||
+      row?.email ||
+      "Nhân viên",
+  );
+}
+
+function mapStaffAssignOption(row: any): StaffAssignOption | null {
+  const value = String(row?.id || row?.staffId || row?.userId || row?.code || "").trim();
+  if (!value) return null;
+
+  const name = normalizeStaffAssignName(row);
+  const branchId = String(row?.branchId || row?.workingBranchId || row?.mainBranchId || row?.branch?.id || "").trim();
+  const branchName = normalizeSpaces(
+    row?.branchName || row?.branch?.name || row?.mainBranch?.name || branchId,
+  );
+  const code = String(row?.code || row?.staffCode || row?.username || "").trim();
+  const suffix = [code, branchName].filter(Boolean).join(" · ");
+
+  return {
+    value,
+    label: suffix ? `${name} (${suffix})` : name,
+    name,
+    code: code || undefined,
+    branchId: branchId || undefined,
+    branchName: branchName || undefined,
+    isActive: row?.isActive !== false,
+  };
+}
+
 function normalizeColorImageKey(value?: string | null) {
   return String(value || "")
     .trim()
@@ -1773,6 +1818,9 @@ export default function CreateOrderPageClient() {
   const [userBranchIds, setUserBranchIds] = useState<string[]>([]);
   const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
   const [branchLoading, setBranchLoading] = useState(false);
+  const [assignStaffOptions, setAssignStaffOptions] = useState<StaffAssignOption[]>([]);
+  const [assignStaffLoading, setAssignStaffLoading] = useState(false);
+  const [assignedStaffId, setAssignedStaffId] = useState("");
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -2602,6 +2650,81 @@ export default function CreateOrderPageClient() {
 
   useEffect(() => {
     const run = async () => {
+      const apiBase = getApiBaseUrl();
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      try {
+        setAssignStaffLoading(true);
+
+        const candidates = [
+          `${apiBase}/staff-users`,
+          `${apiBase}/staff`,
+          `${apiBase}/users/staff`,
+          `${apiBase}/permissions/staff`,
+          `${apiBase}/staff-users/all`,
+        ];
+
+        let rows: any[] = [];
+
+        for (const url of candidates) {
+          try {
+            const res = await fetch(url, {
+              headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              cache: "no-store",
+            });
+
+            if (!res.ok) continue;
+
+            const json = await res.json();
+            const list = Array.isArray(json)
+              ? json
+              : Array.isArray(json?.items)
+                ? json.items
+                : Array.isArray(json?.data)
+                  ? json.data
+                  : Array.isArray(json?.rows)
+                    ? json.rows
+                    : Array.isArray(json?.staff)
+                      ? json.staff
+                      : [];
+
+            if (list.length) {
+              rows = list;
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        const mapped = rows
+          .map(mapStaffAssignOption)
+          .filter(Boolean) as StaffAssignOption[];
+
+        const unique = Array.from(
+          new Map(
+            mapped
+              .filter((item) => item.isActive !== false)
+              .map((item) => [item.value, item]),
+          ).values(),
+        ).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+        setAssignStaffOptions(unique);
+      } catch {
+        setAssignStaffOptions([]);
+      } finally {
+        setAssignStaffLoading(false);
+      }
+    };
+
+    void run();
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
       try {
         const rows = await getProvinces();
         setProvinceOptions(rows);
@@ -2981,6 +3104,9 @@ export default function CreateOrderPageClient() {
     branchOptions.find((item) => item.value === branchId)?.label ||
     branchId ||
     "—";
+
+  const selectedAssignedStaff =
+    assignStaffOptions.find((item) => item.value === assignedStaffId) || null;
 
   const selectedAddress =
     customerAddresses.find((item) => item.id === selectedAddressId) || null;
@@ -4611,6 +4737,8 @@ export default function CreateOrderPageClient() {
         couponCode.trim() ? `Mã giảm giá: ${couponCode.trim()}` : "",
         customerId ? `CustomerId: ${customerId}` : "",
         selectedAddressId ? `CustomerAddressId: ${selectedAddressId}` : "",
+        selectedAssignedStaff ? `Nhân viên phụ trách: ${selectedAssignedStaff.name}` : "",
+        selectedAssignedStaff?.branchName ? `Chi nhánh NV phụ trách: ${selectedAssignedStaff.branchName}` : "",
         customerPolicyLabel ? `Policy: ${customerPolicyLabel}` : "",
         customerDiscountPercent
           ? `Chiết khấu mặc định: ${customerDiscountPercent}%`
@@ -4652,6 +4780,10 @@ export default function CreateOrderPageClient() {
         branchId,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
+        assignedStaffId: selectedAssignedStaff?.value || undefined,
+        assignedStaffName: selectedAssignedStaff?.name || undefined,
+        assignedStaffBranchId: selectedAssignedStaff?.branchId || undefined,
+        assignedStaffBranchName: selectedAssignedStaff?.branchName || undefined,
         note: extraNoteParts.join(" | "),
         mode: finalCreateMode,
         skipAutoShipment: shouldCreateCarrierShipmentManually,
@@ -5280,6 +5412,31 @@ export default function CreateOrderPageClient() {
                         ))}
                       </select>
                     )}
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                      Nhân viên phụ trách
+                    </p>
+                    {assignStaffLoading ? (
+                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-500">
+                        Đang tải danh sách nhân viên...
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        value={assignedStaffId}
+                        onChange={setAssignedStaffId}
+                        options={assignStaffOptions.map((item) => ({
+                          value: item.value,
+                          label: item.label,
+                        }))}
+                        placeholder="Không gán nhân viên"
+                        searchPlaceholder="Tìm tên, mã NV hoặc chi nhánh..."
+                      />
+                    )}
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Có thể gán cho nhân viên ở bất kỳ chi nhánh nào.
+                    </p>
                   </div>
 
                   <div>
@@ -6224,6 +6381,8 @@ export default function CreateOrderPageClient() {
 
                     <span className="text-neutral-500">Chi nhánh</span>
                     <span>{previewBranch}</span>
+                    <span className="text-neutral-500">NV phụ trách</span>
+                    <span>{selectedAssignedStaff?.label || "Chưa gán"}</span>
 
                     <span className="text-neutral-500">Vận chuyển</span>
                     <span>
