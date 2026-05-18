@@ -2072,7 +2072,7 @@ export default function ProductsPageClient() {
       return;
     }
 
-    openProductsInPrintCenter(selectedProducts);
+    void openProductsInPrintCenter(selectedProducts);
   };
 
   const handleBulkExportSelected = () => {
@@ -2314,6 +2314,39 @@ export default function ProductsPageClient() {
     window.open(href, "_blank", "noopener,noreferrer");
   };
 
+  const getProductPrintAuthHeaders = () => {
+    const token =
+      typeof window !== "undefined"
+        ? localStorage.getItem("token") ||
+          localStorage.getItem("accessToken") ||
+          localStorage.getItem("the1970_token") ||
+          ""
+        : "";
+
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const fetchFullProductForLabelPrint = async (product: ProductItem) => {
+    if (!product?.id) return product;
+
+    try {
+      const res = await fetch(`${API_BASE}/products/${encodeURIComponent(product.id)}`, {
+        headers: {
+          Accept: "application/json",
+          ...getProductPrintAuthHeaders(),
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) return product;
+
+      const detail = await res.json();
+      return detail?.id ? ({ ...product, ...detail } as ProductItem) : product;
+    } catch {
+      return product;
+    }
+  };
+
   const getLabelPrintRows = (
     product: ProductItem | null,
   ): LabelPrintVariantRow[] => {
@@ -2337,10 +2370,24 @@ export default function ProductsPageClient() {
 
     return variants.map((variant: any, index) => {
       const sku = variant?.sku || `${product.slug || product.id}-${index + 1}`;
-      const stock = visibleBranches.reduce(
-        (sum, branch) => sum + Number(variant?.branchStocks?.[branch.id] || 0),
-        0,
-      );
+      const branchStocks =
+        variant?.branchStocks ||
+        variant?.inventoryByBranch ||
+        Object.fromEntries(
+          Array.isArray(variant?.inventoryItems)
+            ? variant.inventoryItems.map((item: any) => [
+                String(item.branchId || ""),
+                Number(item.availableQty ?? item.qty ?? item.stock ?? 0),
+              ])
+            : [],
+        );
+
+      const stock = visibleBranches.length
+        ? visibleBranches.reduce(
+            (sum, branch) => sum + Number(branchStocks?.[branch.id] || 0),
+            0,
+          )
+        : Number(variant?.stock || 0);
 
       return {
         key: sku,
@@ -2354,7 +2401,7 @@ export default function ProductsPageClient() {
     });
   };
 
-  const openProductsInPrintCenter = (targetProducts: ProductItem[]) => {
+  const openProductsInPrintCenter = async (targetProducts: ProductItem[]) => {
     const safeProducts = Array.isArray(targetProducts)
       ? targetProducts.filter(Boolean)
       : [];
@@ -2364,7 +2411,13 @@ export default function ProductsPageClient() {
       return;
     }
 
-    const rows = safeProducts.flatMap((product) =>
+    setActionMessage("Đang lấy đủ danh sách SKU con để in tem...");
+
+    const fullProducts = await Promise.all(
+      safeProducts.map((product) => fetchFullProductForLabelPrint(product)),
+    );
+
+    const rows = fullProducts.flatMap((product) =>
       getLabelPrintRows(product).map((row) => ({
         key: `${product.id || product.slug || row.productName}:${row.key}`,
         productName: row.productName,
@@ -2382,25 +2435,28 @@ export default function ProductsPageClient() {
     }
 
     const draft = {
-      productId: safeProducts.length === 1 ? safeProducts[0]?.id : undefined,
+      productId: fullProducts.length === 1 ? fullProducts[0]?.id : undefined,
       productName:
-        safeProducts.length === 1
-          ? safeProducts[0]?.name || safeProducts[0]?.slug || "Sản phẩm"
-          : `${safeProducts.length} sản phẩm đã chọn`,
+        fullProducts.length === 1
+          ? fullProducts[0]?.name || fullProducts[0]?.slug || "Sản phẩm"
+          : `${fullProducts.length} sản phẩm đã chọn`,
       branchId: currentBranchId || "__default__",
       rows,
     };
 
     try {
-      sessionStorage.setItem(
-        PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY,
-        JSON.stringify(draft),
-      );
+      const draftPayload = JSON.stringify(draft);
+      // Ghi cả localStorage và sessionStorage.
+      // Trung tâm in ấn mở bằng tab mới nên sessionStorage của tab danh sách sản phẩm không truyền ổn định,
+      // đặc biệt khi window.open dùng noopener. localStorage giúp tab mới đọc đúng draft vừa chọn.
+      localStorage.setItem(PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY, draftPayload);
+      sessionStorage.setItem(PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY, draftPayload);
     } catch {
       setActionMessage("Không lưu được dữ liệu in tem trên trình duyệt.");
       return;
     }
 
+    setActionMessage(`Đã đưa ${rows.length} SKU sang Trung tâm in ấn.`);
     window.open(
       "/print-center/product-labels",
       "_blank",
@@ -2464,7 +2520,7 @@ export default function ProductsPageClient() {
     : `<div style="font-family:Arial,sans-serif;padding:16px;color:#666;">Chưa chọn SKU để in tem.</div>`;
 
   const handlePrintProductLabels = (product: ProductItem) => {
-    openProductsInPrintCenter([product]);
+    void openProductsInPrintCenter([product]);
   };
 
   const handleConfirmPrintProductLabels = () => {

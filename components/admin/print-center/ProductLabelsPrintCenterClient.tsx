@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { API_BASE } from "@/lib/api-base";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api";
 import { findPrintTemplate, loadPrintTemplates, savePrintTemplates } from "@/lib/print-template-config";
 import {
   openProductLabelPrintDocument,
@@ -12,6 +12,25 @@ import {
 } from "@/lib/print-template-engine";
 
 const DRAFT_KEY = "the1970.print-center.product-labels.draft";
+// Dùng localStorage để truyền draft từ tab Danh sách sản phẩm sang tab Trung tâm in ấn.
+// sessionStorage là theo từng tab nên window.open(..., noopener) không đọc được draft mới.
+function readStoredLabelDraft() {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(DRAFT_KEY) || sessionStorage.getItem(DRAFT_KEY) || "";
+}
+
+function writeStoredLabelDraft(value: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(DRAFT_KEY, value);
+  sessionStorage.setItem(DRAFT_KEY, value);
+}
+
+function removeStoredLabelDraft() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(DRAFT_KEY);
+  sessionStorage.removeItem(DRAFT_KEY);
+}
+
 const PAPER_PRESETS_KEY = "the1970.print-center.product-label.paper-presets";
 
 type LabelDraftRow = {
@@ -44,11 +63,15 @@ type ProductSearchItem = {
   slug?: string;
   price?: number;
   variants?: Array<{
+    id?: string;
     sku?: string;
     size?: string;
     color?: string;
     price?: number;
+    stock?: number;
     branchStocks?: Record<string, number>;
+    inventoryByBranch?: Record<string, number>;
+    inventoryItems?: Array<{ branchId?: string; availableQty?: number; qty?: number; stock?: number }>;
   }>;
 };
 
@@ -83,28 +106,73 @@ function safeNumber(value: string | number, fallback: number) {
 
 function defaultDraft(): LabelDraft {
   return {
-    productName: "Sản phẩm mẫu",
+    productName: "Chưa chọn sản phẩm",
     branchId: "__default__",
-    rows: [
-      {
-        key: "DEMO-S",
-        productName: "Áo phông trơn AP938",
-        sku: "AP938-T-S",
-        size: "S",
-        color: "TÍM",
-        price: 460000,
-        stock: 1,
-      },
-    ],
+    rows: [],
   };
 }
 
 function stockOfVariant(variant: any): number {
-  const branchStocks = (variant?.branchStocks || {}) as Record<string, any>;
-  return Object.values(branchStocks).reduce<number>(
+  if (variant?.stock !== undefined && variant?.stock !== null) {
+    return Number(variant.stock || 0);
+  }
+
+  const branchStocks =
+    (variant?.branchStocks || variant?.inventoryByBranch || {}) as Record<string, any>;
+  const branchTotal = Object.values(branchStocks).reduce<number>(
     (sum, qty) => sum + Number(qty || 0),
     0,
   );
+
+  if (branchTotal !== 0 || Object.keys(branchStocks).length > 0) return branchTotal;
+
+  const inventoryItems = Array.isArray(variant?.inventoryItems)
+    ? variant.inventoryItems
+    : [];
+
+  return inventoryItems.reduce(
+    (sum: number, item: any) =>
+      sum + Number(item?.availableQty ?? item?.qty ?? item?.stock ?? 0),
+    0,
+  );
+}
+
+function getProductDisplayName(product?: ProductSearchItem | null) {
+  return product?.name || product?.slug || product?.id || "Sản phẩm";
+}
+
+function normalizeProductRows(raw: any): ProductSearchItem[] {
+  const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
+  return rows.map((product: any) => ({
+    ...product,
+    id: product?.id ? String(product.id) : undefined,
+    name: product?.name ? String(product.name) : "",
+    slug: product?.slug ? String(product.slug) : "",
+    price: Number(product?.price || product?.defaultPrice || 0),
+    variants: Array.isArray(product?.variants) ? product.variants : [],
+  }));
+}
+
+function normalizeDraftRows(rows: LabelDraftRow[]) {
+  const bySku = new Map<string, LabelDraftRow>();
+
+  rows.forEach((row) => {
+    const key = String(row.key || row.sku || "").trim();
+    const sku = String(row.sku || key).trim();
+    if (!key || !sku) return;
+
+    bySku.set(sku.toUpperCase(), {
+      key,
+      productName: row.productName || "Sản phẩm",
+      sku,
+      size: row.size || "",
+      color: row.color || "",
+      price: Number(row.price || 0),
+      stock: Number(row.stock || 0),
+    });
+  });
+
+  return Array.from(bySku.values());
 }
 
 function draftFromProduct(product: ProductSearchItem): LabelDraft {
@@ -149,6 +217,49 @@ function draftFromProduct(product: ProductSearchItem): LabelDraft {
   };
 }
 
+function rowsFromProduct(product: ProductSearchItem, onlySku?: string): LabelDraftRow[] {
+  const productDraft = draftFromProduct(product);
+  const wantedSku = String(onlySku || "").trim();
+  const rows = wantedSku
+    ? productDraft.rows.filter((row) => row.sku === wantedSku || row.key === wantedSku)
+    : productDraft.rows;
+
+  return normalizeDraftRows(rows);
+}
+
+async function readProductList(keyword: string) {
+  const params = new URLSearchParams({ page: "1", limit: "50" });
+  if (keyword.trim()) params.set("q", keyword.trim());
+
+  const res = await apiFetch(`/products?${params.toString()}`, {
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.message || "Không tải được sản phẩm.");
+  }
+
+  return normalizeProductRows(await res.json());
+}
+
+async function readProductDetail(product: ProductSearchItem) {
+  if (!product?.id) return product;
+
+  try {
+    const res = await apiFetch(`/products/${encodeURIComponent(product.id)}`, {
+      cache: "no-store",
+    });
+
+    if (!res.ok) return product;
+
+    const detail = await res.json();
+    return normalizeProductRows([detail])[0] || product;
+  } catch {
+    return product;
+  }
+}
+
 export default function ProductLabelsPrintCenterClient() {
   const [draft, setDraft] = useState<LabelDraft>(() => defaultDraft());
   const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({});
@@ -180,6 +291,158 @@ export default function ProductLabelsPrintCenterClient() {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [customPaperPresets, setCustomPaperPresets] = useState<PaperPreset[]>([]);
   const [templateName, setTemplateName] = useState("Tem tuỳ chỉnh");
+  const draftMutationSeq = useRef(0);
+
+  const isLegacyDemoDraft = (value: any) => {
+    const rows = Array.isArray(value?.rows) ? value.rows : [];
+    if (!rows.length) return false;
+    return rows.some((row: any) =>
+      String(row?.sku || "").toUpperCase() === "AP938-T-S" ||
+      String(row?.key || "").toUpperCase() === "DEMO-S",
+    );
+  };
+
+  const applyDraft = (
+    nextDraft: LabelDraft,
+    previousQtyMap: Record<string, string> = qtyMap,
+    bumpSeq = true,
+  ) => {
+    if (bumpSeq) draftMutationSeq.current += 1;
+    const nextRows = normalizeDraftRows(nextDraft.rows || []);
+    const cleanDraft: LabelDraft = {
+      ...nextDraft,
+      productName: nextDraft.productName || "Sản phẩm",
+      branchId: nextDraft.branchId || "__default__",
+      rows: nextRows,
+    };
+
+    setDraft(cleanDraft);
+    setSelectedMap(Object.fromEntries(nextRows.map((row) => [row.key, true])));
+    setQtyMap(
+      Object.fromEntries(
+        nextRows.map((row) => [row.key, previousQtyMap[row.key] || "1"]),
+      ),
+    );
+    writeStoredLabelDraft(JSON.stringify(cleanDraft));
+  };
+
+  const appendRowsToDraft = (
+    rows: LabelDraftRow[],
+    source?: { productName?: string; productId?: string; branchId?: string | null },
+  ) => {
+    const nextRows = normalizeDraftRows([...draft.rows, ...rows]);
+    const nextDraft: LabelDraft = {
+      productId: draft.productId || source?.productId,
+      productName:
+        draft.rows.length > 0 && draft.productName !== "Chưa chọn sản phẩm"
+          ? draft.productName
+          : source?.productName || "Sản phẩm đã chọn",
+      branchId: draft.branchId || source?.branchId || "__default__",
+      rows: nextRows,
+    };
+
+    applyDraft(nextDraft, qtyMap);
+    setMessage(`Đã thêm ${rows.length} SKU. Tổng hiện có ${nextRows.length} SKU trong bảng in.`);
+  };
+
+  const buildKeyedRows = (product: ProductSearchItem, onlySku?: string) => {
+    return rowsFromProduct(product, onlySku).map((row) => ({
+      ...row,
+      key: `${product.id || product.slug || row.productName}:${row.sku}`,
+    }));
+  };
+
+  const replaceDraftWithProduct = async (product: ProductSearchItem, onlySku?: string) => {
+    const actionSeq = ++draftMutationSeq.current;
+
+    try {
+      setLoadingProducts(true);
+      setMessage("");
+
+      const immediateRows = buildKeyedRows(product, onlySku);
+      if (immediateRows.length) {
+        applyDraft(
+          {
+            productId: product.id,
+            productName: getProductDisplayName(product),
+            branchId: draft.branchId || "__default__",
+            rows: immediateRows,
+          },
+          {},
+          false,
+        );
+        setPickerOpen(false);
+        setMessage(
+          onlySku
+            ? `Đã chọn SKU ${onlySku}.`
+            : `Đã chọn ${getProductDisplayName(product)} với ${immediateRows.length} SKU.`,
+        );
+      }
+
+      const detail = await readProductDetail(product);
+      if (actionSeq !== draftMutationSeq.current) return;
+
+      const rows = buildKeyedRows(detail, onlySku);
+      if (!rows.length) {
+        setMessage("Sản phẩm này chưa có SKU để in tem.");
+        return;
+      }
+
+      applyDraft(
+        {
+          productId: detail.id || product.id,
+          productName: getProductDisplayName(detail),
+          branchId: draft.branchId || "__default__",
+          rows,
+        },
+        {},
+        false,
+      );
+      setPickerOpen(false);
+      setMessage(
+        onlySku
+          ? `Đã chọn SKU ${onlySku}.`
+          : `Đã chọn ${getProductDisplayName(detail)} với ${rows.length} SKU.`,
+      );
+    } catch (err) {
+      if (actionSeq === draftMutationSeq.current) {
+        setMessage(err instanceof Error ? err.message : "Không chọn được sản phẩm.");
+      }
+    } finally {
+      if (actionSeq === draftMutationSeq.current) setLoadingProducts(false);
+    }
+  };
+
+  const appendProductRows = async (product: ProductSearchItem, onlySku?: string) => {
+    const actionSeq = ++draftMutationSeq.current;
+
+    try {
+      setLoadingProducts(true);
+      setMessage("");
+      const detail = await readProductDetail(product);
+      if (actionSeq !== draftMutationSeq.current) return;
+
+      const rows = buildKeyedRows(detail, onlySku);
+
+      if (!rows.length) {
+        setMessage("Sản phẩm này chưa có SKU để in tem.");
+        return;
+      }
+
+      appendRowsToDraft(rows, {
+        productId: detail.id,
+        productName: getProductDisplayName(detail),
+        branchId: draft.branchId || "__default__",
+      });
+      setPickerOpen(false);
+    } catch (err) {
+      if (actionSeq === draftMutationSeq.current) {
+        setMessage(err instanceof Error ? err.message : "Không thêm được sản phẩm.");
+      }
+    } finally {
+      if (actionSeq === draftMutationSeq.current) setLoadingProducts(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -203,19 +466,62 @@ export default function ProductLabelsPrintCenterClient() {
   }, []);
 
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(DRAFT_KEY);
-      if (!raw) return;
+    const hydrateDraft = async () => {
+      const hydrateSeq = ++draftMutationSeq.current;
 
-      const parsed = JSON.parse(raw) as LabelDraft;
-      if (!Array.isArray(parsed?.rows) || !parsed.rows.length) return;
+      try {
+        const raw = readStoredLabelDraft();
+        if (!raw) {
+          if (hydrateSeq !== draftMutationSeq.current) return;
+          setPickerOpen(true);
+          await loadProductsForPicker("");
+          return;
+        }
 
-      setDraft(parsed);
-      setSelectedMap(Object.fromEntries(parsed.rows.map((row) => [row.key, true])));
-      setQtyMap(Object.fromEntries(parsed.rows.map((row) => [row.key, "1"])));
-    } catch {
-      // dùng dữ liệu mẫu nếu draft lỗi
-    }
+        const parsed = JSON.parse(raw) as LabelDraft;
+        if (!Array.isArray(parsed?.rows) || !parsed.rows.length || isLegacyDemoDraft(parsed)) {
+          removeStoredLabelDraft();
+          if (hydrateSeq !== draftMutationSeq.current) return;
+          setPickerOpen(true);
+          await loadProductsForPicker("");
+          return;
+        }
+
+        // Quan trọng: nếu mở từ danh sách sản phẩm mà draft chỉ có 1 SKU,
+        // gọi lại /products/:id để bung đủ toàn bộ mã con cho sản phẩm cha.
+        if (parsed.productId && parsed.rows.length <= 1) {
+          const detail = await readProductDetail({ id: parsed.productId, name: parsed.productName });
+          if (hydrateSeq !== draftMutationSeq.current) return;
+
+          const expandedRows = buildKeyedRows(detail);
+
+          if (expandedRows.length > parsed.rows.length) {
+            applyDraft(
+              {
+                productId: detail.id || parsed.productId,
+                productName: getProductDisplayName(detail) || parsed.productName,
+                branchId: parsed.branchId || "__default__",
+                rows: expandedRows,
+              },
+              {},
+              false,
+            );
+            setMessage(`Đã bung đủ ${expandedRows.length} SKU của ${getProductDisplayName(detail)}.`);
+            return;
+          }
+        }
+
+        if (hydrateSeq !== draftMutationSeq.current) return;
+        applyDraft(parsed, {}, false);
+      } catch {
+        if (hydrateSeq !== draftMutationSeq.current) return;
+        setPickerOpen(true);
+        await loadProductsForPicker("");
+      }
+    };
+
+    void hydrateDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -228,15 +534,12 @@ export default function ProductLabelsPrintCenterClient() {
   const loadProductsForPicker = async (keyword = productQuery) => {
     try {
       setLoadingProducts(true);
-      const params = new URLSearchParams({ page: "1", limit: "30" });
-      if (keyword.trim()) params.set("q", keyword.trim());
-      const res = await fetch(`${API_BASE}/products?${params.toString()}`);
-      if (!res.ok) throw new Error("Không tải được sản phẩm.");
-      const data = await res.json();
-      const rows = Array.isArray(data) ? data : data?.data || [];
-      setProductResults(Array.isArray(rows) ? rows : []);
+      setMessage("");
+      const rows = await readProductList(keyword);
+      setProductResults(rows);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không tải được sản phẩm.");
+      setProductResults([]);
     } finally {
       setLoadingProducts(false);
     }
@@ -245,16 +548,6 @@ export default function ProductLabelsPrintCenterClient() {
   const openProductPicker = () => {
     setPickerOpen(true);
     void loadProductsForPicker("");
-  };
-
-  const chooseProduct = (product: ProductSearchItem) => {
-    const nextDraft = draftFromProduct(product);
-    setDraft(nextDraft);
-    setSelectedMap(Object.fromEntries(nextDraft.rows.map((row) => [row.key, true])));
-    setQtyMap(Object.fromEntries(nextDraft.rows.map((row) => [row.key, "1"])));
-    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(nextDraft));
-    setPickerOpen(false);
-    setMessage(`Đã chọn ${nextDraft.productName}.`);
   };
 
   const paperPresets = useMemo(() => {
@@ -459,6 +752,13 @@ export default function ProductLabelsPrintCenterClient() {
                   </tr>
                 </thead>
                 <tbody>
+                  {!draft.rows.length ? (
+                    <tr className="border-t border-neutral-100">
+                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-neutral-500">
+                        Chưa chọn SKU. Bấm “Chọn sản phẩm cần in” để lấy danh sách sản phẩm và mã con.
+                      </td>
+                    </tr>
+                  ) : null}
                   {draft.rows.map((row) => (
                     <tr key={row.key} className="border-t border-neutral-100">
                       <td className="px-4 py-3">
@@ -623,13 +923,21 @@ export default function ProductLabelsPrintCenterClient() {
 
       {pickerOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[88vh] w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="max-h-[88vh] w-full max-w-5xl overflow-hidden rounded-3xl bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-neutral-100 p-5">
               <div>
                 <h2 className="text-2xl font-semibold text-neutral-950">Chọn sản phẩm cần in</h2>
-                <p className="mt-1 text-sm text-neutral-500">Tìm theo tên, SKU hoặc mã sản phẩm rồi chọn để đưa vào engine in tem.</p>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Tìm theo tên, mã chính hoặc SKU con. Có thể chọn cả sản phẩm cha hoặc từng mã con.
+                </p>
               </div>
-              <button type="button" onClick={() => setPickerOpen(false)} className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-600 hover:bg-neutral-50">Đóng</button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(false)}
+                className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-600 hover:bg-neutral-50"
+              >
+                Đóng
+              </button>
             </div>
 
             <div className="flex gap-2 p-5">
@@ -640,27 +948,105 @@ export default function ProductLabelsPrintCenterClient() {
                   if (event.key === "Enter") void loadProductsForPicker(productQuery);
                 }}
                 className="h-12 flex-1 rounded-2xl border border-neutral-300 px-4 text-sm outline-none focus:border-neutral-900"
-                placeholder="Tìm tên sản phẩm, SKU..."
+                placeholder="Tìm tên sản phẩm, mã chính, SKU con..."
               />
-              <button type="button" onClick={() => void loadProductsForPicker(productQuery)} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800">
+              <button
+                type="button"
+                onClick={() => void loadProductsForPicker(productQuery)}
+                disabled={loadingProducts}
+                className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 disabled:opacity-60"
+              >
                 {loadingProducts ? "Đang tìm..." : "Tìm"}
               </button>
             </div>
 
-            <div className="max-h-[55vh] overflow-auto border-t border-neutral-100">
-              {productResults.map((product) => (
-                <button
-                  key={product.id || product.slug || product.name}
-                  type="button"
-                  onClick={() => chooseProduct(product)}
-                  className="block w-full border-b border-neutral-100 px-5 py-4 text-left hover:bg-neutral-50"
-                >
-                  <div className="font-semibold text-neutral-950">{product.name || product.slug || "Sản phẩm"}</div>
-                  <div className="mt-1 text-sm text-neutral-500">
-                    {product.slug || "—"} · {Array.isArray(product.variants) ? product.variants.length : 0} SKU
+            <div className="max-h-[58vh] overflow-auto border-t border-neutral-100">
+              {productResults.map((product) => {
+                const productName = getProductDisplayName(product);
+                const variants = Array.isArray(product.variants) ? product.variants : [];
+
+                return (
+                  <div key={product.id || product.slug || product.name} className="border-b border-neutral-100 p-5">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div className="text-base font-semibold text-neutral-950">{productName}</div>
+                        <div className="mt-1 text-sm text-neutral-500">
+                          Mã chính: {product.slug || "—"} · {variants.length} SKU con
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void replaceDraftWithProduct(product)}
+                          className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800"
+                        >
+                          Chọn cả mã chính
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void appendProductRows(product)}
+                          className="rounded-2xl border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50"
+                        >
+                          Thêm tất cả SKU
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-neutral-200">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
+                          <tr>
+                            <th className="px-3 py-2">SKU con</th>
+                            <th className="px-3 py-2">Size</th>
+                            <th className="px-3 py-2">Màu</th>
+                            <th className="px-3 py-2">Tồn</th>
+                            <th className="px-3 py-2 text-right">Thao tác</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {!variants.length ? (
+                            <tr>
+                              <td colSpan={5} className="px-3 py-4 text-center text-neutral-500">
+                                Sản phẩm này chưa có SKU con trong dữ liệu trả về.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {variants.map((variant, index) => {
+                            const sku = String(variant?.sku || `${product.slug || product.id || "SKU"}-${index + 1}`);
+                            return (
+                              <tr key={`${product.id || product.slug}:${sku}`} className="border-t border-neutral-100">
+                                <td className="px-3 py-2 font-medium text-neutral-950">{sku}</td>
+                                <td className="px-3 py-2">{variant?.size || "—"}</td>
+                                <td className="px-3 py-2">{variant?.color || "—"}</td>
+                                <td className="px-3 py-2">{stockOfVariant(variant)}</td>
+                                <td className="px-3 py-2">
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => void replaceDraftWithProduct(product, sku)}
+                                      className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50"
+                                    >
+                                      Chọn SKU này
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void appendProductRows(product, sku)}
+                                      className="rounded-xl bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-800"
+                                    >
+                                      Thêm SKU
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+              })}
 
               {!loadingProducts && !productResults.length ? (
                 <div className="p-8 text-center text-sm text-neutral-500">Chưa có sản phẩm phù hợp.</div>
