@@ -28,6 +28,11 @@ type StaffOption = {
     branchId: string;
     branchName?: string | null;
     roleCode?: string | null;
+    branch?: {
+      id?: string;
+      name?: string | null;
+      code?: string | null;
+    } | null;
   }>;
 };
 
@@ -116,7 +121,17 @@ function formatBranch(branch?: BranchOption | null) {
 
 function formatStaffBranch(staff?: StaffOption | null) {
   if (!staff) return "—";
-  return staff.branchName || staff.branchId || staff.branchRoles?.[0]?.branchName || staff.branchRoles?.[0]?.branchId || "—";
+
+  const roles = Array.isArray(staff.branchRoles) ? staff.branchRoles : [];
+
+  if (roles.length) {
+    return roles
+      .map((row) => row.branchName || row.branch?.name || row.branchId)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return staff.branchName || staff.branchId || "—";
 }
 
 function getStaffCurrentBranchId(staff?: StaffOption | null) {
@@ -132,6 +147,28 @@ function getStaffCurrentRole(staff?: StaffOption | null, branchId?: string) {
     staff.role ||
     "retail-staff"
   );
+}
+
+function getStaffRoleChips(staff?: StaffOption | null) {
+  if (!staff) return [];
+
+  const roles = Array.isArray(staff.branchRoles) ? staff.branchRoles : [];
+
+  if (roles.length) {
+    return roles.map((row) => ({
+      branchId: row.branchId,
+      branchName: row.branchName || row.branch?.name || row.branchId,
+      roleCode: row.roleCode || staff.role || "retail-staff",
+    }));
+  }
+
+  return [
+    {
+      branchId: staff.branchId || "",
+      branchName: staff.branchName || staff.branchId || "—",
+      roleCode: staff.role || "retail-staff",
+    },
+  ];
 }
 
 export default function StaffTransferPageClient() {
@@ -177,7 +214,7 @@ export default function StaffTransferPageClient() {
         item.role,
         item.branchName,
         item.branchId,
-        ...(item.branchRoles || []).map((row) => `${row.branchName || ""} ${row.branchId || ""} ${row.roleCode || ""}`),
+        ...(item.branchRoles || []).map((row) => `${row.branchName || row.branch?.name || ""} ${row.branchId || ""} ${row.roleCode || ""}`),
       ]
         .join(" ")
         .toLowerCase()
@@ -396,7 +433,6 @@ export default function StaffTransferPageClient() {
                 {filteredStaff.map((item) => {
                   const active = item.id === staffId;
                   const currentBranchId = getStaffCurrentBranchId(item);
-                  const currentRole = getStaffCurrentRole(item, currentBranchId);
 
                   return (
                     <tr
@@ -411,19 +447,37 @@ export default function StaffTransferPageClient() {
                       </td>
 
                       <td className="px-4 py-3 font-semibold">
-                        {formatStaffBranch(item)}
+                        <div className="flex flex-wrap gap-1.5">
+                          {getStaffRoleChips(item).map((chip) => (
+                            <span
+                              key={`${item.id}-${chip.branchId}-${chip.roleCode}`}
+                              className={
+                                active
+                                  ? "rounded-full bg-white/10 px-2 py-1 text-xs font-bold text-white"
+                                  : "rounded-full bg-neutral-100 px-2 py-1 text-xs font-bold text-neutral-700"
+                              }
+                            >
+                              {chip.branchName}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3">
-                        <span
-                          className={
-                            active
-                              ? "rounded-full bg-white/10 px-2 py-1 text-xs font-bold"
-                              : "rounded-full bg-neutral-100 px-2 py-1 text-xs font-bold text-neutral-700"
-                          }
-                        >
-                          {formatRoleLabel(currentRole)}
-                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {getStaffRoleChips(item).map((chip) => (
+                            <span
+                              key={`${item.id}-${chip.branchId}-${chip.roleCode}-role`}
+                              className={
+                                active
+                                  ? "rounded-full bg-white/10 px-2 py-1 text-xs font-bold"
+                                  : "rounded-full bg-neutral-100 px-2 py-1 text-xs font-bold text-neutral-700"
+                              }
+                            >
+                              {formatRoleLabel(chip.roleCode)}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3 text-right">

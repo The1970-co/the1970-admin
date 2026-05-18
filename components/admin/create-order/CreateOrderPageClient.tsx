@@ -44,6 +44,7 @@ import { BRANCH_LABELS } from "@/lib/authz";
 import {
   getCurrentUserFromStorage,
   getUserBranchIds,
+  getWorkingBranchId,
   isOwnerUser,
 } from "@/lib/current-user";
 
@@ -58,22 +59,22 @@ const AHAMOVE_PAYMENT_METHOD_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  {
-    value: "BALANCE",
-    label: "Trừ ví / công nợ AhaMove",
-    description: "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.",
-  },
-  {
-    value: "CASH",
-    label: "Shop trả tiền mặt cho tài xế",
-    description: "Tài xế thu phí ship từ shop lúc lấy hàng.",
-  },
-  {
-    value: "CASH_BY_RECIPIENT",
-    label: "Khách trả tiền ship",
-    description: "Tài xế thu phí ship từ khách nhận hàng.",
-  },
-];
+    {
+      value: "BALANCE",
+      label: "Trừ ví / công nợ AhaMove",
+      description: "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.",
+    },
+    {
+      value: "CASH",
+      label: "Shop trả tiền mặt cho tài xế",
+      description: "Tài xế thu phí ship từ shop lúc lấy hàng.",
+    },
+    {
+      value: "CASH_BY_RECIPIENT",
+      label: "Khách trả tiền ship",
+      description: "Tài xế thu phí ship từ khách nhận hàng.",
+    },
+  ];
 
 function normalizeAhamovePaymentMethod(value?: string | null): AhamovePaymentMethod {
   const normalized = String(value || "").trim().toUpperCase();
@@ -256,7 +257,7 @@ function isPromotionActiveForContext(
     promotion.salesChannel &&
     input.salesChannel &&
     String(promotion.salesChannel).toUpperCase() !==
-      String(input.salesChannel).toUpperCase()
+    String(input.salesChannel).toUpperCase()
   ) {
     return false;
   }
@@ -703,9 +704,9 @@ function SearchableSelect({
           : labelCompact.includes(compactKeyword)
             ? 90
             : normalizedKeyword
-                .split(/\s+/)
-                .filter(Boolean)
-                .every((term) => labelText.includes(term))
+              .split(/\s+/)
+              .filter(Boolean)
+              .every((term) => labelText.includes(term))
               ? 70
               : 0;
         return { item, score };
@@ -806,15 +807,15 @@ function getFeeNumber(row: ShipmentQuoteResult) {
   const raw = row as any;
   return Number(
     raw?.fee?.total ||
-      raw?.fee?.total_fee ||
-      raw?.fee?.service_fee ||
-      raw?.data?.user_price_details?.total_fee ||
-      raw?.data?.user_price_details?.total_price ||
-      raw?.data?.total_price ||
-      raw?.data?.total_fee ||
-      raw?.data?.service_fee ||
-      raw?.fee ||
-      0,
+    raw?.fee?.total_fee ||
+    raw?.fee?.service_fee ||
+    raw?.data?.user_price_details?.total_fee ||
+    raw?.data?.user_price_details?.total_price ||
+    raw?.data?.total_price ||
+    raw?.data?.total_fee ||
+    raw?.data?.service_fee ||
+    raw?.fee ||
+    0,
   );
 }
 
@@ -828,20 +829,20 @@ function getQuoteKey(row: ShipmentQuoteResult) {
 
   return String(
     raw?._quoteKey ||
-      raw?._ahamoveServiceId ||
-      raw?.service_id ||
-      raw?.serviceCode ||
-      raw?._viettelServiceCode ||
-      [
-        carrier,
-        row.serviceId || 0,
-        row.serviceTypeId || 0,
-        raw?._serviceName || "",
-        raw?.shortName || "",
-        raw?.serviceName || "",
-        raw?._durationMinutes || "",
-        getFeeNumber(row) || "",
-      ].join("-"),
+    raw?._ahamoveServiceId ||
+    raw?.service_id ||
+    raw?.serviceCode ||
+    raw?._viettelServiceCode ||
+    [
+      carrier,
+      row.serviceId || 0,
+      row.serviceTypeId || 0,
+      raw?._serviceName || "",
+      raw?.shortName || "",
+      raw?.serviceName || "",
+      raw?._durationMinutes || "",
+      getFeeNumber(row) || "",
+    ].join("-"),
   );
 }
 
@@ -930,21 +931,21 @@ function parseAhamoveQuoteFee(rawQuote: any) {
   const quoteData = rawQuote?.data || rawQuote || {};
   const quoteFee = Number(
     quoteData?.user_price_details?.total_fee ||
-      quoteData?.user_price_details?.total_price ||
-      quoteData?.total_fee ||
-      quoteData?.totalFee ||
-      quoteData?.total_price ||
-      quoteData?.totalPrice ||
-      quoteData?.subtotal_price ||
-      quoteData?.subtotalPrice ||
-      quoteData?.service_fee ||
-      quoteData?.serviceFee ||
-      quoteData?.distance_fee ||
-      quoteData?.distanceFee ||
-      rawQuote?.fee ||
-      rawQuote?.totalFee ||
-      rawQuote?.total_fee ||
-      0,
+    quoteData?.user_price_details?.total_price ||
+    quoteData?.total_fee ||
+    quoteData?.totalFee ||
+    quoteData?.total_price ||
+    quoteData?.totalPrice ||
+    quoteData?.subtotal_price ||
+    quoteData?.subtotalPrice ||
+    quoteData?.service_fee ||
+    quoteData?.serviceFee ||
+    quoteData?.distance_fee ||
+    quoteData?.distanceFee ||
+    rawQuote?.fee ||
+    rawQuote?.totalFee ||
+    rawQuote?.total_fee ||
+    0,
   );
 
   const serviceLabel =
@@ -1197,12 +1198,12 @@ function getApiBaseUrl() {
 function normalizeStaffAssignName(row: any) {
   return normalizeSpaces(
     row?.name ||
-      row?.fullName ||
-      row?.staffName ||
-      row?.displayName ||
-      row?.username ||
-      row?.email ||
-      "Nhân viên",
+    row?.fullName ||
+    row?.staffName ||
+    row?.displayName ||
+    row?.username ||
+    row?.email ||
+    "Nhân viên",
   );
 }
 
@@ -1746,27 +1747,27 @@ const shippingUiModeOptions: Array<{
   label: string;
   description: string;
 }> = [
-  {
-    value: "carrier",
-    label: "Đẩy qua hãng vận chuyển",
-    description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
-  },
-  {
-    value: "external",
-    label: "Đẩy vận chuyển ngoài",
-    description: "Shipper ngoài / đối tác ngoài hệ thống.",
-  },
-  {
-    value: "pickup",
-    label: "Khách nhận tại cửa hàng",
-    description: "Không tính phí ship.",
-  },
-  {
-    value: "schedule",
-    label: "Giao hàng sau",
-    description: "Tạo đơn trước, xử lý ship sau.",
-  },
-];
+    {
+      value: "carrier",
+      label: "Đẩy qua hãng vận chuyển",
+      description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
+    },
+    {
+      value: "external",
+      label: "Đẩy vận chuyển ngoài",
+      description: "Shipper ngoài / đối tác ngoài hệ thống.",
+    },
+    {
+      value: "pickup",
+      label: "Khách nhận tại cửa hàng",
+      description: "Không tính phí ship.",
+    },
+    {
+      value: "schedule",
+      label: "Giao hàng sau",
+      description: "Tạo đơn trước, xử lý ship sau.",
+    },
+  ];
 
 const shippingPartnerOptions = [
   { value: "ghn", label: "GHN", enabled: true },
@@ -1781,10 +1782,10 @@ const deliveryRequirementOptions: Array<{
   value: DeliveryRequirement;
   label: string;
 }> = [
-  { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
-  { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
-  { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
-];
+    { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
+    { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
+    { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
+  ];
 
 export default function CreateOrderPageClient() {
   const applyShippingRef = useRef<
@@ -1802,6 +1803,25 @@ export default function CreateOrderPageClient() {
   const suppressPhoneSuggestionRef = useRef(false);
   const phoneSuggestionRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    const handleActiveBranchChanged = () => {
+      router.refresh();
+    };
+
+    window.addEventListener(
+      "the1970:active-branch-changed",
+      handleActiveBranchChanged,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "the1970:active-branch-changed",
+        handleActiveBranchChanged,
+      );
+    };
+  }, [router]);
+  
   const [products, setProducts] = useState<OrderProduct[]>([]);
   const [promotions, setPromotions] = useState<PromotionRow[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
@@ -2088,11 +2108,11 @@ export default function CreateOrderPageClient() {
         setNote(
           getCleanCopyOrderNote(
             order?.internalNote ||
-              order?.orderNote ||
-              order?.customerNote ||
-              order?.shippingNote ||
-              order?.note ||
-              "",
+            order?.orderNote ||
+            order?.customerNote ||
+            order?.shippingNote ||
+            order?.note ||
+            "",
           ),
         );
 
@@ -2277,18 +2297,18 @@ export default function CreateOrderPageClient() {
           .map((item: any) => {
             const variantId = String(
               item.variantId ||
-                item.productVariantId ||
-                item.variant?.id ||
-                item.productVariant?.id ||
-                "",
+              item.productVariantId ||
+              item.variant?.id ||
+              item.productVariant?.id ||
+              "",
             );
 
             const itemSku = String(
               item.sku ||
-                item.variantSku ||
-                item.productVariant?.sku ||
-                item.variant?.sku ||
-                "",
+              item.variantSku ||
+              item.productVariant?.sku ||
+              item.variant?.sku ||
+              "",
             );
 
             const found = allProductVariants.find(
@@ -2331,11 +2351,11 @@ export default function CreateOrderPageClient() {
                 "",
               price: Number(
                 item.price ??
-                  item.unitPrice ??
-                  item.salePrice ??
-                  item.productVariant?.price ??
-                  found?.price ??
-                  0,
+                item.unitPrice ??
+                item.salePrice ??
+                item.productVariant?.price ??
+                found?.price ??
+                0,
               ),
               stock: Number(found?.stock || 0),
               totalStock: Number(
@@ -2469,8 +2489,8 @@ export default function CreateOrderPageClient() {
     if (shippingPartner !== "viettelpost" || !selectedCarrierPickup) return;
     const groupAddressId = Number(
       selectedCarrierPickup.viettelGroupAddressId ||
-        selectedCarrierPickup.groupAddressId ||
-        0,
+      selectedCarrierPickup.groupAddressId ||
+      0,
     );
     if (groupAddressId) setSelectedViettelInventoryId(groupAddressId);
   }, [selectedCarrierPickup, shippingPartner]);
@@ -2533,7 +2553,7 @@ export default function CreateOrderPageClient() {
             : [];
 
         setPaymentSources(rows);
-      } catch {}
+      } catch { }
     };
 
     void run();
@@ -2600,11 +2620,11 @@ export default function CreateOrderPageClient() {
           .map((row: any) => ({
             value: String(
               row?.id ??
-                row?.branchId ??
-                row?.warehouseId ??
-                row?.code ??
-                row?.slug ??
-                "",
+              row?.branchId ??
+              row?.warehouseId ??
+              row?.code ??
+              row?.slug ??
+              "",
             ),
             label: branchLabelFromAny(row),
             code: row?.code ? String(row.code) : undefined,
@@ -2618,13 +2638,13 @@ export default function CreateOrderPageClient() {
             ? canPickAll
               ? mapped
               : mapped.filter(
-                  (item) =>
-                    userBranchIds.includes(item.value) ||
-                    (item.code && userBranchIds.includes(item.code)),
-                )
+                (item) =>
+                  userBranchIds.includes(item.value) ||
+                  (item.code && userBranchIds.includes(item.code)),
+              )
             : Object.entries(BRANCH_LABELS)
-                .filter(([id]) => canPickAll || userBranchIds.includes(id))
-                .map(([id, label]) => ({ value: id, label }));
+              .filter(([id]) => canPickAll || userBranchIds.includes(id))
+              .map(([id, label]) => ({ value: id, label }));
 
         setBranchOptions(filtered);
         setBranchId((prev) => {
@@ -3313,10 +3333,10 @@ export default function CreateOrderPageClient() {
 
     appendCustomerFacingNote(
       (address as any).shippingNote ||
-        (address as any).deliveryNote ||
-        (address as any).note ||
-        (address as any).customerNote ||
-        "",
+      (address as any).deliveryNote ||
+      (address as any).note ||
+      (address as any).customerNote ||
+      "",
     );
   };
 
@@ -3345,16 +3365,16 @@ export default function CreateOrderPageClient() {
     setCustomerDiscountPercent(Number(customer.defaultDiscountPercent || 0));
     appendCustomerFacingNote(
       (customer as any).customerNote ||
-        (customer as any).note ||
-        (customer as any).defaultAddress?.note ||
-        (customer as any).defaultAddress?.shippingNote ||
-        "",
+      (customer as any).note ||
+      (customer as any).defaultAddress?.note ||
+      (customer as any).defaultAddress?.shippingNote ||
+      "",
     );
 
     if (customer.id) {
       try {
         await loadCustomerAddressBook(customer.id);
-      } catch {}
+      } catch { }
     }
   };
 
@@ -3371,9 +3391,9 @@ export default function CreateOrderPageClient() {
   const buildCustomerSuggestion = (customer: any): CustomerSuggestionItem => {
     const fullName = String(
       customer?.fullName ||
-        customer?.name ||
-        customer?.customerName ||
-        "Khách hàng",
+      customer?.name ||
+      customer?.customerName ||
+      "Khách hàng",
     );
     const phone = String(customer?.phone || "");
     const email = String(customer?.email || "");
@@ -3763,10 +3783,10 @@ export default function CreateOrderPageClient() {
         return prev.map((line) =>
           line.variantId === variantId
             ? {
-                ...line,
-                // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
-                qty: line.qty + 1,
-              }
+              ...line,
+              // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
+              qty: line.qty + 1,
+            }
             : line,
         );
       }
@@ -4403,11 +4423,10 @@ export default function CreateOrderPageClient() {
                 leadtime: {
                   label:
                     parsed.distanceKm || parsed.durationMinutes
-                      ? `${parsed.distanceKm ? `${parsed.distanceKm}km` : ""}${
-                          parsed.distanceKm && parsed.durationMinutes
-                            ? " · "
-                            : ""
-                        }${parsed.durationMinutes ? `${parsed.durationMinutes} phút` : ""}`
+                      ? `${parsed.distanceKm ? `${parsed.distanceKm}km` : ""}${parsed.distanceKm && parsed.durationMinutes
+                        ? " · "
+                        : ""
+                      }${parsed.durationMinutes ? `${parsed.durationMinutes} phút` : ""}`
                       : "Nội thành",
                 },
                 ...({
@@ -4837,9 +4856,9 @@ export default function CreateOrderPageClient() {
           shippingAddressLine1: isPickupOrder
             ? "Khách nhận tại cửa hàng"
             : selectedAddress?.addressLine1 ||
-              addressLine1.trim() ||
-              shippingAddress.trim() ||
-              undefined,
+            addressLine1.trim() ||
+            shippingAddress.trim() ||
+            undefined,
           shippingAddressLine2: isPickupOrder
             ? undefined
             : selectedAddress?.addressLine2 || addressLine2.trim() || undefined,
@@ -4898,14 +4917,14 @@ export default function CreateOrderPageClient() {
           viettelServiceCode:
             !isPickupOrder && shippingPartner === "viettelpost"
               ? (selectedQuote as any)?._viettelServiceCode ||
-                (selectedQuote as any)?._serviceName ||
-                undefined
+              (selectedQuote as any)?._serviceName ||
+              undefined
               : undefined,
           viettelSenderGroupAddressId:
             !isPickupOrder && shippingPartner === "viettelpost"
               ? (selectedQuote as any)?._viettelSenderGroupAddressId ||
-                selectedViettelInventory?.groupAddressId ||
-                undefined
+              selectedViettelInventory?.groupAddressId ||
+              undefined
               : undefined,
           viettelReceiverProvinceId:
             !isPickupOrder && shippingPartner === "viettelpost"
@@ -5266,7 +5285,7 @@ export default function CreateOrderPageClient() {
                       />
 
                       {customerSuggestionOpen &&
-                      customerSuggestions.length > 0 ? (
+                        customerSuggestions.length > 0 ? (
                         <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 max-h-[280px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
                           {customerSuggestions.map((item, index) => (
                             <button
@@ -5583,16 +5602,16 @@ export default function CreateOrderPageClient() {
                               Tồn CN:{" "}
                               {Number(
                                 (variant as any).branchStock ??
-                                  (variant as any).stock ??
-                                  0,
+                                (variant as any).stock ??
+                                0,
                               )}
                             </p>
                             <p className="mt-1 text-xs text-neutral-400">
                               Tổng tồn:{" "}
                               {Number(
                                 (variant as any).totalStock ??
-                                  (variant as any).stock ??
-                                  0,
+                                (variant as any).stock ??
+                                0,
                               )}
                             </p>
                           </div>
@@ -5651,9 +5670,9 @@ export default function CreateOrderPageClient() {
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{line.productName}</p>
                               {line.productId &&
-                              discountedProductIdSet.has(
-                                String(line.productId),
-                              ) ? (
+                                discountedProductIdSet.has(
+                                  String(line.productId),
+                                ) ? (
                                 <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                                   Đang KM
                                 </span>
@@ -5679,8 +5698,8 @@ export default function CreateOrderPageClient() {
                                 Hết hàng toàn hệ thống · đơn này sẽ xuất âm kho.
                               </p>
                             ) : Number(
-                                (line as any).branchStock ?? line.stock ?? 0,
-                              ) < Number(line.qty || 1) ? (
+                              (line as any).branchStock ?? line.stock ?? 0,
+                            ) < Number(line.qty || 1) ? (
                               <p className="mt-1 text-xs font-medium text-amber-700">
                                 Không đủ tồn ở chi nhánh này · vẫn cho phép bán
                                 âm.
@@ -5855,11 +5874,10 @@ export default function CreateOrderPageClient() {
                     key={item.value}
                     type="button"
                     onClick={() => setShippingUiMode(item.value)}
-                    className={`rounded-2xl border p-3 text-left transition ${
-                      shippingUiMode === item.value
+                    className={`rounded-2xl border p-3 text-left transition ${shippingUiMode === item.value
                         ? "border-neutral-900 bg-neutral-50"
                         : "border-neutral-200 hover:bg-neutral-50"
-                    }`}
+                      }`}
                   >
                     <div className="text-sm font-medium text-neutral-900">
                       {item.label}
@@ -5880,17 +5898,15 @@ export default function CreateOrderPageClient() {
                     onClick={() =>
                       item.enabled && setShippingPartner(item.value)
                     }
-                    className={`rounded-2xl border px-3 py-3 text-left transition ${
-                      shippingPartner === item.value
+                    className={`rounded-2xl border px-3 py-3 text-left transition ${shippingPartner === item.value
                         ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
                         : "border-neutral-200 bg-white text-neutral-900"
-                    } ${item.enabled ? "hover:border-neutral-900" : "cursor-not-allowed opacity-50"}`}
+                      } ${item.enabled ? "hover:border-neutral-900" : "cursor-not-allowed opacity-50"}`}
                   >
                     <div className="text-sm font-semibold">{item.label}</div>
                     <div
-                      className={`mt-1 text-xs ${
-                        shippingPartner === item.value ? "text-neutral-200" : "text-neutral-500"
-                      }`}
+                      className={`mt-1 text-xs ${shippingPartner === item.value ? "text-neutral-200" : "text-neutral-500"
+                        }`}
                     >
                       {item.enabled ? "Đang bật" : "Sẽ bật sau"}
                     </div>
@@ -5985,8 +6001,8 @@ export default function CreateOrderPageClient() {
               ) : null}
 
               {shippingLoading &&
-              shippingUiMode === "carrier" &&
-              !shippingQuotes.length ? (
+                shippingUiMode === "carrier" &&
+                !shippingQuotes.length ? (
                 <div className="mt-4 overflow-hidden rounded-3xl border border-dashed border-neutral-300 bg-white shadow-sm">
                   <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
                     <div className="text-sm font-semibold text-neutral-950">
@@ -6015,345 +6031,339 @@ export default function CreateOrderPageClient() {
 
               {shippingQuotes.length > 0
                 ? (() => {
-                    const customerShippingFee = parseNumber(shippingFee) || 0;
-                    const activeQuote =
-                      selectedQuote ||
-                      shippingQuotes.find(
-                        (q) =>
-                          getQuoteCarrier(q) === shippingPartner &&
-                          q.serviceId === selectedShippingServiceId &&
-                          q.serviceTypeId === selectedShippingServiceTypeId &&
-                          !(q as any)?._disabled,
-                      ) ||
-                      null;
+                  const customerShippingFee = parseNumber(shippingFee) || 0;
+                  const activeQuote =
+                    selectedQuote ||
+                    shippingQuotes.find(
+                      (q) =>
+                        getQuoteCarrier(q) === shippingPartner &&
+                        q.serviceId === selectedShippingServiceId &&
+                        q.serviceTypeId === selectedShippingServiceTypeId &&
+                        !(q as any)?._disabled,
+                    ) ||
+                    null;
 
-                    const validQuotes = shippingQuotes.filter(
+                  const validQuotes = shippingQuotes.filter(
+                    (quote) =>
+                      getFeeNumber(quote) > 0 && !(quote as any)?._disabled,
+                  );
+                  const cheapestQuote = [...validQuotes].sort(
+                    (a, b) => getFeeNumber(a) - getFeeNumber(b),
+                  )[0];
+                  const fastestQuote = [...validQuotes]
+                    .filter(
                       (quote) =>
-                        getFeeNumber(quote) > 0 && !(quote as any)?._disabled,
-                    );
-                    const cheapestQuote = [...validQuotes].sort(
-                      (a, b) => getFeeNumber(a) - getFeeNumber(b),
+                        Number((quote as any)?._durationMinutes || 0) > 0,
+                    )
+                    .sort(
+                      (a, b) =>
+                        Number((a as any)?._durationMinutes || 0) -
+                        Number((b as any)?._durationMinutes || 0),
                     )[0];
-                    const fastestQuote = [...validQuotes]
-                      .filter(
-                        (quote) =>
-                          Number((quote as any)?._durationMinutes || 0) > 0,
-                      )
-                      .sort(
-                        (a, b) =>
-                          Number((a as any)?._durationMinutes || 0) -
-                          Number((b as any)?._durationMinutes || 0),
-                      )[0];
-                    const recommendedQuote =
-                      validQuotes.find((quote) =>
-                        getQuoteBadges(quote).includes("Khuyên dùng"),
-                      ) ||
-                      cheapestQuote ||
-                      validQuotes[0];
+                  const recommendedQuote =
+                    validQuotes.find((quote) =>
+                      getQuoteBadges(quote).includes("Khuyên dùng"),
+                    ) ||
+                    cheapestQuote ||
+                    validQuotes[0];
 
-                    const quickCards = [
-                      {
-                        key: "recommended",
-                        title: "Khuyên dùng",
-                        quote: recommendedQuote,
-                        tone: "emerald",
-                      },
-                      {
-                        key: "cheapest",
-                        title: "Rẻ nhất",
-                        quote: cheapestQuote,
-                        tone: "orange",
-                      },
-                      {
-                        key: "fastest",
-                        title: "Nhanh nhất",
-                        quote: fastestQuote,
-                        tone: "blue",
-                      },
-                    ].filter((item) => item.quote);
+                  const quickCards = [
+                    {
+                      key: "recommended",
+                      title: "Khuyên dùng",
+                      quote: recommendedQuote,
+                      tone: "emerald",
+                    },
+                    {
+                      key: "cheapest",
+                      title: "Rẻ nhất",
+                      quote: cheapestQuote,
+                      tone: "orange",
+                    },
+                    {
+                      key: "fastest",
+                      title: "Nhanh nhất",
+                      quote: fastestQuote,
+                      tone: "blue",
+                    },
+                  ].filter((item) => item.quote);
 
-                    const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
-                    const insight = getShippingInsight(
-                      activeQuote,
-                      customerShippingFee,
-                    );
+                  const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
+                  const insight = getShippingInsight(
+                    activeQuote,
+                    customerShippingFee,
+                  );
 
-                    const applyQuote = (quote: ShipmentQuoteResult) => {
-                      const carrier = getQuoteCarrier(quote);
-                      const feeValue = getFeeNumber(quote);
+                  const applyQuote = (quote: ShipmentQuoteResult) => {
+                    const carrier = getQuoteCarrier(quote);
+                    const feeValue = getFeeNumber(quote);
 
-                      applyShippingRef.current?.({
-                        shippingFee: feeValue,
-                        applyFeeToInput: Boolean(
-                          (quote as any)._applyFeeToInput,
-                        ),
-                        shippingPartner: carrier,
-                        shippingMode: "partner",
-                        selectedServiceId: quote.serviceId,
-                        selectedServiceTypeId: quote.serviceTypeId,
-                        selectedQuoteKey: getQuoteKey(quote),
-                        weight: Number(shippingWeight || 200),
-                        length: Number(shippingLength || 10),
-                        width: Number(shippingWidth || 10),
-                        height: Number(shippingHeight || 10),
-                        ghnDistrictId:
-                          (quote as any)._ghnDistrictId || ghnDistrictId,
-                        ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
-                      });
-                    };
+                    applyShippingRef.current?.({
+                      shippingFee: feeValue,
+                      applyFeeToInput: Boolean(
+                        (quote as any)._applyFeeToInput,
+                      ),
+                      shippingPartner: carrier,
+                      shippingMode: "partner",
+                      selectedServiceId: quote.serviceId,
+                      selectedServiceTypeId: quote.serviceTypeId,
+                      selectedQuoteKey: getQuoteKey(quote),
+                      weight: Number(shippingWeight || 200),
+                      length: Number(shippingLength || 10),
+                      width: Number(shippingWidth || 10),
+                      height: Number(shippingHeight || 10),
+                      ghnDistrictId:
+                        (quote as any)._ghnDistrictId || ghnDistrictId,
+                      ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
+                    });
+                  };
 
-                    return (
-                      <div className="mt-4 space-y-4">
-                        <div className="grid gap-3 md:grid-cols-3">
-                          {quickCards.map((item) => {
-                            const quote = item.quote as ShipmentQuoteResult;
-                            const carrier = getQuoteCarrier(quote);
-                            const meta = getCarrierMeta(carrier);
-                            const active =
-                              activeQuote &&
-                              getQuoteKey(activeQuote) === getQuoteKey(quote);
-                            const feeValue = getFeeNumber(quote);
+                  return (
+                    <div className="mt-4 space-y-4">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {quickCards.map((item) => {
+                          const quote = item.quote as ShipmentQuoteResult;
+                          const carrier = getQuoteCarrier(quote);
+                          const meta = getCarrierMeta(carrier);
+                          const active =
+                            activeQuote &&
+                            getQuoteKey(activeQuote) === getQuoteKey(quote);
+                          const feeValue = getFeeNumber(quote);
 
-                            const tone =
-                              item.tone === "emerald"
-                                ? "border-emerald-200 bg-emerald-50"
-                                : item.tone === "blue"
-                                  ? "border-blue-200 bg-blue-50"
-                                  : "border-orange-200 bg-orange-50";
+                          const tone =
+                            item.tone === "emerald"
+                              ? "border-emerald-200 bg-emerald-50"
+                              : item.tone === "blue"
+                                ? "border-blue-200 bg-blue-50"
+                                : "border-orange-200 bg-orange-50";
 
-                            return (
-                              <button
-                                key={`${item.key}-${getQuoteKey(quote)}`}
-                                type="button"
-                                onClick={() => applyQuote(quote)}
-                                className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                                  active
-                                    ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10"
-                                    : tone
+                          return (
+                            <button
+                              key={`${item.key}-${getQuoteKey(quote)}`}
+                              type="button"
+                              onClick={() => applyQuote(quote)}
+                              className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${active
+                                  ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10"
+                                  : tone
                                 }`}
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
-                                    {item.title}
-                                  </span>
-                                  <span
-                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}
-                                  >
-                                    {meta.short}
-                                  </span>
-                                </div>
-
-                                <div className="mt-3 text-sm font-semibold text-neutral-950">
-                                  {meta.name} ·{" "}
-                                  {getQuoteServiceCleanName(quote)}
-                                </div>
-
-                                <div className="mt-2 flex items-end justify-between gap-3">
-                                  <div>
-                                    <div className="text-2xl font-bold tracking-tight text-neutral-950">
-                                      {currency(feeValue)}
-                                    </div>
-                                    <div className="mt-1 text-xs text-neutral-600">
-                                      {getQuoteLeadtimeLabel(quote)}
-                                    </div>
-                                  </div>
-                                  <div className="text-right text-[11px] font-medium text-neutral-500">
-                                    {getSmartQuoteNote(quote)}
-                                  </div>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        <div
-                          className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span>{insight.label}</span>
-                            <span className="text-xs font-medium opacity-80">
-                              Phí khách đang trả:{" "}
-                              {currency(customerShippingFee)} · Gói đang chọn:{" "}
-                              {activeQuote
-                                ? currency(getFeeNumber(activeQuote))
-                                : "—"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
-                          <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <div className="text-sm font-semibold text-neutral-950">
-                                  So sánh gói vận chuyển
-                                </div>
-                                <div className="mt-0.5 text-xs text-neutral-500">
-                                  Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn
-                                  này.
-                                </div>
-                              </div>
-                              <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
-                                {shippingQuotes.length} gói
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="divide-y divide-neutral-100">
-                            {groupedQuotes.map((group) => (
-                              <div
-                                key={group.carrier}
-                                className="grid grid-cols-[148px_1fr]"
-                              >
-                                <div
-                                  className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
+                                  {item.title}
+                                </span>
+                                <span
+                                  className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}
                                 >
-                                  <div className="sticky top-3">
-                                    <div
-                                      className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}
-                                    >
-                                      {group.meta.name}
-                                    </div>
-                                    <div className="mt-2 text-xs text-neutral-500">
-                                      {group.meta.sub}
-                                    </div>
-                                    <div className="mt-3 text-[11px] font-semibold text-neutral-500">
-                                      {group.quotes.length} lựa chọn
-                                    </div>
+                                  {meta.short}
+                                </span>
+                              </div>
 
-                                    {group.carrier === "ahamove" ? (
-                                      <div className="mt-3 rounded-2xl border border-orange-200 bg-white/80 p-2">
-                                        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-orange-700">
-                                          Thanh toán Aha
-                                        </div>
-                                        <div className="grid gap-1.5">
-                                          {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
-                                            <button
-                                              key={item.value}
-                                              type="button"
-                                              onClick={(event) => {
-                                                event.stopPropagation();
-                                                handleAhamovePaymentMethodChange(item.value);
-                                              }}
-                                              className={`rounded-xl border px-2 py-2 text-left text-[11px] leading-4 transition ${
-                                                ahamovePaymentMethod === item.value
-                                                  ? "border-orange-500 bg-orange-50 text-orange-900 ring-1 ring-orange-200"
-                                                  : "border-orange-100 bg-white text-neutral-600 hover:border-orange-300"
-                                              }`}
-                                            >
-                                              <div className="flex items-center justify-between gap-2">
-                                                <span className="font-semibold">{item.label}</span>
-                                                <span
-                                                  className={`h-2.5 w-2.5 shrink-0 rounded-full border ${
-                                                    ahamovePaymentMethod === item.value
-                                                      ? "border-orange-600 bg-orange-600"
-                                                      : "border-orange-200 bg-white"
-                                                  }`}
-                                                />
-                                              </div>
-                                            </button>
-                                          ))}
-                                        </div>
-                                        <div className="mt-2 rounded-xl bg-orange-50 px-2 py-1.5 text-[11px] leading-4 text-orange-800">
-                                          API: <span className="font-semibold">{ahamovePaymentMethod}</span> · {shippingPayer === "customer" ? "Khách chịu phí" : "Shop chịu phí"}
-                                        </div>
-                                      </div>
-                                    ) : null}
+                              <div className="mt-3 text-sm font-semibold text-neutral-950">
+                                {meta.name} ·{" "}
+                                {getQuoteServiceCleanName(quote)}
+                              </div>
+
+                              <div className="mt-2 flex items-end justify-between gap-3">
+                                <div>
+                                  <div className="text-2xl font-bold tracking-tight text-neutral-950">
+                                    {currency(feeValue)}
+                                  </div>
+                                  <div className="mt-1 text-xs text-neutral-600">
+                                    {getQuoteLeadtimeLabel(quote)}
                                   </div>
                                 </div>
-
-                                <div className="divide-y divide-neutral-100">
-                                  {group.quotes.map((quote) => {
-                                    const carrier = getQuoteCarrier(quote);
-                                    const active =
-                                      selectedShippingQuoteKey
-                                        ? getQuoteKey(quote) === selectedShippingQuoteKey
-                                        : carrier === shippingPartner &&
-                                          quote.serviceId ===
-                                            selectedShippingServiceId &&
-                                          quote.serviceTypeId ===
-                                            selectedShippingServiceTypeId;
-                                    const badges = getQuoteBadges(quote);
-                                    const feeValue = getFeeNumber(quote);
-                                    const disabled = Boolean(
-                                      (quote as any)?._disabled,
-                                    );
-
-                                    return (
-                                      <button
-                                        key={getQuoteKey(quote)}
-                                        type="button"
-                                        disabled={disabled}
-                                        onClick={() => applyQuote(quote)}
-                                        className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
-                                          active
-                                            ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
-                                            : "hover:bg-neutral-50"
-                                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                                      >
-                                        <div className="flex items-start gap-3">
-                                          <span
-                                            className={`mt-1 h-4 w-4 rounded-full border ${
-                                              active
-                                                ? "border-neutral-900 bg-neutral-900"
-                                                : "border-neutral-300 bg-white"
-                                            }`}
-                                          />
-                                          <div>
-                                            <div className="flex flex-wrap items-center gap-2">
-                                              <span className="text-sm font-semibold text-neutral-950">
-                                                {getQuoteServiceCleanName(
-                                                  quote,
-                                                )}
-                                              </span>
-                                              {badges.map((badge) => (
-                                                <span
-                                                  key={badge}
-                                                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                                                    badge === "Rẻ nhất"
-                                                      ? "bg-orange-50 text-orange-600"
-                                                      : badge === "Nhanh nhất"
-                                                        ? "bg-blue-50 text-blue-600"
-                                                        : "bg-emerald-50 text-emerald-700"
-                                                  }`}
-                                                >
-                                                  {badge}
-                                                </span>
-                                              ))}
-                                            </div>
-
-                                            <div className="mt-1 text-xs text-neutral-500">
-                                              {getSmartQuoteNote(quote)}
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        <div className="text-sm text-neutral-700">
-                                          {getQuoteLeadtimeLabel(quote)}
-                                        </div>
-
-                                        <div className="text-right">
-                                          <div className="text-sm font-bold text-neutral-950">
-                                            {currency(feeValue)}
-                                          </div>
-                                          <div className="mt-0.5 text-[11px] text-neutral-400">
-                                            Service {quote.serviceId}
-                                            {quote.serviceTypeId
-                                              ? ` · Type ${quote.serviceTypeId}`
-                                              : ""}
-                                          </div>
-                                        </div>
-                                      </button>
-                                    );
-                                  })}
+                                <div className="text-right text-[11px] font-medium text-neutral-500">
+                                  {getSmartQuoteNote(quote)}
                                 </div>
                               </div>
-                            ))}
-                          </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div
+                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span>{insight.label}</span>
+                          <span className="text-xs font-medium opacity-80">
+                            Phí khách đang trả:{" "}
+                            {currency(customerShippingFee)} · Gói đang chọn:{" "}
+                            {activeQuote
+                              ? currency(getFeeNumber(activeQuote))
+                              : "—"}
+                          </span>
                         </div>
                       </div>
-                    );
-                  })()
+
+                      <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
+                        <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-semibold text-neutral-950">
+                                So sánh gói vận chuyển
+                              </div>
+                              <div className="mt-0.5 text-xs text-neutral-500">
+                                Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn
+                                này.
+                              </div>
+                            </div>
+                            <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
+                              {shippingQuotes.length} gói
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="divide-y divide-neutral-100">
+                          {groupedQuotes.map((group) => (
+                            <div
+                              key={group.carrier}
+                              className="grid grid-cols-[148px_1fr]"
+                            >
+                              <div
+                                className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}
+                              >
+                                <div className="sticky top-3">
+                                  <div
+                                    className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}
+                                  >
+                                    {group.meta.name}
+                                  </div>
+                                  <div className="mt-2 text-xs text-neutral-500">
+                                    {group.meta.sub}
+                                  </div>
+                                  <div className="mt-3 text-[11px] font-semibold text-neutral-500">
+                                    {group.quotes.length} lựa chọn
+                                  </div>
+
+                                  {group.carrier === "ahamove" ? (
+                                    <div className="mt-3 rounded-2xl border border-orange-200 bg-white/80 p-2">
+                                      <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-orange-700">
+                                        Thanh toán Aha
+                                      </div>
+                                      <div className="grid gap-1.5">
+                                        {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
+                                          <button
+                                            key={item.value}
+                                            type="button"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handleAhamovePaymentMethodChange(item.value);
+                                            }}
+                                            className={`rounded-xl border px-2 py-2 text-left text-[11px] leading-4 transition ${ahamovePaymentMethod === item.value
+                                                ? "border-orange-500 bg-orange-50 text-orange-900 ring-1 ring-orange-200"
+                                                : "border-orange-100 bg-white text-neutral-600 hover:border-orange-300"
+                                              }`}
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="font-semibold">{item.label}</span>
+                                              <span
+                                                className={`h-2.5 w-2.5 shrink-0 rounded-full border ${ahamovePaymentMethod === item.value
+                                                    ? "border-orange-600 bg-orange-600"
+                                                    : "border-orange-200 bg-white"
+                                                  }`}
+                                              />
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                      <div className="mt-2 rounded-xl bg-orange-50 px-2 py-1.5 text-[11px] leading-4 text-orange-800">
+                                        API: <span className="font-semibold">{ahamovePaymentMethod}</span> · {shippingPayer === "customer" ? "Khách chịu phí" : "Shop chịu phí"}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="divide-y divide-neutral-100">
+                                {group.quotes.map((quote) => {
+                                  const carrier = getQuoteCarrier(quote);
+                                  const active =
+                                    selectedShippingQuoteKey
+                                      ? getQuoteKey(quote) === selectedShippingQuoteKey
+                                      : carrier === shippingPartner &&
+                                      quote.serviceId ===
+                                      selectedShippingServiceId &&
+                                      quote.serviceTypeId ===
+                                      selectedShippingServiceTypeId;
+                                  const badges = getQuoteBadges(quote);
+                                  const feeValue = getFeeNumber(quote);
+                                  const disabled = Boolean(
+                                    (quote as any)?._disabled,
+                                  );
+
+                                  return (
+                                    <button
+                                      key={getQuoteKey(quote)}
+                                      type="button"
+                                      disabled={disabled}
+                                      onClick={() => applyQuote(quote)}
+                                      className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${active
+                                          ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
+                                          : "hover:bg-neutral-50"
+                                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                                    >
+                                      <div className="flex items-start gap-3">
+                                        <span
+                                          className={`mt-1 h-4 w-4 rounded-full border ${active
+                                              ? "border-neutral-900 bg-neutral-900"
+                                              : "border-neutral-300 bg-white"
+                                            }`}
+                                        />
+                                        <div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="text-sm font-semibold text-neutral-950">
+                                              {getQuoteServiceCleanName(
+                                                quote,
+                                              )}
+                                            </span>
+                                            {badges.map((badge) => (
+                                              <span
+                                                key={badge}
+                                                className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${badge === "Rẻ nhất"
+                                                    ? "bg-orange-50 text-orange-600"
+                                                    : badge === "Nhanh nhất"
+                                                      ? "bg-blue-50 text-blue-600"
+                                                      : "bg-emerald-50 text-emerald-700"
+                                                  }`}
+                                              >
+                                                {badge}
+                                              </span>
+                                            ))}
+                                          </div>
+
+                                          <div className="mt-1 text-xs text-neutral-500">
+                                            {getSmartQuoteNote(quote)}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      <div className="text-sm text-neutral-700">
+                                        {getQuoteLeadtimeLabel(quote)}
+                                      </div>
+
+                                      <div className="text-right">
+                                        <div className="text-sm font-bold text-neutral-950">
+                                          {currency(feeValue)}
+                                        </div>
+                                        <div className="mt-0.5 text-[11px] text-neutral-400">
+                                          Service {quote.serviceId}
+                                          {quote.serviceTypeId
+                                            ? ` · Type ${quote.serviceTypeId}`
+                                            : ""}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
                 : null}
             </Panel>
           </div>
@@ -6776,11 +6786,10 @@ export default function CreateOrderPageClient() {
                 return (
                   <div
                     key={address.id}
-                    className={`rounded-2xl border p-4 ${
-                      isActive
+                    className={`rounded-2xl border p-4 ${isActive
                         ? "border-neutral-900 bg-neutral-50"
                         : "border-neutral-200"
-                    }`}
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-2">

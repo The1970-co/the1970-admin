@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "@/lib/api";
-import { getCurrentUserFromStorage } from "@/lib/current-user";
+import { getCurrentUserFromStorage, getWorkingBranchId } from "@/lib/current-user";
 
 type VoucherType = "RECEIPT" | "PAYMENT";
 type VoucherStatus = "ALL" | "DRAFT" | "CONFIRMED" | "CANCELLED";
@@ -255,6 +255,7 @@ export default function CashVoucherPageClient({ type }: Props) {
     (Array.isArray(currentUser?.permissions) && currentUser.permissions.includes("*"));
 
   const currentBranchId =
+    getWorkingBranchId(currentUser) ||
     currentUser?.branchId ||
     currentUser?.workingBranchId ||
     currentUser?.branch?.id ||
@@ -481,6 +482,17 @@ export default function CashVoucherPageClient({ type }: Props) {
 
   useEffect(() => {
     void loadMeta();
+  }, []);
+
+  useEffect(() => {
+    const handleActiveBranchChanged = () => {
+      window.location.reload();
+    };
+
+    window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    return () => {
+      window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    };
   }, []);
 
   useEffect(() => {

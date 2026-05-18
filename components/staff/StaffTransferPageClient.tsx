@@ -28,6 +28,11 @@ type StaffOption = {
     branchId: string;
     branchName?: string | null;
     roleCode?: string | null;
+    branch?: {
+      id?: string;
+      name?: string | null;
+      code?: string | null;
+    } | null;
   }>;
 };
 
@@ -71,25 +76,81 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-function canUseStaffTransfer() {
-  const user = getCurrentUserFromStorage();
-  const permissions = getCurrentUserPermissions(user);
+const STAFF_TRANSFER_VIEW_KEYS = [
+  "menu.staff_transfer",
+  "staff.transfer_branch.view",
+  "staff.transfer_branch",
+];
 
-  return (
-    permissions.includes("*") ||
-    permissions.includes("staff.transfer_branch.view") ||
-    permissions.includes("staff.transfer_branch")
+const STAFF_TRANSFER_SUBMIT_KEYS = ["staff.transfer_branch"];
+
+function uniqueStrings(values: any[]) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
   );
 }
 
-function canSubmitStaffTransfer() {
-  const user = getCurrentUserFromStorage();
-  const permissions = getCurrentUserPermissions(user);
+function collectNestedPermissionKeys(value: any, depth = 0): string[] {
+  if (!value || depth > 4) return [];
 
-  return (
-    permissions.includes("*") ||
-    permissions.includes("staff.transfer_branch")
-  );
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectNestedPermissionKeys(item, depth + 1));
+  }
+
+  if (typeof value === "string") return [value];
+
+  if (typeof value !== "object") return [];
+
+  return uniqueStrings([
+    ...collectNestedPermissionKeys(value.permissionKeys, depth + 1),
+    ...collectNestedPermissionKeys(value.extraPermissionKeys, depth + 1),
+    ...collectNestedPermissionKeys(value.permissions, depth + 1),
+    ...collectNestedPermissionKeys(value.keys, depth + 1),
+    ...collectNestedPermissionKeys(value.branchPermissions, depth + 1),
+    ...collectNestedPermissionKeys(value.staffBranchPermissions, depth + 1),
+  ]);
+}
+
+function getEffectiveCurrentUserPermissions() {
+  const user = getCurrentUserFromStorage();
+
+  return uniqueStrings([
+    ...getCurrentUserPermissions(user),
+    ...collectNestedPermissionKeys(user),
+  ]);
+}
+
+function hasAnyPermission(permissions: string[], keys: string[]) {
+  return permissions.includes("*") || keys.some((key) => permissions.includes(key));
+}
+
+function canUseStaffTransfer() {
+  return hasAnyPermission(getEffectiveCurrentUserPermissions(), STAFF_TRANSFER_VIEW_KEYS);
+}
+
+function canSubmitStaffTransfer() {
+  return hasAnyPermission(getEffectiveCurrentUserPermissions(), STAFF_TRANSFER_SUBMIT_KEYS);
+}
+
+
+const ROLE_LABELS: Record<string, string> = {
+  owner: "Owner",
+  admin: "Admin vận hành",
+  accountant: "Kế toán",
+  "branch-manager": "Quản lý chi nhánh",
+  fulltime: "Nhân viên fulltime",
+  "retail-staff": "Nhân viên bán lẻ",
+  "stock-staff": "Nhân viên kho",
+  "stock-auditor": "Nhân viên kiểm kho",
+};
+
+function formatRoleLabel(role?: string | null) {
+  const key = String(role || "").trim().toLowerCase();
+  return ROLE_LABELS[key] || role || "Chưa gán";
 }
 
 function formatBranch(branch?: BranchOption | null) {
@@ -99,7 +160,17 @@ function formatBranch(branch?: BranchOption | null) {
 
 function formatStaffBranch(staff?: StaffOption | null) {
   if (!staff) return "—";
-  return staff.branchName || staff.branchId || staff.branchRoles?.[0]?.branchName || staff.branchRoles?.[0]?.branchId || "—";
+
+  const roles = Array.isArray(staff.branchRoles) ? staff.branchRoles : [];
+
+  if (roles.length) {
+    return roles
+      .map((row) => row.branchName || row.branch?.name || row.branchId)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return staff.branchName || staff.branchId || "—";
 }
 
 function getStaffCurrentBranchId(staff?: StaffOption | null) {
@@ -115,6 +186,28 @@ function getStaffCurrentRole(staff?: StaffOption | null, branchId?: string) {
     staff.role ||
     "retail-staff"
   );
+}
+
+function getStaffRoleChips(staff?: StaffOption | null) {
+  if (!staff) return [];
+
+  const roles = Array.isArray(staff.branchRoles) ? staff.branchRoles : [];
+
+  if (roles.length) {
+    return roles.map((row) => ({
+      branchId: row.branchId,
+      branchName: row.branchName || row.branch?.name || row.branchId,
+      roleCode: row.roleCode || staff.role || "retail-staff",
+    }));
+  }
+
+  return [
+    {
+      branchId: staff.branchId || "",
+      branchName: staff.branchName || staff.branchId || "—",
+      roleCode: staff.role || "retail-staff",
+    },
+  ];
 }
 
 export default function StaffTransferPageClient() {
@@ -160,7 +253,7 @@ export default function StaffTransferPageClient() {
         item.role,
         item.branchName,
         item.branchId,
-        ...(item.branchRoles || []).map((row) => `${row.branchName || ""} ${row.branchId || ""} ${row.roleCode || ""}`),
+        ...(item.branchRoles || []).map((row) => `${row.branchName || row.branch?.name || ""} ${row.branchId || ""} ${row.roleCode || ""}`),
       ]
         .join(" ")
         .toLowerCase()
@@ -172,16 +265,10 @@ export default function StaffTransferPageClient() {
   const targetBranch = branchMap.get(toBranchId);
 
   const loadOptions = async () => {
-    const hasView = canUseStaffTransfer();
-    const hasTransfer = canSubmitStaffTransfer();
+    const hasViewFromStorage = canUseStaffTransfer();
+    const hasTransferFromStorage = canSubmitStaffTransfer();
 
-    setAllowed(hasView);
-    setCanTransfer(hasTransfer);
-
-    if (!hasView) {
-      setLoading(false);
-      return;
-    }
+    setCanTransfer(hasTransferFromStorage);
 
     try {
       setLoading(true);
@@ -189,9 +276,14 @@ export default function StaffTransferPageClient() {
 
       const data = await apiJson<OptionsResponse>("/staff-transfer/options");
 
+      // Backend là nguồn quyền cuối cùng. Không chặn sớm bằng localStorage vì token/user cache
+      // có thể chưa kịp refresh sau khi admin vừa cấp quyền theo chi nhánh.
+      setAllowed(true);
+      setCanTransfer(true);
       setBranches(Array.isArray(data.branches) ? data.branches : []);
       setStaff(Array.isArray(data.staff) ? data.staff : []);
     } catch (error) {
+      setAllowed(hasViewFromStorage);
       setMessage(
         error instanceof Error
           ? error.message
@@ -261,7 +353,7 @@ export default function StaffTransferPageClient() {
         "",
         `Từ: ${formatBranch(sourceBranch)}`,
         `Đến: ${formatBranch(targetBranch)}`,
-        `Vai trò mới: ${roleCode}`,
+        `Vai trò mới: ${formatRoleLabel(roleCode)}`,
         "",
         "Sau khi chuyển, nhân viên sẽ bị đăng xuất để nhận quyền mới.",
       ].join("\n"),
@@ -379,7 +471,6 @@ export default function StaffTransferPageClient() {
                 {filteredStaff.map((item) => {
                   const active = item.id === staffId;
                   const currentBranchId = getStaffCurrentBranchId(item);
-                  const currentRole = getStaffCurrentRole(item, currentBranchId);
 
                   return (
                     <tr
@@ -394,19 +485,37 @@ export default function StaffTransferPageClient() {
                       </td>
 
                       <td className="px-4 py-3 font-semibold">
-                        {formatStaffBranch(item)}
+                        <div className="flex flex-wrap gap-1.5">
+                          {getStaffRoleChips(item).map((chip) => (
+                            <span
+                              key={`${item.id}-${chip.branchId}-${chip.roleCode}`}
+                              className={
+                                active
+                                  ? "rounded-full bg-white/10 px-2 py-1 text-xs font-bold text-white"
+                                  : "rounded-full bg-neutral-100 px-2 py-1 text-xs font-bold text-neutral-700"
+                              }
+                            >
+                              {chip.branchName}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3">
-                        <span
-                          className={
-                            active
-                              ? "rounded-full bg-white/10 px-2 py-1 text-xs font-bold"
-                              : "rounded-full bg-neutral-100 px-2 py-1 text-xs font-bold text-neutral-700"
-                          }
-                        >
-                          {currentRole || "—"}
-                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {getStaffRoleChips(item).map((chip) => (
+                            <span
+                              key={`${item.id}-${chip.branchId}-${chip.roleCode}-role`}
+                              className={
+                                active
+                                  ? "rounded-full bg-white/10 px-2 py-1 text-xs font-bold"
+                                  : "rounded-full bg-neutral-100 px-2 py-1 text-xs font-bold text-neutral-700"
+                              }
+                            >
+                              {formatRoleLabel(chip.roleCode)}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3 text-right">

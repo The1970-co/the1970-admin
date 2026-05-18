@@ -11,6 +11,7 @@ import {
 import {
   getCurrentUserFromStorage,
   getUserBranchIds,
+  getWorkingBranchId,
   isOwnerUser,
 } from "@/lib/current-user";
 
@@ -329,6 +330,17 @@ function buildStockNotice(input: {
 
 export default function PosPageClient() {
   const router = useRouter();
+
+  useEffect(() => {
+    const handleActiveBranchChanged = () => {
+      window.location.reload();
+    };
+
+    window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    return () => {
+      window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    };
+  }, []);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const customerSearchVersionRef = useRef(0);
   const [highlightId, setHighlightId] = useState<string | null>(null);

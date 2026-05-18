@@ -19,6 +19,8 @@ import {
   isOwnerUser,
   setCurrentUserToStorage,
   setTokenToStorage,
+  getActiveBranchIdFromStorage,
+  setActiveBranchIdToStorage,
 } from "@/lib/current-user";
 import { uniquePermissions } from "@/lib/permissions";
 
@@ -28,6 +30,8 @@ type AuthContextValue = {
   checked: boolean;
   error: string;
   permissions: string[];
+  activeBranchId: string;
+  setActiveBranchId: (branchId: string) => void;
   can: (permission?: string | null) => boolean;
   reloadAuth: () => Promise<any>;
   logout: () => Promise<void>;
@@ -66,6 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return Boolean(getTokenFromStorage() || getCurrentUserFromStorage());
   });
   const [error, setError] = useState("");
+  const [activeBranchId, setActiveBranchIdState] = useState(() => getActiveBranchIdFromStorage(getCurrentUserFromStorage()));
 
   const pathnameRef = useRef(pathname);
   const reloadingRef = useRef(false);
@@ -100,6 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isPublicPath(currentPath)) {
       const cachedUser = getCurrentUserFromStorage();
       setUser(cachedUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
       setChecked(true);
       setLoading(false);
       setError("");
@@ -121,6 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (cachedUser) {
       setUser(cachedUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
       setChecked(true);
       setLoading(false);
     } else {
@@ -146,6 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (nextToken) setTokenToStorage(nextToken);
       setCurrentUserToStorage(nextUser);
       setUser(nextUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(nextUser));
       setChecked(true);
       setLoading(false);
       setError("");
@@ -163,6 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (latestToken && latestUser) {
         setUser(latestUser);
+        setActiveBranchIdState(getActiveBranchIdFromStorage(latestUser));
         setChecked(true);
         setLoading(false);
         setError("");
@@ -191,6 +200,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (cachedUser) {
       setUser(cachedUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
       setChecked(true);
       setLoading(false);
     }
@@ -203,6 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const cachedUser = getCurrentUserFromStorage();
       if (cachedUser) {
         setUser(cachedUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
         setChecked(true);
         setLoading(false);
       }
@@ -262,10 +273,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [logout, pathname, reloadAuth]);
 
+  const setActiveBranchId = useCallback(
+    (branchId: string) => {
+      const currentUser = getCurrentUserFromStorage() || user;
+      setActiveBranchIdToStorage(branchId, currentUser);
+      const nextUser = getCurrentUserFromStorage() || currentUser;
+      setUser(nextUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(nextUser));
+    },
+    [user],
+  );
+
+  useEffect(() => {
+    const handleActiveBranchChanged = () => {
+      const cachedUser = getCurrentUserFromStorage();
+      setUser(cachedUser);
+      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
+    };
+
+    window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    return () => {
+      window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    };
+  }, []);
+
   const permissions = useMemo(() => {
     if (isOwnerUser(user)) return ["*"];
-    return uniquePermissions(getCurrentUserPermissions(user));
-  }, [user]);
+    return uniquePermissions(getCurrentUserPermissions(user, activeBranchId));
+  }, [user, activeBranchId]);
 
   const can = useCallback(
     (permission?: string | null) => {
@@ -283,11 +318,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       checked,
       error,
       permissions,
+      activeBranchId,
+      setActiveBranchId,
       can,
       reloadAuth,
       logout,
     }),
-    [user, loading, checked, error, permissions, can, reloadAuth, logout],
+    [user, loading, checked, error, permissions, activeBranchId, setActiveBranchId, can, reloadAuth, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

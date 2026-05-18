@@ -310,9 +310,10 @@ export default function PurchaseReceiptsPageClient() {
     roles.includes("owner");
 
   const currentBranchId =
-    (currentUser as any)?.branchId ||
+    (currentUser as any)?.activeBranchId ||
     (currentUser as any)?.workingBranchId ||
     (currentUser as any)?.currentBranchId ||
+    (currentUser as any)?.branchId ||
     (currentUser as any)?.branch?.id ||
     "";
 
@@ -825,14 +826,10 @@ export default function PurchaseReceiptsPageClient() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) return;
     if (!currentBranchId) return;
 
-    setBranchId((prev) => {
-      if (!prev || String(prev) !== String(currentBranchId)) return currentBranchId;
-      return prev;
-    });
-  }, [currentBranchId, isAdmin]);
+    setBranchId(String(currentBranchId));
+  }, [currentBranchId]);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -1518,136 +1515,132 @@ export default function PurchaseReceiptsPageClient() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                      <a
-                        href={`/control/purchase-receipts/${receipt.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800"
-                      >
-                        Mở tab mới
-                      </a>
+                    <a
+                      href={`/control/purchase-receipts/${receipt.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800"
+                    >
+                      Mở tab mới
+                    </a>
 
-                      <button
-                        type="button"
-                        onClick={() => toggleReceiptExpanded(receipt.id)}
-                        className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
-                      >
-                        {expanded ? "Thu gọn nhanh" : "Xem nhanh"}
-                      </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleReceiptExpanded(receipt.id)}
+                      className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                    >
+                      {expanded ? "Thu gọn nhanh" : "Xem nhanh"}
+                    </button>
 
-                      {receipt.status === "DRAFT" &&
+                    {receipt.status === "DRAFT" &&
                       (canEditReceipt || canRequestPaymentReceipt || canCancelReceipt) ? (
-                        <>
-                          {canEditReceipt ? (
-                            <button
-                              type="button"
-                              onClick={() => openEdit(receipt)}
-                              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
-                            >
-                              Sửa phiếu
-                            </button>
-                          ) : null}
+                      <>
+                        {canEditReceipt ? (
+                          <button
+                            type="button"
+                            onClick={() => openEdit(receipt)}
+                            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+                          >
+                            Sửa phiếu
+                          </button>
+                        ) : null}
 
-                          {canRequestPaymentReceipt ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleRequestPayment(receipt.id)}
-                              disabled={importingId === receipt.id}
-                              className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${
-                                importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                        {canRequestPaymentReceipt ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleRequestPayment(receipt.id)}
+                            disabled={importingId === receipt.id}
+                            className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                               }`}
-                            >
-                              {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
-                            </button>
-                          ) : null}
+                          >
+                            {importingId === receipt.id ? "Đang xác nhận..." : "Xác nhận đủ hàng"}
+                          </button>
+                        ) : null}
 
-                          {canCancelReceipt ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleCancel(receipt.id)}
-                              disabled={cancellingId === receipt.id}
-                              className={`rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ${
-                                cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                        {canCancelReceipt ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleCancel(receipt.id)}
+                            disabled={cancellingId === receipt.id}
+                            className={`rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ${cancellingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                               }`}
-                            >
-                              {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
-                            </button>
-                          ) : null}
-                        </>
-                      ) : null}
+                          >
+                            {cancellingId === receipt.id ? "Đang hủy..." : "Hủy"}
+                          </button>
+                        ) : null}
+                      </>
+                    ) : null}
 
-                      {canPayReceipt &&
+                    {canPayReceipt &&
                       (receipt.status === "PAYMENT_REQUESTED" ||
                         receipt.status === "PARTIALLY_PAID") ? (
-                        <a
-                          href={`/finance/supplier-payments?receiptId=${receipt.id}`}
-                          target="_blank"
-                          className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700"
-                        >
-                          Mở phiếu thanh toán
-                        </a>
-                      ) : null}
+                      <a
+                        href={`/finance/supplier-payments?receiptId=${receipt.id}`}
+                        target="_blank"
+                        className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700"
+                      >
+                        Mở phiếu thanh toán
+                      </a>
+                    ) : null}
 
-                      {canImportStockReceipt && receipt.status === "PAID" ? (
-                        <button
-                          onClick={() => void handleImportStock(receipt.id)}
-                          disabled={importingId === receipt.id}
-                          className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${
-                            importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                    {canImportStockReceipt && receipt.status === "PAID" ? (
+                      <button
+                        onClick={() => void handleImportStock(receipt.id)}
+                        disabled={importingId === receipt.id}
+                        className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
-                        >
-                          {importingId === receipt.id ? "Đang nhập kho..." : "Xác nhận nhập kho"}
-                        </button>
-                      ) : null}
+                      >
+                        {importingId === receipt.id ? "Đang nhập kho..." : "Xác nhận nhập kho"}
+                      </button>
+                    ) : null}
 
-                      {canCompleteReceipt && receipt.status === "STOCK_IMPORTED" ? (
-                        <button
-                          onClick={() => void handleComplete(receipt.id)}
-                          disabled={completingId === receipt.id}
-                          className={`rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 ${
-                            completingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
+                    {canCompleteReceipt && receipt.status === "STOCK_IMPORTED" ? (
+                      <button
+                        onClick={() => void handleComplete(receipt.id)}
+                        disabled={completingId === receipt.id}
+                        className={`rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 ${completingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
-                        >
-                          {completingId === receipt.id ? "Đang hoàn tất..." : "Hoàn tất"}
-                        </button>
-                      ) : null}
-                    </div>
+                      >
+                        {completingId === receipt.id ? "Đang hoàn tất..." : "Hoàn tất"}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 {expanded ? (
                   <div className="overflow-auto">
-                                    <table className="min-w-full text-[13px]">
-                                      <thead className="bg-neutral-50 text-left text-neutral-500">
-                                        <tr>
-                                          <th className="px-3 py-2.5 font-medium">SKU</th>
-                                          <th className="px-3 py-2.5 font-medium">Sản phẩm</th>
-                                          <th className="px-3 py-2.5 font-medium">Màu</th>
-                                          <th className="px-3 py-2.5 font-medium">Size</th>
-                                          <th className="px-3 py-2.5 font-medium">Số lượng</th>
-                                          {isAdmin ? <th className="px-3 py-2.5 font-medium">Giá nhập</th> : null}
-                                          {isAdmin ? <th className="px-3 py-2.5 font-medium">Thành tiền</th> : null}
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {getReceiptItems(receipt).map((item) => (
-                                          <tr key={item.id} className="border-t border-neutral-200">
-                                            <td className="px-3 py-2.5 font-medium">{item.sku}</td>
-                                            <td className="px-3 py-2.5">{item.productName}</td>
-                                            <td className="px-3 py-2.5">{item.color || "—"}</td>
-                                            <td className="px-3 py-2.5">{item.size || "—"}</td>
-                                            <td className="px-3 py-2.5">{item.qty}</td>
-                                            {isAdmin ? (
-                                              <td className="px-3 py-2.5">{currency(Number(item.unitCost || 0))}</td>
-                                            ) : null}
-                                            {isAdmin ? (
-                                              <td className="px-3 py-2.5">{currency(Number(item.lineTotal || 0))}</td>
-                                            ) : null}
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                
+                    <table className="min-w-full text-[13px]">
+                      <thead className="bg-neutral-50 text-left text-neutral-500">
+                        <tr>
+                          <th className="px-3 py-2.5 font-medium">SKU</th>
+                          <th className="px-3 py-2.5 font-medium">Sản phẩm</th>
+                          <th className="px-3 py-2.5 font-medium">Màu</th>
+                          <th className="px-3 py-2.5 font-medium">Size</th>
+                          <th className="px-3 py-2.5 font-medium">Số lượng</th>
+                          {isAdmin ? <th className="px-3 py-2.5 font-medium">Giá nhập</th> : null}
+                          {isAdmin ? <th className="px-3 py-2.5 font-medium">Thành tiền</th> : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getReceiptItems(receipt).map((item) => (
+                          <tr key={item.id} className="border-t border-neutral-200">
+                            <td className="px-3 py-2.5 font-medium">{item.sku}</td>
+                            <td className="px-3 py-2.5">{item.productName}</td>
+                            <td className="px-3 py-2.5">{item.color || "—"}</td>
+                            <td className="px-3 py-2.5">{item.size || "—"}</td>
+                            <td className="px-3 py-2.5">{item.qty}</td>
+                            {isAdmin ? (
+                              <td className="px-3 py-2.5">{currency(Number(item.unitCost || 0))}</td>
+                            ) : null}
+                            {isAdmin ? (
+                              <td className="px-3 py-2.5">{currency(Number(item.lineTotal || 0))}</td>
+                            ) : null}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
                 ) : null}
               </Panel>
             );
@@ -1657,45 +1650,45 @@ export default function PurchaseReceiptsPageClient() {
 
       <Modal open={createOpen} onClose={closeForm} title={editingReceiptId ? "Sửa phiếu nhập" : "Tạo phiếu nhập"}>
         <div className="space-y-3">
-<div className="grid gap-3 md:grid-cols-2">
-  {suppliers.filter((item) => item.isActive).length > 0 ? (
-    <select
-      className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-      value={supplierId}
-      onChange={(e) => setSupplierId(e.target.value)}
-    >
-      <option value="">Chọn nhà cung cấp</option>
-      {suppliers
-        .filter((item) => item.isActive)
-        .map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.name} ({item.code})
-          </option>
-        ))}
-    </select>
-  ) : (
-    <div className="flex items-center justify-between rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800">
-      <span>Chưa có nhà cung cấp nào.</span>
-      <a href="/control/suppliers" className="font-medium underline underline-offset-2">
-        Tạo NCC
-      </a>
-    </div>
-  )}
+          <div className="grid gap-3 md:grid-cols-2">
+            {suppliers.filter((item) => item.isActive).length > 0 ? (
+              <select
+                className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={supplierId}
+                onChange={(e) => setSupplierId(e.target.value)}
+              >
+                <option value="">Chọn nhà cung cấp</option>
+                {suppliers
+                  .filter((item) => item.isActive)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.code})
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <div className="flex items-center justify-between rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800">
+                <span>Chưa có nhà cung cấp nào.</span>
+                <a href="/control/suppliers" className="font-medium underline underline-offset-2">
+                  Tạo NCC
+                </a>
+              </div>
+            )}
 
-  <select
-    className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none disabled:bg-neutral-50 disabled:text-neutral-500"
-    value={isAdmin ? branchId : currentBranchId}
-    onChange={(e) => setBranchId(e.target.value)}
-    disabled={!isAdmin}
-  >
-    <option value="">Chọn kho nhập</option>
-    {allowedBranches.map((item) => (
-      <option key={item.id} value={item.id}>
-        {item.name}
-      </option>
-    ))}
-  </select>
-</div>
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none disabled:bg-neutral-50 disabled:text-neutral-500"
+              value={isAdmin ? branchId : currentBranchId}
+              onChange={(e) => setBranchId(e.target.value)}
+              disabled={!isAdmin}
+            >
+              <option value="">Chọn kho nhập</option>
+              {allowedBranches.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <textarea
             className="min-h-[72px] w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
@@ -1854,11 +1847,10 @@ export default function PurchaseReceiptsPageClient() {
                         type="button"
                         onClick={() => addVariantToDraft(item)}
                         disabled={added}
-                        className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition ${
-                          added
+                        className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition ${added
                             ? "cursor-not-allowed bg-emerald-50"
                             : "hover:bg-neutral-50"
-                        }`}
+                          }`}
                       >
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium text-neutral-900">{item.productName}</p>
@@ -2034,9 +2026,8 @@ export default function PurchaseReceiptsPageClient() {
                 onClick={() => void handleSaveReceipt()}
                 disabled={saving || (editingReceiptId ? !canEditReceipt : !canCreateReceipt)}
                 type="button"
-                className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
-                  saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
-                }`}
+                className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+                  }`}
               >
                 {saving ? "Đang lưu..." : editingReceiptId ? "Lưu thay đổi" : "Lưu nháp"}
               </button>
@@ -2116,9 +2107,8 @@ export default function PurchaseReceiptsPageClient() {
             <button
               onClick={() => void handlePayReceipt()}
               disabled={paying || !canPayReceipt}
-              className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
-                paying ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
-              }`}
+              className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${paying ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+                }`}
             >
               {paying ? "Đang thanh toán..." : "Xác nhận thanh toán"}
             </button>

@@ -3,6 +3,7 @@ import {
   getTokenFromStorage,
   setTokenToStorage,
   clearCurrentUserFromStorage,
+  getWorkingBranchId,
 } from "@/lib/current-user";
 
 type RequestOptions = RequestInit & {
@@ -57,6 +58,12 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
     };
 
     if (auth && token) finalHeaders.Authorization = `Bearer ${token}`;
+
+    const activeBranchId = getWorkingBranchId();
+    if (auth && activeBranchId && !finalHeaders["x-active-branch-id"]) {
+      finalHeaders["x-active-branch-id"] = activeBranchId;
+      finalHeaders["x-branch-id"] = activeBranchId;
+    }
 
     const isFormData =
       typeof FormData !== "undefined" && rest.body instanceof FormData;

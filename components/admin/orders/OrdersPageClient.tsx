@@ -1,5 +1,6 @@
 "use client";
 import { apiFetch, apiJson } from "@/lib/api";
+import { getWorkingBranchId } from "@/lib/current-user";
 import * as XLSX from "xlsx";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 
@@ -2449,6 +2450,17 @@ function exportOrdersExcel({
 }
 
 export default function OrdersPageClient() {
+  useEffect(() => {
+    const handleActiveBranchChanged = () => {
+      window.location.reload();
+    };
+
+    window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    return () => {
+      window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    };
+  }, []);
+
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [printVersion, setPrintVersion] = useState(0);
@@ -2642,7 +2654,7 @@ export default function OrdersPageClient() {
       currentUser?.role ||
       "guest";
 
-    return `${String(userKey).replace(/[^a-zA-Z0-9_-]/g, "_")}.${currentUser?.branchId || "all"
+    return `${String(userKey).replace(/[^a-zA-Z0-9_-]/g, "_")}.${getWorkingBranchId(currentUser) || currentUser?.branchId || "all"
       }`;
   }, [currentUser]);
 

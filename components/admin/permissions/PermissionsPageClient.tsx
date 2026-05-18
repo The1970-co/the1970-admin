@@ -890,15 +890,12 @@ function getEmployeeEffectiveKeys(employee?: EmployeeItem | null, branchId?: str
   const scopedBranchId = branchId || employeePrimaryBranch(employee);
   const keys = new Set<string>();
 
-  const roleCode =
-    employee.branchRoles.find((item) => item.branchId === scopedBranchId)?.roleCode ||
-    employee.roleId;
-
+  const roleCode = getEmployeeRoleForBranch(employee, scopedBranchId);
   roleKeys(roleCode).forEach((key) => keys.add(key));
 
-  const branchPermission = employee.branchPermissions.find(
-    (row) => row.branchId === scopedBranchId,
-  );
+  const branchPermission = scopedBranchId
+    ? employee.branchPermissions.find((row) => row.branchId === scopedBranchId)
+    : null;
 
   if (branchPermission) {
     getPermissionKeysFromBranchPermission(branchPermission).forEach((key) => keys.add(key));
@@ -1030,6 +1027,103 @@ function employeePrimaryBranch(employee?: EmployeeItem | null) {
   return employee.branchId || employee.branchRoles[0]?.branchId || employee.branchPermissions[0]?.branchId || "";
 }
 
+function employeeBranchIds(employee?: EmployeeItem | null) {
+  if (!employee) return [];
+  return unique([
+    employee.branchId || "",
+    ...employee.branchRoles.map((item) => item.branchId),
+    ...employee.branchPermissions.map((item) => item.branchId),
+  ]);
+}
+
+function getEmployeeRoleForBranch(employee?: EmployeeItem | null, branchId?: string | null) {
+  if (!employee) return "retail-staff";
+
+  const scopedBranchId = String(branchId || "").trim();
+
+  if (scopedBranchId) {
+    const branchRole = employee.branchRoles.find((item) => item.branchId === scopedBranchId);
+    if (branchRole?.roleCode) return branchRole.roleCode;
+  }
+
+  if (employee.branchRoles.length) {
+    return employee.branchRoles[0]?.roleCode || employee.roleId || "retail-staff";
+  }
+
+  return employee.roleId || "retail-staff";
+}
+
+function mergeBranchRolesForBranch(
+  employee: EmployeeItem,
+  branchId: string,
+  roleCode: string,
+) {
+  const map = new Map<string, BranchRoleItem>();
+
+  employee.branchRoles.forEach((row) => {
+    if (!row?.branchId) return;
+    map.set(row.branchId, {
+      id: row.id,
+      staffId: row.staffId || employee.id,
+      branchId: row.branchId,
+      roleCode: normalizeRole(row.roleCode || employee.roleId || "retail-staff"),
+      branch: row.branch || null,
+    });
+  });
+
+  map.set(branchId, {
+    staffId: employee.id,
+    branchId,
+    roleCode: normalizeRole(roleCode || "retail-staff"),
+    branch: branchesSafeFind(branchId),
+  } as BranchRoleItem);
+
+  return Array.from(map.values()).map((row) => ({
+    branchId: row.branchId,
+    roleCode: row.roleCode,
+  }));
+}
+
+function branchesSafeFind(_branchId: string) {
+  return null;
+}
+
+function buildBranchPermissionsForEmployee(
+  employee: EmployeeItem,
+  branchId: string,
+  roleCode: string,
+  mode: "replace" | "merge",
+) {
+  const permissionMap = new Map<string, BranchPermission>();
+
+  employee.branchPermissions.forEach((row) => {
+    if (!row?.branchId) return;
+    permissionMap.set(row.branchId, sanitizeBranchPermission(row));
+  });
+
+  const rolePermission = buildLegacyFlags(roleKeys(roleCode), branchId);
+
+  if (mode === "replace") {
+    permissionMap.set(branchId, {
+      ...rolePermission,
+      branchId,
+      note: `Bulk role replace: ${roleCode}`,
+    });
+  } else {
+    const current = permissionMap.get(branchId);
+    const currentKeys = current ? getPermissionKeysFromBranchPermission(current) : [];
+    const mergedKeys = unique([...currentKeys, ...roleKeys(roleCode)]);
+    permissionMap.set(branchId, {
+      ...buildLegacyFlags(mergedKeys, branchId),
+      branchId,
+      note: `Bulk role merge: ${roleCode}`,
+    });
+  }
+
+  return Array.from(permissionMap.values()).map(sanitizeBranchPermission);
+}
+
+
 function mapApiStaffToEmployee(item: any): EmployeeItem {
   const roles = getEmployeeRoles(item);
   const branchRoles: BranchRoleItem[] = safeArray(item?.branchRoles).map((row: any) => ({
@@ -1083,29 +1177,27 @@ function mapApiStaffToEmployee(item: any): EmployeeItem {
 
 function buildEmployeeTree(employees: EmployeeItem[], branches: BranchItem[]) {
   return getAllRoleTemplates().map((role) => {
-    const roleEmployees = employees.filter((employee) => employee.roles.includes(role.id) || employee.roleId === role.id);
+    const roleEmployees = employees.filter((employee) => {
+      if (employee.roles.includes(role.id) || employee.roleId === role.id) return true;
+      return employee.branchRoles.some((branchRole) => branchRole.roleCode === role.id);
+    });
+
     const branchGroups = branches
       .map((branch) => ({
         branch,
-        employees: roleEmployees.filter((employee) => {
-          const ids = unique([
-            employee.branchId || "",
-            ...employee.branchRoles.map((item) => item.branchId),
-            ...employee.branchPermissions.map((item) => item.branchId),
-          ]);
-          return ids.includes(branch.id);
-        }),
+        employees: roleEmployees.filter((employee) =>
+          employee.branchRoles.some(
+            (branchRole) =>
+              branchRole.branchId === branch.id && branchRole.roleCode === role.id,
+          ) ||
+          (!employee.branchRoles.length &&
+            employee.roleId === role.id &&
+            employeeBranchIds(employee).includes(branch.id)),
+        ),
       }))
       .filter((group) => group.employees.length > 0);
 
-    const noBranchEmployees = roleEmployees.filter((employee) => {
-      const ids = unique([
-        employee.branchId || "",
-        ...employee.branchRoles.map((item) => item.branchId),
-        ...employee.branchPermissions.map((item) => item.branchId),
-      ]);
-      return ids.length === 0;
-    });
+    const noBranchEmployees = roleEmployees.filter((employee) => employeeBranchIds(employee).length === 0);
 
     return { role, employees: roleEmployees, branchGroups, noBranchEmployees };
   });
@@ -1114,8 +1206,49 @@ function buildEmployeeTree(employees: EmployeeItem[], branches: BranchItem[]) {
 function getEmployeeBranchKeys(employee: EmployeeItem, branchId: string) {
   const row = employee.branchPermissions.find((item) => item.branchId === branchId);
   if (row) return getPermissionKeysFromBranchPermission(row);
-  const roleCode = employee.branchRoles.find((item) => item.branchId === branchId)?.roleCode || employee.roleId;
+
+  const roleCode = getEmployeeRoleForBranch(employee, branchId);
   return roleKeys(roleCode);
+}
+
+function getEmployeeAllBranchKeys(employee: EmployeeItem) {
+  if (employee.roles.includes("owner") || employee.roles.includes("admin")) return ["*"];
+
+  const branchIds = employeeBranchIds(employee);
+  if (!branchIds.length) return getEmployeeEffectiveKeys(employee);
+
+  return unique(
+    branchIds.flatMap((branchId) => getEmployeeBranchKeys(employee, branchId)),
+  );
+}
+
+function getEmployeeBranchRoleChips(employee: EmployeeItem) {
+  const map = new Map<string, { branchId: string; roleCode: string }>();
+
+  employee.branchRoles.forEach((row) => {
+    if (!row.branchId) return;
+    map.set(row.branchId, {
+      branchId: row.branchId,
+      roleCode: row.roleCode || employee.roleId || "retail-staff",
+    });
+  });
+
+  employee.branchPermissions.forEach((row) => {
+    if (!row.branchId || map.has(row.branchId)) return;
+    map.set(row.branchId, {
+      branchId: row.branchId,
+      roleCode: getEmployeeRoleForBranch(employee, row.branchId),
+    });
+  });
+
+  if (!map.size && employee.branchId) {
+    map.set(employee.branchId, {
+      branchId: employee.branchId,
+      roleCode: employee.roleId || "retail-staff",
+    });
+  }
+
+  return Array.from(map.values());
 }
 
 function Button({
@@ -1500,7 +1633,7 @@ export default function PermissionsPageClient() {
     setEditBranchPermissionMap(nextPermissionMap);
     setEditBranchExtraPermissionMap(nextExtraPermissionMap);
     setEditBranchDeniedPermissionMap(nextDeniedPermissionMap);
-    setSelectedBranchId((prev) => prev && (nextRoleMap[prev] || nextPermissionMap[prev]) ? prev : Object.keys(nextRoleMap)[0] || selectedEmployee.branchId || "");
+    setSelectedBranchId((prev) => prev && (nextRoleMap[prev] || nextPermissionMap[prev]) ? prev : Object.keys(nextRoleMap)[0] || selectedEmployee.branchId || selectedEmployee.branchPermissions[0]?.branchId || "");
   }, [selectedEmployeeId, selectedEmployee, roleTemplatesVersion]);
 
   const employeeTree = useMemo(() => buildEmployeeTree(employees, branches), [employees, branches, roleTemplatesVersion]);
@@ -1589,7 +1722,7 @@ export default function PermissionsPageClient() {
     setEditBranchRoleMap((prev) => {
       const next = { ...prev };
       if (enabled) {
-        next[branchId] = selectedEmployee?.roleId || "retail-staff";
+        next[branchId] = getEmployeeRoleForBranch(selectedEmployee, branchId);
       } else {
         delete next[branchId];
       }
@@ -1599,7 +1732,7 @@ export default function PermissionsPageClient() {
     setEditBranchPermissionMap((prev) => {
       const next = { ...prev };
       if (enabled) {
-        next[branchId] = prev[branchId] || roleKeys(selectedEmployee?.roleId || "retail-staff");
+        next[branchId] = prev[branchId] || roleKeys(getEmployeeRoleForBranch(selectedEmployee, branchId));
         setSelectedBranchId(branchId);
       } else {
         delete next[branchId];
@@ -2064,42 +2197,103 @@ export default function PermissionsPageClient() {
       showMessage("Chọn vai trò, chi nhánh và ít nhất 1 nhân viên.", "error");
       return;
     }
+
     setShowBulkConfirm(false);
+
     try {
       setBulkAssigning(true);
       setMessage(`Đang gán vai trò cho ${bulkSelectedIds.size} nhân viên...`);
+
       const ids = Array.from(bulkSelectedIds);
 
-      const results = await Promise.allSettled(ids.map(async (staffId) => {
-        // Replace: gán branch-roles mới (backend sẽ xoá cũ và tạo mới)
-        // Merge: patch thêm branch-role mà không xoá override cũ
-        if (bulkApplyMode === "replace") {
-          // Replace: gán branch-roles → backend xoá StaffBranchPermission cũ, tạo mới theo role
-          return apiJson(`/staff/${staffId}/branch-roles`, {
-            method: "PATCH",
-            body: JSON.stringify({ branchRoles: [{ branchId: bulkBranchId, roleCode: bulkRoleId }] }),
+      const results = await Promise.allSettled(
+        ids.map(async (staffId) => {
+          const employee = employees.find((item) => item.id === staffId);
+          if (!employee) throw new Error(`Không tìm thấy nhân viên ${staffId}`);
+
+          const roleMap = new Map<string, string>();
+
+          employee.branchRoles.forEach((row) => {
+            if (!row.branchId) return;
+            roleMap.set(row.branchId, normalizeRole(row.roleCode || employee.roleId || "retail-staff"));
           });
-        } else {
-          // Merge: sync permissions mà không xoá override
+
+          if (!roleMap.size && employee.branchId) {
+            roleMap.set(employee.branchId, normalizeRole(employee.roleId || "retail-staff"));
+          }
+
+          // Enterprise rule:
+          // - replace: chỉ thay role/quyền của đúng chi nhánh đang chọn, giữ nguyên chi nhánh khác.
+          // - merge: cộng thêm quyền của role mới vào đúng chi nhánh đang chọn, vẫn giữ chi nhánh khác.
+          roleMap.set(bulkBranchId, normalizeRole(bulkRoleId));
+
+          const branchRoles = Array.from(roleMap.entries()).map(([branchId, roleCode]) => ({
+            branchId,
+            roleCode,
+          }));
+
+          const permissionMap = new Map<string, BranchPermission>();
+
+          employee.branchPermissions.forEach((row) => {
+            if (!row.branchId) return;
+            permissionMap.set(row.branchId, sanitizeBranchPermission(row));
+          });
+
+          const rolePermissionKeys = roleKeys(bulkRoleId);
+          const currentPermission = permissionMap.get(bulkBranchId);
+          const currentKeys = currentPermission
+            ? getPermissionKeysFromBranchPermission(currentPermission)
+            : [];
+
+          const nextKeys =
+            bulkApplyMode === "replace"
+              ? rolePermissionKeys
+              : unique([...currentKeys, ...rolePermissionKeys]);
+
+          permissionMap.set(bulkBranchId, {
+            ...buildLegacyFlags(nextKeys, bulkBranchId),
+            branchId: bulkBranchId,
+            note:
+              bulkApplyMode === "replace"
+                ? `Bulk replace role ${bulkRoleId}`
+                : `Bulk merge role ${bulkRoleId}`,
+          });
+
+          const branchPermissions = Array.from(permissionMap.values()).map(sanitizeBranchPermission);
+
           await apiJson(`/staff/${staffId}`, {
             method: "PATCH",
-            body: JSON.stringify({ role: bulkRoleId, branchId: bulkBranchId }),
+            body: JSON.stringify({
+              role: branchRoles[0]?.roleCode || employee.roleId || bulkRoleId,
+              branchId: employee.branchId || branchRoles[0]?.branchId || bulkBranchId,
+            }),
           });
-          return apiJson(`/staff/${staffId}/sync-permissions`, {
-            method: "POST",
-            body: JSON.stringify({ force: false }),
+
+          await apiJson(`/staff/${staffId}/branch-roles`, {
+            method: "PATCH",
+            body: JSON.stringify({ branchRoles }),
           });
-        }
-      }));
+
+          return apiJson(`/staff/${staffId}/permissions`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              roles: unique(branchRoles.map((row) => row.roleCode)),
+              branchPermissions,
+            }),
+          });
+        }),
+      );
 
       const succeeded = results.filter((r) => r.status === "fulfilled").length;
       const failed = results.filter((r) => r.status === "rejected").length;
+
       setBulkSelectedIds(new Set());
       await loadEmployees();
+
       if (failed === 0) {
         showMessage(
           `✓ ${bulkApplyMode === "replace" ? "Đặt lại quyền chi nhánh" : "Giữ quyền + cộng thêm"} — Gán "${getRoleName(bulkRoleId)}" tại ${getBranchName(branches, bulkBranchId)} cho ${succeeded} nhân viên thành công.`,
-          "success"
+          "success",
         );
       } else {
         showMessage(`Gán xong ${succeeded}/${ids.length} nhân viên. ${failed} thất bại.`, "error");
@@ -2373,12 +2567,15 @@ export default function PermissionsPageClient() {
                       <div className="space-y-1">
                         {group.employees.map((employee) => (
                           <button
-                            key={employee.id}
+                            key={`${roleGroup.role.id}-${group.branch.id}-${employee.id}`}
                             type="button"
-                            onClick={() => setSelectedEmployeeId(employee.id)}
+                            onClick={() => {
+                              setSelectedEmployeeId(employee.id);
+                              setSelectedBranchId(group.branch.id);
+                            }}
                             className={cx(
                               "flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition",
-                              selectedEmployeeId === employee.id
+                              selectedEmployeeId === employee.id && selectedBranchId === group.branch.id
                                 ? "bg-neutral-950 text-white"
                                 : "bg-white text-neutral-800 hover:bg-neutral-100",
                             )}
@@ -2401,12 +2598,15 @@ export default function PermissionsPageClient() {
                       </p>
                       {roleGroup.noBranchEmployees.map((employee) => (
                         <button
-                          key={employee.id}
+                          key={`no-branch-${employee.id}`}
                           type="button"
-                          onClick={() => setSelectedEmployeeId(employee.id)}
+                          onClick={() => {
+                            setSelectedEmployeeId(employee.id);
+                            setSelectedBranchId("");
+                          }}
                           className={cx(
                             "mt-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition",
-                            selectedEmployeeId === employee.id
+                            selectedEmployeeId === employee.id && !selectedBranchId
                               ? "bg-neutral-950 text-white"
                               : "bg-white text-neutral-800 hover:bg-neutral-100",
                           )}
@@ -3220,9 +3420,10 @@ Lưu override
                     {filteredEmployees.length === 0 ? (
                       <tr><td colSpan={7} className="px-5 py-10 text-center text-sm text-neutral-400">{loadingEmployees ? "Đang tải..." : "Không có nhân viên nào."}</td></tr>
                     ) : filteredEmployees.map((e) => {
-                      const keys = getEmployeeEffectiveKeys(e);
+                      const keys = getEmployeeAllBranchKeys(e);
                       const dangerous = keys.filter((k) => k === "*" || DANGEROUS_KEYS.has(k)).length;
                       const isSelected = selectedEmpEditId === e.id;
+                      const branchRoleChips = getEmployeeBranchRoleChips(e);
                       return (
                         <tr key={e.id} className={`transition hover:bg-neutral-50 ${isSelected ? "bg-blue-50" : ""}`}>
                           <td className="px-4 py-3">
@@ -3231,17 +3432,28 @@ Lưu override
                             {e.phone ? <p className="text-[11px] text-neutral-400">{e.phone}</p> : null}
                           </td>
                           <td className="px-4 py-3">
-                            {e.branchRoles.length ? e.branchRoles.slice(0, 2).map((br) => {
-                              const role = getRoleTemplate(br.roleCode);
-                              return (
-                                <div key={br.branchId} className="flex items-center gap-1.5 mb-1">
-                                  <span className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${role ? toneClasses[role.tone] : "border-neutral-200 bg-neutral-50 text-neutral-500"}`}>
-                                    {role?.name || br.roleCode}
-                                  </span>
-                                  <span className="text-[11px] text-neutral-400">{getBranchName(branches, br.branchId)}</span>
-                                </div>
-                              );
-                            }) : <span className="text-xs text-neutral-400 italic">Chưa gán</span>}
+                            {branchRoleChips.length ? (
+                              <div className="flex max-w-[360px] flex-wrap gap-1.5">
+                                {branchRoleChips.map((br) => {
+                                  const role = getRoleTemplate(br.roleCode);
+                                  return (
+                                    <span
+                                      key={`${e.id}-${br.branchId}-${br.roleCode}`}
+                                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold ${
+                                        role ? toneClasses[role.tone] : "border-neutral-200 bg-neutral-50 text-neutral-500"
+                                      }`}
+                                      title={`${getBranchName(branches, br.branchId)} — ${role?.name || br.roleCode}`}
+                                    >
+                                      <span>{role?.name || br.roleCode}</span>
+                                      <span className="text-neutral-400">·</span>
+                                      <span>{getBranchName(branches, br.branchId)}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-neutral-400 italic">Chưa gán</span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <span className="text-sm font-bold">{keys.includes("*") ? "∞" : keys.length}</span>

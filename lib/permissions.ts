@@ -166,6 +166,8 @@ export const PERMISSIONS = {
   SYSTEM_MANAGE: "system.manage",
   BRANCHES_MANAGE: "branches.manage",
   STAFF_MANAGE: "staff.manage",
+  STAFF_TRANSFER_BRANCH_VIEW: "staff.transfer_branch.view",
+  STAFF_TRANSFER_BRANCH: "staff.transfer_branch",
   AUDIT_VIEW: "audit.view",
   CARRIERS_MANAGE: "carriers.manage",
 } as const;

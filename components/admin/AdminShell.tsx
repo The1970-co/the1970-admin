@@ -9,6 +9,7 @@ import { getRoleLabel } from "@/lib/authz";
 import { useAuth } from "@/components/admin/auth/AuthProvider";
 import { getRequiredPermissionForPath } from "@/lib/route-permissions";
 import { PERMISSIONS } from "@/lib/permissions";
+import { getCurrentUserBranchOptions, getCurrentUserBranchRole } from "@/lib/current-user";
 
 type MenuItem = {
   href?: string;
@@ -249,7 +250,7 @@ function SidebarContent({
 }
 
 export default function AdminShell({ children, title }: { children: React.ReactNode; title?: string }) {
-  const { user, loading, checked, error, can, logout } = useAuth();
+  const { user, loading, checked, error, can, logout, activeBranchId, setActiveBranchId } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -273,6 +274,12 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     if (!user?.name) return "U";
     return user.name.split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase();
   }, [user]);
+
+  const branchOptions = useMemo(() => getCurrentUserBranchOptions(user), [user]);
+  const activeBranchRole = useMemo(
+    () => getCurrentUserBranchRole(user, activeBranchId) || userRoles(user)[0],
+    [user, activeBranchId],
+  );
 
   if (!mounted || !checked || loading) {
     return (
@@ -319,7 +326,26 @@ export default function AdminShell({ children, title }: { children: React.ReactN
                   </div>
                 </div>
 
-                {userRoles(user).length ? <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-700">{getRoleLabel(userRoles(user)[0])}</div> : null}
+                {branchOptions.length > 1 ? (
+                  <select
+                    value={activeBranchId || branchOptions[0]?.branchId || ""}
+                    onChange={(event) => setActiveBranchId(event.target.value)}
+                    className="max-w-[280px] rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-semibold text-neutral-800 outline-none transition hover:bg-neutral-50"
+                    title="Đổi chi nhánh làm việc"
+                  >
+                    {branchOptions.map((option) => (
+                      <option key={option.branchId} value={option.branchId}>
+                        {option.branchName} — {getRoleLabel(option.role)}
+                      </option>
+                    ))}
+                  </select>
+                ) : branchOptions.length === 1 ? (
+                  <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-700">
+                    {branchOptions[0].branchName} — {getRoleLabel(branchOptions[0].role)}
+                  </div>
+                ) : userRoles(user).length ? (
+                  <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-700">{getRoleLabel(activeBranchRole)}</div>
+                ) : null}
 
                 <button onClick={logout} className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm text-neutral-700 transition hover:bg-neutral-50">
                   Đăng xuất

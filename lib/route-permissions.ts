@@ -28,6 +28,7 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/payroll": PERMISSIONS.MENU_PAYROLL,
   "/payroll/config": PERMISSIONS.PAYROLL_CONFIG,
   "/payroll/settings": PERMISSIONS.PAYROLL_CONFIG,
+  "/staff-transfer": PERMISSIONS.MENU_STAFF_TRANSFER,
   "/control/autopilot": PERMISSIONS.MENU_AUTOPILOT,
   "/control/ai-content": PERMISSIONS.MENU_AI_CONTENT,
   "/permissions": PERMISSIONS.MENU_PERMISSIONS,

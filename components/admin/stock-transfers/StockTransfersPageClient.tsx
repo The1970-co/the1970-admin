@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/api";
+import { getCurrentUserFromStorage, getWorkingBranchId } from "@/lib/current-user";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getBranches,
@@ -383,6 +384,7 @@ export default function StockTransfersPageClient() {
 const [currentUser, setCurrentUser] = useState<any>(null);
 
 const userBranchId =
+  getWorkingBranchId(currentUser) ||
   currentUser?.branchId ||
   currentUser?.branch?.id ||
   currentUser?.branches?.[0]?.id ||
@@ -1133,17 +1135,7 @@ function buildTransferPrintOrder(transfer: StockTransfer) {
   }
 
 function loadCurrentUser() {
-  if (typeof window === "undefined") return;
-
-  try {
-    const raw =
-      localStorage.getItem("the1970_current_user") ||
-      localStorage.getItem("currentUser");
-    const parsed = raw ? JSON.parse(raw) : null;
-    setCurrentUser(parsed?.user || parsed || null);
-  } catch {
-    setCurrentUser(null);
-  }
+  setCurrentUser(getCurrentUserFromStorage());
 }
 
   async function loadAll() {
@@ -1207,6 +1199,16 @@ function loadCurrentUser() {
 useEffect(() => {
   loadCurrentUser();
   void loadAll();
+
+  const handleActiveBranchChanged = () => {
+    loadCurrentUser();
+    void loadAll();
+  };
+
+  window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+  return () => {
+    window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 

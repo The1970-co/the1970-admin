@@ -11,7 +11,7 @@ import {
 } from "@/lib/products-api";
 import { applyStocktake } from "@/lib/stocktake-api";
 import { hasPermission, type AppRole } from "@/lib/authz";
-import { getCurrentUserFromStorage } from "@/lib/current-user";
+import { getCurrentUserFromStorage, getWorkingBranchId } from "@/lib/current-user";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
 type StocktakeStatus =
@@ -647,6 +647,17 @@ function MiniProgressCircle({ percent }: { percent: number }) {
 }
 
 export default function StocktakePageClient() {
+  useEffect(() => {
+    const handleActiveBranchChanged = () => {
+      window.location.reload();
+    };
+
+    window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    return () => {
+      window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
+    };
+  }, []);
+
   const canSeeAllStocktakeSessions = true;
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -1080,14 +1091,47 @@ export default function StocktakePageClient() {
           : fallbackWorkerSummary
       : summary;
 
-  const commitWorkerSummary = (rows: SummaryItem[]) => {
-    const safeRows = Array.isArray(rows)
-      ? rows.filter((row) => Number(row.counted ?? row.countedQty ?? 0) > 0)
+  const mergeStableWorkerSummary = (incomingRows: SummaryItem[]) => {
+    const safeRows = Array.isArray(incomingRows)
+      ? incomingRows.filter((row) => Number(row.counted ?? row.countedQty ?? 0) > 0)
       : [];
 
-    if (safeRows.length > 0) {
-      setWorkerSummary(safeRows);
-      setStableWorkerSummary(safeRows);
+    if (!safeRows.length) return [];
+
+    const hasPendingOptimistic =
+      Object.keys(optimisticQueue).length > 0 ||
+      Date.now() - lastScanAtRef.current < 3000;
+
+    if (!hasPendingOptimistic) return safeRows;
+
+    const bySku = new Map<string, SummaryItem>();
+
+    stableWorkerSummary.forEach((row) => {
+      const key = String(row.sku || row.variantId || "").trim();
+      if (key) bySku.set(key, row);
+    });
+
+    safeRows.forEach((row) => {
+      const key = String(row.sku || row.variantId || "").trim();
+      if (!key) return;
+
+      const optimisticDelta = Number(optimisticQueue[row.sku] || 0);
+      bySku.set(key, {
+        ...row,
+        counted: Number(row.counted ?? row.countedQty ?? 0) + optimisticDelta,
+        countedQty: Number(row.countedQty ?? row.counted ?? 0) + optimisticDelta,
+      });
+    });
+
+    return Array.from(bySku.values());
+  };
+
+  const commitWorkerSummary = (rows: SummaryItem[]) => {
+    const mergedRows = mergeStableWorkerSummary(rows);
+
+    if (mergedRows.length > 0) {
+      setWorkerSummary(mergedRows);
+      setStableWorkerSummary(mergedRows);
     }
   };
 
@@ -2089,27 +2133,12 @@ export default function StocktakePageClient() {
 
     if (scannerBufferTimer) {
       clearTimeout(scannerBufferTimer);
+      setScannerBufferTimer(null);
     }
 
-    const nextValue = value.trim();
-
-    if (!nextValue || !session || paused || closed) return;
-
-    // Nếu đang nhập số lượng nhanh khác 1 thì không tự bắn debounce,
-    // tránh vừa gõ SKU đã tự +1 trước khi bấm "Ghi SL".
-    if (getScanQty() !== 1) return;
-
-    const timer = setTimeout(() => {
-      const finalValue = nextValue.trim();
-      if (finalValue.length >= 3) {
-        const exactVariant = findVariantByCode(finalValue);
-        if (exactVariant) {
-          void handleScanCode(finalValue, 1);
-        }
-      }
-    }, 260);
-
-    setScannerBufferTimer(timer);
+    // Không tự cộng số lượng bằng debounce khi người dùng/máy scan đang nhập.
+    // Máy scan chuẩn sẽ gửi Enter sau barcode; Enter mới là điểm chốt scan.
+    // Cách cũ có thể tự bắn khi mới nhận một phần mã, rồi Enter bắn thêm lần nữa => số lượng nhảy lung tung.
   };
 
   const handlePickSuggestion = async (variant: any) => {
@@ -2197,6 +2226,11 @@ export default function StocktakePageClient() {
     if (!ok) return;
 
     await adjustRowCount(row.sku, -currentCount);
+    setWorkerSummary((prev) => prev.filter((item) => item.sku !== row.sku));
+    setStableWorkerSummary((prev) =>
+      prev.filter((item) => item.sku !== row.sku),
+    );
+    setSummary((prev) => prev.filter((item) => item.sku !== row.sku));
     setQuickQtyBySku((prev) => ({ ...prev, [row.sku]: "0" }));
     setMessage(`Đã xoá số kiểm của ${row.sku}.`);
   };
