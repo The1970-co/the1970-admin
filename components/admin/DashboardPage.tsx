@@ -1346,6 +1346,131 @@ function productReportFromOrders(
     );
 }
 
+
+function mergeProductRowsByMainProduct(
+  rows: ProductOrderReportItem[],
+): ProductOrderReportItem[] {
+  const map = new Map<
+    string,
+    ProductOrderReportItem & {
+      orderIdSet: Set<string>;
+      orderCodeSet: Set<string>;
+      customerSet: Set<string>;
+      sourceSet: Set<string>;
+      statusSet: Set<string>;
+      variantSet: Set<string>;
+      skuSet: Set<string>;
+      detailRows: ProductReportOrderDetail[];
+    }
+  >();
+
+  rows.forEach((row, index) => {
+    const productName = String(row.productName || row.name || "Sản phẩm").trim();
+    const key = String(row.productId || productName || row.id || index).toLowerCase();
+
+    if (!map.has(key)) {
+      map.set(key, {
+        ...row,
+        id: `main-${key}`,
+        name: productName,
+        productName,
+        variantName: "",
+        sku: "",
+        meta: "",
+        orderCount: 0,
+        quantity: 0,
+        revenue: 0,
+        shippedQty: 0,
+        unshippedQty: 0,
+        shippedOrderCount: 0,
+        unshippedOrderCount: 0,
+        avgOrderValue: 0,
+        orderCodes: [],
+        customerNames: [],
+        sources: [],
+        orderStatuses: [],
+        cancelledOrderCount: 0,
+        orderDetails: [],
+        orderIdSet: new Set<string>(),
+        orderCodeSet: new Set<string>(),
+        customerSet: new Set<string>(),
+        sourceSet: new Set<string>(),
+        statusSet: new Set<string>(),
+        variantSet: new Set<string>(),
+        skuSet: new Set<string>(),
+        detailRows: [],
+      });
+    }
+
+    const target = map.get(key)!;
+    const details = Array.isArray(row.orderDetails) ? row.orderDetails : [];
+
+    if (details.length) {
+      details.forEach((detail) => {
+        const orderKey = String(detail.orderId || detail.orderCode || "").trim();
+        if (orderKey) target.orderIdSet.add(orderKey);
+        if (detail.orderCode) target.orderCodeSet.add(detail.orderCode);
+        if (detail.customerName) target.customerSet.add(detail.customerName);
+        if (detail.source) target.sourceSet.add(detail.source);
+        if (detail.status) target.statusSet.add(orderStatusLabel(detail.status));
+        target.detailRows.push(detail);
+      });
+    } else {
+      for (let i = 0; i < Math.max(1, toNumber(row.orderCount)); i += 1) {
+        target.orderIdSet.add(`${row.id}-${i}`);
+      }
+      (row.orderCodes || []).forEach((value) => target.orderCodeSet.add(value));
+      (row.customerNames || []).forEach((value) => target.customerSet.add(value));
+      (row.sources || []).forEach((value) => target.sourceSet.add(value));
+      (row.orderStatuses || []).forEach((value) => target.statusSet.add(value));
+    }
+
+    if (row.variantName && row.variantName !== productName) {
+      target.variantSet.add(String(row.variantName));
+    }
+    if (row.sku) target.skuSet.add(String(row.sku));
+
+    target.quantity += toNumber(row.quantity);
+    target.revenue += toNumber(row.revenue);
+    target.shippedQty += toNumber(row.shippedQty);
+    target.unshippedQty += toNumber(row.unshippedQty);
+    target.cancelledOrderCount =
+      toNumber(target.cancelledOrderCount) + toNumber(row.cancelledOrderCount);
+  });
+
+  return Array.from(map.values()).map((item) => {
+    const variantCount = item.variantSet.size;
+    const skuCount = item.skuSet.size;
+    const orderCount = item.orderIdSet.size || toNumber(item.orderCount);
+
+    return {
+      ...item,
+      orderCount,
+      avgOrderValue: orderCount ? Math.round(item.revenue / orderCount) : 0,
+      variantName: variantCount ? `${formatQty(variantCount)} phiên bản` : "Gộp sản phẩm chính",
+      sku: skuCount ? `${formatQty(skuCount)} SKU` : null,
+      meta: skuCount
+        ? Array.from(item.skuSet).slice(0, 3).join(", ") +
+          (skuCount > 3 ? ` +${skuCount - 3}` : "")
+        : null,
+      orderCodes: Array.from(item.orderCodeSet).slice(0, 12),
+      customerNames: Array.from(item.customerSet).slice(0, 12),
+      sources: Array.from(item.sourceSet).slice(0, 12),
+      orderStatuses: Array.from(item.statusSet).slice(0, 8),
+      orderDetails: item.detailRows.slice(0, 300),
+      orderIdSet: undefined,
+      orderCodeSet: undefined,
+      customerSet: undefined,
+      sourceSet: undefined,
+      statusSet: undefined,
+      variantSet: undefined,
+      skuSet: undefined,
+      detailRows: undefined,
+    } as ProductOrderReportItem;
+  });
+}
+
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -2285,7 +2410,11 @@ export default function DashboardPage() {
     },
   );
 
-  const productReportRowsToShow = productReportRows
+  const productReportBaseRows = productColumns.mainProduct
+    ? mergeProductRowsByMainProduct(productReportRows)
+    : productReportRows;
+
+  const productReportRowsToShow = productReportBaseRows
     .filter((item) => {
       if (productFulfillmentFilter === "shipped") return item.shippedQty > 0;
       if (productFulfillmentFilter === "unshipped") {
@@ -3298,7 +3427,7 @@ export default function DashboardPage() {
                 ["customer", "Hiện tên khách"],
                 ["orderCode", "Hiện mã đơn"],
                 ["orderStatus", "Hiện trạng thái đơn hàng"],
-                ["mainProduct", "Hiện sản phẩm chính"],
+                ["mainProduct", "Gộp theo sản phẩm chính"],
                 ["variant", "Hiện phiên bản sản phẩm"],
                 ["sku", "Hiện SKU / phân loại"],
                 ["fulfillment", "Hiện trạng thái xuất kho"],
@@ -3355,9 +3484,6 @@ export default function DashboardPage() {
               <tr>
                 <th className="px-4 py-4 font-medium">#</th>
                 <th className="px-4 py-4 font-medium">Sản phẩm</th>
-                {productColumns.mainProduct ? (
-                  <th className="px-4 py-4 font-medium">Sản phẩm chính</th>
-                ) : null}
                 {productColumns.variant ? (
                   <th className="px-4 py-4 font-medium">Phiên bản</th>
                 ) : null}
@@ -3483,8 +3609,13 @@ export default function DashboardPage() {
                           }
                           className="max-w-[320px] truncate text-left font-medium text-neutral-900"
                         >
-                          {item.name}
+                          {productColumns.mainProduct ? item.productName || item.name : item.name}
                         </button>
+                        {productColumns.mainProduct ? (
+                          <div className="mt-1 text-xs text-neutral-500">
+                            Đã gộp theo sản phẩm chính
+                          </div>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => openProductOrderDetails(item)}
@@ -3493,11 +3624,6 @@ export default function DashboardPage() {
                           Mở chi tiết đơn
                         </button>
                       </td>
-                      {productColumns.mainProduct ? (
-                        <td className="px-4 py-4 text-neutral-700">
-                          {item.productName || item.name}
-                        </td>
-                      ) : null}
                       {productColumns.variant ? (
                         <td className="px-4 py-4 text-neutral-700">
                           <div>{item.variantName || item.meta || "—"}</div>
@@ -3615,7 +3741,6 @@ export default function DashboardPage() {
                   <td
                     colSpan={
                       5 +
-                      (productColumns.mainProduct ? 1 : 0) +
                       (productColumns.variant ? 1 : 0) +
                       (productColumns.sku ? 1 : 0) +
                       (productColumns.source ? 1 : 0) +

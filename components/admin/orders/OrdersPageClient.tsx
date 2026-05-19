@@ -166,7 +166,7 @@ type NormalizedOrder = AdminOrder & {
   _createdAtDate: Date | null;
 };
 
-const TABLE_MIN_WIDTH = 3240;
+const TABLE_MIN_WIDTH = 3340;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
@@ -6099,7 +6099,7 @@ export default function OrdersPageClient() {
 
                     {orderedVisibleColumns.map(renderColumnHeader)}
 
-                    <th className="sticky right-0 z-30 w-[96px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
+                    <th className="sticky right-0 z-30 w-[176px] min-w-[176px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-center shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
                       Mở
                     </th>
                   </tr>
@@ -6138,9 +6138,9 @@ export default function OrdersPageClient() {
                             renderColumnCell(order, key),
                           )}
 
-                          <td className="sticky right-0 z-20 border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
-                            <div className="flex justify-end">
-                              <div className="flex items-center gap-2 whitespace-nowrap">
+                          <td className="sticky right-0 z-20 w-[176px] min-w-[176px] border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
+                            <div className="flex justify-center">
+                              <div className="flex w-full items-center justify-center gap-1.5 whitespace-nowrap">
                                 <button
                                   type="button"
                                   onClick={() => void openQuickViewOrder(order)}
