@@ -621,7 +621,11 @@ export default function StocktakeExcelImportPageClient() {
   const matchedCount = reconciledRows.filter((row) => row.status === "MATCH").length;
   const mismatchCount = reconciledRows.filter((row) => row.status === "MISMATCH").length;
   const notFoundCount = reconciledRows.filter((row) => row.status === "NOT_FOUND").length;
-  const willWriteCount = rows.filter((row) => Number(row.countedQty || 0) !== (currentCountBySku.get(row.sku) || 0)).length;
+  const willWriteCount = reconciledRows.filter(({ row, snapshot }) => {
+    const targetQty = Number(row.countedQty ?? 0);
+    const currentQty = currentCountBySku.get(row.sku) ?? 0;
+    return targetQty !== currentQty || (targetQty === 0 && currentQty === 0 && snapshot > 0);
+  }).length;
 
   async function fetchSummaryRows(targetSessionId: string, targetWorkerId?: string) {
     if (!targetSessionId) return [];
@@ -839,11 +843,14 @@ export default function StocktakeExcelImportPageClient() {
 
       for (const row of rows) {
         const sku = row.sku.trim();
-        const targetQty = Number(row.countedQty || 0);
-        const currentQty = currentMap.get(sku) || 0;
+        const targetQty = Number(row.countedQty ?? 0);
+        const currentQty = currentMap.get(sku) ?? 0;
+        const previewRow = reconciledRows.find((item) => item.row.rowNumber === row.rowNumber || item.row.sku === sku);
+        const snapshotQty = Number(previewRow?.snapshot ?? row.systemQty ?? 0);
         const delta = targetQty - currentQty;
+        const shouldWriteZeroCountMarker = Boolean(sku && delta === 0 && targetQty === 0 && snapshotQty > 0);
 
-        if (!sku || delta === 0) {
+        if (!sku || (delta === 0 && !shouldWriteZeroCountMarker)) {
           skipped += 1;
           done += 1;
           setProgress({ done, total: rows.length });

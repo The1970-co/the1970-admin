@@ -778,6 +778,11 @@ export default function ReturnCreatePageClient({
   const differenceAmount = returnTotal - exchangeTotal - shippingFee;
   const refundAmount = differenceAmount > 0 ? differenceAmount : 0;
   const extraChargeAmount = customerPayableAmount;
+  const returnReceiveLabel =
+    statusMode === "COMPLETED"
+      ? "Đã nhận hàng khách gửi đổi/trả"
+      : "Chưa nhận hàng khách gửi đổi/trả";
+  const isReturnReceived = statusMode === "COMPLETED";
 
   const selectedReturnQty = useMemo(() => {
     return returnLines.reduce((sum, line) => sum + toNumber(line.returnQty), 0);
@@ -793,8 +798,8 @@ export default function ReturnCreatePageClient({
     if (saving) return false;
     if (!receiveBranchId) return false;
     if (selectedReturnQty <= 0 && selectedExchangeQty <= 0) return false;
-    if (refundAmount > 0 && !refundPaymentSourceId) return false;
-    if (extraChargeAmount > 0 && !extraChargePaymentSourceId) return false;
+    if (isReturnReceived && refundAmount > 0 && !refundPaymentSourceId) return false;
+    if (isReturnReceived && extraChargeAmount > 0 && !extraChargePaymentSourceId) return false;
     return true;
   }, [
     order,
@@ -806,6 +811,7 @@ export default function ReturnCreatePageClient({
     extraChargeAmount,
     refundPaymentSourceId,
     extraChargePaymentSourceId,
+    isReturnReceived,
   ]);
 
   const canShipSubmit = useMemo(() => {
@@ -815,7 +821,7 @@ export default function ReturnCreatePageClient({
     if (!receiveBranchId) return false;
     if (selectedReturnQty <= 0 && selectedExchangeQty <= 0) return false;
     if (selectedExchangeQty <= 0) return false;
-    if (refundAmount > 0 && !refundPaymentSourceId) return false;
+    if (isReturnReceived && refundAmount > 0 && !refundPaymentSourceId) return false;
     return true;
   }, [
     order,
@@ -825,6 +831,7 @@ export default function ReturnCreatePageClient({
     selectedExchangeQty,
     refundAmount,
     refundPaymentSourceId,
+    isReturnReceived,
   ]);
 
   useEffect(() => {
@@ -1182,11 +1189,16 @@ export default function ReturnCreatePageClient({
       return `Sản phẩm ${invalidReturn.sku || invalidReturn.productName || ""} vượt số lượng được trả.`;
     }
 
-    if (refundAmount > 0 && !refundPaymentSourceId) {
+    if (isReturnReceived && refundAmount > 0 && !refundPaymentSourceId) {
       return "Chưa chọn nguồn tiền hoàn khách.";
     }
 
-    if (!forShipping && extraChargeAmount > 0 && !extraChargePaymentSourceId) {
+    if (
+      isReturnReceived &&
+      !forShipping &&
+      extraChargeAmount > 0 &&
+      !extraChargePaymentSourceId
+    ) {
       return "Chưa chọn nguồn tiền khách bù thêm.";
     }
 
@@ -1474,6 +1486,12 @@ export default function ReturnCreatePageClient({
     void refreshShippingQuotes();
   }, [autoQuoteKey]);
 
+  const buildReturnNote = () => {
+    const cleanNote = note.trim();
+    const receiveNote = `Tình trạng nhận hàng trả: ${returnReceiveLabel}`;
+    return [cleanNote, receiveNote].filter(Boolean).join(" | ");
+  };
+
   const buildReturnPayload = (selectedReturnItems: ReturnLine[]) => ({
     originalOrderId: order?.id,
     originalBranchId: order?.branchId || null,
@@ -1519,11 +1537,12 @@ export default function ReturnCreatePageClient({
       order?.shippingGhnWardCode ||
       null,
 
-    refundPaymentSourceId: refundAmount > 0 ? refundPaymentSourceId : null,
+    refundPaymentSourceId:
+      isReturnReceived && refundAmount > 0 ? refundPaymentSourceId : null,
     extraChargePaymentSourceId:
-      extraChargeAmount > 0 ? extraChargePaymentSourceId : null,
+      isReturnReceived && extraChargeAmount > 0 ? extraChargePaymentSourceId : null,
 
-    note,
+    note: buildReturnNote(),
 
     items: [
       ...selectedReturnItems.map((line) => ({
@@ -2498,7 +2517,7 @@ export default function ReturnCreatePageClient({
             ) : null}
 
             <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Trạng thái
+              Tình trạng nhận hàng trả
             </label>
             <select
               value={statusMode}
@@ -2507,9 +2526,21 @@ export default function ReturnCreatePageClient({
               }
               className="mt-2 h-11 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm outline-none focus:border-neutral-900"
             >
-              <option value="COMPLETED">Đã nhận hàng và xử lý</option>
-              <option value="DRAFT">Lưu nháp</option>
+              <option value="COMPLETED">Đã nhận được hàng khách gửi đổi/trả</option>
+              <option value="DRAFT">Chưa nhận được hàng khách gửi đổi/trả</option>
             </select>
+
+            <div
+              className={`mt-3 rounded-2xl border px-4 py-3 text-xs leading-5 ${
+                isReturnReceived
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-amber-200 bg-amber-50 text-amber-700"
+              }`}
+            >
+              {isReturnReceived
+                ? "Đã nhận hàng: phiếu được xử lý hoàn tất, backend có thể cộng lại kho hàng trả và sinh phiếu thu/chi nếu có chênh lệch."
+                : "Chưa nhận hàng: phiếu lưu ở trạng thái nháp/chờ nhận, không bắt buộc chọn nguồn tiền hoàn khách và không gửi nguồn tiền hoàn/thu thêm về backend."}
+            </div>
 
             <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Ghi chú
@@ -2545,6 +2576,15 @@ export default function ReturnCreatePageClient({
 
               <div className="border-t border-neutral-100 pt-3" />
 
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Tình trạng hàng trả</span>
+                <strong
+                  className={isReturnReceived ? "text-emerald-700" : "text-amber-700"}
+                >
+                  {returnReceiveLabel}
+                </strong>
+              </div>
+
               <div className="flex justify-between text-base">
                 <span className="font-semibold">
                   {refundAmount > 0
@@ -2561,9 +2601,16 @@ export default function ReturnCreatePageClient({
               </div>
 
               {differenceAmount > 0 ? (
-                <div className="rounded-2xl bg-red-50 px-4 py-3 text-xs leading-5 text-red-700">
-                  Khi tạo phiếu, hệ thống sinh phiếu chi OUT từ nguồn tiền hoàn
-                  khách.
+                <div
+                  className={`rounded-2xl px-4 py-3 text-xs leading-5 ${
+                    isReturnReceived
+                      ? "bg-red-50 text-red-700"
+                      : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {isReturnReceived
+                    ? "Khi tạo phiếu, hệ thống sinh phiếu chi OUT từ nguồn tiền hoàn khách."
+                    : "Chưa nhận hàng trả: lưu nháp trước, không gửi nguồn tiền hoàn khách về backend."}
                 </div>
               ) : null}
 
@@ -2597,8 +2644,7 @@ export default function ReturnCreatePageClient({
 
             {!canSubmit ? (
               <p className="mt-3 text-xs leading-5 text-neutral-500">
-                Kiểm tra điều kiện đơn, chi nhánh nhận trả, sản phẩm và nguồn
-                tiền tương ứng trước khi tạo.
+                Kiểm tra điều kiện đơn, chi nhánh nhận trả, sản phẩm, tình trạng nhận hàng trả và nguồn tiền tương ứng trước khi tạo.
               </p>
             ) : null}
           </section>

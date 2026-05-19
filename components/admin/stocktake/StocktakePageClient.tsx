@@ -11,7 +11,7 @@ import {
 } from "@/lib/products-api";
 import { applyStocktake } from "@/lib/stocktake-api";
 import { hasPermission, type AppRole } from "@/lib/authz";
-import { getCurrentUserFromStorage, getWorkingBranchId } from "@/lib/current-user";
+import { getCurrentUserFromStorage } from "@/lib/current-user";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
 type StocktakeStatus =
@@ -647,17 +647,6 @@ function MiniProgressCircle({ percent }: { percent: number }) {
 }
 
 export default function StocktakePageClient() {
-  useEffect(() => {
-    const handleActiveBranchChanged = () => {
-      window.location.reload();
-    };
-
-    window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
-    return () => {
-      window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
-    };
-  }, []);
-
   const canSeeAllStocktakeSessions = true;
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -2046,9 +2035,11 @@ export default function StocktakePageClient() {
       setStocktakeExcelProgress({ done: 0, total: stocktakeExcelRows.length });
 
       const currentCountBySku = new Map<string, number>();
-      rows.forEach((row) =>
-        currentCountBySku.set(row.sku, Number(row.counted || 0)),
-      );
+      const snapshotBySku = new Map<string, number>();
+      rows.forEach((row) => {
+        currentCountBySku.set(row.sku, Number(row.counted || 0));
+        snapshotBySku.set(row.sku, Number(row.system || 0));
+      });
 
       let imported = 0;
       let skipped = 0;
@@ -2057,11 +2048,13 @@ export default function StocktakePageClient() {
 
       for (const excelRow of stocktakeExcelRows) {
         const sku = excelRow.sku.trim();
-        const targetQty = Number(excelRow.countedQty || 0);
-        const currentQty = currentCountBySku.get(sku) || 0;
+        const targetQty = Number(excelRow.countedQty ?? 0);
+        const currentQty = currentCountBySku.get(sku) ?? 0;
+        const snapshotQty = snapshotBySku.get(sku) ?? Number(excelRow.systemQty ?? 0);
         const delta = targetQty - currentQty;
+        const shouldWriteZeroCountMarker = Boolean(sku && delta === 0 && targetQty === 0 && snapshotQty > 0);
 
-        if (!sku || delta === 0) {
+        if (!sku || (delta === 0 && !shouldWriteZeroCountMarker)) {
           skipped += 1;
           imported += 1;
           setStocktakeExcelProgress({
@@ -2159,12 +2152,14 @@ export default function StocktakePageClient() {
     setManualPickVariantIds((prev) =>
       Array.from(new Set([...variantIds, ...prev])),
     );
-    setRowQuery(String(product?.name || product?.slug || ""));
+    setRowFilter("ALL");
+    setRowQuery("");
     setShowSuggestions(false);
     setScanCode("");
     setMessage(
-      `Đã đưa ${variantIds.length} phiên bản con của ${product?.name || "sản phẩm"} sang bảng nhập tay.`,
+      `Đã đưa ${variantIds.length} phiên bản con của ${product?.name || "sản phẩm"} sang bảng nhập tay. Có thể scan/chọn tiếp mã khác ngay.`,
     );
+    window.setTimeout(() => scanInputRef.current?.focus(), 50);
   };
 
   const adjustRowCount = async (sku: string, delta: number) => {
