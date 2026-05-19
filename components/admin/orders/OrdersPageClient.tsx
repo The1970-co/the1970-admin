@@ -166,7 +166,7 @@ type NormalizedOrder = AdminOrder & {
   _createdAtDate: Date | null;
 };
 
-const TABLE_MIN_WIDTH = 3340;
+const TABLE_MIN_WIDTH = 3240;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
@@ -978,8 +978,45 @@ function shipmentStatusValue(order: AdminOrder) {
   return "";
 }
 
+function normalizeShipmentTextForUi(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
 function shipmentDisplayStatusLabel(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
+  const normalizedValue = normalizeShipmentTextForUi(shipmentStatusValue(order));
+
+  if (
+    normalizedValue.includes("CHUYEN HOAN") ||
+    normalizedValue.includes("CHO HOAN") ||
+    normalizedValue.includes("DANG HOAN") ||
+    normalizedValue.includes("HOAN HANG") ||
+    normalizedValue.includes("HANG HOAN") ||
+    normalizedValue.includes("RETURN")
+  ) {
+    return "Đang hoàn hàng";
+  }
+
+  if (
+    normalizedValue.includes("KHONG LIEN LAC") ||
+    normalizedValue.includes("KHONG NGHE MAY") ||
+    normalizedValue.includes("CHAN SO") ||
+    normalizedValue.includes("TU CHOI") ||
+    normalizedValue.includes("DOI Y KHONG MUA") ||
+    normalizedValue.includes("GIAO THAT BAI") ||
+    normalizedValue.includes("DELIVERY FAIL") ||
+    normalizedValue.includes("FAILED")
+  ) {
+    return "Có sự cố";
+  }
 
   switch (value) {
     case "ASSIGNING":
@@ -1117,6 +1154,31 @@ const DELIVERY_STATUS_FILTER_OPTIONS = [
 
 function shipmentDisplayStatusTone(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
+  const normalizedValue = normalizeShipmentTextForUi(shipmentStatusValue(order));
+
+  if (
+    normalizedValue.includes("CHUYEN HOAN") ||
+    normalizedValue.includes("CHO HOAN") ||
+    normalizedValue.includes("DANG HOAN") ||
+    normalizedValue.includes("HOAN HANG") ||
+    normalizedValue.includes("HANG HOAN") ||
+    normalizedValue.includes("RETURN")
+  ) {
+    return "bg-amber-50 text-amber-700 border-amber-200";
+  }
+
+  if (
+    normalizedValue.includes("KHONG LIEN LAC") ||
+    normalizedValue.includes("KHONG NGHE MAY") ||
+    normalizedValue.includes("CHAN SO") ||
+    normalizedValue.includes("TU CHOI") ||
+    normalizedValue.includes("DOI Y KHONG MUA") ||
+    normalizedValue.includes("GIAO THAT BAI") ||
+    normalizedValue.includes("DELIVERY FAIL") ||
+    normalizedValue.includes("FAILED")
+  ) {
+    return "bg-red-50 text-red-700 border-red-200";
+  }
 
   switch (value) {
     case "ASSIGNING":
@@ -2037,9 +2099,22 @@ function defaultVisibleColumns(canSeeMoney: boolean) {
 }
 
 function normalizeShipmentStatus(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
   const status = String(
-    order.shipment?.shippingStatus ||
-    (order.shipment as any)?.partnerStatus ||
+    shipment.shippingStatus ||
+    shipment.partnerStatus ||
+    shipment.status ||
+    shipment.currentStatus ||
+    shipment.current_status ||
+    shipment.lastStatus ||
+    shipment.last_status ||
+    anyOrder.shippingStatus ||
+    anyOrder.partnerStatus ||
+    anyOrder.deliveryStatus ||
+    anyOrder.shipmentStatus ||
+    anyOrder.carrierStatus ||
+    anyOrder.carrierStatusName ||
     "",
   ).toUpperCase();
 
@@ -2048,9 +2123,112 @@ function normalizeShipmentStatus(order: AdminOrder) {
   return "";
 }
 
+function getShipmentIssueText(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+  const values = [
+    shipment.shippingStatus,
+    shipment.partnerStatus,
+    shipment.status,
+    shipment.currentStatus,
+    shipment.current_status,
+    shipment.lastStatus,
+    shipment.last_status,
+    shipment.reason,
+    shipment.failureReason,
+    shipment.failReason,
+    shipment.note,
+    shipment.message,
+    shipment.description,
+    shipment.metadata,
+    anyOrder.shippingStatus,
+    anyOrder.partnerStatus,
+    anyOrder.deliveryStatus,
+    anyOrder.shipmentStatus,
+    anyOrder.carrierStatus,
+    anyOrder.carrierStatusName,
+    anyOrder.deliveryResult,
+    anyOrder.deliveryReason,
+    anyOrder.failReason,
+    anyOrder.failureReason,
+    anyOrder.note,
+    anyOrder._meta?.noteText,
+    anyOrder._meta?.shippingNote,
+  ];
+
+  return values
+    .map((value) => {
+      if (!value) return "";
+      if (typeof value === "object") {
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return "";
+        }
+      }
+      return String(value);
+    })
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function isReturnOrWaitingReturnOrder(order: AdminOrder) {
+  const text = getShipmentIssueText(order);
+  return (
+    text.includes("chuyen hoan") ||
+    text.includes("cho hoan") ||
+    text.includes("dang hoan") ||
+    text.includes("hoan hang") ||
+    text.includes("hang hoan") ||
+    text.includes("luu tai buu cuc cho ap don") ||
+    text.includes("returning") ||
+    text.includes("waiting to return") ||
+    text.includes("waiting return") ||
+    text.includes("returned") ||
+    text.includes("return")
+  );
+}
+
+function isDeliveryFailureSignal(order: AdminOrder) {
+  const text = getShipmentIssueText(order);
+  return (
+    text.includes("giao hang khong thanh cong") ||
+    text.includes("giao khong thanh cong") ||
+    text.includes("giao that bai") ||
+    text.includes("that bai") ||
+    text.includes("delivery fail") ||
+    text.includes("delivery failed") ||
+    text.includes("deliver fail") ||
+    text.includes("khong lien lac duoc") ||
+    text.includes("khong nghe may") ||
+    text.includes("chan so") ||
+    text.includes("tu choi nhan") ||
+    text.includes("doi y khong mua") ||
+    text.includes("khong mua nua") ||
+    text.includes("nhan vien gap su co") ||
+    text.includes("fail") ||
+    text.includes("exception") ||
+    text.includes("lost") ||
+    text.includes("damage")
+  );
+}
+
 function isSoonDeliveryOrder(order: AdminOrder) {
   const shipmentStatus = normalizeShipmentStatus(order);
-  return shipmentStatus.includes("DELIVERING");
+  const text = getShipmentIssueText(order);
+  return (
+    shipmentStatus.includes("DELIVERING") ||
+    text.includes("dang giao") ||
+    text.includes("dang phat") ||
+    text.includes("san sang giao") ||
+    text.includes("ready to deliver")
+  );
 }
 
 function isFailedOrder(order: AdminOrder) {
@@ -2059,17 +2237,25 @@ function isFailedOrder(order: AdminOrder) {
     order.status === "CANCELLED" ||
     order.paymentStatus === "FAILED" ||
     shipmentStatus.includes("FAIL") ||
-    shipmentStatus.includes("RETURN") ||
-    shipmentStatus.includes("CANCEL")
+    shipmentStatus.includes("CANCEL") ||
+    isDeliveryFailureSignal(order) ||
+    isReturnOrWaitingReturnOrder(order)
   );
 }
 
 function isRedeliveryOrder(order: AdminOrder) {
+  const text = getShipmentIssueText(order);
   const shipmentStatus = normalizeShipmentStatus(order);
   return (
-    shipmentStatus.includes("RETURN") ||
-    shipmentStatus.includes("FAIL") ||
-    shipmentStatus.includes("DELIVERY_FAIL")
+    text.includes("giao lai") ||
+    text.includes("giao hang lan") ||
+    text.includes("hen lai ngay giao") ||
+    text.includes("cho xac nhan giao lai") ||
+    text.includes("re delivery") ||
+    text.includes("redelivery") ||
+    shipmentStatus.includes("REDELIVERY") ||
+    isDeliveryFailureSignal(order) ||
+    isReturnOrWaitingReturnOrder(order)
   );
 }
 
@@ -3345,6 +3531,20 @@ export default function OrdersPageClient() {
     applySearchAndFilters();
   };
 
+  const applyQuickStatusFilter = (nextStatus: QuickStatusKey) => {
+    setQuickStatus(nextStatus);
+    setAppliedQuickStatus(nextStatus);
+    setPage(1);
+  };
+
+  const toggleQuickStatusFilter = (status: QuickStatusKey) => {
+    applyQuickStatusFilter(quickStatus === status ? "ALL" : status);
+  };
+
+  const clearQuickStatusFilter = () => {
+    applyQuickStatusFilter("ALL");
+  };
+
   const clearOrderSearch = () => {
     setQuery("");
     setSubmittedQuery("");
@@ -4303,10 +4503,16 @@ export default function OrdersPageClient() {
   const isColumnVisible = (key: ColumnKey) => draftVisibleColumns.includes(key);
 
   const applyQuickDate = (key: QuickDateKey) => {
-    setQuickDate(key);
     const range = getQuickDateRange(key);
-    setDateFrom(toInputDateValue(range.from));
-    setDateTo(toInputDateValue(range.to));
+    const nextFrom = toInputDateValue(range.from);
+    const nextTo = toInputDateValue(range.to);
+    setQuickDate(key);
+    setAppliedQuickDate(key);
+    setDateFrom(nextFrom);
+    setDateTo(nextTo);
+    setAppliedDateFrom(nextFrom);
+    setAppliedDateTo(nextTo);
+    setPage(1);
   };
 
   const paidRevenue = useMemo(
@@ -4924,11 +5130,7 @@ export default function OrdersPageClient() {
                 <button
                   key={item.key}
                   type="button"
-                  onClick={() =>
-                    setQuickStatus((prev) =>
-                      prev === item.key ? "ALL" : item.key,
-                    )
-                  }
+                  onClick={() => toggleQuickStatusFilter(item.key)}
                   className={`rounded-[22px] border p-3 text-left transition ${active
                       ? "border-neutral-900 bg-neutral-950 text-white shadow-sm"
                       : "border-neutral-200 bg-white text-neutral-900"
@@ -4967,7 +5169,7 @@ export default function OrdersPageClient() {
           {quickStatus !== "ALL" ? (
             <button
               type="button"
-              onClick={() => setQuickStatus("ALL")}
+              onClick={clearQuickStatusFilter}
               className="mt-3 w-full rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700"
             >
               Bỏ lọc nhanh
@@ -5242,103 +5444,69 @@ export default function OrdersPageClient() {
                 value={counts.waitingApprove}
                 active={quickStatus === "WAITING_APPROVE"}
                 icon="✓"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "WAITING_APPROVE" ? "ALL" : "WAITING_APPROVE",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("WAITING_APPROVE")}
               />
               <SummaryCard
                 title="Chờ thanh toán"
                 value={counts.waitingPayment}
                 active={quickStatus === "WAITING_PAYMENT"}
                 icon="₫"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "WAITING_PAYMENT" ? "ALL" : "WAITING_PAYMENT",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("WAITING_PAYMENT")}
               />
               <SummaryCard
                 title="Chờ đóng gói"
                 value={counts.waitingPacking}
                 active={quickStatus === "WAITING_PACKING"}
                 icon="□"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "WAITING_PACKING" ? "ALL" : "WAITING_PACKING",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("WAITING_PACKING")}
               />
               <SummaryCard
                 title="Chờ gửi hãng"
                 value={counts.waitingShip}
                 active={quickStatus === "WAITING_SHIP"}
                 icon="→"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "WAITING_SHIP" ? "ALL" : "WAITING_SHIP",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("WAITING_SHIP")}
               />
               <SummaryCard
                 title="Đang giao hàng"
                 value={counts.delivering}
                 active={quickStatus === "DELIVERING"}
                 icon="↗"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "DELIVERING" ? "ALL" : "DELIVERING",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("DELIVERING")}
               />
               <SummaryCard
                 title="Sắp giao"
                 value={counts.soonDelivery}
                 active={quickStatus === "SOON_DELIVERY"}
                 icon="◔"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "SOON_DELIVERY" ? "ALL" : "SOON_DELIVERY",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("SOON_DELIVERY")}
               />
               <SummaryCard
                 title="Đơn giao không thành công"
                 value={counts.failed}
                 active={quickStatus === "FAIL"}
                 icon="!"
-                onClick={() =>
-                  setQuickStatus((prev) => (prev === "FAIL" ? "ALL" : "FAIL"))
-                }
+                onClick={() => toggleQuickStatusFilter("FAIL")}
               />
               <SummaryCard
                 title="Đơn giao lại"
                 value={counts.redelivery}
                 active={quickStatus === "REDELIVERY"}
                 icon="↺"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "REDELIVERY" ? "ALL" : "REDELIVERY",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("REDELIVERY")}
               />
               <SummaryCard
                 title="Nội thành"
                 value={counts.localDelivery}
                 active={quickStatus === "LOCAL_DELIVERY"}
                 icon="⚡"
-                onClick={() =>
-                  setQuickStatus((prev) =>
-                    prev === "LOCAL_DELIVERY" ? "ALL" : "LOCAL_DELIVERY",
-                  )
-                }
+                onClick={() => toggleQuickStatusFilter("LOCAL_DELIVERY")}
               />
             </div>
 
             {quickStatus !== "ALL" ? (
               <div className="mt-4">
-                <Button onClick={() => setQuickStatus("ALL")} size="sm">
+                <Button onClick={clearQuickStatusFilter} size="sm">
                   Bỏ lọc nhanh
                 </Button>
               </div>
@@ -6099,7 +6267,7 @@ export default function OrdersPageClient() {
 
                     {orderedVisibleColumns.map(renderColumnHeader)}
 
-                    <th className="sticky right-0 z-30 w-[176px] min-w-[176px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-center shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
+                    <th className="sticky right-0 z-30 w-[96px] border-b border-neutral-200 bg-neutral-50 px-3 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)]">
                       Mở
                     </th>
                   </tr>
@@ -6138,9 +6306,9 @@ export default function OrdersPageClient() {
                             renderColumnCell(order, key),
                           )}
 
-                          <td className="sticky right-0 z-20 w-[176px] min-w-[176px] border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
-                            <div className="flex justify-center">
-                              <div className="flex w-full items-center justify-center gap-1.5 whitespace-nowrap">
+                          <td className="sticky right-0 z-20 border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
+                            <div className="flex justify-end">
+                              <div className="flex items-center gap-2 whitespace-nowrap">
                                 <button
                                   type="button"
                                   onClick={() => void openQuickViewOrder(order)}
