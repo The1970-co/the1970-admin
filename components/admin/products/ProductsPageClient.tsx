@@ -473,20 +473,289 @@ function shortText(text?: string | null, max = 56) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-function ProductImage({ src, alt }: { src?: string | null; alt: string }) {
+function normalizeProductColorKey(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeProductColorLookupKey(value?: string | null) {
+  return normalizeProductColorKey(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/Đ/g, "D")
+    .replace(/[^A-Z0-9]+/g, "")
+    .trim();
+}
+
+function getProductVariantImageUrl(variant: any) {
+  return String(
+    variant?.imageUrl ||
+      variant?.image ||
+      variant?.imageUrlByColor ||
+      variant?.colorImageUrl ||
+      "",
+  ).trim();
+}
+
+function getImageUrlFromAny(value: any) {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const image = getImageUrlFromAny(item);
+      if (image) return image;
+    }
+    return "";
+  }
+
+  if (typeof value === "object") {
+    return String(
+      value.imageUrl ||
+        value.url ||
+        value.image ||
+        value.src ||
+        value.secure_url ||
+        value.secureUrl ||
+        value.thumbnailUrl ||
+        "",
+    ).trim();
+  }
+
+  return "";
+}
+
+function parseProductColorImagesRaw(value: any) {
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return null;
+
+    try {
+      const parsed = JSON.parse(text);
+      return parsed || null;
+    } catch {
+      return null;
+    }
+  }
+
+  return value;
+}
+
+function getProductRawColorImages(product?: ProductItem | null) {
+  const anyProduct = product as any;
+  const candidates = [
+    anyProduct?.colorImages,
+    anyProduct?.imagesByColor,
+    anyProduct?.colorImageMap,
+    anyProduct?.variantImagesByColor,
+    anyProduct?.productImagesByColor,
+    anyProduct?.imageByColor,
+    anyProduct?.metadata?.colorImages,
+    anyProduct?.metadata?.imagesByColor,
+    anyProduct?.extra?.colorImages,
+    anyProduct?.extra?.imagesByColor,
+    anyProduct?.data?.colorImages,
+    anyProduct?.data?.imagesByColor,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseProductColorImagesRaw(candidate);
+    if (parsed && typeof parsed === "object") return parsed;
+  }
+
+  return null;
+}
+
+function productHasSavedColorImageMap(product?: ProductItem | null) {
+  const rawColorImages = getProductRawColorImages(product);
+
+  if (!rawColorImages || typeof rawColorImages !== "object") return false;
+
+  const values = Array.isArray(rawColorImages)
+    ? rawColorImages
+    : Object.values(rawColorImages);
+
+  return values.some((value) => Boolean(getImageUrlFromAny(value)));
+}
+
+function productNeedsFullColorImageDetail(product?: ProductItem | null) {
+  if (!product?.id) return false;
+
+  const colorCount = uniqueValues(
+    (product.variants || []).map((variant: any) => variant?.color),
+  ).length;
+
+  // Danh sách sản phẩm thường chỉ có ảnh đại diện/ảnh variant bị fallback về ảnh chính.
+  // Ảnh theo màu thật đang nằm ở endpoint chi tiết, nên cứ sản phẩm có nhiều màu là fetch detail
+  // một lần để lấy colorImages/imagesByColor chuẩn. Không dùng điều kiện "đã có variant.imageUrl"
+  // vì chính đoạn đó làm QKK812 vẫn hiện toàn màu THAN ngoài list.
+  return colorCount > 1;
+}
+
+function getProductListAuthHeaders() {
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("the1970_token") ||
+        ""
+      : "";
+
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+type ProductColorPreviewItem = {
+  color: string;
+  imageUrl: string;
+  variantCount: number;
+};
+
+function getProductColorPreviewItems(product?: ProductItem | null) {
+  if (!product) return [] as ProductColorPreviewItem[];
+
+  const colorImageMap = new Map<string, string>();
+  const rawColorImages = getProductRawColorImages(product);
+  const rememberColorImage = (color: any, image: any) => {
+    const colorKey = normalizeProductColorLookupKey(color);
+    const imageUrl = getImageUrlFromAny(image);
+    if (colorKey && imageUrl) colorImageMap.set(colorKey, imageUrl);
+  };
+
+  if (rawColorImages && typeof rawColorImages === "object") {
+    if (Array.isArray(rawColorImages)) {
+      rawColorImages.forEach((item: any) => {
+        rememberColorImage(
+          item?.color || item?.name || item?.label || item?.key,
+          item?.imageUrl || item?.url || item?.image || item,
+        );
+      });
+    } else {
+      Object.entries(rawColorImages).forEach(([color, image]) => {
+        rememberColorImage(color, image);
+      });
+    }
+  }
+
+  const rows = new Map<string, ProductColorPreviewItem>();
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+
+  variants.forEach((variant: any) => {
+    const color = String(variant?.color || "").trim();
+    const colorKey = normalizeProductColorKey(color || "Chưa rõ màu");
+    const colorLookupKey = normalizeProductColorLookupKey(color || colorKey);
+    if (!colorKey) return;
+
+    const imageUrl =
+      colorImageMap.get(colorLookupKey) ||
+      getProductVariantImageUrl(variant) ||
+      String(product.imageUrl || "").trim();
+
+    const current = rows.get(colorKey);
+    if (current) {
+      current.variantCount += 1;
+      if (!current.imageUrl && imageUrl) current.imageUrl = imageUrl;
+      return;
+    }
+
+    rows.set(colorKey, {
+      color: color || colorKey,
+      imageUrl,
+      variantCount: 1,
+    });
+  });
+
+  if (!rows.size && product.imageUrl) {
+    rows.set("ẢNH CHÍNH", {
+      color: "Ảnh chính",
+      imageUrl: String(product.imageUrl || ""),
+      variantCount: 1,
+    });
+  }
+
+  return Array.from(rows.values());
+}
+
+function ProductColorPreviewStrip({
+  product,
+  max = 4,
+}: {
+  product?: ProductItem | null;
+  max?: number;
+}) {
+  const colorItems = getProductColorPreviewItems(product);
+  if (colorItems.length < 1) return null;
+
+  const visibleItems = colorItems.slice(0, max);
+  const hiddenCount = Math.max(0, colorItems.length - visibleItems.length);
+  const title = colorItems
+    .map((item) => `${item.color}${item.variantCount > 1 ? ` (${item.variantCount} SKU)` : ""}`)
+    .join(" · ");
+
   return (
-    <div className="h-12 w-12 overflow-hidden rounded-2xl bg-neutral-100">
-      {src ? (
-        <img
-          src={toAbsoluteFileUrl(src)}
-          alt={alt}
-          className="h-full w-full object-cover"
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
-          No image
-        </div>
-      )}
+    <div className="mt-2 flex w-full max-w-[120px] items-center justify-center gap-2" title={title}>
+      {visibleItems.map((item) => (
+        <span
+          key={item.color}
+          className="inline-flex h-7 w-7 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow ring-1 ring-neutral-300"
+          title={`${item.color} · ${item.variantCount} SKU`}
+        >
+          {item.imageUrl ? (
+            <img
+              src={toAbsoluteFileUrl(item.imageUrl)}
+              alt={item.color}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center text-[8px] font-semibold text-neutral-500">
+              {item.color.slice(0, 1)}
+            </span>
+          )}
+        </span>
+      ))}
+      {hiddenCount > 0 ? (
+        <span
+          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-neutral-900 px-2 text-[11px] font-bold leading-none text-white"
+          title={`Còn ${hiddenCount} màu khác`}
+        >
+          +{hiddenCount}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function ProductImage({
+  src,
+  alt,
+  product,
+  showColorPreview = false,
+}: {
+  src?: string | null;
+  alt: string;
+  product?: ProductItem | null;
+  showColorPreview?: boolean;
+}) {
+  return (
+    <div className="flex w-[120px] flex-col items-center">
+      <div className="h-[58px] w-[58px] overflow-hidden rounded-2xl bg-neutral-100">
+        {src ? (
+          <img
+            src={toAbsoluteFileUrl(src)}
+            alt={alt}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
+            No image
+          </div>
+        )}
+      </div>
+      {showColorPreview ? <ProductColorPreviewStrip product={product} /> : null}
     </div>
   );
 }
@@ -1382,6 +1651,11 @@ export default function ProductsPageClient() {
   const searchParams = useSearchParams();
   const categoryFromUrl = searchParams.get("category") || "ALL";
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [productPreviewDetailsById, setProductPreviewDetailsById] = useState<
+    Record<string, ProductItem>
+  >({});
+  const [colorPreviewDetailFetchedById, setColorPreviewDetailFetchedById] =
+    useState<Record<string, boolean>>({});
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [categories, setCategories] = useState<ProductCategoryItem[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
@@ -1847,6 +2121,122 @@ export default function ProductsPageClient() {
 
     return () => window.clearTimeout(timer);
   }, [page, limit, query, groupFilter, statusFilter, currentBranchId, isOwner]);
+
+  useEffect(() => {
+    const candidates = products
+      .filter(
+        (product) =>
+          productNeedsFullColorImageDetail(product) &&
+          !productPreviewDetailsById[product.id] &&
+          !colorPreviewDetailFetchedById[product.id],
+      )
+      .slice(0, 50);
+
+    if (!candidates.length) return;
+
+    let cancelled = false;
+    const ids = candidates.map((product) => product.id).filter(Boolean);
+
+    setColorPreviewDetailFetchedById((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => {
+        next[id] = true;
+      });
+      return next;
+    });
+
+    void Promise.all(
+      candidates.map(async (product) => {
+        try {
+          const productKeys = Array.from(
+            new Set(
+              [product.id, (product as any).slug]
+                .map((value) => String(value || "").trim())
+                .filter(Boolean),
+            ),
+          );
+
+          let detail: any = null;
+
+          for (const productKey of productKeys) {
+            const detailUrls = [
+              `${API_BASE}/products/${encodeURIComponent(productKey)}?includeColorImages=1&includeVariants=1`,
+              `${API_BASE}/products/${encodeURIComponent(productKey)}`,
+            ];
+
+            for (const detailUrl of detailUrls) {
+              const res = await fetch(detailUrl, {
+                headers: {
+                  Accept: "application/json",
+                  ...getProductListAuthHeaders(),
+                },
+                cache: "no-store",
+              });
+
+              if (!res.ok) continue;
+
+              const json = await res.json().catch(() => null);
+              const candidate = json?.data || json?.product || json;
+              if (candidate) {
+                detail = candidate;
+                break;
+              }
+            }
+
+            if (detail) break;
+          }
+
+          if (!detail) return null;
+
+          const detailColorImages = getProductRawColorImages(detail);
+          const productColorImages = getProductRawColorImages(product);
+
+          return {
+            id: product.id,
+            detail: {
+              ...product,
+              ...detail,
+              variants: Array.isArray(detail?.variants)
+                ? detail.variants
+                : product.variants,
+              colorImages:
+                detailColorImages ||
+                productColorImages ||
+                (detail as any)?.colorImages ||
+                (product as any).colorImages,
+              imagesByColor:
+                (detail as any)?.imagesByColor ||
+                detailColorImages ||
+                productColorImages ||
+                (product as any).imagesByColor,
+            } as ProductItem,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+
+      const validRows = rows.filter(Boolean) as Array<{
+        id: string;
+        detail: ProductItem;
+      }>;
+      if (!validRows.length) return;
+
+      setProductPreviewDetailsById((prev) => {
+        const next = { ...prev };
+        validRows.forEach((row) => {
+          next[row.id] = row.detail;
+        });
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [products, productPreviewDetailsById, colorPreviewDetailFetchedById]);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -3967,6 +4357,9 @@ export default function ProductsPageClient() {
                   .map((item) => `${item.name}: ${item.qty}`)
                   .join(" · ");
 
+                const productForPreview =
+                  productPreviewDetailsById[product.id] || product;
+
                 return (
                   <button
                     key={product.id}
@@ -3975,7 +4368,12 @@ export default function ProductsPageClient() {
                     className="flex w-full items-center gap-3 bg-white px-3 py-3 text-left transition active:bg-neutral-50"
                     title="Mở chi tiết sản phẩm"
                   >
-                    <ProductImage src={product.imageUrl} alt={product.name} />
+                    <ProductImage
+                      src={productForPreview.imageUrl || product.imageUrl}
+                      alt={product.name}
+                      product={productForPreview}
+                      showColorPreview
+                    />
 
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[15px] font-semibold leading-5 text-neutral-950">
@@ -4205,6 +4603,9 @@ export default function ProductsPageClient() {
                       product.variants.map((variant) => variant.size),
                     );
 
+                    const productForPreview =
+                      productPreviewDetailsById[product.id] || product;
+
                     return (
                       <tr
                         key={product.id}
@@ -4231,8 +4632,10 @@ export default function ProductsPageClient() {
                             title="Mở chi tiết sản phẩm trong tab mới"
                           >
                             <ProductImage
-                              src={product.imageUrl}
+                              src={productForPreview.imageUrl || product.imageUrl}
                               alt={product.name}
+                              product={productForPreview}
+                              showColorPreview
                             />
                           </button>
                         </td>

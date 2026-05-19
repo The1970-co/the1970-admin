@@ -2232,18 +2232,23 @@ function isSoonDeliveryOrder(order: AdminOrder) {
 }
 
 function isFailedOrder(order: AdminOrder) {
+  // Card "Đơn giao không thành công" chỉ tính lỗi giao vận thật.
+  // Không gộp đơn huỷ nội bộ và không gộp nhóm hoàn/chuyển hoàn,
+  // vì nhóm hoàn cần đẩy sang card "Đơn giao lại" để xử lý tiếp.
+  if (String(order.status || "").toUpperCase() === "CANCELLED") return false;
+
   const shipmentStatus = normalizeShipmentStatus(order);
   return (
-    order.status === "CANCELLED" ||
     order.paymentStatus === "FAILED" ||
     shipmentStatus.includes("FAIL") ||
-    shipmentStatus.includes("CANCEL") ||
-    isDeliveryFailureSignal(order) ||
-    isReturnOrWaitingReturnOrder(order)
+    shipmentStatus.includes("EXCEPTION") ||
+    isDeliveryFailureSignal(order)
   );
 }
 
 function isRedeliveryOrder(order: AdminOrder) {
+  if (String(order.status || "").toUpperCase() === "CANCELLED") return false;
+
   const text = getShipmentIssueText(order);
   const shipmentStatus = normalizeShipmentStatus(order);
   return (
@@ -2652,6 +2657,7 @@ export default function OrdersPageClient() {
   const [printVersion, setPrintVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
+  const [refreshingAllGhnTracking, setRefreshingAllGhnTracking] = useState(false);
   const [quickViewOrder, setQuickViewOrder] = useState<AdminOrder | null>(null);
   const [quickViewLoading, setQuickViewLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -3284,6 +3290,42 @@ export default function OrdersPageClient() {
       if (requestSeq === ordersRequestSeqRef.current && !abortController.signal.aborted) {
         setLoading(false);
       }
+    }
+  };
+
+  const handleRefreshAllGhnTracking = async () => {
+    const ok = window.confirm(
+      "Refresh toàn bộ trạng thái GHN trong 90 ngày gần nhất? Thao tác này có thể mất vài phút nếu nhiều vận đơn.",
+    );
+    if (!ok) return;
+
+    try {
+      setRefreshingAllGhnTracking(true);
+      setActionMessage("Đang refresh toàn bộ trạng thái GHN...");
+      const res = await apiFetch(
+        "/shipments/ghn/tracking/refresh-all?days=90&limit=5000&includeFinal=1",
+        { method: "POST" },
+      );
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(json?.message || "Refresh trạng thái GHN thất bại.");
+      }
+
+      const total = Number(json?.total || 0);
+      const success = Number(json?.success || 0);
+      const failed = Number(json?.failed || 0);
+
+      setActionMessage(
+        `Đã refresh GHN: ${success}/${total} vận đơn${failed ? `, lỗi ${failed}` : ""}.`,
+      );
+      await loadOrders();
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Refresh trạng thái GHN thất bại.",
+      );
+    } finally {
+      setRefreshingAllGhnTracking(false);
     }
   };
 
@@ -5638,6 +5680,15 @@ export default function OrdersPageClient() {
                   Xuất Excel
                 </Button>
               ) : null}
+
+              <Button
+                onClick={() => void handleRefreshAllGhnTracking()}
+                disabled={refreshingAllGhnTracking}
+                size="md"
+                variant="secondary"
+              >
+                {refreshingAllGhnTracking ? "Đang refresh GHN..." : "Refresh toàn bộ GHN"}
+              </Button>
 
               <div className="w-full md:col-span-full" ref={columnMenuRef}>
                 <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">

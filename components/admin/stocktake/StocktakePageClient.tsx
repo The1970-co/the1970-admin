@@ -167,6 +167,34 @@ const STOCKTAKE_STORAGE_SESSION_ID = "the1970_stocktake_session_id";
 const STOCKTAKE_STORAGE_WORKER_ID = "the1970_stocktake_worker_id";
 const STOCKTAKE_STORAGE_BRANCH_ID = "the1970_stocktake_branch_id";
 
+const STOCKTAKE_EXCEL_TEMPLATE_FILE_NAME = "EXEL KIEM KHO THE 1970.xlsx";
+const STOCKTAKE_EXCEL_TEMPLATE_BASE64 = "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";
+
+function downloadStocktakeExcelTemplate() {
+  if (typeof window === "undefined") return;
+
+  const byteCharacters = window.atob(STOCKTAKE_EXCEL_TEMPLATE_BASE64);
+  const buffer = new ArrayBuffer(byteCharacters.length);
+  const bytes = new Uint8Array(buffer);
+
+  for (let index = 0; index < byteCharacters.length; index += 1) {
+    bytes[index] = byteCharacters.charCodeAt(index);
+  }
+
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = STOCKTAKE_EXCEL_TEMPLATE_FILE_NAME;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+
 function saveStocktakeResumeState(input: {
   sessionId?: string | null;
   workerId?: string | null;
@@ -1050,7 +1078,7 @@ export default function StocktakePageClient() {
     });
 
     return Array.from(grouped.values()).filter(
-      (row) => Number(row.counted || 0) > 0,
+      (row) => Number(row.events || row.eventCount || 0) > 0 || Number(row.counted || 0) !== 0,
     );
   };
 
@@ -1082,7 +1110,7 @@ export default function StocktakePageClient() {
 
   const mergeStableWorkerSummary = (incomingRows: SummaryItem[]) => {
     const safeRows = Array.isArray(incomingRows)
-      ? incomingRows.filter((row) => Number(row.counted ?? row.countedQty ?? 0) > 0)
+      ? incomingRows.filter((row) => Number(row.events || row.eventCount || 0) > 0 || Number(row.counted ?? row.countedQty ?? 0) !== 0)
       : [];
 
     if (!safeRows.length) return [];
@@ -2050,9 +2078,10 @@ export default function StocktakePageClient() {
         const sku = excelRow.sku.trim();
         const targetQty = Number(excelRow.countedQty ?? 0);
         const currentQty = currentCountBySku.get(sku) ?? 0;
-        const snapshotQty = snapshotBySku.get(sku) ?? Number(excelRow.systemQty ?? 0);
         const delta = targetQty - currentQty;
-        const shouldWriteZeroCountMarker = Boolean(sku && delta === 0 && targetQty === 0 && snapshotQty > 0);
+        // Excel = 0 vẫn phải ghi marker đã kiểm bằng 0, kể cả delta = 0.
+        // Marker này giúp summary/apply biết SKU đã được kiểm và cần đưa tồn về 0 nếu snapshot đang > 0.
+        const shouldWriteZeroCountMarker = Boolean(sku && delta === 0 && targetQty === 0);
 
         if (!sku || (delta === 0 && !shouldWriteZeroCountMarker)) {
           skipped += 1;
@@ -2549,11 +2578,20 @@ export default function StocktakePageClient() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-neutral-500">
-          <span
-            className={`inline-flex h-2 w-2 rounded-full ${paused ? "bg-amber-500" : "bg-green-500"}`}
-          />
-          Realtime: {paused ? "Đang tạm dừng" : "Đang kết nối"}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={downloadStocktakeExcelTemplate}
+            className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100"
+          >
+            Tải file mẫu Excel
+          </button>
+          <div className="flex items-center gap-2 text-xs text-neutral-500">
+            <span
+              className={`inline-flex h-2 w-2 rounded-full ${paused ? "bg-amber-500" : "bg-green-500"}`}
+            />
+            Realtime: {paused ? "Đang tạm dừng" : "Đang kết nối"}
+          </div>
         </div>
       </div>
 
@@ -2589,6 +2627,13 @@ export default function StocktakePageClient() {
                     ? "Đang kiểm"
                     : "Sẵn sàng"}
               </span>
+              <button
+                type="button"
+                onClick={downloadStocktakeExcelTemplate}
+                className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-extrabold text-white shadow-sm hover:bg-white/15"
+              >
+                Tải file mẫu
+              </button>
               <button
                 type="button"
                 onClick={() => scanInputRef.current?.focus()}
