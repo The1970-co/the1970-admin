@@ -82,6 +82,7 @@ const LEGACY_ROLE_FALLBACK: Record<string, string[]> = {
     "orders.return",
     "orders.excel.export",
     "products.view",
+    "products.print_label",
     "products.create",
     "products.edit",
     "products.price.edit",
@@ -108,6 +109,7 @@ const LEGACY_ROLE_FALLBACK: Record<string, string[]> = {
     "orders.update_status",
     "orders.return",
     "products.view",
+    "products.print_label",
     "promotions.view",
     "inventory.view",
     "inventory.logs.view",
@@ -120,12 +122,14 @@ const LEGACY_ROLE_FALLBACK: Record<string, string[]> = {
     "orders.create",
     "orders.return",
     "products.view",
+    "products.print_label",
     "promotions.view",
     "inventory.view",
     "customers.view",
   ],
   "stock-auditor": [
     "products.view",
+    "products.print_label",
     "inventory.view",
     "inventory.logs.view",
     "stocktake.view",
@@ -133,6 +137,7 @@ const LEGACY_ROLE_FALLBACK: Record<string, string[]> = {
   ],
   "stock-staff": [
     "products.view",
+    "products.print_label",
     "inventory.view",
     "inventory.logs.view",
     "stocktake.view",
@@ -293,4 +298,8 @@ export async function changeMyPassword(newPassword: string) {
 
   if (!res.ok) throw new Error("Đổi mật khẩu thất bại");
   return res.json();
+}
+
+export function canPrintProductLabel(userOrRole: any) {
+  return hasPermission(userOrRole, "products.print_label");
 }

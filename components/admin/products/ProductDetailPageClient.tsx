@@ -200,6 +200,61 @@ function normalizeColorImages(product: any): ColorImageMap {
   return output;
 }
 
+const PRODUCT_COLOR_IMAGE_CACHE_KEY = "the1970.products.colorImages.v1";
+
+function normalizeProductCacheKey(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .trim()
+    .toLowerCase();
+}
+
+function getProductCacheKeys(product?: any) {
+  if (!product) return [] as string[];
+  return Array.from(
+    new Set(
+      [product?.id, product?.slug, product?.skuCode, product?.code, product?.name]
+        .map((value) => normalizeProductCacheKey(value))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function writeProductColorImagesToCache(product: any, colorImages: ColorImageMap) {
+  if (typeof window === "undefined" || !product) return;
+  const normalized = Object.fromEntries(
+    Object.entries(colorImages || {})
+      .map(([color, image]) => [normalizeColorKey(color), String(image || "").trim()])
+      .filter(([color, image]) => Boolean(color && image)),
+  ) as ColorImageMap;
+
+  if (!Object.keys(normalized).length) return;
+
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_COLOR_IMAGE_CACHE_KEY);
+    const cache = raw ? JSON.parse(raw) : {};
+    const nextCache = cache && typeof cache === "object" ? cache : {};
+    const entry = {
+      productId: String(product?.id || ""),
+      slug: String(product?.slug || ""),
+      name: String(product?.name || ""),
+      colorImages: normalized,
+      updatedAt: Date.now(),
+    };
+
+    getProductCacheKeys(product).forEach((key) => {
+      nextCache[key] = entry;
+    });
+
+    window.localStorage.setItem(PRODUCT_COLOR_IMAGE_CACHE_KEY, JSON.stringify(nextCache));
+  } catch {
+    // Bỏ qua lỗi localStorage để không ảnh hưởng flow lưu sản phẩm.
+  }
+}
+
 type CurrentUserPermissionProfile = {
   id?: string;
   code?: string;
@@ -1104,7 +1159,9 @@ export default function ProductDetailPageClient({
     setBrand(item.brand || "The 1970");
     setWeight(String(item.weight || 0));
     setImageUrl(item.imageUrl || "");
-    setColorImages(normalizeColorImages(item));
+    const initialColorImages = normalizeColorImages(item);
+    setColorImages(initialColorImages);
+    writeProductColorImagesToCache(item, initialColorImages);
     setDescription(item.description || "");
     setDefaultPrice(String(minPrice || 0));
     setDefaultCostPrice(String(minCostPrice || 0));
@@ -1271,6 +1328,11 @@ export default function ProductDetailPageClient({
   const hasUnsavedChanges = Boolean(
     product && initialSnapshot && currentSnapshot !== initialSnapshot,
   );
+
+  useEffect(() => {
+    if (!product) return;
+    writeProductColorImagesToCache(product, colorImages);
+  }, [product, colorImages]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {

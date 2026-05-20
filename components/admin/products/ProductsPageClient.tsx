@@ -503,6 +503,7 @@ function getImageUrlFromAny(value: any) {
   if (typeof value === "string") return value.trim();
 
   if (Array.isArray(value)) {
+    // Hỗ trợ dạng tuple: ["THAN", "https://..."] hoặc [{...}, "https://..."]
     for (const item of value) {
       const image = getImageUrlFromAny(item);
       if (image) return image;
@@ -511,7 +512,7 @@ function getImageUrlFromAny(value: any) {
   }
 
   if (typeof value === "object") {
-    return String(
+    const direct = String(
       value.imageUrl ||
         value.url ||
         value.image ||
@@ -519,8 +520,20 @@ function getImageUrlFromAny(value: any) {
         value.secure_url ||
         value.secureUrl ||
         value.thumbnailUrl ||
+        value.fileUrl ||
+        value.publicUrl ||
         "",
     ).trim();
+
+    if (direct) return direct;
+
+    // Một số API bọc URL sâu hơn: { data: { url } }, { file: { url } }...
+    return (
+      getImageUrlFromAny(value.data) ||
+      getImageUrlFromAny(value.file) ||
+      getImageUrlFromAny(value.asset) ||
+      getImageUrlFromAny(value.media)
+    );
   }
 
   return "";
@@ -544,6 +557,147 @@ function parseProductColorImagesRaw(value: any) {
   return value;
 }
 
+const PRODUCT_COLOR_IMAGE_CACHE_KEY = "the1970.products.colorImages.v1";
+
+type ProductColorImageCacheEntry = {
+  productId?: string;
+  slug?: string;
+  name?: string;
+  colorImages: Record<string, string>;
+  updatedAt: number;
+};
+
+function normalizeProductCacheKey(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .trim()
+    .toLowerCase();
+}
+
+function readProductColorImageCache(): Record<string, ProductColorImageCacheEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_COLOR_IMAGE_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeColorImageRecord(raw: any) {
+  const output: Record<string, string> = {};
+  const parsed = parseProductColorImagesRaw(raw);
+  if (!parsed || typeof parsed !== "object") return output;
+
+  if (Array.isArray(parsed)) {
+    parsed.forEach((item: any) => {
+      if (Array.isArray(item)) {
+        const colorKey = normalizeProductColorKey(item[0]);
+        const imageUrl = getImageUrlFromAny(item[1] || item[2] || item);
+        if (colorKey && imageUrl) output[colorKey] = imageUrl;
+        return;
+      }
+      const colorKey = normalizeProductColorKey(
+        item?.color || item?.colorName || item?.variantColor || item?.name || item?.label || item?.key,
+      );
+      const imageUrl = getImageUrlFromAny(item?.imageUrl || item?.url || item?.image || item?.src || item);
+      if (colorKey && imageUrl) output[colorKey] = imageUrl;
+    });
+    return output;
+  }
+
+  Object.entries(parsed).forEach(([color, image]) => {
+    const colorKey = normalizeProductColorKey(color);
+    const imageUrl = getImageUrlFromAny(image);
+    if (colorKey && imageUrl) output[colorKey] = imageUrl;
+  });
+
+  return output;
+}
+
+function getProductCacheKeys(product?: any) {
+  if (!product) return [] as string[];
+  return Array.from(
+    new Set(
+      [
+        product?.id,
+        product?.slug,
+        product?.skuCode,
+        product?.code,
+        product?.name,
+        product?.productId,
+        product?.product?.id,
+        product?.product?.slug,
+      ]
+        .map((value) => normalizeProductCacheKey(value))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function readCachedProductColorImages(product?: any) {
+  const cache = readProductColorImageCache();
+  const keys = getProductCacheKeys(product);
+  for (const key of keys) {
+    const entry = cache[key];
+    if (entry?.colorImages && typeof entry.colorImages === "object") {
+      const normalized = normalizeColorImageRecord(entry.colorImages);
+      if (Object.keys(normalized).length) return normalized;
+    }
+  }
+  return {} as Record<string, string>;
+}
+
+function writeProductColorImagesToCache(product: any, rawColorImages: any) {
+  if (typeof window === "undefined" || !product) return;
+  const colorImages = normalizeColorImageRecord(rawColorImages);
+  if (!Object.keys(colorImages).length) return;
+
+  try {
+    const cache = readProductColorImageCache();
+    const entry: ProductColorImageCacheEntry = {
+      productId: String(product?.id || ""),
+      slug: String(product?.slug || ""),
+      name: String(product?.name || ""),
+      colorImages,
+      updatedAt: Date.now(),
+    };
+
+    getProductCacheKeys(product).forEach((key) => {
+      cache[key] = entry;
+    });
+
+    window.localStorage.setItem(PRODUCT_COLOR_IMAGE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Bỏ qua lỗi quota/private mode. Không ảnh hưởng flow sản phẩm.
+  }
+}
+
+function unwrapProductApiPayload(payload: any) {
+  if (!payload) return null;
+
+  // API có thể trả thẳng product, hoặc bọc nhiều lớp:
+  // { data: product }, { product }, { data: { product } }, { data: { item } }...
+  const candidates = [
+    payload?.data?.product,
+    payload?.data?.item,
+    payload?.data?.row,
+    payload?.data?.detail,
+    payload?.product,
+    payload?.item,
+    payload?.row,
+    payload?.detail,
+    payload?.data,
+    payload,
+  ];
+
+  return candidates.find((item) => item && typeof item === "object") || null;
+}
+
 function getProductRawColorImages(product?: ProductItem | null) {
   const anyProduct = product as any;
   const candidates = [
@@ -559,6 +713,12 @@ function getProductRawColorImages(product?: ProductItem | null) {
     anyProduct?.extra?.imagesByColor,
     anyProduct?.data?.colorImages,
     anyProduct?.data?.imagesByColor,
+    anyProduct?.product?.colorImages,
+    anyProduct?.product?.imagesByColor,
+    anyProduct?.item?.colorImages,
+    anyProduct?.item?.imagesByColor,
+    anyProduct?.detail?.colorImages,
+    anyProduct?.detail?.imagesByColor,
   ];
 
   for (const candidate of candidates) {
@@ -584,15 +744,12 @@ function productHasSavedColorImageMap(product?: ProductItem | null) {
 function productNeedsFullColorImageDetail(product?: ProductItem | null) {
   if (!product?.id) return false;
 
-  const colorCount = uniqueValues(
-    (product.variants || []).map((variant: any) => variant?.color),
-  ).length;
-
-  // Danh sách sản phẩm thường chỉ có ảnh đại diện/ảnh variant bị fallback về ảnh chính.
-  // Ảnh theo màu thật đang nằm ở endpoint chi tiết, nên cứ sản phẩm có nhiều màu là fetch detail
-  // một lần để lấy colorImages/imagesByColor chuẩn. Không dùng điều kiện "đã có variant.imageUrl"
-  // vì chính đoạn đó làm QKK812 vẫn hiện toàn màu THAN ngoài list.
-  return colorCount > 1;
+  // Không dựa vào số màu của response /products list nữa.
+  // List API nhiều lúc chỉ trả ảnh đại diện hoặc vài variant đầu nên mã như 812 nhìn ngoài
+  // vẫn tưởng chỉ có màu THAN, trong khi detail có đủ ảnh từng màu.
+  // Vì vậy mỗi sản phẩm trên trang hiện tại sẽ fetch detail đúng 1 lần rồi dùng detail
+  // để render preview màu. Nếu detail chỉ có 1 màu thì ngoài list cũng chỉ hiện 1 ảnh.
+  return true;
 }
 
 function getProductListAuthHeaders() {
@@ -627,9 +784,26 @@ function getProductColorPreviewItems(product?: ProductItem | null) {
   if (rawColorImages && typeof rawColorImages === "object") {
     if (Array.isArray(rawColorImages)) {
       rawColorImages.forEach((item: any) => {
+        if (Array.isArray(item)) {
+          rememberColorImage(item[0], item[1] || item[2] || item);
+          return;
+        }
+
         rememberColorImage(
-          item?.color || item?.name || item?.label || item?.key,
-          item?.imageUrl || item?.url || item?.image || item,
+          item?.color ||
+            item?.colorName ||
+            item?.variantColor ||
+            item?.name ||
+            item?.label ||
+            item?.key ||
+            item?.colorKey,
+          item?.imageUrl ||
+            item?.url ||
+            item?.image ||
+            item?.src ||
+            item?.fileUrl ||
+            item?.publicUrl ||
+            item,
         );
       });
     } else {
@@ -638,6 +812,14 @@ function getProductColorPreviewItems(product?: ProductItem | null) {
       });
     }
   }
+
+  // Ưu tiên cache ảnh màu được ghi từ trang chi tiết. Cache này giúp list hiển thị
+  // đúng link đang thấy trong mục "Ảnh theo màu" kể cả khi endpoint /products list
+  // hoặc /products/:id chưa trả colorImages đầy đủ.
+  const cachedColorImages = readCachedProductColorImages(product);
+  Object.entries(cachedColorImages).forEach(([color, image]) => {
+    rememberColorImage(color, image);
+  });
 
   const rows = new Map<string, ProductColorPreviewItem>();
   const variants = Array.isArray(product.variants) ? product.variants : [];
@@ -1227,6 +1409,7 @@ type LabelPrintVariantRow = {
   key: string;
   productName: string;
   sku: string;
+  barcode: string;
   size: string;
   color: string;
   price: number;
@@ -1247,6 +1430,105 @@ const labelPaperOptions = [
 
 const PRINT_CENTER_PRODUCT_LABEL_DRAFT_KEY =
   "the1970.print-center.product-labels.draft";
+
+
+function removeVietnameseTone(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D");
+}
+
+function normalizeBarcodeToken(value?: string | null) {
+  return removeVietnameseTone(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "")
+    .trim();
+}
+
+function compactColorCode(value?: string | null) {
+  const normalized = removeVietnameseTone(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return "";
+
+  const special: Record<string, string> = {
+    DEN: "D",
+    TRANG: "T",
+    KEM: "K",
+    BE: "BE",
+    VANG: "V",
+    NAU: "N",
+    REU: "R",
+    THAN: "TH",
+    GHI: "G",
+    XAM: "X",
+    "XAM NHAT": "XN",
+    "XAM DAM": "XD",
+    XANH: "XH",
+    "XANH NHAT": "XN",
+    "XANH DAM": "XD",
+    "XANH DEN": "XD",
+    "XANH REU": "XR",
+    "XANH LA": "XL",
+    DO: "DO",
+    CAM: "C",
+    TIM: "TI",
+    HONG: "H",
+  };
+
+  if (special[normalized]) return special[normalized];
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  if (tokens.length === 1) {
+    return tokens[0].slice(0, Math.min(tokens[0].length, 2));
+  }
+
+  return tokens
+    .map((token) => token[0])
+    .join("")
+    .slice(0, 3);
+}
+
+function compactSizeCode(value?: string | null) {
+  const normalized = normalizeBarcodeToken(value);
+  return normalized || "OS";
+}
+
+function getBarcodeRootCode(product: any, rawSku?: string | null) {
+  const skuRoot = String(rawSku || "")
+    .split("-")[0]
+    .trim();
+
+  const root =
+    normalizeBarcodeToken(skuRoot) ||
+    normalizeBarcodeToken(product?.slug) ||
+    normalizeBarcodeToken(product?.code) ||
+    normalizeBarcodeToken(product?.id);
+
+  return root || "SP";
+}
+
+function buildProductLabelBarcode(
+  product: any,
+  row: { sku?: string | null; color?: string | null; size?: string | null; index?: number },
+) {
+  const root = getBarcodeRootCode(product, row.sku);
+  const colorCode = compactColorCode(row.color);
+  const sizeCode = compactSizeCode(row.size);
+  const fallbackIndex = Number.isFinite(Number(row.index)) ? String(Number(row.index) + 1) : "1";
+
+  const parts = [root];
+  if (colorCode) parts.push(colorCode);
+  if (sizeCode && sizeCode !== "OS") parts.push(sizeCode);
+  if (parts.length === 1) parts.push(fallbackIndex);
+
+  return parts.join("-");
+}
 
 const defaultExportColumns: ExportColumnState = {
   productName: true,
@@ -1998,6 +2280,11 @@ export default function ProductsPageClient() {
     role,
     "products.excel.export",
   );
+  const canPrintProductLabels = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "products.print_label",
+  );
   const canViewInventoryValue = hasProductInventoryPermission(
     currentUser,
     role,
@@ -2130,7 +2417,7 @@ export default function ProductsPageClient() {
           !productPreviewDetailsById[product.id] &&
           !colorPreviewDetailFetchedById[product.id],
       )
-      .slice(0, 50);
+      .slice(0, 80);
 
     if (!candidates.length) return;
 
@@ -2176,7 +2463,7 @@ export default function ProductsPageClient() {
               if (!res.ok) continue;
 
               const json = await res.json().catch(() => null);
-              const candidate = json?.data || json?.product || json;
+              const candidate = unwrapProductApiPayload(json);
               if (candidate) {
                 detail = candidate;
                 break;
@@ -2191,6 +2478,11 @@ export default function ProductsPageClient() {
           const detailColorImages = getProductRawColorImages(detail);
           const productColorImages = getProductRawColorImages(product);
 
+          writeProductColorImagesToCache(
+            { ...product, ...detail },
+            detailColorImages || productColorImages,
+          );
+
           return {
             id: product.id,
             detail: {
@@ -2198,7 +2490,11 @@ export default function ProductsPageClient() {
               ...detail,
               variants: Array.isArray(detail?.variants)
                 ? detail.variants
-                : product.variants,
+                : Array.isArray(detail?.product?.variants)
+                  ? detail.product.variants
+                  : Array.isArray(detail?.data?.variants)
+                    ? detail.data.variants
+                    : product.variants,
               colorImages:
                 detailColorImages ||
                 productColorImages ||
@@ -2457,12 +2753,58 @@ export default function ProductsPageClient() {
   };
 
   const handleBulkPrintLabels = () => {
+    if (!canPrintProductLabels) {
+      setActionMessage("Bạn chưa có quyền in tem sản phẩm.");
+      return;
+    }
+
     if (!selectedProducts.length) {
       setActionMessage("Chưa chọn sản phẩm để in tem.");
       return;
     }
 
-    void openProductsInPrintCenter(selectedProducts);
+    void (async () => {
+      setActionMessage("Đang lấy đủ danh sách SKU con để in tem...");
+
+      const fullProducts = await Promise.all(
+        selectedProducts.map((product) => fetchFullProductForLabelPrint(product)),
+      );
+
+      if (fullProducts.length === 1) {
+        openLabelPrintModal(fullProducts[0]);
+        setActionMessage("");
+        return;
+      }
+
+      const mergedVariants = fullProducts.flatMap((product) =>
+        getLabelPrintRows(product).map((row) => ({
+          sku: row.sku,
+          color: row.color,
+          size: row.size,
+          price: row.price,
+          stock: row.stock,
+          __labelKey: `${product.id || product.slug || row.productName}:${row.key}`,
+          __labelProductName: row.productName,
+          __labelBarcode: row.barcode,
+          __labelStock: row.stock,
+        })),
+      );
+
+      if (!mergedVariants.length) {
+        setActionMessage("Sản phẩm chưa có SKU để in tem.");
+        return;
+      }
+
+      const mergedProduct = {
+        id: `bulk-print-${Date.now()}`,
+        name: `${fullProducts.length} sản phẩm đã chọn`,
+        slug: "BULK-PRINT",
+        variants: mergedVariants,
+      } as unknown as ProductItem;
+
+      openLabelPrintModal(mergedProduct);
+      setActionMessage("");
+    })();
   };
 
   const handleBulkExportSelected = () => {
@@ -2730,8 +3072,11 @@ export default function ProductsPageClient() {
 
       if (!res.ok) return product;
 
-      const detail = await res.json();
-      return detail?.id ? ({ ...product, ...detail } as ProductItem) : product;
+      const json = await res.json().catch(() => null);
+      const detail = unwrapProductApiPayload(json);
+      return detail?.id || detail?.variants
+        ? ({ ...product, ...detail } as ProductItem)
+        : product;
     } catch {
       return product;
     }
@@ -2750,6 +3095,12 @@ export default function ProductsPageClient() {
           key: product.id,
           productName: product.name || "Sản phẩm",
           sku: product.slug || product.id,
+          barcode: buildProductLabelBarcode(product, {
+            sku: product.slug || product.id,
+            color: "",
+            size: "",
+            index: 0,
+          }),
           size: "",
           color: "",
           price: Number((product as any)?.price || 0),
@@ -2780,13 +3131,21 @@ export default function ProductsPageClient() {
         : Number(variant?.stock || 0);
 
       return {
-        key: sku,
-        productName: product.name || "Sản phẩm",
+        key: String(variant?.__labelKey || sku),
+        productName: String(variant?.__labelProductName || product.name || "Sản phẩm"),
         sku,
+        barcode:
+          String(variant?.__labelBarcode || "").trim() ||
+          buildProductLabelBarcode(product, {
+            sku,
+            color: variant?.color || "",
+            size: variant?.size || "",
+            index,
+          }),
         size: variant?.size || "",
         color: variant?.color || "",
         price: Number(variant?.price || (product as any)?.price || 0),
-        stock,
+        stock: variant?.__labelStock !== undefined ? Number(variant.__labelStock || 0) : stock,
       };
     });
   };
@@ -2812,6 +3171,7 @@ export default function ProductsPageClient() {
         key: `${product.id || product.slug || row.productName}:${row.key}`,
         productName: row.productName,
         sku: row.sku,
+        barcode: row.barcode,
         size: row.size,
         color: row.color,
         price: row.price,
@@ -2874,8 +3234,8 @@ export default function ProductsPageClient() {
       .map<ProductLabelPrintItem>((row) => ({
         productName: row.productName,
         sku: row.sku,
-        barcode: row.sku,
-        qrValue: row.sku,
+        barcode: row.barcode,
+        qrValue: row.barcode,
         size: row.size,
         color: row.color,
         price: labelPriceMode === "hidden" ? 0 : row.price,
@@ -2909,11 +3269,24 @@ export default function ProductsPageClient() {
       })
     : `<div style="font-family:Arial,sans-serif;padding:16px;color:#666;">Chưa chọn SKU để in tem.</div>`;
 
-  const handlePrintProductLabels = (product: ProductItem) => {
-    void openProductsInPrintCenter([product]);
+  const handlePrintProductLabels = async (product: ProductItem) => {
+    if (!canPrintProductLabels) {
+      setActionMessage("Bạn chưa có quyền in tem sản phẩm.");
+      return;
+    }
+
+    setActionMessage("Đang lấy đủ danh sách SKU con để in tem...");
+    const fullProduct = await fetchFullProductForLabelPrint(product);
+    openLabelPrintModal(fullProduct);
+    setActionMessage("");
   };
 
   const handleConfirmPrintProductLabels = () => {
+    if (!canPrintProductLabels) {
+      setActionMessage("Bạn chưa có quyền in tem sản phẩm.");
+      return;
+    }
+
     const items = buildLabelPrintItems();
 
     if (!items.length) {
@@ -4270,7 +4643,9 @@ export default function ProductsPageClient() {
                   Xuất Excel đã chọn
                 </Button>
               ) : null}
-              <Button onClick={handleBulkPrintLabels}>In tem đã chọn</Button>
+              {canPrintProductLabels ? (
+                <Button onClick={handleBulkPrintLabels}>In tem đã chọn</Button>
+              ) : null}
               {canToggleProductStatus ? (
                 <Button variant="danger" onClick={handleBulkToggleInactive}>
                   Ngừng bán đã chọn
@@ -4750,13 +5125,15 @@ export default function ProductsPageClient() {
                               Chi tiết
                             </button>
 
-                            <button
-                              type="button"
-                              onClick={() => handlePrintProductLabels(product)}
-                              className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
-                            >
-                              In tem
-                            </button>
+                            {canPrintProductLabels ? (
+                              <button
+                                type="button"
+                                onClick={() => handlePrintProductLabels(product)}
+                                className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+                              >
+                                In tem
+                              </button>
+                            ) : null}
 
                             <button
                               type="button"

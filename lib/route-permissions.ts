@@ -37,7 +37,7 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/settings/print-templates": PERMISSIONS.MENU_PRINT_CENTER,
   "/control/security/google-auth": PERMISSIONS.MENU_SETTINGS,
   "/print-center": PERMISSIONS.MENU_PRINT_CENTER,
-  "/print-center/product-labels": PERMISSIONS.MENU_PRINT_CENTER,
+  "/print-center/product-labels": PERMISSIONS.PRODUCTS_PRINT_LABEL,
   "/print-center/templates": PERMISSIONS.MENU_PRINT_CENTER,
 };
 

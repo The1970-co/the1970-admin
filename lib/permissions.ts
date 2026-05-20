@@ -58,6 +58,7 @@ export const PERMISSIONS = {
   ORDERS_EXCEL_IMPORT: "orders.excel.import",
 
   PRODUCTS_VIEW: "products.view",
+  PRODUCTS_PRINT_LABEL: "products.print_label",
   PRODUCTS_CREATE: "products.create",
   PRODUCTS_EDIT: "products.edit",
   PRODUCTS_DELETE: "products.delete",
