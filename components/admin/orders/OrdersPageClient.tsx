@@ -1076,6 +1076,148 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
   }
 }
 
+
+function getShipmentStatusTextCandidates(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+
+  return [
+    shipment.shippingStatus,
+    shipment.partnerStatus,
+    shipment.status,
+    shipment.currentStatus,
+    shipment.current_status,
+    shipment.lastStatus,
+    shipment.last_status,
+    shipment.ahamoveStatus,
+    shipment.reason,
+    shipment.failureReason,
+    shipment.failReason,
+    shipment.note,
+    shipment.message,
+    shipment.description,
+    anyOrder.shippingStatus,
+    anyOrder.partnerStatus,
+    anyOrder.deliveryStatus,
+    anyOrder.shipmentStatus,
+    anyOrder.carrierStatus,
+    anyOrder.carrierStatusName,
+  ]
+    .map((item) => {
+      if (!item) return "";
+      if (typeof item === "object") {
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return "";
+        }
+      }
+      return String(item);
+    })
+    .join(" ");
+}
+
+function getNormalizedShipmentStatusText(order: AdminOrder) {
+  return normalizeShipmentTextForUi(getShipmentStatusTextCandidates(order));
+}
+
+function isShipmentDeliveredForOrderStatus(order: AdminOrder) {
+  const text = getNormalizedShipmentStatusText(order);
+
+  return (
+    text.includes("DELIVERED") ||
+    text.includes("DELIVERY SUCCESS") ||
+    text.includes("GIAO THANH CONG") ||
+    text.includes("HOAN THANH GIAO") ||
+    text.includes("DA GIAO THANH CONG")
+  );
+}
+
+function isShipmentActiveForOrderStatus(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+  const trackingCode = String(
+    shipment.trackingCode ||
+      shipment.tracking_code ||
+      anyOrder.trackingCode ||
+      anyOrder.shipmentTrackingCode ||
+      "",
+  ).trim();
+
+  if (!trackingCode) return false;
+  if (isShipmentDeliveredForOrderStatus(order)) return false;
+
+  const text = getNormalizedShipmentStatusText(order);
+
+  if (
+    text.includes("CANCELLED") ||
+    text.includes("CANCEL") ||
+    text.includes("HUY VAN DON") ||
+    text.includes("DA HUY VAN DON")
+  ) {
+    return (
+      text.includes("TRANSPORTING") ||
+      text.includes("IN TRANSIT") ||
+      text.includes("DANG TRUNG CHUYEN") ||
+      text.includes("TRUNG CHUYEN") ||
+      text.includes("DELIVERING") ||
+      text.includes("DANG GIAO") ||
+      text.includes("DANG PHAT") ||
+      text.includes("PICKING") ||
+      text.includes("PICKED") ||
+      text.includes("LAY HANG") ||
+      text.includes("DA LAY HANG") ||
+      text.includes("STORING") ||
+      text.includes("SORTING")
+    );
+  }
+
+  return !(
+    text.includes("RETURNED") ||
+    text.includes("RETURN TO CLIENT") ||
+    text.includes("DA HOAN HANG") ||
+    text.includes("FAILED") ||
+    text.includes("LOST") ||
+    text.includes("DAMAGE")
+  );
+}
+
+function getDisplayOrderStatus(order: AdminOrder): OrderStatus {
+  const rawStatus = String(order.status || "") as OrderStatus;
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+  const hasTracking = Boolean(
+    String(
+      shipment.trackingCode ||
+        shipment.tracking_code ||
+        anyOrder.trackingCode ||
+        anyOrder.shipmentTrackingCode ||
+        "",
+    ).trim(),
+  );
+
+  // Chặn lỗi GHN: các trạng thái "lấy hàng thành công / đang trung chuyển"
+  // chỉ được coi là ĐÃ XUẤT KHO, tuyệt đối không hiển thị Hoàn thành nếu hãng chưa giao thành công.
+  if (hasTracking && isShipmentActiveForOrderStatus(order)) {
+    if (
+      rawStatus === "NEW" ||
+      rawStatus === "APPROVED" ||
+      rawStatus === "PACKING" ||
+      rawStatus === "COMPLETED" ||
+      rawStatus === "CANCELLED"
+    ) {
+      return "SHIPPED" as OrderStatus;
+    }
+  }
+
+  if (rawStatus === "COMPLETED" && hasTracking && !isShipmentDeliveredForOrderStatus(order)) {
+    return "SHIPPED" as OrderStatus;
+  }
+
+  return (rawStatus || "NEW") as OrderStatus;
+}
+
+
 function orderStatusTone(status?: string) {
   switch (status) {
     case "NEW":
@@ -2078,7 +2220,7 @@ function orderMatchesSmartSearch(
     matchedStructuredPart = true;
     const deliveryLabel = shipmentDisplayStatusLabel(order);
     const isCompleted =
-      order.status === "COMPLETED" ||
+      getDisplayOrderStatus(order) === "COMPLETED" ||
       order.fulfillmentStatus === "FULFILLED" ||
       deliveryLabel === "Giao thành công";
     if (!isCompleted) return false;
@@ -2423,7 +2565,7 @@ function getOrderExportRows(
     if (columns.customerName) row["Khách hàng"] = order.customerName || "";
     if (columns.customerPhone) row["SĐT"] = order.customerPhone || "";
     if (columns.orderStatus)
-      row["Trạng thái đơn"] = orderStatusLabel(order.status);
+      row["Trạng thái đơn"] = orderStatusLabel(getDisplayOrderStatus(order));
     if (columns.paymentDotStatus)
       row["Trạng thái thanh toán"] = dotStateLabel(
         paymentDotState(order.paymentStatus),
@@ -2440,7 +2582,7 @@ function getOrderExportRows(
       row["Đơn giao 1 phần"] = isPartialDeliveryListOrder(order) ? "Có" : "Không";
     if (columns.stockOutStatus)
       row["Trạng thái xuất kho"] = dotStateLabel(
-        stockOutDotState(order.status),
+        stockOutDotState(getDisplayOrderStatus(order)),
       );
     if (columns.fulfillmentStatus)
       row["Giao vận"] = shipmentDisplayStatusLabel(order);
@@ -3631,18 +3773,18 @@ export default function OrdersPageClient() {
       result = result.filter((o) => {
         switch (appliedQuickStatus) {
           case "WAITING_APPROVE":
-            return o.status === "NEW";
+            return getDisplayOrderStatus(o) === "NEW";
           case "WAITING_PAYMENT":
             return (
               ["UNPAID", "PARTIAL"].includes(o.paymentStatus) ||
               (o.paymentStatus === "PENDING_COD" && !shouldShowPendingCodReconciliation(o))
             );
           case "WAITING_PACKING":
-            return o.status === "PACKING";
+            return getDisplayOrderStatus(o) === "PACKING";
           case "WAITING_SHIP":
-            return ["APPROVED", "PACKING"].includes(o.status);
+            return ["APPROVED", "PACKING"].includes(getDisplayOrderStatus(o));
           case "DELIVERING":
-            return o.status === "SHIPPED";
+            return getDisplayOrderStatus(o) === "SHIPPED";
           case "SOON_DELIVERY":
             return isSoonDeliveryOrder(o);
           case "FAIL":
@@ -3854,13 +3996,13 @@ export default function OrdersPageClient() {
     let localDelivery = 0;
 
     for (const o of normalizedOrders) {
-      if (o.status === "NEW") waitingApprove++;
+      if (getDisplayOrderStatus(o) === "NEW") waitingApprove++;
       if (["UNPAID", "PARTIAL", "PENDING_COD"].includes(o.paymentStatus)) {
         waitingPayment++;
       }
-      if (o.status === "PACKING") waitingPacking++;
-      if (["APPROVED", "PACKING"].includes(o.status)) waitingShip++;
-      if (o.status === "SHIPPED") delivering++;
+      if (getDisplayOrderStatus(o) === "PACKING") waitingPacking++;
+      if (["APPROVED", "PACKING"].includes(getDisplayOrderStatus(o))) waitingShip++;
+      if (getDisplayOrderStatus(o) === "SHIPPED") delivering++;
       if (isSoonDeliveryOrder(o)) soonDelivery++;
       if (isFailedOrder(o)) failed++;
       if (isRedeliveryOrder(o)) redelivery++;
@@ -4719,8 +4861,8 @@ export default function OrdersPageClient() {
             className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap"
           >
             <StatusBadge
-              label={orderStatusLabel(order.status)}
-              tone={orderStatusTone(order.status)}
+              label={orderStatusLabel(getDisplayOrderStatus(order))}
+              tone={orderStatusTone(getDisplayOrderStatus(order))}
             />
           </td>
         );
@@ -4788,8 +4930,8 @@ export default function OrdersPageClient() {
             className="border-b border-neutral-100 px-3 py-3 text-center"
           >
             <DotStatus
-              state={stockOutDotState(order.status)}
-              title={`Xuất kho: ${orderStatusLabel(order.status)}`}
+              state={stockOutDotState(getDisplayOrderStatus(order))}
+              title={`Xuất kho: ${orderStatusLabel(getDisplayOrderStatus(order))}`}
             />
           </td>
         );
@@ -5375,13 +5517,13 @@ export default function OrdersPageClient() {
 
                       <div className="flex flex-wrap items-center gap-2">
                         <StatusBadge
-                          label={orderStatusLabel(order.status)}
-                          tone={orderStatusTone(order.status)}
+                          label={orderStatusLabel(getDisplayOrderStatus(order))}
+                          tone={orderStatusTone(getDisplayOrderStatus(order))}
                         />
                         <span className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1">
                           <DotStatus
-                            state={stockOutDotState(order.status)}
-                            title={`Xuất kho: ${orderStatusLabel(order.status)}`}
+                            state={stockOutDotState(getDisplayOrderStatus(order))}
+                            title={`Xuất kho: ${orderStatusLabel(getDisplayOrderStatus(order))}`}
                           />
                           <span className="text-[10px] font-semibold text-neutral-500">
                             XK
