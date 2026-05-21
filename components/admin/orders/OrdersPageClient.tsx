@@ -3299,28 +3299,9 @@ export default function OrdersPageClient() {
     );
     if (!ok) return;
 
-    const startedAt = Date.now();
-
-    const pickNumber = (value: any, fallback = 0) => {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : fallback;
-    };
-
-    const formatPercent = (value: any) => {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return "0%";
-      return `${n.toFixed(n % 1 === 0 ? 0 : 2)}%`;
-    };
-
-    const formatSeconds = (ms: number) => {
-      const seconds = ms / 1000;
-      return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
-    };
-
     try {
       setRefreshingAllGhnTracking(true);
       setActionMessage("Đang refresh toàn bộ trạng thái GHN...");
-
       const res = await apiFetch(
         "/shipments/ghn/tracking/refresh-all?days=90&limit=5000&includeFinal=1",
         { method: "POST" },
@@ -3331,53 +3312,19 @@ export default function OrdersPageClient() {
         throw new Error(json?.message || "Refresh trạng thái GHN thất bại.");
       }
 
-      const elapsedMs = pickNumber(json?.elapsedMs, Date.now() - startedAt);
-      const totalSelected = pickNumber(
-        json?.total ?? json?.targets ?? json?.selected ?? json?.scanned,
-        0,
-      );
-      const totalAll = pickNumber(
-        json?.totalEligibleShipments ?? json?.totalOrdersInRange ?? json?.totalAll,
-        totalSelected,
-      );
-      const processed = pickNumber(
-        json?.processed,
-        pickNumber(json?.success ?? json?.successCount ?? json?.refreshed, 0) +
-          pickNumber(json?.failed ?? json?.failedCount, 0),
-      );
-      const success = pickNumber(
-        json?.success ?? json?.successCount ?? json?.refreshed,
-        0,
-      );
-      const failed = pickNumber(json?.failed ?? json?.failedCount, 0);
-      const changed = pickNumber(json?.changedCount, 0);
-      const correctStatus = pickNumber(
-        json?.correctStatusCount ?? json?.unchangedCount,
-        Math.max(0, success - changed),
-      );
-      const percentSelected = Number.isFinite(Number(json?.progressPercentOfSelected))
-        ? Number(json?.progressPercentOfSelected)
-        : totalSelected
-          ? (processed / totalSelected) * 100
-          : 100;
-      const percentTotal = Number.isFinite(Number(json?.progressPercentOfTotal ?? json?.percentOfTotal))
-        ? Number(json?.progressPercentOfTotal ?? json?.percentOfTotal)
-        : totalAll
-          ? (processed / totalAll) * 100
-          : percentSelected;
+      const total = Number(json?.total ?? json?.targets ?? json?.scanned ?? 0);
+      const success = Number(json?.success ?? json?.refreshed ?? 0);
+      const failed = Number(json?.failed ?? json?.failedCount ?? 0);
+      const unchanged = Number(json?.unchanged ?? 0);
+      const corrected = Number(json?.corrected ?? json?.correctedOrderStatus ?? 0);
+      const shipmentChanged = Number(json?.shipmentStatusChanged ?? json?.changedCount ?? 0);
+      const percent = Number(json?.progressPercent ?? (total ? ((success + failed) / total) * 100 : 100));
+      const elapsed = Number(json?.elapsedSeconds ?? 0);
 
       setActionMessage(
-        [
-          `GHN chạy xong: ${processed}/${totalSelected} vận đơn được chọn (${formatPercent(percentSelected)}).`,
-          `Thành công ${success}, đúng trạng thái ${correctStatus}, đổi trạng thái ${changed}, lỗi ${failed}.`,
-          `Đã chạy ${formatPercent(percentTotal)} tổng số đơn GHN trong 90 ngày (${processed}/${totalAll}).`,
-          `Thời gian chuẩn hoá ${formatSeconds(elapsedMs)}.`,
-          failed ? "Có lỗi, xem log backend hoặc payload failedItems/failedRows trả về từ API." : "",
-        ]
-          .filter(Boolean)
-          .join(" "),
+        json?.message ||
+          `GHN chạy xong: ${success}/${total} vận đơn (${percent.toFixed(1)}%). Đúng trạng thái ${unchanged}, sửa trạng thái đơn ${corrected}, đổi trạng thái vận đơn ${shipmentChanged}, lỗi ${failed}. Thời gian chuẩn hoá ${elapsed}s.`,
       );
-
       await loadOrders();
     } catch (err) {
       setActionMessage(
