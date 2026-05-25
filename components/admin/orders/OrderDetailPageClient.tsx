@@ -2409,8 +2409,15 @@ export default function OrderDetailPageClient({
 
   const codEditable = useMemo(() => {
     if (!currentUser) return false;
-    const canRoleEdit = hasPermission(currentUser.role, "shipments.cod.edit");
-    return canRoleEdit && canEditCod(order);
+
+    // Permission UI đang lưu quyền sửa COD bằng key `orders.cod.edit`.
+    // Trước đây màn chi tiết đơn lại check role cứng `shipments.cod.edit` nên nhân viên
+    // đã được bật quyền trong Phân quyền vẫn không thấy nút Sửa COD.
+    const canEditCodPermission =
+      hasOrderPermission(currentUser, "orders.cod.edit") ||
+      getUserPermissionKeys(currentUser).has("shipments.cod.edit");
+
+    return canEditCodPermission && canEditCod(order);
   }, [order, currentUser]);
 
   const codChanged = useMemo(() => {
