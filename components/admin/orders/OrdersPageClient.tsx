@@ -1371,6 +1371,126 @@ function shipmentDisplayStatusTone(order: AdminOrder) {
   }
 }
 
+function getShipmentSyncIndicator(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+  const trackingCode = String(
+    shipment.trackingCode ||
+      shipment.tracking_code ||
+      anyOrder.trackingCode ||
+      anyOrder.shipmentTrackingCode ||
+      "",
+  ).trim();
+
+  if (!trackingCode) {
+    return {
+      ok: false,
+      tone: "bg-neutral-300 border-neutral-400",
+      label: "Chưa có vận đơn để kiểm tra đồng bộ trạng thái",
+    };
+  }
+
+  const shipmentStatus = String(shipment.shippingStatus || "").toUpperCase().trim();
+  const normalizedText = getNormalizedShipmentStatusText(order);
+  const orderStatus = String(getDisplayOrderStatus(order) || "").toUpperCase();
+  const fulfillmentStatus = String(order.fulfillmentStatus || "").toUpperCase();
+  const paymentStatus = String(order.paymentStatus || "").toUpperCase();
+  const returnReceiveStatus = String(
+    shipment.returnReceiveStatus ||
+      shipment.return_receive_status ||
+      anyOrder.returnReceiveStatus ||
+      anyOrder.return_receive_status ||
+      "",
+  )
+    .toUpperCase()
+    .trim();
+
+  const matchesAny = (values: string[]) =>
+    values.some((value) => {
+      const upper = String(value || "").toUpperCase();
+      return shipmentStatus === upper || normalizedText.includes(upper.replace(/_/g, " "));
+    });
+
+  const isDelivered = matchesAny(["DELIVERED", "DELIVERY_SUCCESS", "COMPLETED"]);
+  const isReturned = matchesAny(["RETURNED", "RETURNED_TO_CLIENT"]);
+  const isReturning = matchesAny(["RETURNING", "RETURN", "WAITING_TO_RETURN"]);
+  const isCancelled = matchesAny(["CANCELLED", "CANCEL"]);
+  const isFailed = matchesAny(["FAILED", "DELIVERY_FAIL", "EXCEPTION", "LOST", "DAMAGE"]);
+  const isActive = matchesAny([
+    "READY_TO_PICK",
+    "READY_TO_PICKING",
+    "WAITING_PICK",
+    "WAITING_TO_PICK",
+    "CREATED",
+    "PENDING",
+    "PICKING",
+    "PICK",
+    "PICKED",
+    "ACCEPTED",
+    "STORING",
+    "IN_TRANSIT",
+    "TRANSPORTING",
+    "SORTING",
+    "DELIVERING",
+    "DELIVERY",
+    "IN_PROCESS",
+  ]);
+
+  let ok = false;
+  let label = "Cần đồng bộ lại trạng thái đơn hàng";
+
+  if (isDelivered) {
+    ok = orderStatus === "COMPLETED" && fulfillmentStatus === "FULFILLED";
+    label = ok
+      ? "Đã đồng bộ đúng trạng thái giao thành công"
+      : "GHN đã giao thành công nhưng đơn nội bộ chưa đồng bộ xong";
+  } else if (isReturned) {
+    ok = ["WAITING_CONFIRM", "RECEIVED", "RECEIVED_WITH_ISSUE", "CONFIRMED"].includes(returnReceiveStatus) || fulfillmentStatus === "RETURNED" || orderStatus === "SHIPPED";
+    label = ok
+      ? returnReceiveStatus === "RECEIVED" || returnReceiveStatus === "RECEIVED_WITH_ISSUE"
+        ? "Đã đồng bộ trạng thái hoàn hàng và đã xác nhận nhận hoàn"
+        : "Đã đồng bộ trạng thái đã hoàn hàng / chờ xác nhận nhận hoàn"
+      : "GHN đã hoàn hàng nhưng đơn nội bộ chưa đồng bộ xong";
+  } else if (isReturning) {
+    ok = orderStatus === "SHIPPED" && fulfillmentStatus !== "FULFILLED";
+    label = ok
+      ? "Đã đồng bộ trạng thái đang hoàn hàng"
+      : "GHN đang hoàn hàng nhưng đơn nội bộ chưa đồng bộ xong";
+  } else if (isCancelled) {
+    ok = orderStatus !== "COMPLETED";
+    label = ok
+      ? "Đã đồng bộ trạng thái huỷ vận đơn"
+      : "Vận đơn đã huỷ nhưng trạng thái đơn nội bộ chưa khớp";
+  } else if (isFailed) {
+    ok = orderStatus !== "COMPLETED" && fulfillmentStatus !== "FULFILLED";
+    label = ok
+      ? "Đã đồng bộ trạng thái giao vận có sự cố"
+      : "GHN báo sự cố nhưng đơn nội bộ chưa đồng bộ xong";
+  } else if (isActive) {
+    ok = orderStatus === "SHIPPED" && fulfillmentStatus !== "FULFILLED";
+    label = ok
+      ? "Đã đồng bộ trạng thái giao vận hiện tại"
+      : "Trạng thái vận đơn đã đổi nhưng đơn nội bộ chưa đồng bộ xong";
+  } else if (shipmentStatus) {
+    ok = true;
+    label = "Đã có trạng thái vận đơn, chưa phát hiện lệch đồng bộ";
+  }
+
+  if (isDelivered && paymentStatus === "PENDING_COD") {
+    label = ok
+      ? "Đã đồng bộ giao thành công, COD vẫn chờ đối soát"
+      : label;
+  }
+
+  return {
+    ok,
+    tone: ok
+      ? "bg-emerald-500 border-emerald-600"
+      : "bg-amber-400 border-amber-500",
+    label,
+  };
+}
+
 function StatusBadge({ label, tone }: { label: string; tone: string }) {
   return (
     <span
@@ -6506,24 +6626,41 @@ export default function OrdersPageClient() {
                           )}
 
                           <td className="sticky right-0 z-20 border-b border-neutral-100 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.35)] group-hover:bg-neutral-50">
-                            <div className="flex justify-end">
-                              <div className="flex items-center gap-2 whitespace-nowrap">
-                                <button
-                                  type="button"
-                                  onClick={() => void openQuickViewOrder(order)}
-                                  className="inline-flex items-center rounded-xl border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-neutral-800"
-                                >
-                                  Xem nhanh
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openOrderInNewTab(order)}
-                                  className="inline-flex items-center rounded-xl border border-neutral-300 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                                >
-                                  Chi tiết
-                                </button>
-                              </div>
-                            </div>
+                            {(() => {
+                              const syncIndicator = getShipmentSyncIndicator(order);
+                              return (
+                                <div className="flex justify-end">
+                                  <div className="flex flex-col items-end gap-2 whitespace-nowrap">
+                                    <div
+                                      className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-[10px] font-semibold text-neutral-600"
+                                      title={syncIndicator.label}
+                                      aria-label={syncIndicator.label}
+                                    >
+                                      <span
+                                        className={`h-3 w-3 rounded-full border ${syncIndicator.tone} shadow-sm`}
+                                      />
+                                      <span>Đồng bộ GHN</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => void openQuickViewOrder(order)}
+                                        className="inline-flex items-center rounded-xl border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-neutral-800"
+                                      >
+                                        Xem nhanh
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => openOrderInNewTab(order)}
+                                        className="inline-flex items-center rounded-xl border border-neutral-300 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
+                                      >
+                                        Chi tiết
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </td>
                         </tr>
                       );

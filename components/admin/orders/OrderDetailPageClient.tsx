@@ -82,6 +82,10 @@ type ShipmentItem = {
   ahamoveTrackingUrl?: string | null;
   ahamoveStatus?: string | null;
   ahamoveSubStatus?: string | null;
+  metadata?: any;
+  returnReceiveStatus?: string | null;
+  returnReceivedAt?: string | null;
+  returnReceivedByName?: string | null;
 };
 
 type PaymentItem = {
@@ -366,9 +370,44 @@ function shipmentStatusText(status?: string | null, carrier?: string | null) {
   }
   if (s.includes("CANCEL")) return "Đã huỷ vận đơn";
   if (s.includes("FAIL")) return "Giao thất bại";
+  if (s.includes("RETURNED") || s.includes("DA_HOAN") || s.includes("ĐÃ_HOÀN")) return "Chờ xác nhận hàng hoàn";
   if (s.includes("RETURN")) return "Đang hoàn hàng";
+  if (s.includes("IN_TRANSIT") || s.includes("TRANSPORT")) return "Đang trung chuyển";
 
   return status || "—";
+}
+
+function getReturnReceiveStatus(shipment?: ShipmentItem | null) {
+  const explicit = String(
+    shipment?.returnReceiveStatus ||
+      shipment?.metadata?.returnReceiveStatus ||
+      shipment?.metadata?.return_receive_status ||
+      "",
+  ).toUpperCase();
+
+  if (explicit) return explicit;
+
+  const shippingStatus = String(shipment?.shippingStatus || "").toUpperCase();
+  const partnerStatus = String(shipment?.partnerStatus || "").toUpperCase();
+  const statusText = `${shippingStatus} ${partnerStatus}`;
+
+  if (statusText.includes("RETURNED") || statusText.includes("DA HOAN") || statusText.includes("ĐÃ HOÀN")) {
+    return "WAITING_CONFIRM";
+  }
+
+  if (statusText.includes("RETURNING") || statusText.includes("RETURN")) {
+    return "RETURNING";
+  }
+
+  return "";
+}
+
+function returnReceiveStatusLabel(status?: string | null) {
+  const value = String(status || "").toUpperCase();
+  if (value === "RECEIVED") return "Đã nhận hàng hoàn";
+  if (value === "WAITING_CONFIRM") return "Chờ xác nhận hàng hoàn";
+  if (value === "RETURNING") return "Đang hoàn hàng";
+  return "";
 }
 
 const AHAMOVE_EXPRESS_TRACKING_BASE_URL = "https://express.ahamove.com/s";
@@ -2097,6 +2136,7 @@ export default function OrderDetailPageClient({
   const [shipmentTimeline, setShipmentTimeline] = useState<ShipmentTimelineEntry[]>([]);
   const [trackingRefreshing, setTrackingRefreshing] = useState(false);
   const [trackingMessage, setTrackingMessage] = useState("");
+  const [returnConfirming, setReturnConfirming] = useState(false);
   const forcedTrackingRefreshRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -2262,6 +2302,68 @@ export default function OrderDetailPageClient({
       if (force) {
         setTrackingRefreshing(false);
       }
+    }
+  };
+
+
+  const handleConfirmReturnReceived = async () => {
+    if (!order?.id || returnConfirming) return;
+
+    const ok = window.confirm(
+      "Xác nhận shop đã nhận hàng hoàn từ GHN? Thao tác này chỉ nên bấm sau khi nhân viên đã cầm/kiểm hàng hoàn.",
+    );
+
+    if (!ok) return;
+
+    setReturnConfirming(true);
+    setMessage("");
+
+    try {
+      const res = await apiFetch(`/shipments/${encodeURIComponent(order.id)}/return/confirm-received`, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(json?.message || "Không xác nhận được hàng hoàn.");
+      }
+
+      const nextShipment = {
+        ...(order.shipment || {}),
+        ...(json?.shipment || {}),
+        returnReceiveStatus: json?.returnReceiveStatus || "RECEIVED",
+        returnReceivedAt: json?.returnReceivedAt || new Date().toISOString(),
+        returnReceivedByName: json?.returnReceivedByName || "",
+      };
+
+      setOrder((prev) =>
+        prev
+          ? {
+              ...prev,
+              fulfillmentStatus: json?.order?.fulfillmentStatus || "RETURNED",
+              shipment: nextShipment,
+            }
+          : prev,
+      );
+
+      setDraftOrder((prev) =>
+        prev
+          ? {
+              ...prev,
+              fulfillmentStatus: json?.order?.fulfillmentStatus || "RETURNED",
+              shipment: nextShipment,
+            }
+          : prev,
+      );
+
+      setMessage(json?.message || "Đã xác nhận shop nhận hàng hoàn.");
+      await refreshShipmentTracking(false);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không xác nhận được hàng hoàn.");
+    } finally {
+      setReturnConfirming(false);
     }
   };
 
@@ -2541,6 +2643,9 @@ export default function OrderDetailPageClient({
     viewOrder?.shipment?.carrier || meta.shippingPartner,
   );
   const openTrackingUrl = trackingLinkForShipment(viewOrder?.shipment);
+  const returnReceiveStatus = getReturnReceiveStatus(viewOrder?.shipment);
+  const returnReceiveLabel = returnReceiveStatusLabel(returnReceiveStatus);
+  const showConfirmReturnReceived = returnReceiveStatus === "WAITING_CONFIRM";
 
   const canEdit =
     canEditOrderPermission &&
@@ -3622,6 +3727,23 @@ export default function OrderDetailPageClient({
               <p className="mt-2 text-sm font-semibold text-neutral-950">
                 {currentShipmentLabel}
               </p>
+              {returnReceiveLabel ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge tone={returnReceiveStatus === "RECEIVED" ? "green" : "amber"}>
+                    {returnReceiveLabel}
+                  </Badge>
+                  {showConfirmReturnReceived ? (
+                    <button
+                      type="button"
+                      disabled={returnConfirming}
+                      onClick={() => void handleConfirmReturnReceived()}
+                      className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {returnConfirming ? "Đang xác nhận..." : "Xác nhận đã nhận hoàn"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </Panel>
             <Panel className="px-4 py-3">
               <p className="text-[10px] uppercase tracking-wide text-neutral-400">
