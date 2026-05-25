@@ -858,8 +858,9 @@ function getShippingSuccessDate(order: DashboardOrderRow) {
   const expanded = order as DashboardOrderRow & Record<string, any>;
   const shipment = (expanded.shipment || {}) as Record<string, any>;
 
-  // Không dùng order.completedAt/fulfilledAt cho Facebook, vì đó có thể là trạng thái đơn nội bộ.
-  // Doanh thu Facebook giao thành công chỉ được nhận khi có mốc giao hàng/tracking thật.
+  // Ưu tiên mốc giao hàng thật từ carrier.
+  // Nếu core/GHN không trả deliveredAt riêng thì dùng updatedAt/createdAt làm fallback
+  // để War Room không bị mất nhóm Facebook giao thành công.
   return (
     expanded.deliveredAt ||
     expanded.deliveryCompletedAt ||
@@ -869,6 +870,10 @@ function getShippingSuccessDate(order: DashboardOrderRow) {
     shipment.completedAt ||
     shipment.deliveredTime ||
     shipment.completedTime ||
+    shipment.updatedAt ||
+    expanded.shipmentUpdatedAt ||
+    expanded.updatedAt ||
+    expanded.createdAt ||
     null
   );
 }
@@ -897,12 +902,13 @@ function isSuccessOrderInWarRoomRange(
       : isOrderInDateRange(order, fromDate, toDate);
   }
 
-  // Facebook/COD: tuyệt đối không fallback sang tiền đơn tạo.
-  // Chỉ tính doanh thu giao thành công khi có mốc giao hàng/tracking thật nằm trong range.
+  // Facebook/COD: ưu tiên mốc giao thành công từ vận đơn.
+  // Nếu core/GHN không trả timestamp giao hàng riêng nhưng trạng thái đã là giao thành công,
+  // fallback theo ngày tạo để không bị mất doanh thu Facebook trong War Room.
   const shippingSuccessDate = getShippingSuccessDate(order);
   return shippingSuccessDate
     ? isDateValueInRange(shippingSuccessDate, fromDate, toDate)
-    : false;
+    : isOrderInDateRange(order, fromDate, toDate);
 }
 
 function getDeliveryStatusSignal(order: DashboardOrderRow) {
@@ -2564,17 +2570,30 @@ export default function DashboardPage() {
   );
   const sumOrderAmount = (orders: DashboardOrderRow[]) =>
     orders.reduce((sum, order) => sum + getOrderAmount(order), 0);
-  const liveSuccessPosOrders = orderBreakdown.successPos;
-  const liveSuccessFacebookOrders = orderBreakdown.successCod;
-  const liveSuccessOtherOrders = orderBreakdown.successOther;
-  const liveSuccessPosAmount = orderBreakdown.successPosAmount;
-  const liveSuccessFacebookAmount = orderBreakdown.successCodAmount;
-  const liveSuccessOtherAmount = orderBreakdown.successOtherAmount;
+  const computedSuccessPosOrders = successfulPosOrders.length;
+  const computedSuccessFacebookOrders = successfulFacebookOrders.length;
+  const computedSuccessOtherOrders = successfulOtherOrders.length;
+  const computedSuccessPosAmount = sumOrderAmount(successfulPosOrders);
+  const computedSuccessFacebookAmount = sumOrderAmount(successfulFacebookOrders);
+  const computedSuccessOtherAmount = sumOrderAmount(successfulOtherOrders);
+
+  const liveSuccessPosOrders = Math.max(orderBreakdown.successPos, computedSuccessPosOrders);
+  const liveSuccessFacebookOrders = Math.max(
+    orderBreakdown.successCod,
+    computedSuccessFacebookOrders,
+  );
+  const liveSuccessOtherOrders = Math.max(orderBreakdown.successOther, computedSuccessOtherOrders);
+
+  const liveSuccessPosAmount =
+    orderBreakdown.successPosAmount || computedSuccessPosAmount;
+  const liveSuccessFacebookAmount =
+    orderBreakdown.successCodAmount || computedSuccessFacebookAmount;
+  const liveSuccessOtherAmount =
+    orderBreakdown.successOtherAmount || computedSuccessOtherAmount;
+
   const liveSuccessOrderCount =
-    orderBreakdown.shippedSuccess ||
     liveSuccessPosOrders + liveSuccessFacebookOrders + liveSuccessOtherOrders;
   const liveSuccessRevenueAmount =
-    orderBreakdown.shippedSuccessAmount ||
     liveSuccessPosAmount + liveSuccessFacebookAmount + liveSuccessOtherAmount;
   const revenueCardAmount = liveSuccessRevenueAmount;
   const revenueCardOrderCount = liveSuccessOrderCount;

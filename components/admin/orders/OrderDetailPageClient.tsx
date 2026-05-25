@@ -540,6 +540,42 @@ function getPartialRecordItems(record?: PartialDeliveryRecord | null, action?: "
   return rows.filter((item) => String(item.actionType || "").toUpperCase() === action || (action === "RETURNED" && Number(item.returnedQty || 0) > 0));
 }
 
+function hasRealPartialDeliveryItems(record?: PartialDeliveryRecord | null) {
+  if (!record) return false;
+
+  const rows = Array.isArray(record.items) ? record.items : [];
+  const keptRows = getPartialRecordItems(record, "KEPT");
+  const returnedRows = getPartialRecordItems(record, "RETURNED");
+
+  if (keptRows.length > 0 || returnedRows.length > 0) return true;
+
+  return rows.some((item) => {
+    const orderedQty = Number(item.orderedQty || item.qty || 0);
+    const deliveredQty = Number(item.deliveredQty || 0);
+    const returnedQty = Number(item.returnedQty || 0);
+    const actionType = String(item.actionType || "").toUpperCase();
+
+    return (
+      actionType === "KEPT" ||
+      actionType === "RETURNED" ||
+      returnedQty > 0 ||
+      (orderedQty > 0 && deliveredQty >= 0 && deliveredQty < orderedQty)
+    );
+  });
+}
+
+function getRealPartialDeliveryRecord(order?: OrderDetail | null) {
+  const rows = Array.isArray(order?.partialDeliveries)
+    ? order?.partialDeliveries || []
+    : [];
+
+  return rows.find((record) => hasRealPartialDeliveryItems(record)) || null;
+}
+
+function hasRealPartialDelivery(order?: OrderDetail | null) {
+  return Boolean(getRealPartialDeliveryRecord(order));
+}
+
 function formatVndInput(value: string | number | null | undefined) {
   const digits = String(value ?? "").replace(/\D/g, "");
   if (!digits) return "";
@@ -1182,19 +1218,10 @@ function canEditCod(order?: OrderDetail | null) {
   return true;
 }
 function isPartialDelivery(order?: OrderDetail | null) {
-  if (!order) return false;
-
-  const itemTotal =
-    (order.items || []).reduce(
-      (sum, item) => sum + Number(item.lineTotal || 0),
-      0,
-    ) +
-    Number(order.shippingFee || 0) -
-    Number(order.discountAmount || 0);
-
-  const cod = Number(order.shipment?.codAmount || 0);
-
-  return cod > 0 && cod < itemTotal;
+  // Không suy luận giao hàng 1 phần chỉ vì COD nhỏ hơn tổng đơn.
+  // Sửa COD thường cũng làm COD nhỏ hơn tổng đơn, nhưng không được show phiếu 1 phần,
+  // không được show sản phẩm hoàn về và không tự dựng đơn hoàn _PR.
+  return hasRealPartialDelivery(order);
 }
 
 function buildShipmentEditDraft(order?: OrderDetail | null): ShipmentEditDraft {
@@ -2038,6 +2065,7 @@ export default function OrderDetailPageClient({
   const [shipmentSaving, setShipmentSaving] = useState(false);
 
   const [editMode, setEditMode] = useState<"full" | "cod">("full");
+  const [codEditFlow, setCodEditFlow] = useState<"normal" | "partial">("normal");
   const [authCode, setAuthCode] = useState("");
   const [authVerifying, setAuthVerifying] = useState(false);
   const [showPartialDeliveryModal, setShowPartialDeliveryModal] =
@@ -2261,8 +2289,14 @@ export default function OrderDetailPageClient({
 
   useEffect(() => {
     if (!order) return;
+
+    // Khi modal sửa giao hàng/COD đang mở, order detail có thể tự refresh tracking
+    // mỗi vài giây. Không reset draft trong lúc đang nhập, tránh ô COD bị nháy
+    // và nhảy về số cũ khiến không gõ được số mới.
+    if (showShipmentEditModal) return;
+
     setShipmentDraft(buildShipmentEditDraft(order));
-  }, [order]);
+  }, [order, showShipmentEditModal]);
 
   useEffect(() => {
     if (!order) return;
@@ -2287,8 +2321,9 @@ export default function OrderDetailPageClient({
       });
     }
 
-    if (order.isPartialDelivery || isPartialDelivery(order)) {
-      const partialRecord = Array.isArray(order.partialDeliveries) ? order.partialDeliveries[0] : null;
+    const historyPartialRecord = getRealPartialDeliveryRecord(order);
+    if (historyPartialRecord) {
+      const partialRecord = historyPartialRecord;
       const kept = getPartialRecordItems(partialRecord, "KEPT").map((item) => `${item.sku || item.productName} x${Number(item.qty || item.deliveredQty || 0)}`).join(", ");
       const returned = getPartialRecordItems(partialRecord, "RETURNED").map((item) => `${item.sku || item.productName} x${Number(item.qty || item.returnedQty || 0)}`).join(", ");
       entries.push({
@@ -2455,17 +2490,25 @@ export default function OrderDetailPageClient({
         ? Number(String(meta.customerPaidText).replace(/[^\d]/g, "") || 0)
         : 0;
 
-  const amountDue = Math.max(shownFinalAmount - customerPaid, 0);
+  const isCodCollectingOrder =
+    !isPOSOrder &&
+    !isPaidOrder &&
+    String(viewOrder?.paymentStatus || "").toUpperCase() === "PENDING_COD" &&
+    shipmentCodAmount > 0;
+
+  const amountDue = isCodCollectingOrder
+    ? shipmentCodAmount
+    : Math.max(shownFinalAmount - customerPaid, 0);
 
   const partialDelivery = useMemo(
-    () => isPartialDelivery(viewOrder),
+    () => hasRealPartialDelivery(viewOrder),
     [viewOrder],
   );
 
 
   const currentPartialDelivery = useMemo(
-    () => (Array.isArray(viewOrder?.partialDeliveries) ? viewOrder?.partialDeliveries?.[0] : null),
-    [viewOrder?.partialDeliveries],
+    () => getRealPartialDeliveryRecord(viewOrder),
+    [viewOrder],
   );
 
   const latestShipmentEvent = latestShipmentTimelineEntry(shipmentTimeline);
@@ -2622,9 +2665,10 @@ export default function OrderDetailPageClient({
 
     setShowShipmentEditModal(true);
   };
-  const handleOpenCodEdit = () => {
+  const handleOpenCodEdit = (flow: "normal" | "partial" = "normal") => {
     if (!order) return;
     setShipmentDraft(buildShipmentEditDraft(order));
+    setCodEditFlow(flow);
     setEditMode("cod");
     setAuthCode("");
     setShowAuthConfirmModal(false);
@@ -2640,6 +2684,7 @@ export default function OrderDetailPageClient({
     }
 
     setEditMode("full");
+    setCodEditFlow("normal");
     setAuthCode("");
     setAuthVerifying(false);
   };
@@ -2751,11 +2796,15 @@ export default function OrderDetailPageClient({
         );
       }
 
-      const nextNote = upsertStructuredNotePart(
-        order.note,
-        "Tình trạng giao:",
-        nextCod < computedFinalAmount ? "Giao hàng 1 phần" : "",
-      );
+      const shouldOpenPartialDelivery = codEditFlow === "partial";
+
+      const nextNote = shouldOpenPartialDelivery
+        ? upsertStructuredNotePart(
+          order.note,
+          "Tình trạng giao:",
+          nextCod < computedFinalAmount ? "Giao hàng 1 phần" : "",
+        )
+        : order.note;
 
       const nextOrder: OrderDetail = {
         ...order,
@@ -2767,6 +2816,8 @@ export default function OrderDetailPageClient({
           codAmount: nextCod,
         },
       };
+
+      setOrder(nextOrder);
 
       if (draftOrder) {
         setDraftOrder({
@@ -2790,18 +2841,25 @@ export default function OrderDetailPageClient({
         setShowCodSuccessToast(false);
       }, 3500);
 
-      const nextPartialDraft = buildPartialDeliveryDraft(order, nextCod);
-      setPartialDraft({
-        ...nextPartialDraft,
-        adjustedCod: nextCod,
-        approvedBy: currentUser?.name || currentUser?.code || "Admin / Owner",
-      });
+      if (shouldOpenPartialDelivery) {
+        const nextPartialDraft = buildPartialDeliveryDraft(order, nextCod);
+        setPartialDraft({
+          ...nextPartialDraft,
+          adjustedCod: nextCod,
+          approvedBy: currentUser?.name || currentUser?.code || "Admin / Owner",
+        });
+      }
 
       setShowAuthConfirmModal(false);
       setShowShipmentEditModal(false);
-      setShowPartialDeliveryModal(true);
-      setMessage("");
+      setShowPartialDeliveryModal(shouldOpenPartialDelivery);
+      setMessage(
+        shouldOpenPartialDelivery
+          ? ""
+          : `Đã sửa COD thường từ ${currency(oldCod)} → ${currency(nextCod)}.`,
+      );
       setEditMode("full");
+      setCodEditFlow("normal");
       setAuthCode("");
     } catch (err) {
       setMessage(
@@ -3358,7 +3416,7 @@ export default function OrderDetailPageClient({
         onInternalCancel={handleInternalCancelOrder}
         onCancelShipment={handleCancelShipment}
         onOpenShipmentEdit={handleOpenShipmentEdit}
-        onOpenCodEdit={handleOpenCodEdit}
+        onOpenCodEdit={() => handleOpenCodEdit("normal")}
         canCreateShipment={canCreateShipment}
         onCreateShipment={handleCreateShipmentFromOrder}
       />
@@ -3913,9 +3971,14 @@ export default function OrderDetailPageClient({
                       ) : null}
 
                       {codEditable ? (
-                        <ActionButton tone="danger" onClick={handleOpenCodEdit}>
-                          Sửa COD giao hàng 1 phần
-                        </ActionButton>
+                        <>
+                          <ActionButton onClick={() => handleOpenCodEdit("normal")}>
+                            Sửa COD thường
+                          </ActionButton>
+                          <ActionButton tone="danger" onClick={() => handleOpenCodEdit("partial")}>
+                            Sửa COD giao hàng 1 phần
+                          </ActionButton>
+                        </>
                       ) : null}
 
                       {redeliveryAvailable ? (
@@ -4001,7 +4064,7 @@ export default function OrderDetailPageClient({
               </Panel>
             ) : null}
 
-            {viewOrder.isPartialDelivery || partialDelivery ? (
+            {partialDelivery && currentPartialDelivery ? (
               <Panel>
                 <SectionHeader
                   title="Phiếu giao hàng 1 phần"
@@ -4895,11 +4958,17 @@ export default function OrderDetailPageClient({
             <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3">
               <div>
                 <h3 className="text-[15px] font-semibold text-neutral-900">
-                  {editMode === "cod" ? "Sửa COD" : "Chỉnh sửa giao hàng"}
+                  {editMode === "cod"
+                    ? codEditFlow === "partial"
+                      ? "Sửa COD giao hàng 1 phần"
+                      : "Sửa COD thường"
+                    : "Chỉnh sửa giao hàng"}
                 </h3>
                 <p className="text-[11px] text-neutral-500">
                   {editMode === "cod"
-                    ? "Nhập COD mới trước, sau đó xác nhận bằng Google Authenticator"
+                    ? codEditFlow === "partial"
+                      ? "Luồng này giữ nguyên: sửa COD xong sẽ mở phiếu giao hàng 1 phần."
+                      : "Chỉ cập nhật số tiền COD trên vận đơn, không tạo phiếu giao hàng 1 phần."
                     : "Sửa địa chỉ + ghi chú giao hàng"}
                 </p>
               </div>
@@ -4918,12 +4987,10 @@ export default function OrderDetailPageClient({
                   <p className="mb-1 text-[11px] text-neutral-500">COD mới</p>
 
                   <EditInput
-                    value={String(shipmentDraft.codAmountInput || "").replace(/\D/g, "")}
+                    value={formatVndInput(shipmentDraft.codAmountInput)}
                     onChange={(v) =>
                       setShipmentDraft((prev) => ({
                         ...prev,
-                        // Giữ raw digits trong ô nhập để không bị nhảy con trỏ khi đang gõ.
-                        // Khi hiển thị/xác nhận mới format lại thành 486.000đ.
                         codAmountInput: v.replace(/\D/g, "").slice(0, 12),
                       }))
                     }
@@ -5118,7 +5185,9 @@ export default function OrderDetailPageClient({
                 Xác nhận bằng Google Authenticator
               </p>
               <p className="mt-1 text-[12px] text-neutral-500">
-                Nhập mã 6 số để xác nhận thay đổi COD.
+                {codEditFlow === "partial"
+                  ? "Nhập mã 6 số để xác nhận thay đổi COD và mở phiếu giao hàng 1 phần."
+                  : "Nhập mã 6 số để xác nhận sửa COD thường. Không tạo phiếu giao hàng 1 phần."}
               </p>
             </div>
 
