@@ -1461,7 +1461,17 @@ export default function StocktakePageClient() {
           });
         }
 
-        await refreshSession(restoreSessionId);
+        try {
+          const summaryData = await apiRequest<SummaryItem[]>(
+            `/stocktake-sessions/${restoreSessionId}/summary`,
+          );
+          if (Array.isArray(summaryData)) {
+            setSummary(summaryData);
+          }
+          setLastUpdatedAt(new Date().toISOString());
+        } catch {
+          // Giữ session đã khôi phục; summary sẽ được đồng bộ lại ở vòng realtime kế tiếp.
+        }
 
         if (savedWorker?.id) {
           await refreshWorkerSummary(restoreSessionId, savedWorker.id);
@@ -1588,25 +1598,39 @@ export default function StocktakePageClient() {
         setLoadingJoinableSessions(true);
         setJoinableSessionsError("");
 
-        const q = new URLSearchParams();
-        if (finalBranchId) q.set("branchId", finalBranchId);
-        q.set("limit", "100");
-        const query = q.toString() ? `?${q.toString()}` : "";
+        const fetchByStatus = async (status: string) => {
+          const q = new URLSearchParams();
+          if (finalBranchId) q.set("branchId", finalBranchId);
+          q.set("status", status);
+          q.set("limit", "30");
+          const query = q.toString() ? `?${q.toString()}` : "";
+          const data = await apiRequest<any>(`/stocktake-sessions${query}`);
+          return Array.isArray(data)
+            ? data
+            : Array.isArray(data?.data)
+              ? data.data
+              : Array.isArray(data?.items)
+                ? data.items
+                : [];
+        };
 
-        const data = await apiRequest<any>(`/stocktake-sessions${query}`);
-        const rows = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.data)
-            ? data.data
-            : Array.isArray(data?.items)
-              ? data.items
-              : [];
+        const rowsByStatus = await Promise.all([
+          fetchByStatus("IN_PROGRESS"),
+          fetchByStatus("PAUSED"),
+          fetchByStatus("DRAFT"),
+        ]);
 
-        const activeRows = rows.filter((item: RealtimeSession) =>
-          ["DRAFT", "IN_PROGRESS", "PAUSED"].includes(
-            String(item.status || "").toUpperCase(),
-          ),
-        );
+        const seen = new Set<string>();
+        const activeRows = rowsByStatus
+          .flat()
+          .filter((item: RealtimeSession) => {
+            const id = String(item?.id || "");
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            return ["DRAFT", "IN_PROGRESS", "PAUSED"].includes(
+              String(item.status || "").toUpperCase(),
+            );
+          });
 
         setJoinableSessions(activeRows);
       } catch (err) {
