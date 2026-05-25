@@ -38,6 +38,8 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const AUTH_RELOAD_TTL_MS = 2 * 60 * 1000;
+const AUTH_EVENT_DEBOUNCE_MS = 1500;
 
 function isPublicPath(pathname: string) {
   return pathname === "/login" || pathname.startsWith("/login/");
@@ -70,19 +72,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return Boolean(getTokenFromStorage() || getCurrentUserFromStorage());
   });
   const [error, setError] = useState("");
-  const [activeBranchId, setActiveBranchIdState] = useState(() => getActiveBranchIdFromStorage(getCurrentUserFromStorage()));
+  const [activeBranchId, setActiveBranchIdState] = useState(() =>
+    getActiveBranchIdFromStorage(getCurrentUserFromStorage()),
+  );
 
   const pathnameRef = useRef(pathname);
-  const reloadingRef = useRef(false);
+  const reloadPromiseRef = useRef<Promise<any> | null>(null);
   const lastReloadAtRef = useRef(0);
+  const lastAuthEventAtRef = useRef(0);
 
   pathnameRef.current = pathname;
+
+  const syncCachedUser = useCallback(() => {
+    const cachedUser = getCurrentUserFromStorage();
+    setUser(cachedUser);
+    setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
+    setChecked(true);
+    setLoading(false);
+    return cachedUser;
+  }, []);
 
   const logout = useCallback(async () => {
     try {
       await apiJson("/auth/logout", {
         method: "POST",
         redirectOnUnauthorized: false,
+        timeoutMs: 8000,
       } as any);
     } catch {
       // ignore logout API errors
@@ -98,16 +113,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reloadAuth = useCallback(async () => {
     const currentPath = pathnameRef.current;
 
-    if (reloadingRef.current) {
-      return getCurrentUserFromStorage();
+    if (reloadPromiseRef.current) {
+      return reloadPromiseRef.current;
     }
 
     if (isPublicPath(currentPath)) {
-      const cachedUser = getCurrentUserFromStorage();
-      setUser(cachedUser);
-      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
-      setChecked(true);
-      setLoading(false);
+      const cachedUser = syncCachedUser();
       setError("");
       return cachedUser;
     }
@@ -134,91 +145,102 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
     }
 
-    try {
-      reloadingRef.current = true;
-      lastReloadAtRef.current = Date.now();
-      setError("");
+    const run = (async () => {
+      try {
+        setError("");
 
-      const data: any = await apiJson("/auth/me", {
-        redirectOnUnauthorized: true,
-      } as any);
+        const data: any = await apiJson("/auth/me", {
+          redirectOnUnauthorized: false,
+          timeoutMs: 10000,
+        } as any);
 
-      const nextToken = extractToken(data);
-      const nextUser = extractUser(data);
+        const nextToken = extractToken(data);
+        const nextUser = extractUser(data);
 
-      if (!nextUser) {
-        throw new Error("Không lấy được thông tin đăng nhập.");
-      }
+        if (!nextUser) {
+          throw new Error("Không lấy được thông tin đăng nhập.");
+        }
 
-      if (nextToken) setTokenToStorage(nextToken);
-      setCurrentUserToStorage(nextUser);
-      setUser(nextUser);
-      setActiveBranchIdState(getActiveBranchIdFromStorage(nextUser));
-      setChecked(true);
-      setLoading(false);
-      setError("");
-
-      return nextUser;
-    } catch (err) {
-      /**
-       * Khi tab bị background rồi quay lại, Chrome/Safari có thể bắn focus +
-       * visibilitychange liên tục. Nếu access token vừa hết hạn, một request khác
-       * có thể đã refresh token thành công trong lúc request /auth/me hiện tại lỗi.
-       * Không xoá storage ngay để tránh đá người dùng về login sau ~15 phút.
-       */
-      const latestToken = getTokenFromStorage();
-      const latestUser = getCurrentUserFromStorage();
-
-      if (latestToken && latestUser) {
-        setUser(latestUser);
-        setActiveBranchIdState(getActiveBranchIdFromStorage(latestUser));
+        if (nextToken) setTokenToStorage(nextToken);
+        setCurrentUserToStorage(nextUser);
+        setUser(nextUser);
+        setActiveBranchIdState(getActiveBranchIdFromStorage(nextUser));
         setChecked(true);
         setLoading(false);
         setError("");
-        return latestUser;
-      }
+        lastReloadAtRef.current = Date.now();
 
-      setUser(null);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Không xác thực được phiên đăng nhập.",
-      );
+        return nextUser;
+      } catch (err) {
+        /**
+         * Không xoá cache ngay khi /auth/me timeout hoặc đang refresh.
+         * Các API vận hành vẫn được JwtGuard xác thực bằng access token/refresh flow.
+         * Chỉ đá login khi không còn cả token lẫn cached user.
+         */
+        const latestToken = getTokenFromStorage();
+        const latestUser = getCurrentUserFromStorage();
+        const errorMessage =
+          err instanceof Error
+            ? err.message
+            : "Không xác thực được phiên đăng nhập.";
+        const isAuthExpired =
+          errorMessage.includes("hết hạn") ||
+          errorMessage.includes("Unauthorized") ||
+          errorMessage.includes("401");
 
-      clearCurrentUserFromStorage();
-      router.replace("/login");
-      return null;
-    } finally {
-      reloadingRef.current = false;
-      setChecked(true);
-      setLoading(false);
-    }
-  }, [router]);
+        if (latestToken && latestUser && !isAuthExpired) {
+          setUser(latestUser);
+          setActiveBranchIdState(getActiveBranchIdFromStorage(latestUser));
+          setChecked(true);
+          setLoading(false);
+          setError("");
+          return latestUser;
+        }
 
-  useEffect(() => {
-    const cachedUser = getCurrentUserFromStorage();
+        setUser(null);
+        setError(errorMessage);
 
-    if (cachedUser) {
-      setUser(cachedUser);
-      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
-      setChecked(true);
-      setLoading(false);
-    }
-
-    void reloadAuth();
-  }, [pathname, reloadAuth]);
-
-  useEffect(() => {
-    const handleAuthChanged = () => {
-      const cachedUser = getCurrentUserFromStorage();
-      if (cachedUser) {
-        setUser(cachedUser);
-      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
+        clearCurrentUserFromStorage();
+        router.replace("/login");
+        return null;
+      } finally {
+        reloadPromiseRef.current = null;
         setChecked(true);
         setLoading(false);
       }
+    })();
 
-      if (!reloadingRef.current) {
+    reloadPromiseRef.current = run;
+    return run;
+  }, [router, syncCachedUser]);
+
+  useEffect(() => {
+    const cachedUser = syncCachedUser();
+
+    if (isPublicPath(pathname)) return;
+
+    const token = getTokenFromStorage();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    const isStale = Date.now() - lastReloadAtRef.current > AUTH_RELOAD_TTL_MS;
+
+    if (!cachedUser || isStale) {
+      void reloadAuth();
+    }
+  }, [pathname, reloadAuth, router, syncCachedUser]);
+
+  useEffect(() => {
+    const handleAuthChanged = () => {
+      syncCachedUser();
+
+      const now = Date.now();
+      if (now - lastAuthEventAtRef.current < AUTH_EVENT_DEBOUNCE_MS) return;
+      lastAuthEventAtRef.current = now;
+
+      if (Date.now() - lastReloadAtRef.current > AUTH_RELOAD_TTL_MS) {
         void reloadAuth();
       }
     };
@@ -230,19 +252,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("the1970:auth-changed", handleAuthChanged);
       window.removeEventListener("storage", handleAuthChanged);
     };
-  }, [reloadAuth]);
+  }, [reloadAuth, syncCachedUser]);
 
   useEffect(() => {
     if (isPublicPath(pathname)) return;
 
     const reloadIfStale = () => {
-      if (reloadingRef.current) return;
-
       const token = getTokenFromStorage();
       if (!token) return;
-
-      // Tránh chớp trắng khi Chrome focus/visibility bắn liên tục.
-      if (Date.now() - lastReloadAtRef.current < 15000) return;
+      if (Date.now() - lastReloadAtRef.current < AUTH_RELOAD_TTL_MS) return;
 
       void reloadAuth();
     };

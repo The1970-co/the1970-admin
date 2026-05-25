@@ -32,7 +32,7 @@ function WorkspaceTabsInner() {
                   : "border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100"
               }`}
             >
-              <Link href={tab.href} className="max-w-[190px] truncate">
+              <Link href={tab.href} prefetch={false} className="max-w-[190px] truncate">
                 {tab.title}
               </Link>
 

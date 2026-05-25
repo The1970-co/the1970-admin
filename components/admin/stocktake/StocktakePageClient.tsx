@@ -771,6 +771,9 @@ export default function StocktakePageClient() {
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const lastScanAtRef = useRef(0);
+  const sessionRefreshInFlightRef = useRef<Record<string, Promise<void>>>({});
+  const workerSummaryInFlightRef = useRef<Record<string, Promise<void>>>({});
+  const joinableSessionsInFlightRef = useRef<Record<string, Promise<void>>>({});
 
   useEffect(() => {
     const currentUser = getCurrentUserFromStorage();
@@ -1320,94 +1323,73 @@ export default function StocktakePageClient() {
       return;
     }
 
-    try {
-      const data = await apiRequest<SummaryItem[]>(
-        `/stocktake-sessions/${id}/workers/${selectedWorkerId}/summary`,
-      );
+    const requestKey = `${id}:${selectedWorkerId}`;
+    const existingRequest = workerSummaryInFlightRef.current[requestKey];
+    if (existingRequest) return existingRequest;
 
-      if (Array.isArray(data) && data.length > 0) {
-        commitWorkerSummary(data);
+    const request = (async () => {
+      try {
+        const data = await apiRequest<SummaryItem[]>(
+          `/stocktake-sessions/${id}/workers/${selectedWorkerId}/summary`,
+        );
+
+        if (Array.isArray(data) && data.length > 0) {
+          commitWorkerSummary(data);
+          return;
+        }
+
+        const fallback = buildWorkerSummaryFromEvents(selectedWorkerId);
+        if (fallback.length > 0) commitWorkerSummary(fallback);
+      } catch {
+        const fallback = buildWorkerSummaryFromEvents(selectedWorkerId);
+        if (fallback.length > 0) commitWorkerSummary(fallback);
+      } finally {
+        delete workerSummaryInFlightRef.current[requestKey];
       }
-    } catch {
-      const fallback = buildWorkerSummaryFromEvents(selectedWorkerId);
-      if (fallback.length > 0) commitWorkerSummary(fallback);
-    }
+    })();
+
+    workerSummaryInFlightRef.current[requestKey] = request;
+    return request;
   };
 
   const refreshSession = async (
     sessionId?: string,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; force?: boolean },
   ) => {
     const id = sessionId || session?.id;
     if (!id) return;
 
-    try {
-      if (!options?.silent) setRefreshing(true);
-      const [sessionData, summaryData] = await Promise.all([
-        apiRequest<RealtimeSession>(`/stocktake-sessions/${id}`),
-        apiRequest<SummaryItem[]>(`/stocktake-sessions/${id}/summary`),
-      ]);
+    const requestKey = id;
+    const existingRequest = sessionRefreshInFlightRef.current[requestKey];
+    if (!options?.force && existingRequest) return existingRequest;
 
-      setSession(sessionData);
-      if (Array.isArray(summaryData) && summaryData.length > 0) {
-        setSummary(summaryData);
-      }
-      setLastUpdatedAt(new Date().toISOString());
+    const request = (async () => {
+      try {
+        if (!options?.silent) setRefreshing(true);
+        const [sessionData, summaryData] = await Promise.all([
+          apiRequest<RealtimeSession>(`/stocktake-sessions/${id}`),
+          apiRequest<SummaryItem[]>(`/stocktake-sessions/${id}/summary`),
+        ]);
 
-      const currentWorkerId = worker?.id;
-      if (currentWorkerId) {
-        try {
-          const workerData = await apiRequest<SummaryItem[]>(
-            `/stocktake-sessions/${id}/workers/${currentWorkerId}/summary`,
-          );
-
-          if (Array.isArray(workerData) && workerData.length > 0) {
-            commitWorkerSummary(workerData);
-          } else {
-            const grouped = new Map<string, SummaryItem>();
-            (sessionData.scanEvents || [])
-              .filter((event) => event.workerId === currentWorkerId)
-              .forEach((event) => {
-                const key = event.variantId || event.sku;
-                const current = grouped.get(key) || {
-                  variantId: event.variantId,
-                  workerId: event.workerId,
-                  sku: event.sku,
-                  counted: 0,
-                  status: event.status,
-                  events: 0,
-                  zone: event.zone,
-                  locationCode: event.locationCode,
-                  lastScannedAt: event.createdAt,
-                };
-
-                current.counted += event.qtyDelta;
-                current.events += 1;
-                current.lastScannedAt = event.createdAt;
-
-                if (event.status !== "OK") current.status = event.status;
-
-                grouped.set(key, current);
-              });
-
-            const fallbackRows = Array.from(grouped.values()).filter(
-              (row) => Number(row.counted || 0) > 0,
-            );
-            if (fallbackRows.length > 0) commitWorkerSummary(fallbackRows);
-          }
-        } catch {
-          const fallbackRows = buildWorkerSummaryFromEvents(currentWorkerId);
-          if (fallbackRows.length > 0) commitWorkerSummary(fallbackRows);
+        setSession(sessionData);
+        if (Array.isArray(summaryData) && summaryData.length > 0) {
+          setSummary(summaryData);
         }
+        setLastUpdatedAt(new Date().toISOString());
+      } catch (err) {
+        if (!options?.silent) {
+          setMessage(
+            err instanceof Error ? err.message : "Không refresh được session.",
+          );
+        }
+      } finally {
+        delete sessionRefreshInFlightRef.current[requestKey];
+        if (!options?.silent) setRefreshing(false);
       }
-    } catch (err) {
-      if (!options?.silent)
-        setMessage(
-          err instanceof Error ? err.message : "Không refresh được session.",
-        );
-    } finally {
-      if (!options?.silent) setRefreshing(false);
-    }
+    })();
+
+    sessionRefreshInFlightRef.current[requestKey] = request;
+    return request;
   };
 
   useEffect(() => {
@@ -1505,9 +1487,10 @@ export default function StocktakePageClient() {
 
     const timer = window.setInterval(() => {
       // Không refresh đè ngay sau khi máy tít vừa scan, tránh dòng vừa hiện bị nháy mất.
-      if (Date.now() - lastScanAtRef.current < 2500) return;
+      if (Date.now() - lastScanAtRef.current < 3500) return;
       void refreshSession(session.id, { silent: true });
-    }, 6000);
+      if (worker?.id) void refreshWorkerSummary(session.id, worker.id);
+    }, 12000);
 
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1596,34 +1579,51 @@ export default function StocktakePageClient() {
         ? ""
         : targetBranchId || branchId || currentBranchId || "";
 
-    try {
-      setLoadingJoinableSessions(true);
-      setJoinableSessionsError("");
+    const requestKey = finalBranchId || "__ALL__";
+    const existingRequest = joinableSessionsInFlightRef.current[requestKey];
+    if (existingRequest) return existingRequest;
 
-      const query = finalBranchId
-        ? `?branchId=${encodeURIComponent(finalBranchId)}`
-        : "";
-      const data = await apiRequest<RealtimeSession[]>(
-        `/stocktake-sessions${query}`,
-      );
+    const request = (async () => {
+      try {
+        setLoadingJoinableSessions(true);
+        setJoinableSessionsError("");
 
-      const activeRows = (Array.isArray(data) ? data : []).filter((item) =>
-        ["IN_PROGRESS", "PAUSED"].includes(
-          String(item.status || "").toUpperCase(),
-        ),
-      );
+        const q = new URLSearchParams();
+        if (finalBranchId) q.set("branchId", finalBranchId);
+        q.set("limit", "100");
+        const query = q.toString() ? `?${q.toString()}` : "";
 
-      setJoinableSessions(activeRows);
-    } catch (err) {
-      setJoinableSessions([]);
-      setJoinableSessionsError(
-        err instanceof Error
-          ? err.message
-          : "Không tải được danh sách phiên tổng đang mở.",
-      );
-    } finally {
-      setLoadingJoinableSessions(false);
-    }
+        const data = await apiRequest<any>(`/stocktake-sessions${query}`);
+        const rows = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data?.items)
+              ? data.items
+              : [];
+
+        const activeRows = rows.filter((item: RealtimeSession) =>
+          ["DRAFT", "IN_PROGRESS", "PAUSED"].includes(
+            String(item.status || "").toUpperCase(),
+          ),
+        );
+
+        setJoinableSessions(activeRows);
+      } catch (err) {
+        setJoinableSessions([]);
+        setJoinableSessionsError(
+          err instanceof Error
+            ? err.message
+            : "Không tải được danh sách phiên tổng đang mở.",
+        );
+      } finally {
+        delete joinableSessionsInFlightRef.current[requestKey];
+        setLoadingJoinableSessions(false);
+      }
+    })();
+
+    joinableSessionsInFlightRef.current[requestKey] = request;
+    return request;
   };
 
   const openJoinModal = () => {
@@ -3752,6 +3752,7 @@ export default function StocktakePageClient() {
 
             <Link
               href={excelImportHref}
+              prefetch={false}
               target="_blank"
               className="mt-4 flex w-full items-center justify-center rounded-xl bg-neutral-950 px-4 py-3 text-sm font-extrabold text-white hover:bg-neutral-800"
             >

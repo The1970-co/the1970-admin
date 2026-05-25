@@ -1,4 +1,4 @@
-import { API_BASE } from "@/lib/api-base";
+import { apiFetch } from "@/lib/api";
 
 export type ApplyStocktakeRow = {
   variantId?: string;
@@ -115,28 +115,8 @@ export type StocktakeLogItem = {
   note?: string | null;
 };
 
-function getTokenFromStorage() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getTokenFromStorage();
-  const headers = new Headers(init?.headers || {});
-
-  if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
+  const res = await apiFetch(path, init as any);
 
   if (!res.ok) {
     let message = `Request failed: ${res.status}`;
@@ -152,6 +132,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export type StocktakeSessionListResponse = {
+  items: StocktakeSessionListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type StocktakeSessionsOverview = {
+  total: number;
+  running: number;
+  finished: number;
+  applied: number;
+  cancelled: number;
+  totalWorkers: number;
+  totalScanEvents: number;
+};
+
 export async function applyStocktake(payload: ApplyStocktakePayload): Promise<ApplyStocktakeResponse> {
   return request<ApplyStocktakeResponse>("/stocktake/apply", {
     method: "POST",
@@ -164,14 +162,46 @@ export async function listStocktakeSessions(params?: {
   status?: string;
   from?: string;
   to?: string;
-}): Promise<StocktakeSessionListItem[]> {
+  page?: number;
+  limit?: number;
+}): Promise<StocktakeSessionListResponse> {
+  const q = new URLSearchParams();
+  if (params?.branchId) q.set("branchId", params.branchId);
+  if (params?.status && params.status !== "ALL") q.set("status", params.status);
+  if (params?.from) q.set("from", params.from);
+  if (params?.to) q.set("to", params.to);
+  if (params?.page) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  const data = await request<StocktakeSessionListResponse | StocktakeSessionListItem[]>(`/stocktake-sessions${suffix}`);
+
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+      page: 1,
+      limit: data.length || params?.limit || 50,
+      totalPages: 1,
+    };
+  }
+
+  return data;
+}
+
+export async function getStocktakeSessionsOverview(params?: {
+  branchId?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+}): Promise<StocktakeSessionsOverview> {
   const q = new URLSearchParams();
   if (params?.branchId) q.set("branchId", params.branchId);
   if (params?.status && params.status !== "ALL") q.set("status", params.status);
   if (params?.from) q.set("from", params.from);
   if (params?.to) q.set("to", params.to);
   const suffix = q.toString() ? `?${q.toString()}` : "";
-  return request<StocktakeSessionListItem[]>(`/stocktake-sessions${suffix}`);
+
+  return request<StocktakeSessionsOverview>(`/stocktake-sessions/summary/overview${suffix}`);
 }
 
 export async function getStocktakeSessionDetail(id: string): Promise<StocktakeSessionDetail> {
@@ -222,11 +252,9 @@ export async function finishStocktakeSession(id: string) {
 }
 
 export async function downloadStocktakeSessionExcel(id: string, fallbackFileName = "kiem-kho.xlsx") {
-  const token = getTokenFromStorage();
-  const res = await fetch(`${API_BASE}/stocktake-sessions/${id}/export-excel`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  const res = await apiFetch(`/stocktake-sessions/${id}/export-excel`, {
     cache: "no-store",
-  });
+  } as any);
 
   if (!res.ok) {
     let message = `Request failed: ${res.status}`;

@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { API_BASE } from "@/lib/api-base";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   downloadStocktakeSessionExcel,
+  getStocktakeSessionsOverview,
   listStocktakeSessions,
   type StocktakeSessionListItem,
+  type StocktakeSessionsOverview,
 } from "@/lib/stocktake-api";
 import { getBranches, type BranchItem } from "@/lib/products-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
@@ -288,16 +290,38 @@ export default function StocktakeSessionsPageClient() {
   const [workerFilter, setWorkerFilter] = useState<WorkerFilter>("ALL");
   const [minScanCount, setMinScanCount] = useState("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(50);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [overview, setOverview] = useState<StocktakeSessionsOverview | null>(null);
+
+  const branchesLoadedRef = useRef(false);
+  const inFlightSessionKeyRef = useRef("");
+  const loadedSessionKeyRef = useRef("");
+  const sessionRequestSeqRef = useRef(0);
 
   useEffect(() => {
     const user = getCurrentUserFromStorage();
     setCurrentUser(user);
-    if (!user) return;
-    setRole(user.role as AppRole);
-    setCurrentBranchId(user.branchId || null);
-    if (user.role !== "admin" && user.role !== "owner" && user.branchId) {
-      setBranchId(user.branchId);
+
+    if (!user) {
+      setReady(true);
+      return;
     }
+
+    const nextRole = (user.role || "admin") as AppRole;
+    const nextBranchId = user.activeBranchId || user.workingBranchId || user.branchId || null;
+
+    setRole(nextRole);
+    setCurrentBranchId(nextBranchId);
+
+    if (nextRole !== "admin" && nextRole !== "owner" && nextBranchId) {
+      setBranchId(nextBranchId);
+    }
+
+    setReady(true);
   }, []);
 
   const isOwner = role === "admin" || role === "owner";
@@ -306,36 +330,89 @@ export default function StocktakeSessionsPageClient() {
   const canCancelStocktake = hasUserPermission(currentUser, "stocktake.cancel");
   const canDeleteStocktake = hasUserPermission(currentUser, "stocktake.delete");
 
-  const loadBranches = async () => {
-    try {
-      const data = await getBranches();
-      setBranches(data);
-      setBranchId((prev) => prev || (!isOwner && currentBranchId ? currentBranchId : ""));
-    } catch {}
-  };
+  const loadBranches = useCallback(async () => {
+    if (branchesLoadedRef.current) return;
 
-  const loadSessions = async () => {
     try {
-      setLoading(true);
-      setMessage("");
-      const data = await listStocktakeSessions({ branchId, status, from, to });
-      setSessions(Array.isArray(data) ? (data as EnrichedStocktakeSession[]) : []);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không tải được lịch sử kiểm kho.");
-    } finally {
-      setLoading(false);
+      branchesLoadedRef.current = true;
+      const data = await getBranches();
+      setBranches(Array.isArray(data) ? data : []);
+    } catch {
+      branchesLoadedRef.current = false;
     }
-  };
+  }, []);
+
+  const loadSessions = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!ready) return;
+
+      const params = { branchId, status, from, to, page, limit };
+      const summaryParams = { branchId, status, from, to };
+      const requestKey = JSON.stringify(params);
+
+      if (!options?.force && inFlightSessionKeyRef.current === requestKey) return;
+      if (!options?.force && loadedSessionKeyRef.current === requestKey) return;
+
+      const requestSeq = sessionRequestSeqRef.current + 1;
+      sessionRequestSeqRef.current = requestSeq;
+      inFlightSessionKeyRef.current = requestKey;
+
+      try {
+        setLoading(true);
+        setMessage("");
+
+        const [listData, overviewData] = await Promise.all([
+          listStocktakeSessions(params),
+          getStocktakeSessionsOverview(summaryParams).catch(() => null),
+        ]);
+
+        if (sessionRequestSeqRef.current !== requestSeq) return;
+
+        loadedSessionKeyRef.current = requestKey;
+        setSessions(Array.isArray(listData.items) ? (listData.items as EnrichedStocktakeSession[]) : []);
+        setTotalItems(Number(listData.total || 0));
+        setTotalPages(Math.max(1, Number(listData.totalPages || 1)));
+        setOverview(overviewData);
+      } catch (err) {
+        if (sessionRequestSeqRef.current !== requestSeq) return;
+
+        setMessage(err instanceof Error ? err.message : "Không tải được lịch sử kiểm kho.");
+        setSessions([]);
+        setTotalItems(0);
+        setTotalPages(1);
+      } finally {
+        if (sessionRequestSeqRef.current === requestSeq) {
+          inFlightSessionKeyRef.current = "";
+          setLoading(false);
+        }
+      }
+    },
+    [branchId, from, limit, page, ready, status, to],
+  );
 
   useEffect(() => {
+    if (!ready) return;
     void loadBranches();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOwner, currentBranchId]);
+  }, [loadBranches, ready]);
 
   useEffect(() => {
     void loadSessions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadSessions]);
+
+  useEffect(() => {
+    setPage(1);
+    loadedSessionKeyRef.current = "";
   }, [branchId, status, from, to]);
+
+
+  useEffect(() => {
+    if (!ready) return;
+    void loadBranches();
+  }, [loadBranches, ready]);
+
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
 
   const branchMap = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
 
@@ -380,15 +457,15 @@ export default function StocktakeSessionsPageClient() {
     branchMap,
   ]);
 
-  const total = visibleSessions.length;
-  const applied = visibleSessions.filter((s) => isApplied(s)).length;
-  const running = visibleSessions.filter((s) =>
+  const total = overview?.total ?? totalItems;
+  const applied = overview?.applied ?? visibleSessions.filter((s) => isApplied(s)).length;
+  const running = overview?.running ?? visibleSessions.filter((s) =>
     ["DRAFT", "IN_PROGRESS", "PAUSED"].includes(String(s.status).toUpperCase()),
   ).length;
-  const finished = visibleSessions.filter((s) => String(s.status).toUpperCase() === "FINISHED").length;
-  const cancelled = visibleSessions.filter((s) => String(s.status).toUpperCase() === "CANCELLED").length;
-  const totalScanEvents = visibleSessions.reduce((sum, item) => sum + getScanCount(item), 0);
-  const totalWorkers = visibleSessions.reduce((sum, item) => sum + getWorkerCount(item), 0);
+  const finished = overview?.finished ?? visibleSessions.filter((s) => String(s.status).toUpperCase() === "FINISHED").length;
+  const cancelled = overview?.cancelled ?? visibleSessions.filter((s) => String(s.status).toUpperCase() === "CANCELLED").length;
+  const totalScanEvents = overview?.totalScanEvents ?? visibleSessions.reduce((sum, item) => sum + getScanCount(item), 0);
+  const totalWorkers = overview?.totalWorkers ?? visibleSessions.reduce((sum, item) => sum + getWorkerCount(item), 0);
 
   const handleCancelSession = async (item: EnrichedStocktakeSession) => {
     if (!canCancelStocktake) {
@@ -406,7 +483,7 @@ export default function StocktakeSessionsPageClient() {
         method: "PATCH",
       });
       setMessage("Đã huỷ phiên kiểm kho.");
-      await loadSessions();
+      await loadSessions({ force: true });
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không huỷ được phiên kiểm kho.");
     } finally {
@@ -434,7 +511,7 @@ Không xoá phiên đã chốt tồn.`,
         method: "DELETE",
       });
       setMessage("Đã xoá phiên kiểm kho.");
-      await loadSessions();
+      await loadSessions({ force: true });
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không xoá được phiên kiểm kho.");
     } finally {
@@ -453,6 +530,8 @@ Không xoá phiên đã chốt tồn.`,
     setMinScanCount("");
     setFrom("");
     setTo("");
+    setPage(1);
+    loadedSessionKeyRef.current = "";
     if (isOwner) setBranchId("");
   };
 
@@ -468,7 +547,7 @@ Không xoá phiên đã chốt tồn.`,
           </p>
         </div>
         {canOpenRealtime ? (
-          <Link href="/stocktake" className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800">
+          <Link href="/stocktake" prefetch={false} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800">
             + Vào màn kiểm realtime
           </Link>
         ) : null}
@@ -547,7 +626,7 @@ Không xoá phiên đã chốt tồn.`,
             Chi nhánh
             <select
               value={branchId}
-              onChange={(e) => setBranchId(e.target.value)}
+              onChange={(e) => { setPage(1); loadedSessionKeyRef.current = ""; setBranchId(e.target.value); }}
               disabled={!isOwner}
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500 disabled:bg-neutral-50"
             >
@@ -564,7 +643,7 @@ Không xoá phiên đã chốt tồn.`,
             Trạng thái
             <select
               value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              onChange={(e) => { setPage(1); loadedSessionKeyRef.current = ""; setStatus(e.target.value); }}
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
             >
               <option value="ALL">Tất cả</option>
@@ -582,7 +661,7 @@ Không xoá phiên đã chốt tồn.`,
             <input
               type="date"
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(e) => { setPage(1); loadedSessionKeyRef.current = ""; setFrom(e.target.value); }}
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
             />
           </label>
@@ -592,7 +671,7 @@ Không xoá phiên đã chốt tồn.`,
             <input
               type="date"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              onChange={(e) => { setPage(1); loadedSessionKeyRef.current = ""; setTo(e.target.value); }}
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
             />
           </label>
@@ -679,15 +758,46 @@ Không xoá phiên đã chốt tồn.`,
           <div>
             <p className="text-base font-bold text-neutral-950">Danh sách phiên kiểm</p>
             <p className="mt-1 text-xs font-medium text-neutral-500">
-              Đang hiển thị {formatNumber(visibleSessions.length)} / {formatNumber(sessions.length)} phiên.
+              Đang hiển thị {formatNumber(visibleSessions.length)} / {formatNumber(sessions.length)} phiên ở trang {formatNumber(page)}.
+              Tổng theo bộ lọc: {formatNumber(totalItems)} phiên.
             </p>
           </div>
-          <button
-            onClick={() => void loadSessions()}
-            className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-neutral-50"
-          >
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => {
+                loadedSessionKeyRef.current = "";
+                setPage((value) => Math.max(1, value - 1));
+              }}
+              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Trước
+            </button>
+            <span className="min-w-[92px] text-center text-xs font-bold text-neutral-500">
+              {formatNumber(page)} / {formatNumber(totalPages)}
+            </span>
+            <button
+              type="button"
+              disabled={page >= totalPages || loading}
+              onClick={() => {
+                loadedSessionKeyRef.current = "";
+                setPage((value) => Math.min(totalPages, value + 1));
+              }}
+              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Sau
+            </button>
+            <button
+              onClick={() => {
+                loadedSessionKeyRef.current = "";
+                void loadSessions({ force: true });
+              }}
+              className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-neutral-50"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="overflow-auto">
@@ -735,7 +845,7 @@ Không xoá phiên đã chốt tồn.`,
                   return (
                     <tr key={item.id} className="border-t border-neutral-100 align-top hover:bg-neutral-50/70">
                       <td className="px-4 py-3">
-                        <Link href={`/stocktake-sessions/${item.id}`} target="_blank" rel="noopener noreferrer" className="font-bold text-neutral-950 hover:underline">
+                        <Link href={`/stocktake-sessions/${item.id}`} prefetch={false} target="_blank" rel="noopener noreferrer" className="font-bold text-neutral-950 hover:underline">
                           {item.name || item.id}
                         </Link>
                         <p className="mt-1 font-mono text-xs text-neutral-400">{item.id}</p>
@@ -829,6 +939,7 @@ Không xoá phiên đã chốt tồn.`,
                         <div className="flex justify-end gap-2">
                           <Link
                             href={`/stocktake-sessions/${item.id}`}
+                            prefetch={false}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"

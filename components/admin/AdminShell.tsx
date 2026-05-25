@@ -209,7 +209,7 @@ function SidebarContent({
                   {item.children.map((child) => {
                     const isActive = isMenuActive(pathname, child.href);
                     return (
-                      <Link key={child.href} href={child.href!} onClick={onNavigate} className={`block rounded-2xl px-3 py-2.5 text-sm transition ${isActive ? "bg-neutral-900 font-medium text-white shadow-sm" : "text-neutral-700 hover:bg-neutral-100"}`}>
+                      <Link key={child.href} href={child.href!} prefetch={false} onClick={onNavigate} className={`block rounded-2xl px-3 py-2.5 text-sm transition ${isActive ? "bg-neutral-900 font-medium text-white shadow-sm" : "text-neutral-700 hover:bg-neutral-100"}`}>
                         {child.label}
                       </Link>
                     );
@@ -225,6 +225,7 @@ function SidebarContent({
             <Link
               key={item.href}
               href={item.href!}
+              prefetch={false}
               onClick={onNavigate}
               className={
                 isDashboard

@@ -10,17 +10,44 @@ type RequestOptions = RequestInit & {
   auth?: boolean;
   skipRefresh?: boolean;
   redirectOnUnauthorized?: boolean;
+  timeoutMs?: number;
 };
 
 let refreshPromise: Promise<string | null> | null = null;
 
+function isAuthPath(path: string) {
+  return path === "/auth/me" || path === "/auth/refresh" || path === "/auth/logout";
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs?: number) {
+  if (!timeoutMs || timeoutMs <= 0 || typeof AbortController === "undefined") {
+    return fetch(input, init);
+  }
+
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: init.signal || controller.signal,
+    });
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
 async function refreshAccessToken() {
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-    })
+    refreshPromise = fetchWithTimeout(
+      `${API_BASE}/auth/refresh`,
+      {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+      },
+      10000,
+    )
       .then(async (res) => {
         if (!res.ok) return null;
         const data = await res.json().catch(() => null);
@@ -48,6 +75,7 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
     auth = true,
     skipRefresh = false,
     redirectOnUnauthorized = true,
+    timeoutMs,
     headers,
     ...rest
   } = options;
@@ -72,12 +100,18 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
       finalHeaders["Content-Type"] = "application/json";
     }
 
-    return fetch(`${API_BASE}${path}`, {
-      ...rest,
-      headers: finalHeaders,
-      credentials: "include",
-      cache: "no-store",
-    });
+    const effectiveTimeoutMs = timeoutMs ?? (isAuthPath(path) ? 10000 : undefined);
+
+    return fetchWithTimeout(
+      `${API_BASE}${path}`,
+      {
+        ...rest,
+        headers: finalHeaders,
+        credentials: "include",
+        cache: "no-store",
+      },
+      effectiveTimeoutMs,
+    );
   };
 
   let res = await makeRequest(getTokenFromStorage());
