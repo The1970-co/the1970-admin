@@ -1501,6 +1501,13 @@ export default function ReturnCreatePageClient({
     returnReceiveBranchId: receiveBranchId,
     exchangeIssueBranchId: exchangeIssueBranchId || receiveBranchId,
 
+    // Cho phép đơn đổi xuất kho âm giống flow tạo đơn/POS.
+    // Nếu backend đang whitelist DTO, cần bổ sung các field này vào DTO/service backend nữa.
+    allowNegativeStock: true,
+    allowNegativeInventory: true,
+    allowOutOfStockExchange: true,
+    skipExchangeStockCheck: true,
+
     type: exchangeLines.length ? "RETURN_EXCHANGE" : "RETURN",
     status: statusMode,
 
@@ -1566,6 +1573,9 @@ export default function ReturnCreatePageClient({
         unitPrice: Number(line.price || 0),
         refundPrice: Number(line.price || 0),
         reason: "Sản phẩm đổi cho khách",
+        allowNegativeStock: true,
+        allowNegativeInventory: true,
+        stockPolicy: "ALLOW_NEGATIVE",
       })),
     ],
   });
