@@ -371,12 +371,23 @@ function shipmentStatusText(status?: string | null, carrier?: string | null) {
   return status || "—";
 }
 
+const AHAMOVE_EXPRESS_TRACKING_BASE_URL = "https://express.ahamove.com/s";
+
 function trackingLinkForShipment(shipment?: ShipmentItem | null) {
   if (!shipment) return "";
   const carrier = String(shipment.carrier || "").toUpperCase();
 
   if (carrier.includes("AHAMOVE")) {
-    return shipment.ahamoveTrackingUrl || "";
+    const directTrackingUrl = String(shipment.ahamoveTrackingUrl || "").trim();
+    if (directTrackingUrl) return directTrackingUrl;
+
+    const ahamoveCode = String(
+      shipment.ahamoveOrderId || shipment.trackingCode || "",
+    ).trim();
+
+    return ahamoveCode
+      ? `${AHAMOVE_EXPRESS_TRACKING_BASE_URL}/${encodeURIComponent(ahamoveCode)}`
+      : "";
   }
 
   if (carrier.includes("GHN") && shipment.trackingCode) {
@@ -1638,7 +1649,9 @@ function MobileOrderDetailView({
                     rel="noreferrer"
                     className="text-blue-600 underline"
                   >
-                    Mở tracking
+                    {String(viewOrder.shipment?.carrier || "").toUpperCase().includes("AHAMOVE")
+                      ? "Mở AhaMove"
+                      : "Mở tracking"}
                   </a>
                 }
               />
@@ -3973,10 +3986,10 @@ export default function OrderDetailPageClient({
                       {codEditable ? (
                         <>
                           <ActionButton onClick={() => handleOpenCodEdit("normal")}>
-                            Sửa COD thường
+                            SỬA COD ĐỔI HÀNG
                           </ActionButton>
                           <ActionButton tone="danger" onClick={() => handleOpenCodEdit("partial")}>
-                            Sửa COD giao hàng 1 phần
+                            SỬA COD GIAO HÀNG 1 PHẦN
                           </ActionButton>
                         </>
                       ) : null}
@@ -4960,8 +4973,8 @@ export default function OrderDetailPageClient({
                 <h3 className="text-[15px] font-semibold text-neutral-900">
                   {editMode === "cod"
                     ? codEditFlow === "partial"
-                      ? "Sửa COD giao hàng 1 phần"
-                      : "Sửa COD thường"
+                      ? "SỬA COD GIAO HÀNG 1 PHẦN"
+                      : "SỬA COD ĐỔI HÀNG"
                     : "Chỉnh sửa giao hàng"}
                 </h3>
                 <p className="text-[11px] text-neutral-500">
