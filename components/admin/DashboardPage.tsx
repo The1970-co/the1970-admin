@@ -2571,18 +2571,23 @@ export default function DashboardPage() {
     },
   );
 
+  const matchesProductFulfillmentFilter = (item: ProductOrderReportItem) => {
+    if (productFulfillmentFilter === "shipped") return item.shippedQty > 0;
+    if (productFulfillmentFilter === "unshipped") {
+      return item.unshippedQty > 0 || item.shippedQty === 0;
+    }
+    return true;
+  };
+
   const productReportBaseRows = productColumns.mainProduct
     ? mergeProductRowsByMainProduct(productReportRows)
     : productReportRows;
 
-  const productReportRowsToShow = productReportBaseRows
-    .filter((item) => {
-      if (productFulfillmentFilter === "shipped") return item.shippedQty > 0;
-      if (productFulfillmentFilter === "unshipped") {
-        return item.unshippedQty > 0 || item.shippedQty === 0;
-      }
-      return true;
-    })
+  const productReportFilteredBaseRows = productReportBaseRows.filter(
+    matchesProductFulfillmentFilter,
+  );
+
+  const productReportRowsToShow = [...productReportFilteredBaseRows]
     .sort((a, b) => {
       const av = toNumber(a[productReportSort]);
       const bv = toNumber(b[productReportSort]);
@@ -2591,15 +2596,41 @@ export default function DashboardPage() {
     })
     .slice(0, 50);
 
-  const productReportSummary = productReportRowsToShow.reduce(
+  const productReportSummarySourceRows = productReportRows.filter(
+    matchesProductFulfillmentFilter,
+  );
+  const productReportSummaryOrderIds = new Set<string>();
+  let productReportFallbackOrderCount = 0;
+
+  productReportSummarySourceRows.forEach((item, itemIndex) => {
+    const details = Array.isArray(item.orderDetails) ? item.orderDetails : [];
+    if (details.length) {
+      details.forEach((detail, detailIndex) => {
+        const key = String(
+          detail.orderId || detail.orderCode || `${item.id || itemIndex}-${detailIndex}`,
+        ).trim();
+        if (key) productReportSummaryOrderIds.add(key);
+      });
+      return;
+    }
+
+    productReportFallbackOrderCount += toNumber(item.orderCount);
+  });
+
+  const productReportSummaryTotals = productReportSummarySourceRows.reduce(
     (acc, item) => ({
-      productCount: acc.productCount + 1,
-      orderCount: acc.orderCount + item.orderCount,
       quantity: acc.quantity + item.quantity,
       revenue: acc.revenue + item.revenue,
     }),
-    { productCount: 0, orderCount: 0, quantity: 0, revenue: 0 },
+    { quantity: 0, revenue: 0 },
   );
+
+  const productReportSummary = {
+    productCount: productReportFilteredBaseRows.length,
+    orderCount: productReportSummaryOrderIds.size || productReportFallbackOrderCount,
+    quantity: productReportSummaryTotals.quantity,
+    revenue: productReportSummaryTotals.revenue,
+  };
 
   const warRoomRangeText = dashboardRangeDescription(warRoomRange);
   const productReportRangeText = dashboardRangeDescription(productReportRange);
@@ -3242,7 +3273,7 @@ export default function DashboardPage() {
               <div>
                 <p className="text-sm text-neutral-500">{`Đơn tạo ${warRoomRangeText.toLowerCase()}`}</p>
                 <p className="mt-3 text-[30px] font-semibold tracking-tight text-neutral-950 xl:text-[38px]">
-                  {formatQty(warRoomOrderCount)}
+                  {formatQty(liveOrderTotal)}
                 </p>
               </div>
               <span className="rounded-full border border-neutral-200 px-3 py-1 text-[11px] font-medium text-neutral-500">

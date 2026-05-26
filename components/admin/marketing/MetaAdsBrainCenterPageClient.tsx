@@ -412,7 +412,7 @@ function Toolbar({
   );
 }
 
-function MainTable({ rows, level, loading }: { rows: BrainRow[]; level: LevelKey; loading: boolean }) {
+function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level: LevelKey; loading: boolean; onSelect: (row: BrainRow) => void }) {
   const total = rows.reduce(
     (acc, row) => {
       acc.spend += n(row.metrics?.spend);
@@ -447,7 +447,7 @@ function MainTable({ rows, level, loading }: { rows: BrainRow[]; level: LevelKey
         <table className="w-full min-w-[1720px] border-separate border-spacing-0 text-left text-sm">
           <thead className="sticky top-0 z-20 bg-neutral-950 text-[11px] uppercase tracking-[0.12em] text-white">
             <tr>
-              <th className="w-[44px] px-3 py-3"><input type="checkbox" className="h-4 w-4 rounded" /></th>
+              <th className="w-[44px] px-3 py-3"><input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" /></th>
               <th className="w-[430px] px-3 py-3">Tên</th>
               <th className="px-3 py-3">Phân phối</th>
               <th className="px-3 py-3 text-right">Kết quả Meta</th>
@@ -475,9 +475,9 @@ function MainTable({ rows, level, loading }: { rows: BrainRow[]; level: LevelKey
                 const s = signalScore(row);
                 const hasSpend = n(m.spend) > 0;
                 return (
-                  <tr key={`${level}-${row.id}`} className={`${index % 2 ? "bg-neutral-50/40" : "bg-white"} hover:bg-lime-50/60`}>
+                  <tr key={`${level}-${row.id}`} onClick={() => onSelect(row)} className={`${index % 2 ? "bg-neutral-50/40" : "bg-white"} cursor-pointer hover:bg-lime-50/60`}>
                     <td className="border-b border-neutral-100 px-3 py-3 align-middle">
-                      <input type="checkbox" className="h-4 w-4 rounded" />
+                      <input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" />
                     </td>
                     <td className="border-b border-neutral-100 px-3 py-3">
                       <div className="flex items-center gap-3">
@@ -632,6 +632,150 @@ function InsightRail({ data, rows, productPayload }: { data: BrainOverview | nul
   );
 }
 
+
+function RowDetailDrawer({
+  row,
+  onClose,
+}: {
+  row: BrainRow | null;
+  onClose: () => void;
+}) {
+  if (!row) return null;
+
+  const m = row.metrics || {};
+  const a = productAttr(row);
+  const score = signalScore(row);
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button
+        type="button"
+        aria-label="Đóng chi tiết"
+        className="absolute inset-0 bg-black/30"
+        onClick={onClose}
+      />
+      <aside className="relative h-full w-full max-w-[520px] overflow-y-auto border-l border-neutral-200 bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 border-b border-neutral-200 bg-white px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Chi tiết quảng cáo</p>
+              <h2 className="mt-1 line-clamp-2 text-xl font-semibold text-neutral-950">{row.name}</h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-neutral-200 px-3 py-1.5 text-sm font-semibold text-neutral-600 hover:bg-neutral-50"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-5">
+          {row.thumbnailUrl ? (
+            <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
+              <img src={row.thumbnailUrl} alt="" className="max-h-[320px] w-full object-cover" referrerPolicy="no-referrer" />
+            </div>
+          ) : null}
+
+          <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold">Tín hiệu vận hành</h3>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                score >= 75 ? "bg-emerald-50 text-emerald-700" : score >= 45 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
+              }`}>
+                {score} điểm
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">Chi phí ads</div>
+                <div className="mt-1 font-semibold">{money(m.spend)}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">CTR</div>
+                <div className="mt-1 font-semibold">{pct(m.ctr)}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">Lượt nhấp</div>
+                <div className="mt-1 font-semibold">{compact(m.clicks)}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">CPC</div>
+                <div className="mt-1 font-semibold">{n(m.cpc) ? money(m.cpc) : "—"}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+            <h3 className="font-semibold">Sản phẩm / đơn hệ thống</h3>
+            <p className="mt-1 text-xs leading-5 text-neutral-500">
+              Dữ liệu đơn là order thật theo sản phẩm. Gắn vào ads theo tên/SKU, chưa phải fbclid/pixel chuẩn.
+            </p>
+
+            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-xl bg-emerald-50 p-3">
+                <div className="text-xs text-emerald-700">Đơn hệ thống</div>
+                <div className="mt-1 font-semibold text-emerald-800">{compact(a.orderCount)}</div>
+              </div>
+              <div className="rounded-xl bg-emerald-50 p-3">
+                <div className="text-xs text-emerald-700">Doanh thu HT</div>
+                <div className="mt-1 font-semibold text-emerald-800">{money(a.revenue)}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">SKU match</div>
+                <div className="mt-1 truncate font-semibold">{a.sku || "—"}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">Real ROAS ƯT</div>
+                <div className="mt-1 font-semibold">{n(a.realRoasEstimate) ? ratio(a.realRoasEstimate) : "—"}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-xl bg-neutral-50 p-3">
+              <div className="text-xs text-neutral-400">Sản phẩm match</div>
+              <div className="mt-1 text-sm font-semibold">{a.productName || "Chưa match sản phẩm"}</div>
+              <div className="mt-1 text-xs text-neutral-500">{a.label || "—"}</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+            <h3 className="font-semibold">Đơn mẫu</h3>
+            <div className="mt-3 space-y-2">
+              {(a.sampleOrders || []).slice(0, 8).map((order, index) => (
+                <div key={`${order.orderCode || index}`} className="flex items-center justify-between rounded-xl bg-neutral-50 p-3 text-sm">
+                  <div>
+                    <div className="font-semibold">{order.orderCode || `Đơn ${index + 1}`}</div>
+                    <div className="text-xs text-neutral-500">{order.status || "—"}</div>
+                  </div>
+                  <div className="font-semibold">{money(order.revenue)}</div>
+                </div>
+              ))}
+              {!a.sampleOrders?.length ? (
+                <div className="rounded-xl bg-neutral-50 p-3 text-sm font-medium text-neutral-400">
+                  Chưa có đơn mẫu để hiển thị.
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {row.previewShareableLink ? (
+            <a
+              href={row.previewShareableLink}
+              target="_blank"
+              rel="noreferrer"
+              className="block rounded-2xl bg-neutral-950 px-4 py-3 text-center text-sm font-semibold text-white"
+            >
+              Mở preview Meta
+            </a>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+
 export default function MetaAdsBrainCenterPageClient() {
   const [range, setRange] = useState<RangeKey>("yesterday");
   const [level, setLevel] = useState<LevelKey>("ad");
@@ -643,6 +787,7 @@ export default function MetaAdsBrainCenterPageClient() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
+  const [selectedRow, setSelectedRow] = useState<BrainRow | null>(null);
 
   async function load() {
     setLoading(true);
@@ -709,7 +854,7 @@ export default function MetaAdsBrainCenterPageClient() {
         <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
           <div className="flex w-full flex-col gap-4 border-b border-neutral-200 bg-neutral-950 px-5 py-5 text-white xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V10 Operating System</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V11 Detail Drawer</p>
               <h1 className="mt-2 font-serif text-[34px] font-medium tracking-tight">Meta Ads Operating Center</h1>
               <p className="mt-2 max-w-5xl text-sm font-medium leading-6 text-neutral-300">
                 Bảng vận hành là trung tâm. KPI tổng dùng số chính thức từ Meta. Sản phẩm tạo đơn đọc từ order thật trong hệ thống; gắn ads theo tên/SKU chỉ là gợi ý, chưa phải fbclid chuẩn.
@@ -752,11 +897,13 @@ export default function MetaAdsBrainCenterPageClient() {
               syncing={syncing}
               onReload={load}
             />
-            <MainTable rows={rows} level={level} loading={loading} />
+            <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
           </div>
           <InsightRail data={data} rows={sourceRows} productPayload={productPayload} />
         </section>
       </div>
+
+      <RowDetailDrawer row={selectedRow} onClose={() => setSelectedRow(null)} />
     </main>
   );
 }

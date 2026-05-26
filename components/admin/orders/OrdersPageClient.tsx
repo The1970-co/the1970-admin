@@ -170,6 +170,8 @@ const TABLE_MIN_WIDTH = 3240;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
+const ORDER_CLIENT_SEARCH_PAGE_SIZE = 1000;
+const ORDER_CLIENT_SEARCH_MAX_PAGES = 5;
 
 const COLUMN_DEFS: ColumnDef[] = [
   { key: "orderCode", label: "Mã đơn", defaultVisible: true },
@@ -1720,6 +1722,29 @@ function isLikelyExactCarrierCode(keyword: string) {
   return normalized.length >= 6 && !String(keyword || "").trim().includes(" ");
 }
 
+function hasSearchKeyword(value?: string | null) {
+  return Boolean(String(value || "").trim());
+}
+
+function shouldFallbackToClientOrderSearch(keyword?: string | null) {
+  const raw = String(keyword || "").trim();
+  if (!raw) return false;
+
+  // SKU thường là mã ngắn/dài có chữ + số/ký tự phân tách. Backend /orders có thể
+  // chưa join order items để search được SKU, nên nếu server trả rỗng sẽ tải rộng
+  // theo các filter còn lại và lọc lại trên frontend.
+  const normalized = normalizeTrackingLikeText(raw);
+  const hasAlpha = /[A-Z]/.test(normalized);
+  const hasDigit = /\d/.test(normalized);
+  const hasSkuSeparator = /[-_.\/]/.test(raw);
+
+  return (
+    raw.toLowerCase().includes("sku") ||
+    hasSkuSeparator ||
+    (normalized.length >= 4 && hasAlpha && hasDigit)
+  );
+}
+
 function orderMatchesExactCarrierCode(order: NormalizedOrder, keyword: string) {
   const needle = normalizeTrackingLikeText(keyword);
   if (!needle) return false;
@@ -1774,11 +1799,23 @@ function getOrderSearchValues(order: NormalizedOrder) {
     order.items.forEach((item: any) => {
       [
         item?.sku,
+        item?.skuCode,
+        item?.barcode,
+        item?.variantSku,
+        item?.variantSKU,
+        item?.productSku,
+        item?.productSKU,
         item?.productName,
         item?.name,
         item?.variant?.sku,
+        item?.variant?.skuCode,
+        item?.variant?.barcode,
+        item?.variant?.code,
         item?.variant?.color,
         item?.variant?.size,
+        item?.product?.sku,
+        item?.product?.skuCode,
+        item?.product?.code,
         item?.product?.name,
       ].forEach((value) => pushSearchValue(values, value));
     });
@@ -3450,16 +3487,22 @@ export default function OrdersPageClient() {
         .map((item) => String(item || "").trim())
         .filter(Boolean)
         .join(" ");
+      const shouldTryClientSearchFallback = shouldFallbackToClientOrderSearch(serverKeyword);
 
       const hasSmartSearch = Boolean(String(smartSearch || "").trim());
-      const requestPageSize = hasSmartSearch ? Math.max(pageSize, 1000) : pageSize;
+      const requestPageSize = hasSmartSearch ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE) : pageSize;
       const requestPage = hasSmartSearch ? 1 : page;
 
-      const buildParams = (targetPage: number) => {
+      const buildParams = (
+        targetPage: number,
+        options?: { includeKeyword?: boolean; pageSizeOverride?: number },
+      ) => {
         const params = new URLSearchParams();
         params.set("page", String(targetPage));
-        params.set("pageSize", String(requestPageSize));
-        if (serverKeyword) params.set("q", serverKeyword);
+        params.set("pageSize", String(options?.pageSizeOverride || requestPageSize));
+        params.set("includeItems", "1");
+        params.set("withItems", "1");
+        if (serverKeyword && options?.includeKeyword !== false) params.set("q", serverKeyword);
 
         if (!canViewAllOrders && canViewOwnOrders) {
           params.set("viewScope", "own");
@@ -3489,8 +3532,11 @@ export default function OrdersPageClient() {
         return params;
       };
 
-      const fetchOrderPage = async (targetPage: number) => {
-        const res = await apiFetch(`/orders?${buildParams(targetPage).toString()}`, {
+      const fetchOrderPage = async (
+        targetPage: number,
+        options?: { includeKeyword?: boolean; pageSizeOverride?: number },
+      ) => {
+        const res = await apiFetch(`/orders?${buildParams(targetPage, options).toString()}`, {
           method: "GET",
           headers: {
             Accept: "application/json",
@@ -3521,9 +3567,38 @@ export default function OrdersPageClient() {
       };
 
       const firstPage = await fetchOrderPage(requestPage);
-      const data = firstPage.data;
-      const remoteTotalPages = firstPage.totalPages;
-      const remoteTotalItems = firstPage.total;
+      let data = firstPage.data;
+      let remoteTotalPages = firstPage.totalPages;
+      let remoteTotalItems = firstPage.total;
+
+      if (
+        hasSearchKeyword(serverKeyword) &&
+        shouldTryClientSearchFallback &&
+        data.length === 0
+      ) {
+        const fallbackFirstPage = await fetchOrderPage(1, {
+          includeKeyword: false,
+          pageSizeOverride: ORDER_CLIENT_SEARCH_PAGE_SIZE,
+        });
+        const fallbackData = [...fallbackFirstPage.data];
+        const fallbackTotalPages = Math.min(
+          Number(fallbackFirstPage.totalPages || 1),
+          ORDER_CLIENT_SEARCH_MAX_PAGES,
+        );
+
+        for (let nextPage = 2; nextPage <= fallbackTotalPages; nextPage += 1) {
+          if (abortController.signal.aborted) break;
+          const next = await fetchOrderPage(nextPage, {
+            includeKeyword: false,
+            pageSizeOverride: ORDER_CLIENT_SEARCH_PAGE_SIZE,
+          });
+          fallbackData.push(...next.data);
+        }
+
+        data = fallbackData;
+        remoteTotalPages = 1;
+        remoteTotalItems = fallbackData.length;
+      }
 
       const scopedData =
         !canViewAllOrders && canViewOwnOrders
