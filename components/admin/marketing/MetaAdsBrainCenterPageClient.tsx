@@ -3,8 +3,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 type RangeKey = "today" | "yesterday" | "7d" | "10d" | "30d";
+type SourceMode = "facebook" | "all" | "pos";
 type LevelKey = "campaign" | "adset" | "ad";
-type FilterKey = "all" | "active" | "spent" | "hasPurchase" | "noMetaPurchase" | "hasSystemOrder" | "noSystemOrder" | "cpaHigh" | "ctrHigh";
+type FilterKey = "all" | "active" | "spent" | "hasPurchase" | "noMetaPurchase" | "hasSystemOrder" | "noSystemOrder" | "cpaHigh" | "ctrHigh" | "familyShared" | "unmatched";
 
 type Metrics = {
   spend?: number;
@@ -19,6 +20,11 @@ type Metrics = {
   cpm?: number;
   costPerPurchase?: number;
   roas?: number;
+  messages?: number;
+  conversationStarts?: number;
+  comments?: number;
+  costPerMessage?: number;
+  costPerConversation?: number;
 };
 
 type ProductAttribution = {
@@ -33,6 +39,13 @@ type ProductAttribution = {
   averageOrderValue?: number;
   realRoasEstimate?: number;
   sampleOrders?: Array<{ orderCode?: string; revenue?: number; quantity?: number; status?: string }>;
+  allocationMode?: string;
+  familySku?: string | null;
+  familyOrderCount?: number;
+  familyRevenue?: number;
+  familyOrderRevenue?: number;
+  familyRoasEstimate?: number;
+  sharedFamilyCount?: number;
   note?: string;
 };
 
@@ -48,6 +61,10 @@ type BrainRow = {
   previewShareableLink?: string | null;
   metrics: Metrics;
   productAttribution?: ProductAttribution;
+  childCount?: number;
+  familyCount?: number;
+  childAds?: BrainRow[];
+  familyFlows?: Array<{ familySku: string; ads: number; spend: number; revenue: number; orders: number; names: string[] }>;
 };
 
 type ProductPerformanceRow = {
@@ -58,6 +75,8 @@ type ProductPerformanceRow = {
   quantity: number;
   revenue: number;
   averageOrderValue: number;
+  familySku?: string;
+  orderRevenue?: number;
 };
 
 type ProductPerformancePayload = {
@@ -66,6 +85,7 @@ type ProductPerformancePayload = {
   totalOrders?: number;
   totalQuantity?: number;
   totalRevenue?: number;
+  totalOrderRevenue?: number;
   rows?: ProductPerformanceRow[];
 };
 
@@ -136,6 +156,8 @@ const FILTERS: Array<{ id: FilterKey; label: string }> = [
   { id: "noSystemOrder", label: "Chưa match đơn hệ thống" },
   { id: "cpaHigh", label: "CPA cao" },
   { id: "ctrHigh", label: "CTR tốt" },
+  { id: "familyShared" as FilterKey, label: "Family bị trùng ads" },
+  { id: "unmatched" as FilterKey, label: "Chưa match SKU" },
 ];
 
 function getToken() {
@@ -240,6 +262,163 @@ function productAttr(row: BrainRow): ProductAttribution {
   return row.productAttribution || {};
 }
 
+function emptyMetrics(): Metrics {
+  return {
+    spend: 0,
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    inlineLinkClicks: 0,
+    purchases: 0,
+    purchaseValue: 0,
+    ctr: 0,
+    cpc: 0,
+    cpm: 0,
+    costPerPurchase: 0,
+    roas: 0,
+  };
+}
+
+function addMetrics(target: Metrics, source?: Metrics) {
+  target.spend = n(target.spend) + n(source?.spend);
+  target.impressions = n(target.impressions) + n(source?.impressions);
+  target.reach = n(target.reach) + n(source?.reach);
+  target.clicks = n(target.clicks) + n(source?.clicks);
+  target.inlineLinkClicks = n(target.inlineLinkClicks) + n(source?.inlineLinkClicks);
+  target.purchases = n(target.purchases) + n(source?.purchases);
+  target.purchaseValue = n(target.purchaseValue) + n(source?.purchaseValue);
+}
+
+function finalizeMetrics(metrics: Metrics) {
+  metrics.ctr = n(metrics.impressions) > 0 ? (n(metrics.clicks) / n(metrics.impressions)) * 100 : 0;
+  metrics.cpc = n(metrics.clicks) > 0 ? n(metrics.spend) / n(metrics.clicks) : 0;
+  metrics.cpm = n(metrics.impressions) > 0 ? (n(metrics.spend) / n(metrics.impressions)) * 1000 : 0;
+  metrics.costPerPurchase = n(metrics.purchases) > 0 ? n(metrics.spend) / n(metrics.purchases) : 0;
+  metrics.roas = n(metrics.spend) > 0 ? n(metrics.purchaseValue) / n(metrics.spend) : 0;
+}
+
+function buildFamilyFlows(children: BrainRow[]) {
+  const map = new Map<string, { familySku: string; ads: number; spend: number; revenue: number; orders: number; names: string[] }>();
+
+  for (const row of children) {
+    const a = productAttr(row);
+    const family = String(a.familySku || a.sku || "").trim();
+    if (!family) continue;
+
+    const current = map.get(family) || { familySku: family, ads: 0, spend: 0, revenue: 0, orders: 0, names: [] };
+    current.ads += 1;
+    current.spend += n(row.metrics?.spend);
+    current.revenue = Math.max(current.revenue, n(a.familyRevenue || a.revenue));
+    current.orders = Math.max(current.orders, n(a.familyOrderCount || a.orderCount));
+    if (row.name && current.names.length < 5) current.names.push(row.name);
+    map.set(family, current);
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.spend - a.spend);
+}
+
+function aggregateRows(rows: BrainRow[], level: LevelKey): BrainRow[] {
+  if (level === "ad") return rows || [];
+
+  const grouped = new Map<string, BrainRow[]>();
+
+  for (const row of rows || []) {
+    const key =
+      level === "campaign"
+        ? String(row.campaignName || row.name || "Không rõ chiến dịch")
+        : `${row.campaignName || "Không rõ chiến dịch"}|||${row.adSetName || "Không rõ nhóm quảng cáo"}`;
+
+    const list = grouped.get(key) || [];
+    list.push(row);
+    grouped.set(key, list);
+  }
+
+  return Array.from(grouped.entries()).map(([key, children]) => {
+    const metrics = emptyMetrics();
+    for (const child of children) addMetrics(metrics, child.metrics);
+    finalizeMetrics(metrics);
+
+    const familyFlows = buildFamilyFlows(children);
+    const uniqueFamilies = new Set(familyFlows.map((item) => item.familySku));
+    const revenue = familyFlows.reduce((sum, item) => sum + n(item.revenue), 0);
+    const orders = familyFlows.reduce((sum, item) => sum + n(item.orders), 0);
+
+    const [campaignName, adSetName] = key.split("|||");
+
+    return {
+      id: `${level}-${key}`,
+      level,
+      name: level === "campaign" ? campaignName : adSetName,
+      campaignName: level === "campaign" ? campaignName : campaignName,
+      adSetName: level === "campaign" ? null : adSetName,
+      status: children.some((x) => String(x.effectiveStatus || x.status || "").toUpperCase().includes("ACTIVE")) ? "ACTIVE" : "PAUSED",
+      effectiveStatus: children.some((x) => String(x.effectiveStatus || x.status || "").toUpperCase().includes("ACTIVE")) ? "ACTIVE" : "PAUSED",
+      thumbnailUrl: children.find((x) => x.thumbnailUrl)?.thumbnailUrl || null,
+      metrics,
+      childCount: children.length,
+      familyCount: uniqueFamilies.size,
+      childAds: children,
+      familyFlows,
+      productAttribution: {
+        mode: "campaign_family_flow",
+        allocationMode: "family_flow",
+        label: `${children.length} ads · ${uniqueFamilies.size} SKU family`,
+        orderCount: orders,
+        familyOrderCount: orders,
+        revenue,
+        familyRevenue: revenue,
+        realRoasEstimate: n(metrics.spend) > 0 ? revenue / n(metrics.spend) : 0,
+        familyRoasEstimate: n(metrics.spend) > 0 ? revenue / n(metrics.spend) : 0,
+        sharedFamilyCount: children.length,
+        note: "Dòng tổng hợp theo chiến dịch/nhóm quảng cáo từ ad-level. Doanh thu family chỉ tính một lần theo SKU family để tránh nhân đôi.",
+      },
+    };
+  }).sort((a, b) => n(b.metrics?.spend) - n(a.metrics?.spend));
+}
+
+function FamilyFlowMini({ row }: { row: BrainRow }) {
+  const flows = row.familyFlows || [];
+  if (!flows.length) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {flows.slice(0, 4).map((item) => (
+        <span
+          key={item.familySku}
+          className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
+          title={`${item.ads} ads cùng kéo về ${item.familySku}`}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          {item.ads} ads → {item.familySku} · {compact(item.orders)} đơn
+        </span>
+      ))}
+      {flows.length > 4 ? (
+        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-500">+{flows.length - 4} family</span>
+      ) : null}
+    </div>
+  );
+}
+
+
+function FamilyPill({ row }: { row: BrainRow }) {
+  const a = productAttr(row);
+  const family = a.familySku || a.sku;
+  const count = n(a.familyOrderCount || a.orderCount);
+  const ads = n(a.sharedFamilyCount);
+
+  if (!family || !count) {
+    return <span className="text-[11px] font-semibold text-neutral-400">{a.label || "Chưa match SKU family"}</span>;
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800 shadow-sm">
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      {ads > 1 ? `${ads} ads → ` : ""}
+      {family} · {compact(count)} đơn
+    </span>
+  );
+}
+
 function signalScore(row: BrainRow) {
   const m = row.metrics || {};
   const a = productAttr(row);
@@ -273,6 +452,8 @@ function filterRow(row: BrainRow, filter: FilterKey) {
   if (filter === "noSystemOrder") return n(m.spend) > 0 && n(a.orderCount) <= 0;
   if (filter === "cpaHigh") return n(m.costPerPurchase) >= 500_000;
   if (filter === "ctrHigh") return n(m.ctr) >= 3;
+  if (filter === "familyShared") return a.allocationMode === "family_shared";
+  if (filter === "unmatched") return n(m.spend) > 0 && !a.familySku;
   return true;
 }
 
@@ -433,7 +614,7 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
         <div>
           <h2 className="text-lg font-semibold">Bảng quản lý {LEVEL_OPTIONS.find((x) => x.id === level)?.noun}</h2>
           <p className="text-xs font-semibold text-neutral-500">
-            Bảng là trung tâm vận hành. Cột đơn hệ thống là đơn thật theo sản phẩm; gắn ads theo tên/SKU, chưa phải fbclid chuẩn.
+            Bảng là trung tâm vận hành. Tab Chiến dịch/Nhóm quảng cáo được gộp từ ads con. Dòng xanh dạng “3 ads → AP931” thể hiện nhiều ads cùng đổ về một SKU family; ROAS từng ads không chia ảo.
           </p>
         </div>
         <div className="hidden gap-2 text-xs font-semibold text-neutral-500 md:flex">
@@ -443,16 +624,16 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
         </div>
       </div>
 
-      <div className="max-h-[700px] w-full overflow-auto">
-        <table className="w-full min-w-[1720px] border-separate border-spacing-0 text-left text-sm">
+      <div className="max-h-[calc(100vh-300px)] w-full overflow-auto">
+        <table className="w-full min-w-[2300px] border-separate border-spacing-0 text-left text-sm">
           <thead className="sticky top-0 z-20 bg-neutral-950 text-[11px] uppercase tracking-[0.12em] text-white">
             <tr>
               <th className="w-[44px] px-3 py-3"><input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" /></th>
               <th className="w-[430px] px-3 py-3">Tên</th>
               <th className="px-3 py-3">Phân phối</th>
               <th className="px-3 py-3 text-right">Kết quả Meta</th>
-              <th className="px-3 py-3 text-right">Đơn hệ thống</th>
-              <th className="px-3 py-3 text-right">Doanh thu HT</th>
+              <th className="px-3 py-3 text-right">Đơn gán ads</th>
+              <th className="px-3 py-3 text-right">DT gán ads</th>
               <th className="px-3 py-3 text-right">Real ROAS ƯT</th>
               <th className="px-3 py-3 text-right">CPA</th>
               <th className="px-3 py-3 text-right">Đã chi tiêu</th>
@@ -498,6 +679,7 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
                               {(a.sku ? `SKU: ${a.sku}` : a.productName) || ""}
                             </div>
                           ) : null}
+                          {level !== "ad" ? <FamilyFlowMini row={row} /> : null}
                         </div>
                       </div>
                     </td>
@@ -507,11 +689,19 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
                       <div className="text-[11px] font-semibold text-neutral-400">Purchase Meta</div>
                     </td>
                     <td className="border-b border-neutral-100 px-3 py-3 text-right">
-                      <div className={n(a.orderCount) ? "font-semibold text-emerald-700" : "font-semibold text-neutral-400"}>{compact(a.orderCount)}</div>
-                      <div className="text-[11px] font-semibold text-neutral-400">{a.label || "Chưa match"}</div>
+                      <div className={n(a.orderCount) ? "font-semibold text-emerald-700" : "font-semibold text-neutral-400"}>
+                        {a.allocationMode === "family_shared" ? "—" : compact(a.orderCount)}
+                      </div>
+                      <div className="text-[11px] font-semibold text-neutral-400">
+                        <FamilyPill row={row} />
+                      </div>
                     </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(a.revenue) ? money(a.revenue) : "—"}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(a.realRoasEstimate) ? ratio(a.realRoasEstimate) : "—"}</td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {a.allocationMode === "family_shared" ? <span className="text-neutral-400">{a.familySku || "Family"} · {money(a.familyRevenue)}</span> : (n(a.revenue) ? money(a.revenue) : "—")}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {a.allocationMode === "family_shared" ? "—" : (n(a.realRoasEstimate) ? ratio(a.realRoasEstimate) : "—")}
+                    </td>
                     <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.costPerPurchase) ? money(m.costPerPurchase) : "—"}</td>
                     <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{hasSpend ? money(m.spend) : "0đ"}</td>
                     <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.impressions)}</td>
@@ -531,7 +721,7 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
                 );
               })
             ) : (
-              <tr><td colSpan={16} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Không có dòng phù hợp bộ lọc.</td></tr>
+              <tr><td colSpan={16} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Không có dòng phù hợp bộ lọc. Kiểm tra bộ lọc hoặc bấm Sync nhẹ hôm nay để có ad-level rồi hệ thống sẽ tự gộp lên Chiến dịch/Nhóm quảng cáo.</td></tr>
             )}
           </tbody>
         </table>
@@ -557,11 +747,11 @@ function ProductPanel({ payload }: { payload: ProductPerformancePayload | null }
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{index + 1}. {row.productName}</div>
-                <div className="truncate text-[11px] font-semibold text-neutral-500">{row.sku || "Không có SKU"}</div>
+                <div className="truncate text-[11px] font-semibold text-neutral-500">SKU cha: {row.familySku || row.sku || "Không có SKU"}</div>
               </div>
               <div className="text-right">
                 <div className="text-sm font-semibold text-emerald-700">{compact(row.orderCount)} đơn</div>
-                <div className="text-[11px] font-semibold text-neutral-500">{money(row.revenue)}</div>
+                <div className="text-[11px] font-semibold text-neutral-500">SP {money(row.revenue)} · Đơn {money((row as any).orderRevenue)}</div>
               </div>
             </div>
           </div>
@@ -715,12 +905,12 @@ function RowDetailDrawer({
 
             <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-xl bg-emerald-50 p-3">
-                <div className="text-xs text-emerald-700">Đơn hệ thống</div>
-                <div className="mt-1 font-semibold text-emerald-800">{compact(a.orderCount)}</div>
+                <div className="text-xs text-emerald-700">Đơn gán ads</div>
+                <div className="mt-1 font-semibold text-emerald-800">{a.allocationMode === "family_shared" ? "—" : compact(a.orderCount)}</div>
               </div>
               <div className="rounded-xl bg-emerald-50 p-3">
-                <div className="text-xs text-emerald-700">Doanh thu HT</div>
-                <div className="mt-1 font-semibold text-emerald-800">{money(a.revenue)}</div>
+                <div className="text-xs text-emerald-700">DT gán ads</div>
+                <div className="mt-1 font-semibold text-emerald-800">{a.allocationMode === "family_shared" ? "Không chia theo ads" : money(a.revenue)}</div>
               </div>
               <div className="rounded-xl bg-neutral-50 p-3">
                 <div className="text-xs text-neutral-400">SKU match</div>
@@ -781,6 +971,7 @@ export default function MetaAdsBrainCenterPageClient() {
   const [level, setLevel] = useState<LevelKey>("ad");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [search, setSearch] = useState("");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("facebook");
   const [data, setData] = useState<BrainOverview | null>(null);
   const [productPayload, setProductPayload] = useState<ProductPerformancePayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -788,14 +979,13 @@ export default function MetaAdsBrainCenterPageClient() {
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [selectedRow, setSelectedRow] = useState<BrainRow | null>(null);
-
-  async function load() {
+async function load() {
     setLoading(true);
     setError("");
     try {
       const [brain, products] = await Promise.all([
-        apiJson<BrainOverview>(`/meta-ads/brain-overview?range=${range}&summaryLevel=ad&includeProductOrders=1`),
-        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?range=${range}&limit=100`),
+        apiJson<BrainOverview>(`/meta-ads/brain-overview?range=${range}&summaryLevel=ad&includeProductOrders=1&sourceMode=${sourceMode}&orderMode=valid`),
+        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?range=${range}&limit=100&sourceMode=${sourceMode}&orderMode=valid`),
       ]);
       setData(brain);
       setProductPayload(products);
@@ -832,10 +1022,13 @@ export default function MetaAdsBrainCenterPageClient() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range]);
+  }, [range, sourceMode, level]);
 
-  const sourceRows =
-    level === "campaign" ? data?.topCampaigns || [] : level === "adset" ? data?.topAdSets || [] : data?.topAds || [];
+  const rawAdRows = data?.topAds || [];
+
+  const sourceRows = useMemo(() => {
+    return aggregateRows(rawAdRows, level);
+  }, [rawAdRows, level]);
 
   const rows = useMemo(() => {
     return sourceRows
@@ -854,7 +1047,7 @@ export default function MetaAdsBrainCenterPageClient() {
         <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
           <div className="flex w-full flex-col gap-4 border-b border-neutral-200 bg-neutral-950 px-5 py-5 text-white xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V11 Detail Drawer</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V18.1 Fullscreen Reports</p>
               <h1 className="mt-2 font-serif text-[34px] font-medium tracking-tight">Meta Ads Operating Center</h1>
               <p className="mt-2 max-w-5xl text-sm font-medium leading-6 text-neutral-300">
                 Bảng vận hành là trung tâm. KPI tổng dùng số chính thức từ Meta. Sản phẩm tạo đơn đọc từ order thật trong hệ thống; gắn ads theo tên/SKU chỉ là gợi ý, chưa phải fbclid chuẩn.
@@ -870,8 +1063,8 @@ export default function MetaAdsBrainCenterPageClient() {
           <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-8">
             <Kpi label="Chi phí ads" value={money(summary.spend)} sub="Meta official live" tone="amber" />
             <Kpi label="Lượt mua Meta" value={compact(summary.purchases)} sub={`CPA ${n(summary.costPerPurchase) ? money(summary.costPerPurchase) : "—"}`} tone={n(summary.purchases) ? "green" : "neutral"} />
-            <Kpi label="Đơn hệ thống" value={compact(productTotal.totalOrders)} sub="Order thật" tone={n(productTotal.totalOrders) ? "green" : "neutral"} />
-            <Kpi label="DT hệ thống" value={money(productTotal.totalRevenue)} sub="Theo sản phẩm tạo đơn" tone={n(productTotal.totalRevenue) ? "green" : "neutral"} />
+            <Kpi label="Đơn gán ads" value={compact(productTotal.totalOrders)} sub="Tạo đơn hợp lệ" tone={n(productTotal.totalOrders) ? "green" : "neutral"} />
+            <Kpi label="DT sản phẩm" value={money(productTotal.totalRevenue)} sub={`DT đơn ${money((productTotal as any).totalOrderRevenue)}`} tone={n(productTotal.totalRevenue) ? "green" : "neutral"} />
             <Kpi label="ROAS Meta" value={ratio(summary.roas)} sub={money(summary.purchaseValue)} tone={n(summary.roas) >= 2 ? "green" : "neutral"} />
             <Kpi label="Lượt nhấp" value={compact(summary.clicks)} sub={`CTR ${pct(summary.ctr)}`} />
             <Kpi label="Chiến dịch chạy" value={`${status?.campaigns?.active || 0}/${status?.campaigns?.total || 0}`} sub="Campaign active" tone="green" />
@@ -882,7 +1075,7 @@ export default function MetaAdsBrainCenterPageClient() {
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{error}</div> : null}
         {syncMessage ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{syncMessage}</div> : null}
 
-        <section className="grid w-full gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
+        <section className="grid w-full gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
           <div className="min-w-0 w-full">
             <Toolbar
               level={level}
@@ -897,6 +1090,24 @@ export default function MetaAdsBrainCenterPageClient() {
               syncing={syncing}
               onReload={load}
             />
+            <div className="flex items-center gap-2 border-x border-neutral-200 bg-white px-4 py-2 text-xs font-semibold">
+              <span className="text-neutral-400">Nguồn đơn:</span>
+              {[
+                { id: "facebook", label: "Chỉ Facebook" },
+                { id: "all", label: "Tất cả nguồn" },
+                { id: "pos", label: "Chỉ POS" },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setSourceMode(item.id as SourceMode)}
+                  className={`rounded-full border px-3 py-1 ${
+                    sourceMode === item.id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-neutral-50 text-neutral-600"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
             <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
           </div>
           <InsightRail data={data} rows={sourceRows} productPayload={productPayload} />
