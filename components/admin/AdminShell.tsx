@@ -80,6 +80,9 @@ const MENU: MenuItem[] = [
     permission: PERMISSIONS.MENU_AUTOPILOT,
     children: [
       { href: "/control/autopilot", label: "Autopilot", permission: PERMISSIONS.MENU_AUTOPILOT },
+      { href: "/control/marketing/meta-ads", label: "Meta Ads Operating Center", permission: PERMISSIONS.MENU_AUTOPILOT },
+      { href: "/control/marketing/meta-products", label: "Sản phẩm từ Ads", permission: PERMISSIONS.MENU_AUTOPILOT },
+      { href: "/control/marketing/meta-war-room", label: "Meta War Room", permission: PERMISSIONS.MENU_AUTOPILOT },
       { href: "/control/ai-content", label: "AI Content", permission: PERMISSIONS.MENU_AI_CONTENT },
     ],
   },
