@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 type Tone = "safe" | "warning" | "critical";
 type WarRoomTab = "realtime" | "7days" | "forecast";
 type DecisionMode = "profit" | "growth" | "inventory";
-type DashboardRange = "today" | "yesterday" | "7d" | "10d" | "30d" | "custom";
+type DashboardRange = "today" | "yesterday" | "7d" | "10d" | "30d" | "month" | "custom";
 type ProductFulfillmentFilter = "all" | "shipped" | "unshipped";
 type ProductReportSortKey =
   | "quantity"
@@ -159,6 +159,22 @@ type OrderChannelBreakdown = {
   orders: DashboardOrderRow[];
 };
 
+type WarRoomDailySuccessRow = {
+  date: string;
+  successOrders?: number;
+  successAmount?: number;
+  successCost?: number;
+  posOrders?: number;
+  posAmount?: number;
+  posCost?: number;
+  facebookDeliveredOrders?: number;
+  facebookDeliveredAmount?: number;
+  facebookDeliveredCost?: number;
+  otherDeliveredOrders?: number;
+  otherDeliveredAmount?: number;
+  otherDeliveredCost?: number;
+};
+
 type WarRoomDeliveryRevenueApi = {
   orderCreated?: {
     total?: number;
@@ -170,12 +186,14 @@ type WarRoomDeliveryRevenueApi = {
   revenueSuccess?: {
     totalOrders?: number;
     totalAmount?: number;
-    pos?: { orders?: number; amount?: number };
-    facebookDelivered?: { orders?: number; amount?: number };
-    otherDelivered?: { orders?: number; amount?: number };
+    totalCost?: number;
+    pos?: { orders?: number; amount?: number; cost?: number };
+    facebookDelivered?: { orders?: number; amount?: number; cost?: number };
+    otherDelivered?: { orders?: number; amount?: number; cost?: number };
   };
   createdOrders?: DashboardOrderRow[];
   successOrders?: DashboardOrderRow[];
+  dailySuccessRows?: WarRoomDailySuccessRow[];
   orders?: DashboardOrderRow[];
 };
 
@@ -369,6 +387,16 @@ const DASHBOARD_RANGE_OPTIONS: Array<{ id: DashboardRange; label: string }> = [
   { id: "custom", label: "Tuỳ chọn" },
 ];
 
+const DAILY_TABLE_RANGE_OPTIONS: Array<{ id: DashboardRange; label: string }> = [
+  { id: "today", label: "Hôm nay" },
+  { id: "yesterday", label: "Hôm qua" },
+  { id: "7d", label: "7 ngày" },
+  { id: "10d", label: "10 ngày" },
+  { id: "30d", label: "30 ngày" },
+  { id: "month", label: "Theo tháng" },
+  { id: "custom", label: "Tuỳ chọn" },
+];
+
 const PRODUCT_FULFILLMENT_OPTIONS: Array<{
   id: ProductFulfillmentFilter;
   label: string;
@@ -384,6 +412,7 @@ function dashboardRangeDescription(range: DashboardRange) {
   if (range === "7d") return "7 ngày gần nhất";
   if (range === "10d") return "10 ngày gần nhất";
   if (range === "30d") return "30 ngày gần nhất";
+  if (range === "month") return "Theo tháng";
   return "Tuỳ chọn";
 }
 
@@ -393,6 +422,68 @@ function padDatePart(value: number) {
 
 function formatDateInputValue(date: Date) {
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
+}
+
+function getCurrentMonthValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${padDatePart(now.getMonth() + 1)}`;
+}
+
+function getMonthDateRange(monthValue: string) {
+  const [yearRaw, monthRaw] = String(monthValue || getCurrentMonthValue()).split("-");
+  const year = Number(yearRaw);
+  const monthIndex = Number(monthRaw) - 1;
+  const safeDate = Number.isFinite(year) && Number.isFinite(monthIndex)
+    ? new Date(year, monthIndex, 1)
+    : new Date();
+  const start = new Date(safeDate.getFullYear(), safeDate.getMonth(), 1);
+  const end = new Date(safeDate.getFullYear(), safeDate.getMonth() + 1, 0);
+  return {
+    fromDate: formatDateInputValue(start),
+    toDate: formatDateInputValue(end),
+  };
+}
+
+function enumerateDateKeysDesc(fromDate: string, toDate: string, maxDays = 31) {
+  const start = new Date(`${fromDate}T00:00:00`);
+  const end = new Date(`${toDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+
+  const min = start <= end ? start : end;
+  const max = start <= end ? end : start;
+  const keys: string[] = [];
+  for (let cursor = new Date(max); cursor >= min && keys.length < maxDays; cursor.setDate(cursor.getDate() - 1)) {
+    keys.push(formatDateInputValue(cursor));
+  }
+  return keys;
+}
+
+function createEmptyDailyRow(dateKey: string): DashboardData["dailyRows"][number] {
+  const date = new Date(`${dateKey}T00:00:00`);
+  const now = new Date();
+  const todayKey = formatDateInputValue(now);
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = formatDateInputValue(yesterday);
+  const day = String(date.getDate()).padStart(2, "0");
+  return {
+    day,
+    date: dateKey,
+    displayDate: formatDateDisplay(dateKey),
+    note: dateKey === todayKey ? "Hôm nay" : dateKey === yesterdayKey ? "Hôm qua" : "Trong tháng",
+    revenue: "0",
+    cost: "Chưa có giá vốn",
+    adsCost: "0",
+    profit: "0",
+    operatingCost: "0",
+    netProfit: "0",
+    orders: "0",
+    roas: "0.00x",
+    compare: "—",
+    positive: true,
+    isToday: dateKey === todayKey,
+    raw: { revenue: 0, cost: 0, adsCost: 0, profit: 0, orders: 0 },
+  };
 }
 
 function formatDateDisplay(value?: string) {
@@ -420,6 +511,8 @@ function getDefaultDateRange(range: DashboardRange) {
     start.setDate(start.getDate() - 9);
   } else if (range === "30d") {
     start.setDate(start.getDate() - 29);
+  } else if (range === "month") {
+    return getMonthDateRange(getCurrentMonthValue());
   }
   return {
     fromDate: formatDateInputValue(start),
@@ -1107,7 +1200,7 @@ function buildOrderBreakdown(
 }
 
 async function fetchWarRoomDeliveryRevenue(params: {
-  range: DashboardRange;
+  range: string;
   fromDate: string;
   toDate: string;
 }) {
@@ -2098,6 +2191,7 @@ export default function DashboardPage() {
     successOtherAmount: 0,
     orders: [],
   });
+  const [dailySuccessRows, setDailySuccessRows] = useState<WarRoomDailySuccessRow[]>([]);
 
   const [dailyTableRange, setDailyTableRange] = useState<DashboardRange>("10d");
   const dailyTableDefaultRange = getDefaultDateRange("10d");
@@ -2107,6 +2201,7 @@ export default function DashboardPage() {
   const [dailyTableCustomTo, setDailyTableCustomTo] = useState(
     dailyTableDefaultRange.toDate,
   );
+  const [dailyTableMonth, setDailyTableMonth] = useState(getCurrentMonthValue());
   const [dailyOperatingCost, setDailyOperatingCost] = useState(0);
   const [operatingCostMode, setOperatingCostMode] = useState<"daily" | "monthly">("daily");
 
@@ -2288,6 +2383,43 @@ export default function DashboardPage() {
     };
   }, [warRoomRange, warRoomCustomFrom, warRoomCustomTo]);
 
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadDailySuccessRows() {
+      try {
+        const dateRange =
+          dailyTableRange === "custom"
+            ? { fromDate: dailyTableCustomFrom, toDate: dailyTableCustomTo }
+            : dailyTableRange === "month"
+              ? getMonthDateRange(dailyTableMonth)
+              : getDefaultDateRange(dailyTableRange);
+
+        const payload = await fetchWarRoomDeliveryRevenue({
+          range: dailyTableRange === "month" ? "custom" : dailyTableRange,
+          fromDate: dateRange.fromDate,
+          toDate: dateRange.toDate,
+        });
+
+        if (!ignore) {
+          setDailySuccessRows(
+            Array.isArray(payload?.dailySuccessRows)
+              ? payload.dailySuccessRows
+              : [],
+          );
+        }
+      } catch {
+        if (!ignore) setDailySuccessRows([]);
+      }
+    }
+
+    loadDailySuccessRows();
+
+    return () => {
+      ignore = true;
+    };
+  }, [dailyTableRange, dailyTableCustomFrom, dailyTableCustomTo, dailyTableMonth]);
+
   const decisionPills = useMemo(
     () => [
       { id: "profit", label: "Ưu tiên profit" },
@@ -2305,40 +2437,42 @@ export default function DashboardPage() {
     data.dailyRows.find((row) => row.day === selectedDay) || data.dailyRows[0];
 
   const dailyRowsForTableRange = useMemo(() => {
-    const sortedRows = [...data.dailyRows].sort((a, b) =>
-      dailyRowDateKey(a) < dailyRowDateKey(b) ? 1 : -1,
-    );
-
-    if (dailyTableRange === "today") {
-      const todayKey = formatDateInputValue(new Date());
-      return sortedRows.filter((row) => dailyRowDateKey(row) === todayKey);
-    }
-    if (dailyTableRange === "yesterday") {
-      const date = new Date();
-      date.setDate(date.getDate() - 1);
-      const yesterdayKey = formatDateInputValue(date);
-      return sortedRows.filter((row) => dailyRowDateKey(row) === yesterdayKey);
-    }
-    if (dailyTableRange === "7d") return sortedRows.slice(0, 7);
-    if (dailyTableRange === "10d") return sortedRows.slice(0, 10);
-    if (dailyTableRange === "30d") return sortedRows.slice(0, 30);
-
-    const from = new Date(`${dailyTableCustomFrom}T00:00:00`);
-    const to = new Date(`${dailyTableCustomTo}T23:59:59.999`);
-    return sortedRows.filter((row) => {
-      const date = new Date(`${dailyRowDateKey(row)}T00:00:00`);
-      return date >= from && date <= to;
+    const existingRows = new Map<string, DashboardData["dailyRows"][number]>();
+    data.dailyRows.forEach((row) => {
+      existingRows.set(dailyRowDateKey(row), row);
     });
+
+    const dateRange =
+      dailyTableRange === "custom"
+        ? { fromDate: dailyTableCustomFrom, toDate: dailyTableCustomTo }
+        : dailyTableRange === "month"
+          ? getMonthDateRange(dailyTableMonth)
+          : getDefaultDateRange(dailyTableRange);
+
+    const maxDays = dailyTableRange === "month" ? 31 : 30;
+    const dateKeys = enumerateDateKeysDesc(dateRange.fromDate, dateRange.toDate, maxDays);
+
+    return dateKeys.map((key) => existingRows.get(key) || createEmptyDailyRow(key));
   }, [
     data.dailyRows,
     dailyTableRange,
     dailyTableCustomFrom,
     dailyTableCustomTo,
+    dailyTableMonth,
   ]);
 
-  const dailyRowsToShow = showAllDailyRows
-    ? dailyRowsForTableRange
-    : dailyRowsForTableRange.slice(0, 10);
+  const dailySuccessRowsByDate = useMemo(() => {
+    const map = new Map<string, WarRoomDailySuccessRow>();
+    dailySuccessRows.forEach((row) => {
+      if (row?.date) map.set(String(row.date).slice(0, 10), row);
+    });
+    return map;
+  }, [dailySuccessRows]);
+
+  const dailyRowsToShow =
+    dailyTableRange === "10d" && !showAllDailyRows
+      ? dailyRowsForTableRange.slice(0, 10)
+      : dailyRowsForTableRange;
 
   const dailyOperatingCostPerDay =
     operatingCostMode === "monthly"
@@ -2346,24 +2480,44 @@ export default function DashboardPage() {
       : dailyOperatingCost;
 
   const dailyRowsWithOperatingCost = dailyRowsToShow.map((row) => {
-    const revenueValue = toNumber(
-      row.raw?.revenue ?? parseCompactMetric(row.revenue),
-    );
-    const costValue = toNumber(row.raw?.cost ?? parseCompactMetric(row.cost));
+    const rowDateKey = dailyRowDateKey(row);
+    const successRow = dailySuccessRowsByDate.get(rowDateKey);
+    const revenueValue = successRow
+      ? toNumber(successRow.successAmount)
+      : toNumber(row.raw?.revenue ?? parseCompactMetric(row.revenue));
+    const orderCountValue = successRow
+      ? toNumber(successRow.successOrders)
+      : toNumber(row.raw?.orders ?? parseQtyMetric(row.orders));
+    const costValue = successRow
+      ? toNumber(successRow.successCost)
+      : toNumber(row.raw?.cost ?? parseCompactMetric(row.cost));
     const adsCostValue = toNumber(
       row.raw?.adsCost ?? parseCompactMetric(row.adsCost || 0),
     );
     const grossProfit = revenueValue - costValue;
-    const profitAfterAds =
-      row.raw?.profit != null
+    const profitAfterAds = successRow
+      ? grossProfit - adsCostValue
+      : row.raw?.profit != null
         ? toNumber(row.raw.profit)
         : grossProfit - adsCostValue;
     const netProfit = profitAfterAds - dailyOperatingCostPerDay;
 
     return {
       ...row,
-      date: dailyRowDateKey(row),
-      displayDate: formatDateDisplay(dailyRowDateKey(row)),
+      date: rowDateKey,
+      displayDate: formatDateDisplay(rowDateKey),
+      revenue: successRow ? formatMoneyShort(revenueValue) : row.revenue,
+      cost: successRow
+        ? costValue > 0
+          ? formatMoneyShort(costValue)
+          : "Chưa có giá vốn"
+        : row.cost,
+      roas: adsCostValue > 0 ? `${(revenueValue / adsCostValue).toFixed(2)}x` : row.roas,
+      orders: successRow ? formatQty(orderCountValue) : row.orders,
+      posOrders: successRow ? toNumber(successRow.posOrders) : row.posOrders,
+      codOrders: successRow
+        ? toNumber(successRow.facebookDeliveredOrders)
+        : row.codOrders,
       grossProfit: formatMoneyShort(grossProfit),
       profit: formatMoneyShort(profitAfterAds),
       operatingCost:
@@ -2380,6 +2534,7 @@ export default function DashboardPage() {
         profit: profitAfterAds,
         operatingCost: dailyOperatingCostPerDay,
         netProfit,
+        orders: orderCountValue,
       },
     };
   });
@@ -3152,7 +3307,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex flex-col gap-2 xl:items-end">
             <div className="flex flex-wrap items-center gap-2">
-              {DASHBOARD_RANGE_OPTIONS.map((item) => (
+              {DAILY_TABLE_RANGE_OPTIONS.map((item) => (
                 <button
                   key={item.id}
                   type="button"
@@ -3169,14 +3324,27 @@ export default function DashboardPage() {
                   {item.label}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={() => setShowAllDailyRows((prev) => !prev)}
-                className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700"
-              >
-                {showAllDailyRows ? "Thu gọn" : "Xem toàn bộ"}
-              </button>
+              {dailyTableRange === "10d" ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAllDailyRows((prev) => !prev)}
+                  className="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700"
+                >
+                  {showAllDailyRows ? "Thu gọn" : "Xem toàn bộ"}
+                </button>
+              ) : null}
             </div>
+            {dailyTableRange === "month" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="month"
+                  value={dailyTableMonth}
+                  onChange={(e) => setDailyTableMonth(e.target.value)}
+                  className="rounded-full border border-neutral-200 px-3 py-2 text-sm outline-none"
+                />
+                <span className="text-xs text-neutral-400">Hiển thị toàn bộ ngày trong tháng đã chọn</span>
+              </div>
+            ) : null}
             {dailyTableRange === "custom" ? (
               <div className="flex flex-wrap items-center gap-2">
                 <input
