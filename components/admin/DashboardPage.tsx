@@ -2603,40 +2603,109 @@ export default function DashboardPage() {
 
   const warRoomRangeText = dashboardRangeDescription(warRoomRange);
   const productReportRangeText = dashboardRangeDescription(productReportRange);
-  const todayDay = new Date().getDate().toString().padStart(2, "0");
-  const yesterdayDate = new Date();
-  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-  const yesterdayDay = yesterdayDate.getDate().toString().padStart(2, "0");
-  const dailyRowByDay = (day: string) =>
-    data.dailyRows.find((row) => row.day === day);
-  const rowsForCurrentWarRoomRange = (() => {
-    if (warRoomRange === "today")
-      return [dailyRowByDay(todayDay)].filter(
-        Boolean,
-      ) as DashboardData["dailyRows"];
-    if (warRoomRange === "yesterday")
-      return [dailyRowByDay(yesterdayDay)].filter(
-        Boolean,
-      ) as DashboardData["dailyRows"];
-    if (warRoomRange === "7d") return data.dailyRows.slice(0, 7);
-    if (warRoomRange === "10d") return data.dailyRows.slice(0, 10);
-    if (warRoomRange === "30d") return data.dailyRows.slice(0, 30);
-    return data.dailyRows;
-  })();
+
+  const buildDailyRowsForRange = (
+    range: DashboardRange,
+    customFrom?: string,
+    customTo?: string,
+  ) => {
+    const existingRows = new Map<string, DashboardData["dailyRows"][number]>();
+    data.dailyRows.forEach((row) => {
+      existingRows.set(dailyRowDateKey(row), row);
+    });
+
+    const rangeDates =
+      range === "custom"
+        ? {
+            fromDate: customFrom || getDefaultDateRange("today").fromDate,
+            toDate: customTo || getDefaultDateRange("today").toDate,
+          }
+        : getDefaultDateRange(range);
+
+    const maxDays = range === "30d" ? 30 : range === "10d" ? 10 : range === "7d" ? 7 : 31;
+    const dateKeys = enumerateDateKeysDesc(rangeDates.fromDate, rangeDates.toDate, maxDays);
+
+    return dateKeys.map((key) => {
+      const row = existingRows.get(key) || createEmptyDailyRow(key);
+      const successRow = dailySuccessRowsByDate.get(key);
+      const revenueValue = successRow
+        ? toNumber(successRow.successAmount)
+        : toNumber(row.raw?.revenue ?? parseCompactMetric(row.revenue));
+      const orderCountValue = successRow
+        ? toNumber(successRow.successOrders)
+        : toNumber(row.raw?.orders ?? parseQtyMetric(row.orders));
+      const costValue = successRow
+        ? toNumber(successRow.successCost)
+        : toNumber(row.raw?.cost ?? parseCompactMetric(row.cost));
+      const adsCostValue = toNumber(
+        row.raw?.adsCost ?? parseCompactMetric(row.adsCost || 0),
+      );
+      const grossProfit = revenueValue - costValue;
+      const profitAfterAds = grossProfit - adsCostValue;
+      const netProfit = profitAfterAds - dailyOperatingCostPerDay;
+
+      return {
+        ...row,
+        date: key,
+        displayDate: formatDateDisplay(key),
+        revenue: successRow ? formatMoneyShort(revenueValue) : row.revenue,
+        cost: successRow
+          ? costValue > 0
+            ? formatMoneyShort(costValue)
+            : "Chưa có giá vốn"
+          : row.cost,
+        roas: adsCostValue > 0 ? `${(revenueValue / adsCostValue).toFixed(2)}x` : row.roas,
+        orders: successRow ? formatQty(orderCountValue) : row.orders,
+        posOrders: successRow ? toNumber(successRow.posOrders) : row.posOrders,
+        codOrders: successRow
+          ? toNumber(successRow.facebookDeliveredOrders)
+          : row.codOrders,
+        grossProfit: formatMoneyShort(grossProfit),
+        profit: formatMoneyShort(profitAfterAds),
+        operatingCost:
+          dailyOperatingCostPerDay > 0
+            ? formatMoneyShort(dailyOperatingCostPerDay)
+            : "0",
+        netProfit: formatMoneyShort(netProfit),
+        raw: {
+          ...(row.raw || {}),
+          revenue: revenueValue,
+          cost: costValue,
+          grossProfit,
+          adsCost: adsCostValue,
+          profit: profitAfterAds,
+          operatingCost: dailyOperatingCostPerDay,
+          netProfit,
+          orders: orderCountValue,
+        },
+      };
+    });
+  };
+
+  const rowsForCurrentWarRoomRange = buildDailyRowsForRange(
+    warRoomRange,
+    warRoomCustomFrom,
+    warRoomCustomTo,
+  );
+
   const warRoomRevenueAmount = rowsForCurrentWarRoomRange.reduce(
-    (sum, row) => sum + parseCompactMetric(row.revenue),
+    (sum, row) => sum + toNumber(row.raw?.revenue ?? parseCompactMetric(row.revenue)),
     0,
   );
   const warRoomProfitAmount = rowsForCurrentWarRoomRange.reduce(
-    (sum, row) => sum + parseCompactMetric(row.profit),
+    (sum, row) => sum + toNumber(row.raw?.profit ?? parseCompactMetric(row.profit)),
+    0,
+  );
+  const warRoomNetProfitAmount = rowsForCurrentWarRoomRange.reduce(
+    (sum, row) => sum + toNumber(row.raw?.netProfit ?? parseCompactMetric(row.netProfit)),
     0,
   );
   const warRoomAdsAmount = rowsForCurrentWarRoomRange.reduce(
-    (sum, row) => sum + parseCompactMetric(row.adsCost || 0),
+    (sum, row) => sum + toNumber(row.raw?.adsCost ?? parseCompactMetric(row.adsCost || 0)),
     0,
   );
   const warRoomOrderCount = rowsForCurrentWarRoomRange.reduce(
-    (sum, row) => sum + parseQtyMetric(row.orders),
+    (sum, row) => sum + toNumber(row.raw?.orders ?? parseQtyMetric(row.orders)),
     0,
   );
   const warRoomCompareText =
@@ -2644,12 +2713,10 @@ export default function DashboardPage() {
   const warRoomRevenueText = warRoomRevenueAmount
     ? formatMoneyShort(warRoomRevenueAmount)
     : selectedDailyRow?.revenue || data.realtime.delta;
-  const warRoomOperatingAmount =
-    rowsForCurrentWarRoomRange.length * dailyOperatingCost;
-  const warRoomNetProfitAmount = warRoomProfitAmount - warRoomOperatingAmount;
-  const warRoomProfitText = warRoomProfitAmount
-    ? formatMoneyShort(warRoomNetProfitAmount)
-    : "—";
+  const warRoomProfitText =
+    warRoomRevenueAmount || warRoomProfitAmount || warRoomNetProfitAmount
+      ? formatMoneyShort(warRoomNetProfitAmount)
+      : "—";
   const warRoomAdsText = warRoomAdsAmount
     ? formatMoneyShort(warRoomAdsAmount)
     : "0";
@@ -2658,9 +2725,7 @@ export default function DashboardPage() {
   const warRoomAdsPerOrder =
     warRoomOrderCount > 0 ? warRoomAdsAmount / warRoomOrderCount : 0;
   const warRoomAdsRate =
-    warRoomRevenueAmount > 0
-      ? (warRoomAdsAmount / warRoomRevenueAmount) * 100
-      : 0;
+    warRoomRevenueAmount > 0 ? (warRoomAdsAmount / warRoomRevenueAmount) * 100 : 0;
   const warRoomAdsLastUpdated = new Date().toLocaleTimeString("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
