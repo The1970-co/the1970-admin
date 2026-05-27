@@ -9,6 +9,7 @@ import { getCurrentUserFromStorage, getTokenFromStorage } from "@/lib/current-us
 
 const ALL_VALUE = "ALL";
 const UNMAPPED_ACTOR_VALUE = "__UNMAPPED_ACTOR__";
+const INVENTORY_LOG_FETCH_LIMIT = 50000;
 
 type InventoryActorOption = {
   id: string;
@@ -758,7 +759,7 @@ export default function InventoryLogsPageClient() {
       try {
         setLoading(true);
         setError(null);
-        const data = await getInventoryMovements();
+        const data = await getInventoryMovements(INVENTORY_LOG_FETCH_LIMIT);
         setRows(data as InventoryMovementV2[]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Không tải được lịch sử kho.");

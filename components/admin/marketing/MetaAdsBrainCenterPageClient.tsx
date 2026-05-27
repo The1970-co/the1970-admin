@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-type RangeKey = "today" | "yesterday" | "7d" | "10d" | "30d";
+type RangeKey = "today" | "yesterday" | "7d" | "10d" | "30d" | "custom";
 type SourceMode = "facebook" | "all" | "pos";
 type LevelKey = "campaign" | "adset" | "ad";
 type FilterKey = "all" | "active" | "spent" | "hasPurchase" | "noMetaPurchase" | "hasSystemOrder" | "noSystemOrder" | "cpaHigh" | "ctrHigh" | "familyShared" | "unmatched";
@@ -140,6 +140,7 @@ const RANGE_OPTIONS: Array<{ id: RangeKey; label: string }> = [
   { id: "7d", label: "7 ngày" },
   { id: "10d", label: "10 ngày" },
   { id: "30d", label: "30 ngày" },
+  { id: "custom", label: "Tùy chọn" },
 ];
 
 const LEVEL_OPTIONS: Array<{ id: LevelKey; label: string; noun: string }> = [
@@ -161,6 +162,104 @@ const FILTERS: Array<{ id: FilterKey; label: string }> = [
   { id: "familyShared" as FilterKey, label: "Family bị trùng ads" },
   { id: "unmatched" as FilterKey, label: "Chưa match SKU" },
 ];
+
+type SortDir = "asc" | "desc";
+
+type ColumnKey =
+  | "name"
+  | "delivery"
+  | "result"
+  | "messages"
+  | "costPerMessage"
+  | "conversationStarts"
+  | "costPerConversation"
+  | "comments"
+  | "averagePurchaseValue"
+  | "systemOrders"
+  | "systemRevenue"
+  | "realRoas"
+  | "cpa"
+  | "spend"
+  | "impressions"
+  | "reach"
+  | "clicks"
+  | "ctr"
+  | "cpc"
+  | "roas"
+  | "signal";
+
+const COLUMN_LABELS: Record<ColumnKey, string> = {
+  name: "Tên",
+  delivery: "Phân phối",
+  result: "Kết quả",
+  messages: "Tổng số người liên hệ nhắn tin",
+  costPerMessage: "Chi phí trên mỗi kết quả",
+  conversationStarts: "Lượt bắt đầu cuộc trò chuyện qua tin nhắn",
+  costPerConversation: "Chi phí trên mỗi lượt bắt đầu cuộc trò chuyện qua tin nhắn",
+  comments: "Bình luận về bài viết",
+  averagePurchaseValue: "Giá trị chuyển đổi trung bình mỗi lượt mua",
+  systemOrders: "Đơn gán ads",
+  systemRevenue: "DT gán ads",
+  realRoas: "Real ROAS ƯT",
+  cpa: "CPA",
+  spend: "Số tiền đã chi tiêu",
+  impressions: "Lượt hiển thị",
+  reach: "Người tiếp cận",
+  clicks: "Lượt nhấp",
+  ctr: "CTR",
+  cpc: "CPC",
+  roas: "ROAS Meta",
+  signal: "Tín hiệu",
+};
+
+const DEFAULT_COLUMNS: ColumnKey[] = [
+  "name",
+  "delivery",
+  "result",
+  "messages",
+  "costPerMessage",
+  "conversationStarts",
+  "costPerConversation",
+  "comments",
+  "averagePurchaseValue",
+  "systemOrders",
+  "systemRevenue",
+  "realRoas",
+  "cpa",
+  "spend",
+  "impressions",
+  "reach",
+  "clicks",
+  "ctr",
+  "cpc",
+  "roas",
+  "signal",
+];
+
+const METRIC_FILTER_OPTIONS = [
+  { id: "spend", label: "Số tiền đã chi tiêu" },
+  { id: "reach", label: "Người tiếp cận" },
+  { id: "impressions", label: "Lượt hiển thị" },
+  { id: "clicks", label: "Lượt nhấp" },
+  { id: "ctr", label: "CTR" },
+  { id: "cpc", label: "CPC" },
+  { id: "messages", label: "Tổng số người liên hệ nhắn tin" },
+  { id: "conversationStarts", label: "Lượt bắt đầu cuộc trò chuyện qua tin nhắn" },
+  { id: "costPerConversation", label: "Chi phí trên mỗi kết quả" },
+  { id: "comments", label: "Bình luận về bài viết" },
+  { id: "orders", label: "Đơn gán ads" },
+  { id: "revenue", label: "DT gán ads" },
+  { id: "realRoas", label: "Real ROAS ƯT" },
+];
+
+const METRIC_OP_OPTIONS = [
+  { id: "gte", label: "lớn hơn hoặc bằng" },
+  { id: "gt", label: "lớn hơn" },
+  { id: "lte", label: "nhỏ hơn hoặc bằng" },
+  { id: "lt", label: "nhỏ hơn" },
+  { id: "eq", label: "bằng" },
+];
+
 
 function getToken() {
   if (typeof window === "undefined") return "";
@@ -456,7 +555,11 @@ function metricValue(row: BrainRow, field: string): number {
   if (field === "messages") return n(m.messages);
   if (field === "conversationStarts") return n(m.conversationStarts);
   if (field === "costPerConversation") return n(m.costPerConversation);
+  if (field === "costPerMessage") return n(m.costPerMessage);
+  if (field === "costPerResult") return n(m.costPerResult);
   if (field === "comments") return n(m.comments);
+  if (field === "purchases") return n(m.purchases);
+  if (field === "roas") return n(m.roas);
   if (field === "orders") return n(a.familyOrderCount || a.orderCount);
   if (field === "revenue") return n(a.familyRevenue || a.revenue);
   if (field === "realRoas") return n(a.familyRoasEstimate || a.realRoasEstimate);
@@ -545,6 +648,18 @@ function Toolbar({
   setSearch,
   range,
   setRange,
+  customFrom,
+  setCustomFrom,
+  customTo,
+  setCustomTo,
+  advancedFilterOpen,
+  setAdvancedFilterOpen,
+  metricFilterField,
+  setMetricFilterField,
+  metricFilterOp,
+  setMetricFilterOp,
+  metricFilterValue,
+  setMetricFilterValue,
   onSync,
   syncing,
   onReload,
@@ -559,6 +674,18 @@ function Toolbar({
   setSearch: (v: string) => void;
   range: RangeKey;
   setRange: (v: RangeKey) => void;
+  customFrom: string;
+  setCustomFrom: (v: string) => void;
+  customTo: string;
+  setCustomTo: (v: string) => void;
+  advancedFilterOpen: boolean;
+  setAdvancedFilterOpen: (v: boolean) => void;
+  metricFilterField: string;
+  setMetricFilterField: (v: string) => void;
+  metricFilterOp: string;
+  setMetricFilterOp: (v: string) => void;
+  metricFilterValue: string;
+  setMetricFilterValue: (v: string) => void;
   onSync: () => void;
   syncing: boolean;
   onReload: () => void;
@@ -593,15 +720,25 @@ function Toolbar({
                 {item.label}
               </button>
             ))}
+            {range === "custom" ? (
+              <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1">
+                <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-8 rounded-md border border-neutral-200 px-2 text-xs font-semibold" />
+                <span className="text-xs font-semibold text-neutral-400">→</span>
+                <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-8 rounded-md border border-neutral-200 px-2 text-xs font-semibold" />
+              </div>
+            ) : null}
           </div>
 
-          <div className="flex flex-1 items-center gap-2 xl:max-w-[560px]">
+          <div className="flex flex-1 items-center gap-2 xl:max-w-[720px]">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Tìm tên, ID, SKU, campaign..."
               className="h-10 flex-1 rounded-lg border border-neutral-200 bg-neutral-50 px-4 text-sm font-medium outline-none focus:border-neutral-950"
             />
+            <button onClick={() => setAdvancedFilterOpen(!advancedFilterOpen)} className="h-10 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-semibold">
+              Bộ lọc
+            </button>
             <button onClick={onToggleFullscreen} className="h-10 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-semibold">
               {fullscreen ? "Thu nhỏ bảng" : "Phóng to bảng"}
             </button>
@@ -631,13 +768,156 @@ function Toolbar({
             </button>
           ))}
         </div>
+
+        {advancedFilterOpen ? (
+          <div className="grid gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 md:grid-cols-[1.5fr_1fr_1fr_auto]">
+            <select value={metricFilterField} onChange={(e) => setMetricFilterField(e.target.value)} className="h-10 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-semibold">
+              {METRIC_FILTER_OPTIONS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+            <select value={metricFilterOp} onChange={(e) => setMetricFilterOp(e.target.value)} className="h-10 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-semibold">
+              {METRIC_OP_OPTIONS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+            <input
+              value={metricFilterValue}
+              onChange={(e) => setMetricFilterValue(e.target.value)}
+              placeholder="Giá trị, vd 500000"
+              className="h-10 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-semibold"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setFilter("all");
+                setMetricFilterValue("");
+                setSearch("");
+              }}
+              className="h-10 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-semibold"
+            >
+              Xóa lọc
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
+
+
+function getAdThumb(row: BrainRow): string {
+  const r: any = row || {};
+  const raw: any = r.rawJson || r.raw || r.metaRaw || {};
+  const candidates = [
+    r.thumbnailUrl,
+    r.thumbnail_url,
+    r.imageUrl,
+    r.image_url,
+    r.creativeThumbnailUrl,
+    r.productThumbnailUrl,
+    r.productImageUrl,
+    r.creative?.thumbnailUrl,
+    r.creative?.thumbnail_url,
+    r.creative?.imageUrl,
+    r.creative?.image_url,
+    raw.thumbnail_url,
+    raw.image_url,
+    raw.creative?.thumbnail_url,
+    raw.creative?.image_url,
+  ];
+  return String(candidates.find((x) => typeof x === "string" && x.trim()) || "");
+}
+
+function deliveryText(row: BrainRow): string {
+  const r: any = row || {};
+  const v = String(
+    r.effectiveStatus ||
+      r.effective_status ||
+      r.deliveryStatus ||
+      r.delivery_status ||
+      r.status ||
+      r.configuredStatus ||
+      r.configured_status ||
+      "",
+  );
+  const lower = v.toLowerCase();
+  if (lower === "active" || lower.includes("active") || lower.includes("đang hoạt")) return "Đang hoạt động";
+  if (lower === "paused" || lower.includes("paused") || lower.includes("tắt")) return "Đang tắt";
+  if (lower.includes("pending") || lower.includes("review")) return "Đang xét duyệt";
+  if (lower.includes("archived")) return "Đã lưu trữ";
+  if (lower.includes("deleted")) return "Đã xoá";
+  return v || "Không rõ";
+}
+
+
+function columnSortValue(row: BrainRow, key: ColumnKey): number | string {
+  const m: any = row.metrics || {};
+  const a: any = productAttr(row);
+  if (key === "name") return String(row.name || "").toLowerCase();
+  if (key === "delivery") return String(row.effectiveStatus || row.status || "").toLowerCase();
+  if (key === "result") return n(m.conversationStarts || m.purchases);
+  if (key === "messages") return n(m.messages);
+  if (key === "costPerMessage") return n(m.costPerMessage);
+  if (key === "conversationStarts") return n(m.conversationStarts);
+  if (key === "costPerConversation") return n(m.costPerConversation);
+  if (key === "comments") return n(m.comments);
+  if (key === "averagePurchaseValue") return n(m.averagePurchaseValue);
+  if (key === "systemOrders") return n(a.familyOrderCount || a.orderCount);
+  if (key === "systemRevenue") return n(a.familyRevenue || a.revenue);
+  if (key === "realRoas") return n(a.familyRoasEstimate || a.realRoasEstimate);
+  if (key === "cpa") return n(m.costPerPurchase);
+  if (key === "spend") return n(m.spend);
+  if (key === "impressions") return n(m.impressions);
+  if (key === "reach") return n(m.reach);
+  if (key === "clicks") return n(m.clicks);
+  if (key === "ctr") return n(m.ctr);
+  if (key === "cpc") return n(m.cpc);
+  if (key === "roas") return n(m.roas);
+  if (key === "signal") return signalScore(row);
+  return 0;
+}
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return <span className="ml-1 text-neutral-500">↕</span>;
+  return <span className="ml-1">{dir === "asc" ? "↑" : "↓"}</span>;
+}
+
+
 function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level: LevelKey; loading: boolean; onSelect: (row: BrainRow) => void }) {
-  const total = rows.reduce(
+  const [sortKey, setSortKey] = useState<ColumnKey>("spend");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(DEFAULT_COLUMNS);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("metaAdsVisibleColumnsV38");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter((x) => DEFAULT_COLUMNS.includes(x));
+        if (valid.length) setVisibleColumns(valid);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("metaAdsVisibleColumnsV38", JSON.stringify(visibleColumns));
+    } catch {}
+  }, [visibleColumns]);
+
+  const sortedRows = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const av = columnSortValue(a, sortKey);
+      const bv = columnSortValue(b, sortKey);
+      if (typeof av === "string" || typeof bv === "string") {
+        return String(av).localeCompare(String(bv), "vi") * dir;
+      }
+      return (n(av) - n(bv)) * dir;
+    });
+  }, [rows, sortKey, sortDir]);
+
+  const total = sortedRows.reduce(
     (acc, row) => {
       acc.spend += n(row.metrics?.spend);
       acc.purchases += n(row.metrics?.purchases);
@@ -651,19 +931,108 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
     { spend: 0, purchases: 0, clicks: 0, reach: 0, impressions: 0, systemOrders: 0, systemRevenue: 0 },
   );
 
+  const show = (key: ColumnKey) => visibleColumns.includes(key);
+
+  const toggleSort = (key: ColumnKey) => {
+    if (sortKey === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir("desc");
+  };
+
+  const Th = ({ id, className = "" }: { id: ColumnKey; className?: string }) => (
+    <th className={`px-3 py-3 ${className}`}>
+      <button type="button" onClick={() => toggleSort(id)} className="inline-flex items-center justify-end gap-1 text-left">
+        <span>{COLUMN_LABELS[id]}</span>
+        <SortIcon active={sortKey === id} dir={sortDir} />
+      </button>
+    </th>
+  );
+
+  const toggleColumn = (id: ColumnKey) => {
+    if (id === "name") return;
+    setVisibleColumns((current) =>
+      current.includes(id)
+        ? current.filter((x) => x !== id)
+        : [...current, id],
+    );
+  };
+
+  const colSpan = 1 + visibleColumns.length;
+
   return (
     <section className="w-full overflow-hidden rounded-b-2xl border-x border-b border-neutral-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
+      <div className="flex flex-col gap-3 border-b border-neutral-100 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Bảng quản lý {LEVEL_OPTIONS.find((x) => x.id === level)?.noun}</h2>
           <p className="text-xs font-semibold text-neutral-500">
-            Bảng là trung tâm vận hành. Kết quả/Lượt bắt đầu cuộc trò chuyện qua tin nhắn/Tổng số người liên hệ nhắn tin/Bình luận về bài viết lấy theo query live đã khớp Meta; Đơn gán ads là số nội bộ theo SKU family, không trộn vào cột tin nhắn.
+            Số Meta lấy live theo đúng level đang chọn. Header có mũi tên sort như Meta; cột có thể ẩn/hiện theo preset riêng.
           </p>
         </div>
-        <div className="hidden gap-2 text-xs font-semibold text-neutral-500 md:flex">
-          <span className="rounded-full bg-neutral-100 px-3 py-1">{rows.length} dòng</span>
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-neutral-500">
+          <span className="rounded-full bg-neutral-100 px-3 py-1">{sortedRows.length} dòng</span>
           <span className="rounded-full bg-neutral-100 px-3 py-1">{money(total.spend)}</span>
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">{compact(total.systemOrders)} đơn HT</span>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setColumnsOpen((v) => !v)}
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-800"
+            >
+              Tùy chỉnh cột
+            </button>
+            {columnsOpen ? (
+              <div className="absolute right-0 z-40 mt-2 w-[320px] rounded-2xl border border-neutral-200 bg-white p-3 shadow-xl">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="font-semibold text-neutral-950">Cột hiển thị / xếp vị trí</div>
+                  <button type="button" onClick={() => setVisibleColumns(DEFAULT_COLUMNS)} className="text-xs font-semibold text-emerald-700">Reset</button>
+                </div>
+                <div className="max-h-[420px] space-y-1 overflow-auto">
+                  {DEFAULT_COLUMNS.map((id) => (
+                    <div key={id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-50">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns.includes(id)}
+                        disabled={id === "name"}
+                        onChange={() => toggleColumn(id)}
+                      />
+                      <span className="flex-1 text-xs font-semibold text-neutral-700">{COLUMN_LABELS[id]}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = visibleColumns.indexOf(id);
+                          if (idx <= 1) return;
+                          const next = [...visibleColumns];
+                          [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                          setVisibleColumns(next);
+                        }}
+                        className="rounded border border-neutral-200 px-1.5 py-0.5 text-xs font-bold"
+                        title="Đẩy cột sang trái"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = visibleColumns.indexOf(id);
+                          if (idx < 1 || idx >= visibleColumns.length - 1) return;
+                          const next = [...visibleColumns];
+                          [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+                          setVisibleColumns(next);
+                        }}
+                        className="rounded border border-neutral-200 px-1.5 py-0.5 text-xs font-bold"
+                        title="Đẩy cột sang phải"
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -671,130 +1040,153 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
         <table className="w-full min-w-[3000px] border-separate border-spacing-0 text-left text-sm">
           <thead className="sticky top-0 z-20 bg-neutral-950 text-[11px] uppercase tracking-[0.12em] text-white">
             <tr>
-              <th className="w-[44px] px-3 py-3"><input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" /></th>
-              <th className="w-[430px] px-3 py-3">Tên</th>
-              <th className="px-3 py-3">Phân phối</th>
-              <th className="px-3 py-3 text-right">Kết quả</th>
-              <th className="px-3 py-3 text-right">Tổng số người liên hệ nhắn tin</th>
-              <th className="px-3 py-3 text-right">Chi phí trên mỗi kết quả</th>
-              <th className="px-3 py-3 text-right">Lượt bắt đầu cuộc trò chuyện qua tin nhắn</th>
-              <th className="px-3 py-3 text-right">Chi phí trên mỗi kết quả</th>
-              <th className="px-3 py-3 text-right">Bình luận về bài viết</th>
-              <th className="px-3 py-3 text-right">Chi phí trên mỗi kết quả</th>
-              <th className="px-3 py-3 text-right">Giá trị chuyển đổi trung bình mỗi lượt mua</th>
-              <th className="px-3 py-3 text-right">Đơn gán ads</th>
-              <th className="px-3 py-3 text-right">DT gán ads</th>
-              <th className="px-3 py-3 text-right">Real ROAS ƯT</th>
-              <th className="px-3 py-3 text-right">CPA</th>
-              <th className="px-3 py-3 text-right">Số tiền đã chi tiêu</th>
-              <th className="px-3 py-3 text-right">Lượt hiển thị</th>
-              <th className="px-3 py-3 text-right">Người tiếp cận</th>
-              <th className="px-3 py-3 text-right">Lượt nhấp</th>
-              <th className="px-3 py-3 text-right">CTR</th>
-              <th className="px-3 py-3 text-right">CPC</th>
-              <th className="px-3 py-3 text-right">ROAS Meta</th>
-              <th className="px-3 py-3 text-right">Tín hiệu</th>
+              <th className="sticky left-0 z-30 w-[44px] bg-neutral-950 px-3 py-3"><input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" /></th>
+              {show("name") ? <Th id="name" className="sticky left-[44px] z-30 w-[430px] bg-neutral-950" /> : null}
+              {show("delivery") ? <Th id="delivery" /> : null}
+              {show("result") ? <Th id="result" className="text-right" /> : null}
+              {show("messages") ? <Th id="messages" className="text-right" /> : null}
+              {show("costPerMessage") ? <Th id="costPerMessage" className="text-right" /> : null}
+              {show("conversationStarts") ? <Th id="conversationStarts" className="text-right" /> : null}
+              {show("costPerConversation") ? <Th id="costPerConversation" className="text-right" /> : null}
+              {show("comments") ? <Th id="comments" className="text-right" /> : null}
+              {show("averagePurchaseValue") ? <Th id="averagePurchaseValue" className="text-right" /> : null}
+              {show("systemOrders") ? <Th id="systemOrders" className="text-right" /> : null}
+              {show("systemRevenue") ? <Th id="systemRevenue" className="text-right" /> : null}
+              {show("realRoas") ? <Th id="realRoas" className="text-right" /> : null}
+              {show("cpa") ? <Th id="cpa" className="text-right" /> : null}
+              {show("spend") ? <Th id="spend" className="text-right" /> : null}
+              {show("impressions") ? <Th id="impressions" className="text-right" /> : null}
+              {show("reach") ? <Th id="reach" className="text-right" /> : null}
+              {show("clicks") ? <Th id="clicks" className="text-right" /> : null}
+              {show("ctr") ? <Th id="ctr" className="text-right" /> : null}
+              {show("cpc") ? <Th id="cpc" className="text-right" /> : null}
+              {show("roas") ? <Th id="roas" className="text-right" /> : null}
+              {show("signal") ? <Th id="signal" className="text-right" /> : null}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={23} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Đang tải dữ liệu...</td></tr>
-            ) : rows.length ? (
-              rows.map((row, index) => {
-                const m = row.metrics || {};
+              <tr><td colSpan={colSpan} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Đang tải dữ liệu...</td></tr>
+            ) : sortedRows.length ? (
+              sortedRows.map((row, index) => {
+                const m: any = row.metrics || {};
                 const a = productAttr(row);
                 const s = signalScore(row);
                 const hasSpend = n(m.spend) > 0;
                 return (
                   <tr key={`${level}-${row.id}`} onClick={() => onSelect(row)} className={`${index % 2 ? "bg-neutral-50/40" : "bg-white"} cursor-pointer hover:bg-lime-50/60`}>
-                    <td className="border-b border-neutral-100 px-3 py-3 align-middle">
+                    <td className="sticky left-0 z-10 border-b border-neutral-100 bg-inherit px-3 py-3 align-middle">
                       <input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" />
                     </td>
-                    <td className="border-b border-neutral-100 px-3 py-3">
-                      <div className="flex items-center gap-3">
-                        {row.thumbnailUrl ? (
-                          <img src={row.thumbnailUrl} alt="" className="h-12 w-12 rounded-lg object-cover ring-1 ring-neutral-200" referrerPolicy="no-referrer" />
-                        ) : (
-                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-neutral-100 text-[10px] font-semibold text-neutral-400">
-                            {level === "campaign" ? "CD" : level === "adset" ? "NQ" : "ADS"}
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <div className="max-w-[360px] truncate font-semibold text-neutral-950">{row.name || "—"}</div>
-                          <div className="mt-1 max-w-[360px] truncate text-xs font-medium text-neutral-400">
-                            {[row.campaignName, row.adSetName].filter(Boolean).join(" · ") || row.id}
-                          </div>
-                          {a.sku || a.productName ? (
-                            <div className="mt-1 max-w-[360px] truncate text-[11px] font-semibold text-emerald-700">
-                              {(a.sku ? `SKU: ${a.sku}` : a.productName) || ""}
+                    {show("name") ? (
+                      <td className="sticky left-[44px] z-10 border-b border-neutral-100 bg-inherit px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          {getAdThumb(row) ? (
+                            <img src={getAdThumb(row)} alt="" className="h-12 w-12 rounded-lg object-cover ring-1 ring-neutral-200" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-neutral-100 text-[10px] font-semibold text-neutral-400">
+                              {level === "campaign" ? "CD" : level === "adset" ? "NQ" : "ADS"}
                             </div>
-                          ) : null}
-                          {level !== "ad" ? <FamilyFlowMini row={row} /> : null}
+                          )}
+                          <div className="min-w-0">
+                            <div className="max-w-[360px] truncate font-semibold text-neutral-950">{row.name || "—"}</div>
+                            <div className="mt-1 max-w-[360px] truncate text-xs font-medium text-neutral-400">
+                              {[row.campaignName, row.adSetName].filter(Boolean).join(" · ") || row.id}
+                            </div>
+                            {a.sku || a.productName ? (
+                              <div className="mt-1 max-w-[360px] truncate text-[11px] font-semibold text-emerald-700">
+                                {(a.sku ? `SKU: ${a.sku}` : a.productName) || ""}
+                              </div>
+                            ) : null}
+                            {level !== "ad" ? <FamilyFlowMini row={row} /> : null}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3"><StatusPill value={row.effectiveStatus || row.status} /></td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">
-                      <div className="font-semibold">{compact((m as any).conversationStarts || m.purchases)}</div>
-                      <div className="text-[11px] font-semibold text-neutral-400">Lượt bắt đầu cuộc trò chuyện qua tin nhắn</div>
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).messages) ? compact((m as any).messages) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).costPerMessage) ? money((m as any).costPerMessage) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).conversationStarts) ? compact((m as any).conversationStarts) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).costPerConversation) ? money((m as any).costPerConversation) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).comments) ? compact((m as any).comments) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).costPerResult) ? money((m as any).costPerResult) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {n((m as any).averagePurchaseValue) ? money((m as any).averagePurchaseValue) : "—"}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">
-                      <div className={n(a.orderCount) ? "font-semibold text-emerald-700" : "font-semibold text-neutral-400"}>
-                        {a.allocationMode === "family_shared" ? "—" : compact(a.orderCount)}
-                      </div>
-                      <div className="mt-1 flex justify-end">
-                        <FamilyPill row={row} />
-                      </div>
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {a.allocationMode === "family_shared" ? <span className="text-neutral-400">{a.familySku || "Family"} · {money(a.familyRevenue)}</span> : (n(a.revenue) ? money(a.revenue) : "—")}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
-                      {a.allocationMode === "family_shared" ? "—" : (n(a.realRoasEstimate) ? ratio(a.realRoasEstimate) : "—")}
-                    </td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.costPerPurchase) ? money(m.costPerPurchase) : "—"}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{hasSpend ? money(m.spend) : "0đ"}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.impressions)}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.reach)}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.clicks)}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">{pct(m.ctr)}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">{n(m.cpc) ? money(m.cpc) : "—"}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">{ratio(m.roas)}</td>
-                    <td className="border-b border-neutral-100 px-3 py-3 text-right">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                        s >= 75 ? "bg-emerald-50 text-emerald-700" : s >= 45 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
-                      }`}>
-                        {s} điểm
-                      </span>
-                    </td>
+                      </td>
+                    ) : null}
+                    {show("delivery") ? (
+                      <td className="border-b border-neutral-100 px-3 py-3">
+                        <StatusPill value={deliveryText(row)} />
+                      </td>
+                    ) : null}
+                    {show("result") ? (
+                      <td className="border-b border-neutral-100 px-3 py-3 text-right">
+                        <div className="font-semibold">{compact(m.conversationStarts || m.purchases)}</div>
+                        <div className="text-[11px] font-semibold text-neutral-400">Lượt bắt đầu cuộc trò chuyện qua tin nhắn</div>
+                      </td>
+                    ) : null}
+                    {show("messages") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.messages) ? compact(m.messages) : "—"}</td> : null}
+                    {show("costPerMessage") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.costPerMessage) ? money(m.costPerMessage) : "—"}</td> : null}
+                    {show("conversationStarts") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.conversationStarts) ? compact(m.conversationStarts) : "—"}</td> : null}
+                    {show("costPerConversation") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.costPerConversation) ? money(m.costPerConversation) : "—"}</td> : null}
+                    {show("comments") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.comments) ? compact(m.comments) : "—"}</td> : null}
+                    {show("averagePurchaseValue") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.averagePurchaseValue) ? money(m.averagePurchaseValue) : "—"}</td> : null}
+                    {show("systemOrders") ? (
+                      <td className="border-b border-neutral-100 px-3 py-3 text-right">
+                        <div className={n(a.orderCount) ? "font-semibold text-emerald-700" : "font-semibold text-neutral-400"}>
+                          {a.allocationMode === "family_shared" ? "—" : compact(a.orderCount)}
+                        </div>
+                        <div className="mt-1 flex justify-end">
+                          <FamilyPill row={row} />
+                        </div>
+                      </td>
+                    ) : null}
+                    {show("systemRevenue") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{a.allocationMode === "family_shared" ? <span className="text-neutral-400">{a.familySku || "Family"} · {money(a.familyRevenue)}</span> : (n(a.revenue) ? money(a.revenue) : "—")}</td> : null}
+                    {show("realRoas") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{a.allocationMode === "family_shared" ? "—" : (n(a.realRoasEstimate) ? ratio(a.realRoasEstimate) : "—")}</td> : null}
+                    {show("cpa") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{n(m.costPerPurchase) ? money(m.costPerPurchase) : "—"}</td> : null}
+                    {show("spend") ? <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">{hasSpend ? money(m.spend) : "0đ"}</td> : null}
+                    {show("impressions") ? <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.impressions)}</td> : null}
+                    {show("reach") ? <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.reach)}</td> : null}
+                    {show("clicks") ? <td className="border-b border-neutral-100 px-3 py-3 text-right">{compact(m.clicks)}</td> : null}
+                    {show("ctr") ? <td className="border-b border-neutral-100 px-3 py-3 text-right">{pct(m.ctr)}</td> : null}
+                    {show("cpc") ? <td className="border-b border-neutral-100 px-3 py-3 text-right">{n(m.cpc) ? money(m.cpc) : "—"}</td> : null}
+                    {show("roas") ? <td className="border-b border-neutral-100 px-3 py-3 text-right">{ratio(m.roas)}</td> : null}
+                    {show("signal") ? (
+                      <td className="border-b border-neutral-100 px-3 py-3 text-right">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                          s >= 75 ? "bg-emerald-50 text-emerald-700" : s >= 45 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
+                        }`}>
+                          {s} điểm
+                        </span>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })
             ) : (
-              <tr><td colSpan={23} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Không có dòng phù hợp bộ lọc. Kiểm tra bộ lọc hoặc bấm Sync nhẹ hôm nay để có ad-level rồi hệ thống sẽ tự gộp lên Chiến dịch/Nhóm quảng cáo.</td></tr>
+              <tr><td colSpan={colSpan} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Không có dòng phù hợp bộ lọc. Kiểm tra bộ lọc hoặc bỏ điều kiện nâng cao.</td></tr>
             )}
           </tbody>
+          <tfoot className="sticky bottom-0 z-20 bg-white shadow-[0_-2px_8px_rgba(0,0,0,0.08)]">
+            <tr className="border-t border-neutral-200 text-sm font-semibold text-neutral-900">
+              <td className="sticky left-0 z-30 bg-white px-3 py-3"></td>
+              {show("name") ? (
+                <td className="sticky left-[44px] z-30 bg-white px-3 py-3">
+                  <div>Tổng cộng</div>
+                  <div className="text-[11px] font-semibold text-neutral-400">{compact(sortedRows.length)} dòng</div>
+                </td>
+              ) : null}
+              {show("delivery") ? <td className="bg-white px-3 py-3">—</td> : null}
+              {show("result") ? <td className="bg-white px-3 py-3 text-right">{compact(sortedRows.reduce((s, r) => s + n((r.metrics as any)?.conversationStarts || (r.metrics as any)?.purchases), 0))}</td> : null}
+              {show("messages") ? <td className="bg-white px-3 py-3 text-right">{compact(sortedRows.reduce((s, r) => s + n((r.metrics as any)?.messages), 0))}</td> : null}
+              {show("costPerMessage") ? <td className="bg-white px-3 py-3 text-right">{money(total.spend / Math.max(1, sortedRows.reduce((s, r) => s + n((r.metrics as any)?.messages), 0)))}</td> : null}
+              {show("conversationStarts") ? <td className="bg-white px-3 py-3 text-right">{compact(sortedRows.reduce((s, r) => s + n((r.metrics as any)?.conversationStarts), 0))}</td> : null}
+              {show("costPerConversation") ? <td className="bg-white px-3 py-3 text-right">{money(total.spend / Math.max(1, sortedRows.reduce((s, r) => s + n((r.metrics as any)?.conversationStarts), 0)))}</td> : null}
+              {show("comments") ? <td className="bg-white px-3 py-3 text-right">{compact(sortedRows.reduce((s, r) => s + n((r.metrics as any)?.comments), 0))}</td> : null}
+              {show("averagePurchaseValue") ? <td className="bg-white px-3 py-3 text-right">—</td> : null}
+              {show("systemOrders") ? <td className="bg-white px-3 py-3 text-right">{compact(total.systemOrders)}</td> : null}
+              {show("systemRevenue") ? <td className="bg-white px-3 py-3 text-right">{money(total.systemRevenue)}</td> : null}
+              {show("realRoas") ? <td className="bg-white px-3 py-3 text-right">{total.spend > 0 ? ratio(total.systemRevenue / total.spend) : "—"}</td> : null}
+              {show("cpa") ? <td className="bg-white px-3 py-3 text-right">{total.systemOrders > 0 ? money(total.spend / total.systemOrders) : "—"}</td> : null}
+              {show("spend") ? <td className="bg-white px-3 py-3 text-right">{money(total.spend)}</td> : null}
+              {show("impressions") ? <td className="bg-white px-3 py-3 text-right">{compact(total.impressions)}</td> : null}
+              {show("reach") ? <td className="bg-white px-3 py-3 text-right">{compact(total.reach)}</td> : null}
+              {show("clicks") ? <td className="bg-white px-3 py-3 text-right">{compact(total.clicks)}</td> : null}
+              {show("ctr") ? <td className="bg-white px-3 py-3 text-right">{total.impressions > 0 ? pct((total.clicks / total.impressions) * 100) : "—"}</td> : null}
+              {show("cpc") ? <td className="bg-white px-3 py-3 text-right">{total.clicks > 0 ? money(total.spend / total.clicks) : "—"}</td> : null}
+              {show("roas") ? <td className="bg-white px-3 py-3 text-right">—</td> : null}
+              {show("signal") ? <td className="bg-white px-3 py-3 text-right">—</td> : null}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </section>
@@ -1039,8 +1431,17 @@ function RowDetailDrawer({
 
 export default function MetaAdsBrainCenterPageClient() {
   const [range, setRange] = useState<RangeKey>("yesterday");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [level, setLevel] = useState<LevelKey>("ad");
-  const [filter, setFilter] = useState<FilterKey>("all");
+
+  const metaLevel = useMemo<"campaign" | "adset" | "ad">(() => {
+    const value = String(level || "ad");
+    if (value === "campaign" || value === "campaigns" || value === "Chiến dịch") return "campaign";
+    if (value === "adset" || value === "adsets" || value === "Nhóm quảng cáo") return "adset";
+    return "ad";
+  }, [level]);
+const [filter, setFilter] = useState<FilterKey>("all");
   const [advancedFilterOpen, setAdvancedFilterOpen] = useState(false);
   const [metricFilterField, setMetricFilterField] = useState("spend");
   const [metricFilterOp, setMetricFilterOp] = useState("gte");
@@ -1048,6 +1449,13 @@ export default function MetaAdsBrainCenterPageClient() {
   const [search, setSearch] = useState("");
   const [sourceMode, setSourceMode] = useState<SourceMode>("facebook");
   const [data, setData] = useState<BrainOverview | null>(null);
+
+  const metaRows = useMemo(() => {
+    if (metaLevel === "campaign") return data?.topCampaigns || [];
+    if (metaLevel === "adset") return data?.topAdSets || [];
+    return data?.topAds || [];
+  }, [data, metaLevel]);
+
   const [productPayload, setProductPayload] = useState<ProductPerformancePayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -1068,11 +1476,48 @@ export default function MetaAdsBrainCenterPageClient() {
     setLoading(true);
     setError("");
     try {
+      const dateQuery =
+        range === "custom" && customFrom && customTo
+          ? `range=custom&fromDate=${customFrom}&toDate=${customTo}`
+          : `range=${range}`;
+
       const [brain, products] = await Promise.all([
-        apiJson<BrainOverview>(`/meta-ads/brain-overview?range=${range}&summaryLevel=ad&includeProductOrders=1&sourceMode=${sourceMode}&orderMode=valid`),
-        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?range=${range}&limit=100&sourceMode=${sourceMode}&orderMode=valid`),
+        apiJson<BrainOverview>(`/meta-ads/live-insights?${dateQuery}&level=${metaLevel}&limit=1000`),
+        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?${dateQuery}&limit=100&sourceMode=${sourceMode}&orderMode=valid`),
       ]);
-      setData(brain);
+
+      const productRows = products?.rows || [];
+      const enrichedBrain: BrainOverview = {
+        ...brain,
+        topAds: metaLevel === "ad" ? (brain.topAds || []).map((row) => {
+          const product = productRows.find((p) => {
+            const sku = String(p.familySku || p.sku || "").toLowerCase();
+            const name = String(row.name || "").toLowerCase();
+            return sku && name.includes(sku);
+          });
+
+          if (!product) return row;
+
+          return {
+            ...row,
+            productAttribution: {
+              mode: "sku_family_live",
+              sku: product.sku,
+              familySku: product.familySku || product.sku,
+              orderCount: product.orderCount,
+              familyOrderCount: product.orderCount,
+              quantity: product.quantity,
+              revenue: product.revenue,
+              familyRevenue: product.revenue,
+              orderRevenue: product.orderRevenue || product.revenue,
+              familyOrderRevenue: product.orderRevenue || product.revenue,
+              averageOrderValue: product.averageOrderValue,
+            },
+          };
+        }) : (brain.topAds || []),
+      };
+
+      setData(enrichedBrain);
       setProductPayload(products);
     } catch (err: any) {
       setError(err?.message || "Không tải được dữ liệu Meta Ads Operating Center");
@@ -1086,18 +1531,8 @@ export default function MetaAdsBrainCenterPageClient() {
     setError("");
     setSyncMessage("");
     try {
-      const payload = await apiJson<SyncPayload>("/meta-ads/sync", {
-        method: "POST",
-        body: JSON.stringify({
-          range,
-          includeStructure: false,
-          includeInsights: true,
-          levels: ["ad"],
-          limit: 1000,
-        }),
-      });
-      setSyncMessage(`Sync nhẹ xong: ${payload.insights || 0} dòng ad insights. Không kéo structure nên không đơ.`);
       await load();
+      setSyncMessage("Đã tải lại Meta live theo đúng khoảng đang chọn.");
     } catch (err: any) {
       setError(err?.message || "Sync Meta Ads thất bại");
     } finally {
@@ -1108,13 +1543,13 @@ export default function MetaAdsBrainCenterPageClient() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, sourceMode, level]);
-
-  const rawAdRows = data?.topAds || [];
+  }, [range, customFrom, customTo, sourceMode, level]);
 
   const sourceRows = useMemo(() => {
-    return aggregateRows(rawAdRows, level);
-  }, [rawAdRows, level]);
+    // Quan trọng: mỗi tab dùng đúng Meta live level tương ứng.
+    // Không tự gộp ad-level lên campaign/adset ở FE vì sẽ lệch số so với Meta Ads Manager.
+    return metaRows || [];
+  }, [metaRows]);
 
   const rows = useMemo(() => {
     return sourceRows
@@ -1134,7 +1569,7 @@ export default function MetaAdsBrainCenterPageClient() {
         <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
           <div className="flex w-full flex-col gap-4 border-b border-neutral-200 bg-neutral-950 px-5 py-5 text-white xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V30 CORE BUILD FIXED</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V38 FILTER SORT COLUMNS</p>
               <h1 className="mt-2 font-serif text-[34px] font-medium tracking-tight">Meta Ads Operating Center</h1>
               <p className="mt-2 max-w-5xl text-sm font-medium leading-6 text-neutral-300">
                 Bảng vận hành là trung tâm. KPI tổng dùng số chính thức từ Meta. Sản phẩm tạo đơn đọc từ order thật trong hệ thống; gắn ads theo tên/SKU chỉ là gợi ý, chưa phải fbclid chuẩn.
@@ -1173,6 +1608,18 @@ export default function MetaAdsBrainCenterPageClient() {
               setSearch={setSearch}
               range={range}
               setRange={setRange}
+              customFrom={customFrom}
+              setCustomFrom={setCustomFrom}
+              customTo={customTo}
+              setCustomTo={setCustomTo}
+              advancedFilterOpen={advancedFilterOpen}
+              setAdvancedFilterOpen={setAdvancedFilterOpen}
+              metricFilterField={metricFilterField}
+              setMetricFilterField={setMetricFilterField}
+              metricFilterOp={metricFilterOp}
+              setMetricFilterOp={setMetricFilterOp}
+              metricFilterValue={metricFilterValue}
+              setMetricFilterValue={setMetricFilterValue}
               onSync={syncNow}
               syncing={syncing}
               onReload={load}

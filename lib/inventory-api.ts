@@ -141,8 +141,9 @@ function normalizeMovement(raw: any): InventoryMovement {
   };
 }
 
-export async function getInventoryMovements(limit = 100): Promise<InventoryMovement[]> {
-  const data = await request<any[]>(`/inventory/movements/history?limit=${limit}`);
+export async function getInventoryMovements(limit = 50000): Promise<InventoryMovement[]> {
+  const safeLimit = Math.min(Math.max(Number(limit || 50000), 1), 50000);
+  const data = await request<any[]>(`/inventory/movements/history?limit=${safeLimit}`);
   return data.map(normalizeMovement);
 }
 
