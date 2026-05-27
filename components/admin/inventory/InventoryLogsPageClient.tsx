@@ -289,6 +289,72 @@ function firstNumber(...values: any[]) {
   return null;
 }
 
+function normalizeSearchValue(value: any) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactSearchValue(value: any) {
+  return normalizeSearchValue(value).replace(/\s+/g, "");
+}
+
+function buildSearchTerms(input: string) {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+
+  const hasStrongSeparator = /[,;\n\r\t]+/.test(raw);
+  const parts = hasStrongSeparator
+    ? raw
+        .split(/[,;\n\r\t]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [raw];
+
+  // Trường hợp paste một loạt mã cách nhau bằng dấu cách: AP833 QS940 ORD-...
+  // Không tách câu tên sản phẩm tiếng Việt có nhiều chữ, để paste nguyên tên vẫn tìm đúng.
+  if (!hasStrongSeparator && parts.length === 1) {
+    const tokens = raw.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+    const codeLikeTokens = tokens.filter((token) =>
+      /^[a-z0-9_-]{3,}$/i.test(token) &&
+      (/[0-9]/.test(token) || /^(ord|qo|cl|xd|th|ap|qs|sm|sku)/i.test(token)),
+    );
+
+    if (tokens.length >= 2 && codeLikeTokens.length === tokens.length) {
+      return Array.from(new Set(codeLikeTokens.map(normalizeSearchValue).filter(Boolean)));
+    }
+  }
+
+  return Array.from(new Set(parts.map(normalizeSearchValue).filter(Boolean)));
+}
+
+function rowMatchesSearchTerms(row: InventoryMovementV2, branches: BranchItem[], terms: string[]) {
+  if (!terms.length) return true;
+
+  const blob = rowSearchBlob(row, branches);
+  const compactBlob = compactSearchValue(blob);
+
+  return terms.some((term) => {
+    const normalizedTerm = normalizeSearchValue(term);
+    if (!normalizedTerm) return true;
+
+    const compactTerm = compactSearchValue(normalizedTerm);
+    if (blob.includes(normalizedTerm)) return true;
+    if (compactTerm && compactBlob.includes(compactTerm)) return true;
+
+    const words = normalizedTerm.split(" ").filter(Boolean);
+    // Hỗ trợ paste tên sản phẩm đầy đủ nhưng khác dấu/ký tự: chỉ cần toàn bộ từ đều nằm trong blob.
+    return words.length >= 2 && words.every((word) => blob.includes(word));
+  });
+}
+
+
 function getMovementDateCandidates(row: InventoryMovementV2) {
   const meta = getMeta(row);
 
@@ -682,7 +748,8 @@ function getBranchText(row: InventoryMovementV2, branches: BranchItem[]) {
 function rowSearchBlob(row: InventoryMovementV2, branches: BranchItem[]) {
   const meta = getMeta(row);
 
-  return [
+  const values = [
+    row.id,
     row.sku,
     row.productName,
     row.productCode,
@@ -696,20 +763,55 @@ function rowSearchBlob(row: InventoryMovementV2, branches: BranchItem[]) {
     refTypeLabel(getRefType(row)),
     row.refId,
     getReferenceCode(row),
+    row.refCode,
+    row.referenceCode,
+    row.orderCode,
+    row.purchaseReceiptCode,
+    row.purchaseCode,
+    row.stocktakeCode,
+    row.stocktakeSessionCode,
+    row.stockTransferCode,
+    row.returnCode,
+    row.shipmentCode,
+    row.sourceCode,
     row.note,
     getActorLabel(row),
     getStatus(row),
     getBranchText(row, branches),
     meta.note,
     meta.reason,
+    meta.refCode,
+    meta.referenceCode,
     meta.orderCode,
+    meta.orderId,
     meta.purchaseReceiptCode,
+    meta.purchaseCode,
+    meta.stocktakeCode,
     meta.stocktakeSessionCode,
     meta.stockTransferCode,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+    meta.returnCode,
+    meta.shipmentCode,
+    meta.sourceCode,
+    getNestedValue(meta, [
+      "order.code",
+      "order.orderCode",
+      "order.id",
+      "order.displayCode",
+      "order.internalCode",
+      "order.externalCode",
+      "order.customerPhone",
+      "shipment.orderCode",
+      "shipment.code",
+      "return.orderCode",
+      "return.code",
+      "purchaseReceipt.code",
+      "stockTransfer.code",
+      "stocktakeSession.code",
+      "stocktakeSession.name",
+    ]),
+  ];
+
+  return normalizeSearchValue(values.filter(Boolean).join(" "));
 }
 
 function getUniqueOptions(rows: InventoryMovementV2[], getter: (row: InventoryMovementV2) => string) {
@@ -925,7 +1027,7 @@ export default function InventoryLogsPageClient() {
   }, [actorDirectory, scopedRows]);
 
   const filtered = useMemo(() => {
-    const q = appliedQuery.trim().toLowerCase();
+    const searchTerms = buildSearchTerms(appliedQuery);
     const from = appliedFromDate ? new Date(`${appliedFromDate}T00:00:00`).getTime() : null;
     const to = appliedToDate ? new Date(`${appliedToDate}T23:59:59`).getTime() : null;
 
@@ -933,7 +1035,7 @@ export default function InventoryLogsPageClient() {
       const rowDate = parseDate(getMovementDate(row));
       const rowTime = rowDate?.getTime() || null;
 
-      const matchQuery = !q || rowSearchBlob(row, branches).includes(q);
+      const matchQuery = rowMatchesSearchTerms(row, branches, searchTerms);
       const matchType = appliedTypeFilters.length === 0 || appliedTypeFilters.includes(String(row.type || ""));
       const matchBranch = appliedBranchFilters.length === 0 || appliedBranchFilters.includes(String(row.branchId || ""));
       const matchRefType = appliedRefTypeFilters.length === 0 || appliedRefTypeFilters.includes(String(getRefType(row) || ""));
@@ -1196,7 +1298,7 @@ export default function InventoryLogsPageClient() {
             onKeyDown={(e) => {
               if (e.key === "Enter") applyFilters();
             }}
-            placeholder="Tìm SKU, sản phẩm, mã đơn, mã phiếu nhập, mã kiểm kho, nhân viên, ghi chú..."
+            placeholder="Tìm SKU, tên sản phẩm, mã đơn. Nhập nhiều mã bằng dấu phẩy hoặc xuống dòng..."
           />
 
           <MultiFilter

@@ -363,6 +363,8 @@ export default function StocktakeSessionsPageClient() {
   const [noteDraft, setNoteDraft] = useState("");
   const [noteSavingId, setNoteSavingId] = useState<string | null>(null);
   const [applyingSessionId, setApplyingSessionId] = useState<string | null>(null);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [bulkAction, setBulkAction] = useState<"apply" | "cancel" | "delete" | null>(null);
   const [creatorQuery, setCreatorQuery] = useState("");
   const [workerQuery, setWorkerQuery] = useState("");
   const [applyFilter, setApplyFilter] = useState<ApplyFilter>("ALL");
@@ -541,6 +543,23 @@ export default function StocktakeSessionsPageClient() {
     branchMap,
   ]);
 
+  const visibleSessionIds = useMemo(() => visibleSessions.map((item) => item.id), [visibleSessions]);
+  const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds]);
+  const selectedSessions = useMemo(
+    () => sessions.filter((item) => selectedSessionIdSet.has(item.id)),
+    [sessions, selectedSessionIdSet],
+  );
+  const selectableVisibleIds = useMemo(() => visibleSessionIds, [visibleSessionIds]);
+  const allVisibleSelected =
+    selectableVisibleIds.length > 0 && selectableVisibleIds.every((id) => selectedSessionIdSet.has(id));
+  const selectedApplySessions = selectedSessions.filter(
+    (item) => !isApplied(item) && String(item.status || "").toUpperCase() === "FINISHED",
+  );
+  const selectedCancelSessions = selectedSessions.filter(
+    (item) => !isApplied(item) && String(item.status || "").toUpperCase() !== "CANCELLED",
+  );
+  const selectedDeleteSessions = selectedSessions.filter((item) => !isApplied(item));
+
   const total = overview?.total ?? totalItems;
   const applied = overview?.applied ?? visibleSessions.filter((s) => isApplied(s)).length;
   const running = overview?.running ?? visibleSessions.filter((s) =>
@@ -550,6 +569,160 @@ export default function StocktakeSessionsPageClient() {
   const cancelled = overview?.cancelled ?? visibleSessions.filter((s) => String(s.status).toUpperCase() === "CANCELLED").length;
   const totalScanEvents = overview?.totalScanEvents ?? visibleSessions.reduce((sum, item) => sum + getScanCount(item), 0);
   const totalWorkers = overview?.totalWorkers ?? visibleSessions.reduce((sum, item) => sum + getWorkerCount(item), 0);
+
+  useEffect(() => {
+    setSelectedSessionIds((current) => current.filter((id) => sessions.some((item) => item.id === id)));
+  }, [sessions]);
+
+  const toggleSelectSession = (id: string) => {
+    setSelectedSessionIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
+
+  const toggleSelectVisibleSessions = () => {
+    setSelectedSessionIds((current) => {
+      if (allVisibleSelected) {
+        const visibleSet = new Set(selectableVisibleIds);
+        return current.filter((id) => !visibleSet.has(id));
+      }
+
+      return Array.from(new Set([...current, ...selectableVisibleIds]));
+    });
+  };
+
+  const clearSelectedSessions = () => setSelectedSessionIds([]);
+
+  const handleBulkApplySessions = async () => {
+    if (!canApplyStocktake) {
+      setMessage("Bạn không có quyền cân bằng kho.");
+      return;
+    }
+
+    if (!selectedApplySessions.length) {
+      setMessage("Chưa có phiên hợp lệ để cân bằng kho. Chỉ cân bằng được phiên đã kết thúc và chưa chốt.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Cân bằng kho ${selectedApplySessions.length} phiên đã chọn?\n\n` +
+        "Hệ thống sẽ bỏ qua các phiên không hợp lệ và ghi nhận điều chỉnh tồn kho theo chênh lệch kiểm.",
+    );
+    if (!ok) return;
+
+    try {
+      setBulkAction("apply");
+      setMessage("");
+
+      let success = 0;
+      let failed = 0;
+
+      for (const item of selectedApplySessions) {
+        try {
+          await apiRequest(`/stocktake-sessions/${item.id}/apply`, {
+            method: "PATCH",
+            body: JSON.stringify({ note: item.note || "Cân bằng kho hàng loạt từ lịch sử kiểm kho" }),
+          });
+          success += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      setMessage(`Đã cân bằng ${success} phiên${failed ? `, lỗi ${failed} phiên` : ""}.`);
+      setSelectedSessionIds([]);
+      loadedSessionKeyRef.current = "";
+      await loadSessions({ force: true });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không xử lý được các phiên đã chọn.");
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const handleBulkCancelSessions = async () => {
+    if (!canCancelStocktake) {
+      setMessage("Bạn không có quyền huỷ phiên kiểm kho.");
+      return;
+    }
+
+    if (!selectedCancelSessions.length) {
+      setMessage("Chưa có phiên hợp lệ để huỷ.");
+      return;
+    }
+
+    const ok = window.confirm(`Huỷ ${selectedCancelSessions.length} phiên kiểm kho đã chọn?`);
+    if (!ok) return;
+
+    try {
+      setBulkAction("cancel");
+      setMessage("");
+
+      let success = 0;
+      let failed = 0;
+
+      for (const item of selectedCancelSessions) {
+        try {
+          await apiRequest(`/stocktake-sessions/${item.id}/cancel`, { method: "PATCH" });
+          success += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      setMessage(`Đã huỷ ${success} phiên${failed ? `, lỗi ${failed} phiên` : ""}.`);
+      setSelectedSessionIds([]);
+      loadedSessionKeyRef.current = "";
+      await loadSessions({ force: true });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không huỷ được các phiên đã chọn.");
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const handleBulkDeleteSessions = async () => {
+    if (!canDeleteStocktake) {
+      setMessage("Bạn không có quyền xoá phiên kiểm kho.");
+      return;
+    }
+
+    if (!selectedDeleteSessions.length) {
+      setMessage("Chưa có phiên hợp lệ để xoá. Không xoá phiên đã chốt tồn.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Xoá ${selectedDeleteSessions.length} phiên kiểm kho đã chọn?\n\nKhông xoá phiên đã chốt tồn.`,
+    );
+    if (!ok) return;
+
+    try {
+      setBulkAction("delete");
+      setMessage("");
+
+      let success = 0;
+      let failed = 0;
+
+      for (const item of selectedDeleteSessions) {
+        try {
+          await apiRequest(`/stocktake-sessions/${item.id}`, { method: "DELETE" });
+          success += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      setMessage(`Đã xoá ${success} phiên${failed ? `, lỗi ${failed} phiên` : ""}.`);
+      setSelectedSessionIds([]);
+      loadedSessionKeyRef.current = "";
+      await loadSessions({ force: true });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không xoá được các phiên đã chọn.");
+    } finally {
+      setBulkAction(null);
+    }
+  };
 
   const handleApplySession = async (item: EnrichedStocktakeSession) => {
     if (!canApplyStocktake) {
@@ -1013,10 +1186,69 @@ Không xoá phiên đã chốt tồn.`,
           </div>
         </div>
 
+        {selectedSessionIds.length > 0 ? (
+          <div className="mx-5 mb-4 flex flex-col gap-3 rounded-2xl border border-purple-200 bg-purple-50 p-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-extrabold text-purple-900">Đã chọn {formatNumber(selectedSessionIds.length)} phiên</p>
+              <p className="mt-0.5 text-xs text-purple-700">Có thể cân bằng kho, huỷ hoặc xoá hàng loạt. Phiên không hợp lệ sẽ được bỏ qua.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {canApplyStocktake ? (
+                <button
+                  type="button"
+                  onClick={() => void handleBulkApplySessions()}
+                  disabled={bulkAction !== null || selectedApplySessions.length === 0}
+                  className="rounded-xl border border-purple-300 bg-white px-3 py-2 text-xs font-extrabold text-purple-700 hover:bg-purple-100 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-400"
+                >
+                  {bulkAction === "apply" ? "Đang cân bằng..." : `Cân bằng kho (${formatNumber(selectedApplySessions.length)})`}
+                </button>
+              ) : null}
+              {canCancelStocktake ? (
+                <button
+                  type="button"
+                  onClick={() => void handleBulkCancelSessions()}
+                  disabled={bulkAction !== null || selectedCancelSessions.length === 0}
+                  className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-extrabold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-400"
+                >
+                  {bulkAction === "cancel" ? "Đang huỷ..." : `Huỷ (${formatNumber(selectedCancelSessions.length)})`}
+                </button>
+              ) : null}
+              {canDeleteStocktake ? (
+                <button
+                  type="button"
+                  onClick={() => void handleBulkDeleteSessions()}
+                  disabled={bulkAction !== null || selectedDeleteSessions.length === 0}
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-extrabold text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-400"
+                >
+                  {bulkAction === "delete" ? "Đang xoá..." : `Xoá (${formatNumber(selectedDeleteSessions.length)})`}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={clearSelectedSessions}
+                disabled={bulkAction !== null}
+                className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-extrabold text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Bỏ chọn
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="overflow-auto">
-          <table className="min-w-[1420px] text-sm">
+          <table className="min-w-[1500px] text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
+                <th className="w-12 px-4 py-3 font-bold">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-neutral-300"
+                    checked={allVisibleSelected}
+                    disabled={!visibleSessions.length || bulkAction !== null}
+                    onChange={toggleSelectVisibleSessions}
+                    aria-label="Chọn tất cả phiên đang hiển thị"
+                  />
+                </th>
                 <th className="px-4 py-3 font-bold">Phiên</th>
                 <th className="px-4 py-3 font-bold">Chi nhánh</th>
                 <th className="px-4 py-3 font-bold">Trạng thái</th>
@@ -1034,13 +1266,13 @@ Không xoá phiên đã chốt tồn.`,
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-neutral-500">
                     Đang tải lịch sử...
                   </td>
                 </tr>
               ) : visibleSessions.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-neutral-500">
                     Không có phiên kiểm phù hợp.
                   </td>
                 </tr>
@@ -1056,7 +1288,16 @@ Không xoá phiên đã chốt tồn.`,
                   const appliedByName = getAppliedByName(item);
 
                   return (
-                    <tr key={item.id} className="border-t border-neutral-100 align-top hover:bg-neutral-50/70">
+                    <tr key={item.id} className={`border-t border-neutral-100 align-top hover:bg-neutral-50/70 ${selectedSessionIdSet.has(item.id) ? "bg-purple-50/40" : ""}`}>
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-neutral-300"
+                          checked={selectedSessionIdSet.has(item.id)}
+                          onChange={() => toggleSelectSession(item.id)}
+                          aria-label={`Chọn phiên ${item.name || item.id}`}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <Link href={`/stocktake-sessions/${item.id}`} prefetch={false} target="_blank" rel="noopener noreferrer" className="font-bold text-neutral-950 hover:underline">
                           {item.name || item.id}
