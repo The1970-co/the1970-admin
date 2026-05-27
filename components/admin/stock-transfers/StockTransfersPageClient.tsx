@@ -447,6 +447,8 @@ export default function StockTransfersPageClient() {
   const scanBackendTimerRef = useRef<number | null>(null);
   const lastBackendLookupRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
   const hotScanVariantMapRef = useRef<Map<string, any>>(new Map());
+  const hydratedTransferIdsRef = useRef<Set<string>>(new Set());
+  const [searchHydrating, setSearchHydrating] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [fromBranchFilter, setFromBranchFilter] = useState("ALL");
@@ -653,6 +655,42 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
     return map;
   }, [allVariants]);
+
+
+
+  const transferCatalogEntries = useMemo(() => {
+    return (allVariants as any[])
+      .map((item) => {
+        const skuNorm = normalizeCategoryName(item?.sku);
+        if (!skuNorm) return null;
+
+        return {
+          skuNorm,
+          searchText: normalizeCategoryName(
+            [item?.sku, item?.barcode, item?.productName, item?.color, item?.size]
+              .filter(Boolean)
+              .join(" ")
+          ),
+        };
+      })
+      .filter(Boolean) as Array<{ skuNorm: string; searchText: string }>;
+  }, [allVariants]);
+
+  function getTransferCatalogSearchText(transfer: any) {
+    if (!transferCatalogEntries.length) return "";
+
+    const baseText = getTransferSearchText(transfer);
+    if (!baseText) return "";
+
+    const matches: string[] = [];
+
+    for (const entry of transferCatalogEntries) {
+      if (!entry.skuNorm) continue;
+      if (baseText.includes(entry.skuNorm)) matches.push(entry.searchText);
+    }
+
+    return matches.join(" ");
+  }
 
   const dynamicCategories = useMemo(() => {
     const set = new Set<string>();
@@ -946,16 +984,22 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
         item.totalQty ?? items.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0),
       );
       const totalLinesValue = Number(item.totalLines ?? items.length ?? 0);
-      const searchable = getTransferSearchText(item);
+      const baseSearchable = getTransferSearchText(item);
+      const catalogSearchable = getTransferCatalogSearchText(item);
+      const searchable = normalizeCategoryName(`${baseSearchable} ${catalogSearchable}`);
       const itemText = normalizeCategoryName(
-        items
-          .flatMap((line: any) => [
+        [
+          baseSearchable,
+          catalogSearchable,
+          ...items.flatMap((line: any) => [
             getTransferItemProductName(line),
             getTransferItemSku(line),
             getTransferItemColor(line),
             getTransferItemSize(line),
             getTransferItemCategoryName(line),
-          ])
+          ]),
+        ]
+          .filter(Boolean)
           .join(" "),
       );
 
@@ -966,7 +1010,7 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       if (active.sourceTypeFilter !== "ALL" && String(item.sourceType || "MANUAL") !== active.sourceTypeFilter) return false;
       if (active.createdByFilter !== "ALL" && String(item.createdByName || item.confirmedByName || "") !== active.createdByFilter) return false;
       if (productQ && !itemText.includes(productQ)) return false;
-      if (skuQ && !items.some((line: any) => normalizeCategoryName(getTransferItemSku(line)).includes(skuQ))) return false;
+      if (skuQ && !searchable.includes(skuQ)) return false;
       if (active.categoryFilter !== "ALL" && !items.some((line: any) => getTransferItemCategoryName(line) === active.categoryFilter)) return false;
       if (active.colorFilter !== "ALL" && !items.some((line: any) => getTransferItemColor(line) === active.colorFilter)) return false;
       if (active.sizeFilter !== "ALL" && !items.some((line: any) => getTransferItemSize(line) === active.sizeFilter)) return false;
@@ -1004,7 +1048,7 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       if (active.sortBy === "code_desc") return String(b.transferCode || "").localeCompare(String(a.transferCode || ""), "vi");
       return bCreated - aCreated;
     });
-  }, [visibleRows, appliedTransferFilters]);
+  }, [visibleRows, appliedTransferFilters, transferCatalogEntries]);
 
   const transferStats = useMemo(() => {
     const totalQty = filteredRows.reduce(
@@ -1047,8 +1091,86 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     };
   }
 
+  function shouldHydrateTransfersForSearch(filters: TransferFilters) {
+    // Danh sách /stock-transfers trả rất nhanh nhưng nhiều phiếu chỉ có summary,
+    // không có full items. Khi tìm theo SKU/tên SP/màu/size/danh mục hoặc ô tìm chính,
+    // phải lấy detail theo nhu cầu thì mới search chính xác mà không làm chậm lúc mở trang.
+    return Boolean(
+      String(filters.query || "").trim() ||
+        String(filters.skuFilter || "").trim() ||
+        String(filters.productFilter || "").trim() ||
+        filters.categoryFilter !== "ALL" ||
+        filters.colorFilter !== "ALL" ||
+        filters.sizeFilter !== "ALL"
+    );
+  }
+
+  async function hydrateTransfersForSearch(filters: TransferFilters) {
+    if (!shouldHydrateTransfersForSearch(filters)) return;
+
+    const candidates = visibleRows.filter((transfer: any) => {
+      const id = String(transfer?.id || "");
+      if (!id || hydratedTransferIdsRef.current.has(id)) return false;
+
+      // Nếu list payload đã có items thật thì không cần gọi detail nữa.
+      const items = getTransferItems(transfer);
+      if (items.length > 0) {
+        hydratedTransferIdsRef.current.add(id);
+        return false;
+      }
+
+      return true;
+    });
+
+    if (!candidates.length) return;
+
+    setSearchHydrating(true);
+
+    try {
+      const detailMap = new Map<string, StockTransfer>();
+      const chunkSize = 8;
+
+      for (let index = 0; index < candidates.length; index += chunkSize) {
+        const chunk = candidates.slice(index, index + chunkSize);
+        const details = await Promise.all(
+          chunk.map(async (transfer: any) => {
+            const id = String(transfer?.id || "");
+            try {
+              const detail = await getStockTransferDetail(id);
+              hydratedTransferIdsRef.current.add(id);
+              return detail ? ({ ...transfer, ...detail } as StockTransfer) : null;
+            } catch (err) {
+              console.error("stock transfer detail search hydrate failed", id, err);
+              hydratedTransferIdsRef.current.add(id);
+              return null;
+            }
+          }),
+        );
+
+        for (const detail of details) {
+          if (detail?.id) detailMap.set(String(detail.id), detail);
+        }
+      }
+
+      if (detailMap.size) {
+        setRows((prev) =>
+          prev.map((transfer: any) => detailMap.get(String(transfer?.id || "")) || transfer),
+        );
+      }
+    } finally {
+      setSearchHydrating(false);
+    }
+  }
+
   function applyTransferFilters() {
-    setAppliedTransferFilters(getDraftTransferFilters());
+    const nextFilters = getDraftTransferFilters();
+    setAppliedTransferFilters(nextFilters);
+
+    // Search lần đầu lọc ngay trên dữ liệu list nhanh. Nếu cần tìm theo dữ liệu item,
+    // hydrate detail sau đó set lại filters để bảng tự tính lại kết quả chính xác.
+    void hydrateTransfersForSearch(nextFilters).then(() => {
+      setAppliedTransferFilters({ ...nextFilters });
+    });
   }
 
   function resetTransferFilters() {
@@ -2115,7 +2237,9 @@ useEffect(() => {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="text-sm font-medium text-neutral-500">{filteredRows.length} phiếu</div>
+            <div className="text-sm font-medium text-neutral-500">
+              {searchHydrating ? "Đang tìm sâu..." : `${filteredRows.length} phiếu`}
+            </div>
             <button
               type="button"
               onClick={() => setFilterPanelOpen((prev) => !prev)}
@@ -2331,9 +2455,10 @@ useEffect(() => {
           <button
             type="button"
             onClick={applyTransferFilters}
-            className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800"
+            disabled={searchHydrating}
+            className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Tìm kiếm
+            {searchHydrating ? "Đang tìm..." : "Tìm kiếm"}
           </button>
 
           <button
