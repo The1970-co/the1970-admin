@@ -1,7 +1,10 @@
 "use client";
 
 import { apiFetch } from "@/lib/api";
-import { getCurrentUserFromStorage, getWorkingBranchId } from "@/lib/current-user";
+import {
+  getCurrentUserFromStorage,
+  getWorkingBranchId,
+} from "@/lib/current-user";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getBranches,
@@ -33,7 +36,6 @@ import {
   renderOrderTemplateHtml,
 } from "@/lib/print-template-engine";
 
-
 function Panel({
   children,
   className = "",
@@ -42,7 +44,9 @@ function Panel({
   className?: string;
 }) {
   return (
-    <div className={`rounded-2xl border border-neutral-200 bg-white shadow-sm ${className}`}>
+    <div
+      className={`rounded-2xl border border-neutral-200 bg-white shadow-sm ${className}`}
+    >
       {children}
     </div>
   );
@@ -90,7 +94,11 @@ function Modal({
       <div className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-2xl bg-white p-4 shadow-2xl">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-2xl font-semibold tracking-tight">{title}</h3>
-          <button onClick={onClose} className="text-lg text-neutral-500" type="button">
+          <button
+            onClick={onClose}
+            className="text-lg text-neutral-500"
+            type="button"
+          >
             ×
           </button>
         </div>
@@ -156,7 +164,6 @@ const DEFAULT_TRANSFER_FILTERS: TransferFilters = {
   sortBy: "created_desc",
 };
 
-
 function makeRowId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -173,7 +180,6 @@ function statusBadge(status: StockTransfer["status"]) {
   if (status === "PENDING") return <Badge tone="amber">Chờ xác nhận</Badge>;
   return <Badge tone="amber">Nháp</Badge>;
 }
-
 
 const MAIN_CATEGORY_GROUPS = [
   {
@@ -248,7 +254,8 @@ function getProductCategoryName(product: any) {
     "";
 
   const categoryName = String(rawCategory || "").trim();
-  if (!categoryName || categoryName === "—" || categoryName === "undefined") return "";
+  if (!categoryName || categoryName === "—" || categoryName === "undefined")
+    return "";
   return categoryName;
 }
 
@@ -297,7 +304,7 @@ function getTransferItemSku(item: any) {
       item?.productVariant?.sku ||
       item?.productSnapshot?.sku ||
       item?.variantSnapshot?.sku ||
-      ""
+      "",
   ).trim();
 }
 
@@ -311,7 +318,7 @@ function getTransferItemProductName(item: any) {
       item?.product?.name ||
       item?.productSnapshot?.name ||
       item?.variantProduct?.name ||
-      ""
+      "",
   ).trim();
 }
 
@@ -322,7 +329,7 @@ function getTransferItemColor(item: any) {
       item?.variant?.color ||
       item?.productVariant?.color ||
       item?.variantSnapshot?.color ||
-      ""
+      "",
   ).trim();
 }
 
@@ -333,19 +340,25 @@ function getTransferItemSize(item: any) {
       item?.variant?.size ||
       item?.productVariant?.size ||
       item?.variantSnapshot?.size ||
-      ""
+      "",
   ).trim();
 }
 
 function collectTransferPrimitiveText(value: any, depth = 0): string[] {
   if (value === null || value === undefined || depth > 4) return [];
 
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
     return [String(value)];
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap((item) => collectTransferPrimitiveText(item, depth + 1));
+    return value.flatMap((item) =>
+      collectTransferPrimitiveText(item, depth + 1),
+    );
   }
 
   if (typeof value === "object") {
@@ -394,6 +407,7 @@ function getTransferSearchText(transfer: any) {
         item?.variantId,
         item?.productId,
       ]),
+      ...collectTransferPrimitiveText(transfer),
       ...collectTransferPrimitiveText(transfer?.itemsSummary),
       ...collectTransferPrimitiveText(transfer?.itemPreview),
     ]
@@ -414,7 +428,6 @@ function formatShortDateTime(value: any) {
     minute: "2-digit",
   });
 }
-
 
 export default function StockTransfersPageClient() {
   const [rows, setRows] = useState<StockTransfer[]>([]);
@@ -442,13 +455,17 @@ export default function StockTransfersPageClient() {
   const [scanNotice, setScanNotice] = useState("");
   const [recentScans, setRecentScans] = useState<string[]>([]);
   const variantSearchRef = useRef<HTMLInputElement | null>(null);
-  const lastScanRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+  const lastScanRef = useRef<{ value: string; at: number }>({
+    value: "",
+    at: 0,
+  });
   const scanTimerRef = useRef<number | null>(null);
   const scanBackendTimerRef = useRef<number | null>(null);
-  const lastBackendLookupRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+  const lastBackendLookupRef = useRef<{ value: string; at: number }>({
+    value: "",
+    at: 0,
+  });
   const hotScanVariantMapRef = useRef<Map<string, any>>(new Map());
-  const hydratedTransferIdsRef = useRef<Set<string>>(new Set());
-  const [searchHydrating, setSearchHydrating] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [fromBranchFilter, setFromBranchFilter] = useState("ALL");
@@ -471,36 +488,52 @@ export default function StockTransfersPageClient() {
   const [minLineFilter, setMinLineFilter] = useState("");
   const [maxLineFilter, setMaxLineFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_desc");
-  const [appliedTransferFilters, setAppliedTransferFilters] = useState<TransferFilters>(DEFAULT_TRANSFER_FILTERS);
+  const [appliedTransferFilters, setAppliedTransferFilters] =
+    useState<TransferFilters>(DEFAULT_TRANSFER_FILTERS);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [selectedTransfer, setSelectedTransfer] = useState<StockTransfer | null>(null);
+  const [selectedTransfer, setSelectedTransfer] =
+    useState<StockTransfer | null>(null);
 
   const [transferPrintOpen, setTransferPrintOpen] = useState(false);
   const [transferPrintLoading, setTransferPrintLoading] = useState(false);
-  const [transferPrintTransfer, setTransferPrintTransfer] = useState<StockTransfer | null>(null);
-  const [transferPrintPaperSize, setTransferPrintPaperSize] = useState<PrintPaperSize>("80mm");
+  const [transferPrintTransfer, setTransferPrintTransfer] =
+    useState<StockTransfer | null>(null);
+  const [transferPrintPaperSize, setTransferPrintPaperSize] =
+    useState<PrintPaperSize>("80mm");
   const [transferPrintTemplateId, setTransferPrintTemplateId] = useState("");
-  const [transferPrintShowOrderCode, setTransferPrintShowOrderCode] = useState(true);
-  const [transferPrintShowCreatedAt, setTransferPrintShowCreatedAt] = useState(true);
-  const [transferPrintShowCustomerName, setTransferPrintShowCustomerName] = useState(true);
-  const [transferPrintShowCustomerPhone, setTransferPrintShowCustomerPhone] = useState(false);
-  const [transferPrintShowShippingAddress, setTransferPrintShowShippingAddress] = useState(false);
+  const [transferPrintShowOrderCode, setTransferPrintShowOrderCode] =
+    useState(true);
+  const [transferPrintShowCreatedAt, setTransferPrintShowCreatedAt] =
+    useState(true);
+  const [transferPrintShowCustomerName, setTransferPrintShowCustomerName] =
+    useState(true);
+  const [transferPrintShowCustomerPhone, setTransferPrintShowCustomerPhone] =
+    useState(false);
+  const [
+    transferPrintShowShippingAddress,
+    setTransferPrintShowShippingAddress,
+  ] = useState(false);
   const [transferPrintShowItems, setTransferPrintShowItems] = useState(true);
-  const [transferPrintShowItemQty, setTransferPrintShowItemQty] = useState(true);
-  const [transferPrintShowBarcode, setTransferPrintShowBarcode] = useState(true);
+  const [transferPrintShowItemQty, setTransferPrintShowItemQty] =
+    useState(true);
+  const [transferPrintShowBarcode, setTransferPrintShowBarcode] =
+    useState(true);
   const [transferPrintShowQr, setTransferPrintShowQr] = useState(true);
   const [transferPrintShowNote, setTransferPrintShowNote] = useState(true);
   const [transferPrintShowFooter, setTransferPrintShowFooter] = useState(false);
-
 
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
   const [suggestionCreating, setSuggestionCreating] = useState(false);
   const [suggestions, setSuggestions] = useState<OutboundSuggestion[]>([]);
-  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
-  const [suggestionQtyMap, setSuggestionQtyMap] = useState<Record<string, number>>({});
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>(
+    [],
+  );
+  const [suggestionQtyMap, setSuggestionQtyMap] = useState<
+    Record<string, number>
+  >({});
 
   const [branchTargets, setBranchTargets] = useState<Record<string, number>>({
     TH: 2,
@@ -509,18 +542,22 @@ export default function StockTransfersPageClient() {
   });
 
   const [maxPerVariant, setMaxPerVariant] = useState(5);
-  const [selectedTargetBranches, setSelectedTargetBranches] = useState<string[]>([
-    "TH",
-    "XD",
-    "CL",
-  ]);
-  const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>([]);
-  const [selectedCategoryGroupMap, setSelectedCategoryGroupMap] = useState<Record<string, string[]>>({
+  const [selectedTargetBranches, setSelectedTargetBranches] = useState<
+    string[]
+  >(["TH", "XD", "CL"]);
+  const [selectedCategoryNames, setSelectedCategoryNames] = useState<string[]>(
+    [],
+  );
+  const [selectedCategoryGroupMap, setSelectedCategoryGroupMap] = useState<
+    Record<string, string[]>
+  >({
     summer: [],
     winter: [],
     other: [],
   });
-  const [activeCategoryGroupMap, setActiveCategoryGroupMap] = useState<Record<string, boolean>>({
+  const [activeCategoryGroupMap, setActiveCategoryGroupMap] = useState<
+    Record<string, boolean>
+  >({
     summer: true,
     winter: false,
     other: false,
@@ -533,91 +570,101 @@ export default function StockTransfersPageClient() {
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-const userBranchId =
-  getWorkingBranchId(currentUser) ||
-  currentUser?.branchId ||
-  currentUser?.branch?.id ||
-  currentUser?.branches?.[0]?.id ||
-  currentUser?.assignedBranches?.[0]?.id;
+  const userBranchId =
+    getWorkingBranchId(currentUser) ||
+    currentUser?.branchId ||
+    currentUser?.branch?.id ||
+    currentUser?.branches?.[0]?.id ||
+    currentUser?.assignedBranches?.[0]?.id;
 
-const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
+  const userRoleText = JSON.stringify(currentUser || {}).toLowerCase();
 
-const canManageAutoTransfer =
-  userRoleText.includes("owner") || userRoleText.includes("admin");
+  const canManageAutoTransfer =
+    userRoleText.includes("owner") || userRoleText.includes("admin");
 
-const isQOWarehouseUser = userBranchId === "QO";
-const currentBranchId = userBranchId || "";
+  const isQOWarehouseUser = userBranchId === "QO";
+  const currentBranchId = userBranchId || "";
 
-const lockedSourceBranchId = useMemo(() => {
-  if (canManageAutoTransfer) {
-    return branches.find((branch) => branch.id === "QO")?.id || "QO";
+  const lockedSourceBranchId = useMemo(() => {
+    if (canManageAutoTransfer) {
+      return branches.find((branch) => branch.id === "QO")?.id || "QO";
+    }
+
+    return currentBranchId || branches[0]?.id || "QO";
+  }, [branches, canManageAutoTransfer, currentBranchId]);
+
+  const lockedSourceBranchName = useMemo(() => {
+    const branch = branches.find((item) => item.id === lockedSourceBranchId);
+    return branch?.name || lockedSourceBranchId || "—";
+  }, [branches, lockedSourceBranchId]);
+
+  function collectPermissionKeys(user: any) {
+    const keys = new Set<string>();
+    const denied = new Set<string>();
+
+    const add = (items: any) => {
+      if (!Array.isArray(items)) return;
+      items.forEach((key: any) => {
+        const value = String(key || "").trim();
+        if (value) keys.add(value);
+      });
+    };
+
+    add(user?.permissions);
+    add(user?.permissionKeys);
+    add(user?.extraPermissionKeys);
+
+    const scopedRows = Array.isArray(user?.branchPermissions)
+      ? user.branchPermissions.filter((row: any) => {
+          if (!currentBranchId) return true;
+          const rowBranchId = String(row?.branchId || "").trim();
+          return !rowBranchId || rowBranchId === currentBranchId;
+        })
+      : [];
+
+    scopedRows.forEach((row: any) => {
+      add(row?.permissionKeys);
+      add(row?.extraPermissionKeys);
+
+      if (Array.isArray(row?.deniedPermissionKeys)) {
+        row.deniedPermissionKeys.forEach((key: any) => {
+          const value = String(key || "").trim();
+          if (value) denied.add(value);
+        });
+      }
+    });
+
+    denied.forEach((key) => keys.delete(key));
+
+    return keys;
   }
 
-  return currentBranchId || branches[0]?.id || "QO";
-}, [branches, canManageAutoTransfer, currentBranchId]);
+  function hasStockTransferPermission(permission: string) {
+    if (canManageAutoTransfer) return true;
+    const keys = collectPermissionKeys(currentUser);
+    return keys.has("*") || keys.has(permission);
+  }
 
-const lockedSourceBranchName = useMemo(() => {
-  const branch = branches.find((item) => item.id === lockedSourceBranchId);
-  return branch?.name || lockedSourceBranchId || "—";
-}, [branches, lockedSourceBranchId]);
-
-function collectPermissionKeys(user: any) {
-  const keys = new Set<string>();
-  const denied = new Set<string>();
-
-  const add = (items: any) => {
-    if (!Array.isArray(items)) return;
-    items.forEach((key: any) => {
-      const value = String(key || "").trim();
-      if (value) keys.add(value);
-    });
-  };
-
-  add(user?.permissions);
-  add(user?.permissionKeys);
-  add(user?.extraPermissionKeys);
-
-  const scopedRows = Array.isArray(user?.branchPermissions)
-    ? user.branchPermissions.filter((row: any) => {
-        if (!currentBranchId) return true;
-        const rowBranchId = String(row?.branchId || "").trim();
-        return !rowBranchId || rowBranchId === currentBranchId;
-      })
-    : [];
-
-  scopedRows.forEach((row: any) => {
-    add(row?.permissionKeys);
-    add(row?.extraPermissionKeys);
-
-    if (Array.isArray(row?.deniedPermissionKeys)) {
-      row.deniedPermissionKeys.forEach((key: any) => {
-        const value = String(key || "").trim();
-        if (value) denied.add(value);
-      });
-    }
-  });
-
-  denied.forEach((key) => keys.delete(key));
-
-  return keys;
-}
-
-function hasStockTransferPermission(permission: string) {
-  if (canManageAutoTransfer) return true;
-  const keys = collectPermissionKeys(currentUser);
-  return keys.has("*") || keys.has(permission);
-}
-
-const canCreateStockTransfer = hasStockTransferPermission("stock_transfer.create");
-const canEditStockTransfer = hasStockTransferPermission("stock_transfer.edit");
-const canConfirmStockTransfer = hasStockTransferPermission("stock_transfer.confirm");
-const canReceiveStockTransfer = hasStockTransferPermission("stock_transfer.receive");
-const canCancelStockTransfer = hasStockTransferPermission("stock_transfer.cancel");
-const canDeleteStockTransfer = canManageAutoTransfer;
-const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransfer;
-
+  const canCreateStockTransfer = hasStockTransferPermission(
+    "stock_transfer.create",
+  );
+  const canEditStockTransfer = hasStockTransferPermission(
+    "stock_transfer.edit",
+  );
+  const canConfirmStockTransfer = hasStockTransferPermission(
+    "stock_transfer.confirm",
+  );
+  const canReceiveStockTransfer = hasStockTransferPermission(
+    "stock_transfer.receive",
+  );
+  const canCancelStockTransfer = hasStockTransferPermission(
+    "stock_transfer.cancel",
+  );
+  const canDeleteStockTransfer = canManageAutoTransfer;
+  const canManageStockTransferAuto =
+    canManageAutoTransfer && canCreateStockTransfer;
 
   const allVariants = useMemo(() => {
     return products.flatMap((product: any) =>
@@ -636,7 +683,7 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
         productName: product.name,
         color: variant.color || "",
         size: variant.size || "",
-      }))
+      })),
     );
   }, [products]);
 
@@ -656,8 +703,6 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     return map;
   }, [allVariants]);
 
-
-
   const transferCatalogEntries = useMemo(() => {
     return (allVariants as any[])
       .map((item) => {
@@ -667,9 +712,15 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
         return {
           skuNorm,
           searchText: normalizeCategoryName(
-            [item?.sku, item?.barcode, item?.productName, item?.color, item?.size]
+            [
+              item?.sku,
+              item?.barcode,
+              item?.productName,
+              item?.color,
+              item?.size,
+            ]
               .filter(Boolean)
-              .join(" ")
+              .join(" "),
           ),
         };
       })
@@ -733,7 +784,7 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
   function buildActiveCategoryNames(
     groups: Record<string, string[]>,
-    activeGroups: Record<string, boolean>
+    activeGroups: Record<string, boolean>,
   ) {
     const activeNames = Object.entries(groups)
       .filter(([groupKey]) => Boolean(activeGroups[groupKey]))
@@ -744,7 +795,7 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
   function syncActiveSelectedCategories(
     groups: Record<string, string[]>,
-    activeGroups: Record<string, boolean>
+    activeGroups: Record<string, boolean>,
   ) {
     setSelectedCategoryNames(buildActiveCategoryNames(groups, activeGroups));
   }
@@ -791,7 +842,6 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     setActiveCategoryGroupMap({ summer: true, winter: true, other: true });
     setSelectedCategoryNames(dynamicCategories);
   }
-
 
   function normalizeScanValue(value: unknown) {
     return String(value || "")
@@ -856,7 +906,9 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     const scan = normalizeScanValue(value);
     if (!isLikelyCompleteScanCode(scan)) return null;
 
-    return scanVariantMap.get(scan) || hotScanVariantMapRef.current.get(scan) || null;
+    return (
+      scanVariantMap.get(scan) || hotScanVariantMapRef.current.get(scan) || null
+    );
   }
   function hasLongerScanCodePrefix(value: string) {
     const scan = normalizeScanValue(value);
@@ -873,8 +925,10 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     return false;
   }
 
-
-  function findExactVariantInProductPayload(productsPayload: any[], value: string) {
+  function findExactVariantInProductPayload(
+    productsPayload: any[],
+    value: string,
+  ) {
     const scan = normalizeScanValue(value);
     if (!scan) return null;
 
@@ -899,7 +953,12 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
           rowId: variant.id,
           variantId: variant.id,
           sku: variant.sku,
-          barcode: variant?.barcode || variant?.barCode || variant?.scanCode || variant?.code || "",
+          barcode:
+            variant?.barcode ||
+            variant?.barCode ||
+            variant?.scanCode ||
+            variant?.code ||
+            "",
           productName: product.name,
           color: variant.color || "",
           size: variant.size || "",
@@ -916,7 +975,9 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
     return allVariants
       .filter((item) => {
-        const label = normalizeScanValue(`${item.productName} ${item.sku} ${item.color} ${item.size}`);
+        const label = normalizeScanValue(
+          `${item.productName} ${item.sku} ${item.color} ${item.size}`,
+        );
         return label.includes(q);
       })
       .slice(0, 20);
@@ -932,7 +993,9 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
       if (!userBranchId) return false;
 
-      return row.fromBranchId === userBranchId || row.toBranchId === userBranchId;
+      return (
+        row.fromBranchId === userBranchId || row.toBranchId === userBranchId
+      );
     });
   }, [rows, canManageAutoTransfer, isQOWarehouseUser, userBranchId]);
 
@@ -944,7 +1007,8 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
     visibleRows.forEach((transfer: any) => {
       if (transfer.createdByName) createdBy.add(String(transfer.createdByName));
-      if (transfer.confirmedByName) createdBy.add(String(transfer.confirmedByName));
+      if (transfer.confirmedByName)
+        createdBy.add(String(transfer.confirmedByName));
 
       getTransferItems(transfer).forEach((item: any) => {
         const categoryName = getTransferItemCategoryName(item);
@@ -958,7 +1022,9 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
 
     return {
       createdBy: Array.from(createdBy).sort((a, b) => a.localeCompare(b, "vi")),
-      categories: Array.from(categories).sort((a, b) => a.localeCompare(b, "vi")),
+      categories: Array.from(categories).sort((a, b) =>
+        a.localeCompare(b, "vi"),
+      ),
       colors: Array.from(colors).sort((a, b) => a.localeCompare(b, "vi")),
       sizes: Array.from(sizes).sort((a, b) => a.localeCompare(b, "vi")),
     };
@@ -971,22 +1037,36 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     const skuQ = normalizeCategoryName(active.skuFilter);
     const noteQ = normalizeCategoryName(active.noteFilter);
     const sourceRefQ = normalizeCategoryName(active.sourceRefFilter);
-    const fromDate = active.dateFromFilter ? new Date(`${active.dateFromFilter}T00:00:00`).getTime() : 0;
-    const toDate = active.dateToFilter ? new Date(`${active.dateToFilter}T23:59:59`).getTime() : 0;
-    const minQty = active.minQtyFilter === "" ? null : Number(active.minQtyFilter);
-    const maxQty = active.maxQtyFilter === "" ? null : Number(active.maxQtyFilter);
-    const minLines = active.minLineFilter === "" ? null : Number(active.minLineFilter);
-    const maxLines = active.maxLineFilter === "" ? null : Number(active.maxLineFilter);
+    const fromDate = active.dateFromFilter
+      ? new Date(`${active.dateFromFilter}T00:00:00`).getTime()
+      : 0;
+    const toDate = active.dateToFilter
+      ? new Date(`${active.dateToFilter}T23:59:59`).getTime()
+      : 0;
+    const minQty =
+      active.minQtyFilter === "" ? null : Number(active.minQtyFilter);
+    const maxQty =
+      active.maxQtyFilter === "" ? null : Number(active.maxQtyFilter);
+    const minLines =
+      active.minLineFilter === "" ? null : Number(active.minLineFilter);
+    const maxLines =
+      active.maxLineFilter === "" ? null : Number(active.maxLineFilter);
 
     const list = visibleRows.filter((item: any) => {
       const items = getTransferItems(item);
       const totalQtyValue = Number(
-        item.totalQty ?? items.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0),
+        item.totalQty ??
+          items.reduce(
+            (sum: number, line: any) => sum + Number(line.qty || 0),
+            0,
+          ),
       );
       const totalLinesValue = Number(item.totalLines ?? items.length ?? 0);
       const baseSearchable = getTransferSearchText(item);
       const catalogSearchable = getTransferCatalogSearchText(item);
-      const searchable = normalizeCategoryName(`${baseSearchable} ${catalogSearchable}`);
+      const searchable = normalizeCategoryName(
+        `${baseSearchable} ${catalogSearchable}`,
+      );
       const itemText = normalizeCategoryName(
         [
           baseSearchable,
@@ -1004,24 +1084,79 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       );
 
       if (q && !searchable.includes(q)) return false;
-      if (active.statusFilter !== "ALL" && item.status !== active.statusFilter) return false;
-      if (active.fromBranchFilter !== "ALL" && item.fromBranchId !== active.fromBranchFilter) return false;
-      if (active.toBranchFilter !== "ALL" && item.toBranchId !== active.toBranchFilter) return false;
-      if (active.sourceTypeFilter !== "ALL" && String(item.sourceType || "MANUAL") !== active.sourceTypeFilter) return false;
-      if (active.createdByFilter !== "ALL" && String(item.createdByName || item.confirmedByName || "") !== active.createdByFilter) return false;
+      if (active.statusFilter !== "ALL" && item.status !== active.statusFilter)
+        return false;
+      if (
+        active.fromBranchFilter !== "ALL" &&
+        item.fromBranchId !== active.fromBranchFilter
+      )
+        return false;
+      if (
+        active.toBranchFilter !== "ALL" &&
+        item.toBranchId !== active.toBranchFilter
+      )
+        return false;
+      if (
+        active.sourceTypeFilter !== "ALL" &&
+        String(item.sourceType || "MANUAL") !== active.sourceTypeFilter
+      )
+        return false;
+      if (
+        active.createdByFilter !== "ALL" &&
+        String(item.createdByName || item.confirmedByName || "") !==
+          active.createdByFilter
+      )
+        return false;
       if (productQ && !itemText.includes(productQ)) return false;
       if (skuQ && !searchable.includes(skuQ)) return false;
-      if (active.categoryFilter !== "ALL" && !items.some((line: any) => getTransferItemCategoryName(line) === active.categoryFilter)) return false;
-      if (active.colorFilter !== "ALL" && !items.some((line: any) => getTransferItemColor(line) === active.colorFilter)) return false;
-      if (active.sizeFilter !== "ALL" && !items.some((line: any) => getTransferItemSize(line) === active.sizeFilter)) return false;
-      if (noteQ && !normalizeCategoryName(item.note).includes(noteQ)) return false;
-      if (sourceRefQ && !normalizeCategoryName(item.sourceRefId).includes(sourceRefQ)) return false;
-      if (minQty !== null && Number.isFinite(minQty) && totalQtyValue < minQty) return false;
-      if (maxQty !== null && Number.isFinite(maxQty) && totalQtyValue > maxQty) return false;
-      if (minLines !== null && Number.isFinite(minLines) && totalLinesValue < minLines) return false;
-      if (maxLines !== null && Number.isFinite(maxLines) && totalLinesValue > maxLines) return false;
+      if (
+        active.categoryFilter !== "ALL" &&
+        !items.some(
+          (line: any) =>
+            getTransferItemCategoryName(line) === active.categoryFilter,
+        )
+      )
+        return false;
+      if (
+        active.colorFilter !== "ALL" &&
+        !items.some(
+          (line: any) => getTransferItemColor(line) === active.colorFilter,
+        )
+      )
+        return false;
+      if (
+        active.sizeFilter !== "ALL" &&
+        !items.some(
+          (line: any) => getTransferItemSize(line) === active.sizeFilter,
+        )
+      )
+        return false;
+      if (noteQ && !normalizeCategoryName(item.note).includes(noteQ))
+        return false;
+      if (
+        sourceRefQ &&
+        !normalizeCategoryName(item.sourceRefId).includes(sourceRefQ)
+      )
+        return false;
+      if (minQty !== null && Number.isFinite(minQty) && totalQtyValue < minQty)
+        return false;
+      if (maxQty !== null && Number.isFinite(maxQty) && totalQtyValue > maxQty)
+        return false;
+      if (
+        minLines !== null &&
+        Number.isFinite(minLines) &&
+        totalLinesValue < minLines
+      )
+        return false;
+      if (
+        maxLines !== null &&
+        Number.isFinite(maxLines) &&
+        totalLinesValue > maxLines
+      )
+        return false;
 
-      const rawDate = item.createdAt || item.createdAtText || item.updatedAt || "";
+      const rawDate =
+        item.createdAt || item.createdAtText || item.updatedAt || "";
       const createdTime = rawDate ? new Date(rawDate).getTime() : 0;
       if (fromDate && createdTime && createdTime < fromDate) return false;
       if (toDate && createdTime && createdTime > toDate) return false;
@@ -1034,8 +1169,22 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       const bCreated = new Date(b.createdAt || b.updatedAt || 0).getTime();
       const aItems = getTransferItems(a);
       const bItems = getTransferItems(b);
-      const aQty = Number(a.totalQty ?? aItems.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
-      const bQty = Number(b.totalQty ?? bItems.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
+      const aQty = Number(
+        a.totalQty ??
+          aItems.reduce(
+            (sum: number, line: any) => sum + Number(line.qty || 0),
+            0,
+          ) ??
+          0,
+      );
+      const bQty = Number(
+        b.totalQty ??
+          bItems.reduce(
+            (sum: number, line: any) => sum + Number(line.qty || 0),
+            0,
+          ) ??
+          0,
+      );
       const aLines = Number(a.totalLines ?? aItems.length ?? 0);
       const bLines = Number(b.totalLines ?? bItems.length ?? 0);
 
@@ -1044,27 +1193,48 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       if (active.sortBy === "qty_asc") return aQty - bQty;
       if (active.sortBy === "lines_desc") return bLines - aLines;
       if (active.sortBy === "lines_asc") return aLines - bLines;
-      if (active.sortBy === "code_asc") return String(a.transferCode || "").localeCompare(String(b.transferCode || ""), "vi");
-      if (active.sortBy === "code_desc") return String(b.transferCode || "").localeCompare(String(a.transferCode || ""), "vi");
+      if (active.sortBy === "code_asc")
+        return String(a.transferCode || "").localeCompare(
+          String(b.transferCode || ""),
+          "vi",
+        );
+      if (active.sortBy === "code_desc")
+        return String(b.transferCode || "").localeCompare(
+          String(a.transferCode || ""),
+          "vi",
+        );
       return bCreated - aCreated;
     });
   }, [visibleRows, appliedTransferFilters, transferCatalogEntries]);
 
   const transferStats = useMemo(() => {
     const totalQty = filteredRows.reduce(
-      (sum, row: any) => sum + Number(row.totalQty ?? row.items?.reduce?.((itemSum: number, item: any) => itemSum + Number(item.qty || 0), 0) ?? 0),
+      (sum, row: any) =>
+        sum +
+        Number(
+          row.totalQty ??
+            row.items?.reduce?.(
+              (itemSum: number, item: any) => itemSum + Number(item.qty || 0),
+              0,
+            ) ??
+            0,
+        ),
       0,
     );
 
     return {
       total: filteredRows.length,
       totalQty,
-      waitingConfirm: filteredRows.filter((row) => row.status === "DRAFT" || row.status === "PENDING").length,
-      waitingReceive: filteredRows.filter((row) => row.status === "CONFIRMED" || row.status === "IN_TRANSIT").length,
-      completed: filteredRows.filter((row) => row.status === "COMPLETED").length,
+      waitingConfirm: filteredRows.filter(
+        (row) => row.status === "DRAFT" || row.status === "PENDING",
+      ).length,
+      waitingReceive: filteredRows.filter(
+        (row) => row.status === "CONFIRMED" || row.status === "IN_TRANSIT",
+      ).length,
+      completed: filteredRows.filter((row) => row.status === "COMPLETED")
+        .length,
     };
   }, [filteredRows]);
-
 
   function getDraftTransferFilters(): TransferFilters {
     return {
@@ -1091,86 +1261,8 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     };
   }
 
-  function shouldHydrateTransfersForSearch(filters: TransferFilters) {
-    // Danh sách /stock-transfers trả rất nhanh nhưng nhiều phiếu chỉ có summary,
-    // không có full items. Khi tìm theo SKU/tên SP/màu/size/danh mục hoặc ô tìm chính,
-    // phải lấy detail theo nhu cầu thì mới search chính xác mà không làm chậm lúc mở trang.
-    return Boolean(
-      String(filters.query || "").trim() ||
-        String(filters.skuFilter || "").trim() ||
-        String(filters.productFilter || "").trim() ||
-        filters.categoryFilter !== "ALL" ||
-        filters.colorFilter !== "ALL" ||
-        filters.sizeFilter !== "ALL"
-    );
-  }
-
-  async function hydrateTransfersForSearch(filters: TransferFilters) {
-    if (!shouldHydrateTransfersForSearch(filters)) return;
-
-    const candidates = visibleRows.filter((transfer: any) => {
-      const id = String(transfer?.id || "");
-      if (!id || hydratedTransferIdsRef.current.has(id)) return false;
-
-      // Nếu list payload đã có items thật thì không cần gọi detail nữa.
-      const items = getTransferItems(transfer);
-      if (items.length > 0) {
-        hydratedTransferIdsRef.current.add(id);
-        return false;
-      }
-
-      return true;
-    });
-
-    if (!candidates.length) return;
-
-    setSearchHydrating(true);
-
-    try {
-      const detailMap = new Map<string, StockTransfer>();
-      const chunkSize = 8;
-
-      for (let index = 0; index < candidates.length; index += chunkSize) {
-        const chunk = candidates.slice(index, index + chunkSize);
-        const details = await Promise.all(
-          chunk.map(async (transfer: any) => {
-            const id = String(transfer?.id || "");
-            try {
-              const detail = await getStockTransferDetail(id);
-              hydratedTransferIdsRef.current.add(id);
-              return detail ? ({ ...transfer, ...detail } as StockTransfer) : null;
-            } catch (err) {
-              console.error("stock transfer detail search hydrate failed", id, err);
-              hydratedTransferIdsRef.current.add(id);
-              return null;
-            }
-          }),
-        );
-
-        for (const detail of details) {
-          if (detail?.id) detailMap.set(String(detail.id), detail);
-        }
-      }
-
-      if (detailMap.size) {
-        setRows((prev) =>
-          prev.map((transfer: any) => detailMap.get(String(transfer?.id || "")) || transfer),
-        );
-      }
-    } finally {
-      setSearchHydrating(false);
-    }
-  }
-
   function applyTransferFilters() {
-    const nextFilters = getDraftTransferFilters();
-    setAppliedTransferFilters(nextFilters);
-
-    // Search lần đầu lọc ngay trên dữ liệu list nhanh. Nếu cần tìm theo dữ liệu item,
-    // hydrate detail sau đó set lại filters để bảng tự tính lại kết quả chính xác.
-    void hydrateTransfersForSearch(nextFilters).then(() => {
-      setAppliedTransferFilters({ ...nextFilters });
-    });
+    setAppliedTransferFilters(getDraftTransferFilters());
   }
 
   function resetTransferFilters() {
@@ -1204,59 +1296,62 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     return date.toLocaleString("vi-VN");
   }
 
-function buildTransferPrintOrder(transfer: StockTransfer) {
-  const fromName =
-    transfer.fromBranch?.name ||
-    transfer.fromBranchName ||
-    transfer.fromBranchId ||
-    "—";
+  function buildTransferPrintOrder(transfer: StockTransfer) {
+    const fromName =
+      transfer.fromBranch?.name ||
+      transfer.fromBranchName ||
+      transfer.fromBranchId ||
+      "—";
 
-  const toName =
-    transfer.toBranch?.name ||
-    transfer.toBranchName ||
-    transfer.toBranchId ||
-    "—";
+    const toName =
+      transfer.toBranch?.name ||
+      transfer.toBranchName ||
+      transfer.toBranchId ||
+      "—";
 
-  const mappedItems = getTransferItems(transfer).map((item: any) => ({
-    productName: getTransferItemProductName(item) || "Sản phẩm",
-    sku: getTransferItemSku(item),
-    color: getTransferItemColor(item),
-    size: getTransferItemSize(item),
-    qty: Number(item.qty ?? item.quantity ?? 0),
-  }));
+    const mappedItems = getTransferItems(transfer).map((item: any) => ({
+      productName: getTransferItemProductName(item) || "Sản phẩm",
+      sku: getTransferItemSku(item),
+      color: getTransferItemColor(item),
+      size: getTransferItemSize(item),
+      qty: Number(item.qty ?? item.quantity ?? 0),
+    }));
 
-  const totalQty = mappedItems.reduce(
-    (sum: number, item: any) => sum + Number(item.qty || 0),
-    0
-  );
+    const totalQty = mappedItems.reduce(
+      (sum: number, item: any) => sum + Number(item.qty || 0),
+      0,
+    );
 
-  return {
-    ...transfer,
-    referenceCode: transfer.transferCode || transfer.id,
-    orderCode: transfer.transferCode || transfer.id,
-    createdAt: formatTransferPrintDate(
-      (transfer as any).createdAt || (transfer as any).updatedAt
-    ),
-    branchName: `${fromName} → ${toName}`,
-    warehouseName: "THE 1970",
-    warehousePhone: "",
-    warehouseAddress: "",
-    customerName: toName,
-    shippingRecipientName: toName,
-    customerPhone: "",
-    shippingPhone: "",
-    note: transfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
+    return {
+      ...transfer,
+      referenceCode: transfer.transferCode || transfer.id,
+      orderCode: transfer.transferCode || transfer.id,
+      createdAt: formatTransferPrintDate(
+        (transfer as any).createdAt || (transfer as any).updatedAt,
+      ),
+      branchName: `${fromName} → ${toName}`,
+      warehouseName: "THE 1970",
+      warehousePhone: "",
+      warehouseAddress: "",
+      customerName: toName,
+      shippingRecipientName: toName,
+      customerPhone: "",
+      shippingPhone: "",
+      note: transfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
 
-    items: mappedItems,
+      items: mappedItems,
 
-    totalQty,
-  };
-}
+      totalQty,
+    };
+  }
 
-  function getTransferPrintTemplates(paperSize: PrintPaperSize = transferPrintPaperSize) {
+  function getTransferPrintTemplates(
+    paperSize: PrintPaperSize = transferPrintPaperSize,
+  ) {
     return loadPrintTemplates().filter(
       (template) =>
-        template.templateType === "transfer" && template.paperSize === paperSize,
+        template.templateType === "transfer" &&
+        template.paperSize === paperSize,
     );
   }
 
@@ -1309,13 +1404,18 @@ function buildTransferPrintOrder(transfer: StockTransfer) {
     const template = buildTransferPrintTemplate();
     if (!transferPrintTransfer || !template) return "";
 
-    return `<div class="print-page"><div class="print-page-inner">${renderOrderTemplateHtml({
-      order: buildTransferPrintOrder(transferPrintTransfer),
-      template,
-    })}</div></div>`;
+    return `<div class="print-page"><div class="print-page-inner">${renderOrderTemplateHtml(
+      {
+        order: buildTransferPrintOrder(transferPrintTransfer),
+        template,
+      },
+    )}</div></div>`;
   }
 
-  async function openTransferPrintSetup(transfer: StockTransfer, paperSize: PrintPaperSize = "80mm") {
+  async function openTransferPrintSetup(
+    transfer: StockTransfer,
+    paperSize: PrintPaperSize = "80mm",
+  ) {
     try {
       setTransferPrintLoading(true);
       setTransferPrintOpen(true);
@@ -1335,7 +1435,11 @@ function buildTransferPrintOrder(transfer: StockTransfer) {
       setTransferPrintTemplateId(template?.id || "");
       applyTemplateToggleDefaults(template);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không mở được cấu hình in phiếu kho.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không mở được cấu hình in phiếu kho.",
+      );
       setTransferPrintOpen(false);
     } finally {
       setTransferPrintLoading(false);
@@ -1353,7 +1457,8 @@ function buildTransferPrintOrder(transfer: StockTransfer) {
 
   function handleTransferPrintTemplateChange(templateId: string) {
     setTransferPrintTemplateId(templateId);
-    const template = loadPrintTemplates().find((item) => item.id === templateId) || null;
+    const template =
+      loadPrintTemplates().find((item) => item.id === templateId) || null;
     applyTemplateToggleDefaults(template);
   }
 
@@ -1419,14 +1524,18 @@ function buildTransferPrintOrder(transfer: StockTransfer) {
     return statusBadge(transfer.status);
   }
 
-function loadCurrentUser() {
-  setCurrentUser(getCurrentUserFromStorage());
-}
+  function loadCurrentUser() {
+    setCurrentUser(getCurrentUserFromStorage());
+  }
 
   async function loadProductsInBackground() {
     try {
       const productsData = await getProducts({ page: 1, limit: 10000 } as any);
-      setProducts(Array.isArray(productsData) ? productsData : ((productsData as any)?.data || []));
+      setProducts(
+        Array.isArray(productsData)
+          ? productsData
+          : (productsData as any)?.data || [],
+      );
     } catch (err) {
       console.error("background products load failed", err);
     }
@@ -1452,7 +1561,9 @@ function loadCurrentUser() {
       // Sản phẩm chỉ phục vụ modal tạo phiếu/auto đề xuất nên tải nền, không chặn render danh sách.
       void loadProductsInBackground();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tải được phiếu chuyển kho.");
+      setError(
+        err instanceof Error ? err.message : "Không tải được phiếu chuyển kho.",
+      );
     } finally {
       setLoading(false);
     }
@@ -1494,54 +1605,60 @@ function loadCurrentUser() {
     } catch {}
   }
 
-
-useEffect(() => {
-  loadCurrentUser();
-  void loadAll();
-
-  const handleActiveBranchChanged = () => {
+  useEffect(() => {
     loadCurrentUser();
     void loadAll();
-  };
 
-  window.addEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
-  return () => {
-    window.removeEventListener("the1970:active-branch-changed", handleActiveBranchChanged);
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+    const handleActiveBranchChanged = () => {
+      loadCurrentUser();
+      void loadAll();
+    };
 
-useEffect(() => {
-  if (canManageAutoTransfer) {
-    void loadAutoConfig();
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [canManageAutoTransfer]);
+    window.addEventListener(
+      "the1970:active-branch-changed",
+      handleActiveBranchChanged,
+    );
+    return () => {
+      window.removeEventListener(
+        "the1970:active-branch-changed",
+        handleActiveBranchChanged,
+      );
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-useEffect(() => {
-  return () => {
-    if (scanTimerRef.current) {
-      window.clearTimeout(scanTimerRef.current);
-      scanTimerRef.current = null;
+  useEffect(() => {
+    if (canManageAutoTransfer) {
+      void loadAutoConfig();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageAutoTransfer]);
 
-    if (scanBackendTimerRef.current) {
-      window.clearTimeout(scanBackendTimerRef.current);
-      scanBackendTimerRef.current = null;
-    }
-  };
-}, []);
+  useEffect(() => {
+    return () => {
+      if (scanTimerRef.current) {
+        window.clearTimeout(scanTimerRef.current);
+        scanTimerRef.current = null;
+      }
 
+      if (scanBackendTimerRef.current) {
+        window.clearTimeout(scanBackendTimerRef.current);
+        scanBackendTimerRef.current = null;
+      }
+    };
+  }, []);
 
-useEffect(() => {
-  if (!lockedSourceBranchId) return;
+  useEffect(() => {
+    if (!lockedSourceBranchId) return;
 
-  setFromBranchId(lockedSourceBranchId);
-  setToBranchId((prev) => {
-    if (prev && prev !== lockedSourceBranchId) return prev;
-    return branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || "";
-  });
-}, [branches, lockedSourceBranchId]);
+    setFromBranchId(lockedSourceBranchId);
+    setToBranchId((prev) => {
+      if (prev && prev !== lockedSourceBranchId) return prev;
+      return (
+        branches.find((branch) => branch.id !== lockedSourceBranchId)?.id || ""
+      );
+    });
+  }, [branches, lockedSourceBranchId]);
 
   function resetForm() {
     const sourceId = lockedSourceBranchId || "QO";
@@ -1573,11 +1690,13 @@ useEffect(() => {
       color?: string;
       size?: string;
     },
-    source: "manual" | "scan" = "manual"
+    source: "manual" | "scan" = "manual",
   ) {
     let existed = false;
     const initialQty =
-      source === "manual" && Number(bulkQty || 0) > 0 ? String(Number(bulkQty || 1)) : "1";
+      source === "manual" && Number(bulkQty || 0) > 0
+        ? String(Number(bulkQty || 1))
+        : "1";
 
     setItems((prev) => {
       let updatedItem: DraftItem | null = null;
@@ -1597,7 +1716,9 @@ useEffect(() => {
 
       if (updatedItem) {
         // Khi quét/thêm lại SKU đã có, đưa dòng vừa thao tác lên đầu để dễ kiểm soát số lượng.
-        return draftSortBy === "added_desc" ? [updatedItem, ...rest] : [...rest, updatedItem];
+        return draftSortBy === "added_desc"
+          ? [updatedItem, ...rest]
+          : [...rest, updatedItem];
       }
 
       const nextItem: DraftItem = {
@@ -1611,7 +1732,9 @@ useEffect(() => {
       };
 
       // Mặc định giống phiếu nhập: dòng mới nhập/quét nằm trên đầu danh sách.
-      return draftSortBy === "added_asc" ? [...prev, nextItem] : [nextItem, ...prev];
+      return draftSortBy === "added_asc"
+        ? [...prev, nextItem]
+        : [nextItem, ...prev];
     });
 
     if (source === "scan") {
@@ -1637,7 +1760,11 @@ useEffect(() => {
       }));
 
     if (!nextItems.length) return;
-    setItems((prev) => (draftSortBy === "added_asc" ? [...prev, ...nextItems] : [...nextItems, ...prev]));
+    setItems((prev) =>
+      draftSortBy === "added_asc"
+        ? [...prev, ...nextItems]
+        : [...nextItems, ...prev],
+    );
     setScanNotice(`Đã thêm ${nextItems.length} SKU đang lọc`);
   }
 
@@ -1656,10 +1783,21 @@ useEffect(() => {
     const list = [...items];
 
     if (draftSortBy === "added_asc") return list.reverse();
-    if (draftSortBy === "sku_asc") return list.sort((a, b) => String(a.sku || "").localeCompare(String(b.sku || ""), "vi"));
-    if (draftSortBy === "name_asc") return list.sort((a, b) => String(a.productName || "").localeCompare(String(b.productName || ""), "vi"));
-    if (draftSortBy === "qty_desc") return list.sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0));
-    if (draftSortBy === "qty_asc") return list.sort((a, b) => Number(a.qty || 0) - Number(b.qty || 0));
+    if (draftSortBy === "sku_asc")
+      return list.sort((a, b) =>
+        String(a.sku || "").localeCompare(String(b.sku || ""), "vi"),
+      );
+    if (draftSortBy === "name_asc")
+      return list.sort((a, b) =>
+        String(a.productName || "").localeCompare(
+          String(b.productName || ""),
+          "vi",
+        ),
+      );
+    if (draftSortBy === "qty_desc")
+      return list.sort((a, b) => Number(b.qty || 0) - Number(a.qty || 0));
+    if (draftSortBy === "qty_asc")
+      return list.sort((a, b) => Number(a.qty || 0) - Number(b.qty || 0));
 
     return list;
   }, [items, draftSortBy]);
@@ -1677,19 +1815,25 @@ useEffect(() => {
 
     const now = Date.now();
     const lastLookup = lastBackendLookupRef.current;
-    if (lastLookup.value === normalizedValue && now - lastLookup.at < 220) return;
+    if (lastLookup.value === normalizedValue && now - lastLookup.at < 220)
+      return;
 
     lastBackendLookupRef.current = { value: normalizedValue, at: now };
 
     try {
-      const res = await apiFetch(`/stock-transfers/scan-variant?code=${encodeURIComponent(normalizedValue)}`);
+      const res = await apiFetch(
+        `/stock-transfers/scan-variant?code=${encodeURIComponent(normalizedValue)}`,
+      );
       if (!res.ok) {
         setScanNotice(`Không tìm thấy mã ${normalizedValue}`);
         return;
       }
 
       const exact = await res.json();
-      if (!exact?.variantId || !variantMatchesScanCode(exact, normalizedValue)) {
+      if (
+        !exact?.variantId ||
+        !variantMatchesScanCode(exact, normalizedValue)
+      ) {
         setScanNotice(`Không khớp chính xác mã ${normalizedValue}`);
         return;
       }
@@ -1772,7 +1916,9 @@ useEffect(() => {
   }
 
   function updateDraftItem(rowId: string, patch: Partial<DraftItem>) {
-    setItems((prev) => prev.map((item) => (item.rowId === rowId ? { ...item, ...patch } : item)));
+    setItems((prev) =>
+      prev.map((item) => (item.rowId === rowId ? { ...item, ...patch } : item)),
+    );
   }
 
   function removeDraftItem(rowId: string) {
@@ -1781,7 +1927,7 @@ useEffect(() => {
 
   const totalQty = useMemo(
     () => items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
-    [items]
+    [items],
   );
 
   async function handleCreateTransfer() {
@@ -1829,7 +1975,9 @@ useEffect(() => {
       setNotice("Đã lưu phiếu chuyển kho.");
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tạo được phiếu chuyển.");
+      setError(
+        err instanceof Error ? err.message : "Không tạo được phiếu chuyển.",
+      );
     } finally {
       setSaving(false);
     }
@@ -1846,7 +1994,9 @@ useEffect(() => {
       setError(null);
       setNotice(null);
       await confirmStockTransfer(id);
-      setNotice("Đã xác nhận chuyển. Phiếu đang chờ bên nhận xác nhận đủ để nhập/trừ kho.");
+      setNotice(
+        "Đã xác nhận chuyển. Phiếu đang chờ bên nhận xác nhận đủ để nhập/trừ kho.",
+      );
       await loadAll();
 
       if (selectedTransfer?.id === id) {
@@ -1854,7 +2004,11 @@ useEffect(() => {
         setSelectedTransfer(detail);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không xác nhận được phiếu chuyển.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không xác nhận được phiếu chuyển.",
+      );
     } finally {
       setConfirmingId(null);
     }
@@ -1867,7 +2021,7 @@ useEffect(() => {
     }
 
     const ok = window.confirm(
-      "Xác nhận bên nhận đã nhận đủ hàng? Sau bước này hệ thống mới trừ kho chuyển và cộng kho nhận."
+      "Xác nhận bên nhận đã nhận đủ hàng? Sau bước này hệ thống mới trừ kho chuyển và cộng kho nhận.",
     );
     if (!ok) return;
 
@@ -1876,7 +2030,9 @@ useEffect(() => {
       setError(null);
       setNotice(null);
       await completeStockTransfer(id);
-      setNotice("Đã xác nhận nhận đủ. Hệ thống đã trừ kho chuyển và cộng kho nhận.");
+      setNotice(
+        "Đã xác nhận nhận đủ. Hệ thống đã trừ kho chuyển và cộng kho nhận.",
+      );
       await loadAll();
 
       if (selectedTransfer?.id === id) {
@@ -1884,7 +2040,11 @@ useEffect(() => {
         setSelectedTransfer(detail);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không xác nhận nhận đủ được phiếu chuyển.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không xác nhận nhận đủ được phiếu chuyển.",
+      );
     } finally {
       setCompletingId(null);
     }
@@ -1904,7 +2064,9 @@ useEffect(() => {
       setNotice("Đã hủy phiếu chuyển.");
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không hủy được phiếu chuyển.");
+      setError(
+        err instanceof Error ? err.message : "Không hủy được phiếu chuyển.",
+      );
     } finally {
       setCancellingId(null);
     }
@@ -1914,7 +2076,7 @@ useEffect(() => {
     if (!canManageAutoTransfer) return;
 
     const ok = window.confirm(
-      `Xóa hẳn phiếu ${transferCode || id}? Chỉ nên dùng để dọn phiếu test. Hành động này không hoàn tác.`
+      `Xóa hẳn phiếu ${transferCode || id}? Chỉ nên dùng để dọn phiếu test. Hành động này không hoàn tác.`,
     );
     if (!ok) return;
 
@@ -1929,7 +2091,9 @@ useEffect(() => {
       setNotice(`Đã xóa phiếu ${transferCode || id}.`);
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không xóa được phiếu chuyển kho.");
+      setError(
+        err instanceof Error ? err.message : "Không xóa được phiếu chuyển kho.",
+      );
     } finally {
       setDeletingId(null);
     }
@@ -1945,7 +2109,9 @@ useEffect(() => {
   async function handleBulkDeleteTransfers() {
     if (!canManageAutoTransfer) return;
 
-    const ids = selectedTransferIds.filter((id) => filteredRows.some((row) => row.id === id));
+    const ids = selectedTransferIds.filter((id) =>
+      filteredRows.some((row) => row.id === id),
+    );
 
     if (!ids.length) {
       setError("Chưa tích phiếu nào để xoá.");
@@ -1953,7 +2119,7 @@ useEffect(() => {
     }
 
     const ok = window.confirm(
-      `Xóa hẳn ${ids.length} phiếu đã chọn? Chỉ xoá được phiếu Nháp/Chờ xác nhận. Hành động này không hoàn tác.`
+      `Xóa hẳn ${ids.length} phiếu đã chọn? Chỉ xoá được phiếu Nháp/Chờ xác nhận. Hành động này không hoàn tác.`,
     );
     if (!ok) return;
 
@@ -1968,7 +2134,11 @@ useEffect(() => {
       setNotice(`Đã xoá ${res.deletedCount ?? ids.length} phiếu chuyển kho.`);
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không xoá được các phiếu đã chọn.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không xoá được các phiếu đã chọn.",
+      );
     } finally {
       setBulkDeleting(false);
     }
@@ -1981,12 +2151,13 @@ useEffect(() => {
       const detail = await getStockTransferDetail(id);
       setSelectedTransfer(detail);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không mở được chi tiết phiếu.");
+      setError(
+        err instanceof Error ? err.message : "Không mở được chi tiết phiếu.",
+      );
     } finally {
       setDetailLoading(false);
     }
   }
-
 
   async function handlePreviewSuggestions() {
     if (!canManageAutoTransfer) return;
@@ -2031,7 +2202,11 @@ useEffect(() => {
       setSuggestionQtyMap(qtyMap);
       setSuggestionOpen(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không quét được đề xuất cấp hàng.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không quét được đề xuất cấp hàng.",
+      );
     } finally {
       setSuggestionLoading(false);
     }
@@ -2089,11 +2264,13 @@ useEffect(() => {
 
       setSuggestionOpen(false);
       setNotice(
-        `Đã tạo ${targetBranchIds.length} phiếu cấp hàng tự động: mỗi chi nhánh nhận 1 phiếu.`
+        `Đã tạo ${targetBranchIds.length} phiếu cấp hàng tự động: mỗi chi nhánh nhận 1 phiếu.`,
       );
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tạo được phiếu tự động.");
+      setError(
+        err instanceof Error ? err.message : "Không tạo được phiếu tự động.",
+      );
     } finally {
       setSuggestionCreating(false);
     }
@@ -2108,7 +2285,9 @@ useEffect(() => {
     }
 
     if (selectedCategoryNames.length === 0) {
-      setError("Chưa bật nhóm mùa hoặc chưa chọn danh mục nào cho cấu hình tự động.");
+      setError(
+        "Chưa bật nhóm mùa hoặc chưa chọn danh mục nào cho cấu hình tự động.",
+      );
       return;
     }
 
@@ -2140,7 +2319,9 @@ useEffect(() => {
 
       setNotice("Đã lưu cấu hình Auto Rebalance.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không lưu được cấu hình tự động.");
+      setError(
+        err instanceof Error ? err.message : "Không lưu được cấu hình tự động.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -2158,11 +2339,15 @@ useEffect(() => {
 
       const res = await runAutoRebalanceNow();
 
-      setNotice(`Đã chạy Auto Rebalance. Tạo ${res.createdCount ?? 0} phiếu tự động.`);
+      setNotice(
+        `Đã chạy Auto Rebalance. Tạo ${res.createdCount ?? 0} phiếu tự động.`,
+      );
       setSuggestionOpen(false);
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không chạy được Auto Rebalance.");
+      setError(
+        err instanceof Error ? err.message : "Không chạy được Auto Rebalance.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -2176,9 +2361,12 @@ useEffect(() => {
             <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">
               THE 1970 WAREHOUSE
             </p>
-            <h2 className="mt-2 text-[30px] font-semibold tracking-tight">Phiếu chuyển kho</h2>
+            <h2 className="mt-2 text-[30px] font-semibold tracking-tight">
+              Phiếu chuyển kho
+            </h2>
             <p className="mt-1 max-w-3xl text-sm text-neutral-300">
-              Điều phối hàng giữa QO, THÁI HÀ, XÃ ĐÀN, CHÙA LÁNG. Bấm vào mã phiếu để mở tab mới, trang danh sách giữ nguyên vị trí đang xem.
+              Điều phối hàng giữa QO, THÁI HÀ, XÃ ĐÀN, CHÙA LÁNG. Bấm vào mã
+              phiếu để mở tab mới, trang danh sách giữ nguyên vị trí đang xem.
             </p>
           </div>
 
@@ -2211,19 +2399,27 @@ useEffect(() => {
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
             <p className="text-xs text-neutral-400">Tổng SL chuyển</p>
-            <p className="mt-1 text-2xl font-semibold">{transferStats.totalQty}</p>
+            <p className="mt-1 text-2xl font-semibold">
+              {transferStats.totalQty}
+            </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
             <p className="text-xs text-neutral-400">Chờ xác nhận</p>
-            <p className="mt-1 text-2xl font-semibold">{transferStats.waitingConfirm}</p>
+            <p className="mt-1 text-2xl font-semibold">
+              {transferStats.waitingConfirm}
+            </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
             <p className="text-xs text-neutral-400">Chờ nhận hàng</p>
-            <p className="mt-1 text-2xl font-semibold">{transferStats.waitingReceive}</p>
+            <p className="mt-1 text-2xl font-semibold">
+              {transferStats.waitingReceive}
+            </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
             <p className="text-xs text-neutral-400">Hoàn tất</p>
-            <p className="mt-1 text-2xl font-semibold">{transferStats.completed}</p>
+            <p className="mt-1 text-2xl font-semibold">
+              {transferStats.completed}
+            </p>
           </div>
         </div>
       </div>
@@ -2231,14 +2427,18 @@ useEffect(() => {
       <Panel className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 pb-3">
           <div>
-            <p className="text-sm font-semibold text-neutral-900">Bộ lọc phiếu chuyển kho</p>
+            <p className="text-sm font-semibold text-neutral-900">
+              Bộ lọc phiếu chuyển kho
+            </p>
             <p className="mt-0.5 text-xs text-neutral-500">
-              Lọc theo toàn bộ trường chính của phiếu: mã, người tạo, kho xuất/nhận, trạng thái, nguồn, sản phẩm, SKU, màu, size, danh mục, ghi chú, ngày tạo, số dòng và tổng số lượng.
+              Lọc theo toàn bộ trường chính của phiếu: mã, người tạo, kho
+              xuất/nhận, trạng thái, nguồn, sản phẩm, SKU, màu, size, danh mục,
+              ghi chú, ngày tạo, số dòng và tổng số lượng.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <div className="text-sm font-medium text-neutral-500">
-              {searchHydrating ? "Đang tìm sâu..." : `${filteredRows.length} phiếu`}
+              {`${filteredRows.length} phiếu`}
             </div>
             <button
               type="button"
@@ -2251,227 +2451,245 @@ useEffect(() => {
         </div>
 
         {filterPanelOpen ? (
-        <div className="mt-4 grid gap-3 md:grid-cols-4 xl:grid-cols-6">
-          <input
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none md:col-span-2"
-            placeholder="Tìm mã phiếu, kho, SKU, sản phẩm, ghi chú..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applyTransferFilters();
-            }}
-          />
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả trạng thái</option>
-            <option value="DRAFT">Nháp</option>
-            <option value="PENDING">Chờ xác nhận</option>
-            <option value="CONFIRMED">Chờ nhận hàng</option>
-            <option value="IN_TRANSIT">Đang chuyển</option>
-            <option value="COMPLETED">Hoàn tất</option>
-            <option value="CANCELLED">Đã hủy</option>
-          </select>
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={sourceTypeFilter}
-            onChange={(e) => setSourceTypeFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả nguồn</option>
-            <option value="MANUAL">Thủ công</option>
-            <option value="AUTO">Tự động</option>
-            <option value="REQUEST">Yêu cầu</option>
-          </select>
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={fromBranchFilter}
-            onChange={(e) => setFromBranchFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả kho xuất</option>
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>{branch.name}</option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={toBranchFilter}
-            onChange={(e) => setToBranchFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả kho nhận</option>
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>{branch.name}</option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={createdByFilter}
-            onChange={(e) => setCreatedByFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả người tạo/xác nhận</option>
-            {transferFilterOptions.createdBy.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-
-          <input
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="Mã SKU"
-            value={skuFilter}
-            onChange={(e) => setSkuFilter(e.target.value)}
-          />
-
-          <input
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="Tên sản phẩm"
-            value={productFilter}
-            onChange={(e) => setProductFilter(e.target.value)}
-          />
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả danh mục</option>
-            {transferFilterOptions.categories.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={colorFilter}
-            onChange={(e) => setColorFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả màu</option>
-            {transferFilterOptions.colors.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={sizeFilter}
-            onChange={(e) => setSizeFilter(e.target.value)}
-          >
-            <option value="ALL">Tất cả size</option>
-            {transferFilterOptions.sizes.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-
-          <input
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="Ghi chú"
-            value={noteFilter}
-            onChange={(e) => setNoteFilter(e.target.value)}
-          />
-
-          <input
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="Mã nguồn / ref"
-            value={sourceRefFilter}
-            onChange={(e) => setSourceRefFilter(e.target.value)}
-          />
-
-          <input
-            type="number"
-            min="0"
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="SL từ"
-            value={minQtyFilter}
-            onChange={(e) => setMinQtyFilter(e.target.value)}
-          />
-
-          <input
-            type="number"
-            min="0"
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="SL đến"
-            value={maxQtyFilter}
-            onChange={(e) => setMaxQtyFilter(e.target.value)}
-          />
-
-          <input
-            type="number"
-            min="0"
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="Số dòng từ"
-            value={minLineFilter}
-            onChange={(e) => setMinLineFilter(e.target.value)}
-          />
-
-          <input
-            type="number"
-            min="0"
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            placeholder="Số dòng đến"
-            value={maxLineFilter}
-            onChange={(e) => setMaxLineFilter(e.target.value)}
-          />
-
-          <label className="text-xs font-medium text-neutral-500">
-            Từ ngày tạo
+          <div className="mt-4 grid gap-3 md:grid-cols-4 xl:grid-cols-6">
             <input
-              type="date"
-              className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-              value={dateFromFilter}
-              onChange={(e) => setDateFromFilter(e.target.value)}
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none md:col-span-2"
+              placeholder="Tìm mã phiếu, kho, SKU, sản phẩm, ghi chú..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyTransferFilters();
+              }}
             />
-          </label>
 
-          <label className="text-xs font-medium text-neutral-500">
-            Đến ngày tạo
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="DRAFT">Nháp</option>
+              <option value="PENDING">Chờ xác nhận</option>
+              <option value="CONFIRMED">Chờ nhận hàng</option>
+              <option value="IN_TRANSIT">Đang chuyển</option>
+              <option value="COMPLETED">Hoàn tất</option>
+              <option value="CANCELLED">Đã hủy</option>
+            </select>
+
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={sourceTypeFilter}
+              onChange={(e) => setSourceTypeFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả nguồn</option>
+              <option value="MANUAL">Thủ công</option>
+              <option value="AUTO">Tự động</option>
+              <option value="REQUEST">Yêu cầu</option>
+            </select>
+
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={fromBranchFilter}
+              onChange={(e) => setFromBranchFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả kho xuất</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={toBranchFilter}
+              onChange={(e) => setToBranchFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả kho nhận</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={createdByFilter}
+              onChange={(e) => setCreatedByFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả người tạo/xác nhận</option>
+              {transferFilterOptions.createdBy.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+
             <input
-              type="date"
-              className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-              value={dateToFilter}
-              onChange={(e) => setDateToFilter(e.target.value)}
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="Mã SKU"
+              value={skuFilter}
+              onChange={(e) => setSkuFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyTransferFilters();
+              }}
             />
-          </label>
 
-          <select
-            className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-          >
-            <option value="created_desc">Mới nhất trước</option>
-            <option value="created_asc">Cũ nhất trước</option>
-            <option value="qty_desc">SL nhiều nhất</option>
-            <option value="qty_asc">SL ít nhất</option>
-            <option value="lines_desc">Nhiều dòng SKU nhất</option>
-            <option value="lines_asc">Ít dòng SKU nhất</option>
-            <option value="code_desc">Mã phiếu Z-A</option>
-            <option value="code_asc">Mã phiếu A-Z</option>
-          </select>
+            <input
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="Tên sản phẩm"
+              value={productFilter}
+              onChange={(e) => setProductFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyTransferFilters();
+              }}
+            />
 
-          <button
-            type="button"
-            onClick={applyTransferFilters}
-            disabled={searchHydrating}
-            className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {searchHydrating ? "Đang tìm..." : "Tìm kiếm"}
-          </button>
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả danh mục</option>
+              {transferFilterOptions.categories.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
 
-          <button
-            type="button"
-            onClick={resetTransferFilters}
-            className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
-          >
-            Xóa lọc
-          </button>
-        </div>
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={colorFilter}
+              onChange={(e) => setColorFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả màu</option>
+              {transferFilterOptions.colors.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={sizeFilter}
+              onChange={(e) => setSizeFilter(e.target.value)}
+            >
+              <option value="ALL">Tất cả size</option>
+              {transferFilterOptions.sizes.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="Ghi chú"
+              value={noteFilter}
+              onChange={(e) => setNoteFilter(e.target.value)}
+            />
+
+            <input
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="Mã nguồn / ref"
+              value={sourceRefFilter}
+              onChange={(e) => setSourceRefFilter(e.target.value)}
+            />
+
+            <input
+              type="number"
+              min="0"
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="SL từ"
+              value={minQtyFilter}
+              onChange={(e) => setMinQtyFilter(e.target.value)}
+            />
+
+            <input
+              type="number"
+              min="0"
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="SL đến"
+              value={maxQtyFilter}
+              onChange={(e) => setMaxQtyFilter(e.target.value)}
+            />
+
+            <input
+              type="number"
+              min="0"
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="Số dòng từ"
+              value={minLineFilter}
+              onChange={(e) => setMinLineFilter(e.target.value)}
+            />
+
+            <input
+              type="number"
+              min="0"
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              placeholder="Số dòng đến"
+              value={maxLineFilter}
+              onChange={(e) => setMaxLineFilter(e.target.value)}
+            />
+
+            <label className="text-xs font-medium text-neutral-500">
+              Từ ngày tạo
+              <input
+                type="date"
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={dateFromFilter}
+                onChange={(e) => setDateFromFilter(e.target.value)}
+              />
+            </label>
+
+            <label className="text-xs font-medium text-neutral-500">
+              Đến ngày tạo
+              <input
+                type="date"
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+                value={dateToFilter}
+                onChange={(e) => setDateToFilter(e.target.value)}
+              />
+            </label>
+
+            <select
+              className="rounded-xl border border-neutral-300 px-3.5 py-2.5 text-sm outline-none"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="created_desc">Mới nhất trước</option>
+              <option value="created_asc">Cũ nhất trước</option>
+              <option value="qty_desc">SL nhiều nhất</option>
+              <option value="qty_asc">SL ít nhất</option>
+              <option value="lines_desc">Nhiều dòng SKU nhất</option>
+              <option value="lines_asc">Ít dòng SKU nhất</option>
+              <option value="code_desc">Mã phiếu Z-A</option>
+              <option value="code_asc">Mã phiếu A-Z</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={applyTransferFilters}
+              className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Tìm kiếm
+            </button>
+
+            <button
+              type="button"
+              onClick={resetTransferFilters}
+              className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Xóa lọc
+            </button>
+          </div>
         ) : (
           <div className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm text-neutral-500">
-            Bộ lọc đang thu gọn. Đang hiển thị {filteredRows.length} phiếu theo điều kiện đã bấm tìm.
+            Bộ lọc đang thu gọn. Đang hiển thị {filteredRows.length} phiếu theo
+            điều kiện đã bấm tìm.
           </div>
         )}
       </Panel>
@@ -2480,9 +2698,12 @@ useEffect(() => {
         <Panel className="p-4">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-neutral-900">Cấu hình đề xuất cấp hàng</p>
+              <p className="text-sm font-semibold text-neutral-900">
+                Cấu hình đề xuất cấp hàng
+              </p>
               <p className="mt-1 text-xs text-neutral-400">
-                Chỉ Owner/Admin thấy phần này. QO và chi nhánh chỉ xử lý phiếu được tạo.
+                Chỉ Owner/Admin thấy phần này. QO và chi nhánh chỉ xử lý phiếu
+                được tạo.
               </p>
             </div>
 
@@ -2516,339 +2737,388 @@ useEffect(() => {
           </div>
 
           {autoConfigOpen ? (
-          <>
-          <div className="grid gap-3 md:grid-cols-4">
-            <label className="text-xs text-neutral-500">
-              THÁI HÀ dưới
-              <input
-                type="number"
-                min={1}
-                value={branchTargets.TH}
-                onChange={(e) =>
-                  setBranchTargets((prev) => ({ ...prev, TH: Number(e.target.value || 1) }))
-                }
-                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
-              />
-            </label>
+            <>
+              <div className="grid gap-3 md:grid-cols-4">
+                <label className="text-xs text-neutral-500">
+                  THÁI HÀ dưới
+                  <input
+                    type="number"
+                    min={1}
+                    value={branchTargets.TH}
+                    onChange={(e) =>
+                      setBranchTargets((prev) => ({
+                        ...prev,
+                        TH: Number(e.target.value || 1),
+                      }))
+                    }
+                    className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  />
+                </label>
 
-            <label className="text-xs text-neutral-500">
-              XÃ ĐÀN dưới
-              <input
-                type="number"
-                min={1}
-                value={branchTargets.XD}
-                onChange={(e) =>
-                  setBranchTargets((prev) => ({ ...prev, XD: Number(e.target.value || 1) }))
-                }
-                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
-              />
-            </label>
+                <label className="text-xs text-neutral-500">
+                  XÃ ĐÀN dưới
+                  <input
+                    type="number"
+                    min={1}
+                    value={branchTargets.XD}
+                    onChange={(e) =>
+                      setBranchTargets((prev) => ({
+                        ...prev,
+                        XD: Number(e.target.value || 1),
+                      }))
+                    }
+                    className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  />
+                </label>
 
-            <label className="text-xs text-neutral-500">
-              CHÙA LÁNG dưới
-              <input
-                type="number"
-                min={1}
-                value={branchTargets.CL}
-                onChange={(e) =>
-                  setBranchTargets((prev) => ({ ...prev, CL: Number(e.target.value || 1) }))
-                }
-                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
-              />
-            </label>
+                <label className="text-xs text-neutral-500">
+                  CHÙA LÁNG dưới
+                  <input
+                    type="number"
+                    min={1}
+                    value={branchTargets.CL}
+                    onChange={(e) =>
+                      setBranchTargets((prev) => ({
+                        ...prev,
+                        CL: Number(e.target.value || 1),
+                      }))
+                    }
+                    className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  />
+                </label>
 
-            <label className="text-xs text-neutral-500">
-              Tối đa / mã
-              <input
-                type="number"
-                min={1}
-                value={maxPerVariant}
-                onChange={(e) => setMaxPerVariant(Number(e.target.value || 1))}
-                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
-              />
-            </label>
-          </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <div>
-              <p className="mb-2 text-sm font-semibold text-neutral-800">Chi nhánh quét</p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { id: "TH", name: "THÁI HÀ" },
-                  { id: "XD", name: "XÃ ĐÀN" },
-                  { id: "CL", name: "CHÙA LÁNG" },
-                ].map((branch) => {
-                  const checked = selectedTargetBranches.includes(branch.id);
-
-                  return (
-                    <button
-                      key={branch.id}
-                      type="button"
-                      onClick={() =>
-                        setSelectedTargetBranches((prev) =>
-                          checked
-                            ? prev.filter((id) => id !== branch.id)
-                            : [...prev, branch.id]
-                        )
-                      }
-                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
-                        checked
-                          ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
-                          : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
-                      }`}
-                    >
-                      {branch.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm font-semibold text-neutral-800">
-                Ngày bán gần nhất
-                <input
-                  type="number"
-                  min={1}
-                  value={salesVelocityDays}
-                  onChange={(e) => setSalesVelocityDays(Number(e.target.value || 1))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-                />
-              </label>
-
-              <label className="text-sm font-semibold text-neutral-800">
-                Tối thiểu đã bán
-                <input
-                  type="number"
-                  min={0}
-                  value={minSoldQty}
-                  onChange={(e) => setMinSoldQty(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              <label className="text-sm font-semibold text-neutral-800">
-                Bật auto
-                <select
-                  value={autoEnabled ? "on" : "off"}
-                  onChange={(e) => setAutoEnabled(e.target.value === "on")}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-                >
-                  <option value="off">Tắt</option>
-                  <option value="on">Bật</option>
-                </select>
-              </label>
-
-              <label className="text-sm font-semibold text-neutral-800">
-                Giờ
-                <input
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={runHour}
-                  onChange={(e) => setRunHour(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-                />
-              </label>
-
-              <label className="text-sm font-semibold text-neutral-800">
-                Phút
-                <input
-                  type="number"
-                  min={0}
-                  max={59}
-                  value={runMinute}
-                  onChange={(e) => setRunMinute(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-bold uppercase tracking-wide text-neutral-800">
-                  Danh mục sản phẩm quét
-                </p>
-                <p className="mt-1 text-xs font-medium text-neutral-500">
-                  Gọn lại theo nhóm mùa. Bấm mở từng nhóm để chọn danh mục con, tránh rối màn hình.
-                </p>
+                <label className="text-xs text-neutral-500">
+                  Tối đa / mã
+                  <input
+                    type="number"
+                    min={1}
+                    value={maxPerVariant}
+                    onChange={(e) =>
+                      setMaxPerVariant(Number(e.target.value || 1))
+                    }
+                    className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none"
+                  />
+                </label>
               </div>
 
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={selectAllCategoryGroups}
-                  disabled={dynamicCategories.length === 0}
-                  className="text-xs font-semibold text-blue-700 underline underline-offset-2 hover:text-blue-900 disabled:text-neutral-300"
-                >
-                  Bật tất cả
-                </button>
-                <button
-                  type="button"
-                  onClick={clearAllCategoryGroups}
-                  className="text-xs font-semibold text-neutral-600 underline underline-offset-2 hover:text-neutral-900"
-                >
-                  Tắt tất cả
-                </button>
-              </div>
-            </div>
-
-            {selectedCategoryNames.length > 0 ? (
-              <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-xs font-bold uppercase tracking-wide text-blue-800">
-                    Đang chọn để AI Rebalance quét
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-neutral-800">
+                    Chi nhánh quét
                   </p>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-blue-700 ring-1 ring-blue-200">
-                    {selectedCategoryNames.length} danh mục
-                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { id: "TH", name: "THÁI HÀ" },
+                      { id: "XD", name: "XÃ ĐÀN" },
+                      { id: "CL", name: "CHÙA LÁNG" },
+                    ].map((branch) => {
+                      const checked = selectedTargetBranches.includes(
+                        branch.id,
+                      );
+
+                      return (
+                        <button
+                          key={branch.id}
+                          type="button"
+                          onClick={() =>
+                            setSelectedTargetBranches((prev) =>
+                              checked
+                                ? prev.filter((id) => id !== branch.id)
+                                : [...prev, branch.id],
+                            )
+                          }
+                          className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                            checked
+                              ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
+                              : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
+                          }`}
+                        >
+                          {branch.name}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="flex max-h-20 flex-wrap gap-1.5 overflow-auto">
-                  {selectedCategoryNames.map((name) => (
-                    <span
-                      key={`selected-${name}`}
-                      className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700"
+
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-sm font-semibold text-neutral-800">
+                    Ngày bán gần nhất
+                    <input
+                      type="number"
+                      min={1}
+                      value={salesVelocityDays}
+                      onChange={(e) =>
+                        setSalesVelocityDays(Number(e.target.value || 1))
+                      }
+                      className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+                    />
+                  </label>
+
+                  <label className="text-sm font-semibold text-neutral-800">
+                    Tối thiểu đã bán
+                    <input
+                      type="number"
+                      min={0}
+                      value={minSoldQty}
+                      onChange={(e) =>
+                        setMinSoldQty(Number(e.target.value || 0))
+                      }
+                      className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <label className="text-sm font-semibold text-neutral-800">
+                    Bật auto
+                    <select
+                      value={autoEnabled ? "on" : "off"}
+                      onChange={(e) => setAutoEnabled(e.target.value === "on")}
+                      className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
                     >
-                      {name}
-                    </span>
-                  ))}
+                      <option value="off">Tắt</option>
+                      <option value="on">Bật</option>
+                    </select>
+                  </label>
+
+                  <label className="text-sm font-semibold text-neutral-800">
+                    Giờ
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={runHour}
+                      onChange={(e) => setRunHour(Number(e.target.value || 0))}
+                      className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+                    />
+                  </label>
+
+                  <label className="text-sm font-semibold text-neutral-800">
+                    Phút
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={runMinute}
+                      onChange={(e) =>
+                        setRunMinute(Number(e.target.value || 0))
+                      }
+                      className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+                    />
+                  </label>
                 </div>
               </div>
-            ) : null}
 
-            {dynamicCategories.length === 0 ? (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-700">
-                Không lấy được danh mục từ API sản phẩm. Hệ thống vẫn có thể quét tất cả sản phẩm.
-              </div>
-            ) : (
-              <div className="grid gap-3 xl:grid-cols-3">
-                {categoryGroups.map((group, index) => {
-                  const groupSelected = selectedCategoryGroupMap[group.key] || [];
-                  const groupEnabled = Boolean(activeCategoryGroupMap[group.key]);
-                  const selectedCount = group.categories.filter((name) =>
-                    groupSelected.includes(name)
-                  ).length;
-                  const allChecked = group.categories.length > 0 && selectedCount === group.categories.length;
-                  const groupTone =
-                    group.tone === "blue"
-                      ? "border-blue-200 bg-blue-50"
-                      : group.tone === "amber"
-                        ? "border-amber-200 bg-amber-50"
-                        : "border-neutral-200 bg-white";
+              <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold uppercase tracking-wide text-neutral-800">
+                      Danh mục sản phẩm quét
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-neutral-500">
+                      Gọn lại theo nhóm mùa. Bấm mở từng nhóm để chọn danh mục
+                      con, tránh rối màn hình.
+                    </p>
+                  </div>
 
-                  return (
-                    <details
-                      key={group.key}
-                      open
-                      className={`rounded-2xl border ${groupTone}`}
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={selectAllCategoryGroups}
+                      disabled={dynamicCategories.length === 0}
+                      className="text-xs font-semibold text-blue-700 underline underline-offset-2 hover:text-blue-900 disabled:text-neutral-300"
                     >
-                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-                        <div>
-                          <p className="text-sm font-bold text-neutral-900">
-                            {group.title}
-                            <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-neutral-600 ring-1 ring-neutral-200">
-                              {groupEnabled ? `${selectedCount}/${group.categories.length}` : "Tắt"}
+                      Bật tất cả
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearAllCategoryGroups}
+                      className="text-xs font-semibold text-neutral-600 underline underline-offset-2 hover:text-neutral-900"
+                    >
+                      Tắt tất cả
+                    </button>
+                  </div>
+                </div>
+
+                {selectedCategoryNames.length > 0 ? (
+                  <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-blue-800">
+                        Đang chọn để AI Rebalance quét
+                      </p>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-blue-700 ring-1 ring-blue-200">
+                        {selectedCategoryNames.length} danh mục
+                      </span>
+                    </div>
+                    <div className="flex max-h-20 flex-wrap gap-1.5 overflow-auto">
+                      {selectedCategoryNames.map((name) => (
+                        <span
+                          key={`selected-${name}`}
+                          className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {dynamicCategories.length === 0 ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-700">
+                    Không lấy được danh mục từ API sản phẩm. Hệ thống vẫn có thể
+                    quét tất cả sản phẩm.
+                  </div>
+                ) : (
+                  <div className="grid gap-3 xl:grid-cols-3">
+                    {categoryGroups.map((group, index) => {
+                      const groupSelected =
+                        selectedCategoryGroupMap[group.key] || [];
+                      const groupEnabled = Boolean(
+                        activeCategoryGroupMap[group.key],
+                      );
+                      const selectedCount = group.categories.filter((name) =>
+                        groupSelected.includes(name),
+                      ).length;
+                      const allChecked =
+                        group.categories.length > 0 &&
+                        selectedCount === group.categories.length;
+                      const groupTone =
+                        group.tone === "blue"
+                          ? "border-blue-200 bg-blue-50"
+                          : group.tone === "amber"
+                            ? "border-amber-200 bg-amber-50"
+                            : "border-neutral-200 bg-white";
+
+                      return (
+                        <details
+                          key={group.key}
+                          open
+                          className={`rounded-2xl border ${groupTone}`}
+                        >
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-bold text-neutral-900">
+                                {group.title}
+                                <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-neutral-600 ring-1 ring-neutral-200">
+                                  {groupEnabled
+                                    ? `${selectedCount}/${group.categories.length}`
+                                    : "Tắt"}
+                                </span>
+                              </p>
+                              <p className="mt-0.5 text-xs font-medium text-neutral-600">
+                                {group.subtitle}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-xs font-bold text-neutral-500">
+                              Mở
                             </span>
-                          </p>
-                          <p className="mt-0.5 text-xs font-medium text-neutral-600">
-                            {group.subtitle}
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-xs font-bold text-neutral-500">Mở</span>
-                      </summary>
+                          </summary>
 
-                      <div className="border-t border-white/70 px-4 pb-4 pt-3">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-bold text-neutral-800">
-                            <input
-                              type="checkbox"
-                              checked={groupEnabled}
-                              onChange={(e) => setGroupEnabled(group.key, e.target.checked)}
-                              className="h-3.5 w-3.5 accent-blue-600"
-                            />
-                            Bật quét nhóm này
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setGroupCategories(
-                                group.key,
-                                allChecked ? [] : group.categories
-                              )
-                            }
-                            disabled={!groupEnabled}
-                            className="rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {allChecked ? "Bỏ nhóm" : `Chọn nhóm (${group.categories.length})`}
-                          </button>
-                        </div>
+                          <div className="border-t border-white/70 px-4 pb-4 pt-3">
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                              <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-bold text-neutral-800">
+                                <input
+                                  type="checkbox"
+                                  checked={groupEnabled}
+                                  onChange={(e) =>
+                                    setGroupEnabled(group.key, e.target.checked)
+                                  }
+                                  className="h-3.5 w-3.5 accent-blue-600"
+                                />
+                                Bật quét nhóm này
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setGroupCategories(
+                                    group.key,
+                                    allChecked ? [] : group.categories,
+                                  )
+                                }
+                                disabled={!groupEnabled}
+                                className="rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {allChecked
+                                  ? "Bỏ nhóm"
+                                  : `Chọn nhóm (${group.categories.length})`}
+                              </button>
+                            </div>
 
-                        <div className="max-h-56 overflow-auto rounded-xl border border-white/80 bg-white/80 p-2">
-                          <div className="grid gap-2">
-                            {[...group.categories]
-                              .sort((a, b) => {
-                                const aSelected = groupSelected.includes(a) ? 1 : 0;
-                                const bSelected = groupSelected.includes(b) ? 1 : 0;
-                                if (aSelected !== bSelected) return bSelected - aSelected;
-                                return a.localeCompare(b);
-                              })
-                              .map((name) => {
-                              const checked = groupSelected.includes(name);
+                            <div className="max-h-56 overflow-auto rounded-xl border border-white/80 bg-white/80 p-2">
+                              <div className="grid gap-2">
+                                {[...group.categories]
+                                  .sort((a, b) => {
+                                    const aSelected = groupSelected.includes(a)
+                                      ? 1
+                                      : 0;
+                                    const bSelected = groupSelected.includes(b)
+                                      ? 1
+                                      : 0;
+                                    if (aSelected !== bSelected)
+                                      return bSelected - aSelected;
+                                    return a.localeCompare(b);
+                                  })
+                                  .map((name) => {
+                                    const checked =
+                                      groupSelected.includes(name);
 
-                              return (
-                                <label
-                                  key={`${group.key}-${name}`}
-                                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                                    checked
-                                      ? "border-blue-300 bg-blue-50 text-blue-700"
-                                      : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    disabled={!groupEnabled}
-                                    onChange={() =>
-                                      setGroupCategories(
-                                        group.key,
-                                        checked
-                                          ? groupSelected.filter((x) => x !== name)
-                                          : [...groupSelected, name]
-                                      )
-                                    }
-                                    className="h-3.5 w-3.5 accent-blue-600"
-                                  />
-                                  <span className="truncate">{name}</span>
-                                </label>
-                              );
-                            })}
+                                    return (
+                                      <label
+                                        key={`${group.key}-${name}`}
+                                        className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                                          checked
+                                            ? "border-blue-300 bg-blue-50 text-blue-700"
+                                            : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          disabled={!groupEnabled}
+                                          onChange={() =>
+                                            setGroupCategories(
+                                              group.key,
+                                              checked
+                                                ? groupSelected.filter(
+                                                    (x) => x !== name,
+                                                  )
+                                                : [...groupSelected, name],
+                                            )
+                                          }
+                                          className="h-3.5 w-3.5 accent-blue-600"
+                                        />
+                                        <span className="truncate">{name}</span>
+                                      </label>
+                                    );
+                                  })}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    </details>
-                  );
-                })}
-              </div>
-            )}
+                        </details>
+                      );
+                    })}
+                  </div>
+                )}
 
-            {selectedCategoryNames.length === 0 ? (
-              <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-                Chưa bật nhóm mùa hoặc chưa chọn danh mục, hệ thống sẽ không quét tự động.
-              </p>
-            ) : (
-              <p className="mt-3 rounded-2xl border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700">
-                AI Rebalance đang quét {selectedCategoryNames.length}/{dynamicCategories.length} danh mục đã chọn. Danh mục được tick sẽ được ưu tiên hiển thị lên trên.
-              </p>
-            )}
-          </div>
-          </>
+                {selectedCategoryNames.length === 0 ? (
+                  <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                    Chưa bật nhóm mùa hoặc chưa chọn danh mục, hệ thống sẽ không
+                    quét tự động.
+                  </p>
+                ) : (
+                  <p className="mt-3 rounded-2xl border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700">
+                    AI Rebalance đang quét {selectedCategoryNames.length}/
+                    {dynamicCategories.length} danh mục đã chọn. Danh mục được
+                    tick sẽ được ưu tiên hiển thị lên trên.
+                  </p>
+                )}
+              </div>
+            </>
           ) : (
             <div className="rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm text-neutral-500">
-              Đề xuất cấp hàng đang thu gọn. Ngưỡng hiện tại: TH {branchTargets.TH}, XĐ {branchTargets.XD}, CL {branchTargets.CL}; tối đa {maxPerVariant} sản phẩm / mã.
+              Đề xuất cấp hàng đang thu gọn. Ngưỡng hiện tại: TH{" "}
+              {branchTargets.TH}, XĐ {branchTargets.XD}, CL {branchTargets.CL};
+              tối đa {maxPerVariant} sản phẩm / mã.
             </div>
           )}
         </Panel>
@@ -2875,7 +3145,9 @@ useEffect(() => {
                 className="h-4 w-4 accent-neutral-900"
                 checked={
                   filteredRows.length > 0 &&
-                  filteredRows.every((row) => selectedTransferIds.includes(row.id))
+                  filteredRows.every((row) =>
+                    selectedTransferIds.includes(row.id),
+                  )
                 }
                 onChange={(event) => {
                   if (event.target.checked) {
@@ -2910,27 +3182,35 @@ useEffect(() => {
           </Panel>
         ) : filteredRows.length === 0 ? (
           <Panel className="p-4">
-            <p className="text-sm text-neutral-500">Chưa có phiếu chuyển kho nào.</p>
+            <p className="text-sm text-neutral-500">
+              Chưa có phiếu chuyển kho nào.
+            </p>
           </Panel>
         ) : (
           filteredRows.map((transfer) => {
             const total =
               transfer.totalQty ??
-              getTransferItems(transfer).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+              getTransferItems(transfer).reduce(
+                (sum, item) => sum + Number(item.qty || 0),
+                0,
+              );
             const canConfirmSending =
               canConfirmStockTransfer &&
               (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
-              (canManageAutoTransfer || transfer.fromBranchId === currentBranchId);
+              (canManageAutoTransfer ||
+                transfer.fromBranchId === currentBranchId);
 
             const canCancelTransfer =
               canCancelStockTransfer &&
               (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
-              (canManageAutoTransfer || transfer.fromBranchId === currentBranchId);
+              (canManageAutoTransfer ||
+                transfer.fromBranchId === currentBranchId);
 
             const canCompleteReceiving =
               canReceiveStockTransfer &&
               transfer.status === "CONFIRMED" &&
-              (canManageAutoTransfer || transfer.toBranchId === currentBranchId);
+              (canManageAutoTransfer ||
+                transfer.toBranchId === currentBranchId);
 
             const fromBranchName =
               transfer.fromBranch?.name ||
@@ -2942,18 +3222,27 @@ useEffect(() => {
               transfer.toBranchName ||
               transfer.toBranchId ||
               "—";
-            const lineCount = transfer.totalLines ?? getTransferItems(transfer).length ?? 0;
+            const lineCount =
+              transfer.totalLines ?? getTransferItems(transfer).length ?? 0;
             const createdByName = (transfer as any).createdByName || "—";
-            const createdAtText = formatShortDateTime((transfer as any).createdAt);
+            const createdAtText = formatShortDateTime(
+              (transfer as any).createdAt,
+            );
             const topItems = getTransferItems(transfer).slice(0, 3);
             const skuPreview = topItems
-              .map((item: any) => getTransferItemSku(item) || getTransferItemProductName(item))
+              .map(
+                (item: any) =>
+                  getTransferItemSku(item) || getTransferItemProductName(item),
+              )
               .filter(Boolean)
               .join(", ");
             const extraItemCount = Math.max(lineCount - topItems.length, 0);
 
             return (
-              <Panel key={transfer.id} className="overflow-hidden transition hover:border-neutral-300 hover:shadow-md">
+              <Panel
+                key={transfer.id}
+                className="overflow-hidden transition hover:border-neutral-300 hover:shadow-md"
+              >
                 <div className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -2962,7 +3251,12 @@ useEffect(() => {
                           type="checkbox"
                           className="h-4 w-4 accent-neutral-900"
                           checked={selectedTransferIds.includes(transfer.id)}
-                          onChange={(event) => toggleSelectTransfer(transfer.id, event.target.checked)}
+                          onChange={(event) =>
+                            toggleSelectTransfer(
+                              transfer.id,
+                              event.target.checked,
+                            )
+                          }
                           onClick={(event) => event.stopPropagation()}
                           aria-label={`Chọn phiếu ${transfer.transferCode}`}
                         />
@@ -2979,48 +3273,75 @@ useEffect(() => {
                       </a>
 
                       {renderTransferStatusBadge(transfer)}
-                      {transfer.sourceType === "AUTO" ? <Badge tone="blue">Tự động</Badge> : null}
-                      {transfer.sourceType === "MANUAL" ? <Badge tone="gray">Thủ công</Badge> : null}
-                      {transfer.sourceType === "REQUEST" ? <Badge tone="green">Yêu cầu</Badge> : null}
+                      {transfer.sourceType === "AUTO" ? (
+                        <Badge tone="blue">Tự động</Badge>
+                      ) : null}
+                      {transfer.sourceType === "MANUAL" ? (
+                        <Badge tone="gray">Thủ công</Badge>
+                      ) : null}
+                      {transfer.sourceType === "REQUEST" ? (
+                        <Badge tone="green">Yêu cầu</Badge>
+                      ) : null}
                     </div>
 
                     <div className="mt-2 grid gap-2 text-xs text-neutral-600 md:grid-cols-4">
                       <div className="rounded-xl bg-neutral-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Tuyến chuyển</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
+                          Tuyến chuyển
+                        </p>
                         <p className="mt-0.5 truncate font-bold text-neutral-950">
                           {fromBranchName} → {toBranchName}
                         </p>
                       </div>
 
                       <div className="rounded-xl bg-neutral-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Tổng hàng</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
+                          Tổng hàng
+                        </p>
                         <p className="mt-0.5 font-bold text-neutral-950">
                           {total} sản phẩm · {lineCount} SKU
                         </p>
                       </div>
 
                       <div className="rounded-xl bg-neutral-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Người tạo</p>
-                        <p className="mt-0.5 truncate font-bold text-neutral-950">{createdByName}</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
+                          Người tạo
+                        </p>
+                        <p className="mt-0.5 truncate font-bold text-neutral-950">
+                          {createdByName}
+                        </p>
                       </div>
 
                       <div className="rounded-xl bg-neutral-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Thời gian</p>
-                        <p className="mt-0.5 truncate font-bold text-neutral-950">{createdAtText}</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
+                          Thời gian
+                        </p>
+                        <p className="mt-0.5 truncate font-bold text-neutral-950">
+                          {createdAtText}
+                        </p>
                       </div>
                     </div>
 
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
                       {skuPreview ? (
                         <p className="min-w-0 truncate">
-                          SKU tiêu biểu: <span className="font-medium text-neutral-700">{skuPreview}</span>
-                          {extraItemCount > 0 ? <span> +{extraItemCount} dòng</span> : null}
+                          SKU tiêu biểu:{" "}
+                          <span className="font-medium text-neutral-700">
+                            {skuPreview}
+                          </span>
+                          {extraItemCount > 0 ? (
+                            <span> +{extraItemCount} dòng</span>
+                          ) : null}
                         </p>
                       ) : (
                         <p>Bấm “Xem phiếu” để xem chi tiết sản phẩm.</p>
                       )}
-                      {(transfer as any).sourceRefId ? <p>Mã nguồn: {(transfer as any).sourceRefId}</p> : null}
-                      {transfer.note ? <p className="truncate">Ghi chú: {transfer.note}</p> : null}
+                      {(transfer as any).sourceRefId ? (
+                        <p>Mã nguồn: {(transfer as any).sourceRefId}</p>
+                      ) : null}
+                      {transfer.note ? (
+                        <p className="truncate">Ghi chú: {transfer.note}</p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -3044,7 +3365,9 @@ useEffect(() => {
 
                     <button
                       type="button"
-                      onClick={() => void openTransferPrintSetup(transfer, "80mm")}
+                      onClick={() =>
+                        void openTransferPrintSetup(transfer, "80mm")
+                      }
                       className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
                     >
                       In phiếu kho
@@ -3052,7 +3375,9 @@ useEffect(() => {
 
                     <button
                       type="button"
-                      onClick={() => void openTransferPrintSetup(transfer, "A4")}
+                      onClick={() =>
+                        void openTransferPrintSetup(transfer, "A4")
+                      }
                       className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
                     >
                       In A4
@@ -3060,11 +3385,18 @@ useEffect(() => {
 
                     {canDeleteStockTransfer ? (
                       <button
-                        onClick={() => void handleDeleteTransfer(transfer.id, transfer.transferCode)}
+                        onClick={() =>
+                          void handleDeleteTransfer(
+                            transfer.id,
+                            transfer.transferCode,
+                          )
+                        }
                         disabled={deletingId === transfer.id}
                         className="rounded-xl border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {deletingId === transfer.id ? "Đang xóa..." : "Xóa phiếu"}
+                        {deletingId === transfer.id
+                          ? "Đang xóa..."
+                          : "Xóa phiếu"}
                       </button>
                     ) : null}
 
@@ -3074,7 +3406,9 @@ useEffect(() => {
                         disabled={confirmingId === transfer.id}
                         className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {confirmingId === transfer.id ? "Đang xác nhận..." : "Xác nhận chuyển"}
+                        {confirmingId === transfer.id
+                          ? "Đang xác nhận..."
+                          : "Xác nhận chuyển"}
                       </button>
                     ) : null}
 
@@ -3094,23 +3428,31 @@ useEffect(() => {
                         disabled={completingId === transfer.id}
                         className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {completingId === transfer.id ? "Đang nhập kho..." : "Xác nhận nhận đủ"}
+                        {completingId === transfer.id
+                          ? "Đang nhập kho..."
+                          : "Xác nhận nhận đủ"}
                       </button>
                     ) : null}
                   </div>
                 </div>
               </Panel>
             );
-
           })
         )}
       </div>
 
-      <Modal open={suggestionOpen} onClose={() => setSuggestionOpen(false)} title="Đề xuất cấp hàng tự động">
+      <Modal
+        open={suggestionOpen}
+        onClose={() => setSuggestionOpen(false)}
+        title="Đề xuất cấp hàng tự động"
+      >
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-neutral-500">
-              Tổng đề xuất: <span className="font-semibold text-neutral-900">{suggestions.length}</span>
+              Tổng đề xuất:{" "}
+              <span className="font-semibold text-neutral-900">
+                {suggestions.length}
+              </span>
             </div>
 
             <div className="flex gap-2">
@@ -3132,7 +3474,11 @@ useEffect(() => {
 
               <button
                 onClick={() => void handleCreateAutoTransfers()}
-                disabled={suggestionCreating || selectedSuggestionIds.length === 0 || !canCreateStockTransfer}
+                disabled={
+                  suggestionCreating ||
+                  selectedSuggestionIds.length === 0 ||
+                  !canCreateStockTransfer
+                }
                 className={`rounded-xl px-4 py-2 text-sm font-medium text-white ${
                   suggestionCreating || selectedSuggestionIds.length === 0
                     ? "bg-neutral-400"
@@ -3168,7 +3514,10 @@ useEffect(() => {
                 <tbody>
                   {suggestions.length === 0 ? (
                     <tr>
-                      <td colSpan={13} className="px-3 py-6 text-center text-sm text-neutral-500">
+                      <td
+                        colSpan={13}
+                        className="px-3 py-6 text-center text-sm text-neutral-500"
+                      >
                         Không có đề xuất phù hợp.
                       </td>
                     </tr>
@@ -3187,22 +3536,31 @@ useEffect(() => {
                                 setSelectedSuggestionIds((prev) =>
                                   e.target.checked
                                     ? [...prev, key]
-                                    : prev.filter((id) => id !== key)
+                                    : prev.filter((id) => id !== key),
                                 );
                               }}
                             />
                           </td>
-                          <td className="px-3 py-2.5 font-medium">{item.toBranchName}</td>
+                          <td className="px-3 py-2.5 font-medium">
+                            {item.toBranchName}
+                          </td>
                           <td className="px-3 py-2.5">{item.sku}</td>
                           <td className="px-3 py-2.5">{item.productName}</td>
                           <td className="px-3 py-2.5">{item.color || "—"}</td>
                           <td className="px-3 py-2.5">{item.size || "—"}</td>
-                          <td className="px-3 py-2.5">{item.storeAvailableQty}</td>
                           <td className="px-3 py-2.5">
-                            {item.soldQty ?? 0}/{item.salesVelocityDays ?? salesVelocityDays} ngày
+                            {item.storeAvailableQty}
                           </td>
-                          <td className="px-3 py-2.5">{item.branchMinTarget}</td>
-                          <td className="px-3 py-2.5">{item.qoAvailableQty ?? "—"}</td>
+                          <td className="px-3 py-2.5">
+                            {item.soldQty ?? 0}/
+                            {item.salesVelocityDays ?? salesVelocityDays} ngày
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {item.branchMinTarget}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {item.qoAvailableQty ?? "—"}
+                          </td>
                           <td className="px-3 py-2.5">
                             <span
                               className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${
@@ -3244,31 +3602,45 @@ useEffect(() => {
           </Panel>
 
           <div className="rounded-2xl bg-green-50 p-3 text-xs font-medium text-green-700">
-            Level 5 AI Rebalance: hệ thống xếp hạng theo mức thiếu hàng, tốc độ bán, tồn QO và ngưỡng chi nhánh. Chỉ tạo phiếu từ những dòng được tick và theo đúng số lượng đã chỉnh.
+            Level 5 AI Rebalance: hệ thống xếp hạng theo mức thiếu hàng, tốc độ
+            bán, tồn QO và ngưỡng chi nhánh. Chỉ tạo phiếu từ những dòng được
+            tick và theo đúng số lượng đã chỉnh.
           </div>
         </div>
       </Modal>
 
-      <Modal open={detailOpen} onClose={() => setDetailOpen(false)} title="Chi tiết phiếu chuyển kho">
+      <Modal
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        title="Chi tiết phiếu chuyển kho"
+      >
         {detailLoading || !selectedTransfer ? (
-          <div className="p-4 text-sm text-neutral-500">Đang tải chi tiết...</div>
+          <div className="p-4 text-sm text-neutral-500">
+            Đang tải chi tiết...
+          </div>
         ) : (
           <div className="space-y-3">
             <div className="grid gap-3 md:grid-cols-3">
               <Panel className="p-3">
                 <p className="text-xs text-neutral-500">Mã phiếu</p>
-                <p className="mt-1 text-sm font-semibold">{selectedTransfer.transferCode}</p>
+                <p className="mt-1 text-sm font-semibold">
+                  {selectedTransfer.transferCode}
+                </p>
               </Panel>
               <Panel className="p-3">
                 <p className="text-xs text-neutral-500">Xuất</p>
                 <p className="mt-1 text-sm font-semibold">
-                  {selectedTransfer.fromBranchName || selectedTransfer.fromBranch?.name || selectedTransfer.fromBranchId}
+                  {selectedTransfer.fromBranchName ||
+                    selectedTransfer.fromBranch?.name ||
+                    selectedTransfer.fromBranchId}
                 </p>
               </Panel>
               <Panel className="p-3">
                 <p className="text-xs text-neutral-500">Nhận</p>
                 <p className="mt-1 text-sm font-semibold">
-                  {selectedTransfer.toBranchName || selectedTransfer.toBranch?.name || selectedTransfer.toBranchId}
+                  {selectedTransfer.toBranchName ||
+                    selectedTransfer.toBranch?.name ||
+                    selectedTransfer.toBranchId}
                 </p>
               </Panel>
             </div>
@@ -3276,21 +3648,27 @@ useEffect(() => {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void openTransferPrintSetup(selectedTransfer, "80mm")}
+                onClick={() =>
+                  void openTransferPrintSetup(selectedTransfer, "80mm")
+                }
                 className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
                 In phiếu kho 80mm
               </button>
               <button
                 type="button"
-                onClick={() => void openTransferPrintSetup(selectedTransfer, "A4")}
+                onClick={() =>
+                  void openTransferPrintSetup(selectedTransfer, "A4")
+                }
                 className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
                 In A4
               </button>
               <button
                 type="button"
-                onClick={() => void openTransferPrintSetup(selectedTransfer, "A5")}
+                onClick={() =>
+                  void openTransferPrintSetup(selectedTransfer, "A5")
+                }
                 className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
               >
                 In A5
@@ -3300,19 +3678,26 @@ useEffect(() => {
             {selectedTransfer.status === "CONFIRMED" ? (
               <Panel className="flex flex-wrap items-center justify-between gap-3 border-blue-200 bg-blue-50 p-3">
                 <div>
-                  <p className="text-sm font-semibold text-blue-800">Phiếu đang chờ bên nhận xác nhận đủ</p>
+                  <p className="text-sm font-semibold text-blue-800">
+                    Phiếu đang chờ bên nhận xác nhận đủ
+                  </p>
                   <p className="mt-1 text-xs text-blue-700">
-                    Chỉ khi xác nhận đủ, hệ thống mới trừ kho chuyển và cộng kho nhận.
+                    Chỉ khi xác nhận đủ, hệ thống mới trừ kho chuyển và cộng kho
+                    nhận.
                   </p>
                 </div>
-                {(canReceiveStockTransfer && (canManageAutoTransfer || selectedTransfer.toBranchId === currentBranchId)) ? (
+                {canReceiveStockTransfer &&
+                (canManageAutoTransfer ||
+                  selectedTransfer.toBranchId === currentBranchId) ? (
                   <button
                     type="button"
                     onClick={() => void handleComplete(selectedTransfer.id)}
                     disabled={completingId === selectedTransfer.id}
                     className="rounded-xl bg-green-700 px-4 py-2 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {completingId === selectedTransfer.id ? "Đang nhập kho..." : "Xác nhận đã nhận đủ"}
+                    {completingId === selectedTransfer.id
+                      ? "Đang nhập kho..."
+                      : "Xác nhận đã nhận đủ"}
                   </button>
                 ) : null}
               </Panel>
@@ -3332,7 +3717,9 @@ useEffect(() => {
                 <tbody>
                   {(selectedTransfer.items || []).map((item) => (
                     <tr key={item.id} className="border-t border-neutral-200">
-                      <td className="px-3 py-2.5 font-medium">{item.sku || "—"}</td>
+                      <td className="px-3 py-2.5 font-medium">
+                        {item.sku || "—"}
+                      </td>
                       <td className="px-3 py-2.5">{item.productName || "—"}</td>
                       <td className="px-3 py-2.5">{item.color || "—"}</td>
                       <td className="px-3 py-2.5">{item.size || "—"}</td>
@@ -3346,10 +3733,15 @@ useEffect(() => {
         )}
       </Modal>
 
-
-      <Modal open={transferPrintOpen} onClose={() => setTransferPrintOpen(false)} title="Cấu hình in phiếu chuyển kho">
+      <Modal
+        open={transferPrintOpen}
+        onClose={() => setTransferPrintOpen(false)}
+        title="Cấu hình in phiếu chuyển kho"
+      >
         {transferPrintLoading || !transferPrintTransfer ? (
-          <div className="p-4 text-sm text-neutral-500">Đang tải phiếu in...</div>
+          <div className="p-4 text-sm text-neutral-500">
+            Đang tải phiếu in...
+          </div>
         ) : (
           <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
             <div className="space-y-4">
@@ -3359,14 +3751,18 @@ useEffect(() => {
                     Mẫu phiếu
                     <select
                       value={transferPrintTemplateId}
-                      onChange={(event) => handleTransferPrintTemplateChange(event.target.value)}
+                      onChange={(event) =>
+                        handleTransferPrintTemplateChange(event.target.value)
+                      }
                       className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none"
                     >
-                      {getTransferPrintTemplates(transferPrintPaperSize).map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name}
-                        </option>
-                      ))}
+                      {getTransferPrintTemplates(transferPrintPaperSize).map(
+                        (template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.name}
+                          </option>
+                        ),
+                      )}
                     </select>
                   </label>
 
@@ -3375,7 +3771,9 @@ useEffect(() => {
                     <select
                       value={transferPrintPaperSize}
                       onChange={(event) =>
-                        handleTransferPrintPaperSizeChange(event.target.value as PrintPaperSize)
+                        handleTransferPrintPaperSizeChange(
+                          event.target.value as PrintPaperSize,
+                        )
                       }
                       className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none"
                     >
@@ -3387,25 +3785,69 @@ useEffect(() => {
                 </div>
 
                 <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">
-                  Khi hộp thoại máy in hiện lên, chọn đúng khổ giấy trong driver: 80mm/cuộn hoặc A5/A4. Trình duyệt không ép được máy in nếu driver đang để sai khổ.
+                  Khi hộp thoại máy in hiện lên, chọn đúng khổ giấy trong
+                  driver: 80mm/cuộn hoặc A5/A4. Trình duyệt không ép được máy in
+                  nếu driver đang để sai khổ.
                 </div>
               </Panel>
 
               <Panel className="p-4">
-                <p className="mb-3 text-sm font-semibold text-neutral-900">Thông tin hiển thị trên phiếu</p>
+                <p className="mb-3 text-sm font-semibold text-neutral-900">
+                  Thông tin hiển thị trên phiếu
+                </p>
                 <div className="grid gap-2 md:grid-cols-2">
                   {[
-                    [transferPrintShowOrderCode, setTransferPrintShowOrderCode, "Mã phiếu"],
-                    [transferPrintShowCreatedAt, setTransferPrintShowCreatedAt, "Ngày tạo"],
-                    [transferPrintShowCustomerName, setTransferPrintShowCustomerName, "Chi nhánh nhận"],
-                    [transferPrintShowCustomerPhone, setTransferPrintShowCustomerPhone, "SĐT"],
-                    [transferPrintShowShippingAddress, setTransferPrintShowShippingAddress, "Địa chỉ"],
-                    [transferPrintShowItems, setTransferPrintShowItems, "Danh sách sản phẩm"],
-                    [transferPrintShowItemQty, setTransferPrintShowItemQty, "Số lượng"],
-                    [transferPrintShowBarcode, setTransferPrintShowBarcode, "Mã vạch"],
+                    [
+                      transferPrintShowOrderCode,
+                      setTransferPrintShowOrderCode,
+                      "Mã phiếu",
+                    ],
+                    [
+                      transferPrintShowCreatedAt,
+                      setTransferPrintShowCreatedAt,
+                      "Ngày tạo",
+                    ],
+                    [
+                      transferPrintShowCustomerName,
+                      setTransferPrintShowCustomerName,
+                      "Chi nhánh nhận",
+                    ],
+                    [
+                      transferPrintShowCustomerPhone,
+                      setTransferPrintShowCustomerPhone,
+                      "SĐT",
+                    ],
+                    [
+                      transferPrintShowShippingAddress,
+                      setTransferPrintShowShippingAddress,
+                      "Địa chỉ",
+                    ],
+                    [
+                      transferPrintShowItems,
+                      setTransferPrintShowItems,
+                      "Danh sách sản phẩm",
+                    ],
+                    [
+                      transferPrintShowItemQty,
+                      setTransferPrintShowItemQty,
+                      "Số lượng",
+                    ],
+                    [
+                      transferPrintShowBarcode,
+                      setTransferPrintShowBarcode,
+                      "Mã vạch",
+                    ],
                     [transferPrintShowQr, setTransferPrintShowQr, "QR"],
-                    [transferPrintShowNote, setTransferPrintShowNote, "Ghi chú"],
-                    [transferPrintShowFooter, setTransferPrintShowFooter, "Footer cuối phiếu"],
+                    [
+                      transferPrintShowNote,
+                      setTransferPrintShowNote,
+                      "Ghi chú",
+                    ],
+                    [
+                      transferPrintShowFooter,
+                      setTransferPrintShowFooter,
+                      "Footer cuối phiếu",
+                    ],
                   ].map(([checked, setter, label]) => (
                     <label
                       key={String(label)}
@@ -3414,7 +3856,11 @@ useEffect(() => {
                       <input
                         type="checkbox"
                         checked={Boolean(checked)}
-                        onChange={(event) => (setter as (value: boolean) => void)(event.target.checked)}
+                        onChange={(event) =>
+                          (setter as (value: boolean) => void)(
+                            event.target.checked,
+                          )
+                        }
                         className="h-4 w-4 accent-neutral-900"
                       />
                       {String(label)}
@@ -3444,9 +3890,12 @@ useEffect(() => {
             <Panel className="overflow-hidden p-4">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-sm font-semibold text-neutral-900">Preview trước khi in</p>
+                  <p className="text-sm font-semibold text-neutral-900">
+                    Preview trước khi in
+                  </p>
                   <p className="text-xs text-neutral-500">
-                    {transferPrintTransfer.transferCode || transferPrintTransfer.id}
+                    {transferPrintTransfer.transferCode ||
+                      transferPrintTransfer.id}
                   </p>
                 </div>
                 <button
@@ -3461,7 +3910,9 @@ useEffect(() => {
               <div className="max-h-[620px] overflow-auto rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                 <div
                   className="mx-auto origin-top scale-[0.9] bg-white p-3 shadow-sm"
-                  dangerouslySetInnerHTML={{ __html: buildTransferPrintBodyHtml() }}
+                  dangerouslySetInnerHTML={{
+                    __html: buildTransferPrintBodyHtml(),
+                  }}
                 />
               </div>
             </Panel>
@@ -3469,14 +3920,20 @@ useEffect(() => {
         )}
       </Modal>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Tạo phiếu chuyển kho">
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Tạo phiếu chuyển kho"
+      >
         <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-sm">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
                 Chi nhánh chuyển
               </p>
-              <p className="mt-0.5 font-semibold text-neutral-900">{lockedSourceBranchName}</p>
+              <p className="mt-0.5 font-semibold text-neutral-900">
+                {lockedSourceBranchName}
+              </p>
             </div>
 
             <select
@@ -3509,7 +3966,8 @@ useEffect(() => {
                   Thêm sản phẩm / variant
                 </p>
                 <p className="mt-0.5 text-[11px] text-neutral-400">
-                  Quét mã, tìm SKU hoặc thêm tất cả dòng đang lọc. Dòng mới nhập sẽ nổi lên đầu.
+                  Quét mã, tìm SKU hoặc thêm tất cả dòng đang lọc. Dòng mới nhập
+                  sẽ nổi lên đầu.
                 </p>
               </div>
               <button
@@ -3549,7 +4007,8 @@ useEffect(() => {
 
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
               <div className="text-xs font-semibold text-blue-700">
-                Quét nhanh exact · Đợi đủ mã rồi mới cộng, không ăn nhầm mã ngắn.
+                Quét nhanh exact · Đợi đủ mã rồi mới cộng, không ăn nhầm mã
+                ngắn.
               </div>
 
               {scanNotice ? (
@@ -3574,7 +4033,9 @@ useEffect(() => {
 
             <div className="max-h-52 overflow-auto rounded-xl border border-neutral-200">
               {variantOptions.length === 0 ? (
-                <div className="p-3 text-sm text-neutral-500">Không có variant phù hợp.</div>
+                <div className="p-3 text-sm text-neutral-500">
+                  Không có variant phù hợp.
+                </div>
               ) : (
                 <div className="divide-y divide-neutral-200">
                   {variantOptions.map((item) => (
@@ -3585,12 +4046,16 @@ useEffect(() => {
                       className="flex w-full items-center justify-between px-3 py-2.5 text-left transition hover:bg-neutral-50"
                     >
                       <div>
-                        <p className="text-sm font-medium text-neutral-900">{item.productName}</p>
+                        <p className="text-sm font-medium text-neutral-900">
+                          {item.productName}
+                        </p>
                         <p className="mt-0.5 text-xs text-neutral-500">
                           {item.sku} · {item.color || "—"} / {item.size || "—"}
                         </p>
                       </div>
-                      <span className="text-xs font-medium text-neutral-500">Thêm</span>
+                      <span className="text-xs font-medium text-neutral-500">
+                        Thêm
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -3633,7 +4098,9 @@ useEffect(() => {
             </div>
             <div className="overflow-auto">
               {items.length === 0 ? (
-                <div className="p-4 text-sm text-neutral-500">Chưa có dòng hàng nào.</div>
+                <div className="p-4 text-sm text-neutral-500">
+                  Chưa có dòng hàng nào.
+                </div>
               ) : (
                 <table className="min-w-full text-[13px]">
                   <thead className="bg-neutral-50 text-left text-neutral-500">
@@ -3648,7 +4115,10 @@ useEffect(() => {
                   </thead>
                   <tbody>
                     {sortedDraftItems.map((item) => (
-                      <tr key={item.rowId} className="border-t border-neutral-200">
+                      <tr
+                        key={item.rowId}
+                        className="border-t border-neutral-200"
+                      >
                         <td className="px-3 py-2.5 font-medium">{item.sku}</td>
                         <td className="px-3 py-2.5">{item.productName}</td>
                         <td className="px-3 py-2.5">{item.color || "—"}</td>
@@ -3657,7 +4127,11 @@ useEffect(() => {
                           <input
                             className="w-20 rounded-xl border border-neutral-300 px-3 py-1.5 text-sm outline-none"
                             value={item.qty}
-                            onChange={(e) => updateDraftItem(item.rowId, { qty: e.target.value })}
+                            onChange={(e) =>
+                              updateDraftItem(item.rowId, {
+                                qty: e.target.value,
+                              })
+                            }
                           />
                         </td>
                         <td className="px-3 py-2.5">
@@ -3678,7 +4152,8 @@ useEffect(() => {
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
             <div className="text-xs text-neutral-500">
-              Tổng số lượng: <span className="font-medium text-neutral-900">{totalQty}</span>
+              Tổng số lượng:{" "}
+              <span className="font-medium text-neutral-900">{totalQty}</span>
             </div>
 
             <div className="flex gap-2">
@@ -3692,7 +4167,9 @@ useEffect(() => {
                 onClick={() => void handleCreateTransfer()}
                 disabled={saving}
                 className={`rounded-xl px-4 py-2.5 text-sm font-medium text-white ${
-                  saving ? "cursor-not-allowed bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+                  saving
+                    ? "cursor-not-allowed bg-neutral-400"
+                    : "bg-neutral-900 hover:bg-neutral-800"
                 }`}
               >
                 {saving ? "Đang lưu..." : "Lưu nháp"}

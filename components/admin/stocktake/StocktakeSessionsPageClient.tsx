@@ -362,6 +362,7 @@ export default function StocktakeSessionsPageClient() {
   const [editingNoteSessionId, setEditingNoteSessionId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteSavingId, setNoteSavingId] = useState<string | null>(null);
+  const [applyingSessionId, setApplyingSessionId] = useState<string | null>(null);
   const [creatorQuery, setCreatorQuery] = useState("");
   const [workerQuery, setWorkerQuery] = useState("");
   const [applyFilter, setApplyFilter] = useState<ApplyFilter>("ALL");
@@ -406,6 +407,7 @@ export default function StocktakeSessionsPageClient() {
   const isOwner = role === "admin" || role === "owner";
   const canOpenRealtime = hasUserPermission(currentUser, "stocktake.view");
   const canExportStocktake = hasUserPermission(currentUser, "stocktake.excel.export");
+  const canApplyStocktake = hasUserPermission(currentUser, "stocktake.apply");
   const canCancelStocktake = hasUserPermission(currentUser, "stocktake.cancel");
   const canDeleteStocktake = hasUserPermission(currentUser, "stocktake.delete");
 
@@ -548,6 +550,56 @@ export default function StocktakeSessionsPageClient() {
   const cancelled = overview?.cancelled ?? visibleSessions.filter((s) => String(s.status).toUpperCase() === "CANCELLED").length;
   const totalScanEvents = overview?.totalScanEvents ?? visibleSessions.reduce((sum, item) => sum + getScanCount(item), 0);
   const totalWorkers = overview?.totalWorkers ?? visibleSessions.reduce((sum, item) => sum + getWorkerCount(item), 0);
+
+  const handleApplySession = async (item: EnrichedStocktakeSession) => {
+    if (!canApplyStocktake) {
+      setMessage("Bạn không có quyền cân bằng kho.");
+      return;
+    }
+
+    if (isApplied(item)) {
+      setMessage("Phiên kiểm kho này đã cân bằng kho rồi.");
+      return;
+    }
+
+    const itemStatus = String(item.status || "").toUpperCase();
+    if (itemStatus === "CANCELLED") {
+      setMessage("Phiên kiểm kho đã huỷ, không thể cân bằng kho.");
+      return;
+    }
+
+    if (itemStatus !== "FINISHED") {
+      setMessage("Phiên kiểm kho cần kết thúc/xác nhận trước khi cân bằng kho.");
+      return;
+    }
+
+    const kpi = item.kpi || {};
+    const mismatch = Number(kpi.discrepancySku ?? kpi.mismatchSku ?? 0);
+    const diffQty = Number(kpi.totalDiffQty || 0);
+    const ok = window.confirm(
+      `Cân bằng kho cho phiên "${item.name || item.id}"?\n\n` +
+        `SKU lệch: ${formatNumber(mismatch)}\n` +
+        `Tổng lệch SL: ${diffText(diffQty)}\n\n` +
+        "Sau khi cân bằng, hệ thống sẽ ghi nhận điều chỉnh tồn kho theo chênh lệch kiểm.",
+    );
+    if (!ok) return;
+
+    try {
+      setApplyingSessionId(item.id);
+      setMessage("");
+      await apiRequest(`/stocktake-sessions/${item.id}/apply`, {
+        method: "PATCH",
+        body: JSON.stringify({ note: item.note || "Cân bằng kho từ lịch sử kiểm kho" }),
+      });
+      setMessage("Đã cân bằng kho cho phiên kiểm kho.");
+      loadedSessionKeyRef.current = "";
+      await loadSessions({ force: true });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không cân bằng được kho cho phiên này.");
+    } finally {
+      setApplyingSessionId(null);
+    }
+  };
 
   const handleCancelSession = async (item: EnrichedStocktakeSession) => {
     if (!canCancelStocktake) {
@@ -1151,6 +1203,16 @@ Không xoá phiên đã chốt tồn.`,
 
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
+                          {canApplyStocktake && !isApplied(item) && String(item.status || "").toUpperCase() === "FINISHED" ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleApplySession(item)}
+                              disabled={applyingSessionId === item.id}
+                              className="rounded-lg border border-purple-300 bg-purple-50 px-3 py-2 text-xs font-bold text-purple-700 hover:bg-purple-100 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-neutral-100 disabled:text-neutral-400"
+                            >
+                              {applyingSessionId === item.id ? "Đang cân bằng..." : "Cân bằng kho"}
+                            </button>
+                          ) : null}
                           <Link
                             href={`/stocktake-sessions/${item.id}`}
                             prefetch={false}

@@ -61,7 +61,6 @@ import {
   applyStocktakeSession,
   downloadStocktakeSessionExcel,
   getStocktakeSessionDetail,
-  getStocktakeSessionItems,
   getStocktakeSessionLogs,
   type StocktakeDetailItem,
   type StocktakeLogItem,
@@ -217,7 +216,7 @@ function buildBranchScopedKpiForDetail(rows: StocktakeDetailItem[], fallback?: a
     totalSku: totalRows,
     totalSnapshotSku: totalRows,
     countedSku,
-    uncountedSku: Math.max(totalRows - countedSku, 0),
+    uncountedSku: 0,
     matchedSku,
     mismatchSku,
     discrepancySku: mismatchSku,
@@ -281,12 +280,15 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
     try {
       setLoading(true);
       setMessage("");
-      const [detailData, itemData] = await Promise.all([
-        getStocktakeSessionDetail(sessionId),
-        getStocktakeSessionItems(sessionId, { status: tab === "LOGS" ? "ALL" : tab, q: query.trim() || undefined }),
-      ]);
 
-      const rawItems = Array.isArray(itemData) ? itemData : [];
+      // Fast mode: chỉ gọi detail 1 lần. Backend đã trả rows/items là các SKU có phát sinh
+      // trong phiếu, không còn load toàn bộ snapshot 6.000+ SKU của kho.
+      const detailData = await getStocktakeSessionDetail(sessionId);
+      const rawItems = Array.isArray((detailData as any)?.items)
+        ? (detailData as any).items
+        : Array.isArray((detailData as any)?.rows)
+          ? (detailData as any).rows
+          : [];
       const scopedItems = getBranchScopedStocktakeRows(rawItems, (detailData as any)?.branchId);
       const scopedKpi = buildBranchScopedKpiForDetail(scopedItems, (detailData as any)?.kpi);
 
@@ -294,7 +296,9 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
       setItems(scopedItems);
 
       if (tab === "LOGS") {
-        const logData = await getStocktakeSessionLogs(sessionId);
+        const logData = Array.isArray((detailData as any)?.logs)
+          ? (detailData as any).logs
+          : await getStocktakeSessionLogs(sessionId);
         setLogs(Array.isArray(logData) ? logData : []);
       }
     } catch (err) {
@@ -305,45 +309,50 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
   };
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadDetail(), 180);
+    const timer = window.setTimeout(() => void loadDetail(), 120);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, tab, query]);
+  }, [sessionId, tab]);
 
   const scopedItems = useMemo(() => {
     const rows = Array.isArray(items) ? items : [];
     const sessionBranchId = String((detail as any)?.branchId || "").trim();
+    const q = query.trim().toLowerCase();
+    const currentTab = String(tab || "ALL").toUpperCase();
 
     return rows.filter((item: any) => {
       const itemBranchId = String(item?.branchId || item?.branch?.id || item?.inventoryBranchId || "").trim();
-      if (sessionBranchId && itemBranchId) return itemBranchId === sessionBranchId;
+      if (sessionBranchId && itemBranchId && itemBranchId !== sessionBranchId) return false;
 
       const snapshotQty = Number(item?.snapshotQty ?? item?.systemQty ?? item?.openingQty ?? 0);
       const countedQty = Number(item?.countedQty ?? item?.counted ?? 0);
       const diff = Number(item?.diff ?? item?.deltaQty ?? (countedQty - snapshotQty));
       const status = String(item?.status || "").toUpperCase();
 
-      // Fallback cho API cũ đang trả toàn bộ 6.184 variant:
-      // chỉ giữ SKU có tồn snapshot của phiên/chi nhánh, đã kiểm, có lệch, mã lạ hoặc có log scan.
-      // Những SKU toàn hệ thống snapshot=0/count=0/status=UNCOUNTED sẽ bị ẩn khỏi chi tiết phiên chi nhánh.
-      return (
-        snapshotQty !== 0 ||
-        countedQty !== 0 ||
-        diff !== 0 ||
-        Boolean(item?.lastScannedAt) ||
-        Boolean(item?.workerId) ||
-        status === "NOT_FOUND" ||
-        status === "MISMATCH" ||
-        status === "OVER" ||
-        status === "SHORT" ||
-        status === "MATCH" ||
-        status === "MATCHED"
-      );
+      if (currentTab === "COUNTED" && !(countedQty !== 0 || Boolean(item?.lastScannedAt) || Boolean(item?.workerId))) return false;
+      if (currentTab === "MISMATCH" && !(diff !== 0 || status === "MISMATCH" || status === "OVER" || status === "SHORT")) return false;
+      if (currentTab === "MATCH" && !(diff === 0 && status !== "NOT_FOUND")) return false;
+      if (currentTab === "NOT_FOUND" && status !== "NOT_FOUND") return false;
+
+      if (!q) return true;
+      return [
+        item?.sku,
+        item?.barcode,
+        item?.productName,
+        item?.color,
+        item?.size,
+        item?.zone,
+        item?.rackCode,
+        item?.locationCode,
+        item?.workerName,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(q));
     });
-  }, [items, detail]);
+  }, [items, detail, query, tab]);
 
   const kpi = useMemo(() => {
-    const rows = scopedItems;
+    const rows = Array.isArray(items) ? items : [];
     const totalRows = rows.length;
     const countedSku = rows.filter((item: any) => Number(item?.countedQty ?? item?.counted ?? 0) !== 0 || Boolean(item?.lastScannedAt) || Boolean(item?.workerId)).length;
     const notFoundSku = rows.filter((item: any) => String(item?.status || "").toUpperCase() === "NOT_FOUND").length;
@@ -373,7 +382,7 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
       totalSku: totalRows,
       totalSnapshotSku: totalRows,
       countedSku,
-      uncountedSku: Math.max(totalRows - countedSku, 0),
+      uncountedSku: 0,
       mismatchSku,
       discrepancySku: mismatchSku,
       matchedSku,
@@ -381,7 +390,7 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
       totalDiffQty,
       totalDiffValue,
     };
-  }, [detail, scopedItems]);
+  }, [detail, items]);
   const filteredLogs = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return logs;
@@ -390,20 +399,20 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
 
   const handleApply = async () => {
     if (!canApplyStocktake) {
-      setMessage("Bạn không có quyền chốt tồn kiểm kho.");
+      setMessage("Bạn không có quyền cân bằng kho.");
       return;
     }
     if (!detail?.id) return;
-    const ok = window.confirm("Chốt tồn kho thật cho phiên này? Hệ thống sẽ ghi chênh lệch vào tồn kho và chuyển trạng thái APPLIED.");
+    const ok = window.confirm("Cân bằng kho cho phiên này? Hệ thống sẽ áp chênh lệch đã kiểm vào tồn kho và chuyển trạng thái đã chốt.");
     if (!ok) return;
 
     try {
       setApplying(true);
-      const result = await applyStocktakeSession(detail.id, "Chốt từ trang chi tiết phiên kiểm");
-      setMessage(`Đã chốt tồn. Điều chỉnh ${result.adjustedCount} dòng, tổng lệch ${diffText(result.totalDelta)}.`);
+      const result = await applyStocktakeSession(detail.id, "Cân bằng kho từ trang chi tiết phiên kiểm");
+      setMessage(`Đã cân bằng kho. Điều chỉnh ${result.adjustedCount} dòng, tổng lệch ${diffText(result.totalDelta)}.`);
       await loadDetail();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không chốt được tồn kho.");
+      setMessage(err instanceof Error ? err.message : "Không cân bằng được kho.");
     } finally {
       setApplying(false);
     }
@@ -427,8 +436,8 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
           <Link href="/stocktake" className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50">Màn kiểm realtime</Link>
           <button type="button" onClick={downloadStocktakeExcelTemplate} className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100">Tải file mẫu</button>
           {canExportStocktake ? <button onClick={() => void downloadStocktakeSessionExcel(sessionId, `kiem-kho-${sessionId}.xlsx`)} className="rounded-xl border border-green-300 bg-green-50 px-4 py-2 text-sm font-bold text-green-700 hover:bg-green-100">Xuất Excel</button> : null}
-          <button onClick={handleApply} disabled={!canApply || applying} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-neutral-300">
-            {applying ? "Đang chốt..." : "Chốt tồn kho thật"}
+          <button onClick={handleApply} disabled={!canApply || applying} className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-bold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-neutral-300">
+            {applying ? "Đang cân bằng..." : "Cân bằng kho"}
           </button>
         </div>
       </div>
@@ -436,9 +445,8 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
       {message ? <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-sm font-semibold text-neutral-700 shadow-sm">{message}</div> : null}
 
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard title="SKU snapshot" value={formatNumber(kpi?.totalSnapshotSku ?? kpi?.totalSku)} helper="số SKU có trong ảnh chụp tồn" tone="blue" />
+        <StatCard title="SKU trong phiếu" value={formatNumber(kpi?.totalSnapshotSku ?? kpi?.totalSku)} helper="chỉ SKU đã phát sinh kiểm" tone="blue" />
         <StatCard title="Đã kiểm" value={formatNumber(kpi?.countedSku)} helper="SKU đã có count" tone="green" />
-        <StatCard title="Chưa kiểm" value={formatNumber(kpi?.uncountedSku)} helper="lọc sẵn ở tab Chưa kiểm" tone="amber" />
         <StatCard title="Chênh lệch" value={formatNumber(kpi?.mismatchSku ?? kpi?.discrepancySku)} helper="thiếu / thừa so snapshot" tone="red" />
         <StatCard title="Tổng lệch SL" value={diffText(kpi?.totalDiffQty)} helper="counted - snapshot" tone="purple" />
         {canSeeStocktakeValue ? (
@@ -451,7 +459,7 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
           <div><p className="text-xs font-medium text-neutral-500">Chi nhánh</p><p className="mt-1 text-sm font-bold text-neutral-900">{detail?.branchId || "—"}</p></div>
           <div><p className="text-xs font-medium text-neutral-500">Bắt đầu</p><p className="mt-1 text-sm font-bold text-neutral-900">{formatDateTime(detail?.startedAt || detail?.createdAt)}</p></div>
           <div><p className="text-xs font-medium text-neutral-500">Kết thúc</p><p className="mt-1 text-sm font-bold text-neutral-900">{formatDateTime(detail?.finishedAt)}</p></div>
-          <div><p className="text-xs font-medium text-neutral-500">Đã chốt tồn</p><p className="mt-1 text-sm font-bold text-neutral-900">{formatDateTime(detail?.appliedAt)}</p></div>
+          <div><p className="text-xs font-medium text-neutral-500">Đã cân bằng</p><p className="mt-1 text-sm font-bold text-neutral-900">{formatDateTime(detail?.appliedAt)}</p></div>
           <div><p className="text-xs font-medium text-neutral-500">Phiên con</p><p className="mt-1 text-sm font-bold text-neutral-900">{detail?.workers?.length || 0} máy</p></div>
         </div>
         {detail?.note ? <p className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{detail.note}</p> : null}
@@ -464,7 +472,6 @@ export default function StocktakeSessionDetailPageClient({ sessionId }: { sessio
               ["ALL", "Toàn bộ", kpi?.totalRows ?? kpi?.totalSku],
               ["COUNTED", "Đã kiểm", kpi?.countedSku],
               ["MISMATCH", "Chênh lệch", kpi?.mismatchSku ?? kpi?.discrepancySku],
-              ["UNCOUNTED", "Chưa kiểm", kpi?.uncountedSku],
               ["MATCH", "Khớp", kpi?.matchedSku],
               ["NOT_FOUND", "Mã lạ", kpi?.notFoundSku],
               ["LOGS", "Log quét", undefined],

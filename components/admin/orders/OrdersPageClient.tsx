@@ -64,6 +64,18 @@ type MultiFilterOption = {
   label: string;
 };
 
+type ProductFilterOption = {
+  value: string;
+  label: string;
+  sku: string;
+  productName: string;
+  color?: string;
+  size?: string;
+  productCode?: string;
+  source?: "orders" | "catalog";
+  searchText: string;
+};
+
 const ALL_MULTI_FILTER: MultiFilterValue = ["ALL"];
 
 function normalizeMultiFilterValue(values?: string[] | string | null): MultiFilterValue {
@@ -183,7 +195,170 @@ function MultiFilterSelect({
   );
 }
 
+
+function ProductSkuSearchBox({
+  value,
+  onChange,
+  selectedValues,
+  onToggleValue,
+  onClearSelected,
+  options,
+  placeholder,
+  onEnter,
+  className = "",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  selectedValues: string[];
+  onToggleValue: (value: string) => void;
+  onClearSelected: () => void;
+  options: ProductFilterOption[];
+  placeholder: string;
+  onEnter: (value: string) => void;
+  className?: string;
+}) {
+  const selectedSet = new Set(selectedValues.map(normalizeTrackingLikeText));
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const shouldShowDropdown = open && Boolean(value.trim() || selectedValues.length);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const closeWhenClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target || !wrapperRef.current || wrapperRef.current.contains(target)) return;
+      setOpen(false);
+    };
+
+    document.addEventListener("mousedown", closeWhenClickOutside);
+    document.addEventListener("touchstart", closeWhenClickOutside);
+
+    return () => {
+      document.removeEventListener("mousedown", closeWhenClickOutside);
+      document.removeEventListener("touchstart", closeWhenClickOutside);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapperRef} className={`relative ${className}`}>
+      <div className="flex min-h-[46px] flex-wrap items-center gap-2 rounded-2xl border border-neutral-300 bg-white px-3 py-2 focus-within:border-neutral-900">
+        {selectedValues.length ? (
+          <div className="flex max-w-full flex-wrap gap-1.5">
+            {selectedValues.slice(0, 4).map((selected) => {
+              const option = options.find((item) => item.value === selected);
+              return (
+                <button
+                  key={selected}
+                  type="button"
+                  onClick={() => onToggleValue(selected)}
+                  className="inline-flex max-w-[220px] items-center gap-1 rounded-full bg-neutral-900 px-2.5 py-1 text-[11px] font-semibold text-white"
+                  title={option?.label || selected}
+                >
+                  <span className="truncate">{option?.sku || option?.label || selected}</span>
+                  <span aria-hidden="true">×</span>
+                </button>
+              );
+            })}
+            {selectedValues.length > 4 ? (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-semibold text-neutral-700">
+                +{selectedValues.length - 4} SKU
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        <input
+          className="min-w-[180px] flex-1 bg-transparent px-1 py-1 text-sm outline-none"
+          placeholder={selectedValues.length ? "Gõ thêm SKU/SP..." : placeholder}
+          value={value}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setOpen(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setOpen(false);
+              return;
+            }
+
+            if (e.key === "Enter") {
+              e.preventDefault();
+              setOpen(false);
+              onEnter(e.currentTarget.value.trim());
+            }
+          }}
+        />
+        {selectedValues.length ? (
+          <button
+            type="button"
+            onClick={() => {
+              onClearSelected();
+              setOpen(false);
+            }}
+            className="shrink-0 rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-600 hover:bg-neutral-50"
+          >
+            Bỏ SKU
+          </button>
+        ) : null}
+      </div>
+
+      {shouldShowDropdown ? (
+        <div className="absolute left-0 right-0 z-50 mt-2 max-h-[320px] overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
+          <div className="mb-1 flex items-center justify-between gap-2 px-2 py-1">
+            <span className="text-[11px] font-semibold text-neutral-500">
+              Chọn được nhiều SKU con cùng lúc
+            </span>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-600 hover:bg-neutral-50"
+            >
+              Đóng
+            </button>
+          </div>
+
+          {options.length ? (
+            options.map((option) => {
+              const checked = selectedSet.has(option.value);
+              return (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-start gap-3 rounded-xl px-3 py-2 text-xs hover:bg-neutral-50"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={checked}
+                    onChange={() => onToggleValue(option.value)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold text-neutral-900">
+                      {option.label}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[11px] text-neutral-500">
+                      SKU con: {option.sku || "—"}
+                      {option.color || option.size ? ` · ${[option.color, option.size].filter(Boolean).join(" - ")}` : ""}
+                    </span>
+                  </span>
+                </label>
+              );
+            })
+          ) : (
+            <div className="px-3 py-4 text-xs font-medium text-neutral-500">
+              Chưa thấy SKU phù hợp. Gõ mã sản phẩm/SKU rồi đợi hệ thống tải danh sách biến thể.
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type QuickDateKey = "all" | "today" | "yesterday" | "7d" | "30d" | "month";
+
+type OrderSearchMode = "ALL" | "ORDER" | "PHONE" | "PRODUCT";
 
 type QuickStatusKey =
   | "ALL"
@@ -1423,6 +1598,13 @@ const DELIVERY_STATUS_FILTER_OPTIONS = [
   "Có sự cố",
 ];
 
+const ORDER_SEARCH_MODE_OPTIONS: Array<{ value: OrderSearchMode; label: string }> = [
+  { value: "ALL", label: "Tìm tất cả" },
+  { value: "ORDER", label: "Theo đơn hàng / vận đơn" },
+  { value: "PHONE", label: "Theo SĐT" },
+  { value: "PRODUCT", label: "Theo sản phẩm / SKU" },
+];
+
 function shipmentDisplayStatusTone(order: AdminOrder) {
   const value = shipmentStatusValue(order).toUpperCase();
   const normalizedValue = normalizeShipmentTextForUi(shipmentStatusValue(order));
@@ -1956,12 +2138,399 @@ function getOrderSearchValues(order: NormalizedOrder) {
   return Array.from(new Set(values));
 }
 
-function orderMatchesKeyword(order: NormalizedOrder, keyword: string, branchName?: string) {
+function getOrderCodeSearchValues(order: NormalizedOrder) {
+  const anyOrder = order as any;
+  const shipment: any = anyOrder.shipment || {};
+  const values: string[] = [];
+
+  [
+    order.id,
+    order.orderCode,
+    anyOrder.code,
+    anyOrder.orderId,
+    anyOrder.displayId,
+    anyOrder.clientOrderCode,
+    anyOrder.orderNo,
+    anyOrder.orderNumber,
+    shipment.trackingCode,
+    shipment.tracking_code,
+    shipment.orderCode,
+    shipment.order_code,
+    shipment.clientOrderCode,
+    shipment.client_order_code,
+    shipment.partnerOrderCode,
+    shipment.partner_order_code,
+    shipment.waybillCode,
+    shipment.waybill_code,
+    shipment.billCode,
+    shipment.bill_code,
+    shipment.carrierOrderCode,
+    shipment.carrier_order_code,
+    anyOrder.trackingCode,
+    anyOrder.tracking_code,
+    anyOrder.shipmentTrackingCode,
+    anyOrder.shipment_tracking_code,
+    anyOrder.deliveryCode,
+    anyOrder.delivery_code,
+  ].forEach((value) => pushSearchValue(values, value));
+
+  getShipmentExactSearchValues(order).forEach((value) => pushSearchValue(values, value));
+
+  return Array.from(new Set(values));
+}
+
+function getPhoneSearchValues(order: NormalizedOrder) {
+  const anyOrder = order as any;
+  const values: string[] = [];
+
+  [
+    order.customerPhone,
+    anyOrder.phone,
+    anyOrder.receiverPhone,
+    anyOrder.toPhone,
+    anyOrder.shippingPhone,
+    anyOrder.customer?.phone,
+    anyOrder.customer?.mobile,
+    anyOrder.customer?.tel,
+    anyOrder.customerAddress?.phone,
+    anyOrder.address?.phone,
+  ].forEach((value) => pushSearchValue(values, value));
+
+  return Array.from(new Set(values));
+}
+
+function getProductSearchValues(order: NormalizedOrder) {
+  const values: string[] = [];
+
+  if (Array.isArray(order.items)) {
+    order.items.forEach((item: any) => {
+      [
+        item?.sku,
+        item?.skuCode,
+        item?.sku_code,
+        item?.barcode,
+        item?.variantSku,
+        item?.variantSKU,
+        item?.variantCode,
+        item?.productSku,
+        item?.productSKU,
+        item?.productCode,
+        item?.productName,
+        item?.name,
+        item?.title,
+        item?.color,
+        item?.size,
+        item?.variantName,
+        item?.variant?.sku,
+        item?.variant?.skuCode,
+        item?.variant?.sku_code,
+        item?.variant?.barcode,
+        item?.variant?.code,
+        item?.variant?.name,
+        item?.variant?.color,
+        item?.variant?.size,
+        item?.product?.sku,
+        item?.product?.skuCode,
+        item?.product?.sku_code,
+        item?.product?.code,
+        item?.product?.name,
+        item?.product?.title,
+      ].forEach((value) => pushSearchValue(values, value));
+    });
+  }
+
+  return Array.from(new Set(values));
+}
+
+
+function getProductItemPrimarySku(item: any) {
+  return String(
+    item?.sku ||
+      item?.skuCode ||
+      item?.sku_code ||
+      item?.variantSku ||
+      item?.variantSKU ||
+      item?.variant?.sku ||
+      item?.variant?.skuCode ||
+      item?.variant?.sku_code ||
+      item?.barcode ||
+      item?.variant?.barcode ||
+      item?.variantCode ||
+      item?.variant?.code ||
+      item?.productSku ||
+      item?.productSKU ||
+      item?.product?.sku ||
+      item?.product?.skuCode ||
+      item?.product?.sku_code ||
+      item?.productCode ||
+      item?.product?.code ||
+      "",
+  ).trim();
+}
+
+function getProductItemProductName(item: any) {
+  return String(
+    item?.productName ||
+      item?.product?.name ||
+      item?.product?.title ||
+      item?.name ||
+      item?.title ||
+      item?.variantName ||
+      item?.variant?.name ||
+      "",
+  ).trim();
+}
+
+function getProductItemColor(item: any) {
+  return String(item?.color || item?.variant?.color || item?.colorName || item?.variant?.colorName || "").trim();
+}
+
+function getProductItemSize(item: any) {
+  return String(item?.size || item?.variant?.size || item?.sizeName || item?.variant?.sizeName || "").trim();
+}
+
+function buildProductFilterOptionFromItem(item: any): ProductFilterOption | null {
+  const sku = getProductItemPrimarySku(item);
+  const productName = getProductItemProductName(item);
+  const color = getProductItemColor(item);
+  const size = getProductItemSize(item);
+
+  if (!sku && !productName) return null;
+
+  const value = normalizeTrackingLikeText(sku || `${productName}-${color}-${size}`);
+  if (!value) return null;
+
+  const variantText = [color, size].filter(Boolean).join(" - ");
+  const productCode = pickFirstText(
+    item?.productSku,
+    item?.productSKU,
+    item?.productCode,
+    item?.product?.sku,
+    item?.product?.skuCode,
+    item?.product?.sku_code,
+    item?.product?.code,
+  );
+  const label = [productName || "Sản phẩm", sku, variantText]
+    .filter(Boolean)
+    .join(" · ");
+  const searchText = normalizeSearchText(
+    [label, sku, productCode, productName, color, size, item?.variantName]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  return {
+    value,
+    label,
+    sku,
+    productName,
+    color,
+    size,
+    productCode,
+    source: "orders",
+    searchText,
+  };
+}
+
+
+function pickFirstText(...values: any[]) {
+  return values
+    .map((value) => String(value || "").trim())
+    .find(Boolean) || "";
+}
+
+function getProductCatalogRows(raw: any): any[] {
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw?.data)) return raw.data;
+  if (Array.isArray(raw?.rows)) return raw.rows;
+  if (Array.isArray(raw?.items)) return raw.items;
+  if (Array.isArray(raw?.products)) return raw.products;
+  return [];
+}
+
+function getProductVariantRows(product: any): any[] {
+  const variants =
+    product?.variants ||
+    product?.productVariants ||
+    product?.skus ||
+    product?.children ||
+    product?.items ||
+    [];
+  return Array.isArray(variants) ? variants : [];
+}
+
+function buildProductFilterOptionFromCatalog(product: any, variant?: any): ProductFilterOption | null {
+  const productName = pickFirstText(
+    product?.name,
+    product?.productName,
+    product?.title,
+    product?.displayName,
+  );
+  const productCode = pickFirstText(
+    product?.sku,
+    product?.skuCode,
+    product?.sku_code,
+    product?.code,
+    product?.productCode,
+    product?.product_code,
+    product?.barcode,
+  );
+  const sku = pickFirstText(
+    variant?.sku,
+    variant?.skuCode,
+    variant?.sku_code,
+    variant?.code,
+    variant?.variantCode,
+    variant?.barcode,
+    variant?.productSku,
+    variant?.productSKU,
+    productCode,
+  );
+  const color = pickFirstText(
+    variant?.color,
+    variant?.colorName,
+    variant?.color_name,
+    variant?.attributeColor,
+    variant?.attributes?.color,
+  );
+  const size = pickFirstText(
+    variant?.size,
+    variant?.sizeName,
+    variant?.size_name,
+    variant?.attributeSize,
+    variant?.attributes?.size,
+  );
+
+  if (!sku && !productCode && !productName) return null;
+
+  const value = normalizeTrackingLikeText(sku || productCode || `${productName}-${color}-${size}`);
+  if (!value) return null;
+
+  const variantText = [color, size].filter(Boolean).join(" - ");
+  const label = [productName || "Sản phẩm", sku || productCode, variantText]
+    .filter(Boolean)
+    .join(" · ");
+  const searchText = normalizeSearchText(
+    [
+      label,
+      sku,
+      productCode,
+      productName,
+      color,
+      size,
+      variant?.name,
+      variant?.title,
+      variant?.variantName,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  return {
+    value,
+    label,
+    sku: sku || productCode,
+    productName,
+    color,
+    size,
+    productCode,
+    source: "catalog",
+    searchText,
+  };
+}
+
+function buildProductFilterOptionsFromCatalogRows(rows: any[]): ProductFilterOption[] {
+  const optionMap = new Map<string, ProductFilterOption>();
+
+  rows.forEach((product) => {
+    const variants = getProductVariantRows(product);
+
+    if (variants.length) {
+      variants.forEach((variant) => {
+        const option = buildProductFilterOptionFromCatalog(product, variant);
+        if (option && !optionMap.has(option.value)) optionMap.set(option.value, option);
+      });
+      return;
+    }
+
+    const option = buildProductFilterOptionFromCatalog(product);
+    if (option && !optionMap.has(option.value)) optionMap.set(option.value, option);
+  });
+
+  return Array.from(optionMap.values()).sort((a, b) => {
+    const byProduct = String(a.productCode || a.productName || "").localeCompare(
+      String(b.productCode || b.productName || ""),
+      "vi",
+    );
+    if (byProduct !== 0) return byProduct;
+    return String(a.sku || "").localeCompare(String(b.sku || ""), "vi");
+  });
+}
+
+function optionMatchesProductSkuKeyword(option: ProductFilterOption, rawKeyword: string) {
+  const keyword = String(rawKeyword || "").trim();
+  if (!keyword) return true;
+
+  const textNeedle = normalizeSearchText(keyword);
+  const trackingNeedle = normalizeTrackingLikeText(keyword);
+  const searchText = option.searchText || "";
+  const trackingValues = [option.sku, option.productCode, option.label, option.productName]
+    .map(normalizeTrackingLikeText)
+    .filter(Boolean);
+
+  if (textNeedle && searchText.includes(textNeedle)) return true;
+  if (trackingNeedle && trackingValues.some((value) => value.includes(trackingNeedle))) return true;
+
+  return false;
+}
+
+function getOrderProductFilterValues(order: NormalizedOrder) {
+  const values: string[] = [];
+
+  if (Array.isArray(order.items)) {
+    order.items.forEach((item: any) => {
+      const option = buildProductFilterOptionFromItem(item);
+      if (option?.value) values.push(option.value);
+
+      [
+        item?.sku,
+        item?.skuCode,
+        item?.sku_code,
+        item?.variantSku,
+        item?.variantSKU,
+        item?.variant?.sku,
+        item?.variant?.skuCode,
+        item?.variant?.sku_code,
+        item?.barcode,
+        item?.variant?.barcode,
+        item?.variantCode,
+        item?.variant?.code,
+        item?.productSku,
+        item?.productSKU,
+        item?.product?.sku,
+        item?.product?.skuCode,
+        item?.product?.sku_code,
+        item?.productCode,
+        item?.product?.code,
+      ].forEach((value) => {
+        const normalized = normalizeTrackingLikeText(value);
+        if (normalized) values.push(normalized);
+      });
+    });
+  }
+
+  return Array.from(new Set(values));
+}
+
+function orderMatchesSelectedProductFilters(order: NormalizedOrder, selectedValues: string[]) {
+  if (!selectedValues.length) return true;
+  const orderValues = new Set(getOrderProductFilterValues(order));
+  return selectedValues.some((value) => orderValues.has(normalizeTrackingLikeText(value)));
+}
+
+function valuesMatchKeyword(values: string[], keyword: string) {
   const rawKeyword = String(keyword || "").trim();
   if (!rawKeyword) return true;
-
-  const values = getOrderSearchValues(order);
-  if (branchName) values.push(branchName);
 
   const haystackText = values.map(normalizeSearchText).filter(Boolean).join(" ");
   const haystackDigits = values.map(normalizeSearchDigits).filter(Boolean).join(" ");
@@ -1992,6 +2561,32 @@ function orderMatchesKeyword(order: NormalizedOrder, keyword: string, branchName
       Boolean(trackingNeedle && haystackTracking.includes(trackingNeedle))
     );
   });
+}
+
+function orderMatchesKeyword(
+  order: NormalizedOrder,
+  keyword: string,
+  branchName?: string,
+  mode: OrderSearchMode = "ALL",
+) {
+  const rawKeyword = String(keyword || "").trim();
+  if (!rawKeyword) return true;
+
+  if (mode === "ORDER") {
+    return valuesMatchKeyword(getOrderCodeSearchValues(order), rawKeyword);
+  }
+
+  if (mode === "PHONE") {
+    return valuesMatchKeyword(getPhoneSearchValues(order), rawKeyword);
+  }
+
+  if (mode === "PRODUCT") {
+    return valuesMatchKeyword(getProductSearchValues(order), rawKeyword);
+  }
+
+  const values = getOrderSearchValues(order);
+  if (branchName) values.push(branchName);
+  return valuesMatchKeyword(values, rawKeyword);
 }
 
 function isOrderCreatedByCurrentUser(order: any, user: CurrentUserLite | null) {
@@ -3083,7 +3678,6 @@ export default function OrdersPageClient() {
   const [printVersion, setPrintVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
-  const [refreshingAllGhnTracking, setRefreshingAllGhnTracking] = useState(false);
   const [quickViewOrder, setQuickViewOrder] = useState<AdminOrder | null>(null);
   const [quickViewLoading, setQuickViewLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -3096,6 +3690,13 @@ export default function OrdersPageClient() {
   >(null);
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<OrderSearchMode>("ALL");
+  const [submittedSearchMode, setSubmittedSearchMode] = useState<OrderSearchMode>("ALL");
+  const [selectedProductSkuValues, setSelectedProductSkuValues] = useState<string[]>([]);
+  const [appliedProductSkuValues, setAppliedProductSkuValues] = useState<string[]>([]);
+  const [catalogProductSkuOptions, setCatalogProductSkuOptions] = useState<ProductFilterOption[]>([]);
+  const [productSkuCatalogLoading, setProductSkuCatalogLoading] = useState(false);
+  const productSkuCatalogQueryRef = useRef("");
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [staffList, setStaffList] = useState<StaffLite[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -3286,6 +3887,64 @@ export default function OrdersPageClient() {
   const branchLabel = (branchId?: string | null) => {
     if (!branchId) return "All";
     return branches.find((b) => b.id === branchId)?.name || branchId;
+  };
+
+  const toggleSelectedProductSku = (value: string) => {
+    const normalized = normalizeTrackingLikeText(value);
+    if (!normalized) return;
+    setSelectedProductSkuValues((prev) =>
+      prev.includes(normalized)
+        ? prev.filter((item) => item !== normalized)
+        : [...prev, normalized],
+    );
+  };
+
+
+  const loadProductCatalogOptions = async (keyword: string) => {
+    const normalizedKeyword = keyword.trim();
+    if (normalizedKeyword.length < 2) {
+      setCatalogProductSkuOptions([]);
+      return;
+    }
+
+    productSkuCatalogQueryRef.current = normalizedKeyword;
+    setProductSkuCatalogLoading(true);
+
+    try {
+      const params = new URLSearchParams({
+        q: normalizedKeyword,
+        search: normalizedKeyword,
+        keyword: normalizedKeyword,
+        includeVariants: "1",
+        withVariants: "1",
+        pageSize: "80",
+        limit: "80",
+      });
+
+      const raw = await apiJson<any>(`/products?${params.toString()}`).catch(async () => {
+        const fallbackParams = new URLSearchParams({
+          q: normalizedKeyword,
+          includeVariants: "1",
+          pageSize: "80",
+        });
+        return apiJson<any>(`/control/products?${fallbackParams.toString()}`);
+      });
+
+      if (productSkuCatalogQueryRef.current !== normalizedKeyword) return;
+
+      const options = buildProductFilterOptionsFromCatalogRows(getProductCatalogRows(raw))
+        .filter((option) => optionMatchesProductSkuKeyword(option, normalizedKeyword));
+
+      setCatalogProductSkuOptions(options);
+    } catch {
+      if (productSkuCatalogQueryRef.current === normalizedKeyword) {
+        setCatalogProductSkuOptions([]);
+      }
+    } finally {
+      if (productSkuCatalogQueryRef.current === normalizedKeyword) {
+        setProductSkuCatalogLoading(false);
+      }
+    }
   };
 
   const staffLabel = (staff?: StaffLite | null) => {
@@ -3500,6 +4159,22 @@ export default function OrdersPageClient() {
   }, [assignOpen, staffList.length]);
 
   useEffect(() => {
+    if (searchMode !== "PRODUCT") {
+      setCatalogProductSkuOptions([]);
+      return;
+    }
+
+    const keyword = query.trim();
+    const timer = window.setTimeout(() => {
+      void loadProductCatalogOptions(keyword);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [searchMode, query]);
+
+
+
+  useEffect(() => {
     try {
       const raw = localStorage.getItem(columnStorageKey);
       if (!raw) {
@@ -3613,7 +4288,12 @@ export default function OrdersPageClient() {
         .map((item) => String(item || "").trim())
         .filter(Boolean)
         .join(" ");
-      const shouldTryClientSearchFallback = shouldFallbackToClientOrderSearch(serverKeyword);
+      const hasAppliedProductSkuFilter = appliedProductSkuValues.length > 0;
+      const shouldUseClientOnlySearch =
+        (submittedSearchMode === "PRODUCT" && hasSearchKeyword(serverKeyword)) ||
+        hasAppliedProductSkuFilter;
+      const effectiveServerKeyword = shouldUseClientOnlySearch ? "" : serverKeyword;
+      const shouldTryClientSearchFallback = shouldFallbackToClientOrderSearch(effectiveServerKeyword);
 
       const hasSmartSearch = Boolean(String(smartSearch || "").trim());
       const hasMultiServerFilter = [
@@ -3621,7 +4301,7 @@ export default function OrdersPageClient() {
         appliedOrderFilter,
         appliedPaymentFilter,
       ].some((filterValue) => selectedMultiFilterValues(filterValue).length > 1);
-      const shouldLoadWideForClientFilters = hasSmartSearch || hasMultiServerFilter;
+      const shouldLoadWideForClientFilters = hasSmartSearch || hasMultiServerFilter || shouldUseClientOnlySearch;
       const requestPageSize = shouldLoadWideForClientFilters
         ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE)
         : pageSize;
@@ -3636,7 +4316,7 @@ export default function OrdersPageClient() {
         params.set("pageSize", String(options?.pageSizeOverride || requestPageSize));
         params.set("includeItems", "1");
         params.set("withItems", "1");
-        if (serverKeyword && options?.includeKeyword !== false) params.set("q", serverKeyword);
+        if (effectiveServerKeyword && options?.includeKeyword !== false) params.set("q", effectiveServerKeyword);
 
         if (!canViewAllOrders && canViewOwnOrders) {
           params.set("viewScope", "own");
@@ -3709,8 +4389,27 @@ export default function OrdersPageClient() {
       let remoteTotalPages = firstPage.totalPages;
       let remoteTotalItems = firstPage.total;
 
+      if (shouldLoadWideForClientFilters && Number(firstPage.totalPages || 1) > 1) {
+        const wideTotalPages = Math.min(
+          Number(firstPage.totalPages || 1),
+          ORDER_CLIENT_SEARCH_MAX_PAGES,
+        );
+
+        for (let nextPage = 2; nextPage <= wideTotalPages; nextPage += 1) {
+          if (abortController.signal.aborted) break;
+          const next = await fetchOrderPage(nextPage, {
+            includeKeyword: false,
+            pageSizeOverride: ORDER_CLIENT_SEARCH_PAGE_SIZE,
+          });
+          data.push(...next.data);
+        }
+
+        remoteTotalPages = 1;
+        remoteTotalItems = data.length;
+      }
+
       if (
-        hasSearchKeyword(serverKeyword) &&
+        hasSearchKeyword(effectiveServerKeyword) &&
         shouldTryClientSearchFallback &&
         data.length === 0
       ) {
@@ -3768,48 +4467,6 @@ export default function OrdersPageClient() {
     }
   };
 
-  const handleRefreshAllGhnTracking = async () => {
-    const ok = window.confirm(
-      "Refresh toàn bộ trạng thái GHN trong 90 ngày gần nhất? Thao tác này có thể mất vài phút nếu nhiều vận đơn.",
-    );
-    if (!ok) return;
-
-    try {
-      setRefreshingAllGhnTracking(true);
-      setActionMessage("Đang refresh toàn bộ trạng thái GHN...");
-      const res = await apiFetch(
-        "/shipments/ghn/tracking/refresh-all?days=90&limit=5000&includeFinal=1",
-        { method: "POST" },
-      );
-      const json = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        throw new Error(json?.message || "Refresh trạng thái GHN thất bại.");
-      }
-
-      const total = Number(json?.total ?? json?.targets ?? json?.scanned ?? 0);
-      const success = Number(json?.success ?? json?.refreshed ?? 0);
-      const failed = Number(json?.failed ?? json?.failedCount ?? 0);
-      const unchanged = Number(json?.unchanged ?? 0);
-      const corrected = Number(json?.corrected ?? json?.correctedOrderStatus ?? 0);
-      const shipmentChanged = Number(json?.shipmentStatusChanged ?? json?.changedCount ?? 0);
-      const percent = Number(json?.progressPercent ?? (total ? ((success + failed) / total) * 100 : 100));
-      const elapsed = Number(json?.elapsedSeconds ?? 0);
-
-      setActionMessage(
-        json?.message ||
-          `GHN chạy xong: ${success}/${total} vận đơn (${percent.toFixed(1)}%). Đúng trạng thái ${unchanged}, sửa trạng thái đơn ${corrected}, đổi trạng thái vận đơn ${shipmentChanged}, lỗi ${failed}. Thời gian chuẩn hoá ${elapsed}s.`,
-      );
-      await loadOrders();
-    } catch (err) {
-      setActionMessage(
-        err instanceof Error ? err.message : "Refresh trạng thái GHN thất bại.",
-      );
-    } finally {
-      setRefreshingAllGhnTracking(false);
-    }
-  };
-
   useEffect(() => {
     const t = setTimeout(() => {
       void loadOrders();
@@ -3818,8 +4475,10 @@ export default function OrdersPageClient() {
     return () => clearTimeout(t);
   }, [
     submittedQuery,
+    submittedSearchMode,
     appliedFreeTextFilter,
     smartSearch,
+    appliedProductSkuValues,
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
@@ -3840,6 +4499,7 @@ export default function OrdersPageClient() {
     setPage(1);
   }, [
     submittedQuery,
+    submittedSearchMode,
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
@@ -3858,6 +4518,7 @@ export default function OrdersPageClient() {
     appliedCodReconciliationFilter,
     appliedAmountDueFilter,
     appliedItemCountFilter,
+    appliedProductSkuValues,
     appliedFreeTextFilter,
     smartSearch,
   ]);
@@ -3955,6 +4616,49 @@ export default function OrdersPageClient() {
     [normalizedOrders],
   );
 
+  const productSkuOptions = useMemo<ProductFilterOption[]>(() => {
+    const optionMap = new Map<string, ProductFilterOption>();
+
+    normalizedOrders.forEach((order) => {
+      if (!Array.isArray(order.items)) return;
+      order.items.forEach((item: any) => {
+        const option = buildProductFilterOptionFromItem(item);
+        if (!option || optionMap.has(option.value)) return;
+        optionMap.set(option.value, option);
+      });
+    });
+
+    catalogProductSkuOptions.forEach((option) => {
+      if (!option || !option.value) return;
+      // Ưu tiên catalog vì catalog thường có đủ biến thể/SKU con hơn dữ liệu list đơn.
+      optionMap.set(option.value, option);
+    });
+
+    return Array.from(optionMap.values()).sort((a, b) => {
+      const byProduct = String(a.productCode || a.productName || "").localeCompare(
+        String(b.productCode || b.productName || ""),
+        "vi",
+      );
+      if (byProduct !== 0) return byProduct;
+      const bySku = String(a.sku || "").localeCompare(String(b.sku || ""), "vi");
+      if (bySku !== 0) return bySku;
+      return a.label.localeCompare(b.label, "vi");
+    });
+  }, [normalizedOrders, catalogProductSkuOptions]);
+
+  const visibleProductSkuOptions = useMemo(() => {
+    const rawKeyword = query.trim();
+    const selected = new Set(selectedProductSkuValues.map(normalizeTrackingLikeText));
+
+    const matched = productSkuOptions.filter((option) => {
+      if (selected.has(option.value)) return true;
+      if (!rawKeyword) return selected.size > 0;
+      return optionMatchesProductSkuKeyword(option, rawKeyword);
+    });
+
+    return matched.slice(0, 120);
+  }, [productSkuOptions, query, selectedProductSkuValues]);
+
   const activeAdvancedFilterCount =
     [
       appliedCreatedByFilter,
@@ -4014,6 +4718,8 @@ export default function OrdersPageClient() {
     const nextSmartSearch = smartSearchInput.trim();
 
     setSubmittedQuery(nextQuery);
+    setSubmittedSearchMode(searchMode);
+    setAppliedProductSkuValues(selectedProductSkuValues);
     setAppliedBranchFilter(branchFilter);
     setAppliedOrderFilter(orderFilter);
     setAppliedPaymentFilter(paymentFilter);
@@ -4071,11 +4777,17 @@ export default function OrdersPageClient() {
   const clearOrderSearch = () => {
     setQuery("");
     setSubmittedQuery("");
+    setSearchMode("ALL");
+    setSubmittedSearchMode("ALL");
+    setSelectedProductSkuValues([]);
+    setAppliedProductSkuValues([]);
     setPage(1);
   };
 
   const hasPendingFilterChanges =
     query.trim() !== submittedQuery ||
+    searchMode !== submittedSearchMode ||
+    !multiFilterEquals(selectedProductSkuValues, appliedProductSkuValues) ||
     !multiFilterEquals(branchFilter, appliedBranchFilter) ||
     !multiFilterEquals(orderFilter, appliedOrderFilter) ||
     !multiFilterEquals(paymentFilter, appliedPaymentFilter) ||
@@ -4246,6 +4958,12 @@ export default function OrdersPageClient() {
       });
     }
 
+    if (appliedProductSkuValues.length) {
+      result = result.filter((o) =>
+        orderMatchesSelectedProductFilters(o, appliedProductSkuValues),
+      );
+    }
+
     const keywords = [submittedQuery, appliedFreeTextFilter]
       .map((item) => String(item || "").trim())
       .filter(Boolean);
@@ -4253,7 +4971,9 @@ export default function OrdersPageClient() {
     if (keywords.length) {
       // Nếu người dùng nhập mã vận đơn/GHN/VTP/Aha dạng mã liền, ưu tiên trả đúng mã vận đơn tuyệt đối.
       // Tránh tình trạng search GYT7YBXA nhưng bảng vẫn xổ cả nhóm GYT7... rồi bắt người dùng tự dò.
-      const exactCarrierKeywords = keywords.filter(isLikelyExactCarrierCode);
+      const exactCarrierKeywords = ["ALL", "ORDER"].includes(submittedSearchMode)
+        ? keywords.filter(isLikelyExactCarrierCode)
+        : [];
       if (exactCarrierKeywords.length) {
         const exactCarrierMatches = result.filter((o) =>
           exactCarrierKeywords.every((keyword) =>
@@ -4267,7 +4987,7 @@ export default function OrdersPageClient() {
           result = result.filter((o) => {
             const branchName = branchLabel(o.branchId);
             return keywords.every((keyword) =>
-              orderMatchesKeyword(o, keyword, branchName),
+              orderMatchesKeyword(o, keyword, branchName, submittedSearchMode),
             );
           });
         }
@@ -4275,7 +4995,7 @@ export default function OrdersPageClient() {
         result = result.filter((o) => {
           const branchName = branchLabel(o.branchId);
           return keywords.every((keyword) =>
-            orderMatchesKeyword(o, keyword, branchName),
+            orderMatchesKeyword(o, keyword, branchName, submittedSearchMode),
           );
         });
       }
@@ -4293,6 +5013,10 @@ export default function OrdersPageClient() {
     normalizedOrders,
     appliedQuickStatus,
     submittedQuery,
+    submittedSearchMode,
+    appliedBranchFilter,
+    appliedOrderFilter,
+    appliedPaymentFilter,
     appliedCreatedByFilter,
     appliedAssignedStaffFilter,
     appliedFulfillmentFilter,
@@ -4306,6 +5030,7 @@ export default function OrdersPageClient() {
     appliedCodReconciliationFilter,
     appliedAmountDueFilter,
     appliedItemCountFilter,
+    appliedProductSkuValues,
     appliedFreeTextFilter,
     parsedSmartSearch,
     branches,
@@ -5708,20 +6433,59 @@ export default function OrdersPageClient() {
         </Panel>
 
         <Panel className="p-3">
-          <input
-            className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-[15px] outline-none"
-            placeholder="Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                const value = e.currentTarget.value.trim();
-                setQuery(value);
-                applySearchAndFilters(value);
-              }
-            }}
-          />
+          <div className="grid gap-2 sm:grid-cols-[190px_1fr]">
+            <select
+              className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-[15px] font-semibold outline-none"
+              value={searchMode}
+              onChange={(e) => {
+                const nextMode = e.target.value as OrderSearchMode;
+                setSearchMode(nextMode);
+                if (nextMode !== "PRODUCT") setSelectedProductSkuValues([]);
+              }}
+            >
+              {ORDER_SEARCH_MODE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            {searchMode === "PRODUCT" ? (
+              <ProductSkuSearchBox
+                value={query}
+                onChange={setQuery}
+                selectedValues={selectedProductSkuValues}
+                onToggleValue={toggleSelectedProductSku}
+                onClearSelected={() => setSelectedProductSkuValues([])}
+                options={visibleProductSkuOptions}
+                placeholder="Gõ QS28/AP833 để xổ SKU con..."
+                onEnter={(value) => {
+                  setQuery(value);
+                  applySearchAndFilters(value);
+                }}
+              />
+            ) : (
+              <input
+                className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-[15px] outline-none"
+                placeholder={
+                  searchMode === "PHONE"
+                    ? "Nhập SĐT khách..."
+                    : searchMode === "ORDER"
+                      ? "Nhập mã đơn, mã GHN/vận đơn..."
+                      : "Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
+                }
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const value = e.currentTarget.value.trim();
+                    setQuery(value);
+                    applySearchAndFilters(value);
+                  }
+                }}
+              />
+            )}
+          </div>
 
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {mobileQuickDates.map((item) => (
@@ -6078,22 +6842,58 @@ export default function OrdersPageClient() {
               </SmallChip>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-[1.7fr_1fr_1fr_1fr_auto_auto]">
-              <input
-                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-                placeholder="Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    const value = e.currentTarget.value.trim();
-                    setQuery(value);
-                    setSubmittedQuery(value);
-                    setPage(1);
-                  }
+            <div className="mt-4 grid gap-3 md:grid-cols-[190px_1.7fr_1fr_1fr_1fr_auto_auto]">
+              <select
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold outline-none"
+                value={searchMode}
+                onChange={(e) => {
+                  const nextMode = e.target.value as OrderSearchMode;
+                  setSearchMode(nextMode);
+                  if (nextMode !== "PRODUCT") setSelectedProductSkuValues([]);
                 }}
-              />
+              >
+                {ORDER_SEARCH_MODE_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              {searchMode === "PRODUCT" ? (
+                <ProductSkuSearchBox
+                  value={query}
+                  onChange={setQuery}
+                  selectedValues={selectedProductSkuValues}
+                  onToggleValue={toggleSelectedProductSku}
+                  onClearSelected={() => setSelectedProductSkuValues([])}
+                  options={visibleProductSkuOptions}
+                  placeholder="Gõ QS28/AP833 để xổ SKU con..."
+                  onEnter={(value) => {
+                    setQuery(value);
+                    applySearchAndFilters(value);
+                  }}
+                />
+              ) : (
+                <input
+                  className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+                  placeholder={
+                    searchMode === "PHONE"
+                      ? "Nhập SĐT khách..."
+                      : searchMode === "ORDER"
+                        ? "Nhập mã đơn, mã GHN/vận đơn..."
+                        : "Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
+                  }
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const value = e.currentTarget.value.trim();
+                      setQuery(value);
+                      applySearchAndFilters(value);
+                    }
+                  }}
+                />
+              )}
               <Button onClick={submitOrderSearch} variant="primary">
                 Tìm / Áp dụng lọc
               </Button>
@@ -6149,15 +6949,6 @@ export default function OrdersPageClient() {
                   Xuất Excel
                 </Button>
               ) : null}
-
-              <Button
-                onClick={() => void handleRefreshAllGhnTracking()}
-                disabled={refreshingAllGhnTracking}
-                size="md"
-                variant="secondary"
-              >
-                {refreshingAllGhnTracking ? "Đang refresh GHN..." : "Refresh toàn bộ GHN"}
-              </Button>
 
               <div className="w-full md:col-span-full" ref={columnMenuRef}>
                 <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">
