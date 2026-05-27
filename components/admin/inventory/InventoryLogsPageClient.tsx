@@ -10,6 +10,12 @@ import { getCurrentUserFromStorage, getTokenFromStorage } from "@/lib/current-us
 const ALL_VALUE = "ALL";
 const UNMAPPED_ACTOR_VALUE = "__UNMAPPED_ACTOR__";
 const INVENTORY_LOG_FETCH_LIMIT = 50000;
+const VISIBLE_LIMIT_OPTIONS = [50, 100] as const;
+const DIRECTION_FILTER_OPTIONS: MultiFilterOption[] = [
+  { value: "IN", label: "Cộng kho" },
+  { value: "OUT", label: "Trừ kho" },
+  { value: "ZERO", label: "Không đổi số lượng" },
+];
 
 type InventoryActorOption = {
   id: string;
@@ -149,6 +155,93 @@ function Badge({
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${styles[tone]}`}>
       {children}
     </span>
+  );
+}
+
+
+type MultiFilterOption = {
+  value: string;
+  label: string;
+  count?: number;
+};
+
+function MultiFilter({
+  label,
+  allLabel,
+  values,
+  options,
+  onChange,
+  disabled = false,
+  loading = false,
+}: {
+  label: string;
+  allLabel: string;
+  values: string[];
+  options: MultiFilterOption[];
+  onChange: (values: string[]) => void;
+  disabled?: boolean;
+  loading?: boolean;
+}) {
+  const selectedSet = new Set(values);
+  const selectedLabels = values
+    .map((value) => options.find((option) => option.value === value)?.label || value)
+    .filter(Boolean);
+  const summary = selectedLabels.length
+    ? selectedLabels.length <= 2
+      ? selectedLabels.join(", ")
+      : `${selectedLabels.slice(0, 2).join(", ")} +${selectedLabels.length - 2}`
+    : allLabel;
+
+  function toggle(value: string) {
+    if (disabled) return;
+    if (selectedSet.has(value)) {
+      onChange(values.filter((item) => item !== value));
+    } else {
+      onChange([...values, value]);
+    }
+  }
+
+  return (
+    <details className="group relative">
+      <summary
+        className={`flex min-h-[46px] cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none transition hover:border-neutral-900 ${disabled ? "pointer-events-none opacity-60" : ""}`}
+      >
+        <span className="min-w-0 truncate">
+          <span className="text-neutral-400">{label}: </span>
+          <span className="font-medium text-neutral-900">{loading ? "Đang tải..." : summary}</span>
+        </span>
+        <span className="text-xs text-neutral-400">▾</span>
+      </summary>
+
+      <div className="absolute left-0 z-30 mt-2 max-h-72 w-full min-w-[280px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
+        <button
+          type="button"
+          onClick={() => onChange([])}
+          className="mb-1 w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-neutral-900 hover:bg-neutral-100"
+        >
+          {allLabel}
+        </button>
+        <div className="space-y-1">
+          {options.map((option) => (
+            <label
+              key={option.value}
+              className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-neutral-50"
+            >
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-neutral-300"
+                checked={selectedSet.has(option.value)}
+                onChange={() => toggle(option.value)}
+              />
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {option.count !== undefined ? (
+                <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500">{option.count}</span>
+              ) : null}
+            </label>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -635,16 +728,30 @@ export default function InventoryLogsPageClient() {
   const [role, setRole] = useState<AppRole>("admin");
   const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
 
+  // Draft filters: người dùng chọn/gõ trước, chưa chạy lọc ngay.
   const [query, setQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState(ALL_VALUE);
-  const [branchFilter, setBranchFilter] = useState<string>(ALL_VALUE);
-  const [directionFilter, setDirectionFilter] = useState<DirectionFilter>("ALL");
-  const [refTypeFilter, setRefTypeFilter] = useState(ALL_VALUE);
-  const [statusFilter, setStatusFilter] = useState(ALL_VALUE);
-  const [actorFilter, setActorFilter] = useState(ALL_VALUE);
+  const [typeFilters, setTypeFilters] = useState<string[]>([]);
+  const [branchFilters, setBranchFilters] = useState<string[]>([]);
+  const [directionFilters, setDirectionFilters] = useState<string[]>([]);
+  const [refTypeFilters, setRefTypeFilters] = useState<string[]>([]);
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [actorFilters, setActorFilters] = useState<string[]>([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+
+  // Applied filters: chỉ cập nhật khi bấm nút Tìm kiếm.
+  const [appliedQuery, setAppliedQuery] = useState("");
+  const [appliedTypeFilters, setAppliedTypeFilters] = useState<string[]>([]);
+  const [appliedBranchFilters, setAppliedBranchFilters] = useState<string[]>([]);
+  const [appliedDirectionFilters, setAppliedDirectionFilters] = useState<string[]>([]);
+  const [appliedRefTypeFilters, setAppliedRefTypeFilters] = useState<string[]>([]);
+  const [appliedStatusFilters, setAppliedStatusFilters] = useState<string[]>([]);
+  const [appliedActorFilters, setAppliedActorFilters] = useState<string[]>([]);
+  const [appliedFromDate, setAppliedFromDate] = useState("");
+  const [appliedToDate, setAppliedToDate] = useState("");
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [visibleLimit, setVisibleLimit] = useState<(typeof VISIBLE_LIMIT_OPTIONS)[number]>(50);
 
   useEffect(() => {
     const currentUser = getCurrentUserFromStorage();
@@ -654,7 +761,8 @@ export default function InventoryLogsPageClient() {
     setCurrentBranchId(currentUser.branchId || null);
 
     if (currentUser.role !== "admin" && currentUser.role !== "owner" && currentUser.branchId) {
-      setBranchFilter(currentUser.branchId);
+      setBranchFilters([currentUser.branchId]);
+      setAppliedBranchFilters([currentUser.branchId]);
     }
   }, []);
 
@@ -817,29 +925,33 @@ export default function InventoryLogsPageClient() {
   }, [actorDirectory, scopedRows]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const from = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null;
-    const to = toDate ? new Date(`${toDate}T23:59:59`).getTime() : null;
+    const q = appliedQuery.trim().toLowerCase();
+    const from = appliedFromDate ? new Date(`${appliedFromDate}T00:00:00`).getTime() : null;
+    const to = appliedToDate ? new Date(`${appliedToDate}T23:59:59`).getTime() : null;
 
     return scopedRows.filter((row) => {
       const rowDate = parseDate(getMovementDate(row));
       const rowTime = rowDate?.getTime() || null;
 
       const matchQuery = !q || rowSearchBlob(row, branches).includes(q);
-      const matchType = typeFilter === ALL_VALUE || row.type === typeFilter;
-      const matchBranch = branchFilter === ALL_VALUE ? true : row.branchId === branchFilter;
-      const matchRefType = refTypeFilter === ALL_VALUE || getRefType(row) === refTypeFilter;
-      const matchStatus = statusFilter === ALL_VALUE || getStatus(row) === statusFilter;
+      const matchType = appliedTypeFilters.length === 0 || appliedTypeFilters.includes(String(row.type || ""));
+      const matchBranch = appliedBranchFilters.length === 0 || appliedBranchFilters.includes(String(row.branchId || ""));
+      const matchRefType = appliedRefTypeFilters.length === 0 || appliedRefTypeFilters.includes(String(getRefType(row) || ""));
+      const matchStatus = appliedStatusFilters.length === 0 || appliedStatusFilters.includes(String(getStatus(row) || ""));
       const rowActor = getActorLabel(row);
       const matchActor =
-        actorFilter === ALL_VALUE ||
-        (actorFilter === UNMAPPED_ACTOR_VALUE ? !rowActor : rowActor === actorFilter);
+        appliedActorFilters.length === 0 ||
+        appliedActorFilters.some((value) =>
+          value === UNMAPPED_ACTOR_VALUE ? !rowActor : rowActor === value,
+        );
 
       const matchDirection =
-        directionFilter === "ALL" ||
-        (directionFilter === "IN" && row.qty > 0) ||
-        (directionFilter === "OUT" && row.qty < 0) ||
-        (directionFilter === "ZERO" && row.qty === 0);
+        appliedDirectionFilters.length === 0 ||
+        appliedDirectionFilters.some((value) =>
+          (value === "IN" && row.qty > 0) ||
+          (value === "OUT" && row.qty < 0) ||
+          (value === "ZERO" && row.qty === 0),
+        );
 
       const matchFrom = !from || (rowTime !== null && rowTime >= from);
       const matchTo = !to || (rowTime !== null && rowTime <= to);
@@ -858,16 +970,16 @@ export default function InventoryLogsPageClient() {
     });
   }, [
     scopedRows,
-    query,
+    appliedQuery,
     branches,
-    typeFilter,
-    branchFilter,
-    directionFilter,
-    refTypeFilter,
-    statusFilter,
-    actorFilter,
-    fromDate,
-    toDate,
+    appliedTypeFilters,
+    appliedBranchFilters,
+    appliedDirectionFilters,
+    appliedRefTypeFilters,
+    appliedStatusFilters,
+    appliedActorFilters,
+    appliedFromDate,
+    appliedToDate,
   ]);
 
   const totalIn = filtered.filter((r) => r.qty > 0).reduce((sum, r) => sum + r.qty, 0);
@@ -876,43 +988,96 @@ export default function InventoryLogsPageClient() {
   const uniqueSkuRows = Array.from(new Set(filtered.map((r) => String(r.sku || "").trim()).filter(Boolean))).length;
   const missingActorRows = filtered.filter((r) => !getActorLabel(r)).length;
 
-  const branchOptions = useMemo(() => {
-    const scoped = visibleBranches.map((branch) => ({
+  const branchOptions = useMemo<MultiFilterOption[]>(() => {
+    return visibleBranches.map((branch) => ({
       value: branch.id,
       label: branch.name,
     }));
+  }, [visibleBranches]);
 
-    if (isOwner) {
-      return [{ value: ALL_VALUE, label: "Tất cả chi nhánh" }, ...scoped];
-    }
+  const typeFilterOptions = useMemo<MultiFilterOption[]>(() => {
+    return typeOptions.map((type) => ({ value: type, label: `${movementLabel(type)} (${type})` }));
+  }, [typeOptions]);
 
-    return scoped;
-  }, [visibleBranches, isOwner]);
+  const refTypeFilterOptions = useMemo<MultiFilterOption[]>(() => {
+    return refTypeOptions.map((type) => ({ value: type, label: `${refTypeLabel(type)} (${type})` }));
+  }, [refTypeOptions]);
+
+  const statusFilterOptions = useMemo<MultiFilterOption[]>(() => {
+    return statusOptions.map((status) => ({ value: status, label: statusLabel(status) }));
+  }, [statusOptions]);
+
+  const actorFilterOptions = useMemo<MultiFilterOption[]>(() => {
+    return [
+      { value: UNMAPPED_ACTOR_VALUE, label: "Chưa ghi nhận nhân viên", count: missingActorRows },
+      ...actorOptions.map((actor) => ({
+        value: actor.label,
+        label: `${actor.label}${actor.type ? ` · ${actor.type}` : ""}`,
+      })),
+    ];
+  }, [actorOptions, missingActorRows]);
+
+  const visibleRows = useMemo(() => {
+    return filtered.slice(0, visibleLimit);
+  }, [filtered, visibleLimit]);
+
+  function applyFilters() {
+    setAppliedQuery(query);
+    setAppliedTypeFilters(typeFilters);
+    setAppliedDirectionFilters(directionFilters);
+    setAppliedRefTypeFilters(refTypeFilters);
+    setAppliedStatusFilters(statusFilters);
+    setAppliedActorFilters(actorFilters);
+    setAppliedFromDate(fromDate);
+    setAppliedToDate(toDate);
+    setAppliedBranchFilters(branchFilters);
+    setExpandedId(null);
+  }
 
   function clearFilters() {
     setQuery("");
-    setTypeFilter(ALL_VALUE);
-    setDirectionFilter("ALL");
-    setRefTypeFilter(ALL_VALUE);
-    setStatusFilter(ALL_VALUE);
-    setActorFilter(ALL_VALUE);
+    setTypeFilters([]);
+    setDirectionFilters([]);
+    setRefTypeFilters([]);
+    setStatusFilters([]);
+    setActorFilters([]);
     setFromDate("");
     setToDate("");
-    if (isOwner) setBranchFilter(ALL_VALUE);
+    setAppliedQuery("");
+    setAppliedTypeFilters([]);
+    setAppliedDirectionFilters([]);
+    setAppliedRefTypeFilters([]);
+    setAppliedStatusFilters([]);
+    setAppliedActorFilters([]);
+    setAppliedFromDate("");
+    setAppliedToDate("");
+    if (isOwner) {
+      setBranchFilters([]);
+      setAppliedBranchFilters([]);
+    }
+    setExpandedId(null);
   }
 
   function setToday() {
     const today = formatDateOnlyInput(new Date());
     setFromDate(today);
     setToDate(today);
+    setAppliedFromDate(today);
+    setAppliedToDate(today);
+    setExpandedId(null);
   }
 
   function setLast7Days() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - 6);
-    setFromDate(formatDateOnlyInput(start));
-    setToDate(formatDateOnlyInput(end));
+    const startText = formatDateOnlyInput(start);
+    const endText = formatDateOnlyInput(end);
+    setFromDate(startText);
+    setToDate(endText);
+    setAppliedFromDate(startText);
+    setAppliedToDate(endText);
+    setExpandedId(null);
   }
 
   if (!canViewLogs) {
@@ -1023,92 +1188,68 @@ export default function InventoryLogsPageClient() {
       </div>
 
       <Panel className="p-4">
-        <div className="grid gap-3 xl:grid-cols-[1.4fr_0.75fr_0.75fr_0.75fr]">
+        <div className="grid gap-3 xl:grid-cols-[1.4fr_0.9fr_0.9fr_0.9fr]">
           <input
             className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyFilters();
+            }}
             placeholder="Tìm SKU, sản phẩm, mã đơn, mã phiếu nhập, mã kiểm kho, nhân viên, ghi chú..."
           />
 
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-          >
-            <option value={ALL_VALUE}>Tất cả loại biến động</option>
-            {typeOptions.map((type) => (
-              <option key={type} value={type}>
-                {movementLabel(type)} ({type})
-              </option>
-            ))}
-          </select>
+          <MultiFilter
+            label="Loại"
+            allLabel="Tất cả loại biến động"
+            values={typeFilters}
+            options={typeFilterOptions}
+            onChange={setTypeFilters}
+          />
 
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
-            value={directionFilter}
-            onChange={(e) => setDirectionFilter(e.target.value as DirectionFilter)}
-          >
-            <option value="ALL">Tất cả chiều biến động</option>
-            <option value="IN">Cộng kho</option>
-            <option value="OUT">Trừ kho</option>
-            <option value="ZERO">Không đổi số lượng</option>
-          </select>
+          <MultiFilter
+            label="Chiều"
+            allLabel="Tất cả chiều biến động"
+            values={directionFilters}
+            options={DIRECTION_FILTER_OPTIONS}
+            onChange={setDirectionFilters}
+          />
 
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
-            value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value)}
+          <MultiFilter
+            label="Chi nhánh"
+            allLabel="Tất cả chi nhánh"
+            values={branchFilters}
+            options={branchOptions}
+            onChange={setBranchFilters}
             disabled={!isOwner && !loadingBranches}
-          >
-            {branchOptions.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
-        <div className="mt-3 grid gap-3 xl:grid-cols-[0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_auto]">
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
-            value={refTypeFilter}
-            onChange={(e) => setRefTypeFilter(e.target.value)}
-          >
-            <option value={ALL_VALUE}>Tất cả nguồn chứng từ</option>
-            {refTypeOptions.map((type) => (
-              <option key={type} value={type}>
-                {refTypeLabel(type)} ({type})
-              </option>
-            ))}
-          </select>
+        <div className="mt-3 grid gap-3 xl:grid-cols-[0.9fr_0.9fr_1fr_0.75fr_0.75fr_0.75fr_auto_auto]">
+          <MultiFilter
+            label="Nguồn"
+            allLabel="Tất cả nguồn chứng từ"
+            values={refTypeFilters}
+            options={refTypeFilterOptions}
+            onChange={setRefTypeFilters}
+          />
 
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value={ALL_VALUE}>Tất cả trạng thái</option>
-            {statusOptions.map((status) => (
-              <option key={status} value={status}>
-                {statusLabel(status)}
-              </option>
-            ))}
-          </select>
+          <MultiFilter
+            label="Trạng thái"
+            allLabel="Tất cả trạng thái"
+            values={statusFilters}
+            options={statusFilterOptions}
+            onChange={setStatusFilters}
+          />
 
-          <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
-            value={actorFilter}
-            onChange={(e) => setActorFilter(e.target.value)}
-          >
-            <option value={ALL_VALUE}>Tất cả nhân viên thao tác{loadingActors ? " · đang tải" : ""}</option>
-            <option value={UNMAPPED_ACTOR_VALUE}>Chưa ghi nhận nhân viên ({missingActorRows})</option>
-            {actorOptions.map((actor) => (
-              <option key={actor.id || actor.label} value={actor.label}>
-                {actor.label}{actor.type ? ` · ${actor.type}` : ""}
-              </option>
-            ))}
-          </select>
+          <MultiFilter
+            label="Nhân viên"
+            allLabel={`Tất cả nhân viên thao tác${loadingActors ? " · đang tải" : ""}`}
+            values={actorFilters}
+            options={actorFilterOptions}
+            onChange={setActorFilters}
+            loading={loadingActors}
+          />
 
           <input
             type="date"
@@ -1124,8 +1265,26 @@ export default function InventoryLogsPageClient() {
             onChange={(e) => setToDate(e.target.value)}
           />
 
+          <select
+            className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
+            value={visibleLimit}
+            onChange={(e) => setVisibleLimit(Number(e.target.value) as (typeof VISIBLE_LIMIT_OPTIONS)[number])}
+          >
+            {VISIBLE_LIMIT_OPTIONS.map((limit) => (
+              <option key={limit} value={limit}>Hiển thị {limit} dòng</option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={applyFilters}
+            className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white hover:bg-neutral-800"
+          >
+            Tìm kiếm
+          </button>
+
           <div className="flex items-center justify-end whitespace-nowrap text-sm text-neutral-500">
-            {filtered.length} dòng
+            {Math.min(filtered.length, visibleLimit)} / {filtered.length} dòng
           </div>
         </div>
       </Panel>
@@ -1141,7 +1300,7 @@ export default function InventoryLogsPageClient() {
           <div>
             <p className="font-medium text-neutral-900">Bảng lịch sử biến động chi tiết</p>
             <p className="mt-1 text-sm text-neutral-500">
-              Dòng mới nhất ở trên cùng. Bấm vào một dòng để xem chi tiết chứng từ, tồn trước/sau và người thao tác.
+              Dòng mới nhất ở trên cùng. Bộ lọc chỉ chạy sau khi bấm Tìm kiếm; bảng chỉ render số dòng đã chọn.
             </p>
           </div>
           <Badge tone="blue">V8 · Chi tiết kho</Badge>
@@ -1172,7 +1331,7 @@ export default function InventoryLogsPageClient() {
               </thead>
 
               <tbody>
-                {filtered.map((row) => {
+                {visibleRows.map((row) => {
                   const isExpanded = expandedId === row.id;
                   const beforeQty = getBeforeQty(row);
                   const afterQty = getAfterQty(row);
