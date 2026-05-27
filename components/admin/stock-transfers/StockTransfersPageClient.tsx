@@ -110,6 +110,52 @@ type DraftItem = {
   qty: string;
 };
 
+type TransferFilters = {
+  query: string;
+  statusFilter: string;
+  fromBranchFilter: string;
+  toBranchFilter: string;
+  sourceTypeFilter: string;
+  createdByFilter: string;
+  productFilter: string;
+  skuFilter: string;
+  categoryFilter: string;
+  colorFilter: string;
+  sizeFilter: string;
+  noteFilter: string;
+  sourceRefFilter: string;
+  minQtyFilter: string;
+  maxQtyFilter: string;
+  minLineFilter: string;
+  maxLineFilter: string;
+  dateFromFilter: string;
+  dateToFilter: string;
+  sortBy: string;
+};
+
+const DEFAULT_TRANSFER_FILTERS: TransferFilters = {
+  query: "",
+  statusFilter: "ALL",
+  fromBranchFilter: "ALL",
+  toBranchFilter: "ALL",
+  sourceTypeFilter: "ALL",
+  createdByFilter: "ALL",
+  productFilter: "",
+  skuFilter: "",
+  categoryFilter: "ALL",
+  colorFilter: "ALL",
+  sizeFilter: "ALL",
+  noteFilter: "",
+  sourceRefFilter: "",
+  minQtyFilter: "",
+  maxQtyFilter: "",
+  minLineFilter: "",
+  maxLineFilter: "",
+  dateFromFilter: "",
+  dateToFilter: "",
+  sortBy: "created_desc",
+};
+
 
 function makeRowId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -223,14 +269,105 @@ function getTransferItemCategoryName(item: any) {
   );
 }
 
+function getTransferItems(transfer: any) {
+  const candidates = [
+    transfer?.items,
+    transfer?.lines,
+    transfer?.details,
+    transfer?.stockTransferItems,
+    transfer?.transferItems,
+    transfer?.variants,
+    transfer?.productVariants,
+    transfer?.itemRows,
+  ];
+
+  for (const value of candidates) {
+    if (Array.isArray(value)) return value;
+  }
+
+  return [];
+}
+
+function getTransferItemSku(item: any) {
+  return String(
+    item?.sku ||
+      item?.variantSku ||
+      item?.productSku ||
+      item?.variant?.sku ||
+      item?.productVariant?.sku ||
+      item?.productSnapshot?.sku ||
+      item?.variantSnapshot?.sku ||
+      ""
+  ).trim();
+}
+
+function getTransferItemProductName(item: any) {
+  return String(
+    item?.productName ||
+      item?.name ||
+      item?.title ||
+      item?.variant?.product?.name ||
+      item?.productVariant?.product?.name ||
+      item?.product?.name ||
+      item?.productSnapshot?.name ||
+      item?.variantProduct?.name ||
+      ""
+  ).trim();
+}
+
+function getTransferItemColor(item: any) {
+  return String(
+    item?.color ||
+      item?.variantColor ||
+      item?.variant?.color ||
+      item?.productVariant?.color ||
+      item?.variantSnapshot?.color ||
+      ""
+  ).trim();
+}
+
+function getTransferItemSize(item: any) {
+  return String(
+    item?.size ||
+      item?.variantSize ||
+      item?.variant?.size ||
+      item?.productVariant?.size ||
+      item?.variantSnapshot?.size ||
+      ""
+  ).trim();
+}
+
+function collectTransferPrimitiveText(value: any, depth = 0): string[] {
+  if (value === null || value === undefined || depth > 4) return [];
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectTransferPrimitiveText(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .filter(([key]) => !["createdAt", "updatedAt", "deletedAt"].includes(key))
+      .flatMap(([, item]) => collectTransferPrimitiveText(item, depth + 1));
+  }
+
+  return [];
+}
+
 function getTransferSearchText(transfer: any) {
-  const items = Array.isArray(transfer?.items) ? transfer.items : [];
+  const items = getTransferItems(transfer);
 
   return normalizeCategoryName(
     [
+      transfer?.id,
       transfer?.transferCode,
       transfer?.code,
       transfer?.sourceRefId,
+      transfer?.sourceCode,
+      transfer?.referenceCode,
       transfer?.note,
       transfer?.createdByName,
       transfer?.confirmedByName,
@@ -240,13 +377,25 @@ function getTransferSearchText(transfer: any) {
       transfer?.toBranch?.name,
       transfer?.toBranchName,
       transfer?.toBranchId,
+      transfer?.skuPreview,
+      transfer?.productPreview,
+      transfer?.itemSummary,
+      transfer?.itemsText,
+      transfer?.searchText,
+      transfer?.metadata,
       ...items.flatMap((item: any) => [
-        item?.sku,
-        item?.productName,
-        item?.color,
-        item?.size,
+        getTransferItemSku(item),
+        getTransferItemProductName(item),
+        getTransferItemColor(item),
+        getTransferItemSize(item),
         getTransferItemCategoryName(item),
+        item?.barcode,
+        item?.barCode,
+        item?.variantId,
+        item?.productId,
       ]),
+      ...collectTransferPrimitiveText(transfer?.itemsSummary),
+      ...collectTransferPrimitiveText(transfer?.itemPreview),
     ]
       .filter(Boolean)
       .join(" "),
@@ -320,6 +469,7 @@ export default function StockTransfersPageClient() {
   const [minLineFilter, setMinLineFilter] = useState("");
   const [maxLineFilter, setMaxLineFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_desc");
+  const [appliedTransferFilters, setAppliedTransferFilters] = useState<TransferFilters>(DEFAULT_TRANSFER_FILTERS);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -758,11 +908,13 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       if (transfer.createdByName) createdBy.add(String(transfer.createdByName));
       if (transfer.confirmedByName) createdBy.add(String(transfer.confirmedByName));
 
-      (transfer.items || []).forEach((item: any) => {
+      getTransferItems(transfer).forEach((item: any) => {
         const categoryName = getTransferItemCategoryName(item);
         if (categoryName) categories.add(categoryName);
-        if (item?.color) colors.add(String(item.color));
-        if (item?.size) sizes.add(String(item.size));
+        const color = getTransferItemColor(item);
+        const size = getTransferItemSize(item);
+        if (color) colors.add(color);
+        if (size) sizes.add(size);
       });
     });
 
@@ -775,20 +927,21 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
   }, [visibleRows]);
 
   const filteredRows = useMemo(() => {
-    const q = normalizeCategoryName(query);
-    const productQ = normalizeCategoryName(productFilter);
-    const skuQ = normalizeCategoryName(skuFilter);
-    const noteQ = normalizeCategoryName(noteFilter);
-    const sourceRefQ = normalizeCategoryName(sourceRefFilter);
-    const fromDate = dateFromFilter ? new Date(`${dateFromFilter}T00:00:00`).getTime() : 0;
-    const toDate = dateToFilter ? new Date(`${dateToFilter}T23:59:59`).getTime() : 0;
-    const minQty = minQtyFilter === "" ? null : Number(minQtyFilter);
-    const maxQty = maxQtyFilter === "" ? null : Number(maxQtyFilter);
-    const minLines = minLineFilter === "" ? null : Number(minLineFilter);
-    const maxLines = maxLineFilter === "" ? null : Number(maxLineFilter);
+    const active = appliedTransferFilters;
+    const q = normalizeCategoryName(active.query);
+    const productQ = normalizeCategoryName(active.productFilter);
+    const skuQ = normalizeCategoryName(active.skuFilter);
+    const noteQ = normalizeCategoryName(active.noteFilter);
+    const sourceRefQ = normalizeCategoryName(active.sourceRefFilter);
+    const fromDate = active.dateFromFilter ? new Date(`${active.dateFromFilter}T00:00:00`).getTime() : 0;
+    const toDate = active.dateToFilter ? new Date(`${active.dateToFilter}T23:59:59`).getTime() : 0;
+    const minQty = active.minQtyFilter === "" ? null : Number(active.minQtyFilter);
+    const maxQty = active.maxQtyFilter === "" ? null : Number(active.maxQtyFilter);
+    const minLines = active.minLineFilter === "" ? null : Number(active.minLineFilter);
+    const maxLines = active.maxLineFilter === "" ? null : Number(active.maxLineFilter);
 
     const list = visibleRows.filter((item: any) => {
-      const items = Array.isArray(item.items) ? item.items : [];
+      const items = getTransferItems(item);
       const totalQtyValue = Number(
         item.totalQty ?? items.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0),
       );
@@ -797,26 +950,26 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
       const itemText = normalizeCategoryName(
         items
           .flatMap((line: any) => [
-            line?.productName,
-            line?.sku,
-            line?.color,
-            line?.size,
+            getTransferItemProductName(line),
+            getTransferItemSku(line),
+            getTransferItemColor(line),
+            getTransferItemSize(line),
             getTransferItemCategoryName(line),
           ])
           .join(" "),
       );
 
       if (q && !searchable.includes(q)) return false;
-      if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
-      if (fromBranchFilter !== "ALL" && item.fromBranchId !== fromBranchFilter) return false;
-      if (toBranchFilter !== "ALL" && item.toBranchId !== toBranchFilter) return false;
-      if (sourceTypeFilter !== "ALL" && String(item.sourceType || "MANUAL") !== sourceTypeFilter) return false;
-      if (createdByFilter !== "ALL" && String(item.createdByName || item.confirmedByName || "") !== createdByFilter) return false;
+      if (active.statusFilter !== "ALL" && item.status !== active.statusFilter) return false;
+      if (active.fromBranchFilter !== "ALL" && item.fromBranchId !== active.fromBranchFilter) return false;
+      if (active.toBranchFilter !== "ALL" && item.toBranchId !== active.toBranchFilter) return false;
+      if (active.sourceTypeFilter !== "ALL" && String(item.sourceType || "MANUAL") !== active.sourceTypeFilter) return false;
+      if (active.createdByFilter !== "ALL" && String(item.createdByName || item.confirmedByName || "") !== active.createdByFilter) return false;
       if (productQ && !itemText.includes(productQ)) return false;
-      if (skuQ && !items.some((line: any) => normalizeCategoryName(line?.sku).includes(skuQ))) return false;
-      if (categoryFilter !== "ALL" && !items.some((line: any) => getTransferItemCategoryName(line) === categoryFilter)) return false;
-      if (colorFilter !== "ALL" && !items.some((line: any) => String(line?.color || "") === colorFilter)) return false;
-      if (sizeFilter !== "ALL" && !items.some((line: any) => String(line?.size || "") === sizeFilter)) return false;
+      if (skuQ && !items.some((line: any) => normalizeCategoryName(getTransferItemSku(line)).includes(skuQ))) return false;
+      if (active.categoryFilter !== "ALL" && !items.some((line: any) => getTransferItemCategoryName(line) === active.categoryFilter)) return false;
+      if (active.colorFilter !== "ALL" && !items.some((line: any) => getTransferItemColor(line) === active.colorFilter)) return false;
+      if (active.sizeFilter !== "ALL" && !items.some((line: any) => getTransferItemSize(line) === active.sizeFilter)) return false;
       if (noteQ && !normalizeCategoryName(item.note).includes(noteQ)) return false;
       if (sourceRefQ && !normalizeCategoryName(item.sourceRefId).includes(sourceRefQ)) return false;
       if (minQty !== null && Number.isFinite(minQty) && totalQtyValue < minQty) return false;
@@ -835,43 +988,23 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
     return list.sort((a: any, b: any) => {
       const aCreated = new Date(a.createdAt || a.updatedAt || 0).getTime();
       const bCreated = new Date(b.createdAt || b.updatedAt || 0).getTime();
-      const aQty = Number(a.totalQty ?? a.items?.reduce?.((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
-      const bQty = Number(b.totalQty ?? b.items?.reduce?.((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
-      const aLines = Number(a.totalLines ?? a.items?.length ?? 0);
-      const bLines = Number(b.totalLines ?? b.items?.length ?? 0);
+      const aItems = getTransferItems(a);
+      const bItems = getTransferItems(b);
+      const aQty = Number(a.totalQty ?? aItems.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
+      const bQty = Number(b.totalQty ?? bItems.reduce((sum: number, line: any) => sum + Number(line.qty || 0), 0) ?? 0);
+      const aLines = Number(a.totalLines ?? aItems.length ?? 0);
+      const bLines = Number(b.totalLines ?? bItems.length ?? 0);
 
-      if (sortBy === "created_asc") return aCreated - bCreated;
-      if (sortBy === "qty_desc") return bQty - aQty;
-      if (sortBy === "qty_asc") return aQty - bQty;
-      if (sortBy === "lines_desc") return bLines - aLines;
-      if (sortBy === "lines_asc") return aLines - bLines;
-      if (sortBy === "code_asc") return String(a.transferCode || "").localeCompare(String(b.transferCode || ""), "vi");
-      if (sortBy === "code_desc") return String(b.transferCode || "").localeCompare(String(a.transferCode || ""), "vi");
+      if (active.sortBy === "created_asc") return aCreated - bCreated;
+      if (active.sortBy === "qty_desc") return bQty - aQty;
+      if (active.sortBy === "qty_asc") return aQty - bQty;
+      if (active.sortBy === "lines_desc") return bLines - aLines;
+      if (active.sortBy === "lines_asc") return aLines - bLines;
+      if (active.sortBy === "code_asc") return String(a.transferCode || "").localeCompare(String(b.transferCode || ""), "vi");
+      if (active.sortBy === "code_desc") return String(b.transferCode || "").localeCompare(String(a.transferCode || ""), "vi");
       return bCreated - aCreated;
     });
-  }, [
-    visibleRows,
-    query,
-    statusFilter,
-    fromBranchFilter,
-    toBranchFilter,
-    sourceTypeFilter,
-    createdByFilter,
-    productFilter,
-    skuFilter,
-    categoryFilter,
-    colorFilter,
-    sizeFilter,
-    noteFilter,
-    sourceRefFilter,
-    minQtyFilter,
-    maxQtyFilter,
-    minLineFilter,
-    maxLineFilter,
-    dateFromFilter,
-    dateToFilter,
-    sortBy,
-  ]);
+  }, [visibleRows, appliedTransferFilters]);
 
   const transferStats = useMemo(() => {
     const totalQty = filteredRows.reduce(
@@ -889,27 +1022,57 @@ const canManageStockTransferAuto = canManageAutoTransfer && canCreateStockTransf
   }, [filteredRows]);
 
 
+  function getDraftTransferFilters(): TransferFilters {
+    return {
+      query,
+      statusFilter,
+      fromBranchFilter,
+      toBranchFilter,
+      sourceTypeFilter,
+      createdByFilter,
+      productFilter,
+      skuFilter,
+      categoryFilter,
+      colorFilter,
+      sizeFilter,
+      noteFilter,
+      sourceRefFilter,
+      minQtyFilter,
+      maxQtyFilter,
+      minLineFilter,
+      maxLineFilter,
+      dateFromFilter,
+      dateToFilter,
+      sortBy,
+    };
+  }
+
+  function applyTransferFilters() {
+    setAppliedTransferFilters(getDraftTransferFilters());
+  }
+
   function resetTransferFilters() {
-    setQuery("");
-    setStatusFilter("ALL");
-    setFromBranchFilter("ALL");
-    setToBranchFilter("ALL");
-    setSourceTypeFilter("ALL");
-    setCreatedByFilter("ALL");
-    setProductFilter("");
-    setSkuFilter("");
-    setCategoryFilter("ALL");
-    setColorFilter("ALL");
-    setSizeFilter("ALL");
-    setNoteFilter("");
-    setSourceRefFilter("");
-    setMinQtyFilter("");
-    setMaxQtyFilter("");
-    setMinLineFilter("");
-    setMaxLineFilter("");
-    setDateFromFilter("");
-    setDateToFilter("");
-    setSortBy("created_desc");
+    setQuery(DEFAULT_TRANSFER_FILTERS.query);
+    setStatusFilter(DEFAULT_TRANSFER_FILTERS.statusFilter);
+    setFromBranchFilter(DEFAULT_TRANSFER_FILTERS.fromBranchFilter);
+    setToBranchFilter(DEFAULT_TRANSFER_FILTERS.toBranchFilter);
+    setSourceTypeFilter(DEFAULT_TRANSFER_FILTERS.sourceTypeFilter);
+    setCreatedByFilter(DEFAULT_TRANSFER_FILTERS.createdByFilter);
+    setProductFilter(DEFAULT_TRANSFER_FILTERS.productFilter);
+    setSkuFilter(DEFAULT_TRANSFER_FILTERS.skuFilter);
+    setCategoryFilter(DEFAULT_TRANSFER_FILTERS.categoryFilter);
+    setColorFilter(DEFAULT_TRANSFER_FILTERS.colorFilter);
+    setSizeFilter(DEFAULT_TRANSFER_FILTERS.sizeFilter);
+    setNoteFilter(DEFAULT_TRANSFER_FILTERS.noteFilter);
+    setSourceRefFilter(DEFAULT_TRANSFER_FILTERS.sourceRefFilter);
+    setMinQtyFilter(DEFAULT_TRANSFER_FILTERS.minQtyFilter);
+    setMaxQtyFilter(DEFAULT_TRANSFER_FILTERS.maxQtyFilter);
+    setMinLineFilter(DEFAULT_TRANSFER_FILTERS.minLineFilter);
+    setMaxLineFilter(DEFAULT_TRANSFER_FILTERS.maxLineFilter);
+    setDateFromFilter(DEFAULT_TRANSFER_FILTERS.dateFromFilter);
+    setDateToFilter(DEFAULT_TRANSFER_FILTERS.dateToFilter);
+    setSortBy(DEFAULT_TRANSFER_FILTERS.sortBy);
+    setAppliedTransferFilters(DEFAULT_TRANSFER_FILTERS);
   }
 
   function formatTransferPrintDate(value: any) {
@@ -932,11 +1095,11 @@ function buildTransferPrintOrder(transfer: StockTransfer) {
     transfer.toBranchId ||
     "—";
 
-  const mappedItems = (transfer.items || []).map((item: any) => ({
-    productName: item.productName || item.name || "Sản phẩm",
-    sku: item.sku || item.variant?.sku || "",
-    color: item.color || item.variant?.color || "",
-    size: item.size || item.variant?.size || "",
+  const mappedItems = getTransferItems(transfer).map((item: any) => ({
+    productName: getTransferItemProductName(item) || "Sản phẩm",
+    sku: getTransferItemSku(item),
+    color: getTransferItemColor(item),
+    size: getTransferItemSize(item),
     qty: Number(item.qty ?? item.quantity ?? 0),
   }));
 
@@ -1138,20 +1301,34 @@ function loadCurrentUser() {
   setCurrentUser(getCurrentUserFromStorage());
 }
 
+  async function loadProductsInBackground() {
+    try {
+      const productsData = await getProducts({ page: 1, limit: 10000 } as any);
+      setProducts(Array.isArray(productsData) ? productsData : ((productsData as any)?.data || []));
+    } catch (err) {
+      console.error("background products load failed", err);
+    }
+  }
+
   async function loadAll() {
     try {
       setLoading(true);
       setError(null);
 
-      const [transfersData, branchesData, productsData] = await Promise.all([
+      // Không hydrate detail từng phiếu ở màn danh sách nữa.
+      // Trước đây trang gọi thêm getStockTransferDetail cho từng phiếu thiếu items,
+      // tạo hàng chục request /stock-transfers/:id và làm màn đứng ~10s.
+      // Danh sách chỉ cần payload list; khi bấm Xem phiếu/In mới lấy detail.
+      const [transfersData, branchesData] = await Promise.all([
         getStockTransfers(),
         getBranches(),
-        getProducts({ page: 1, limit: 10000 } as any),
       ]);
 
       setRows(Array.isArray(transfersData) ? transfersData : []);
       setBranches(Array.isArray(branchesData) ? branchesData : []);
-      setProducts(Array.isArray(productsData) ? productsData : ((productsData as any)?.data || []));
+
+      // Sản phẩm chỉ phục vụ modal tạo phiếu/auto đề xuất nên tải nền, không chặn render danh sách.
+      void loadProductsInBackground();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được phiếu chuyển kho.");
     } finally {
@@ -1956,6 +2133,9 @@ useEffect(() => {
             placeholder="Tìm mã phiếu, kho, SKU, sản phẩm, ghi chú..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyTransferFilters();
+            }}
           />
 
           <select
@@ -2150,6 +2330,14 @@ useEffect(() => {
 
           <button
             type="button"
+            onClick={applyTransferFilters}
+            className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800"
+          >
+            Tìm kiếm
+          </button>
+
+          <button
+            type="button"
             onClick={resetTransferFilters}
             className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
           >
@@ -2158,7 +2346,7 @@ useEffect(() => {
         </div>
         ) : (
           <div className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2 text-sm text-neutral-500">
-            Bộ lọc đang thu gọn. Đang hiển thị {filteredRows.length} phiếu theo điều kiện hiện tại.
+            Bộ lọc đang thu gọn. Đang hiển thị {filteredRows.length} phiếu theo điều kiện đã bấm tìm.
           </div>
         )}
       </Panel>
@@ -2603,7 +2791,7 @@ useEffect(() => {
           filteredRows.map((transfer) => {
             const total =
               transfer.totalQty ??
-              (transfer.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+              getTransferItems(transfer).reduce((sum, item) => sum + Number(item.qty || 0), 0);
             const canConfirmSending =
               canConfirmStockTransfer &&
               (transfer.status === "DRAFT" || transfer.status === "PENDING") &&
@@ -2629,12 +2817,12 @@ useEffect(() => {
               transfer.toBranchName ||
               transfer.toBranchId ||
               "—";
-            const lineCount = transfer.totalLines ?? transfer.items?.length ?? 0;
+            const lineCount = transfer.totalLines ?? getTransferItems(transfer).length ?? 0;
             const createdByName = (transfer as any).createdByName || "—";
             const createdAtText = formatShortDateTime((transfer as any).createdAt);
-            const topItems = (transfer.items || []).slice(0, 3);
+            const topItems = getTransferItems(transfer).slice(0, 3);
             const skuPreview = topItems
-              .map((item: any) => item.sku || item.productName)
+              .map((item: any) => getTransferItemSku(item) || getTransferItemProductName(item))
               .filter(Boolean)
               .join(", ");
             const extraItemCount = Math.max(lineCount - topItems.length, 0);

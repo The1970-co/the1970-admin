@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   downloadStocktakeSessionExcel,
   getStocktakeSessionsOverview,
-  listStocktakeSessions,
   type StocktakeSessionListItem,
   type StocktakeSessionsOverview,
 } from "@/lib/stocktake-api";
@@ -57,6 +56,20 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 type EnrichedStocktakeSession = StocktakeSessionListItem & {
   note?: string | null;
+  productMatches?: Array<{
+    sku?: string | null;
+    productName?: string | null;
+    countedQty?: number | null;
+    snapshotQty?: number | null;
+    diff?: number | null;
+  }>;
+  matchedProducts?: Array<{
+    sku?: string | null;
+    productName?: string | null;
+    countedQty?: number | null;
+    snapshotQty?: number | null;
+    diff?: number | null;
+  }>;
   createdById?: string | null;
   createdByName?: string | null;
   createdBy?: { id?: string | null; name?: string | null; username?: string | null } | null;
@@ -101,6 +114,67 @@ type EnrichedStocktakeSession = StocktakeSessionListItem & {
     items?: number;
   };
 };
+
+
+type StocktakeSessionListResponse = {
+  items?: EnrichedStocktakeSession[];
+  total?: number;
+  totalPages?: number;
+};
+
+function appendQueryParam(params: URLSearchParams, key: string, value?: string | number | null) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "ALL") return;
+  params.set(key, text);
+}
+
+function buildStocktakeSessionsPath(input: {
+  branchId?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+  productQuery?: string;
+}) {
+  const params = new URLSearchParams();
+  appendQueryParam(params, "branchId", input.branchId);
+  appendQueryParam(params, "status", input.status);
+  appendQueryParam(params, "from", input.from);
+  appendQueryParam(params, "to", input.to);
+  appendQueryParam(params, "page", input.page || 1);
+  appendQueryParam(params, "limit", input.limit || 50);
+
+  // Gửi nhiều alias để backend mới/cũ đều bắt được. Backend không dùng key nào sẽ tự bỏ qua.
+  const productText = String(input.productQuery || "").trim();
+  if (productText) {
+    params.set("productQuery", productText);
+    params.set("productQ", productText);
+    params.set("sku", productText);
+    params.set("q", productText);
+  }
+
+  const query = params.toString();
+  return query ? `/stocktake-sessions?${query}` : "/stocktake-sessions";
+}
+
+function getProductMatches(item: EnrichedStocktakeSession) {
+  const rows = Array.isArray(item.productMatches)
+    ? item.productMatches
+    : Array.isArray(item.matchedProducts)
+      ? item.matchedProducts
+      : [];
+
+  return rows
+    .map((row) => ({
+      sku: String(row?.sku || "").trim(),
+      productName: String(row?.productName || "").trim(),
+      countedQty: Number(row?.countedQty ?? 0),
+      snapshotQty: Number(row?.snapshotQty ?? 0),
+      diff: Number(row?.diff ?? 0),
+    }))
+    .filter((row) => row.sku || row.productName);
+}
 
 function Badge({
   children,
@@ -283,6 +357,11 @@ export default function StocktakeSessionsPageClient() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
+  const [productQueryDraft, setProductQueryDraft] = useState("");
+  const [productQuery, setProductQuery] = useState("");
+  const [editingNoteSessionId, setEditingNoteSessionId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSavingId, setNoteSavingId] = useState<string | null>(null);
   const [creatorQuery, setCreatorQuery] = useState("");
   const [workerQuery, setWorkerQuery] = useState("");
   const [applyFilter, setApplyFilter] = useState<ApplyFilter>("ALL");
@@ -346,7 +425,7 @@ export default function StocktakeSessionsPageClient() {
     async (options?: { force?: boolean }) => {
       if (!ready) return;
 
-      const params = { branchId, status, from, to, page, limit };
+      const params = { branchId, status, from, to, page, limit, productQuery: productQuery.trim() };
       const summaryParams = { branchId, status, from, to };
       const requestKey = JSON.stringify(params);
 
@@ -362,7 +441,7 @@ export default function StocktakeSessionsPageClient() {
         setMessage("");
 
         const [listData, overviewData] = await Promise.all([
-          listStocktakeSessions(params),
+          apiRequest<StocktakeSessionListResponse>(buildStocktakeSessionsPath(params)),
           getStocktakeSessionsOverview(summaryParams).catch(() => null),
         ]);
 
@@ -387,7 +466,7 @@ export default function StocktakeSessionsPageClient() {
         }
       }
     },
-    [branchId, from, limit, page, ready, status, to],
+    [branchId, from, limit, page, productQuery, ready, status, to],
   );
 
   useEffect(() => {
@@ -402,7 +481,7 @@ export default function StocktakeSessionsPageClient() {
   useEffect(() => {
     setPage(1);
     loadedSessionKeyRef.current = "";
-  }, [branchId, status, from, to]);
+  }, [branchId, status, from, to, productQuery]);
 
 
   useEffect(() => {
@@ -426,7 +505,10 @@ export default function StocktakeSessionsPageClient() {
       const branchName = branchMap.get(item.branchId) || "";
       const creatorName = getCreatorName(item);
       const workerText = getWorkerNames(item).join(" ");
-      const searchBlob = `${item.id} ${item.name} ${item.note || ""} ${item.branchId} ${branchName} ${creatorName} ${workerText}`.toLowerCase();
+      const productMatchText = getProductMatches(item)
+        .map((row) => `${row.sku} ${row.productName}`)
+        .join(" ");
+      const searchBlob = `${item.id} ${item.name} ${item.note || ""} ${item.branchId} ${branchName} ${creatorName} ${workerText} ${productMatchText}`.toLowerCase();
 
       if (q && !searchBlob.includes(q)) return false;
       if (creator && !creatorName.toLowerCase().includes(creator)) return false;
@@ -521,6 +603,8 @@ Không xoá phiên đã chốt tồn.`,
 
   const clearFilters = () => {
     setQuery("");
+    setProductQueryDraft("");
+    setProductQuery("");
     setCreatorQuery("");
     setWorkerQuery("");
     setStatus("ALL");
@@ -533,6 +617,54 @@ Không xoá phiên đã chốt tồn.`,
     setPage(1);
     loadedSessionKeyRef.current = "";
     if (isOwner) setBranchId("");
+  };
+
+  const applyProductSearch = () => {
+    const nextQuery = productQueryDraft.trim();
+    setPage(1);
+    loadedSessionKeyRef.current = "";
+    setProductQuery(nextQuery);
+  };
+
+  const startEditNote = (item: EnrichedStocktakeSession) => {
+    setEditingNoteSessionId(item.id);
+    setNoteDraft(String(item.note || ""));
+    setMessage("");
+  };
+
+  const cancelEditNote = () => {
+    setEditingNoteSessionId(null);
+    setNoteDraft("");
+  };
+
+  const saveSessionNote = async (item: EnrichedStocktakeSession) => {
+    const text = noteDraft.trim();
+
+    try {
+      setNoteSavingId(item.id);
+      setMessage("");
+      await apiRequest(`/stocktake-sessions/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ note: text }),
+      });
+
+      setSessions((current) =>
+        current.map((row) =>
+          row.id === item.id ? { ...row, note: text || null } : row,
+        ),
+      );
+      setEditingNoteSessionId(null);
+      setNoteDraft("");
+      setMessage("Đã lưu ghi chú phiên kiểm kho.");
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Không lưu được ghi chú phiên kiểm kho.",
+      );
+    } finally {
+      setNoteSavingId(null);
+    }
   };
 
   return (
@@ -620,6 +752,34 @@ Không xoá phiên đã chốt tồn.`,
               placeholder="Mã phiên, tên phiên, ghi chú, người tạo, nhân viên..."
               className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
             />
+          </label>
+
+          <label className="text-xs font-semibold text-neutral-500 md:col-span-2">
+            Tìm theo sản phẩm / SKU
+            <div className="mt-1 flex gap-2">
+              <input
+                value={productQueryDraft}
+                onChange={(e) => setProductQueryDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyProductSearch();
+                }}
+                placeholder="Nhập mã SKU, mã vạch hoặc tên sản phẩm rồi bấm Tìm"
+                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              />
+              <button
+                type="button"
+                onClick={applyProductSearch}
+                disabled={loading}
+                className="shrink-0 rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+              >
+                Tìm
+              </button>
+            </div>
+            {productQuery ? (
+              <p className="mt-1 text-[11px] font-semibold text-blue-600">
+                Đang tìm sản phẩm: {productQuery}
+              </p>
+            ) : null}
           </label>
 
           <label className="text-xs font-semibold text-neutral-500">
@@ -760,6 +920,7 @@ Không xoá phiên đã chốt tồn.`,
             <p className="mt-1 text-xs font-medium text-neutral-500">
               Đang hiển thị {formatNumber(visibleSessions.length)} / {formatNumber(sessions.length)} phiên ở trang {formatNumber(page)}.
               Tổng theo bộ lọc: {formatNumber(totalItems)} phiên.
+              {productQuery ? ` Kết quả đã lọc theo sản phẩm/SKU: ${productQuery}.` : ""}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -849,7 +1010,60 @@ Không xoá phiên đã chốt tồn.`,
                           {item.name || item.id}
                         </Link>
                         <p className="mt-1 font-mono text-xs text-neutral-400">{item.id}</p>
-                        {item.note ? <p className="mt-1 max-w-[260px] truncate text-xs text-neutral-500">{item.note}</p> : null}
+                        {editingNoteSessionId === item.id ? (
+                          <div className="mt-2 w-[280px] space-y-2">
+                            <textarea
+                              value={noteDraft}
+                              onChange={(e) => setNoteDraft(e.target.value)}
+                              rows={3}
+                              placeholder="VD: Phiên này kiểm áo phông kệ A, bỏ qua nhóm quần jeans..."
+                              className="w-full resize-none rounded-xl border border-neutral-300 px-3 py-2 text-xs font-medium outline-none focus:border-neutral-500"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void saveSessionNote(item)}
+                                disabled={noteSavingId === item.id}
+                                className="rounded-lg bg-neutral-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                              >
+                                {noteSavingId === item.id ? "Đang lưu..." : "Lưu ghi chú"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelEditNote}
+                                className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-[11px] font-bold text-neutral-700 hover:bg-neutral-50"
+                              >
+                                Huỷ
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 max-w-[280px] rounded-xl bg-neutral-50 p-2">
+                            <p className="line-clamp-3 whitespace-pre-wrap text-xs text-neutral-600">
+                              {item.note || "Chưa có ghi chú phiên."}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => startEditNote(item)}
+                              className="mt-1 text-[11px] font-bold text-blue-600 hover:underline"
+                            >
+                              {item.note ? "Sửa ghi chú" : "Thêm ghi chú"}
+                            </button>
+                          </div>
+                        )}
+                        {getProductMatches(item).length ? (
+                          <div className="mt-2 max-w-[280px] rounded-xl border border-blue-100 bg-blue-50 p-2">
+                            <p className="text-[11px] font-extrabold uppercase tracking-wide text-blue-700">Sản phẩm khớp tìm kiếm</p>
+                            <div className="mt-1 space-y-1">
+                              {getProductMatches(item).slice(0, 3).map((row) => (
+                                <p key={`${row.sku}-${row.productName}`} className="text-[11px] font-semibold text-blue-800">
+                                  {row.sku || "—"}{row.productName ? ` · ${row.productName}` : ""}
+                                  {Number.isFinite(row.countedQty) ? ` · Đếm ${formatNumber(row.countedQty)}` : ""}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </td>
 
                       <td className="px-4 py-3">
