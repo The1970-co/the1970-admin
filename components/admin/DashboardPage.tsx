@@ -1222,12 +1222,20 @@ function buildOrderBreakdownFromWarRoomPayload(
 ): OrderChannelBreakdown | null {
   if (!payload?.orderCreated && !payload?.revenueSuccess) return null;
 
-  const createdOrders = Array.isArray(payload.createdOrders)
+  const createdOrdersRaw = Array.isArray(payload.createdOrders)
     ? payload.createdOrders
     : [];
-  const successOrders = Array.isArray(payload.successOrders)
+  const successOrdersRaw = Array.isArray(payload.successOrders)
     ? payload.successOrders
     : [];
+
+  // Card "Đơn tạo" phải loại đơn huỷ. Không dùng trực tiếp aggregate
+  // payload.orderCreated nếu backend còn trả cả CANCELLED trong createdOrders.
+  const createdOrders = createdOrdersRaw.filter((order) => !isCancelledOrder(order));
+  const successOrders = successOrdersRaw.filter((order) => !isCancelledOrder(order));
+
+  const createdBreakdown = buildOrderBreakdown(createdOrders);
+
   const seen = new Set<string>();
   const combinedOrders = [...createdOrders, ...successOrders].filter(
     (order) => {
@@ -1240,7 +1248,6 @@ function buildOrderBreakdownFromWarRoomPayload(
     },
   );
   const fallback = buildOrderBreakdown(combinedOrders);
-  const created = payload.orderCreated || {};
   const success = payload.revenueSuccess || {};
 
   const successPosOrders = toNumber(success.pos?.orders);
@@ -1267,14 +1274,14 @@ function buildOrderBreakdownFromWarRoomPayload(
 
   return {
     ...fallback,
-    total: toNumber(created.total ?? fallback.total),
-    pos: toNumber(created.pos?.orders ?? fallback.pos),
-    cod: toNumber(created.facebook?.orders ?? fallback.cod),
-    other: toNumber(created.other?.orders ?? fallback.other),
-    totalAmount: toNumber(created.amount ?? fallback.totalAmount),
-    posAmount: toNumber(created.pos?.amount ?? fallback.posAmount),
-    codAmount: toNumber(created.facebook?.amount ?? fallback.codAmount),
-    otherAmount: toNumber(created.other?.amount ?? fallback.otherAmount),
+    total: createdBreakdown.total,
+    pos: createdBreakdown.pos,
+    cod: createdBreakdown.cod,
+    other: createdBreakdown.other,
+    totalAmount: createdBreakdown.totalAmount,
+    posAmount: createdBreakdown.posAmount,
+    codAmount: createdBreakdown.codAmount,
+    otherAmount: createdBreakdown.otherAmount,
     shippedSuccess: successTotalOrders,
     shippedSuccessAmount: successTotalAmount,
     successPos: successPosOrders || fallback.successPos,

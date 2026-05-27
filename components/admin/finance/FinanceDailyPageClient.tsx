@@ -196,6 +196,75 @@ function normalizeText(value: unknown) {
 }
 
 
+
+
+type MultiSelectOption = {
+  value: string;
+  label: string;
+};
+
+function toggleMultiValue(values: string[], value: string) {
+  return values.includes(value)
+    ? values.filter((item) => item !== value)
+    : [...values, value];
+}
+
+function MultiSelectFilter({
+  values,
+  options,
+  allLabel,
+  selectedLabel,
+  onChange,
+  className = "",
+}: {
+  values: string[];
+  options: MultiSelectOption[];
+  allLabel: string;
+  selectedLabel?: string;
+  onChange: (values: string[]) => void;
+  className?: string;
+}) {
+  const safeValues = values.filter((value) =>
+    options.some((option) => option.value === value),
+  );
+  const label = safeValues.length
+    ? selectedLabel || `${safeValues.length} nguồn đã chọn`
+    : allLabel;
+
+  return (
+    <details className={`group relative ${className}`}>
+      <summary className="flex h-11 cursor-pointer list-none items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-50 [&::-webkit-details-marker]:hidden">
+        <span className="truncate">{label}</span>
+        <span className="ml-2 text-neutral-400">▾</span>
+      </summary>
+      <div className="absolute left-0 top-12 z-50 max-h-80 w-full min-w-[280px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
+        <label className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold hover:bg-neutral-50">
+          <input
+            type="checkbox"
+            checked={safeValues.length === 0}
+            onChange={() => onChange([])}
+          />
+          <span>{allLabel}</span>
+        </label>
+        <div className="my-1 border-t border-neutral-100" />
+        {options.map((option) => (
+          <label
+            key={option.value}
+            className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-neutral-50"
+          >
+            <input
+              type="checkbox"
+              checked={safeValues.includes(option.value)}
+              onChange={() => onChange(toggleMultiValue(safeValues, option.value))}
+            />
+            <span className="truncate">{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function canonicalBranchName(value: unknown) {
   const raw = String(value || "").trim();
   const key = normalizeText(raw).replace(/\s+/g, " ");
@@ -621,13 +690,13 @@ export default function FinanceDailyPageClient() {
   const [ledgerDateTo, setLedgerDateTo] = useState(initialLedgerRange.to);
 
   const [branchId, setBranchId] = useState("ALL");
-  const [paymentSourceId, setPaymentSourceId] = useState("ALL");
+  const [paymentSourceIds, setPaymentSourceIds] = useState<string[]>([]);
   const [flow, setFlow] = useState<FlowFilter>("ALL");
   const [staffFilter, setStaffFilter] = useState("ALL");
   const [q, setQ] = useState("");
 
   const [transactionBranchFilter, setTransactionBranchFilter] = useState("ALL");
-  const [transactionSourceFilter, setTransactionSourceFilter] = useState("ALL");
+  const [transactionSourceFilters, setTransactionSourceFilters] = useState<string[]>([]);
   const [transactionStatusFilter, setTransactionStatusFilter] = useState("ALL");
   const [transactionTypeFilter, setTransactionTypeFilter] = useState("ALL");
   const [transactionAmountFrom, setTransactionAmountFrom] = useState("");
@@ -661,6 +730,29 @@ export default function FinanceDailyPageClient() {
     setLedgerMessage(message);
     setLedgerMessageTone(tone);
   };
+
+  const paymentSourceOptions = useMemo<MultiSelectOption[]>(() => {
+    return paymentSources.map((source: any) => ({
+      value: String(source?.id || source?.code || source?.name || ""),
+      label: String(source?.name || source?.code || source?.id || "—"),
+    })).filter((option) => option.value);
+  }, [paymentSources]);
+
+  const selectedPaymentSourceIds = useMemo(() => {
+    return paymentSourceIds.filter((value) =>
+      paymentSourceOptions.some((option) => option.value === value),
+    );
+  }, [paymentSourceIds, paymentSourceOptions]);
+
+  const effectivePaymentSourceId = selectedPaymentSourceIds.length === 1
+    ? selectedPaymentSourceIds[0]
+    : "ALL";
+
+  const selectedPaymentSourceLabel = selectedPaymentSourceIds.length
+    ? selectedPaymentSourceIds
+        .map((value) => paymentSourceOptions.find((option) => option.value === value)?.label || value)
+        .join(", ")
+    : "Tất cả nguồn tiền";
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
@@ -697,7 +789,7 @@ export default function FinanceDailyPageClient() {
         dateFrom,
         dateTo,
         branchId,
-        paymentSourceId,
+        paymentSourceId: effectivePaymentSourceId,
         status: flow === "RECEIPT" || flow === "PAYMENT" ? flow : "ALL",
         q,
       });
@@ -720,7 +812,7 @@ export default function FinanceDailyPageClient() {
         dateFrom: ledgerDateFrom,
         dateTo: ledgerDateTo,
         branchId,
-        paymentSourceId,
+        paymentSourceId: effectivePaymentSourceId,
       });
 
       const result = await apiJson<any>(
@@ -740,7 +832,7 @@ export default function FinanceDailyPageClient() {
         dateFrom: ledgerDateFrom,
         dateTo: ledgerDateTo,
         branchId,
-        paymentSourceId,
+        paymentSourceId: effectivePaymentSourceId,
         status: "ALL",
         q: "",
       });
@@ -762,7 +854,7 @@ export default function FinanceDailyPageClient() {
         dateFrom: ledgerDateFrom,
         dateTo: ledgerDateTo,
         branchId,
-        paymentSourceId,
+        paymentSourceId: effectivePaymentSourceId,
       });
 
       const result = await apiJson<FinanceAuditResult>(
@@ -1049,7 +1141,7 @@ export default function FinanceDailyPageClient() {
     }, 450);
 
     return () => window.clearTimeout(timer);
-  }, [ledgerDateFrom, ledgerDateTo, branchId, paymentSourceId]);
+  }, [ledgerDateFrom, ledgerDateTo, branchId, effectivePaymentSourceId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1057,7 +1149,7 @@ export default function FinanceDailyPageClient() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [dateFrom, dateTo, branchId, paymentSourceId, flow, q]);
+  }, [dateFrom, dateTo, branchId, effectivePaymentSourceId, flow, q]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1066,7 +1158,7 @@ export default function FinanceDailyPageClient() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [ledgerDateFrom, ledgerDateTo, branchId, paymentSourceId]);
+  }, [ledgerDateFrom, ledgerDateTo, branchId, effectivePaymentSourceId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1084,7 +1176,7 @@ export default function FinanceDailyPageClient() {
     ledgerDateFrom,
     ledgerDateTo,
     branchId,
-    paymentSourceId,
+    effectivePaymentSourceId,
     flow,
     q,
     savingLedger,
@@ -1138,12 +1230,25 @@ export default function FinanceDailyPageClient() {
   };
 
   const rowMatchesSelectedSource = (row: MoneyRow) => {
-    if (paymentSourceId === "ALL") return true;
-    return (
-      String(row.paymentSourceId || "") === String(paymentSourceId) ||
-      normalizeText(displaySourceName(row)) ===
-        normalizeText(paymentSourceNameById.get(String(paymentSourceId)) || paymentSourceId)
-    );
+    if (!selectedPaymentSourceIds.length) return true;
+    return selectedPaymentSourceIds.some((sourceId) => {
+      const sourceLabel = paymentSourceNameById.get(String(sourceId)) || sourceId;
+      return (
+        String(row.paymentSourceId || "") === String(sourceId) ||
+        normalizeText(displaySourceName(row)) === normalizeText(sourceLabel)
+      );
+    });
+  };
+
+  const ledgerRowMatchesSelectedSource = (row: DailyLedgerRow) => {
+    if (!selectedPaymentSourceIds.length) return true;
+    return selectedPaymentSourceIds.some((sourceId) => {
+      const sourceLabel = paymentSourceNameById.get(String(sourceId)) || sourceId;
+      return (
+        String(row.paymentSourceId || "") === String(sourceId) ||
+        normalizeText(row.paymentSourceName || row.paymentSourceCode || row.paymentSourceId) === normalizeText(sourceLabel)
+      );
+    });
   };
 
   const rows = useMemo(() => {
@@ -1165,8 +1270,8 @@ export default function FinanceDailyPageClient() {
         return normalizeText(displayBranchName(row)) === normalizeText(transactionBranchFilter);
       })
       .filter((row) => {
-        if (transactionSourceFilter === "ALL") return true;
-        return normalizeText(displaySourceName(row)) === normalizeText(transactionSourceFilter);
+        if (transactionSourceFilters.length === 0) return true;
+        return transactionSourceFilters.some((name) => normalizeText(displaySourceName(row)) === normalizeText(name));
       })
       .filter((row) => {
         if (transactionStatusFilter === "ALL") return true;
@@ -1220,9 +1325,9 @@ export default function FinanceDailyPageClient() {
     staffFilter,
     q,
     branchId,
-    paymentSourceId,
+    selectedPaymentSourceIds,
     transactionBranchFilter,
-    transactionSourceFilter,
+    transactionSourceFilters,
     transactionStatusFilter,
     transactionTypeFilter,
     transactionAmountFrom,
@@ -1251,7 +1356,7 @@ export default function FinanceDailyPageClient() {
       if (weightDiff !== 0) return weightDiff;
       return a.localeCompare(b, "vi");
     });
-  }, [data, branchId, paymentSourceId, branches, paymentSourceNameById, branchNameById]);
+  }, [data, branchId, selectedPaymentSourceIds, branches, paymentSourceNameById, branchNameById]);
 
   const transactionSourceOptions = useMemo(() => {
     const names = safeRows(data?.payments)
@@ -1260,7 +1365,7 @@ export default function FinanceDailyPageClient() {
       .map((row) => displaySourceName(row))
       .filter((name) => name && name !== "—");
     return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
-  }, [data, branchId, paymentSourceId, branches, branchNameById, paymentSourceNameById]);
+  }, [data, branchId, selectedPaymentSourceIds, branches, branchNameById, paymentSourceNameById]);
 
   const transactionStatusOptions = useMemo(() => {
     const names = safeRows(data?.payments)
@@ -1399,6 +1504,7 @@ export default function FinanceDailyPageClient() {
             closingBalance: openingBalance + netAmount,
           };
         })
+        .filter((row) => ledgerRowMatchesSelectedSource(row))
         .sort((a, b) => {
           const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
           if (dateDiff !== 0) return dateDiff;
@@ -1411,7 +1517,7 @@ export default function FinanceDailyPageClient() {
         });
     }
 
-    const liveRows = safeRows(data?.payments);
+    const liveRows = safeRows(data?.payments).filter((row) => rowMatchesSelectedSource(row));
     const map = new Map<string, DailyLedgerRow>();
 
     liveRows.forEach((row) => {
@@ -1477,7 +1583,7 @@ export default function FinanceDailyPageClient() {
         "vi",
       );
     });
-  }, [ledgerData, closedLedgerKeys, data, branches, branchNameById, paymentSourceNameById]);
+  }, [ledgerData, closedLedgerKeys, data, branches, branchNameById, paymentSourceNameById, selectedPaymentSourceIds]);
 
   const ledgerSummary = useMemo(() => {
     const acc = {
@@ -2265,18 +2371,13 @@ export default function FinanceDailyPageClient() {
           </Field>
 
           <Field label="Nguồn tiền">
-            <select
-              value={paymentSourceId}
-              onChange={(event) => setPaymentSourceId(event.target.value)}
-              className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
-            >
-              <option value="ALL">Tất cả nguồn tiền</option>
-              {paymentSources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.name || source.code || source.id}
-                </option>
-              ))}
-            </select>
+            <MultiSelectFilter
+              values={selectedPaymentSourceIds}
+              options={paymentSourceOptions}
+              allLabel="Tất cả nguồn tiền"
+              selectedLabel={selectedPaymentSourceLabel}
+              onChange={setPaymentSourceIds}
+            />
           </Field>
 
           <div className="flex items-end">
@@ -2333,11 +2434,11 @@ export default function FinanceDailyPageClient() {
             type="button"
             onClick={() => {
               setBranchId("ALL");
-              setPaymentSourceId("ALL");
+              setPaymentSourceIds([]);
               setFlow("ALL");
               setStaffFilter("ALL");
               setTransactionBranchFilter("ALL");
-              setTransactionSourceFilter("ALL");
+              setTransactionSourceFilters([]);
               setTransactionStatusFilter("ALL");
               setTransactionTypeFilter("ALL");
               setTransactionAmountFrom("");
@@ -3277,18 +3378,14 @@ export default function FinanceDailyPageClient() {
                 </option>
               ))}
             </select>
-            <select
-              value={transactionSourceFilter}
-              onChange={(event) => setTransactionSourceFilter(event.target.value)}
-              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm"
-            >
-              <option value="ALL">Tất cả nguồn tiền</option>
-              {transactionSourceOptions.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+            <MultiSelectFilter
+              values={transactionSourceFilters}
+              options={transactionSourceOptions.map((name) => ({ value: name, label: name }))}
+              allLabel="Tất cả nguồn tiền"
+              selectedLabel={transactionSourceFilters.length ? `${transactionSourceFilters.length} nguồn đã chọn` : "Tất cả nguồn tiền"}
+              onChange={setTransactionSourceFilters}
+              className="h-10"
+            />
             <select
               value={flow}
               onChange={(event) => setFlow(event.target.value as FlowFilter)}
@@ -3356,7 +3453,7 @@ export default function FinanceDailyPageClient() {
                 setFlow("ALL");
                 setStaffFilter("ALL");
                 setTransactionBranchFilter("ALL");
-                setTransactionSourceFilter("ALL");
+                setTransactionSourceFilters([]);
                 setTransactionStatusFilter("ALL");
                 setTransactionTypeFilter("ALL");
                 setTransactionAmountFrom("");

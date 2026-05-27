@@ -56,6 +56,133 @@ import {
   renderOrderTemplateHtml,
 } from "@/lib/print-template-engine";
 
+
+type MultiFilterValue = string[];
+
+type MultiFilterOption = {
+  value: string;
+  label: string;
+};
+
+const ALL_MULTI_FILTER: MultiFilterValue = ["ALL"];
+
+function normalizeMultiFilterValue(values?: string[] | string | null): MultiFilterValue {
+  const list = Array.isArray(values) ? values : [values || "ALL"];
+  const cleaned = Array.from(
+    new Set(list.map((value) => String(value || "").trim()).filter(Boolean)),
+  );
+
+  if (!cleaned.length || cleaned.includes("ALL")) return ["ALL"];
+  return cleaned;
+}
+
+function isAllMultiFilter(values?: string[] | string | null) {
+  return normalizeMultiFilterValue(values).includes("ALL");
+}
+
+function selectedMultiFilterValues(values?: string[] | string | null) {
+  const normalized = normalizeMultiFilterValue(values);
+  return normalized.includes("ALL") ? [] : normalized;
+}
+
+function multiFilterIncludes(values: string[] | string | null | undefined, value: string | null | undefined) {
+  const selected = selectedMultiFilterValues(values);
+  if (!selected.length) return true;
+  return selected.includes(String(value || ""));
+}
+
+function setMultiFilterValue(values: string[] | string | null | undefined, value: string) {
+  const current = normalizeMultiFilterValue(values);
+  if (value === "ALL") return ["ALL"];
+
+  const withoutAll = current.filter((item) => item !== "ALL");
+  const next = withoutAll.includes(value)
+    ? withoutAll.filter((item) => item !== value)
+    : [...withoutAll, value];
+
+  return next.length ? next : ["ALL"];
+}
+
+function multiFilterEquals(a: string[] | string | null | undefined, b: string[] | string | null | undefined) {
+  const aa = normalizeMultiFilterValue(a).slice().sort();
+  const bb = normalizeMultiFilterValue(b).slice().sort();
+  return aa.length === bb.length && aa.every((value, index) => value === bb[index]);
+}
+
+function singleSelectedMultiFilterValue(values: string[] | string | null | undefined) {
+  const selected = selectedMultiFilterValues(values);
+  return selected.length === 1 ? selected[0] : "";
+}
+
+function multiFilterSelectedLabel(values: string[] | string | null | undefined, options: MultiFilterOption[], allLabel: string) {
+  const selected = selectedMultiFilterValues(values);
+  if (!selected.length) return allLabel;
+  if (selected.length === 1) {
+    return options.find((option) => option.value === selected[0])?.label || selected[0];
+  }
+  return `${selected.length} mục đã chọn`;
+}
+
+function MultiFilterSelect({
+  value,
+  onChange,
+  options,
+  allLabel,
+  disabled = false,
+  className = "",
+}: {
+  value: MultiFilterValue;
+  onChange: (value: MultiFilterValue) => void;
+  options: MultiFilterOption[];
+  allLabel: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const normalized = normalizeMultiFilterValue(value);
+  const label = multiFilterSelectedLabel(normalized, options, allLabel);
+
+  return (
+    <details className={`group relative ${className}`}>
+      <summary
+        className={`flex min-h-[46px] cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none marker:hidden ${
+          disabled ? "pointer-events-none opacity-50" : ""
+        }`}
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        <span className="shrink-0 text-neutral-400">⌄</span>
+      </summary>
+
+      <div className="absolute left-0 z-40 mt-2 max-h-[280px] min-w-full overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
+        <label className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50">
+          <input
+            type="checkbox"
+            checked={isAllMultiFilter(normalized)}
+            onChange={() => onChange(["ALL"])}
+          />
+          <span>{allLabel}</span>
+        </label>
+
+        {options.map((option) => {
+          const checked = selectedMultiFilterValues(normalized).includes(option.value);
+          return (
+            <label
+              key={option.value}
+              className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onChange(setMultiFilterValue(normalized, option.value))}
+              />
+              <span className="whitespace-nowrap">{option.label}</span>
+            </label>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 type QuickDateKey = "all" | "today" | "yesterday" | "7d" | "30d" | "month";
 
 type QuickStatusKey =
@@ -3046,16 +3173,12 @@ export default function OrdersPageClient() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
 
-  const [orderFilter, setOrderFilter] = useState<"ALL" | OrderStatus>("ALL");
-  const [appliedOrderFilter, setAppliedOrderFilter] = useState<"ALL" | OrderStatus>("ALL");
-  const [paymentFilter, setPaymentFilter] = useState<
-    "ALL" | OrderPaymentStatus
-  >("ALL");
-  const [appliedPaymentFilter, setAppliedPaymentFilter] = useState<
-    "ALL" | OrderPaymentStatus
-  >("ALL");
-  const [branchFilter, setBranchFilter] = useState<string>("ALL");
-  const [appliedBranchFilter, setAppliedBranchFilter] = useState<string>("ALL");
+  const [orderFilter, setOrderFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedOrderFilter, setAppliedOrderFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [paymentFilter, setPaymentFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedPaymentFilter, setAppliedPaymentFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [branchFilter, setBranchFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedBranchFilter, setAppliedBranchFilter] = useState<MultiFilterValue>(["ALL"]);
   const [dateFrom, setDateFrom] = useState("");
   const [appliedDateFrom, setAppliedDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -3065,32 +3188,32 @@ export default function OrdersPageClient() {
   const [quickStatus, setQuickStatus] = useState<QuickStatusKey>("ALL");
   const [appliedQuickStatus, setAppliedQuickStatus] = useState<QuickStatusKey>("ALL");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [createdByFilter, setCreatedByFilter] = useState("ALL");
-  const [appliedCreatedByFilter, setAppliedCreatedByFilter] = useState("ALL");
-  const [assignedStaffFilter, setAssignedStaffFilter] = useState("ALL");
-  const [appliedAssignedStaffFilter, setAppliedAssignedStaffFilter] = useState("ALL");
-  const [fulfillmentFilter, setFulfillmentFilter] = useState("ALL");
-  const [appliedFulfillmentFilter, setAppliedFulfillmentFilter] = useState("ALL");
-  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState("ALL");
-  const [appliedDeliveryStatusFilter, setAppliedDeliveryStatusFilter] = useState("ALL");
-  const [salesChannelFilter, setSalesChannelFilter] = useState("ALL");
-  const [appliedSalesChannelFilter, setAppliedSalesChannelFilter] = useState("ALL");
-  const [shippingModeFilter, setShippingModeFilter] = useState("ALL");
-  const [appliedShippingModeFilter, setAppliedShippingModeFilter] = useState("ALL");
-  const [shippingPartnerFilter, setShippingPartnerFilter] = useState("ALL");
-  const [appliedShippingPartnerFilter, setAppliedShippingPartnerFilter] = useState("ALL");
-  const [trackingFilter, setTrackingFilter] = useState("ALL");
-  const [appliedTrackingFilter, setAppliedTrackingFilter] = useState("ALL");
-  const [printStatusFilter, setPrintStatusFilter] = useState("ALL");
-  const [appliedPrintStatusFilter, setAppliedPrintStatusFilter] = useState("ALL");
-  const [codFilter, setCodFilter] = useState("ALL");
-  const [appliedCodFilter, setAppliedCodFilter] = useState("ALL");
-  const [codReconciliationFilter, setCodReconciliationFilter] = useState("ALL");
-  const [appliedCodReconciliationFilter, setAppliedCodReconciliationFilter] = useState("ALL");
-  const [amountDueFilter, setAmountDueFilter] = useState("ALL");
-  const [appliedAmountDueFilter, setAppliedAmountDueFilter] = useState("ALL");
-  const [itemCountFilter, setItemCountFilter] = useState("ALL");
-  const [appliedItemCountFilter, setAppliedItemCountFilter] = useState("ALL");
+  const [createdByFilter, setCreatedByFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedCreatedByFilter, setAppliedCreatedByFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [assignedStaffFilter, setAssignedStaffFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedAssignedStaffFilter, setAppliedAssignedStaffFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [fulfillmentFilter, setFulfillmentFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedFulfillmentFilter, setAppliedFulfillmentFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedDeliveryStatusFilter, setAppliedDeliveryStatusFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [salesChannelFilter, setSalesChannelFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedSalesChannelFilter, setAppliedSalesChannelFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [shippingModeFilter, setShippingModeFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedShippingModeFilter, setAppliedShippingModeFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [shippingPartnerFilter, setShippingPartnerFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedShippingPartnerFilter, setAppliedShippingPartnerFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [trackingFilter, setTrackingFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedTrackingFilter, setAppliedTrackingFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [printStatusFilter, setPrintStatusFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedPrintStatusFilter, setAppliedPrintStatusFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [codFilter, setCodFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedCodFilter, setAppliedCodFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [codReconciliationFilter, setCodReconciliationFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedCodReconciliationFilter, setAppliedCodReconciliationFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [amountDueFilter, setAmountDueFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedAmountDueFilter, setAppliedAmountDueFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [itemCountFilter, setItemCountFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [appliedItemCountFilter, setAppliedItemCountFilter] = useState<MultiFilterValue>(["ALL"]);
   const [freeTextFilter, setFreeTextFilter] = useState("");
   const [appliedFreeTextFilter, setAppliedFreeTextFilter] = useState("");
   const [smartSearchInput, setSmartSearchInput] = useState("");
@@ -3171,10 +3294,13 @@ export default function OrdersPageClient() {
   };
 
   const assignableStaffList = useMemo(() => {
-    if (isOwnerOrAdminUser(currentUser) || branchFilter === "ALL")
+    if (isOwnerOrAdminUser(currentUser) || isAllMultiFilter(branchFilter)) {
       return staffList;
+    }
+
+    const selectedBranches = selectedMultiFilterValues(branchFilter);
     return staffList.filter(
-      (staff) => !staff.branchId || staff.branchId === branchFilter,
+      (staff) => !staff.branchId || selectedBranches.includes(staff.branchId),
     );
   }, [staffList, currentUser, branchFilter]);
 
@@ -3361,8 +3487,8 @@ export default function OrdersPageClient() {
       storedUser?.role !== "owner" &&
       storedUser?.branchId
     ) {
-      setBranchFilter(storedUser.branchId);
-      setAppliedBranchFilter(storedUser.branchId);
+      setBranchFilter([storedUser.branchId]);
+      setAppliedBranchFilter([storedUser.branchId]);
     }
 
     void loadBranches();
@@ -3490,8 +3616,16 @@ export default function OrdersPageClient() {
       const shouldTryClientSearchFallback = shouldFallbackToClientOrderSearch(serverKeyword);
 
       const hasSmartSearch = Boolean(String(smartSearch || "").trim());
-      const requestPageSize = hasSmartSearch ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE) : pageSize;
-      const requestPage = hasSmartSearch ? 1 : page;
+      const hasMultiServerFilter = [
+        appliedBranchFilter,
+        appliedOrderFilter,
+        appliedPaymentFilter,
+      ].some((filterValue) => selectedMultiFilterValues(filterValue).length > 1);
+      const shouldLoadWideForClientFilters = hasSmartSearch || hasMultiServerFilter;
+      const requestPageSize = shouldLoadWideForClientFilters
+        ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE)
+        : pageSize;
+      const requestPage = shouldLoadWideForClientFilters ? 1 : page;
 
       const buildParams = (
         targetPage: number,
@@ -3510,14 +3644,18 @@ export default function OrdersPageClient() {
           if (currentUser?.code) params.set("createdByStaffCode", currentUser.code);
         }
 
+        const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
+        const selectedOrderStatuses = selectedMultiFilterValues(appliedOrderFilter);
+        const selectedPaymentStatuses = selectedMultiFilterValues(appliedPaymentFilter);
+
         if (!canViewAllOrders && currentUser?.branchId) {
           params.set("branchId", currentUser.branchId);
-        } else if (appliedBranchFilter !== "ALL") {
-          params.set("branchId", appliedBranchFilter);
+        } else if (selectedBranchIds.length === 1) {
+          params.set("branchId", selectedBranchIds[0]);
         }
 
-        if (appliedOrderFilter !== "ALL") params.set("orderStatus", appliedOrderFilter);
-        if (appliedPaymentFilter !== "ALL") params.set("paymentStatus", appliedPaymentFilter);
+        if (selectedOrderStatuses.length === 1) params.set("orderStatus", selectedOrderStatuses[0]);
+        if (selectedPaymentStatuses.length === 1) params.set("paymentStatus", selectedPaymentStatuses[0]);
         if (appliedDateFrom) params.set("dateFrom", appliedDateFrom);
         if (appliedDateTo) params.set("dateTo", appliedDateTo);
 
@@ -3750,14 +3888,11 @@ export default function OrdersPageClient() {
     );
   }, [normalizedOrders]);
 
-  const branchOptions = useMemo(() => {
-    return [
-      { value: "ALL", label: "Tất cả chi nhánh" },
-      ...branches.map((branch) => ({
-        value: branch.id,
-        label: branch.name,
-      })),
-    ];
+  const branchOptions = useMemo<MultiFilterOption[]>(() => {
+    return branches.map((branch) => ({
+      value: branch.id,
+      label: branch.name,
+    }));
   }, [branches]);
 
   const uniqueOptions = (values: Array<string | null | undefined>) => {
@@ -3832,40 +3967,43 @@ export default function OrdersPageClient() {
       appliedTrackingFilter,
       appliedPrintStatusFilter,
       appliedCodFilter,
+      appliedCodReconciliationFilter,
       appliedAmountDueFilter,
       appliedItemCountFilter,
-    ].filter((value) => value !== "ALL").length +
+    ].filter((value) => !isAllMultiFilter(value)).length +
     (appliedFreeTextFilter.trim() ? 1 : 0) +
     (smartSearch.trim() ? 1 : 0);
 
   const clearAdvancedFilters = () => {
-    setCreatedByFilter("ALL");
-    setAssignedStaffFilter("ALL");
-    setFulfillmentFilter("ALL");
-    setDeliveryStatusFilter("ALL");
-    setSalesChannelFilter("ALL");
-    setShippingModeFilter("ALL");
-    setShippingPartnerFilter("ALL");
-    setTrackingFilter("ALL");
-    setPrintStatusFilter("ALL");
-    setCodFilter("ALL");
-    setAmountDueFilter("ALL");
-    setItemCountFilter("ALL");
+    setCreatedByFilter(["ALL"]);
+    setAssignedStaffFilter(["ALL"]);
+    setFulfillmentFilter(["ALL"]);
+    setDeliveryStatusFilter(["ALL"]);
+    setSalesChannelFilter(["ALL"]);
+    setShippingModeFilter(["ALL"]);
+    setShippingPartnerFilter(["ALL"]);
+    setTrackingFilter(["ALL"]);
+    setPrintStatusFilter(["ALL"]);
+    setCodFilter(["ALL"]);
+    setCodReconciliationFilter(["ALL"]);
+    setAmountDueFilter(["ALL"]);
+    setItemCountFilter(["ALL"]);
     setFreeTextFilter("");
     setSmartSearchInput("");
 
-    setAppliedCreatedByFilter("ALL");
-    setAppliedAssignedStaffFilter("ALL");
-    setAppliedFulfillmentFilter("ALL");
-    setAppliedDeliveryStatusFilter("ALL");
-    setAppliedSalesChannelFilter("ALL");
-    setAppliedShippingModeFilter("ALL");
-    setAppliedShippingPartnerFilter("ALL");
-    setAppliedTrackingFilter("ALL");
-    setAppliedPrintStatusFilter("ALL");
-    setAppliedCodFilter("ALL");
-    setAppliedAmountDueFilter("ALL");
-    setAppliedItemCountFilter("ALL");
+    setAppliedCreatedByFilter(["ALL"]);
+    setAppliedAssignedStaffFilter(["ALL"]);
+    setAppliedFulfillmentFilter(["ALL"]);
+    setAppliedDeliveryStatusFilter(["ALL"]);
+    setAppliedSalesChannelFilter(["ALL"]);
+    setAppliedShippingModeFilter(["ALL"]);
+    setAppliedShippingPartnerFilter(["ALL"]);
+    setAppliedTrackingFilter(["ALL"]);
+    setAppliedPrintStatusFilter(["ALL"]);
+    setAppliedCodFilter(["ALL"]);
+    setAppliedCodReconciliationFilter(["ALL"]);
+    setAppliedAmountDueFilter(["ALL"]);
+    setAppliedItemCountFilter(["ALL"]);
     setAppliedFreeTextFilter("");
     setSmartSearch("");
     setPage(1);
@@ -3938,26 +4076,26 @@ export default function OrdersPageClient() {
 
   const hasPendingFilterChanges =
     query.trim() !== submittedQuery ||
-    branchFilter !== appliedBranchFilter ||
-    orderFilter !== appliedOrderFilter ||
-    paymentFilter !== appliedPaymentFilter ||
+    !multiFilterEquals(branchFilter, appliedBranchFilter) ||
+    !multiFilterEquals(orderFilter, appliedOrderFilter) ||
+    !multiFilterEquals(paymentFilter, appliedPaymentFilter) ||
     dateFrom !== appliedDateFrom ||
     dateTo !== appliedDateTo ||
     quickDate !== appliedQuickDate ||
     quickStatus !== appliedQuickStatus ||
-    createdByFilter !== appliedCreatedByFilter ||
-    assignedStaffFilter !== appliedAssignedStaffFilter ||
-    fulfillmentFilter !== appliedFulfillmentFilter ||
-    deliveryStatusFilter !== appliedDeliveryStatusFilter ||
-    salesChannelFilter !== appliedSalesChannelFilter ||
-    shippingModeFilter !== appliedShippingModeFilter ||
-    shippingPartnerFilter !== appliedShippingPartnerFilter ||
-    trackingFilter !== appliedTrackingFilter ||
-    printStatusFilter !== appliedPrintStatusFilter ||
-    codFilter !== appliedCodFilter ||
-    codReconciliationFilter !== appliedCodReconciliationFilter ||
-    amountDueFilter !== appliedAmountDueFilter ||
-    itemCountFilter !== appliedItemCountFilter ||
+    !multiFilterEquals(createdByFilter, appliedCreatedByFilter) ||
+    !multiFilterEquals(assignedStaffFilter, appliedAssignedStaffFilter) ||
+    !multiFilterEquals(fulfillmentFilter, appliedFulfillmentFilter) ||
+    !multiFilterEquals(deliveryStatusFilter, appliedDeliveryStatusFilter) ||
+    !multiFilterEquals(salesChannelFilter, appliedSalesChannelFilter) ||
+    !multiFilterEquals(shippingModeFilter, appliedShippingModeFilter) ||
+    !multiFilterEquals(shippingPartnerFilter, appliedShippingPartnerFilter) ||
+    !multiFilterEquals(trackingFilter, appliedTrackingFilter) ||
+    !multiFilterEquals(printStatusFilter, appliedPrintStatusFilter) ||
+    !multiFilterEquals(codFilter, appliedCodFilter) ||
+    !multiFilterEquals(codReconciliationFilter, appliedCodReconciliationFilter) ||
+    !multiFilterEquals(amountDueFilter, appliedAmountDueFilter) ||
+    !multiFilterEquals(itemCountFilter, appliedItemCountFilter) ||
     freeTextFilter.trim() !== appliedFreeTextFilter ||
     smartSearchInput.trim() !== smartSearch;
 
@@ -3994,110 +4132,117 @@ export default function OrdersPageClient() {
       });
     }
 
-    if (appliedPaymentFilter !== "ALL") {
-      result = result.filter((o) => {
-        if (appliedPaymentFilter === "PENDING_COD") {
-          return shouldShowPendingCodReconciliation(o);
-        }
-
-        return String(o.paymentStatus || "") === appliedPaymentFilter;
-      });
+    if (!isAllMultiFilter(appliedBranchFilter)) {
+      const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
+      result = result.filter((o) => selectedBranchIds.includes(String(o.branchId || "")));
     }
 
-    if (appliedCreatedByFilter !== "ALL") {
-      result = result.filter((o) => o._createdByName === appliedCreatedByFilter);
+    if (!isAllMultiFilter(appliedOrderFilter)) {
+      const selectedStatuses = selectedMultiFilterValues(appliedOrderFilter);
+      result = result.filter((o) => selectedStatuses.includes(String(getDisplayOrderStatus(o) || "")));
     }
 
-    if (appliedAssignedStaffFilter !== "ALL") {
+    if (!isAllMultiFilter(appliedPaymentFilter)) {
+      const selectedPayments = selectedMultiFilterValues(appliedPaymentFilter);
+      result = result.filter((o) =>
+        selectedPayments.some((payment) => {
+          if (payment === "PENDING_COD") return shouldShowPendingCodReconciliation(o);
+          return String(o.paymentStatus || "") === payment;
+        }),
+      );
+    }
+
+    if (!isAllMultiFilter(appliedCreatedByFilter)) {
+      result = result.filter((o) => multiFilterIncludes(appliedCreatedByFilter, o._createdByName));
+    }
+
+    if (!isAllMultiFilter(appliedAssignedStaffFilter)) {
+      const selectedAssignedStaff = selectedMultiFilterValues(appliedAssignedStaffFilter);
       result = result.filter((o) => {
         const assignedRawName = String(o._assignedStaffRawName || "").trim();
         const assignedDisplayName = String(o._assignedStaffName || "").trim();
-        if (appliedAssignedStaffFilter === "UNASSIGNED") return !assignedRawName;
-        return assignedDisplayName === appliedAssignedStaffFilter;
-      });
-    }
-
-    if (appliedFulfillmentFilter !== "ALL") {
-      result = result.filter(
-        (o) => String(o.fulfillmentStatus || "") === appliedFulfillmentFilter,
-      );
-    }
-
-    if (appliedDeliveryStatusFilter !== "ALL") {
-      result = result.filter(
-        (o) => shipmentDisplayStatusLabel(o) === appliedDeliveryStatusFilter,
-      );
-    }
-
-    if (appliedSalesChannelFilter !== "ALL") {
-      result = result.filter(
-        (o) => String(o.salesChannel || "") === appliedSalesChannelFilter,
-      );
-    }
-
-    if (appliedShippingModeFilter !== "ALL") {
-      result = result.filter(
-        (o) => o._meta.shippingMode === appliedShippingModeFilter,
-      );
-    }
-
-    if (appliedShippingPartnerFilter !== "ALL") {
-      result = result.filter(
-        (o) =>
-          (o.shipment?.carrier || o._meta.shippingPartner || "") ===
-          appliedShippingPartnerFilter,
-      );
-    }
-
-    if (appliedTrackingFilter !== "ALL") {
-      result = result.filter((o) => {
-        const hasTracking = Boolean(
-          String(o.shipment?.trackingCode || "").trim(),
+        return selectedAssignedStaff.some((staff) =>
+          staff === "UNASSIGNED" ? !assignedRawName : assignedDisplayName === staff,
         );
-        return appliedTrackingFilter === "HAS" ? hasTracking : !hasTracking;
       });
     }
 
-    if (appliedPrintStatusFilter !== "ALL") {
+    if (!isAllMultiFilter(appliedFulfillmentFilter)) {
+      result = result.filter((o) => multiFilterIncludes(appliedFulfillmentFilter, String(o.fulfillmentStatus || "")));
+    }
+
+    if (!isAllMultiFilter(appliedDeliveryStatusFilter)) {
+      result = result.filter((o) => multiFilterIncludes(appliedDeliveryStatusFilter, shipmentDisplayStatusLabel(o)));
+    }
+
+    if (!isAllMultiFilter(appliedSalesChannelFilter)) {
+      result = result.filter((o) => multiFilterIncludes(appliedSalesChannelFilter, String(o.salesChannel || "")));
+    }
+
+    if (!isAllMultiFilter(appliedShippingModeFilter)) {
+      result = result.filter((o) => multiFilterIncludes(appliedShippingModeFilter, o._meta.shippingMode));
+    }
+
+    if (!isAllMultiFilter(appliedShippingPartnerFilter)) {
+      result = result.filter((o) =>
+        multiFilterIncludes(appliedShippingPartnerFilter, o.shipment?.carrier || o._meta.shippingPartner || ""),
+      );
+    }
+
+    if (!isAllMultiFilter(appliedTrackingFilter)) {
+      const selectedTracking = selectedMultiFilterValues(appliedTrackingFilter);
+      result = result.filter((o) => {
+        const hasTracking = Boolean(String(o.shipment?.trackingCode || "").trim());
+        return selectedTracking.some((value) => (value === "HAS" ? hasTracking : !hasTracking));
+      });
+    }
+
+    if (!isAllMultiFilter(appliedPrintStatusFilter)) {
+      const selectedPrintStatuses = selectedMultiFilterValues(appliedPrintStatusFilter);
       result = result.filter((o) => {
         const printed = getOrderPrintCount(o.id) > 0;
-        return appliedPrintStatusFilter === "PRINTED" ? printed : !printed;
+        return selectedPrintStatuses.some((value) => (value === "PRINTED" ? printed : !printed));
       });
     }
 
-    if (appliedCodFilter !== "ALL") {
+    if (!isAllMultiFilter(appliedCodFilter)) {
+      const selectedCodStatuses = selectedMultiFilterValues(appliedCodFilter);
       result = result.filter((o) => {
         const hasCod = Number(o._codAmount || 0) > 0;
-        return appliedCodFilter === "HAS_COD" ? hasCod : !hasCod;
+        return selectedCodStatuses.some((value) => (value === "HAS_COD" ? hasCod : !hasCod));
       });
     }
 
-    if (appliedCodReconciliationFilter !== "ALL") {
+    if (!isAllMultiFilter(appliedCodReconciliationFilter)) {
+      const selectedCodReconciliation = selectedMultiFilterValues(appliedCodReconciliationFilter);
       result = result.filter((o) => {
         const status = normalizedCodReconciliationStatusFromOrder(o);
         const done = isOrderCodReconciled(o);
 
-        if (appliedCodReconciliationFilter === "RECONCILED") return done;
-        if (appliedCodReconciliationFilter === "NOT_RECONCILED") return !done;
-        if (appliedCodReconciliationFilter === "MISMATCH") return status === "MISMATCH";
-        if (appliedCodReconciliationFilter === "NOT_FOUND") return status === "NOT_FOUND";
-        if (appliedCodReconciliationFilter === "SAVED") return status === "SAVED";
-
-        return true;
+        return selectedCodReconciliation.some((value) => {
+          if (value === "RECONCILED") return done;
+          if (value === "NOT_RECONCILED") return !done;
+          if (value === "MISMATCH") return status === "MISMATCH";
+          if (value === "NOT_FOUND") return status === "NOT_FOUND";
+          if (value === "SAVED") return status === "SAVED";
+          return true;
+        });
       });
     }
 
-    if (appliedAmountDueFilter !== "ALL") {
+    if (!isAllMultiFilter(appliedAmountDueFilter)) {
+      const selectedAmountDue = selectedMultiFilterValues(appliedAmountDueFilter);
       result = result.filter((o) => {
         const hasDue = Number(o._amountDue || 0) > 0;
-        return appliedAmountDueFilter === "HAS_DUE" ? hasDue : !hasDue;
+        return selectedAmountDue.some((value) => (value === "HAS_DUE" ? hasDue : !hasDue));
       });
     }
 
-    if (appliedItemCountFilter !== "ALL") {
+    if (!isAllMultiFilter(appliedItemCountFilter)) {
+      const selectedItemCount = selectedMultiFilterValues(appliedItemCountFilter);
       result = result.filter((o) => {
         const itemCount = getOrderItemCount(o);
-        return appliedItemCountFilter === "HAS_ITEMS" ? itemCount > 0 : itemCount <= 0;
+        return selectedItemCount.some((value) => (value === "HAS_ITEMS" ? itemCount > 0 : itemCount <= 0));
       });
     }
 
@@ -4947,22 +5092,22 @@ export default function OrdersPageClient() {
 
     switch (key) {
       case "branch":
-        setBranchFilter(String(value));
+        setBranchFilter([String(value)]);
         break;
       case "createdBy":
-        setCreatedByFilter(safeValue);
+        setCreatedByFilter([safeValue]);
         break;
       case "salesChannel":
-        setSalesChannelFilter(safeValue);
+        setSalesChannelFilter([safeValue]);
         break;
       case "shippingMode":
-        setShippingModeFilter(safeValue);
+        setShippingModeFilter([safeValue]);
         break;
       case "shippingPartner":
-        setShippingPartnerFilter(safeValue);
+        setShippingPartnerFilter([safeValue]);
         break;
       case "fulfillmentStatus":
-        setFulfillmentFilter(safeValue);
+        setFulfillmentFilter([safeValue]);
         break;
       default:
         setFreeTextFilter(safeValue);
@@ -5157,7 +5302,7 @@ export default function OrdersPageClient() {
             <button
               type="button"
               onClick={() => {
-                setBranchFilter(order.branchId || "ALL");
+                setBranchFilter(order.branchId ? [order.branchId] : ["ALL"]);
                 setShowAdvancedFilters(true);
               }}
               className={filterButtonClass}
@@ -5176,7 +5321,7 @@ export default function OrdersPageClient() {
             <button
               type="button"
               onClick={() => {
-                setCreatedByFilter(order._createdByName);
+                setCreatedByFilter(order._createdByName ? [order._createdByName] : ["ALL"]);
                 setShowAdvancedFilters(true);
               }}
               className={filterButtonClass}
@@ -5595,38 +5740,33 @@ export default function OrdersPageClient() {
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <select
-              className="min-w-0 rounded-2xl border border-neutral-300 px-3 py-3 text-xs outline-none"
+            <MultiFilterSelect
+              className="min-w-0"
               value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
+              onChange={setBranchFilter}
+              options={branchOptions}
+              allLabel="Tất cả chi nhánh"
               disabled={
                 !!currentUser?.branchId &&
                 currentUser?.role !== "admin" &&
                 currentUser?.role !== "owner"
               }
-            >
-              {branchOptions.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
+            />
 
-            <select
-              className="min-w-0 rounded-2xl border border-neutral-300 px-3 py-3 text-xs outline-none"
+            <MultiFilterSelect
+              className="min-w-0"
               value={paymentFilter}
-              onChange={(e) =>
-                setPaymentFilter(e.target.value as "ALL" | OrderPaymentStatus)
-              }
-            >
-              <option value="ALL">Tất cả thanh toán</option>
-              <option value="UNPAID">Chưa thanh toán</option>
-              <option value="PARTIAL">Một phần</option>
-              <option value="PAID">Đã thanh toán</option>
-              <option value="PENDING_COD">Chờ đối soát COD</option>
-              <option value="REFUNDED">Hoàn tiền</option>
-              <option value="FAILED">Lỗi thanh toán</option>
-            </select>
+              onChange={setPaymentFilter}
+              allLabel="Tất cả thanh toán"
+              options={[
+                { value: "UNPAID", label: "Chưa thanh toán" },
+                { value: "PARTIAL", label: "Một phần" },
+                { value: "PAID", label: "Đã thanh toán" },
+                { value: "PENDING_COD", label: "Chờ đối soát COD" },
+                { value: "REFUNDED", label: "Hoàn tiền" },
+                { value: "FAILED", label: "Lỗi thanh toán" },
+              ]}
+            />
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -5963,52 +6103,38 @@ export default function OrdersPageClient() {
                 </Button>
               ) : null}
 
-              <select
-                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+              <MultiFilterSelect
                 value={branchFilter}
-                onChange={(e) => setBranchFilter(e.target.value)}
+                onChange={setBranchFilter}
+                options={branchOptions}
+                allLabel="Tất cả chi nhánh"
                 disabled={
                   !!currentUser?.branchId &&
                   currentUser?.role !== "admin" &&
                   currentUser?.role !== "owner"
                 }
-              >
-                {branchOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+              />
 
-              <select
-                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+              <MultiFilterSelect
                 value={orderFilter}
-                onChange={(e) =>
-                  setOrderFilter(e.target.value as "ALL" | OrderStatus)
-                }
-              >
-                {ORDER_STATUS_FILTER_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setOrderFilter}
+                allLabel="Tất cả trạng thái đơn"
+                options={ORDER_STATUS_FILTER_OPTIONS.filter((item) => item.value !== "ALL")}
+              />
 
-              <select
-                className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
+              <MultiFilterSelect
                 value={paymentFilter}
-                onChange={(e) =>
-                  setPaymentFilter(e.target.value as "ALL" | OrderPaymentStatus)
-                }
-              >
-                <option value="ALL">Tất cả thanh toán</option>
-                <option value="UNPAID">Chưa thanh toán</option>
-                <option value="PARTIAL">Thanh toán một phần</option>
-                <option value="PAID">Đã thanh toán</option>
-                <option value="PENDING_COD">Chờ đối soát COD</option>
-                <option value="REFUNDED">Đã hoàn tiền</option>
-                <option value="FAILED">Thanh toán lỗi</option>
-              </select>
+                onChange={setPaymentFilter}
+                allLabel="Tất cả thanh toán"
+                options={[
+                  { value: "UNPAID", label: "Chưa thanh toán" },
+                  { value: "PARTIAL", label: "Thanh toán một phần" },
+                  { value: "PAID", label: "Đã thanh toán" },
+                  { value: "PENDING_COD", label: "Chờ đối soát COD" },
+                  { value: "REFUNDED", label: "Đã hoàn tiền" },
+                  { value: "FAILED", label: "Thanh toán lỗi" },
+                ]}
+              />
 
               <Button onClick={() => void loadOrders()} size="md">
                 Làm mới
@@ -6230,174 +6356,133 @@ export default function OrdersPageClient() {
                     ) : null}
                   </div>
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={orderFilter}
-                    onChange={(e) =>
-                      setOrderFilter(e.target.value as "ALL" | OrderStatus)
-                    }
-                  >
-                    {ORDER_STATUS_FILTER_OPTIONS.map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setOrderFilter}
+                    allLabel="Tất cả trạng thái đơn"
+                    options={ORDER_STATUS_FILTER_OPTIONS.filter((item) => item.value !== "ALL")}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={createdByFilter}
-                    onChange={(e) => setCreatedByFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả nhân viên tạo đơn</option>
-                    {createdByOptions.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setCreatedByFilter}
+                    allLabel="Tất cả nhân viên tạo đơn"
+                    options={createdByOptions.map((name) => ({ value: name, label: name }))}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={assignedStaffFilter}
-                    onChange={(e) => setAssignedStaffFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả nhân viên phụ trách</option>
-                    <option value="UNASSIGNED">Chưa gán nhân viên</option>
-                    {assignedStaffOptions.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setAssignedStaffFilter}
+                    allLabel="Tất cả nhân viên phụ trách"
+                    options={[
+                      { value: "UNASSIGNED", label: "Chưa gán nhân viên" },
+                      ...assignedStaffOptions.map((name) => ({ value: name, label: name })),
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={fulfillmentFilter}
-                    onChange={(e) => setFulfillmentFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả giao vận</option>
-                    <option value="UNFULFILLED">Chưa giao</option>
-                    <option value="PROCESSING">Đang chuẩn bị</option>
-                    <option value="PARTIAL">Một phần</option>
-                    <option value="FULFILLED">Đã giao vận / hoàn tất</option>
-                    <option value="RETURNED">Trả hàng</option>
-                  </select>
+                    onChange={setFulfillmentFilter}
+                    allLabel="Tất cả giao vận"
+                    options={[
+                      { value: "UNFULFILLED", label: "Chưa giao" },
+                      { value: "PROCESSING", label: "Đang chuẩn bị" },
+                      { value: "PARTIAL", label: "Một phần" },
+                      { value: "FULFILLED", label: "Đã giao vận / hoàn tất" },
+                      { value: "RETURNED", label: "Trả hàng" },
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={deliveryStatusFilter}
-                    onChange={(e) => setDeliveryStatusFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả trạng thái giao hàng / vận đơn</option>
-                    {deliveryStatusOptions.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setDeliveryStatusFilter}
+                    allLabel="Tất cả trạng thái giao hàng / vận đơn"
+                    options={deliveryStatusOptions.map((status) => ({ value: status, label: status }))}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={salesChannelFilter}
-                    onChange={(e) => setSalesChannelFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả kênh bán</option>
-                    {salesChannelOptions.map((channel) => (
-                      <option key={channel} value={channel}>
-                        {channel}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setSalesChannelFilter}
+                    allLabel="Tất cả kênh bán"
+                    options={salesChannelOptions.map((channel) => ({ value: channel, label: channel }))}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={shippingModeFilter}
-                    onChange={(e) => setShippingModeFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả cách giao</option>
-                    {shippingModeOptions.map((mode) => (
-                      <option key={mode} value={mode}>
-                        {mode}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setShippingModeFilter}
+                    allLabel="Tất cả cách giao"
+                    options={shippingModeOptions.map((mode) => ({ value: mode, label: mode }))}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={shippingPartnerFilter}
-                    onChange={(e) => setShippingPartnerFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả đơn vị vận chuyển</option>
-                    {shippingPartnerOptions.map((partner) => (
-                      <option key={partner} value={partner}>
-                        {partner}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setShippingPartnerFilter}
+                    allLabel="Tất cả đơn vị vận chuyển"
+                    options={shippingPartnerOptions.map((partner) => ({ value: partner, label: partner }))}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={trackingFilter}
-                    onChange={(e) => setTrackingFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả mã vận đơn</option>
-                    <option value="HAS">Có mã vận đơn</option>
-                    <option value="NONE">Chưa có mã vận đơn</option>
-                  </select>
+                    onChange={setTrackingFilter}
+                    allLabel="Tất cả mã vận đơn"
+                    options={[
+                      { value: "HAS", label: "Có mã vận đơn" },
+                      { value: "NONE", label: "Chưa có mã vận đơn" },
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={printStatusFilter}
-                    onChange={(e) => setPrintStatusFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả trạng thái in tem</option>
-                    <option value="PRINTED">Đã in tem</option>
-                    <option value="NOT_PRINTED">Chưa in tem</option>
-                  </select>
+                    onChange={setPrintStatusFilter}
+                    allLabel="Tất cả trạng thái in tem"
+                    options={[
+                      { value: "PRINTED", label: "Đã in tem" },
+                      { value: "NOT_PRINTED", label: "Chưa in tem" },
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={codFilter}
-                    onChange={(e) => setCodFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả COD</option>
-                    <option value="HAS_COD">Có thu hộ COD</option>
-                    <option value="NO_COD">Không COD</option>
-                  </select>
+                    onChange={setCodFilter}
+                    allLabel="Tất cả COD"
+                    options={[
+                      { value: "HAS_COD", label: "Có thu hộ COD" },
+                      { value: "NO_COD", label: "Không COD" },
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={codReconciliationFilter}
-                    onChange={(e) => setCodReconciliationFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả đối soát COD</option>
-                    <option value="RECONCILED">Đã đối soát COD</option>
-                    <option value="NOT_RECONCILED">Chưa đối soát COD</option>
-                    <option value="MISMATCH">Lệch đối soát</option>
-                    <option value="NOT_FOUND">Không tìm thấy trong phiên GHN</option>
-                    <option value="SAVED">Đã lưu đối soát</option>
-                  </select>
+                    onChange={setCodReconciliationFilter}
+                    allLabel="Tất cả đối soát COD"
+                    options={[
+                      { value: "RECONCILED", label: "Đã đối soát COD" },
+                      { value: "NOT_RECONCILED", label: "Chưa đối soát COD" },
+                      { value: "MISMATCH", label: "Lệch đối soát" },
+                      { value: "NOT_FOUND", label: "Không tìm thấy trong phiên GHN" },
+                      { value: "SAVED", label: "Đã lưu đối soát" },
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={amountDueFilter}
-                    onChange={(e) => setAmountDueFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả công nợ khách</option>
-                    <option value="HAS_DUE">Còn phải thu</option>
-                    <option value="NO_DUE">Không còn phải thu</option>
-                  </select>
+                    onChange={setAmountDueFilter}
+                    allLabel="Tất cả công nợ khách"
+                    options={[
+                      { value: "HAS_DUE", label: "Còn phải thu" },
+                      { value: "NO_DUE", label: "Không còn phải thu" },
+                    ]}
+                  />
 
-                  <select
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
+                  <MultiFilterSelect
                     value={itemCountFilter}
-                    onChange={(e) => setItemCountFilter(e.target.value)}
-                  >
-                    <option value="ALL">Tất cả dòng sản phẩm</option>
-                    <option value="HAS_ITEMS">Có sản phẩm</option>
-                    <option value="NO_ITEMS">Thiếu sản phẩm</option>
-                  </select>
+                    onChange={setItemCountFilter}
+                    allLabel="Tất cả dòng sản phẩm"
+                    options={[
+                      { value: "HAS_ITEMS", label: "Có sản phẩm" },
+                      { value: "NO_ITEMS", label: "Thiếu sản phẩm" },
+                    ]}
+                  />
                 </div>
 
                 {smartSearch.trim() ? (

@@ -25,6 +25,8 @@ type Metrics = {
   comments?: number;
   costPerMessage?: number;
   costPerConversation?: number;
+  costPerResult?: number;
+  averagePurchaseValue?: number;
 };
 
 type ProductAttribution = {
@@ -440,6 +442,40 @@ function signalScore(row: BrainRow) {
   return Math.max(0, Math.min(99, Math.round(score)));
 }
 
+
+function metricValue(row: BrainRow, field: string): number {
+  const m: any = row.metrics || {};
+  const a: any = productAttr(row);
+
+  if (field === "spend") return n(m.spend);
+  if (field === "reach") return n(m.reach);
+  if (field === "impressions") return n(m.impressions);
+  if (field === "clicks") return n(m.clicks);
+  if (field === "ctr") return n(m.ctr);
+  if (field === "cpc") return n(m.cpc);
+  if (field === "messages") return n(m.messages);
+  if (field === "conversationStarts") return n(m.conversationStarts);
+  if (field === "costPerConversation") return n(m.costPerConversation);
+  if (field === "comments") return n(m.comments);
+  if (field === "orders") return n(a.familyOrderCount || a.orderCount);
+  if (field === "revenue") return n(a.familyRevenue || a.revenue);
+  if (field === "realRoas") return n(a.familyRoasEstimate || a.realRoasEstimate);
+  return 0;
+}
+
+function passMetricFilter(row: BrainRow, field: string, op: string, rawValue: string): boolean {
+  if (!rawValue.trim()) return true;
+  const left = metricValue(row, field);
+  const right = Number(String(rawValue).replace(/[^\d.-]/g, "")) || 0;
+
+  if (op === "gte") return left >= right;
+  if (op === "lte") return left <= right;
+  if (op === "eq") return left === right;
+  if (op === "gt") return left > right;
+  if (op === "lt") return left < right;
+  return true;
+}
+
 function filterRow(row: BrainRow, filter: FilterKey) {
   const m = row.metrics || {};
   const a = productAttr(row);
@@ -512,6 +548,8 @@ function Toolbar({
   onSync,
   syncing,
   onReload,
+  fullscreen,
+  onToggleFullscreen,
 }: {
   level: LevelKey;
   setLevel: (v: LevelKey) => void;
@@ -524,6 +562,8 @@ function Toolbar({
   onSync: () => void;
   syncing: boolean;
   onReload: () => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
 }) {
   return (
     <div className="sticky top-0 z-30 border-b border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur">
@@ -562,6 +602,9 @@ function Toolbar({
               placeholder="Tìm tên, ID, SKU, campaign..."
               className="h-10 flex-1 rounded-lg border border-neutral-200 bg-neutral-50 px-4 text-sm font-medium outline-none focus:border-neutral-950"
             />
+            <button onClick={onToggleFullscreen} className="h-10 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-semibold">
+              {fullscreen ? "Thu nhỏ bảng" : "Phóng to bảng"}
+            </button>
             <button onClick={onReload} className="h-10 rounded-lg border border-neutral-200 bg-white px-4 text-sm font-semibold">
               Tải lại
             </button>
@@ -614,7 +657,7 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
         <div>
           <h2 className="text-lg font-semibold">Bảng quản lý {LEVEL_OPTIONS.find((x) => x.id === level)?.noun}</h2>
           <p className="text-xs font-semibold text-neutral-500">
-            Bảng là trung tâm vận hành. Tab Chiến dịch/Nhóm quảng cáo được gộp từ ads con. Dòng xanh dạng “3 ads → AP931” thể hiện nhiều ads cùng đổ về một SKU family; ROAS từng ads không chia ảo.
+            Bảng là trung tâm vận hành. Kết quả/Lượt bắt đầu cuộc trò chuyện qua tin nhắn/Tổng số người liên hệ nhắn tin/Bình luận về bài viết lấy theo query live đã khớp Meta; Đơn gán ads là số nội bộ theo SKU family, không trộn vào cột tin nhắn.
           </p>
         </div>
         <div className="hidden gap-2 text-xs font-semibold text-neutral-500 md:flex">
@@ -625,18 +668,25 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
       </div>
 
       <div className="max-h-[calc(100vh-300px)] w-full overflow-auto">
-        <table className="w-full min-w-[2300px] border-separate border-spacing-0 text-left text-sm">
+        <table className="w-full min-w-[3000px] border-separate border-spacing-0 text-left text-sm">
           <thead className="sticky top-0 z-20 bg-neutral-950 text-[11px] uppercase tracking-[0.12em] text-white">
             <tr>
               <th className="w-[44px] px-3 py-3"><input type="checkbox" onClick={(event) => event.stopPropagation()} className="h-4 w-4 rounded" /></th>
               <th className="w-[430px] px-3 py-3">Tên</th>
               <th className="px-3 py-3">Phân phối</th>
-              <th className="px-3 py-3 text-right">Kết quả Meta</th>
+              <th className="px-3 py-3 text-right">Kết quả</th>
+              <th className="px-3 py-3 text-right">Tổng số người liên hệ nhắn tin</th>
+              <th className="px-3 py-3 text-right">Chi phí trên mỗi kết quả</th>
+              <th className="px-3 py-3 text-right">Lượt bắt đầu cuộc trò chuyện qua tin nhắn</th>
+              <th className="px-3 py-3 text-right">Chi phí trên mỗi kết quả</th>
+              <th className="px-3 py-3 text-right">Bình luận về bài viết</th>
+              <th className="px-3 py-3 text-right">Chi phí trên mỗi kết quả</th>
+              <th className="px-3 py-3 text-right">Giá trị chuyển đổi trung bình mỗi lượt mua</th>
               <th className="px-3 py-3 text-right">Đơn gán ads</th>
               <th className="px-3 py-3 text-right">DT gán ads</th>
               <th className="px-3 py-3 text-right">Real ROAS ƯT</th>
               <th className="px-3 py-3 text-right">CPA</th>
-              <th className="px-3 py-3 text-right">Đã chi tiêu</th>
+              <th className="px-3 py-3 text-right">Số tiền đã chi tiêu</th>
               <th className="px-3 py-3 text-right">Lượt hiển thị</th>
               <th className="px-3 py-3 text-right">Người tiếp cận</th>
               <th className="px-3 py-3 text-right">Lượt nhấp</th>
@@ -648,7 +698,7 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={16} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Đang tải dữ liệu...</td></tr>
+              <tr><td colSpan={23} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Đang tải dữ liệu...</td></tr>
             ) : rows.length ? (
               rows.map((row, index) => {
                 const m = row.metrics || {};
@@ -685,14 +735,35 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
                     </td>
                     <td className="border-b border-neutral-100 px-3 py-3"><StatusPill value={row.effectiveStatus || row.status} /></td>
                     <td className="border-b border-neutral-100 px-3 py-3 text-right">
-                      <div className="font-semibold">{compact(m.purchases)}</div>
-                      <div className="text-[11px] font-semibold text-neutral-400">Purchase Meta</div>
+                      <div className="font-semibold">{compact((m as any).conversationStarts || m.purchases)}</div>
+                      <div className="text-[11px] font-semibold text-neutral-400">Lượt bắt đầu cuộc trò chuyện qua tin nhắn</div>
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).messages) ? compact((m as any).messages) : "—"}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).costPerMessage) ? money((m as any).costPerMessage) : "—"}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).conversationStarts) ? compact((m as any).conversationStarts) : "—"}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).costPerConversation) ? money((m as any).costPerConversation) : "—"}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).comments) ? compact((m as any).comments) : "—"}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).costPerResult) ? money((m as any).costPerResult) : "—"}
+                    </td>
+                    <td className="border-b border-neutral-100 px-3 py-3 text-right font-semibold">
+                      {n((m as any).averagePurchaseValue) ? money((m as any).averagePurchaseValue) : "—"}
                     </td>
                     <td className="border-b border-neutral-100 px-3 py-3 text-right">
                       <div className={n(a.orderCount) ? "font-semibold text-emerald-700" : "font-semibold text-neutral-400"}>
                         {a.allocationMode === "family_shared" ? "—" : compact(a.orderCount)}
                       </div>
-                      <div className="text-[11px] font-semibold text-neutral-400">
+                      <div className="mt-1 flex justify-end">
                         <FamilyPill row={row} />
                       </div>
                     </td>
@@ -721,7 +792,7 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
                 );
               })
             ) : (
-              <tr><td colSpan={16} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Không có dòng phù hợp bộ lọc. Kiểm tra bộ lọc hoặc bấm Sync nhẹ hôm nay để có ad-level rồi hệ thống sẽ tự gộp lên Chiến dịch/Nhóm quảng cáo.</td></tr>
+              <tr><td colSpan={23} className="px-4 py-14 text-center text-sm font-semibold text-neutral-400">Không có dòng phù hợp bộ lọc. Kiểm tra bộ lọc hoặc bấm Sync nhẹ hôm nay để có ad-level rồi hệ thống sẽ tự gộp lên Chiến dịch/Nhóm quảng cáo.</td></tr>
             )}
           </tbody>
         </table>
@@ -970,6 +1041,10 @@ export default function MetaAdsBrainCenterPageClient() {
   const [range, setRange] = useState<RangeKey>("yesterday");
   const [level, setLevel] = useState<LevelKey>("ad");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [advancedFilterOpen, setAdvancedFilterOpen] = useState(false);
+  const [metricFilterField, setMetricFilterField] = useState("spend");
+  const [metricFilterOp, setMetricFilterOp] = useState("gte");
+  const [metricFilterValue, setMetricFilterValue] = useState("");
   const [search, setSearch] = useState("");
   const [sourceMode, setSourceMode] = useState<SourceMode>("facebook");
   const [data, setData] = useState<BrainOverview | null>(null);
@@ -979,7 +1054,17 @@ export default function MetaAdsBrainCenterPageClient() {
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [selectedRow, setSelectedRow] = useState<BrainRow | null>(null);
-async function load() {
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.style.overflow = fullscreen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [fullscreen]);
+
+  async function load() {
     setLoading(true);
     setError("");
     try {
@@ -1005,12 +1090,13 @@ async function load() {
         method: "POST",
         body: JSON.stringify({
           range,
-          includeStructure: true,
+          includeStructure: false,
           includeInsights: true,
-          levels: ["campaign", "adset", "ad"],
+          levels: ["ad"],
+          limit: 1000,
         }),
       });
-      setSyncMessage(`Sync xong: ${payload.campaigns || 0} chiến dịch · ${payload.adSets || 0} nhóm · ${payload.ads || 0} quảng cáo · ${payload.insights || 0} insight.`);
+      setSyncMessage(`Sync nhẹ xong: ${payload.insights || 0} dòng ad insights. Không kéo structure nên không đơ.`);
       await load();
     } catch (err: any) {
       setError(err?.message || "Sync Meta Ads thất bại");
@@ -1033,8 +1119,9 @@ async function load() {
   const rows = useMemo(() => {
     return sourceRows
       .filter((row) => rowSearch(row, search))
-      .filter((row) => filterRow(row, filter));
-  }, [sourceRows, search, filter]);
+      .filter((row) => filterRow(row, filter))
+      .filter((row) => passMetricFilter(row, metricFilterField, metricFilterOp, metricFilterValue));
+  }, [sourceRows, search, filter, metricFilterField, metricFilterOp, metricFilterValue]);
 
   const summary = data?.summary || {};
   const status = data?.statusBreakdown;
@@ -1042,12 +1129,12 @@ async function load() {
   const productTotal = productPayload || { totalOrders: 0, totalRevenue: 0 };
 
   return (
-    <main className="min-h-screen w-full bg-[#f7f7f7] px-3 py-4 font-sans text-neutral-950 md:px-4">
-      <div className="w-full space-y-4">
+    <main className={fullscreen ? "fixed inset-0 z-[9999] overflow-auto bg-[#f7f7f7] p-3 font-sans text-neutral-950" : "min-h-screen w-full bg-[#f7f7f7] px-3 py-4 font-sans text-neutral-950 md:px-4"}>
+      <div className={fullscreen ? "w-full space-y-4" : "w-full space-y-4"}>
         <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
           <div className="flex w-full flex-col gap-4 border-b border-neutral-200 bg-neutral-950 px-5 py-5 text-white xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V18.1 Fullscreen Reports</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">Marketing Brain Center · V30 CORE BUILD FIXED</p>
               <h1 className="mt-2 font-serif text-[34px] font-medium tracking-tight">Meta Ads Operating Center</h1>
               <p className="mt-2 max-w-5xl text-sm font-medium leading-6 text-neutral-300">
                 Bảng vận hành là trung tâm. KPI tổng dùng số chính thức từ Meta. Sản phẩm tạo đơn đọc từ order thật trong hệ thống; gắn ads theo tên/SKU chỉ là gợi ý, chưa phải fbclid chuẩn.
@@ -1075,7 +1162,7 @@ async function load() {
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{error}</div> : null}
         {syncMessage ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{syncMessage}</div> : null}
 
-        <section className="grid w-full gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
+        <section className={fullscreen ? "grid w-full gap-4" : "grid w-full gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]"}>
           <div className="min-w-0 w-full">
             <Toolbar
               level={level}
@@ -1089,7 +1176,34 @@ async function load() {
               onSync={syncNow}
               syncing={syncing}
               onReload={load}
+              fullscreen={fullscreen}
+              onToggleFullscreen={() => setFullscreen((v) => !v)}
             />
+
+            <section className="border-x border-neutral-200 bg-white p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-neutral-400">Meta Pivot Report</p>
+                  <h3 className="text-lg font-semibold">Báo cáo tóm tắt nhanh</h3>
+                  <p className="text-sm font-medium text-neutral-500">Lấy từ Meta actions: tin nhắn, bắt đầu chat, comment, Chi phí trên mỗi kết quả và AOV.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-semibold">Pivot</button>
+                  <button className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-semibold">Tuỳ chỉnh cột</button>
+                  <button className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-semibold">Xuất</button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+                <Kpi label="Reach" value={compact(summary.reach)} sub="Người tiếp cận" />
+                <Kpi label="Tổng số người liên hệ nhắn tin" value={compact(summary.messages)} sub={n(summary.costPerMessage) ? `CP msg ${money(summary.costPerMessage)}` : "Meta actions"} />
+                <Kpi label="Lượt bắt đầu cuộc trò chuyện qua tin nhắn" value={compact(summary.conversationStarts)} sub={n(summary.costPerConversation) ? `Chi phí trên mỗi kết quả ${money(summary.costPerConversation)}` : "Conversation started"} />
+                <Kpi label="Bình luận về bài viết" value={compact(summary.comments)} sub="Post comment" />
+                <Kpi label="Chi phí trên mỗi kết quả" value={n(summary.costPerResult) ? money(summary.costPerResult) : "—"} sub="Theo mục tiêu chính" />
+                <Kpi label="Giá trị chuyển đổi trung bình mỗi lượt mua" value={n(summary.averagePurchaseValue) ? money(summary.averagePurchaseValue) : "—"} sub="Giá trị TB / purchase" />
+              </div>
+            </section>
+
             <div className="flex items-center gap-2 border-x border-neutral-200 bg-white px-4 py-2 text-xs font-semibold">
               <span className="text-neutral-400">Nguồn đơn:</span>
               {[
@@ -1110,7 +1224,7 @@ async function load() {
             </div>
             <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
           </div>
-          <InsightRail data={data} rows={sourceRows} productPayload={productPayload} />
+          {!fullscreen ? <InsightRail data={data} rows={sourceRows} productPayload={productPayload} /> : null}
         </section>
       </div>
 

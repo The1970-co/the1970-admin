@@ -15,10 +15,11 @@ import {
   searchPromotionProducts,
 } from "@/lib/promotion-support-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
-import { hasPermission, type AppRole } from "@/lib/authz";
+import { hasPermission } from "@/lib/authz";
 
 type ProductOption = {
   id: string;
+  productId?: string | null;
   name?: string | null;
   title?: string | null;
   sku?: string | null;
@@ -26,9 +27,25 @@ type ProductOption = {
   productCode?: string | null;
   imageUrl?: string | null;
   price?: string | number | null;
+  isVariant?: boolean;
+  variantId?: string | null;
+  parentProductId?: string | null;
+  parentName?: string | null;
+  optionLabel?: string | null;
+  color?: string | null;
+  size?: string | null;
   variants?: Array<{
+    id?: string | null;
+    productId?: string | null;
+    name?: string | null;
+    title?: string | null;
     sku?: string | null;
+    code?: string | null;
+    productCode?: string | null;
+    imageUrl?: string | null;
     price?: string | number | null;
+    color?: string | null;
+    size?: string | null;
   }>;
 };
 
@@ -54,8 +71,10 @@ type Promotion = {
   note?: string | null;
   branch?: BranchOption | null;
   products?: {
-    productId?: string;
-    product?: ProductOption;
+    productId?: string | null;
+    variantId?: string | null;
+    product?: ProductOption | null;
+    variant?: (ProductOption & { product?: ProductOption | null }) | null;
   }[];
 };
 
@@ -74,7 +93,13 @@ const SALES_CHANNELS = [
 
 function getProductName(product?: ProductOption | null) {
   if (!product) return "Không rõ sản phẩm";
-  return product.name || product.title || product.productCode || product.code || product.id;
+  return (
+    product.name ||
+    product.title ||
+    product.productCode ||
+    product.code ||
+    product.id
+  );
 }
 
 function getProductSku(product?: ProductOption | null) {
@@ -89,8 +114,185 @@ function getProductSku(product?: ProductOption | null) {
 }
 
 function getProductPrice(product?: ProductOption | null) {
-  const raw = product?.price ?? product?.variants?.find((variant) => variant?.price)?.price ?? 0;
+  const raw =
+    product?.price ??
+    product?.variants?.find((variant) => variant?.price)?.price ??
+    0;
   return Number(raw || 0);
+}
+
+function uniqueById(items: ProductOption[]) {
+  const map = new Map<string, ProductOption>();
+  for (const item of items) {
+    const id = String(item?.id || "").trim();
+    if (!id || map.has(id)) continue;
+    map.set(id, item);
+  }
+  return Array.from(map.values());
+}
+
+function buildVariantLabel(
+  variant: NonNullable<ProductOption["variants"]>[number],
+) {
+  return [variant.color, variant.size, variant.name || variant.title]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function normalizePromotionProductResults(rows: ProductOption[]) {
+  const output: ProductOption[] = [];
+
+  for (const product of rows || []) {
+    if (!product?.id) continue;
+
+    output.push({ ...product, isVariant: false, parentProductId: null });
+
+    for (const variant of product.variants || []) {
+      const variantId = String(
+        variant.id || variant.sku || variant.code || "",
+      ).trim();
+      if (!variantId) continue;
+
+      output.push({
+        ...product,
+        ...variant,
+        id: variantId,
+        variantId,
+        parentProductId: String(product.id),
+        parentName: getProductName(product),
+        isVariant: true,
+        optionLabel: buildVariantLabel(variant),
+        imageUrl: variant.imageUrl || product.imageUrl,
+        productCode:
+          variant.productCode ||
+          variant.code ||
+          variant.sku ||
+          product.productCode ||
+          product.code,
+        variants: [],
+      });
+    }
+  }
+
+  return uniqueById(output);
+}
+
+function getProductDisplayName(product?: ProductOption | null) {
+  if (!product) return "Không rõ sản phẩm";
+  if (product.isVariant) {
+    const parent = product.parentName || getProductName(product);
+    const option = product.optionLabel || product.color || product.size;
+    return option ? `${parent} · ${option}` : parent;
+  }
+  return getProductName(product);
+}
+
+function getProductTypeLabel(product?: ProductOption | null) {
+  return product?.isVariant ? "SKU con" : "Mã chính";
+}
+
+function getProductScopeId(product?: ProductOption | null) {
+  if (!product) return "";
+  return String(
+    product.isVariant
+      ? product.parentProductId || product.id
+      : product.id || "",
+  );
+}
+
+function getSelectedPromotionTargetIds(products: ProductOption[]) {
+  return {
+    productIds: products
+      .filter((item) => !item.isVariant)
+      .map((item) => String(item.id || "").trim())
+      .filter(Boolean),
+    variantIds: products
+      .filter((item) => item.isVariant)
+      .map((item) => String(item.variantId || item.id || "").trim())
+      .filter(Boolean),
+  };
+}
+
+function promotionTargetToProductOption(row: NonNullable<Promotion["products"]>[number]) {
+  if (row.variant) {
+    const parent = row.variant.product || row.product || null;
+    const variantId = String(row.variantId || row.variant.id || "").trim();
+    return {
+      ...parent,
+      ...row.variant,
+      id: variantId,
+      variantId,
+      parentProductId: row.productId || row.variant.productId || parent?.id || null,
+      parentName: parent ? getProductName(parent) : row.variant.parentName || null,
+      isVariant: true,
+      optionLabel: buildVariantLabel(row.variant),
+      imageUrl: row.variant.imageUrl || parent?.imageUrl || null,
+      productCode:
+        row.variant.productCode ||
+        row.variant.code ||
+        row.variant.sku ||
+        parent?.productCode ||
+        parent?.code ||
+        null,
+      variants: [],
+    } as ProductOption;
+  }
+
+  if (row.product) {
+    return {
+      ...row.product,
+      id: String(row.productId || row.product.id),
+      isVariant: false,
+      parentProductId: null,
+    } as ProductOption;
+  }
+
+  return null;
+}
+
+function hasProductScopeConflict(
+  selectedProducts: ProductOption[],
+  product: ProductOption,
+) {
+  const scopeId = getProductScopeId(product);
+  if (!scopeId) return false;
+
+  return selectedProducts.some((item) => {
+    if (String(item.id) === String(product.id)) return false;
+    if (getProductScopeId(item) !== scopeId) return false;
+
+    // Chọn mã chính thì không được chọn SKU con của cùng sản phẩm.
+    // Chọn SKU con thì không được chọn mã chính của cùng sản phẩm.
+    return (
+      item.isVariant !== product.isVariant ||
+      !item.isVariant ||
+      !product.isVariant
+    );
+  });
+}
+
+function getProductSelectBlockReason(
+  selectedProducts: ProductOption[],
+  product: ProductOption,
+) {
+  const scopeId = getProductScopeId(product);
+  if (!scopeId) return "";
+
+  const sameScopeItems = selectedProducts.filter(
+    (item) => getProductScopeId(item) === scopeId,
+  );
+  if (!sameScopeItems.length) return "";
+
+  if (product.isVariant && sameScopeItems.some((item) => !item.isVariant)) {
+    return "Đã chọn mã chính";
+  }
+
+  if (!product.isVariant && sameScopeItems.some((item) => item.isVariant)) {
+    return "Đã chọn SKU con";
+  }
+
+  return "";
 }
 
 function normalizeDateForInput(value?: string | null) {
@@ -173,11 +375,17 @@ function getTimeProgress(row: Promotion) {
   const start = new Date(row.startAt).getTime();
   const end = new Date(row.endAt).getTime();
   const now = Date.now();
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
-  return Math.max(0, Math.min(100, Math.round(((now - start) / (end - start)) * 100)));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+    return null;
+  return Math.max(
+    0,
+    Math.min(100, Math.round(((now - start) / (end - start)) * 100)),
+  );
 }
 
-function formatDiscount(row: Pick<Promotion, "discountType" | "discountValue">) {
+function formatDiscount(
+  row: Pick<Promotion, "discountType" | "discountValue">,
+) {
   return row.discountType === "PERCENT"
     ? `${Number(row.discountValue || 0)}%`
     : `${money.format(Number(row.discountValue || 0))}đ`;
@@ -190,8 +398,20 @@ function safeDate(value?: string | null) {
   return date.toLocaleString("vi-VN");
 }
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-[26px] border border-neutral-200 bg-white shadow-sm ${className}`}>{children}</div>;
+function Card({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`rounded-[26px] border border-neutral-200 bg-white shadow-sm ${className}`}
+    >
+      {children}
+    </div>
+  );
 }
 
 export default function PromotionsPageClient() {
@@ -202,22 +422,20 @@ export default function PromotionsPageClient() {
   const [error, setError] = useState("");
 
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const currentRole = String(
-    currentUser?.role || currentUser?.roleCode || "retail-staff"
-  ) as AppRole;
-  const adminMode = isAdminOrOwner(currentUser);
+  const permissionUser = currentUser || null;
+  const adminMode = isAdminOrOwner(permissionUser);
 
-  // Permission theo authz.ts:
-  // - promotions.view: chỉ xem danh sách khuyến mại
-  // - promotions.create: được tạo khuyến mại
-  // - promotions.edit: được sửa cấu hình khuyến mại
-  // - promotions.activate / promotions.pause: được bật/tắt khuyến mại
-  const canViewPromotion = hasPermission(currentRole, "promotions.view");
-  const canCreatePromotion = hasPermission(currentRole, "promotions.create");
-  const canEditPromotion = hasPermission(currentRole, "promotions.edit");
-  const canActivatePromotion = hasPermission(currentRole, "promotions.activate");
-  const canPausePromotion = hasPermission(currentRole, "promotions.pause");
-
+  // Phải truyền currentUser object để authz đọc được permissionKeys/branchPermissions từ DB.
+  // Không dùng role string riêng lẻ vì role có thể là ADMIN/Owner hoặc quyền động theo chi nhánh.
+  const canViewPromotion =
+    !permissionUser || hasPermission(permissionUser, "promotions.view");
+  const canCreatePromotion = hasPermission(permissionUser, "promotions.create");
+  const canEditPromotion = hasPermission(permissionUser, "promotions.edit");
+  const canActivatePromotion = hasPermission(
+    permissionUser,
+    "promotions.activate",
+  );
+  const canPausePromotion = hasPermission(permissionUser, "promotions.pause");
 
   const [productKeyword, setProductKeyword] = useState("");
   const [productSearching, setProductSearching] = useState(false);
@@ -225,10 +443,14 @@ export default function PromotionsPageClient() {
   const [selectedProducts, setSelectedProducts] = useState<ProductOption[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const canModifyPromotionForm = editingId ? canEditPromotion : canCreatePromotion;
+  const canModifyPromotionForm = editingId
+    ? canEditPromotion
+    : canCreatePromotion;
   const [formOpen, setFormOpen] = useState(true);
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [statusFilter, setStatusFilter] = useState<
+    "ALL" | "ACTIVE" | "INACTIVE"
+  >("ALL");
   const [typeFilter, setTypeFilter] = useState<"ALL" | PromotionType>("ALL");
 
   const [form, setForm] = useState<PromotionPayload>({
@@ -241,6 +463,7 @@ export default function PromotionsPageClient() {
     branchId: "",
     salesChannel: "",
     productIds: [],
+    variantIds: [],
   });
 
   useEffect(() => {
@@ -263,7 +486,8 @@ export default function PromotionsPageClient() {
   );
 
   const expiringSoonCount = useMemo(() => {
-    return rows.filter((row) => getStatusMeta(row).label === "Sắp hết hạn").length;
+    return rows.filter((row) => getStatusMeta(row).label === "Sắp hết hạn")
+      .length;
   }, [rows]);
 
   const filteredRows = useMemo(() => {
@@ -278,11 +502,12 @@ export default function PromotionsPageClient() {
     const first = selectedProducts[0];
     if (!first) return null;
     const price = getProductPrice(first) || 520000;
-    const discount = form.discountType === "PERCENT"
-      ? Math.round((price * Number(form.discountValue || 0)) / 100)
-      : Number(form.discountValue || 0);
+    const discount =
+      form.discountType === "PERCENT"
+        ? Math.round((price * Number(form.discountValue || 0)) / 100)
+        : Number(form.discountValue || 0);
     return {
-      name: getProductName(first),
+      name: getProductDisplayName(first),
       before: price,
       discount: Math.min(discount, price),
       after: Math.max(0, price - Math.min(discount, price)),
@@ -296,7 +521,9 @@ export default function PromotionsPageClient() {
       const data = await getPromotions();
       setRows(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tải được khuyến mại");
+      setError(
+        err instanceof Error ? err.message : "Không tải được khuyến mại",
+      );
     } finally {
       setLoading(false);
     }
@@ -326,7 +553,9 @@ export default function PromotionsPageClient() {
       try {
         const data = await searchPromotionProducts(keyword);
         if (!cancelled) {
-          setProductResults(Array.isArray(data) ? data : []);
+          setProductResults(
+            normalizePromotionProductResults(Array.isArray(data) ? data : []),
+          );
         }
       } finally {
         if (!cancelled) setProductSearching(false);
@@ -353,6 +582,7 @@ export default function PromotionsPageClient() {
       branchId: "",
       salesChannel: "",
       productIds: [],
+      variantIds: [],
     });
     setProductKeyword("");
     setProductResults([]);
@@ -361,13 +591,24 @@ export default function PromotionsPageClient() {
 
   function selectProduct(product: ProductOption) {
     if (!product?.id) return;
-    if (selectedProducts.some((item) => String(item.id) === String(product.id))) return;
+    if (selectedProducts.some((item) => String(item.id) === String(product.id)))
+      return;
+
+    if (hasProductScopeConflict(selectedProducts, product)) {
+      const message = product.isVariant
+        ? "Sản phẩm này đã chọn mã chính. Muốn chọn SKU con thì bỏ mã chính trước."
+        : "Sản phẩm này đã chọn SKU con. Muốn chọn mã chính thì bỏ các SKU con trước.";
+      alert(message);
+      return;
+    }
 
     const nextSelected = [...selectedProducts, product];
+    const targets = getSelectedPromotionTargetIds(nextSelected);
     setSelectedProducts(nextSelected);
     setForm((prev) => ({
       ...prev,
-      productIds: nextSelected.map((item) => String(item.id)),
+      productIds: targets.productIds,
+      variantIds: targets.variantIds,
     }));
   }
 
@@ -375,10 +616,12 @@ export default function PromotionsPageClient() {
     const nextSelected = selectedProducts.filter(
       (item) => String(item.id) !== String(productId),
     );
+    const targets = getSelectedPromotionTargetIds(nextSelected);
     setSelectedProducts(nextSelected);
     setForm((prev) => ({
       ...prev,
-      productIds: nextSelected.map((item) => String(item.id)),
+      productIds: targets.productIds,
+      variantIds: targets.variantIds,
     }));
   }
 
@@ -389,8 +632,9 @@ export default function PromotionsPageClient() {
     }
 
     const selected = (row.products ?? [])
-      .map((item) => item.product)
+      .map((item) => promotionTargetToProductOption(item))
       .filter(Boolean) as ProductOption[];
+    const targets = getSelectedPromotionTargetIds(selected);
 
     setEditingId(row.id);
     setFormOpen(true);
@@ -413,7 +657,8 @@ export default function PromotionsPageClient() {
       endAt: normalizeDateForInput(row.endAt),
       priority: Number(row.priority || 0),
       note: row.note || "",
-      productIds: selected.map((item) => String(item.id)),
+      productIds: targets.productIds,
+      variantIds: targets.variantIds,
     });
 
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -421,17 +666,28 @@ export default function PromotionsPageClient() {
 
   function validateForm() {
     if (!form.name.trim()) return "Nhập tên khuyến mại";
-    if (Number(form.discountValue || 0) <= 0) return "Giá trị giảm phải lớn hơn 0";
-    if (form.discountType === "PERCENT" && Number(form.discountValue || 0) > 100) {
+    if (Number(form.discountValue || 0) <= 0)
+      return "Giá trị giảm phải lớn hơn 0";
+    if (
+      form.discountType === "PERCENT" &&
+      Number(form.discountValue || 0) > 100
+    ) {
       return "Giảm theo % không được lớn hơn 100";
     }
     if (form.type === "PRODUCT_DISCOUNT" && !selectedProducts.length) {
       return "Khuyến mại theo sản phẩm phải chọn ít nhất 1 sản phẩm";
     }
-    if (form.type === "ORDER_DISCOUNT" && Number(form.minOrderAmount || 0) < 0) {
+    if (
+      form.type === "ORDER_DISCOUNT" &&
+      Number(form.minOrderAmount || 0) < 0
+    ) {
       return "Đơn tối thiểu không hợp lệ";
     }
-    if (form.startAt && form.endAt && new Date(form.startAt) > new Date(form.endAt)) {
+    if (
+      form.startAt &&
+      form.endAt &&
+      new Date(form.startAt) > new Date(form.endAt)
+    ) {
       return "Ngày bắt đầu không được lớn hơn ngày kết thúc";
     }
     return "";
@@ -461,10 +717,16 @@ export default function PromotionsPageClient() {
       startAt: form.startAt || undefined,
       endAt: form.endAt || undefined,
       minOrderAmount:
-        form.type === "ORDER_DISCOUNT" ? Number(form.minOrderAmount || 0) : undefined,
+        form.type === "ORDER_DISCOUNT"
+          ? Number(form.minOrderAmount || 0)
+          : undefined,
       productIds:
         form.type === "PRODUCT_DISCOUNT"
-          ? selectedProducts.map((item) => String(item.id))
+          ? getSelectedPromotionTargetIds(selectedProducts).productIds
+          : [],
+      variantIds:
+        form.type === "PRODUCT_DISCOUNT"
+          ? getSelectedPromotionTargetIds(selectedProducts).variantIds
           : [],
     };
 
@@ -521,7 +783,8 @@ export default function PromotionsPageClient() {
     return SALES_CHANNELS.find((item) => item.value === value)?.label || value;
   }
 
-  const typeLabel = (type: PromotionType) => type === "PRODUCT_DISCOUNT" ? "Giảm sản phẩm" : "Giảm toàn đơn";
+  const typeLabel = (type: PromotionType) =>
+    type === "PRODUCT_DISCOUNT" ? "Giảm sản phẩm" : "Giảm toàn đơn";
 
   if (currentUser && !canViewPromotion) {
     return (
@@ -542,7 +805,8 @@ export default function PromotionsPageClient() {
             Điều khiển khuyến mại tự động
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Nhân viên dùng chế độ cơ bản. Admin/Owner thấy thêm insight và công cụ nâng cao.
+            Nhân viên dùng chế độ cơ bản. Admin/Owner thấy thêm insight và công
+            cụ nâng cao.
           </p>
         </div>
 
@@ -574,26 +838,42 @@ export default function PromotionsPageClient() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card className="p-5">
           <div className="text-sm text-neutral-500">Tổng khuyến mại</div>
-          <div className="mt-2 text-3xl font-bold text-neutral-950">{rows.length}</div>
-          <div className="mt-2 text-xs text-neutral-400">Rule đang có trong hệ thống</div>
+          <div className="mt-2 text-3xl font-bold text-neutral-950">
+            {rows.length}
+          </div>
+          <div className="mt-2 text-xs text-neutral-400">
+            Rule đang có trong hệ thống
+          </div>
         </Card>
 
         <Card className="p-5">
           <div className="text-sm text-neutral-500">Đang hoạt động</div>
-          <div className="mt-2 text-3xl font-bold text-emerald-700">{activeCount}</div>
-          <div className="mt-2 text-xs text-neutral-400">Tự áp dụng khi bán hàng</div>
+          <div className="mt-2 text-3xl font-bold text-emerald-700">
+            {activeCount}
+          </div>
+          <div className="mt-2 text-xs text-neutral-400">
+            Tự áp dụng khi bán hàng
+          </div>
         </Card>
 
         <Card className="p-5">
           <div className="text-sm text-neutral-500">Giảm theo sản phẩm</div>
-          <div className="mt-2 text-3xl font-bold text-neutral-950">{productDiscountCount}</div>
-          <div className="mt-2 text-xs text-neutral-400">Rule gắn trực tiếp sản phẩm</div>
+          <div className="mt-2 text-3xl font-bold text-neutral-950">
+            {productDiscountCount}
+          </div>
+          <div className="mt-2 text-xs text-neutral-400">
+            Rule gắn trực tiếp sản phẩm
+          </div>
         </Card>
 
         <Card className="p-5">
           <div className="text-sm text-neutral-500">Cơ chế</div>
-          <div className="mt-2 text-lg font-semibold text-neutral-950">Auto apply</div>
-          <div className="mt-2 text-xs text-emerald-600">POS + tạo đơn đều preview realtime</div>
+          <div className="mt-2 text-lg font-semibold text-neutral-950">
+            Auto apply
+          </div>
+          <div className="mt-2 text-xs text-emerald-600">
+            POS + tạo đơn đều preview realtime
+          </div>
         </Card>
       </div>
 
@@ -609,7 +889,8 @@ export default function PromotionsPageClient() {
                   Tổng quan sức khoẻ khuyến mại
                 </h2>
                 <p className="mt-1 text-sm text-neutral-500">
-                  Đây là khu nâng cao chỉ admin/owner thấy. Dữ liệu hiệu quả doanh thu sẽ nối thêm ở V3 tiếp theo.
+                  Đây là khu nâng cao chỉ admin/owner thấy. Dữ liệu hiệu quả
+                  doanh thu sẽ nối thêm ở V3 tiếp theo.
                 </p>
               </div>
               <span className="rounded-full bg-black px-3 py-1 text-xs font-semibold text-white">
@@ -620,16 +901,24 @@ export default function PromotionsPageClient() {
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                 <div className="text-xs text-neutral-500">Rule toàn đơn</div>
-                <div className="mt-2 text-2xl font-bold">{orderDiscountCount}</div>
+                <div className="mt-2 text-2xl font-bold">
+                  {orderDiscountCount}
+                </div>
               </div>
               <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                 <div className="text-xs text-neutral-500">Sắp hết hạn</div>
-                <div className="mt-2 text-2xl font-bold text-amber-700">{expiringSoonCount}</div>
+                <div className="mt-2 text-2xl font-bold text-amber-700">
+                  {expiringSoonCount}
+                </div>
               </div>
               <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                 <div className="text-xs text-neutral-500">Stacking</div>
-                <div className="mt-2 text-sm font-semibold text-neutral-900">Theo priority</div>
-                <div className="mt-1 text-xs text-neutral-500">Backend apply lại khi submit</div>
+                <div className="mt-2 text-sm font-semibold text-neutral-900">
+                  Theo priority
+                </div>
+                <div className="mt-1 text-xs text-neutral-500">
+                  Backend apply lại khi submit
+                </div>
               </div>
             </div>
           </Card>
@@ -638,11 +927,19 @@ export default function PromotionsPageClient() {
             <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">
               Control
             </p>
-            <h2 className="mt-2 text-xl font-semibold text-neutral-950">V3 nâng cao</h2>
+            <h2 className="mt-2 text-xl font-semibold text-neutral-950">
+              V3 nâng cao
+            </h2>
             <div className="mt-4 space-y-2 text-sm text-neutral-600">
-              <div className="rounded-2xl bg-neutral-50 p-3">Chuẩn bị: báo cáo số đơn áp dụng KM</div>
-              <div className="rounded-2xl bg-neutral-50 p-3">Chuẩn bị: doanh thu do KM tạo ra</div>
-              <div className="rounded-2xl bg-neutral-50 p-3">Chuẩn bị: cảnh báo rule trùng / đốt margin</div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                Chuẩn bị: báo cáo số đơn áp dụng KM
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                Chuẩn bị: doanh thu do KM tạo ra
+              </div>
+              <div className="rounded-2xl bg-neutral-50 p-3">
+                Chuẩn bị: cảnh báo rule trùng / đốt margin
+              </div>
             </div>
           </Card>
         </div>
@@ -653,9 +950,6 @@ export default function PromotionsPageClient() {
           {error}
         </div>
       ) : null}
-
-
-
 
       {formOpen && canModifyPromotionForm ? (
         <Card className="overflow-hidden">
@@ -669,7 +963,8 @@ export default function PromotionsPageClient() {
                   {editingId ? "Sửa khuyến mại" : "Tạo khuyến mại mới"}
                 </h2>
                 <p className="text-sm text-neutral-500">
-                  Nhân viên chỉ dùng phần cơ bản này: sản phẩm/toàn đơn, phạm vi, thời gian.
+                  Nhân viên chỉ dùng phần cơ bản này: sản phẩm/toàn đơn, phạm
+                  vi, thời gian.
                 </p>
               </div>
 
@@ -688,17 +983,23 @@ export default function PromotionsPageClient() {
             <div className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <div className="xl:col-span-2">
-                  <label className="text-sm font-medium text-neutral-700">Tên khuyến mại</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Tên khuyến mại
+                  </label>
                   <input
                     value={form.name}
-                    onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, name: event.target.value }))
+                    }
                     placeholder="VD: Sale polo hè 10%"
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   />
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Loại</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Loại
+                  </label>
                   <select
                     value={form.type}
                     onChange={(event) => {
@@ -706,7 +1007,10 @@ export default function PromotionsPageClient() {
                       setForm((prev) => ({
                         ...prev,
                         type,
-                        productIds: type === "PRODUCT_DISCOUNT" ? prev.productIds : [],
+                        productIds:
+                          type === "PRODUCT_DISCOUNT" ? prev.productIds : [],
+                        variantIds:
+                          type === "PRODUCT_DISCOUNT" ? prev.variantIds : [],
                       }));
                       if (type !== "PRODUCT_DISCOUNT") setSelectedProducts([]);
                     }}
@@ -718,10 +1022,18 @@ export default function PromotionsPageClient() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Kiểu giảm</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Kiểu giảm
+                  </label>
                   <select
                     value={form.discountType}
-                    onChange={(event) => setForm((prev) => ({ ...prev, discountType: event.target.value as PromotionDiscountType }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        discountType: event.target
+                          .value as PromotionDiscountType,
+                      }))
+                    }
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   >
                     <option value="PERCENT">Giảm %</option>
@@ -730,22 +1042,36 @@ export default function PromotionsPageClient() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Giá trị giảm</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Giá trị giảm
+                  </label>
                   <input
                     type="number"
                     value={form.discountValue}
-                    onChange={(event) => setForm((prev) => ({ ...prev, discountValue: Number(event.target.value) }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        discountValue: Number(event.target.value),
+                      }))
+                    }
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   />
                 </div>
 
                 {form.type === "ORDER_DISCOUNT" ? (
                   <div>
-                    <label className="text-sm font-medium text-neutral-700">Đơn tối thiểu</label>
+                    <label className="text-sm font-medium text-neutral-700">
+                      Đơn tối thiểu
+                    </label>
                     <input
                       type="number"
                       value={form.minOrderAmount ?? ""}
-                      onChange={(event) => setForm((prev) => ({ ...prev, minOrderAmount: Number(event.target.value) }))}
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          minOrderAmount: Number(event.target.value),
+                        }))
+                      }
                       placeholder="VD: 500000"
                       className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                     />
@@ -753,10 +1079,17 @@ export default function PromotionsPageClient() {
                 ) : null}
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Chi nhánh áp dụng</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Chi nhánh áp dụng
+                  </label>
                   <select
                     value={form.branchId || ""}
-                    onChange={(event) => setForm((prev) => ({ ...prev, branchId: event.target.value }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        branchId: event.target.value,
+                      }))
+                    }
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   >
                     <option value="">Tất cả chi nhánh</option>
@@ -769,45 +1102,78 @@ export default function PromotionsPageClient() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Kênh bán áp dụng</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Kênh bán áp dụng
+                  </label>
                   <select
                     value={form.salesChannel || ""}
-                    onChange={(event) => setForm((prev) => ({ ...prev, salesChannel: event.target.value }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        salesChannel: event.target.value,
+                      }))
+                    }
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   >
                     {SALES_CHANNELS.map((channel) => (
-                      <option key={channel.value || "ALL"} value={channel.value}>{channel.label}</option>
+                      <option
+                        key={channel.value || "ALL"}
+                        value={channel.value}
+                      >
+                        {channel.label}
+                      </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Bắt đầu</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Bắt đầu
+                  </label>
                   <input
                     type="datetime-local"
                     value={form.startAt || ""}
-                    onChange={(event) => setForm((prev) => ({ ...prev, startAt: event.target.value }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        startAt: event.target.value,
+                      }))
+                    }
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   />
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-700">Kết thúc</label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    Kết thúc
+                  </label>
                   <input
                     type="datetime-local"
                     value={form.endAt || ""}
-                    onChange={(event) => setForm((prev) => ({ ...prev, endAt: event.target.value }))}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        endAt: event.target.value,
+                      }))
+                    }
                     className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                   />
                 </div>
 
                 {adminMode ? (
                   <div>
-                    <label className="text-sm font-medium text-neutral-700">Độ ưu tiên</label>
+                    <label className="text-sm font-medium text-neutral-700">
+                      Độ ưu tiên
+                    </label>
                     <input
                       type="number"
                       value={form.priority ?? 0}
-                      onChange={(event) => setForm((prev) => ({ ...prev, priority: Number(event.target.value) }))}
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          priority: Number(event.target.value),
+                        }))
+                      }
                       className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                     />
                   </div>
@@ -818,39 +1184,74 @@ export default function PromotionsPageClient() {
                 <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                     <div className="flex-1">
-                      <label className="text-sm font-medium text-neutral-700">Sản phẩm áp dụng</label>
+                      <label className="text-sm font-medium text-neutral-700">
+                        Sản phẩm áp dụng
+                      </label>
                       <input
                         value={productKeyword}
-                        onChange={(event) => setProductKeyword(event.target.value)}
+                        onChange={(event) =>
+                          setProductKeyword(event.target.value)
+                        }
                         placeholder="Gõ tên sản phẩm / SKU để tìm"
                         className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-black"
                       />
                     </div>
                     <div className="text-sm text-neutral-500">
-                      Đã chọn <b className="text-neutral-950">{selectedProducts.length}</b> sản phẩm
+                      Đã chọn{" "}
+                      <b className="text-neutral-950">
+                        {selectedProducts.length}
+                      </b>{" "}
+                      sản phẩm
                     </div>
                   </div>
 
-                  {productSearching ? <div className="mt-3 text-sm text-neutral-500">Đang tìm sản phẩm...</div> : null}
+                  {productSearching ? (
+                    <div className="mt-3 text-sm text-neutral-500">
+                      Đang tìm sản phẩm...
+                    </div>
+                  ) : null}
 
                   {productResults.length ? (
                     <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white">
                       {productResults.map((product) => {
-                        const selected = selectedProducts.some((item) => String(item.id) === String(product.id));
+                        const selected = selectedProducts.some(
+                          (item) => String(item.id) === String(product.id),
+                        );
+                        const blockReason = getProductSelectBlockReason(
+                          selectedProducts,
+                          product,
+                        );
+                        const blocked = Boolean(blockReason);
                         return (
                           <button
                             key={product.id}
                             type="button"
                             onClick={() => selectProduct(product)}
-                            disabled={selected || !canModifyPromotionForm}
-                            className="flex w-full items-center justify-between border-b border-neutral-100 px-4 py-3 text-left text-sm last:border-b-0 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-emerald-50"
+                            disabled={
+                              selected || blocked || !canModifyPromotionForm
+                            }
+                            className="flex w-full items-center justify-between border-b border-neutral-100 px-4 py-3 text-left text-sm last:border-b-0 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:bg-neutral-50"
                           >
                             <div>
-                              <div className="font-semibold text-neutral-950">{getProductName(product)}</div>
-                              <div className="text-xs text-neutral-500">{getProductSku(product) || product.id}</div>
+                              <div className="font-semibold text-neutral-950">
+                                {getProductDisplayName(product)}
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                                <span>
+                                  {getProductSku(product) || product.id}
+                                </span>
+                                <span className="rounded-full bg-neutral-100 px-2 py-0.5 font-semibold text-neutral-600">
+                                  {getProductTypeLabel(product)}
+                                </span>
+                                {blockReason ? (
+                                  <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                                    {blockReason}
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
                             <span className="rounded-full border border-neutral-300 px-3 py-1 text-xs font-semibold">
-                              {selected ? "Đã chọn" : "Chọn"}
+                              {selected ? "Đã chọn" : blockReason || "Chọn"}
                             </span>
                           </button>
                         );
@@ -865,10 +1266,29 @@ export default function PromotionsPageClient() {
                   {selectedProducts.length ? (
                     <div className="mt-4 flex flex-wrap gap-2">
                       {selectedProducts.map((product) => (
-                        <div key={product.id} className="flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 text-sm">
-                          <span className="font-medium text-neutral-950">{getProductName(product)}</span>
-                          <span className="text-xs text-neutral-500">{getProductSku(product)}</span>
-                          <button type="button" onClick={() => canModifyPromotionForm && removeSelectedProduct(String(product.id))} className="text-xs font-bold text-red-600">×</button>
+                        <div
+                          key={product.id}
+                          className="flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 text-sm"
+                        >
+                          <span className="font-medium text-neutral-950">
+                            {getProductDisplayName(product)}
+                          </span>
+                          <span className="text-xs text-neutral-500">
+                            {getProductSku(product)}
+                          </span>
+                          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-600">
+                            {getProductTypeLabel(product)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              canModifyPromotionForm &&
+                              removeSelectedProduct(String(product.id))
+                            }
+                            className="text-xs font-bold text-red-600"
+                          >
+                            ×
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -877,10 +1297,14 @@ export default function PromotionsPageClient() {
               ) : null}
 
               <div>
-                <label className="text-sm font-medium text-neutral-700">Ghi chú</label>
+                <label className="text-sm font-medium text-neutral-700">
+                  Ghi chú
+                </label>
                 <textarea
                   value={form.note ?? ""}
-                  onChange={(event) => setForm((prev) => ({ ...prev, note: event.target.value }))}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, note: event.target.value }))
+                  }
                   rows={3}
                   className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm outline-none focus:border-black"
                 />
@@ -889,29 +1313,55 @@ export default function PromotionsPageClient() {
 
             <div className="space-y-4">
               <div className="rounded-[24px] border border-neutral-200 bg-neutral-950 p-5 text-white">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">Preview</p>
-                <h3 className="mt-2 text-lg font-semibold">Khuyến mại sẽ hoạt động thế nào?</h3>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">
+                  Preview
+                </p>
+                <h3 className="mt-2 text-lg font-semibold">
+                  Khuyến mại sẽ hoạt động thế nào?
+                </h3>
                 <div className="mt-4 space-y-3 text-sm">
                   <div className="flex justify-between gap-4 border-b border-white/10 pb-3">
                     <span className="text-neutral-400">Loại</span>
-                    <span className="font-semibold">{typeLabel(form.type)}</span>
+                    <span className="font-semibold">
+                      {typeLabel(form.type)}
+                    </span>
                   </div>
                   <div className="flex justify-between gap-4 border-b border-white/10 pb-3">
                     <span className="text-neutral-400">Mức giảm</span>
-                    <span className="font-semibold">{formatDiscount({ discountType: form.discountType, discountValue: form.discountValue })}</span>
+                    <span className="font-semibold">
+                      {formatDiscount({
+                        discountType: form.discountType,
+                        discountValue: form.discountValue,
+                      })}
+                    </span>
                   </div>
                   <div className="flex justify-between gap-4 border-b border-white/10 pb-3">
                     <span className="text-neutral-400">Phạm vi</span>
-                    <span className="font-semibold text-right">{form.branchId ? branches.find((b) => b.id === form.branchId)?.name || form.branchId : "Tất cả chi nhánh"}</span>
+                    <span className="font-semibold text-right">
+                      {form.branchId
+                        ? branches.find((b) => b.id === form.branchId)?.name ||
+                          form.branchId
+                        : "Tất cả chi nhánh"}
+                    </span>
                   </div>
                   {selectedProductPreview ? (
                     <div className="rounded-2xl bg-white/10 p-3">
-                      <div className="text-xs text-neutral-300">Ví dụ sản phẩm</div>
-                      <div className="mt-1 font-semibold">{selectedProductPreview.name}</div>
+                      <div className="text-xs text-neutral-300">
+                        Ví dụ sản phẩm
+                      </div>
+                      <div className="mt-1 font-semibold">
+                        {selectedProductPreview.name}
+                      </div>
                       <div className="mt-2 flex justify-between text-sm">
-                        <span>{money.format(selectedProductPreview.before)}đ</span>
-                        <span className="text-emerald-300">-{money.format(selectedProductPreview.discount)}đ</span>
-                        <span>{money.format(selectedProductPreview.after)}đ</span>
+                        <span>
+                          {money.format(selectedProductPreview.before)}đ
+                        </span>
+                        <span className="text-emerald-300">
+                          -{money.format(selectedProductPreview.discount)}đ
+                        </span>
+                        <span>
+                          {money.format(selectedProductPreview.after)}đ
+                        </span>
                       </div>
                     </div>
                   ) : null}
@@ -921,20 +1371,32 @@ export default function PromotionsPageClient() {
               {adminMode ? (
                 <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                   <div className="font-semibold">Admin note</div>
-                  <p className="mt-1">Priority cao hơn sẽ được tính trước. V3 sau sẽ thêm giới hạn lượt dùng, margin guard và báo cáo hiệu quả.</p>
+                  <p className="mt-1">
+                    Priority cao hơn sẽ được tính trước. V3 sau sẽ thêm giới hạn
+                    lượt dùng, margin guard và báo cáo hiệu quả.
+                  </p>
                 </div>
               ) : null}
 
               <div className="flex justify-end gap-3">
                 {editingId ? (
-                  <button onClick={resetForm} className="rounded-xl border border-neutral-300 px-5 py-2.5 text-sm font-semibold text-neutral-700">Huỷ</button>
+                  <button
+                    onClick={resetForm}
+                    className="rounded-xl border border-neutral-300 px-5 py-2.5 text-sm font-semibold text-neutral-700"
+                  >
+                    Huỷ
+                  </button>
                 ) : null}
                 <button
                   onClick={submit}
                   disabled={saving || !canModifyPromotionForm}
                   className="rounded-xl bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? "Đang lưu..." : editingId ? "Lưu khuyến mại" : "Tạo khuyến mại"}
+                  {saving
+                    ? "Đang lưu..."
+                    : editingId
+                      ? "Lưu khuyến mại"
+                      : "Tạo khuyến mại"}
                 </button>
               </div>
             </div>
@@ -946,22 +1408,40 @@ export default function PromotionsPageClient() {
         <div className="border-b border-neutral-200 p-5">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">Promotion list</p>
-              <h2 className="mt-1 text-lg font-bold text-neutral-950">Danh sách khuyến mại</h2>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-neutral-400">
+                Promotion list
+              </p>
+              <h2 className="mt-1 text-lg font-bold text-neutral-950">
+                Danh sách khuyến mại
+              </h2>
             </div>
             <div className="flex flex-wrap gap-2">
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as any)} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm">
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as any)}
+                className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
+              >
                 <option value="ALL">Tất cả trạng thái</option>
                 <option value="ACTIVE">Đang hoạt động</option>
                 <option value="INACTIVE">Tạm tắt</option>
               </select>
-              <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as any)} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm">
+              <select
+                value={typeFilter}
+                onChange={(event) => setTypeFilter(event.target.value as any)}
+                className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
+              >
                 <option value="ALL">Tất cả loại</option>
                 <option value="PRODUCT_DISCOUNT">Giảm sản phẩm</option>
                 <option value="ORDER_DISCOUNT">Giảm toàn đơn</option>
               </select>
               {adminMode ? (
-                <button type="button" onClick={() => setViewMode(viewMode === "cards" ? "table" : "cards")} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setViewMode(viewMode === "cards" ? "table" : "cards")
+                  }
+                  className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold"
+                >
                   {viewMode === "cards" ? "Xem bảng" : "Xem card"}
                 </button>
               ) : null}
@@ -970,31 +1450,54 @@ export default function PromotionsPageClient() {
         </div>
 
         {loading ? (
-          <div className="p-8 text-center text-sm text-neutral-500">Đang tải...</div>
+          <div className="p-8 text-center text-sm text-neutral-500">
+            Đang tải...
+          </div>
         ) : filteredRows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-neutral-500">Chưa có khuyến mại phù hợp</div>
+          <div className="p-8 text-center text-sm text-neutral-500">
+            Chưa có khuyến mại phù hợp
+          </div>
         ) : viewMode === "cards" ? (
           <div className="grid gap-4 p-5 xl:grid-cols-2">
             {filteredRows.map((row) => {
               const status = getStatusMeta(row);
               const progress = getTimeProgress(row);
               return (
-                <div key={row.id} className="rounded-[24px] border border-neutral-200 bg-white p-5 shadow-sm">
+                <div
+                  key={row.id}
+                  className="rounded-[24px] border border-neutral-200 bg-white p-5 shadow-sm"
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}>
-                          <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+                        <span
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}
+                        >
+                          <span
+                            className={`h-2 w-2 rounded-full ${status.dot}`}
+                          />
                           {status.label}
                         </span>
-                        <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">{typeLabel(row.type)}</span>
+                        <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-600">
+                          {typeLabel(row.type)}
+                        </span>
                       </div>
-                      <h3 className="mt-3 truncate text-lg font-semibold text-neutral-950">{row.name}</h3>
-                      {row.note ? <p className="mt-1 line-clamp-2 text-sm text-neutral-500">{row.note}</p> : null}
+                      <h3 className="mt-3 truncate text-lg font-semibold text-neutral-950">
+                        {row.name}
+                      </h3>
+                      {row.note ? (
+                        <p className="mt-1 line-clamp-2 text-sm text-neutral-500">
+                          {row.note}
+                        </p>
+                      ) : null}
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-neutral-950">{formatDiscount(row)}</div>
-                      <div className="text-xs text-neutral-500">Priority {row.priority}</div>
+                      <div className="text-2xl font-bold text-neutral-950">
+                        {formatDiscount(row)}
+                      </div>
+                      <div className="text-xs text-neutral-500">
+                        Priority {row.priority}
+                      </div>
                     </div>
                   </div>
 
@@ -1002,22 +1505,34 @@ export default function PromotionsPageClient() {
                     <div className="rounded-2xl bg-neutral-50 p-3">
                       <div className="text-xs text-neutral-500">Điều kiện</div>
                       <div className="mt-1 text-sm font-semibold text-neutral-900">
-                        {row.type === "ORDER_DISCOUNT" ? `Đơn từ ${money.format(Number(row.minOrderAmount ?? 0))}đ` : `${row.products?.length ?? 0} sản phẩm`}
+                        {row.type === "ORDER_DISCOUNT"
+                          ? `Đơn từ ${money.format(Number(row.minOrderAmount ?? 0))}đ`
+                          : `${row.products?.length ?? 0} sản phẩm`}
                       </div>
                     </div>
                     <div className="rounded-2xl bg-neutral-50 p-3">
                       <div className="text-xs text-neutral-500">Chi nhánh</div>
-                      <div className="mt-1 text-sm font-semibold text-neutral-900">{branchLabel(row)}</div>
+                      <div className="mt-1 text-sm font-semibold text-neutral-900">
+                        {branchLabel(row)}
+                      </div>
                     </div>
                     <div className="rounded-2xl bg-neutral-50 p-3">
                       <div className="text-xs text-neutral-500">Kênh</div>
-                      <div className="mt-1 text-sm font-semibold text-neutral-900">{channelLabel(row.salesChannel)}</div>
+                      <div className="mt-1 text-sm font-semibold text-neutral-900">
+                        {channelLabel(row.salesChannel)}
+                      </div>
                     </div>
                   </div>
 
                   {row.type === "PRODUCT_DISCOUNT" ? (
                     <div className="mt-4 text-xs text-neutral-500">
-                      {(row.products ?? []).slice(0, 3).map((item) => getProductName(item.product)).join(", ")}
+                      {(row.products ?? [])
+                        .slice(0, 3)
+                        .map((item) => {
+                          const option = promotionTargetToProductOption(item);
+                          return option ? getProductDisplayName(option) : "Không rõ sản phẩm";
+                        })
+                        .join(", ")}
                       {(row.products?.length ?? 0) > 3 ? "..." : ""}
                     </div>
                   ) : null}
@@ -1029,20 +1544,46 @@ export default function PromotionsPageClient() {
                   {progress !== null ? (
                     <div className="mt-3">
                       <div className="h-2 overflow-hidden rounded-full bg-neutral-100">
-                        <div className="h-full rounded-full bg-neutral-900" style={{ width: `${progress}%` }} />
+                        <div
+                          className="h-full rounded-full bg-neutral-900"
+                          style={{ width: `${progress}%` }}
+                        />
                       </div>
-                      <div className="mt-1 text-xs text-neutral-400">Đã đi qua {progress}% thời gian chạy</div>
+                      <div className="mt-1 text-xs text-neutral-400">
+                        Đã đi qua {progress}% thời gian chạy
+                      </div>
                     </div>
                   ) : null}
 
                   <div className="mt-5 flex flex-wrap justify-end gap-2">
                     {canEditPromotion ? (
-                      <button onClick={() => editPromotion(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Sửa</button>
+                      <button
+                        onClick={() => editPromotion(row)}
+                        className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold"
+                      >
+                        Sửa
+                      </button>
                     ) : null}
-                    {(row.status === "ACTIVE" ? canPausePromotion : canActivatePromotion) ? (
-                      <button onClick={() => toggleStatus(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">{row.status === "ACTIVE" ? "Tắt" : "Bật"}</button>
+                    {(
+                      row.status === "ACTIVE"
+                        ? canPausePromotion
+                        : canActivatePromotion
+                    ) ? (
+                      <button
+                        onClick={() => toggleStatus(row)}
+                        className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold"
+                      >
+                        {row.status === "ACTIVE" ? "Tắt" : "Bật"}
+                      </button>
                     ) : null}
-                    {adminMode ? <button onClick={() => remove(row.id)} className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600">Xoá</button> : null}
+                    {adminMode ? (
+                      <button
+                        onClick={() => remove(row.id)}
+                        className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600"
+                      >
+                        Xoá
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               );
@@ -1069,15 +1610,73 @@ export default function PromotionsPageClient() {
                   const status = getStatusMeta(row);
                   return (
                     <tr key={row.id} className="border-t align-top">
-                      <td className="px-5 py-4"><div className="font-semibold text-neutral-950">{row.name}</div>{row.note ? <div className="mt-1 text-xs text-neutral-500">{row.note}</div> : null}</td>
+                      <td className="px-5 py-4">
+                        <div className="font-semibold text-neutral-950">
+                          {row.name}
+                        </div>
+                        {row.note ? (
+                          <div className="mt-1 text-xs text-neutral-500">
+                            {row.note}
+                          </div>
+                        ) : null}
+                      </td>
                       <td className="px-5 py-4">{typeLabel(row.type)}</td>
-                      <td className="px-5 py-4 font-semibold">{formatDiscount(row)}</td>
-                      <td className="px-5 py-4">{row.type === "ORDER_DISCOUNT" ? `Đơn từ ${money.format(Number(row.minOrderAmount ?? 0))}đ` : `${row.products?.length ?? 0} sản phẩm`}</td>
-                      <td className="px-5 py-4"><div>{branchLabel(row)}</div><div className="mt-1 text-xs text-neutral-500">{channelLabel(row.salesChannel)}</div></td>
-                      <td className="px-5 py-4 text-xs text-neutral-600"><div>{safeDate(row.startAt)}</div><div className="mt-1">→ {safeDate(row.endAt)}</div></td>
-                      <td className="px-5 py-4"><span className={`rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}>{status.label}</span></td>
+                      <td className="px-5 py-4 font-semibold">
+                        {formatDiscount(row)}
+                      </td>
+                      <td className="px-5 py-4">
+                        {row.type === "ORDER_DISCOUNT"
+                          ? `Đơn từ ${money.format(Number(row.minOrderAmount ?? 0))}đ`
+                          : `${row.products?.length ?? 0} sản phẩm`}
+                      </td>
+                      <td className="px-5 py-4">
+                        <div>{branchLabel(row)}</div>
+                        <div className="mt-1 text-xs text-neutral-500">
+                          {channelLabel(row.salesChannel)}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-xs text-neutral-600">
+                        <div>{safeDate(row.startAt)}</div>
+                        <div className="mt-1">→ {safeDate(row.endAt)}</div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}
+                        >
+                          {status.label}
+                        </span>
+                      </td>
                       <td className="px-5 py-4">{row.priority}</td>
-                      <td className="px-5 py-4 text-right">{canEditPromotion ? <button onClick={() => editPromotion(row)} className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold">Sửa</button> : null}{(row.status === "ACTIVE" ? canPausePromotion : canActivatePromotion) ? <button onClick={() => toggleStatus(row)} className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold">{row.status === "ACTIVE" ? "Tắt" : "Bật"}</button> : null}{adminMode ? <button onClick={() => remove(row.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600">Xoá</button> : null}</td>
+                      <td className="px-5 py-4 text-right">
+                        {canEditPromotion ? (
+                          <button
+                            onClick={() => editPromotion(row)}
+                            className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                          >
+                            Sửa
+                          </button>
+                        ) : null}
+                        {(
+                          row.status === "ACTIVE"
+                            ? canPausePromotion
+                            : canActivatePromotion
+                        ) ? (
+                          <button
+                            onClick={() => toggleStatus(row)}
+                            className="mr-2 rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                          >
+                            {row.status === "ACTIVE" ? "Tắt" : "Bật"}
+                          </button>
+                        ) : null}
+                        {adminMode ? (
+                          <button
+                            onClick={() => remove(row.id)}
+                            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"
+                          >
+                            Xoá
+                          </button>
+                        ) : null}
+                      </td>
                     </tr>
                   );
                 })}

@@ -18,6 +18,7 @@ export type PromotionPayload = {
   priority?: number;
   note?: string;
   productIds?: string[];
+  variantIds?: string[];
 };
 
 async function request(path: string, options?: RequestInit) {

@@ -201,6 +201,70 @@ function cashSourceOptionsForBranch(sources: any[], branch: any, currentUser?: a
   return matched;
 }
 
+
+
+function userIdentityValues(user: any) {
+  return [
+    user?.id,
+    user?.staffId,
+    user?.code,
+    user?.email,
+    user?.username,
+    user?.name,
+    user?.fullName,
+    user?.displayName,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function voucherCreatorValues(row: any) {
+  return [
+    row?.createdById,
+    row?.createdByStaffId,
+    row?.staffId,
+    row?.userId,
+    row?.createdBy?.id,
+    row?.createdBy?.code,
+    row?.createdBy?.email,
+    row?.staff?.id,
+    row?.staff?.code,
+    row?.staff?.email,
+    row?.createdByName,
+    row?.staffName,
+    row?.createdBy?.name,
+    row?.createdBy?.fullName,
+    row?.staff?.name,
+    row?.staff?.fullName,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function isVoucherCreatedByCurrentUser(row: any, user: any) {
+  const userValues = userIdentityValues(user);
+  const rowValues = voucherCreatorValues(row);
+  if (!userValues.length || !rowValues.length) return false;
+
+  const normalizedUserValues = new Set(userValues.map(normalizeMoneySourceName));
+  return rowValues.some((value) => normalizedUserValues.has(normalizeMoneySourceName(value)));
+}
+
+function isCashVoucherRow(row: any, paymentSourceById?: Map<string, any>) {
+  const sourceFromConfig = row?.paymentSourceId
+    ? paymentSourceById?.get(String(row.paymentSourceId))
+    : null;
+
+  return isCashSource(
+    sourceFromConfig || {
+      id: row?.paymentSourceId,
+      name: row?.paymentSourceName,
+      code: row?.paymentSourceCode,
+      type: row?.paymentSourceType,
+    },
+  );
+}
+
 function sourceDisplay(row: any) {
   const source = row.paymentSourceName || row.paymentSourceCode || row.paymentSourceId || "Tiền mặt";
   const branch = row.branchName || row.branchId || "";
@@ -312,6 +376,7 @@ export default function CashVoucherPageClient({ type }: Props) {
   const canDelete = hasPermission(currentUser, deletePermission) || canCancel || isPowerFinanceUser;
   const canExport = hasPermission(currentUser, "cash_voucher.export") || isPowerFinanceUser;
   const canChooseAnyPaymentSource = isGlobalFinanceUser || isPowerFinanceUser;
+  const lockStaffPaymentListToOwnCash = !isReceipt && !isGlobalFinanceUser && !isPowerFinanceUser;
 
   const initialRange = useMemo(() => getRange("today"), []);
   const [quickRange, setQuickRange] = useState<QuickRange>("today");
@@ -325,7 +390,7 @@ export default function CashVoucherPageClient({ type }: Props) {
   const [branches, setBranches] = useState<any[]>([]);
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [rows, setRows] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>({});
+  const [, setSummary] = useState<any>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
@@ -390,6 +455,16 @@ export default function CashVoucherPageClient({ type }: Props) {
   const effectiveFormPaymentSourceId = canChooseAnyPaymentSource
     ? form.paymentSourceId
     : cashPaymentSource?.id || form.paymentSourceId;
+
+  const paymentSourceById = useMemo(() => {
+    const map = new Map<string, any>();
+    paymentSources.forEach((source) => {
+      if (source?.id) map.set(String(source.id), source);
+      if (source?.code) map.set(String(source.code), source);
+      if (source?.name) map.set(String(source.name), source);
+    });
+    return map;
+  }, [paymentSources]);
 
   const resetForm = () => {
     setEditing(null);
@@ -694,18 +769,62 @@ export default function CashVoucherPageClient({ type }: Props) {
     }
   };
 
+  const scopedRows = useMemo(() => {
+    if (!lockStaffPaymentListToOwnCash) return rows;
+
+    return rows.filter((row) => {
+      return (
+        isCashVoucherRow(row, paymentSourceById) &&
+        isVoucherCreatedByCurrentUser(row, currentUser)
+      );
+    });
+  }, [currentUser, lockStaffPaymentListToOwnCash, paymentSourceById, rows]);
+
   const creatorOptions = useMemo(() => {
-    const names = rows
+    const names = scopedRows
       .map((row) => creatorKey(row))
       .filter((name) => name && name !== "—");
 
     return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
-  }, [rows]);
+  }, [scopedRows]);
 
   const visibleRows = useMemo(() => {
-    if (creatorFilter === "ALL") return rows;
-    return rows.filter((row) => creatorKey(row) === creatorFilter);
-  }, [rows, creatorFilter]);
+    if (creatorFilter === "ALL") return scopedRows;
+    return scopedRows.filter((row) => creatorKey(row) === creatorFilter);
+  }, [scopedRows, creatorFilter]);
+
+  const visibleSummary = useMemo(() => {
+    return visibleRows.reduce(
+      (acc, row) => {
+        const amount = Number(row.amount || 0);
+        const rowStatus = String(row.status || "").toUpperCase();
+
+        if (isReceipt) {
+          acc.totalReceipt += amount;
+          acc.netCashFlow += amount;
+          if (rowStatus === "CONFIRMED") acc.confirmedReceipt += amount;
+        } else {
+          acc.totalPayment += amount;
+          acc.netCashFlow -= amount;
+          if (rowStatus === "CONFIRMED") acc.confirmedPayment += amount;
+        }
+
+        if (rowStatus !== "CONFIRMED" && rowStatus !== "CANCELLED") {
+          acc.pendingAmount += amount;
+        }
+
+        return acc;
+      },
+      {
+        totalReceipt: 0,
+        totalPayment: 0,
+        confirmedReceipt: 0,
+        confirmedPayment: 0,
+        pendingAmount: 0,
+        netCashFlow: 0,
+      },
+    );
+  }, [isReceipt, visibleRows]);
 
   const exportCsv = () => {
     const header = ["Mã phiếu", "Loại", "Trạng thái", "Chi nhánh", "Nguồn tiền", "Số tiền", "Nội dung", "Đối tượng", "Ngày tạo"];
@@ -948,10 +1067,10 @@ export default function CashVoucherPageClient({ type }: Props) {
       </section>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Stat label={isReceipt ? "Tổng phiếu thu" : "Tổng phiếu chi"} value={currency(isReceipt ? summary.totalReceipt : summary.totalPayment)} />
-        <Stat label="Đã xác nhận" value={currency(isReceipt ? summary.confirmedReceipt : summary.confirmedPayment)} />
-        <Stat label="Chờ xác nhận" value={currency(summary.pendingAmount)} />
-        <Stat label="Dòng tiền ròng" value={currency(summary.netCashFlow)} />
+        <Stat label={isReceipt ? "Tổng phiếu thu" : "Tổng phiếu chi"} value={currency(isReceipt ? visibleSummary.totalReceipt : visibleSummary.totalPayment)} />
+        <Stat label="Đã xác nhận" value={currency(isReceipt ? visibleSummary.confirmedReceipt : visibleSummary.confirmedPayment)} />
+        <Stat label="Chờ xác nhận" value={currency(visibleSummary.pendingAmount)} />
+        <Stat label="Dòng tiền ròng" value={currency(visibleSummary.netCashFlow)} />
       </div>
 
       <section className="grid gap-5 xl:grid-cols-[420px_1fr]">
@@ -1041,7 +1160,7 @@ export default function CashVoucherPageClient({ type }: Props) {
           <div className="border-b border-neutral-200 p-5">
             <h2 className="text-lg font-semibold">Danh sách {title.toLowerCase()}</h2>
             <div className="mt-1 flex items-center justify-between gap-3">
-              <p className="text-sm text-neutral-900 placeholder:text-neutral-500">{visibleRows.length} / {rows.length} phiếu trong khoảng lọc.</p>
+              <p className="text-sm text-neutral-900 placeholder:text-neutral-500">{visibleRows.length} / {scopedRows.length} phiếu trong khoảng lọc.</p>
               <button
                 type="button"
                 onClick={() => void loadData()}
