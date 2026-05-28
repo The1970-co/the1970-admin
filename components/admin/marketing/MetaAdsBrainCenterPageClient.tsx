@@ -27,6 +27,10 @@ type Metrics = {
   costPerConversation?: number;
   costPerResult?: number;
   averagePurchaseValue?: number;
+  metaPurchases?: number;
+  metaPurchaseValue?: number;
+  costPerMetaPurchase?: number;
+  metaAveragePurchaseValue?: number;
 };
 
 type ProductAttribution = {
@@ -79,6 +83,9 @@ type ProductPerformanceRow = {
   averageOrderValue: number;
   familySku?: string;
   orderRevenue?: number;
+  facebookOrders?: number;
+  posOrders?: number;
+  sampleOrders?: Array<{ orderId?: string; orderCode?: string; revenue?: number }>;
 };
 
 type ProductPerformancePayload = {
@@ -693,7 +700,7 @@ function Toolbar({
   onToggleFullscreen: () => void;
 }) {
   return (
-    <div className="sticky top-0 z-30 border-b border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur">
+    <div className="border-b border-neutral-200 bg-white/95 px-4 py-3 backdrop-blur md:sticky md:top-0 md:z-30">
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap items-center gap-2">
@@ -881,7 +888,21 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
 }
 
 
-function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level: LevelKey; loading: boolean; onSelect: (row: BrainRow) => void }) {
+function MainTable({
+  rows,
+  level,
+  loading,
+  onSelect,
+  productRows = [],
+  productTotal = null,
+}: {
+  rows: BrainRow[];
+  level: LevelKey;
+  loading: boolean;
+  onSelect: (row: BrainRow) => void;
+  productRows?: ProductPerformanceRow[];
+  productTotal?: ProductPerformancePayload | null;
+}) {
   const [sortKey, setSortKey] = useState<ColumnKey>("spend");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [columnsOpen, setColumnsOpen] = useState(false);
@@ -917,6 +938,37 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
     });
   }, [rows, sortKey, sortDir]);
 
+  const uniqueProductTotal = useMemo(() => {
+    const payloadOrders = n(productTotal?.totalOrders);
+    const payloadRevenue = n((productTotal as any)?.totalOrderRevenue ?? productTotal?.totalRevenue);
+
+    // Tổng cuối bảng phải là unique theo đơn từ backend, không cộng từng ads row/SKU family.
+    // Nếu dùng cộng row thì 1 đơn có nhiều sản phẩm hoặc 1 SKU có nhiều ads sẽ bị nhân doanh thu.
+    if (payloadOrders > 0 || payloadRevenue > 0) {
+      return { systemOrders: payloadOrders, systemRevenue: payloadRevenue };
+    }
+
+    const familySet = new Set(
+      sortedRows
+        .map((row) => String(productAttr(row).familySku || productAttr(row).sku || "").toLowerCase().trim())
+        .filter(Boolean),
+    );
+
+    let systemOrders = 0;
+    let systemRevenue = 0;
+    const seen = new Set<string>();
+
+    for (const product of productRows || []) {
+      const key = String(product.familySku || product.sku || "").toLowerCase().trim();
+      if (!key || !familySet.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      systemOrders += n(product.orderCount);
+      systemRevenue += n(product.orderRevenue || product.revenue);
+    }
+
+    return { systemOrders, systemRevenue };
+  }, [sortedRows, productRows, productTotal]);
+
   const total = sortedRows.reduce(
     (acc, row) => {
       acc.spend += n(row.metrics?.spend);
@@ -924,11 +976,9 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
       acc.clicks += n(row.metrics?.clicks);
       acc.reach += n(row.metrics?.reach);
       acc.impressions += n(row.metrics?.impressions);
-      acc.systemOrders += n(row.productAttribution?.orderCount);
-      acc.systemRevenue += n(row.productAttribution?.revenue);
       return acc;
     },
-    { spend: 0, purchases: 0, clicks: 0, reach: 0, impressions: 0, systemOrders: 0, systemRevenue: 0 },
+    { spend: 0, purchases: 0, clicks: 0, reach: 0, impressions: 0, systemOrders: uniqueProductTotal.systemOrders, systemRevenue: uniqueProductTotal.systemRevenue },
   );
 
   const show = (key: ColumnKey) => visibleColumns.includes(key);
@@ -1249,6 +1299,8 @@ function MobileAdsList({
           const spend = n(m.spend);
           const active = deliveryText(row).toLowerCase().includes("đang hoạt");
           const a = productAttr(row);
+          const systemOrderCount = n((a as any).familyOrderCount || a.orderCount);
+          const systemProductCount = n((a as any).familyQuantity || a.quantity || (a as any).totalQuantity);
 
           return (
             <button
@@ -1299,22 +1351,26 @@ function MobileAdsList({
                 </div>
               </div>
 
-              <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+              <div className="mt-3 grid grid-cols-5 gap-1.5 text-center">
+                <div className="rounded-xl bg-neutral-50 px-1.5 py-2">
                   <div className="text-sm font-bold">{compact(m.reach)}</div>
-                  <div className="text-[10px] font-semibold text-neutral-400">Reach</div>
+                  <div className="text-[9px] font-semibold text-neutral-400">Reach</div>
                 </div>
-                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+                <div className="rounded-xl bg-neutral-50 px-1.5 py-2">
                   <div className="text-sm font-bold">{compact(m.messages)}</div>
-                  <div className="text-[10px] font-semibold text-neutral-400">Tin nhắn</div>
+                  <div className="text-[9px] font-semibold text-neutral-400">Tin nhắn</div>
                 </div>
-                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+                <div className="rounded-xl bg-neutral-50 px-1.5 py-2">
                   <div className="text-sm font-bold">{compact(m.comments)}</div>
-                  <div className="text-[10px] font-semibold text-neutral-400">Comment</div>
+                  <div className="text-[9px] font-semibold text-neutral-400">Comment</div>
                 </div>
-                <div className="rounded-xl bg-neutral-50 px-2 py-2">
-                  <div className="text-sm font-bold">{compact(a.familyOrderCount || a.orderCount)}</div>
-                  <div className="text-[10px] font-semibold text-neutral-400">Đơn</div>
+                <div className="rounded-xl bg-emerald-50 px-1.5 py-2 ring-1 ring-emerald-100">
+                  <div className="text-sm font-bold text-emerald-800">{compact(systemOrderCount)}</div>
+                  <div className="text-[9px] font-semibold text-emerald-700">Đơn tạo</div>
+                </div>
+                <div className="rounded-xl bg-emerald-50 px-1.5 py-2 ring-1 ring-emerald-100">
+                  <div className="text-sm font-bold text-emerald-800">{compact(systemProductCount)}</div>
+                  <div className="text-[9px] font-semibold text-emerald-700">SP tạo</div>
                 </div>
               </div>
             </button>
@@ -1482,6 +1538,18 @@ function RowDetailDrawer({
               </span>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-xl bg-emerald-50 p-3">
+                <div className="text-xs text-emerald-700">Tin nhắn / Kết quả</div>
+                <div className="mt-1 font-semibold text-emerald-900">{compact(n(m.messages || m.conversationStarts || m.purchases))}</div>
+              </div>
+              <div className="rounded-xl bg-emerald-50 p-3">
+                <div className="text-xs text-emerald-700">Chi phí / tin nhắn</div>
+                <div className="mt-1 font-semibold text-emerald-900">{n(m.costPerMessage || m.costPerConversation || m.costPerResult) ? money(n(m.costPerMessage || m.costPerConversation || m.costPerResult)) : "—"}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">Bình luận bài viết</div>
+                <div className="mt-1 font-semibold">{compact(m.comments)}</div>
+              </div>
               <div className="rounded-xl bg-neutral-50 p-3">
                 <div className="text-xs text-neutral-400">Chi phí ads</div>
                 <div className="mt-1 font-semibold">{money(m.spend)}</div>
@@ -1491,12 +1559,16 @@ function RowDetailDrawer({
                 <div className="mt-1 font-semibold">{pct(m.ctr)}</div>
               </div>
               <div className="rounded-xl bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-400">CPC</div>
+                <div className="mt-1 font-semibold">{n(m.cpc) ? money(m.cpc) : "—"}</div>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
                 <div className="text-xs text-neutral-400">Lượt nhấp</div>
                 <div className="mt-1 font-semibold">{compact(m.clicks)}</div>
               </div>
               <div className="rounded-xl bg-neutral-50 p-3">
-                <div className="text-xs text-neutral-400">CPC</div>
-                <div className="mt-1 font-semibold">{n(m.cpc) ? money(m.cpc) : "—"}</div>
+                <div className="text-xs text-neutral-400">Reach</div>
+                <div className="mt-1 font-semibold">{compact(m.reach)}</div>
               </div>
             </div>
           </div>
@@ -1509,12 +1581,16 @@ function RowDetailDrawer({
 
             <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-xl bg-emerald-50 p-3">
-                <div className="text-xs text-emerald-700">Đơn gán ads</div>
-                <div className="mt-1 font-semibold text-emerald-800">{a.allocationMode === "family_shared" ? "—" : compact(a.orderCount)}</div>
+                <div className="text-xs text-emerald-700">Đơn tạo từ ads</div>
+                <div className="mt-1 font-semibold text-emerald-800">{compact((a as any).familyOrderCount || a.orderCount)}</div>
+              </div>
+              <div className="rounded-xl bg-emerald-50 p-3">
+                <div className="text-xs text-emerald-700">Sản phẩm đã tạo</div>
+                <div className="mt-1 font-semibold text-emerald-800">{compact((a as any).familyQuantity || a.quantity || (a as any).totalQuantity)}</div>
               </div>
               <div className="rounded-xl bg-emerald-50 p-3">
                 <div className="text-xs text-emerald-700">DT gán ads</div>
-                <div className="mt-1 font-semibold text-emerald-800">{a.allocationMode === "family_shared" ? "Không chia theo ads" : money(a.revenue)}</div>
+                <div className="mt-1 font-semibold text-emerald-800">{a.allocationMode === "family_shared" ? money((a as any).familyRevenue || a.revenue) : money(a.revenue)}</div>
               </div>
               <div className="rounded-xl bg-neutral-50 p-3">
                 <div className="text-xs text-neutral-400">SKU match</div>
@@ -1598,6 +1674,8 @@ const [filter, setFilter] = useState<FilterKey>("all");
   }, [data, metaLevel]);
 
   const [productPayload, setProductPayload] = useState<ProductPerformancePayload | null>(null);
+  const [facebookProductPayload, setFacebookProductPayload] = useState<ProductPerformancePayload | null>(null);
+  const [posProductPayload, setPosProductPayload] = useState<ProductPerformancePayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
@@ -1622,9 +1700,11 @@ const [filter, setFilter] = useState<FilterKey>("all");
           ? `range=custom&fromDate=${customFrom}&toDate=${customTo}`
           : `range=${range}`;
 
-      const [brain, products] = await Promise.all([
+      const [brain, products, facebookProducts, posProducts] = await Promise.all([
         apiJson<BrainOverview>(`/meta-ads/live-insights?${dateQuery}&level=${metaLevel}&limit=1000`),
-        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?${dateQuery}&limit=100&sourceMode=${sourceMode}&orderMode=valid`),
+        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?${dateQuery}&limit=100&sourceMode=all&orderMode=valid`),
+        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?${dateQuery}&limit=100&sourceMode=facebook&orderMode=valid`),
+        apiJson<ProductPerformancePayload>(`/meta-ads/product-performance?${dateQuery}&limit=100&sourceMode=pos&orderMode=valid`),
       ]);
 
       const productRows = products?.rows || [];
@@ -1660,6 +1740,8 @@ const [filter, setFilter] = useState<FilterKey>("all");
 
       setData(enrichedBrain);
       setProductPayload(products);
+      setFacebookProductPayload(facebookProducts);
+      setPosProductPayload(posProducts);
     } catch (err: any) {
       setError(err?.message || "Không tải được dữ liệu Meta Ads Operating Center");
     } finally {
@@ -1684,7 +1766,7 @@ const [filter, setFilter] = useState<FilterKey>("all");
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, customFrom, customTo, sourceMode, level]);
+  }, [range, customFrom, customTo, level]);
 
   const sourceRows = useMemo(() => {
     // Quan trọng: mỗi tab dùng đúng Meta live level tương ứng.
@@ -1702,7 +1784,11 @@ const [filter, setFilter] = useState<FilterKey>("all");
   const summary = data?.summary || {};
   const status = data?.statusBreakdown;
 
-  const productTotal = productPayload || { totalOrders: 0, totalRevenue: 0 };
+  const productTotal = productPayload || { totalOrders: 0, totalRevenue: 0, totalOrderRevenue: 0, rows: [] };
+  const facebookProductTotal = facebookProductPayload || { totalOrders: 0, totalRevenue: 0, totalOrderRevenue: 0 };
+  const posProductTotal = posProductPayload || { totalOrders: 0, totalRevenue: 0, totalOrderRevenue: 0 };
+  const metaPurchaseCount = n((summary as any).metaPurchases);
+  const metaPurchaseCpa = n((summary as any).costPerMetaPurchase);
 
   return (
     <main className={fullscreen ? "fixed inset-0 z-[9999] overflow-auto bg-[#f7f7f7] p-3 font-sans text-neutral-950" : "min-h-screen w-full bg-[#f7f7f7] px-3 py-4 font-sans text-neutral-950 md:px-4"}>
@@ -1725,9 +1811,9 @@ const [filter, setFilter] = useState<FilterKey>("all");
 
           <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-8">
             <Kpi label="Chi phí ads" value={money(summary.spend)} sub="Meta official live" tone="amber" />
-            <Kpi label="Lượt mua Meta" value={compact(summary.purchases)} sub={`CPA ${n(summary.costPerPurchase) ? money(summary.costPerPurchase) : "—"}`} tone={n(summary.purchases) ? "green" : "neutral"} />
-            <Kpi label="Đơn gán ads" value={compact(productTotal.totalOrders)} sub="Tạo đơn hợp lệ" tone={n(productTotal.totalOrders) ? "green" : "neutral"} />
-            <Kpi label="DT sản phẩm" value={money(productTotal.totalRevenue)} sub={`DT đơn ${money((productTotal as any).totalOrderRevenue)}`} tone={n(productTotal.totalRevenue) ? "green" : "neutral"} />
+            <Kpi label="Lượt mua Meta" value={metaPurchaseCount ? compact(metaPurchaseCount) : "—"} sub={metaPurchaseCpa ? `CPA ${money(metaPurchaseCpa)}` : "Không lấy nhầm tin nhắn"} tone={metaPurchaseCount ? "green" : "neutral"} />
+            <Kpi label="Đơn gán ads" value={compact(productTotal.totalOrders)} sub={`FB ${compact(facebookProductTotal.totalOrders)} · POS ${compact(posProductTotal.totalOrders)}`} tone={n(productTotal.totalOrders) ? "green" : "neutral"} />
+            <Kpi label="DT đơn gán ads" value={money((productTotal as any).totalOrderRevenue || productTotal.totalRevenue)} sub={`FB ${money((facebookProductTotal as any).totalOrderRevenue || facebookProductTotal.totalRevenue)} · POS ${money((posProductTotal as any).totalOrderRevenue || posProductTotal.totalRevenue)}`} tone={n((productTotal as any).totalOrderRevenue || productTotal.totalRevenue) ? "green" : "neutral"} />
             <Kpi label="ROAS Meta" value={ratio(summary.roas)} sub={money(summary.purchaseValue)} tone={n(summary.roas) >= 2 ? "green" : "neutral"} />
             <Kpi label="Lượt nhấp" value={compact(summary.clicks)} sub={`CTR ${pct(summary.ctr)}`} />
             <Kpi label="Chiến dịch chạy" value={`${status?.campaigns?.active || 0}/${status?.campaigns?.total || 0}`} sub="Campaign active" tone="green" />
@@ -1811,7 +1897,7 @@ const [filter, setFilter] = useState<FilterKey>("all");
               ))}
             </div>
             <div className="hidden md:block">
-              <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
+              <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} productRows={productPayload?.rows || []} productTotal={productPayload} />
             </div>
             <MobileAdsList rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
           </div>
