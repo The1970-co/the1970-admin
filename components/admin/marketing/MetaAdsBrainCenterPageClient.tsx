@@ -1193,6 +1193,138 @@ function MainTable({ rows, level, loading, onSelect }: { rows: BrainRow[]; level
   );
 }
 
+
+
+function MobileAdsList({
+  rows,
+  level,
+  loading,
+  onSelect,
+}: {
+  rows: BrainRow[];
+  level: LevelKey;
+  loading: boolean;
+  onSelect: (row: BrainRow) => void;
+}) {
+  if (loading) {
+    return (
+      <section className="rounded-b-2xl border-x border-b border-neutral-200 bg-white p-4 md:hidden">
+        <div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm font-semibold text-neutral-400">
+          Đang tải dữ liệu...
+        </div>
+      </section>
+    );
+  }
+
+  if (!rows.length) {
+    return (
+      <section className="rounded-b-2xl border-x border-b border-neutral-200 bg-white p-4 md:hidden">
+        <div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm font-semibold text-neutral-400">
+          Không có dòng phù hợp bộ lọc.
+        </div>
+      </section>
+    );
+  }
+
+  const noun = LEVEL_OPTIONS.find((x) => x.id === level)?.noun || "quảng cáo";
+
+  return (
+    <section className="rounded-b-2xl border-x border-b border-neutral-200 bg-[#f4f8fb] p-3 md:hidden">
+      <div className="mb-3 flex items-center justify-between px-1">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-400">Mobile Ads View</div>
+          <h3 className="text-lg font-semibold text-neutral-950">Danh sách {noun}</h3>
+        </div>
+        <div className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-neutral-600 shadow-sm">
+          {compact(rows.length)} dòng
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {rows.map((row) => {
+          const m: any = row.metrics || {};
+          const thumb = getAdThumb(row);
+          const result = n(m.conversationStarts || m.purchases);
+          const cpr = n(m.costPerConversation || m.costPerResult || m.costPerPurchase);
+          const spend = n(m.spend);
+          const active = deliveryText(row).toLowerCase().includes("đang hoạt");
+          const a = productAttr(row);
+
+          return (
+            <button
+              key={`${level}-mobile-${row.id}`}
+              type="button"
+              onClick={() => onSelect(row)}
+              className="w-full rounded-2xl border border-neutral-200 bg-white p-4 text-left shadow-sm active:scale-[0.99]"
+            >
+              <div className="flex items-start gap-3">
+                <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-neutral-100 ring-1 ring-neutral-200">
+                  {thumb ? (
+                    <img src={thumb} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[10px] font-bold text-neutral-400">
+                      {level === "campaign" ? "CD" : level === "adset" ? "NQ" : "ADS"}
+                    </div>
+                  )}
+                  <span className={`absolute bottom-0.5 right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white ${active ? "bg-emerald-600" : "bg-neutral-400"}`} />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 text-base font-bold leading-5 text-neutral-950">{row.name || "—"}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-semibold text-neutral-500">
+                    <span className={active ? "text-emerald-700" : "text-neutral-500"}>{deliveryText(row)}</span>
+                    <span>·</span>
+                    <span>{result ? "Lượt bắt đầu cuộc trò chuyện qua tin nhắn" : "Chưa có kết quả"}</span>
+                  </div>
+                  {a.sku || a.familySku ? (
+                    <div className="mt-1 text-xs font-bold text-emerald-700">SKU: {a.familySku || a.sku}</div>
+                  ) : null}
+                </div>
+
+                <span className="text-xl font-bold leading-none text-neutral-400">›</span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-3 divide-x divide-neutral-200">
+                <div className="pr-3">
+                  <div className="text-xl font-bold text-neutral-950">{result ? compact(result) : "—"}</div>
+                  <div className="mt-1 text-xs font-semibold leading-4 text-neutral-500">Kết quả</div>
+                </div>
+                <div className="px-3">
+                  <div className="text-xl font-bold text-neutral-950">{cpr ? money(cpr) : "—"}</div>
+                  <div className="mt-1 text-xs font-semibold leading-4 text-neutral-500">Chi phí/kết quả</div>
+                </div>
+                <div className="pl-3">
+                  <div className="text-xl font-bold text-neutral-950">{spend ? money(spend) : "0đ"}</div>
+                  <div className="mt-1 text-xs font-semibold leading-4 text-neutral-500">Đã chi tiêu</div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+                  <div className="text-sm font-bold">{compact(m.reach)}</div>
+                  <div className="text-[10px] font-semibold text-neutral-400">Reach</div>
+                </div>
+                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+                  <div className="text-sm font-bold">{compact(m.messages)}</div>
+                  <div className="text-[10px] font-semibold text-neutral-400">Tin nhắn</div>
+                </div>
+                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+                  <div className="text-sm font-bold">{compact(m.comments)}</div>
+                  <div className="text-[10px] font-semibold text-neutral-400">Comment</div>
+                </div>
+                <div className="rounded-xl bg-neutral-50 px-2 py-2">
+                  <div className="text-sm font-bold">{compact(a.familyOrderCount || a.orderCount)}</div>
+                  <div className="text-[10px] font-semibold text-neutral-400">Đơn</div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function ProductPanel({ payload }: { payload: ProductPerformancePayload | null }) {
   const rows = payload?.rows || [];
   return (
@@ -1307,7 +1439,7 @@ function RowDetailDrawer({
         className="absolute inset-0 bg-black/30"
         onClick={onClose}
       />
-      <aside className="relative h-full w-full max-w-[520px] overflow-y-auto border-l border-neutral-200 bg-white shadow-2xl">
+      <aside className="relative h-full w-full overflow-y-auto border-l border-neutral-200 bg-white shadow-2xl md:max-w-[520px]">
         <div className="sticky top-0 z-10 border-b border-neutral-200 bg-white px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -1325,11 +1457,20 @@ function RowDetailDrawer({
         </div>
 
         <div className="space-y-4 p-5">
-          {row.thumbnailUrl ? (
+          {getAdThumb(row) ? (
             <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
-              <img src={row.thumbnailUrl} alt="" className="max-h-[320px] w-full object-cover" referrerPolicy="no-referrer" />
+              <img src={getAdThumb(row)} alt="" className="max-h-[320px] w-full object-cover" referrerPolicy="no-referrer" />
             </div>
           ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-800">
+              ✎ Chỉnh sửa
+            </button>
+            <button type="button" className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-800">
+              ⧉ Nhân bản
+            </button>
+          </div>
 
           <div className="rounded-2xl border border-neutral-200 bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
@@ -1669,7 +1810,10 @@ const [filter, setFilter] = useState<FilterKey>("all");
                 </button>
               ))}
             </div>
-            <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
+            <div className="hidden md:block">
+              <MainTable rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
+            </div>
+            <MobileAdsList rows={rows} level={level} loading={loading} onSelect={setSelectedRow} />
           </div>
           {!fullscreen ? <InsightRail data={data} rows={sourceRows} productPayload={productPayload} /> : null}
         </section>
