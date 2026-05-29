@@ -17,6 +17,16 @@ type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
 type ApplyFilter = "ALL" | "APPLIED" | "NOT_APPLIED";
 type ConfirmFilter = "ALL" | "FINISHED_OR_APPLIED" | "NOT_FINISHED";
 type WorkerFilter = "ALL" | "HAS_WORKER" | "NO_WORKER";
+type ConfirmDialogState = {
+  title: string;
+  description: React.ReactNode;
+  confirmLabel: string;
+  tone?: "purple" | "red" | "black";
+  onConfirm: () => void | Promise<void>;
+};
+
+type ToastTone = "success" | "error" | "info";
+
 
 function getTokenFromStorage() {
   if (typeof window === "undefined") return null;
@@ -378,11 +388,42 @@ export default function StocktakeSessionsPageClient() {
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [overview, setOverview] = useState<StocktakeSessionsOverview | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [toast, setToast] = useState<{ tone: ToastTone; title: string; description?: string } | null>(null);
+
 
   const branchesLoadedRef = useRef(false);
   const inFlightSessionKeyRef = useRef("");
   const loadedSessionKeyRef = useRef("");
   const sessionRequestSeqRef = useRef(0);
+  const pendingScrollYRef = useRef<number | null>(null);
+  const lastAppliedSessionIdRef = useRef<string | null>(null);
+
+  const showToast = useCallback((tone: ToastTone, title: string, description?: string) => {
+    setToast({ tone, title, description });
+    window.setTimeout(() => {
+      setToast((current) => (current?.title === title ? null : current));
+    }, 3600);
+  }, []);
+
+  const preserveCurrentScroll = useCallback(() => {
+    if (typeof window === "undefined") return;
+    pendingScrollYRef.current = window.scrollY;
+  }, []);
+
+  const restorePreservedScroll = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const y = pendingScrollYRef.current;
+    if (typeof y !== "number") return;
+    pendingScrollYRef.current = null;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: y, left: 0, behavior: "auto" });
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: y, left: 0, behavior: "auto" });
+      });
+    });
+  }, []);
+
 
   useEffect(() => {
     const user = getCurrentUserFromStorage();
@@ -426,7 +467,7 @@ export default function StocktakeSessionsPageClient() {
   }, []);
 
   const loadSessions = useCallback(
-    async (options?: { force?: boolean }) => {
+    async (options?: { force?: boolean; silent?: boolean; preserveScroll?: boolean }) => {
       if (!ready) return;
 
       const params = { branchId, status, from, to, page, limit, productQuery: productQuery.trim() };
@@ -441,7 +482,8 @@ export default function StocktakeSessionsPageClient() {
       inFlightSessionKeyRef.current = requestKey;
 
       try {
-        setLoading(true);
+        if (options?.preserveScroll) preserveCurrentScroll();
+        if (!options?.silent) setLoading(true);
         setMessage("");
 
         const [listData, overviewData] = await Promise.all([
@@ -466,7 +508,8 @@ export default function StocktakeSessionsPageClient() {
       } finally {
         if (sessionRequestSeqRef.current === requestSeq) {
           inFlightSessionKeyRef.current = "";
-          setLoading(false);
+          if (!options?.silent) setLoading(false);
+          if (options?.preserveScroll) restorePreservedScroll();
         }
       }
     },
@@ -724,38 +767,9 @@ export default function StocktakeSessionsPageClient() {
     }
   };
 
-  const handleApplySession = async (item: EnrichedStocktakeSession) => {
-    if (!canApplyStocktake) {
-      setMessage("Bạn không có quyền cân bằng kho.");
-      return;
-    }
-
-    if (isApplied(item)) {
-      setMessage("Phiên kiểm kho này đã cân bằng kho rồi.");
-      return;
-    }
-
-    const itemStatus = String(item.status || "").toUpperCase();
-    if (itemStatus === "CANCELLED") {
-      setMessage("Phiên kiểm kho đã huỷ, không thể cân bằng kho.");
-      return;
-    }
-
-    if (itemStatus !== "FINISHED") {
-      setMessage("Phiên kiểm kho cần kết thúc/xác nhận trước khi cân bằng kho.");
-      return;
-    }
-
-    const kpi = item.kpi || {};
-    const mismatch = Number(kpi.discrepancySku ?? kpi.mismatchSku ?? 0);
-    const diffQty = Number(kpi.totalDiffQty || 0);
-    const ok = window.confirm(
-      `Cân bằng kho cho phiên "${item.name || item.id}"?\n\n` +
-        `SKU lệch: ${formatNumber(mismatch)}\n` +
-        `Tổng lệch SL: ${diffText(diffQty)}\n\n` +
-        "Sau khi cân bằng, hệ thống sẽ ghi nhận điều chỉnh tồn kho theo chênh lệch kiểm.",
-    );
-    if (!ok) return;
+  const applySessionWithoutPageJump = async (item: EnrichedStocktakeSession) => {
+    preserveCurrentScroll();
+    lastAppliedSessionIdRef.current = item.id;
 
     try {
       setApplyingSessionId(item.id);
@@ -764,14 +778,92 @@ export default function StocktakeSessionsPageClient() {
         method: "PATCH",
         body: JSON.stringify({ note: item.note || "Cân bằng kho từ lịch sử kiểm kho" }),
       });
-      setMessage("Đã cân bằng kho cho phiên kiểm kho.");
+
+      const appliedAt = new Date().toISOString();
+      setSessions((current) =>
+        current.map((row) =>
+          row.id === item.id
+            ? {
+                ...row,
+                status: "APPLIED",
+                appliedAt,
+                appliedById: currentUser?.id || row.appliedById || null,
+                appliedByName: currentUser?.name || currentUser?.fullName || row.appliedByName || null,
+              }
+            : row,
+        ),
+      );
+
+      showToast("success", "Đã cân bằng kho", `Phiên ${item.name || item.id} đã được chốt tồn.`);
       loadedSessionKeyRef.current = "";
-      await loadSessions({ force: true });
+      await loadSessions({ force: true, silent: true, preserveScroll: true });
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không cân bằng được kho cho phiên này.");
+      showToast(
+        "error",
+        "Không cân bằng được kho",
+        err instanceof Error ? err.message : "Không cân bằng được kho cho phiên này.",
+      );
     } finally {
       setApplyingSessionId(null);
+      restorePreservedScroll();
     }
+  };
+
+  const handleApplySession = async (item: EnrichedStocktakeSession) => {
+    if (!canApplyStocktake) {
+      showToast("error", "Không có quyền", "Bạn không có quyền cân bằng kho.");
+      return;
+    }
+
+    if (isApplied(item)) {
+      showToast("info", "Phiên đã chốt tồn", "Phiên kiểm kho này đã cân bằng kho rồi.");
+      return;
+    }
+
+    const itemStatus = String(item.status || "").toUpperCase();
+    if (itemStatus === "CANCELLED") {
+      showToast("error", "Không thể cân bằng", "Phiên kiểm kho đã huỷ, không thể cân bằng kho.");
+      return;
+    }
+
+    if (itemStatus !== "FINISHED") {
+      showToast("info", "Chưa đủ điều kiện", "Phiên kiểm kho cần kết thúc/xác nhận trước khi cân bằng kho.");
+      return;
+    }
+
+    const kpi = item.kpi || {};
+    const mismatch = Number(kpi.discrepancySku ?? kpi.mismatchSku ?? 0);
+    const diffQty = Number(kpi.totalDiffQty || 0);
+
+    setConfirmDialog({
+      title: "Xác nhận cân bằng kho",
+      confirmLabel: applyingSessionId === item.id ? "Đang cân bằng..." : "Cân bằng kho",
+      tone: "purple",
+      description: (
+        <div className="space-y-3">
+          <p>
+            Chốt tồn cho phiên <b>{item.name || item.id}</b>. Hệ thống sẽ ghi nhận điều chỉnh tồn kho theo chênh lệch kiểm.
+          </p>
+          <div className="grid gap-2 rounded-2xl border border-purple-100 bg-purple-50 p-3 text-sm md:grid-cols-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-purple-500">SKU lệch</p>
+              <p className="mt-1 text-lg font-extrabold text-purple-900">{formatNumber(mismatch)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-purple-500">Tổng lệch SL</p>
+              <p className="mt-1 text-lg font-extrabold text-purple-900">{diffText(diffQty)}</p>
+            </div>
+          </div>
+          <p className="text-xs font-semibold text-neutral-500">
+            Sau khi xác nhận, dòng này sẽ được cập nhật tại chỗ và trang sẽ giữ nguyên vị trí đang xem.
+          </p>
+        </div>
+      ),
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        await applySessionWithoutPageJump(item);
+      },
+    });
   };
 
   const handleCancelSession = async (item: EnrichedStocktakeSession) => {
@@ -911,8 +1003,48 @@ Không xoá phiên đã chốt tồn.`,
       </div>
 
       {message ? (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+        <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-sm font-semibold text-neutral-700 shadow-sm">
           {message}
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div
+          className={`fixed right-5 top-5 z-50 w-[360px] rounded-2xl border bg-white p-4 shadow-2xl ${
+            toast.tone === "success"
+              ? "border-green-200"
+              : toast.tone === "error"
+                ? "border-red-200"
+                : "border-blue-200"
+          }`}
+        >
+          <div className="flex gap-3">
+            <div
+              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${
+                toast.tone === "success"
+                  ? "bg-green-50 text-green-700"
+                  : toast.tone === "error"
+                    ? "bg-red-50 text-red-700"
+                    : "bg-blue-50 text-blue-700"
+              }`}
+            >
+              {toast.tone === "success" ? "✓" : toast.tone === "error" ? "!" : "i"}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-extrabold text-neutral-950">{toast.title}</p>
+              {toast.description ? (
+                <p className="mt-1 text-sm font-medium text-neutral-500">{toast.description}</p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="ml-auto rounded-lg px-2 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+              aria-label="Đóng thông báo"
+            >
+              ×
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -1499,6 +1631,54 @@ Không xoá phiên đã chốt tồn.`,
           </table>
         </div>
       </div>
+
+      {confirmDialog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/35 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-xl rounded-[28px] border border-neutral-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div
+                className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-lg font-black ${
+                  confirmDialog.tone === "red"
+                    ? "bg-red-50 text-red-700"
+                    : confirmDialog.tone === "black"
+                      ? "bg-neutral-950 text-white"
+                      : "bg-purple-50 text-purple-700"
+                }`}
+              >
+                !
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-extrabold text-neutral-950">{confirmDialog.title}</h3>
+                <div className="mt-2 text-sm font-medium leading-6 text-neutral-600">{confirmDialog.description}</div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDialog(null)}
+                className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
+              >
+                Để sau
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDialog.onConfirm()}
+                disabled={Boolean(applyingSessionId)}
+                className={`rounded-xl px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                  confirmDialog.tone === "red"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : confirmDialog.tone === "black"
+                      ? "bg-neutral-950 hover:bg-neutral-800"
+                      : "bg-purple-700 hover:bg-purple-800"
+                }`}
+              >
+                {confirmDialog.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
