@@ -37,7 +37,7 @@ export type PrintTemplateConfig = {
 
 // Đổi key lên v21 để xoá cache template cũ đang lưu trong localStorage.
 // Nếu không đổi key, trình duyệt vẫn dùng HTML cũ nên sửa engine/config không ăn.
-const STORAGE_KEY = "the1970.printTemplates.v25";
+const STORAGE_KEY = "the1970.printTemplates.v27";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -452,6 +452,7 @@ function normalizePrintTemplateBranch(template: PrintTemplateConfig) {
         : template.storeName,
     storeAddress: template.storeAddress ?? contact.storeAddress,
     storePhone: template.storePhone || contact.storePhone,
+    showNote: template.templateType === "shipping" ? true : template.showNote,
     showTotalQty:
       typeof (template as any).showTotalQty === "boolean"
         ? (template as any).showTotalQty
@@ -519,7 +520,7 @@ export function buildDefaultPrintTemplates(): PrintTemplateConfig[] {
       showQr: true,
       showCod: false,
       showShippingFee: false,
-      showNote: false,
+      showNote: true,
       showTotalQty: true,
     };
 

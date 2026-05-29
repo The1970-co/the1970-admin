@@ -24,6 +24,7 @@ function parseStructuredNote(note?: string) {
       shippingMode: "",
       shippingPartner: "",
       shippingNote: "",
+      deliveryRequirementNote: "",
     };
   }
 
@@ -37,12 +38,30 @@ function parseStructuredNote(note?: string) {
     return found ? found.replace(prefix, "").trim() : "";
   };
 
+  const deliveryRequirement =
+    getValue("Yêu cầu giao hàng:") ||
+    getValue("Yeu cau giao hang:") ||
+    getValue("Yêu cầu GH:") ||
+    "";
+  const failedDeliveryFeeNote = parts.find((part) =>
+    /giao\s*h[aà]ng\s*th[aấ]t\s*b[aạ]i\s*thu\s*30\s*k/i.test(part) ||
+    /giao\s*hang\s*that\s*bai\s*thu\s*30\s*k/i.test(part),
+  );
+
   return {
     noteText: getValue("Ghi chú:"),
     address: getValue("Địa chỉ:"),
     shippingMode: getValue("Cách giao:"),
     shippingPartner: getValue("Đơn vị giao:"),
     shippingNote: getValue("Ghi chú giao hàng:"),
+    deliveryRequirementNote: [
+      deliveryRequirement,
+      failedDeliveryFeeNote && !deliveryRequirement.includes(failedDeliveryFeeNote)
+        ? failedDeliveryFeeNote
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" | "),
   };
 }
 
@@ -331,6 +350,57 @@ function parseMaybeJson(value: any) {
   }
 }
 
+function uniqueTextParts(parts: Array<any>) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const part of parts) {
+    const value = String(part || "").trim();
+    if (!value) continue;
+    const key = normalizeTextForCompare(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+
+  return result;
+}
+
+function extractCarrierNoteSources(order: any, meta?: ReturnType<typeof parseStructuredNote>) {
+  const shipment = order?.shipment || {};
+  const shipmentMetadata = parseMaybeJson(shipment?.metadata) || shipment?.metadata || {};
+  const shipmentRaw = parseMaybeJson(shipment?.raw) || shipment?.raw || {};
+  const orderMetadata = parseMaybeJson(order?.metadata) || order?.metadata || {};
+  const shippingSnapshot =
+    parseMaybeJson(order?.shippingSnapshot) ||
+    parseMaybeJson(orderMetadata?.shippingSnapshot) ||
+    order?.shippingSnapshot ||
+    orderMetadata?.shippingSnapshot ||
+    {};
+
+  return uniqueTextParts([
+    buildShippingNote(order),
+    meta?.shippingNote,
+    meta?.deliveryRequirementNote,
+    order?.requiredNoteLabel,
+    order?.required_note_label,
+    order?.deliveryRequirementLabel,
+    shippingSnapshot?.requiredNoteLabel,
+    shippingSnapshot?.shippingNote,
+    shippingSnapshot?.note,
+    shipment?.requiredNoteLabel,
+    shipment?.required_note_label,
+    shipmentMetadata?.requiredNoteLabel,
+    shipmentMetadata?.required_note_label,
+    shipmentMetadata?.requestPayload?.requiredNoteLabel,
+    shipmentMetadata?.requestPayload?.required_note_label,
+    shipmentMetadata?.payload?.requiredNoteLabel,
+    shipmentMetadata?.payload?.required_note_label,
+    shipmentRaw?.requiredNoteLabel,
+    shipmentRaw?.required_note_label,
+  ]);
+}
+
 function isLikelyGhnSortCode(value: any) {
   const text = String(value || "").trim().toUpperCase();
   if (!text) return false;
@@ -431,8 +501,19 @@ function getGhnSortCode(order: any) {
 
 
 function getGhnRequiredNoteLabel(order: any) {
+  const meta = parseStructuredNote(order?.note);
+  const explicitLabel = extractCarrierNoteSources(order, meta).join(" | ");
+  if (explicitLabel) return explicitLabel;
+
   const shipment = order?.shipment || {};
   const metadata = parseMaybeJson(shipment?.metadata) || shipment?.metadata || {};
+  const orderMetadata = parseMaybeJson(order?.metadata) || order?.metadata || {};
+  const shippingSnapshot =
+    parseMaybeJson(order?.shippingSnapshot) ||
+    parseMaybeJson(orderMetadata?.shippingSnapshot) ||
+    order?.shippingSnapshot ||
+    orderMetadata?.shippingSnapshot ||
+    {};
   const rawValue =
     shipment?.requiredNote ||
     shipment?.required_note ||
@@ -442,6 +523,8 @@ function getGhnRequiredNoteLabel(order: any) {
     metadata?.requestPayload?.requiredNote ||
     metadata?.payload?.required_note ||
     metadata?.rawPayload?.required_note ||
+    shippingSnapshot?.requiredNote ||
+    shippingSnapshot?.required_note ||
     order?.requiredNote ||
     order?.required_note ||
     "";
@@ -566,14 +649,15 @@ function buildCleanNote(
   order: any,
   meta: ReturnType<typeof parseStructuredNote>,
 ) {
-  const preferred = meta.shippingNote || meta.noteText || "";
-  if (preferred) return shortenNote(preferred, 140);
+  const carrierNotes = extractCarrierNoteSources(order, meta);
+  if (carrierNotes.length) return shortenNote(carrierNotes.join(" | "), 220);
 
   const raw = String(order?.note || "").trim();
   if (!raw) return "";
 
   // Nếu là metadata dài kiểu "CustomerId: ... | Giảm giá: ..."
-  // thì không in ra để tránh bẩn mẫu phiếu.
+  // thì không in nguyên chuỗi ra để tránh bẩn mẫu phiếu.
+  // Phần "Yêu cầu giao hàng" đã được tách riêng ở parseStructuredNote bên trên.
   const looksLikeSystemMeta =
     raw.includes("CustomerId:") ||
     raw.includes("CustomerAddressId:") ||
@@ -585,7 +669,7 @@ function buildCleanNote(
 
   if (looksLikeSystemMeta) return "";
 
-  return shortenNote(raw, 140);
+  return shortenNote(raw, 220);
 }
 
 function buildShippingTemplateHtml(params: {

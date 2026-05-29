@@ -789,14 +789,25 @@ function normalizedCodReconciliationStatusFromOrder(order: AdminOrder) {
     shipment.cod_reconciliation_issue,
     anyOrder.codReconciliationIssue,
     anyOrder.cod_reconciliation_issue,
+    anyOrder.shipmentCodReconciliationIssue,
   ]
     .map((item) => String(item || "").trim().toUpperCase())
     .filter(Boolean)
     .join(" ");
 
-  if (issue.includes("PAID") || issue.includes("CONFIRMED") || issue.includes("MATCHED")) {
-    return "MATCHED";
+  if (issue.includes("COD_RECONCILIATION_PAID")) return "PAID";
+  if (issue.includes("USER_CONFIRMED")) return "CONFIRMED";
+  if (issue.includes("BATCH_SAVED")) return "SAVED";
+  if (
+    issue.includes("COD_MISMATCH") ||
+    issue.includes("FEE_MISMATCH") ||
+    issue.includes("PARTIAL_DELIVERY_AMOUNT_MISMATCH")
+  ) {
+    return "MISMATCH";
   }
+  if (issue.includes("NOT_FOUND_INTERNAL_ORDER")) return "NOT_FOUND";
+  if (issue.includes("MATCHED_BY_PARTIAL_DELIVERY")) return "MATCHED_BY_PARTIAL_DELIVERY";
+  if (issue.includes("MATCHED")) return "MATCHED";
 
   const reconciledAt = [
     shipment.codReconciledAt,
@@ -811,6 +822,7 @@ function normalizedCodReconciliationStatusFromOrder(order: AdminOrder) {
     anyOrder.cod_reconciliation_paid_at,
     anyOrder.codReconciliationConfirmedAt,
     anyOrder.cod_reconciliation_confirmed_at,
+    anyOrder.shipmentCodReconciledAt,
   ].some(Boolean);
 
   if (reconciledAt) return "PAID";
@@ -845,24 +857,26 @@ function normalizedCodReconciliationStatusFromOrder(order: AdminOrder) {
 
 function isOrderCodReconciled(order: AdminOrder) {
   const status = normalizedCodReconciliationStatusFromOrder(order);
-
-  // Chỉ coi là "đã đối soát" khi đã chốt/xác nhận/thanh toán thật.
-  // MATCHED chỉ là kết quả đối chiếu nháp khi upload/chạy đối soát, không được
-  // làm cột Đối soát ở danh sách đơn hàng sáng tick để tránh đội số ảo.
+  // MATCHED/MATCHED_BY_PARTIAL_DELIVERY chỉ là kết quả đối chiếu nháp trong phiên GHN,
+  // chưa phải trạng thái đã chốt. Không dùng paymentStatus=PAID + GHN làm fallback nữa
+  // để tránh đội số "đã đối soát" ảo trên danh sách đơn hàng.
   return [
     "PAID",
     "CONFIRMED",
     "RECONCILED",
     "COD_RECONCILED",
+    "COD_RECONCILIATION_PAID",
+    "USER_CONFIRMED",
   ].includes(status);
 }
 
 function codReconciliationListLabel(order: AdminOrder) {
   const status = normalizedCodReconciliationStatusFromOrder(order);
-  if (["PAID", "CONFIRMED", "RECONCILED", "COD_RECONCILED"].includes(status)) {
+  if (["PAID", "CONFIRMED", "RECONCILED", "COD_RECONCILED", "COD_RECONCILIATION_PAID", "USER_CONFIRMED"].includes(status)) {
     return "Đã đối soát COD";
   }
-  if (status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY") return "Khớp nháp, chưa xác nhận";
+  if (status === "MATCHED_BY_PARTIAL_DELIVERY") return "Khớp nháp qua giao 1 phần";
+  if (status === "MATCHED") return "Khớp nháp, chưa xác nhận";
   if (status === "MISMATCH") return "Lệch đối soát";
   if (status === "NOT_FOUND") return "Không tìm thấy";
   if (status === "SAVED") return "Đã lưu";
@@ -4326,6 +4340,12 @@ export default function OrdersPageClient() {
 
         if (selectedOrderStatuses.length === 1) params.set("orderStatus", selectedOrderStatuses[0]);
         if (selectedPaymentStatuses.length === 1) params.set("paymentStatus", selectedPaymentStatuses[0]);
+
+        const selectedCodReconciliationStatuses = selectedMultiFilterValues(appliedCodReconciliationFilter);
+        if (selectedCodReconciliationStatuses.length > 0) {
+          params.set("codReconciliationStatus", selectedCodReconciliationStatuses.join(","));
+        }
+
         if (appliedDateFrom) params.set("dateFrom", appliedDateFrom);
         if (appliedDateTo) params.set("dateTo", appliedDateTo);
 
@@ -4472,6 +4492,7 @@ export default function OrdersPageClient() {
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
+    appliedCodReconciliationFilter,
     appliedDateFrom,
     appliedDateTo,
     page,
@@ -7800,7 +7821,7 @@ export default function OrdersPageClient() {
                 </span>
 
                 <span className="rounded-full bg-neutral-100 px-3 py-1 font-medium text-neutral-700">
-                  Đang lọc: {visibleOrders.length} dòng
+                  Kết quả lọc: {!isAllMultiFilter(appliedCodReconciliationFilter) ? totalItems : visibleOrders.length} dòng
                 </span>
               </div>
 

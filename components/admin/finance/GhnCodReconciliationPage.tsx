@@ -1,7 +1,8 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
-import { useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 const ISSUE_LABELS: Record<string, string> = {
   NOT_FOUND_INTERNAL_ORDER: "Chưa tìm thấy đơn nội bộ",
@@ -69,6 +70,7 @@ type Row = {
 };
 
 type BatchAction = "save" | "confirm" | "payment" | "delete";
+type PageTab = "reconcile" | "history";
 type ActionScope =
   | "selected"
   | "filtered"
@@ -132,6 +134,72 @@ type ExcelPreview = {
   statusOptions: ExcelStatusOption[];
 };
 
+
+type HistoryRow = {
+  id: string;
+  batchId?: string | null;
+  orderId?: string | null;
+  orderCode?: string | null;
+  shipmentId?: string | null;
+  ghnCode?: string | null;
+  customerOrderCode?: string | null;
+  ghnStatus?: string | null;
+  codAmount?: number | null;
+  serviceFee?: number | null;
+  totalReconcileAmount?: number | null;
+  reconciliationStatus?: string | null;
+  issues?: string[] | string | null;
+  actionStatus?: string | null;
+  sourceType?: string | null;
+  savedAt?: string | null;
+  confirmedAt?: string | null;
+  paidAt?: string | null;
+  createdAt?: string | null;
+};
+
+type HistoryIssueSummary = {
+  code: string;
+  label: string;
+  count: number;
+};
+
+type HistoryBatch = {
+  id: string;
+  fileName?: string | null;
+  transferCode?: string | null;
+  transferDate?: string | null;
+  sourceType?: string | null;
+  parserMode?: string | null;
+  status?: string | null;
+  note?: string | null;
+  totalRows?: number;
+  matchedRows?: number;
+  mismatchRows?: number;
+  paidRows?: number;
+  confirmedRows?: number;
+  savedRows?: number;
+  notFoundRows?: number;
+  codMismatchRows?: number;
+  feeMismatchRows?: number;
+  issueSummary?: HistoryIssueSummary[];
+  totalCodAmount?: number;
+  totalFeeAmount?: number;
+  totalNetAmount?: number;
+  createdAt?: string | null;
+  savedAt?: string | null;
+  confirmedAt?: string | null;
+  paidAt?: string | null;
+  rows?: HistoryRow[];
+};
+
+type HistoryResponse = {
+  items: HistoryBatch[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export default function GhnCodReconciliationPage() {
   const [file, setFile] = useState<File | null>(null);
   const [transferDate, setTransferDate] = useState("");
@@ -154,6 +222,20 @@ export default function GhnCodReconciliationPage() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(
     null,
   );
+  const [activeTab, setActiveTab] = useState<PageTab>("reconcile");
+
+  const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyMessage, setHistoryMessage] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("ALL");
+  const [historySourceType, setHistorySourceType] = useState("ALL");
+  const [historyResultType, setHistoryResultType] = useState("ALL");
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [openHistoryBatchId, setOpenHistoryBatchId] = useState<string | null>(null);
+  const [historyDetailLoadingId, setHistoryDetailLoadingId] = useState<string | null>(null);
 
   const uploadFilterSummary = useMemo(() => {
     if (!excelPreview) {
@@ -246,6 +328,104 @@ export default function GhnCodReconciliationPage() {
   const allFilteredSelected =
     rows.length > 0 &&
     rows.every((row) => selectedRowIds.includes(getRowKey(row)));
+
+
+  async function loadHistory(page = historyPage) {
+    setHistoryLoading(true);
+    setHistoryMessage("");
+
+    try {
+      const token = localStorage.getItem("token");
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: "20",
+        q: historyQuery.trim(),
+        status: historyStatus,
+        sourceType: historySourceType,
+        resultType: historyResultType,
+        dateFrom: historyDateFrom,
+        dateTo: historyDateTo,
+      });
+
+      const res = await fetch(
+        `${API_BASE}/finance/ghn-cod-reconciliation/history?${params.toString()}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        },
+      );
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.message || "Không tải được lịch sử đối soát GHN.");
+      }
+
+      setHistory(json);
+      setHistoryPage(Number(json?.page || page));
+    } catch (err) {
+      setHistoryMessage(
+        err instanceof Error ? err.message : "Không tải được lịch sử đối soát GHN.",
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function openHistoryBatch(batchId: string) {
+    if (openHistoryBatchId === batchId) {
+      setOpenHistoryBatchId(null);
+      return;
+    }
+
+    setOpenHistoryBatchId(batchId);
+
+    const existed = history?.items?.find(
+      (item) => item.id === batchId && Array.isArray(item.rows),
+    );
+
+    if (existed) return;
+
+    setHistoryDetailLoadingId(batchId);
+    setHistoryMessage("");
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${API_BASE}/finance/ghn-cod-reconciliation/history/${batchId}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        },
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.message || "Không tải được chi tiết phiên đối soát.");
+      }
+
+      setHistory((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.map((item) =>
+            item.id === batchId ? { ...item, ...json.batch, rows: json.rows || [] } : item,
+          ),
+        };
+      });
+    } catch (err) {
+      setHistoryMessage(
+        err instanceof Error ? err.message : "Không tải được chi tiết phiên đối soát.",
+      );
+    } finally {
+      setHistoryDetailLoadingId(null);
+    }
+  }
+
+  useEffect(() => {
+    void loadHistory(historyPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
@@ -682,6 +862,251 @@ export default function GhnCodReconciliationPage() {
           đối chiếu với đơn nội bộ.
         </p>
       </div>
+
+      <div className="inline-flex rounded-2xl border border-neutral-200 bg-white p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setActiveTab("reconcile")}
+          className={`rounded-xl px-4 py-2 text-sm font-semibold ${
+            activeTab === "reconcile"
+              ? "bg-neutral-950 text-white"
+              : "text-neutral-600 hover:bg-neutral-50"
+          }`}
+        >
+          Đối soát mới
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("history");
+            if (!history && !historyLoading) void loadHistory(1);
+          }}
+          className={`rounded-xl px-4 py-2 text-sm font-semibold ${
+            activeTab === "history"
+              ? "bg-neutral-950 text-white"
+              : "text-neutral-600 hover:bg-neutral-50"
+          }`}
+        >
+          Lịch sử đối soát
+        </button>
+      </div>
+
+      {activeTab === "history" ? (
+      <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">
+              History
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-neutral-950">
+              Lịch sử đối soát COD GHN
+            </h2>
+            <p className="mt-1 text-sm text-neutral-500">
+              Xem lại từng phiên đã lưu/xác nhận/thanh toán và các đơn đã được đối soát trong phiên đó.
+            </p>
+          </div>
+
+          <button
+            onClick={() => void loadHistory(1)}
+            disabled={historyLoading}
+            className="rounded-2xl border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+          >
+            {historyLoading ? "Đang tải..." : "Làm mới lịch sử"}
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 xl:grid-cols-[1.4fr_180px_180px_190px_160px_160px_auto]">
+          <input
+            value={historyQuery}
+            onChange={(e) => setHistoryQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setHistoryPage(1);
+                void loadHistory(1);
+              }
+            }}
+            placeholder="Tìm mã phiên, tên file, mã đơn, mã vận đơn, ghi chú..."
+            className="h-11 rounded-2xl border border-neutral-200 px-4 text-sm outline-none focus:border-neutral-500"
+          />
+
+          <select
+            value={historyStatus}
+            onChange={(e) => {
+              setHistoryStatus(e.target.value);
+              setHistoryPage(1);
+            }}
+            className="h-11 rounded-2xl border border-neutral-200 px-4 text-sm"
+          >
+            <option value="ALL">Tất cả trạng thái</option>
+            <option value="DRAFT">Nháp</option>
+            <option value="SAVED">Đã lưu</option>
+            <option value="CONFIRMED">Đã xác nhận</option>
+            <option value="PAID">Đã thanh toán</option>
+          </select>
+
+          <select
+            value={historySourceType}
+            onChange={(e) => {
+              setHistorySourceType(e.target.value);
+              setHistoryPage(1);
+            }}
+            className="h-11 rounded-2xl border border-neutral-200 px-4 text-sm"
+          >
+            <option value="ALL">Tất cả nguồn</option>
+            <option value="EXCEL">Upload Excel</option>
+            <option value="MANUAL_INPUT">Nhập tay</option>
+          </select>
+
+          <select
+            value={historyResultType}
+            onChange={(e) => {
+              setHistoryResultType(e.target.value);
+              setHistoryPage(1);
+            }}
+            className="h-11 rounded-2xl border border-neutral-200 px-4 text-sm"
+          >
+            <option value="ALL">Tất cả kết quả</option>
+            <option value="PAID">Đã thanh toán COD</option>
+            <option value="CONFIRMED">Đã xác nhận</option>
+            <option value="PROBLEM">Có vấn đề</option>
+            <option value="MATCHED">Khớp</option>
+            <option value="NOT_FOUND">Không tìm thấy đơn</option>
+            <option value="COD_MISMATCH">Lệch COD</option>
+            <option value="FEE_MISMATCH">Lệch phí</option>
+          </select>
+
+          <input
+            type="date"
+            value={historyDateFrom}
+            onChange={(e) => {
+              setHistoryDateFrom(e.target.value);
+              setHistoryPage(1);
+            }}
+            className="h-11 rounded-2xl border border-neutral-200 px-4 text-sm"
+            title="Từ ngày tạo phiên"
+          />
+
+          <input
+            type="date"
+            value={historyDateTo}
+            onChange={(e) => {
+              setHistoryDateTo(e.target.value);
+              setHistoryPage(1);
+            }}
+            className="h-11 rounded-2xl border border-neutral-200 px-4 text-sm"
+            title="Đến ngày tạo phiên"
+          />
+
+          <button
+            onClick={() => void loadHistory(1)}
+            disabled={historyLoading}
+            className="h-11 rounded-2xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            Tìm lịch sử
+          </button>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+          <button
+            type="button"
+            onClick={() => {
+              setHistoryQuery("");
+              setHistoryStatus("ALL");
+              setHistorySourceType("ALL");
+              setHistoryResultType("ALL");
+              setHistoryDateFrom("");
+              setHistoryDateTo("");
+              setHistoryPage(1);
+              setTimeout(() => void loadHistory(1), 0);
+            }}
+            className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 font-semibold text-neutral-600 hover:bg-neutral-50"
+          >
+            Xóa lọc lịch sử
+          </button>
+          <span>Ngày lọc theo thời gian tạo phiên đối soát.</span>
+        </div>
+
+        {historyMessage ? (
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+            {historyMessage}
+          </div>
+        ) : null}
+
+        <div className="mt-4 max-h-[62vh] overflow-auto rounded-2xl border border-neutral-200">
+          <table className="w-full min-w-[1500px] text-sm">
+            <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
+              <tr>
+                <th className="px-4 py-3">Phiên</th>
+                <th className="px-4 py-3">Nguồn</th>
+                <th className="px-4 py-3">Trạng thái</th>
+                <th className="px-4 py-3 text-right">Tổng dòng</th>
+                <th className="px-4 py-3 text-right">Đã TT</th>
+                <th className="px-4 py-3 text-right">Có vấn đề / lý do</th>
+                <th className="px-4 py-3 text-right">COD</th>
+                <th className="px-4 py-3 text-right">Phí</th>
+                <th className="px-4 py-3">Thời gian</th>
+                <th className="px-4 py-3 text-right">Thao tác</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {historyLoading && !history?.items?.length ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-neutral-500">
+                    Đang tải lịch sử đối soát...
+                  </td>
+                </tr>
+              ) : history?.items?.length ? (
+                history.items.map((batch) => (
+                  <HistoryBatchRows
+                    key={batch.id}
+                    batch={batch}
+                  />
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-neutral-500">
+                    Chưa có lịch sử đối soát nào.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-neutral-500">
+          <div>
+            Tổng lịch sử: <b>{history?.total || 0}</b> phiên · Trang <b>{history?.page || historyPage}</b> / <b>{history?.totalPages || 1}</b>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              disabled={historyLoading || historyPage <= 1}
+              onClick={() => {
+                const next = Math.max(1, historyPage - 1);
+                setHistoryPage(next);
+                void loadHistory(next);
+              }}
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold disabled:opacity-50"
+            >
+              Trước
+            </button>
+            <button
+              disabled={historyLoading || historyPage >= Number(history?.totalPages || 1)}
+              onClick={() => {
+                const next = Math.min(Number(history?.totalPages || 1), historyPage + 1);
+                setHistoryPage(next);
+                void loadHistory(next);
+              }}
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold disabled:opacity-50"
+            >
+              Sau
+            </button>
+          </div>
+        </div>
+      </section>
+      ) : (
+      <>
 
       <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-neutral-950">
@@ -1267,6 +1692,9 @@ export default function GhnCodReconciliationPage() {
         </div>
       </section>
 
+      </>
+      )}
+
       <ConfirmDialog
         state={confirmDialog}
         loading={Boolean(batchActionLoading)}
@@ -1274,6 +1702,156 @@ export default function GhnCodReconciliationPage() {
       />
     </div>
   );
+}
+
+function HistoryBatchRows({
+  batch,
+}: {
+  batch: HistoryBatch;
+}) {
+  return (
+    <tr className="border-t align-top hover:bg-neutral-50">
+      <td className="px-4 py-3">
+        <div className="font-semibold text-neutral-950">
+          {batch.transferCode || batch.fileName || batch.id}
+        </div>
+        <div className="mt-1 max-w-[320px] truncate text-xs text-neutral-500">
+          {batch.fileName || "Đối soát nhập tay"}
+        </div>
+        <div className="mt-1 font-mono text-[11px] text-neutral-400">
+          {batch.id}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold text-neutral-700">
+          {batch.sourceType === "MANUAL_INPUT" ? "Nhập tay" : "Excel GHN"}
+        </span>
+      </td>
+      <td className="px-4 py-3">
+        <HistoryStatusBadge status={batch.status} />
+      </td>
+      <td className="px-4 py-3 text-right font-semibold">
+        {formatNumber(batch.totalRows)}
+      </td>
+      <td className="px-4 py-3 text-right font-semibold text-emerald-700">
+        {formatNumber(batch.paidRows)}
+      </td>
+      <td className="px-4 py-3 text-right">
+        <HistoryIssueSummaryCell batch={batch} />
+      </td>
+      <td className="px-4 py-3 text-right font-semibold">
+        {money(batch.totalCodAmount)}
+      </td>
+      <td className="px-4 py-3 text-right">
+        {money(batch.totalFeeAmount)}
+      </td>
+      <td className="px-4 py-3 text-xs text-neutral-500">
+        <div>Tạo: {formatDateTime(batch.createdAt)}</div>
+        {batch.confirmedAt ? <div>Xác nhận: {formatDateTime(batch.confirmedAt)}</div> : null}
+        {batch.paidAt ? <div>Thanh toán: {formatDateTime(batch.paidAt)}</div> : null}
+      </td>
+      <td className="px-4 py-3 text-right">
+        <Link
+          href={`/finance/ghn-reconciliation/history/${encodeURIComponent(batch.id)}`}
+          className="inline-flex rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+        >
+          Xem trang chi tiết
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
+function HistoryIssueSummaryCell({ batch }: { batch: HistoryBatch }) {
+  const issueCount = Number(batch.mismatchRows || 0);
+  const summary = Array.isArray(batch.issueSummary) ? batch.issueSummary : [];
+
+  if (!issueCount) {
+    return <span className="font-semibold text-neutral-400">0</span>;
+  }
+
+  const visible = summary.slice(0, 3);
+  const hiddenCount = Math.max(0, summary.length - visible.length);
+
+  return (
+    <div className="flex min-w-[190px] flex-col items-end gap-1.5">
+      <div className="font-extrabold text-amber-700">
+        {formatNumber(issueCount)} dòng
+      </div>
+      {visible.length ? (
+        <div className="flex flex-wrap justify-end gap-1">
+          {visible.map((item) => (
+            <span
+              key={item.code}
+              title={`${item.label}: ${formatNumber(item.count)} dòng`}
+              className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-800"
+            >
+              {item.label}: {formatNumber(item.count)}
+            </span>
+          ))}
+          {hiddenCount ? (
+            <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-bold text-neutral-600">
+              +{hiddenCount} loại
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <div className="text-[11px] font-semibold text-amber-700">
+          Cần kiểm tra chi tiết
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoryStatusBadge({
+  status,
+  compact,
+}: {
+  status?: string | null;
+  compact?: boolean;
+}) {
+  const value = String(status || "").toUpperCase();
+  const base = compact
+    ? "inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold"
+    : "inline-flex rounded-full px-2.5 py-1 text-xs font-bold";
+
+  if (["PAID", "COD_RECONCILIATION_PAID"].includes(value)) {
+    return <span className={`${base} bg-emerald-600 text-white`}>Đã thanh toán</span>;
+  }
+  if (["CONFIRMED", "USER_CONFIRMED"].includes(value)) {
+    return <span className={`${base} bg-blue-50 text-blue-700`}>Đã xác nhận</span>;
+  }
+  if (["SAVED", "BATCH_SAVED"].includes(value)) {
+    return <span className={`${base} bg-neutral-900 text-white`}>Đã lưu</span>;
+  }
+  if (["MISMATCH", "NOT_FOUND"].includes(value)) {
+    return <span className={`${base} bg-amber-50 text-amber-700`}>Cần kiểm tra</span>;
+  }
+  if (value === "DRAFT") {
+    return <span className={`${base} bg-neutral-100 text-neutral-600`}>Nháp</span>;
+  }
+
+  return <span className={`${base} bg-neutral-100 text-neutral-600`}>{status || "—"}</span>;
+}
+
+function formatHistoryIssues(input: HistoryRow["issues"]) {
+  const issues = Array.isArray(input)
+    ? input
+    : String(input || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+  const businessIssues = issues.filter((issue) => !ACTION_ISSUES.has(issue));
+
+  if (!businessIssues.length) return "Khớp";
+
+  return businessIssues.map((issue) => ISSUE_LABELS[issue] || issue).join(", ");
+}
+
+function formatNumber(value?: number | null) {
+  return Number(value || 0).toLocaleString("vi-VN");
 }
 
 function ConfirmDialog({
@@ -1326,6 +1904,24 @@ function ConfirmDialog({
       </div>
     </div>
   );
+}
+
+function formatDateTime(value?: string | Date | null) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return date.toLocaleString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
 }
 
 function formatGhnStatus(value?: string | null) {

@@ -157,6 +157,8 @@ type DeliveryRequirement =
   | "CHOXEMHANG_CHOTHU"
   | "KHONGCHOXEMHANG";
 
+const DELIVERY_FAILED_FEE_NOTE = "Giao hàng thất bại thu 30k";
+
 type OrderLine = {
   productId?: string | null;
   variantId: string;
@@ -1163,12 +1165,30 @@ function mapRequiredNoteForGhn(value: DeliveryRequirement) {
   return "KHONGCHOXEMHANG";
 }
 
+function deliveryRequirementLabels(input: {
+  deliveryRequirement: DeliveryRequirement;
+  failedDeliveryFee30k?: boolean;
+}) {
+  return [
+    requiredNoteLabel(input.deliveryRequirement),
+    input.failedDeliveryFee30k ? DELIVERY_FAILED_FEE_NOTE : "",
+  ].filter(Boolean);
+}
+
+function deliveryRequirementSummary(input: {
+  deliveryRequirement: DeliveryRequirement;
+  failedDeliveryFee30k?: boolean;
+}) {
+  return deliveryRequirementLabels(input).join(" | ");
+}
+
 function buildCustomerFacingShippingNote(input: {
   orderNote?: string;
   deliveryRequirement: DeliveryRequirement;
+  failedDeliveryFee30k?: boolean;
 }) {
   const parts = [
-    requiredNoteLabel(input.deliveryRequirement),
+    ...deliveryRequirementLabels(input),
     String(input.orderNote || "").trim(),
   ].filter(Boolean);
 
@@ -1923,6 +1943,7 @@ export default function CreateOrderPageClient() {
     useState<AhamovePaymentMethod>("BALANCE");
   const [deliveryRequirement, setDeliveryRequirement] =
     useState<DeliveryRequirement>("CHOXEMHANG_KHONGTHU");
+  const [failedDeliveryFee30k, setFailedDeliveryFee30k] = useState(true);
 
   const [ghnDistrictId, setGhnDistrictId] = useState<number | undefined>();
   const [ghnWardCode, setGhnWardCode] = useState<string | undefined>();
@@ -3921,6 +3942,7 @@ export default function CreateOrderPageClient() {
     setShippingUiMode("carrier");
     setShippingPartner("ghn");
     setDeliveryRequirement("CHOXEMHANG_KHONGTHU");
+    setFailedDeliveryFee30k(true);
     setGhnDistrictId(undefined);
     setGhnWardCode(undefined);
     setSelectedShippingServiceId(undefined);
@@ -4744,6 +4766,12 @@ export default function CreateOrderPageClient() {
       const customerFacingShippingNote = buildCustomerFacingShippingNote({
         orderNote: note,
         deliveryRequirement,
+        failedDeliveryFee30k,
+      });
+
+      const deliveryRequirementPrintLabel = deliveryRequirementSummary({
+        deliveryRequirement,
+        failedDeliveryFee30k,
       });
 
       const extraNoteParts = [
@@ -4775,7 +4803,7 @@ export default function CreateOrderPageClient() {
         `Đơn vị giao: ${shippingPartner}`,
         isPickupOrder ? "Nhận tại cửa hàng: true" : "",
         `Người trả ship: ${shippingPayer}`,
-        `Yêu cầu giao hàng: ${requiredNoteLabel(deliveryRequirement)}`,
+        `Yêu cầu giao hàng: ${deliveryRequirementPrintLabel}`,
         selectedShippingServiceId
           ? `GHN ServiceId: ${selectedShippingServiceId}`
           : "",
@@ -4840,7 +4868,7 @@ export default function CreateOrderPageClient() {
           : mapRequiredNoteForGhn(deliveryRequirement),
         requiredNoteLabel: isPickupOrder
           ? undefined
-          : requiredNoteLabel(deliveryRequirement),
+          : deliveryRequirementPrintLabel,
 
         shippingSnapshot: {
           skipAutoShipment: shouldCreateCarrierShipmentManually,
@@ -4897,7 +4925,7 @@ export default function CreateOrderPageClient() {
             : mapRequiredNoteForGhn(deliveryRequirement),
           requiredNoteLabel: isPickupOrder
             ? undefined
-            : requiredNoteLabel(deliveryRequirement),
+            : deliveryRequirementPrintLabel,
           selectedServiceId: isPickupOrder
             ? undefined
             : selectedShippingServiceId,
@@ -4970,7 +4998,7 @@ export default function CreateOrderPageClient() {
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
-          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
+          requiredNoteLabel: deliveryRequirementPrintLabel,
           clientOrderCode: created.orderCode,
           content: `Đơn hàng ${created.orderCode}`,
           weight: shippingWeight,
@@ -5042,7 +5070,7 @@ export default function CreateOrderPageClient() {
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
-          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
+          requiredNoteLabel: deliveryRequirementPrintLabel,
           items: lines.map((line) => ({
             name: line.productName || line.sku || "Sản phẩm",
             quantity: Number(line.qty || 0),
@@ -5126,7 +5154,7 @@ export default function CreateOrderPageClient() {
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
-          requiredNoteLabel: requiredNoteLabel(deliveryRequirement),
+          requiredNoteLabel: deliveryRequirementPrintLabel,
           weight: shippingWeight,
           length: shippingLength,
           width: shippingWidth,
@@ -5478,21 +5506,38 @@ export default function CreateOrderPageClient() {
                     <p className="mb-2 text-sm font-medium text-neutral-700">
                       Yêu cầu giao hàng
                     </p>
-                    <select
-                      className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-                      value={deliveryRequirement}
-                      onChange={(e) =>
-                        setDeliveryRequirement(
-                          e.target.value as DeliveryRequirement,
-                        )
-                      }
-                    >
+                    <div className="space-y-2 rounded-2xl border border-neutral-300 bg-white p-3">
                       {deliveryRequirementOptions.map((item) => (
-                        <option key={item.value} value={item.value}>
-                          {item.label}
-                        </option>
+                        <label
+                          key={item.value}
+                          className="flex cursor-pointer items-center gap-2 text-sm text-neutral-800"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={deliveryRequirement === item.value}
+                            onChange={() =>
+                              setDeliveryRequirement(item.value)
+                            }
+                            className="h-4 w-4 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
+                          />
+                          <span>{item.label}</span>
+                        </label>
                       ))}
-                    </select>
+
+                      <div className="border-t border-neutral-100 pt-2">
+                        <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-neutral-900">
+                          <input
+                            type="checkbox"
+                            checked={failedDeliveryFee30k}
+                            onChange={(e) =>
+                              setFailedDeliveryFee30k(e.target.checked)
+                            }
+                            className="h-4 w-4 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
+                          />
+                          <span>{DELIVERY_FAILED_FEE_NOTE}</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5818,7 +5863,10 @@ export default function CreateOrderPageClient() {
                         Yêu cầu giao hàng
                       </p>
                       <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm">
-                        {requiredNoteLabel(deliveryRequirement)}
+                        {deliveryRequirementSummary({
+                          deliveryRequirement,
+                          failedDeliveryFee30k,
+                        })}
                       </div>
                     </div>
                   </div>
