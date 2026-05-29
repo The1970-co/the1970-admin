@@ -44,8 +44,8 @@ function parseStructuredNote(note?: string) {
     getValue("Yêu cầu GH:") ||
     "";
   const failedDeliveryFeeNote = parts.find((part) =>
-    /giao\s*h[aà]ng\s*th[aấ]t\s*b[aạ]i\s*thu\s*30\s*k/i.test(part) ||
-    /giao\s*hang\s*that\s*bai\s*thu\s*30\s*k/i.test(part),
+    /giao\s*h[aà]ng\s*(k|kh[oô]ng|th[aấ]t)\s*(th[aà]nh\s*c[oô]ng|b[aạ]i)?\s*thu\s*30\s*k/i.test(part) ||
+    /giao\s*hang\s*(k|khong|that)\s*(thanh\s*cong|bai)?\s*thu\s*30\s*k/i.test(part),
   );
 
   return {
@@ -216,6 +216,13 @@ function buildItemsRowsForPrint(order: any, type: string, showQty = true) {
 function normalizeTextForCompare(value: any) {
   return String(value || "")
     .toLowerCase()
+    .replace(/không/g, "khong")
+    .replace(/ko/g, "k")
+    .replace(/giao hàng thất bại thu 30k/g, "giao hang k thanh cong thu 30k")
+    .replace(/giao hàng không thành công thu 30k/g, "giao hang k thanh cong thu 30k")
+    .replace(/giao hàng k thành công thu 30k/g, "giao hang k thanh cong thu 30k")
+    .replace(/giao hang that bai thu 30k/g, "giao hang k thanh cong thu 30k")
+    .replace(/giao hang khong thanh cong thu 30k/g, "giao hang k thanh cong thu 30k")
     .replace(/\s+/g, " ")
     .replace(/[,.，、;:]+/g, " ")
     .trim();
@@ -350,20 +357,47 @@ function parseMaybeJson(value: any) {
   }
 }
 
+function splitPrintableNoteParts(value: any) {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+
+  return raw
+    .split(/\s*\|\s*/g)
+    .map((part) =>
+      String(part || "")
+        .replace(/^\s*(Ghi chú giao hàng|Ghi chu giao hang|Yêu cầu giao hàng|Yeu cau giao hang|Yêu cầu GH|Ghi chú đơn hàng|Ghi chu don hang|Ghi chú|Ghi chu)\s*:\s*/i, "")
+        .trim(),
+    )
+    .filter((part) => {
+      if (!part) return false;
+      // Không in metadata kỹ thuật của đơn ra phiếu giao hàng.
+      if (/^(CustomerId|CustomerAddressId|Policy|GHN ServiceId|GHN ServiceTypeId|GHN DistrictId|GHN WardCode|Khối lượng|Khoi luong|Kích thước|Kich thuoc|Kiểu vận chuyển UI|Kieu van chuyen UI|Cách giao|Cach giao|Đơn vị giao|Don vi giao|Người trả ship|Nguoi tra ship|Phí ship|Phi ship|Khách đã trả|Khach da tra|Còn phải trả|Con phai tra|Giảm giá|Giam gia|Chiết khấu|Chiet khau)\s*:/i.test(part)) {
+        return false;
+      }
+      return true;
+    });
+}
+
 function uniqueTextParts(parts: Array<any>) {
   const seen = new Set<string>();
   const result: string[] = [];
 
-  for (const part of parts) {
-    const value = String(part || "").trim();
-    if (!value) continue;
-    const key = normalizeTextForCompare(value);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    result.push(value);
+  for (const source of parts) {
+    for (const value of splitPrintableNoteParts(source)) {
+      const key = normalizeTextForCompare(value);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      result.push(value);
+    }
   }
 
   return result;
+}
+
+function noteContainsPart(note: string, part: string) {
+  const noteParts = splitPrintableNoteParts(note).map(normalizeTextForCompare);
+  const key = normalizeTextForCompare(part);
+  return Boolean(key && noteParts.includes(key));
 }
 
 function extractCarrierNoteSources(order: any, meta?: ReturnType<typeof parseStructuredNote>) {
@@ -387,7 +421,6 @@ function extractCarrierNoteSources(order: any, meta?: ReturnType<typeof parseStr
     order?.deliveryRequirementLabel,
     shippingSnapshot?.requiredNoteLabel,
     shippingSnapshot?.shippingNote,
-    shippingSnapshot?.note,
     shipment?.requiredNoteLabel,
     shipment?.required_note_label,
     shipmentMetadata?.requiredNoteLabel,
@@ -1316,7 +1349,9 @@ export function renderOrderTemplateHtml(params: {
         : "",
     noteBlock:
       template.showNote && noteValue
-        ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>`
+        ? template.templateType === "shipping" && template.paperSize === "80mm"
+          ? `<div style="font-size:8.6px;font-weight:900;line-height:1.14;margin:.65mm 0 1.05mm;max-height:9.5mm;overflow:hidden;white-space:normal;"><span style="font-weight:900;">Ghi chú:</span> ${escapeHtml(noteValue)}</div>`
+          : `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:900;margin-bottom:2px;">Ghi chú</div><div style="font-weight:800;white-space:normal;overflow:visible;">${escapeHtml(noteValue)}</div></div>`
         : "",
     shippingFeeBlock:
       template.showShippingFee && Number(shippingFee || 0) > 0
@@ -1328,12 +1363,16 @@ export function renderOrderTemplateHtml(params: {
     salesItemsBlock,
     footerBlock,
     ghnRequiredNote: escapeHtml(ghnRequiredNoteLabel),
-    ghnRequiredNoteBlock: ghnRequiredNoteLabel
-      ? `<div style="margin:1mm 0 1.4mm;text-align:center;font-size:8.5px;font-weight:900;letter-spacing:.2px;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ghnRequiredNoteLabel)}</div>`
-      : "",
+    // Không render requiredNote thành block riêng nữa vì noteBlock đã gộp đủ yêu cầu giao hàng.
+    // Tránh lỗi in trùng 2 dòng ghi chú trên phiếu giao hàng.
+    ghnRequiredNoteBlock: "",
   };
 
-  if (template.templateType === "shipping" && template.paperSize === "80mm") {
+  if (
+    template.templateType === "shipping" &&
+    template.paperSize === "80mm" &&
+    !(template.templateHtml && template.templateHtml.includes("{{itemsRows}}"))
+  ) {
     const codBlock = template.showCod !== false && Number(codAmount || amountDue || 0) > 0
       ? `<div style="margin:.6mm 0 .7mm;"><table style="width:100%;border-collapse:collapse;text-align:center;"><tr><td style="border:1px solid #111;padding:.9mm 2mm;"><span style="font-size:8.4px;">THU HỘ (COD): </span><span style="font-size:12px;font-weight:900;">${money(codAmount || amountDue || 0)}</span></td></tr></table></div>`
       : "";
@@ -1343,16 +1382,14 @@ export function renderOrderTemplateHtml(params: {
       : "";
 
     const noteBlock = template.showNote && noteValue
-      ? `<div style="font-size:7.4px;line-height:1.05;margin:.25mm 0 .45mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Ghi chú:</b> ${escapeHtml(noteValue)}</div>`
+      ? `<div style="font-size:8.6px;font-weight:900;line-height:1.14;margin:.65mm 0 1.05mm;white-space:normal;overflow:visible;"><span style="font-weight:900;">Ghi chú:</span> ${escapeHtml(noteValue)}</div>`
       : "";
 
     const totalQtyMini = showTotalQty && showItems
       ? `<div style="position:absolute;right:2.2mm;bottom:16.1mm;font-size:7.2px;font-weight:900;">Tổng SL: ${totalQty}</div>`
       : "";
 
-    const requiredNoteBlock = ghnRequiredNoteLabel
-      ? `<div style="margin:.45mm 0 .65mm;text-align:center;font-size:7.7px;font-weight:900;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ghnRequiredNoteLabel)}</div>`
-      : "";
+    const requiredNoteBlock = "";
 
     const barcodeBlock = trackingCode && template.showBarcode
       ? `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;"><img src="${barcodeUrl(trackingCode)}" style="width:34mm;height:10.8mm;object-fit:fill;display:block;margin:0 auto;" /><div style="margin-top:.1mm;font-size:6.4px;font-weight:800;line-height:1;white-space:nowrap;max-width:36mm;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(trackingCode)}</div></div>`
@@ -1431,10 +1468,23 @@ export function renderOrderTemplateHtml(params: {
           : "",
     });
 
-    if (template.templateType === "shipping" && ghnSortCodeBlock) {
-      const nextItemsTop =
-        Number(codAmount || amountDue || 0) > 0 ? "37mm" : "34mm";
+    if (template.templateType === "shipping" && template.paperSize === "80mm") {
+      const hasCod = Number(codAmount || amountDue || 0) > 0;
+      const nextItemsTop = ghnSortCodeBlock
+        ? hasCod
+          ? "37mm"
+          : "34mm"
+        : noteValue
+          ? hasCod
+            ? "34mm"
+            : "31mm"
+          : hasCod
+            ? "29mm"
+            : "25mm";
+
       html = html
+        .replaceAll("top:29mm;bottom:15.5mm", `top:${nextItemsTop};bottom:15.5mm`)
+        .replaceAll("top:29mm; bottom:15.5mm", `top:${nextItemsTop}; bottom:15.5mm`)
         .replaceAll("top:33mm;bottom:17mm", `top:${nextItemsTop};bottom:15.5mm`)
         .replaceAll("top:33mm; bottom:17mm", `top:${nextItemsTop}; bottom:15.5mm`);
     }

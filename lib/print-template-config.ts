@@ -37,7 +37,7 @@ export type PrintTemplateConfig = {
 
 // Đổi key lên v21 để xoá cache template cũ đang lưu trong localStorage.
 // Nếu không đổi key, trình duyệt vẫn dùng HTML cũ nên sửa engine/config không ăn.
-const STORAGE_KEY = "the1970.printTemplates.v27";
+const STORAGE_KEY = "the1970.printTemplates.v30";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);

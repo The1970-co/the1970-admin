@@ -157,7 +157,7 @@ type DeliveryRequirement =
   | "CHOXEMHANG_CHOTHU"
   | "KHONGCHOXEMHANG";
 
-const DELIVERY_FAILED_FEE_NOTE = "Giao hàng thất bại thu 30k";
+const DELIVERY_FAILED_FEE_NOTE = "Giao hàng k thành công thu 30k";
 
 type OrderLine = {
   productId?: string | null;
@@ -4803,7 +4803,6 @@ export default function CreateOrderPageClient() {
         `Đơn vị giao: ${shippingPartner}`,
         isPickupOrder ? "Nhận tại cửa hàng: true" : "",
         `Người trả ship: ${shippingPayer}`,
-        `Yêu cầu giao hàng: ${deliveryRequirementPrintLabel}`,
         selectedShippingServiceId
           ? `GHN ServiceId: ${selectedShippingServiceId}`
           : "",
@@ -5525,16 +5524,16 @@ export default function CreateOrderPageClient() {
                       ))}
 
                       <div className="border-t border-neutral-100 pt-2">
-                        <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-neutral-900">
+                        <label className="flex cursor-pointer items-start gap-2 text-sm font-semibold text-neutral-900">
                           <input
                             type="checkbox"
                             checked={failedDeliveryFee30k}
                             onChange={(e) =>
                               setFailedDeliveryFee30k(e.target.checked)
                             }
-                            className="h-4 w-4 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
+                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
                           />
-                          <span>{DELIVERY_FAILED_FEE_NOTE}</span>
+                          <span className="min-w-0 whitespace-nowrap leading-5">{DELIVERY_FAILED_FEE_NOTE}</span>
                         </label>
                       </div>
                     </div>
