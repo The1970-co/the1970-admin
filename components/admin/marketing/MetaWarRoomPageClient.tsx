@@ -168,6 +168,51 @@ function rangeQuery(range: RangeKey, fromDate: string, toDate: string) {
   return `range=${range}`;
 }
 
+
+function isAdActive(row: any) {
+  const raw = String(
+    row?.effectiveStatus ||
+      row?.effective_status ||
+      row?.configuredStatus ||
+      row?.configured_status ||
+      row?.deliveryStatus ||
+      row?.delivery_status ||
+      row?.distributionStatus ||
+      row?.distribution_status ||
+      row?.status ||
+      row?.adStatus ||
+      row?.metaStatus ||
+      row?.state ||
+      ""
+  ).toLowerCase();
+
+  if (typeof row?.isActive === "boolean") return row.isActive;
+  if (typeof row?.active === "boolean") return row.active;
+  if (typeof row?.isRunning === "boolean") return row.isRunning;
+
+  if (raw.includes("active") || raw.includes("đang hoạt động") || raw.includes("dang hoat dong")) return true;
+  if (
+    raw.includes("paused") ||
+    raw.includes("deleted") ||
+    raw.includes("archived") ||
+    raw.includes("inactive") ||
+    raw.includes("off") ||
+    raw.includes("tắt") ||
+    raw.includes("tat") ||
+    raw.includes("không hoạt động") ||
+    raw.includes("khong hoat dong")
+  ) {
+    return false;
+  }
+
+  // Fallback: nếu API chưa trả trạng thái, ads còn phát sinh spend trong range thì coi như đang chạy.
+  return spend(row) > 0;
+}
+
+function adStatusLabel(row: any) {
+  return isAdActive(row) ? "Đang bật" : "Đang tắt";
+}
+
 function statusFromNumbers(s: number, o: number, c: number) {
   if (o >= 3) return { label: "Có đơn", cls: "bg-emerald-100 text-emerald-700" };
   if (s >= 1_500_000 && o <= 0) return { label: "Đốt tiền", cls: "bg-rose-100 text-rose-700" };
@@ -219,9 +264,17 @@ function AdChildRow({ row, maxSpend }: { row: any; maxSpend: number }) {
   const img = thumb(row);
   const st = statusFromNumbers(s, directOrders(row), ctr(row));
   return (
-    <div className="grid grid-cols-[44px_1fr_92px_92px_74px_74px] items-center gap-3 rounded-2xl border border-neutral-100 bg-white p-3 text-sm max-lg:grid-cols-[44px_1fr] max-lg:gap-y-2">
-      <div className="h-11 w-11 overflow-hidden rounded-xl bg-neutral-100">
-        {img ? <img src={img} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-[9px] font-bold text-neutral-400">ADS</div>}
+    <div className="grid grid-cols-[60px_1fr_92px_92px_74px_74px] items-center gap-3 rounded-2xl border border-neutral-100 bg-white p-3 text-sm max-lg:grid-cols-[60px_1fr] max-lg:gap-y-2">
+      <div className="flex items-center gap-2">
+        <span
+          title={adStatusLabel(row)}
+          className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 border-white shadow-sm ${
+            isAdActive(row) ? "bg-emerald-600 ring-2 ring-emerald-100" : "bg-neutral-300 ring-2 ring-neutral-100"
+          }`}
+        />
+        <div className="h-11 w-11 overflow-hidden rounded-xl bg-neutral-100">
+          {img ? <img src={img} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-[9px] font-bold text-neutral-400">ADS</div>}
+        </div>
       </div>
       <div className="min-w-0">
         <div className="line-clamp-1 font-bold">{rowName(row)}</div>
