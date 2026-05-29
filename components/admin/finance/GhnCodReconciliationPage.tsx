@@ -232,6 +232,17 @@ export default function GhnCodReconciliationPage() {
     [visibleRows],
   );
 
+  const hiddenByFilterRows = useMemo(() => {
+    if (filter === "ALL") return [];
+    const shownKeys = new Set(rows.map((row) => getRowKey(row)));
+    return visibleRows.filter((row) => !shownKeys.has(getRowKey(row)));
+  }, [filter, rows, visibleRows]);
+
+  const hiddenByFilterSummary = useMemo(
+    () => buildIssueSummaryText(hiddenByFilterRows),
+    [hiddenByFilterRows],
+  );
+
   const allFilteredSelected =
     rows.length > 0 &&
     rows.every((row) => selectedRowIds.includes(getRowKey(row)));
@@ -640,7 +651,14 @@ export default function GhnCodReconciliationPage() {
         payment: `Đã thanh toán ${affectedRowIds.length} dòng đối soát và lưu database.`,
         delete: "Đã xóa dòng đối soát.",
       };
-      setBatchActionMessage(json?.message || labels[action]);
+
+      const baseMessage = json?.message || labels[action];
+      const hiddenNote =
+        actionScope === "filtered" && hiddenByFilterRows.length > 0
+          ? ` Còn ${hiddenByFilterRows.length} dòng đang bị ẩn bởi bộ lọc "${filterLabel(filter)}"${hiddenByFilterSummary ? `: ${hiddenByFilterSummary}` : ""}.`
+          : "";
+
+      setBatchActionMessage(`${baseMessage}${hiddenNote}`);
     } catch (err) {
       if (showAlert)
         alert(
@@ -1052,6 +1070,14 @@ export default function GhnCodReconciliationPage() {
             </div>
           </div>
 
+          {filter !== "ALL" && hiddenByFilterRows.length > 0 ? (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+              Đang lọc <b>{filterLabel(filter)}</b>: hiển thị <b>{rows.length}</b> / <b>{visibleRows.length}</b> dòng.
+              Còn <b>{hiddenByFilterRows.length}</b> dòng đang bị ẩn
+              {hiddenByFilterSummary ? <>: {hiddenByFilterSummary}</> : null}. Muốn lưu/xác nhận toàn bộ phiên thì đổi phạm vi sang “Toàn bộ phiên còn lại” hoặc bấm “Tất cả”.
+            </div>
+          ) : null}
+
           <div className="mt-2 text-xs text-neutral-500">
             Xác nhận / thanh toán sẽ lưu trạng thái thật vào bảng đối soát và
             cập nhật sang đơn hàng liên quan. Dòng không tìm thấy đơn nội bộ vẫn
@@ -1426,6 +1452,39 @@ function isRowPaid(row: Row) {
     String(row.actionStatus || "").toUpperCase() === "PAID" ||
     getActionIssues(row).includes("COD_RECONCILIATION_PAID")
   );
+}
+
+function filterLabel(filter: string) {
+  const labels: Record<string, string> = {
+    ALL: "Tất cả",
+    MATCHED: "Khớp",
+    NOT_FOUND_INTERNAL_ORDER: "Không tìm thấy đơn",
+    COD_MISMATCH: "Lệch COD",
+    FEE_MISMATCH: "Lệch phí",
+    PARTIAL_RETURN: "Giao 1 phần",
+    PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hoàn",
+    MATCHED_BY_PARTIAL_DELIVERY: "Khớp qua giao 1 phần",
+  };
+
+  return labels[filter] || filter;
+}
+
+function buildIssueSummaryText(rows: Row[]) {
+  if (!rows.length) return "";
+
+  const counts = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const issues = getBusinessIssues(row);
+    const keys = issues.length ? issues : ["MATCHED"];
+    keys.forEach((issue) => counts.set(issue, (counts.get(issue) || 0) + 1));
+  });
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([issue, count]) => `${ISSUE_LABELS[issue] || (issue === "MATCHED" ? "Khớp" : issue)} ${count}`)
+    .join(", ");
 }
 
 function buildClientSummary(rows: Row[]) {

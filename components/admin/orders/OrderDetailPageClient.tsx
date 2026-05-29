@@ -312,13 +312,13 @@ function normalizedCodReconciliationStatus(status?: string | null) {
 
 function isCodReconciled(status?: string | null) {
   const value = normalizedCodReconciliationStatus(status);
-  return ["PAID", "CONFIRMED", "MATCHED", "MATCHED_BY_PARTIAL_DELIVERY"].includes(value);
+  return ["PAID", "CONFIRMED", "RECONCILED", "COD_RECONCILED"].includes(value);
 }
 
 function codReconciliationLabel(status?: string | null) {
   const value = normalizedCodReconciliationStatus(status);
-  if (value === "PAID" || value === "CONFIRMED" || value === "MATCHED") return "✓ Đã đối soát COD";
-  if (value === "MATCHED_BY_PARTIAL_DELIVERY") return "✓ Đã đối soát COD qua giao 1 phần";
+  if (value === "PAID" || value === "CONFIRMED" || value === "RECONCILED" || value === "COD_RECONCILED") return "✓ Đã đối soát COD";
+  if (value === "MATCHED" || value === "MATCHED_BY_PARTIAL_DELIVERY") return "Khớp nháp, chưa xác nhận";
   if (value === "SAVED") return "Đã lưu đối soát";
   if (value === "MISMATCH") return "Đối soát lệch";
   if (value === "NOT_FOUND") return "Không tìm thấy trong phiên GHN";
@@ -329,9 +329,9 @@ function codReconciliationTone(
   status?: string | null,
 ): "gray" | "green" | "amber" | "red" | "blue" {
   const value = normalizedCodReconciliationStatus(status);
-  if (["PAID", "CONFIRMED", "MATCHED", "MATCHED_BY_PARTIAL_DELIVERY"].includes(value))
+  if (["PAID", "CONFIRMED", "RECONCILED", "COD_RECONCILED"].includes(value))
     return "green";
-  if (value === "SAVED") return "blue";
+  if (value === "MATCHED" || value === "MATCHED_BY_PARTIAL_DELIVERY" || value === "SAVED") return "blue";
   if (value === "MISMATCH" || value === "NOT_FOUND") return "red";
   return "gray";
 }

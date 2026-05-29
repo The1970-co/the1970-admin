@@ -840,28 +840,18 @@ function normalizedCodReconciliationStatusFromOrder(order: AdminOrder) {
 
   if (hasGhnCodPayment) return "PAID";
 
-  // Fallback cho list /orders: nhiều endpoint chỉ trả paymentStatus + shipment cơ bản,
-  // không include các cột codReconciliation*. Với đơn GHN đã chuyển PAID sau khi xác nhận
-  // đối soát, vẫn cần hiện tích đen ở cột Đối soát.
-  const carrier = String(shipment.carrier || anyOrder.carrier || anyOrder.shippingPartner || "").toUpperCase();
-  const hasTracking = Boolean(shipment.trackingCode || anyOrder.trackingCode || anyOrder.shipmentTrackingCode);
-  const isGhnCodPaidOrder =
-    String(anyOrder.paymentStatus || "").toUpperCase() === "PAID" &&
-    carrier.includes("GHN") &&
-    hasTracking;
-
-  if (isGhnCodPaidOrder) return "PAID";
-
   return "";
 }
 
 function isOrderCodReconciled(order: AdminOrder) {
   const status = normalizedCodReconciliationStatusFromOrder(order);
+
+  // Chỉ coi là "đã đối soát" khi đã chốt/xác nhận/thanh toán thật.
+  // MATCHED chỉ là kết quả đối chiếu nháp khi upload/chạy đối soát, không được
+  // làm cột Đối soát ở danh sách đơn hàng sáng tick để tránh đội số ảo.
   return [
     "PAID",
     "CONFIRMED",
-    "MATCHED",
-    "MATCHED_BY_PARTIAL_DELIVERY",
     "RECONCILED",
     "COD_RECONCILED",
   ].includes(status);
@@ -869,10 +859,10 @@ function isOrderCodReconciled(order: AdminOrder) {
 
 function codReconciliationListLabel(order: AdminOrder) {
   const status = normalizedCodReconciliationStatusFromOrder(order);
-  if (["PAID", "CONFIRMED", "MATCHED", "RECONCILED", "COD_RECONCILED"].includes(status)) {
+  if (["PAID", "CONFIRMED", "RECONCILED", "COD_RECONCILED"].includes(status)) {
     return "Đã đối soát COD";
   }
-  if (status === "MATCHED_BY_PARTIAL_DELIVERY") return "Đối soát giao 1 phần";
+  if (status === "MATCHED" || status === "MATCHED_BY_PARTIAL_DELIVERY") return "Khớp nháp, chưa xác nhận";
   if (status === "MISMATCH") return "Lệch đối soát";
   if (status === "NOT_FOUND") return "Không tìm thấy";
   if (status === "SAVED") return "Đã lưu";
