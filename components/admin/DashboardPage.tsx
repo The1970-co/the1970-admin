@@ -2918,6 +2918,10 @@ export default function DashboardPage() {
     (sum, row) => sum + toNumber(row.raw?.netProfit ?? parseCompactMetric(row.netProfit)),
     0,
   );
+  const warRoomEstimatedNetProfitAmount = rowsForCurrentWarRoomRange.reduce(
+    (sum, row) => sum + toNumber(row.raw?.estimatedCreatedNetProfit),
+    0,
+  );
   const warRoomAdsAmount = rowsForCurrentWarRoomRange.reduce(
     (sum, row) => sum + toNumber(row.raw?.adsCost ?? parseCompactMetric(row.adsCost || 0)),
     0,
@@ -2935,6 +2939,9 @@ export default function DashboardPage() {
     warRoomRevenueAmount || warRoomProfitAmount || warRoomNetProfitAmount
       ? formatMoneyShort(warRoomNetProfitAmount)
       : "—";
+  const warRoomEstimatedProfitText = warRoomEstimatedNetProfitAmount
+    ? formatMoneyShort(warRoomEstimatedNetProfitAmount)
+    : "—";
   const warRoomAdsText = warRoomAdsAmount
     ? formatMoneyShort(warRoomAdsAmount)
     : "0";
@@ -3577,13 +3584,28 @@ export default function DashboardPage() {
 
           <div className="flex h-[246px] flex-col justify-between rounded-[26px] border border-emerald-100 bg-emerald-50/70 p-4">
             <p className="text-sm text-emerald-800">
-              {`Lợi nhuận ước tính ${warRoomRangeText.toLowerCase()}`}
+              Lợi nhuận
             </p>
-            <p className="mt-4 text-[30px] font-semibold tracking-tight text-emerald-950 xl:text-[38px]">
-              {warRoomProfitText}
-            </p>
+            <div className="mt-4 grid gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                  Thực tế
+                </p>
+                <p className="mt-1 text-[28px] font-semibold tracking-tight text-emerald-950 xl:text-[34px]">
+                  {warRoomProfitText}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-emerald-200 bg-white/70 px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                  Ước tính
+                </p>
+                <p className={`mt-1 text-[24px] font-semibold tracking-tight ${moneyTone(warRoomEstimatedNetProfitAmount)}`}>
+                  {warRoomEstimatedProfitText}
+                </p>
+              </div>
+            </div>
             <p className="mt-3 text-sm text-emerald-700">
-              Doanh thu - giá vốn - ads - vận hành
+              Thực tế: đơn đã giao · Ước tính: đơn tạo - huỷ
             </p>
           </div>
         </div>
@@ -3596,7 +3618,7 @@ export default function DashboardPage() {
               Bảng lãi lỗ tạm tính theo ngày
             </h2>
             <p className="mt-2 max-w-3xl text-sm text-neutral-600">
-              Tách rõ doanh thu, giá vốn, lãi gộp, chi phí ads, chi phí vận hành và lãi sau vận hành theo từng ngày.
+              Tách rõ doanh thu, giá vốn, chi phí ads, chi phí vận hành, lợi nhuận thực tế và lợi nhuận ước tính theo từng ngày.
             </p>
           </div>
           <div className="flex flex-col gap-2 xl:items-end">
@@ -3741,7 +3763,7 @@ export default function DashboardPage() {
           </div>
           <div className={`rounded-[18px] border px-4 py-3 ${moneyBadgeTone(dailyTableSummary.net)}`}>
             <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
-              Lãi sau vận hành
+              Lợi nhuận thực tế
             </div>
             <div className={`mt-2 text-lg font-semibold ${moneyTone(dailyTableSummary.net)}`}>
               {formatMoneyShort(dailyTableSummary.net)}
@@ -3750,7 +3772,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-3 rounded-[18px] border border-dashed border-neutral-200 bg-neutral-50 px-4 py-3 text-[12px] leading-5 text-neutral-500">
-          Công thức: <span className="font-medium text-neutral-800">Lãi gộp trước ads = Doanh thu - Giá vốn</span> · <span className="font-medium text-neutral-800">Lãi sau ads = Lãi gộp - Ads Meta</span> · <span className="font-medium text-neutral-800">Lãi sau vận hành = Lãi sau ads - Chi phí vận hành phân bổ</span>. Dòng hôm nay là tạm tính trong ngày.
+          Công thức: <span className="font-medium text-neutral-800">Lãi gộp trước ads = Doanh thu - Giá vốn</span> · <span className="font-medium text-neutral-800">Lãi sau ads = Lãi gộp - Ads Meta</span> · <span className="font-medium text-neutral-800">Lợi nhuận thực tế = Lãi sau ads - Chi phí vận hành phân bổ</span> · <span className="font-medium text-neutral-800">Lợi nhuận ước tính = Doanh thu ước tính - Giá vốn ước tính - Ads Meta - Chi phí vận hành</span>. Dòng hôm nay là tạm tính trong ngày.
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-[24px] border border-neutral-200">
@@ -3766,7 +3788,7 @@ export default function DashboardPage() {
                 <th className="px-4 py-4 font-medium">Chi phí ads</th>
                 <th className="px-4 py-4 font-medium">Lãi sau ads</th>
                 <th className="px-4 py-4 font-medium">Chi phí vận hành</th>
-                <th className="px-4 py-4 font-medium">Lãi sau vận hành</th>
+                <th className="px-4 py-4 font-medium">Lợi nhuận thực tế</th>
                 <th className="px-4 py-4 font-medium">Đơn</th>
                 <th className="px-4 py-4 font-medium">ROAS</th>
                 <th className="px-4 py-4 text-right font-medium">

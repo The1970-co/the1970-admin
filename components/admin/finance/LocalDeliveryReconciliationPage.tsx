@@ -8,6 +8,7 @@ import {
 } from "@/lib/current-user";
 
 type QuickRange = "today" | "yesterday" | "7d" | "30d" | "custom";
+type ActionScope = "selected" | "filtered" | "all";
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
@@ -42,13 +43,85 @@ function getRange(type: QuickRange) {
   return { from: toDateInput(today), to: toDateInput(today) };
 }
 
+function formatDateTime(value?: string | Date | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+}
+
 function statusClass(status: string) {
-  if (status === "DELIVERED")
+  const s = String(status || "").toUpperCase();
+  if (["DELIVERED", "COMPLETED", "FULFILLED", "PAID"].includes(s)) {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "DELIVERING")
+  }
+  if (["DELIVERING", "SHIPPING", "PACKING", "APPROVED", "CONFIRMED"].includes(s)) {
     return "border-blue-200 bg-blue-50 text-blue-700";
-  if (status === "FAILED") return "border-red-200 bg-red-50 text-red-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (["FAILED", "CANCELLED", "CANCELED"].includes(s)) {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+  if (["DRAFT", "PENDING", "NEW", "PENDING_COD", "PARTIAL"].includes(s)) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  return "border-neutral-200 bg-neutral-50 text-neutral-600";
+}
+
+function reconciliationStatusClass(status: string) {
+  const s = String(status || "").toUpperCase();
+  if (s === "PAID") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (s === "CONFIRMED") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (s === "CANCELLED") return "border-red-200 bg-red-50 text-red-700";
+  if (s === "DRAFT") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-neutral-200 bg-neutral-50 text-neutral-500";
+}
+
+function orderStatusLabel(status: string) {
+  const s = String(status || "").toUpperCase();
+  const labels: Record<string, string> = {
+    NEW: "Mới tạo",
+    APPROVED: "Đã duyệt",
+    PACKING: "Đang đóng hàng",
+    SHIPPED: "Đang giao",
+    COMPLETED: "Thành công",
+    CANCELLED: "Đã huỷ",
+    RETURNED: "Đã hoàn",
+  };
+  return labels[s] || status || "—";
+}
+
+function paymentStatusLabel(status: string) {
+  const s = String(status || "").toUpperCase();
+  const labels: Record<string, string> = {
+    UNPAID: "Chưa thanh toán",
+    PENDING_COD: "Chờ COD",
+    PARTIAL: "Thanh toán một phần",
+    PAID: "Đã thanh toán",
+    REFUNDED: "Đã hoàn tiền",
+    FAILED: "Lỗi thanh toán",
+  };
+  return labels[s] || status || "—";
+}
+
+function isProblemRow(row: any) {
+  const deliveryStatus = String(row.localStatus || "").toUpperCase();
+  const orderStatus = String(row.orderStatus || "").toUpperCase();
+  const reconciliationStatus = String(row.reconciliationStatus || "").toUpperCase();
+
+  return (
+    deliveryStatus === "FAILED" ||
+    orderStatus === "CANCELLED" ||
+    reconciliationStatus === "CANCELLED" ||
+    Number(row.reconciliationCodAmount || 0) !== 0 &&
+      Number(row.needCollectAmount || 0) !== 0 &&
+      Number(row.reconciliationCodAmount || 0) !== Number(row.needCollectAmount || 0)
+  );
 }
 
 export default function LocalDeliveryReconciliationPage() {
@@ -76,6 +149,9 @@ export default function LocalDeliveryReconciliationPage() {
   const [branchId, setBranchId] = useState("ALL");
   const [carrier, setCarrier] = useState("ALL");
   const [status, setStatus] = useState("ALL");
+  const [reconciliationStatus, setReconciliationStatus] = useState("ALL");
+  const [orderStatus, setOrderStatus] = useState("ALL");
+  const [paymentStatus, setPaymentStatus] = useState("ALL");
   const [q, setQ] = useState("");
   const [paymentSourceId, setPaymentSourceId] = useState("");
   const [note, setNote] = useState("");
@@ -87,6 +163,11 @@ export default function LocalDeliveryReconciliationPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [bulkMessage, setBulkMessage] = useState("");
+  const [actionScope, setActionScope] = useState<ActionScope>("selected");
+  const [payingRow, setPayingRow] = useState<any>(null);
+  const [paymentRows, setPaymentRows] = useState<
+    Array<{ paymentSourceId: string; amount: string }>
+  >([{ paymentSourceId: "", amount: "" }]);
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
@@ -112,32 +193,22 @@ export default function LocalDeliveryReconciliationPage() {
     );
     setPaymentSources(Array.isArray(sourceRows) ? sourceRows : []);
 
-    if (!isGlobalFinanceUser && currentBranchId) {
-      setBranchId(currentBranchId);
-    }
+    if (!isGlobalFinanceUser && currentBranchId) setBranchId(currentBranchId);
 
     const codLike = Array.isArray(sourceRows)
       ? sourceRows.find((s: any) =>
-          String(s?.type || s?.code || "")
-            .toUpperCase()
-            .includes("COD"),
+          String(s?.type || s?.code || "").toUpperCase().includes("COD"),
         )
       : null;
     const cashLike = Array.isArray(sourceRows)
       ? sourceRows.find(
           (s: any) =>
-            String(s?.code || s?.name || "")
-              .toUpperCase()
-              .includes("TIEN") ||
-            String(s?.code || "")
-              .toUpperCase()
-              .includes("CASH"),
+            String(s?.code || s?.name || "").toUpperCase().includes("TIEN") ||
+            String(s?.code || "").toUpperCase().includes("CASH"),
         )
       : null;
 
-    setPaymentSourceId(
-      String(codLike?.id || cashLike?.id || sourceRows?.[0]?.id || ""),
-    );
+    setPaymentSourceId(String(codLike?.id || cashLike?.id || sourceRows?.[0]?.id || ""));
   };
 
   const loadData = async () => {
@@ -151,6 +222,9 @@ export default function LocalDeliveryReconciliationPage() {
           !isGlobalFinanceUser && currentBranchId ? currentBranchId : branchId,
         carrier,
         status,
+        reconciliationStatus,
+        orderStatus,
+        paymentStatus,
         q,
       });
 
@@ -171,10 +245,7 @@ export default function LocalDeliveryReconciliationPage() {
   }, [currentBranchId, isGlobalFinanceUser]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadData();
-    }, 250);
-
+    const timer = setTimeout(() => void loadData(), 250);
     return () => clearTimeout(timer);
   }, [
     dateFrom,
@@ -182,60 +253,54 @@ export default function LocalDeliveryReconciliationPage() {
     branchId,
     carrier,
     status,
+    reconciliationStatus,
+    orderStatus,
+    paymentStatus,
     q,
     canViewLocalDelivery,
     currentBranchId,
     isGlobalFinanceUser,
   ]);
 
-  const markDelivered = async (row: any, collectCod: boolean) => {
-    if (!canConfirmLocalDelivery) {
-      alert("Bạn không có quyền xác nhận COD nội thành.");
-      return;
-    }
-
-    if (collectCod && !paymentSourceId) {
-      alert("Chọn nguồn tiền nhận COD trước.");
-      return;
-    }
-
-    setActionId(row.orderId);
-    try {
-      await apiJson(
-        `/finance/local-delivery-reconciliation/${row.orderId}/delivered`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            collectCod,
-            paymentSourceId: collectCod ? paymentSourceId : undefined,
-            amount: collectCod
-              ? row.needCollectAmount || row.codAmount
-              : undefined,
-            note: note || undefined,
-          }),
-        },
-      );
-
-      await loadData();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Cập nhật đối soát thất bại.");
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  const summary = data?.summary || {};
   const rawRows = Array.isArray(data?.rows) ? data.rows : [];
-  const rows = rawRows.filter(
+  const visibleRows = rawRows.filter(
     (row: any) => !deletedIds.includes(getLocalRowKey(row)),
   );
+
+  const rows = visibleRows;
   const selectedRows = rows.filter((row: any) =>
     selectedIds.includes(getLocalRowKey(row)),
   );
   const allRowsSelected =
     rows.length > 0 &&
     rows.every((row: any) => selectedIds.includes(getLocalRowKey(row)));
+
+  const scopeRows = useMemo(() => {
+    if (actionScope === "selected") return selectedRows;
+    if (actionScope === "filtered") return rows;
+    return visibleRows;
+  }, [actionScope, rows, selectedRows, visibleRows]);
+
+  const summary = data?.summary || {};
+  const clientProblemCount = visibleRows.filter(isProblemRow).length;
+
+  function openOrder(row: any) {
+    if (!row?.orderId) return;
+
+    const detail = {
+      orderId: row.orderId,
+      orderCode: row.orderCode,
+      title: row.orderCode,
+      href: `/orders/${row.orderId}`,
+      type: "order",
+    };
+
+    window.dispatchEvent(new CustomEvent("admin:open-order", { detail }));
+    window.dispatchEvent(new CustomEvent("open-order-detail", { detail }));
+    window.dispatchEvent(new CustomEvent("admin-open-tab", { detail }));
+
+    window.open(`/orders/${row.orderId}`, "_blank", "noopener,noreferrer");
+  }
 
   const toggleRow = (row: any) => {
     const key = getLocalRowKey(row);
@@ -247,10 +312,7 @@ export default function LocalDeliveryReconciliationPage() {
   const toggleAllRows = () => {
     const rowKeys = rows.map((row: any) => getLocalRowKey(row));
     setSelectedIds((prev) => {
-      if (
-        rowKeys.length > 0 &&
-        rowKeys.every((key: string) => prev.includes(key))
-      ) {
+      if (rowKeys.length > 0 && rowKeys.every((key) => prev.includes(key))) {
         return prev.filter((key) => !rowKeys.includes(key));
       }
       return Array.from(new Set([...prev, ...rowKeys]));
@@ -260,34 +322,238 @@ export default function LocalDeliveryReconciliationPage() {
   const hideRows = (rowKeys: string[]) => {
     if (!rowKeys.length) return;
     if (!confirm(`Xóa ${rowKeys.length} dòng khỏi danh sách đang xem?`)) return;
-
     setDeletedIds((prev) => Array.from(new Set([...prev, ...rowKeys])));
     setSelectedIds((prev) => prev.filter((key) => !rowKeys.includes(key)));
     setBulkMessage(`Đã xóa ${rowKeys.length} dòng khỏi màn đối soát.`);
   };
 
-  const markSelectedDelivered = async (collectCod: boolean) => {
-    if (!selectedRows.length) {
-      alert("Chọn ít nhất 1 đơn nội thành trước.");
+  const createReconciliation = async (targetRows: any[]) => {
+    if (!canConfirmLocalDelivery) {
+      alert("Bạn không có quyền tạo đối soát nội thành.");
       return;
     }
 
-    if (collectCod && !paymentSourceId) {
-      alert("Chọn nguồn tiền nhận COD trước.");
+    const rowsToCreate = targetRows.filter((row) => !row.reconciliationId);
+    if (!rowsToCreate.length) {
+      alert("Các đơn đã chọn đều đã có phiếu đối soát.");
       return;
     }
 
-    setActionId("__bulk__");
+    setActionId("__create_reconciliation__");
     try {
-      for (const row of selectedRows) {
-        await markDelivered(row, collectCod);
-      }
-      setBulkMessage(
-        collectCod
-          ? `Đã thanh toán COD cho ${selectedRows.length} đơn đã chọn.`
-          : `Đã xác nhận giao thành công ${selectedRows.length} đơn đã chọn.`,
+      const result = await apiJson<any>("/finance/local-delivery-reconciliation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderIds: rowsToCreate.map((row) => row.orderId).filter(Boolean),
+          shipmentIds: rowsToCreate.map((row) => row.shipmentId).filter(Boolean),
+          note: note || undefined,
+          createdById: currentUser?.id,
+          createdByName: currentUser?.name || currentUser?.fullName,
+        }),
+      });
+
+      setBulkMessage(`Đã tạo ${result?.createdCount || rowsToCreate.length} phiếu đối soát nội thành.`);
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Tạo đối soát thất bại.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const updateReconciliation = async (row: any) => {
+    if (!row.reconciliationId) {
+      await createReconciliation([row]);
+      return;
+    }
+
+    const codText = prompt(
+      "COD cần thu trên phiếu đối soát",
+      String(row.reconciliationCodAmount || row.needCollectAmount || row.codAmount || 0),
+    );
+    if (codText === null) return;
+
+    const feeText = prompt(
+      "Phí ship nội thành",
+      String(row.reconciliationShippingFee || row.shippingFee || 0),
+    );
+    if (feeText === null) return;
+
+    const nextNote = prompt("Ghi chú đối soát", row.reconciliationNote || note || "");
+    if (nextNote === null) return;
+
+    setActionId(row.reconciliationId);
+    try {
+      await apiJson(
+        `/finance/local-delivery-reconciliation/reconciliations/${row.reconciliationId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            codAmount: Number(codText || 0),
+            shippingFee: Number(feeText || 0),
+            note: nextNote || undefined,
+          }),
+        },
       );
-      setSelectedIds([]);
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Sửa đối soát thất bại.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const confirmReconciliation = async (row: any) => {
+    if (!row.reconciliationId) {
+      alert("Cần tạo phiếu đối soát trước.");
+      return;
+    }
+
+    setActionId(row.reconciliationId);
+    try {
+      await apiJson(
+        `/finance/local-delivery-reconciliation/reconciliations/${row.reconciliationId}/confirm`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmedById: currentUser?.id,
+            confirmedByName: currentUser?.name || currentUser?.fullName,
+            note: note || undefined,
+          }),
+        },
+      );
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Xác nhận đối soát thất bại.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const cancelReconciliation = async (row: any) => {
+    if (!row.reconciliationId) {
+      alert("Đơn này chưa có phiếu đối soát.");
+      return;
+    }
+
+    if (!confirm(`Huỷ phiếu đối soát ${row.reconciliationCode || ""}?`)) return;
+
+    setActionId(row.reconciliationId);
+    try {
+      await apiJson(
+        `/finance/local-delivery-reconciliation/reconciliations/${row.reconciliationId}/cancel`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cancelledById: currentUser?.id,
+            cancelledByName: currentUser?.name || currentUser?.fullName,
+            note: note || undefined,
+          }),
+        },
+      );
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Huỷ đối soát thất bại.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const openPaymentModal = (row: any) => {
+    if (!row.reconciliationId) {
+      alert("Cần tạo phiếu đối soát trước khi thanh toán.");
+      return;
+    }
+
+    const amount = Number(row.reconciliationCodAmount || row.needCollectAmount || 0);
+    setPayingRow(row);
+    setPaymentRows([{ paymentSourceId, amount: amount ? String(amount) : "" }]);
+  };
+
+  const submitReconciliationPayment = async () => {
+    if (!payingRow?.reconciliationId) return;
+
+    const cleanRows = paymentRows
+      .map((row) => ({
+        paymentSourceId: row.paymentSourceId,
+        amount: Number(row.amount || 0),
+      }))
+      .filter((row) => row.paymentSourceId && row.amount > 0);
+
+    if (!cleanRows.length) {
+      alert("Nhập ít nhất 1 dòng thanh toán.");
+      return;
+    }
+
+    const total = cleanRows.reduce((sum, row) => sum + row.amount, 0);
+    const target = Number(payingRow.reconciliationCodAmount || payingRow.needCollectAmount || 0);
+
+    if (target > 0 && total > target) {
+      alert("Tổng tiền thanh toán không được lớn hơn COD cần thu.");
+      return;
+    }
+
+    setActionId(payingRow.reconciliationId);
+    try {
+      await apiJson(
+        `/finance/local-delivery-reconciliation/reconciliations/${payingRow.reconciliationId}/pay`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            payments: cleanRows,
+            note: note || undefined,
+            paidById: currentUser?.id,
+            paidByName: currentUser?.name || currentUser?.fullName,
+          }),
+        },
+      );
+      setPayingRow(null);
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Thanh toán đối soát thất bại.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const bulkCreate = async () => {
+    await createReconciliation(scopeRows);
+  };
+
+  const bulkConfirm = async () => {
+    const candidates = scopeRows.filter((row) => row.reconciliationId);
+    if (!candidates.length) {
+      alert("Phạm vi đang chọn không có phiếu đối soát để xác nhận.");
+      return;
+    }
+
+    if (!confirm(`Xác nhận ${candidates.length} phiếu đối soát nội thành?`)) return;
+
+    setActionId("__bulk_reconciliation__");
+    try {
+      for (const row of candidates) {
+        await apiJson(
+          `/finance/local-delivery-reconciliation/reconciliations/${row.reconciliationId}/confirm`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              confirmedById: currentUser?.id,
+              confirmedByName: currentUser?.name || currentUser?.fullName,
+              note: note || undefined,
+            }),
+          },
+        );
+      }
+      setBulkMessage(`Đã xác nhận ${candidates.length} phiếu đối soát.`);
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Xác nhận đối soát thất bại.");
     } finally {
       setActionId(null);
     }
@@ -304,24 +570,19 @@ export default function LocalDeliveryReconciliationPage() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-sm text-neutral-500">
-          Tài chính / Đối soát nội thành
-        </p>
+        <p className="text-sm text-neutral-500">Tài chính / Đối soát nội thành</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-neutral-950">
           Đối soát vận chuyển nội thành
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Dành cho Ahamove, shipper nội bộ và các hãng nội thành. Có thể xác
-          nhận giao thành công thủ công, đồng thời ghi nhận COD vào dòng tiền.
+          Theo dõi COD, phí ship, trạng thái giao hàng, trạng thái đơn và tiến độ đối soát cho Ahamove / shipper nội thành.
         </p>
       </div>
 
       <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
         <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto]">
           <div>
-            <p className="mb-2 text-xs font-medium text-neutral-500">
-              Khoảng thời gian
-            </p>
+            <p className="mb-2 text-xs font-medium text-neutral-500">Khoảng thời gian</p>
             <div className="flex flex-wrap gap-2">
               {[
                 ["today", "Hôm nay"],
@@ -334,9 +595,7 @@ export default function LocalDeliveryReconciliationPage() {
                   key={value}
                   onClick={() => applyQuickRange(value as QuickRange)}
                   className={`rounded-xl px-3 py-2 text-sm ${
-                    quickRange === value
-                      ? "bg-black text-white"
-                      : "border border-neutral-200 bg-white"
+                    quickRange === value ? "bg-black text-white" : "border border-neutral-200 bg-white"
                   }`}
                 >
                   {label}
@@ -375,13 +634,9 @@ export default function LocalDeliveryReconciliationPage() {
               onChange={(e) => setBranchId(e.target.value)}
               className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
             >
-              {isGlobalFinanceUser ? (
-                <option value="ALL">Tất cả chi nhánh</option>
-              ) : null}
+              {isGlobalFinanceUser ? <option value="ALL">Tất cả chi nhánh</option> : null}
               {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name || b.id}
-                </option>
+                <option key={b.id} value={b.id}>{b.name || b.id}</option>
               ))}
             </select>
           </Field>
@@ -409,11 +664,11 @@ export default function LocalDeliveryReconciliationPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-[1fr_220px_260px]">
+        <div className="mt-4 grid gap-4 xl:grid-cols-[1.4fr_220px_220px_220px_220px]">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Tìm mã đơn, vận đơn, khách hàng, SĐT..."
+            placeholder="Tìm mã đơn, mã vận đơn, khách hàng, SĐT..."
             className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
           />
 
@@ -422,13 +677,55 @@ export default function LocalDeliveryReconciliationPage() {
             onChange={(e) => setStatus(e.target.value)}
             className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
           >
-            <option value="ALL">Tất cả trạng thái</option>
-            <option value="PENDING">Chờ đối soát</option>
+            <option value="ALL">Tất cả trạng thái giao</option>
+            <option value="PENDING">Chờ giao / chờ xử lý</option>
             <option value="DELIVERING">Đang giao</option>
             <option value="DELIVERED">Đã giao thành công</option>
-            <option value="FAILED">Giao thất bại</option>
+            <option value="FAILED">Giao thất bại / đã huỷ</option>
           </select>
 
+          <select
+            value={reconciliationStatus}
+            onChange={(e) => setReconciliationStatus(e.target.value)}
+            className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
+          >
+            <option value="ALL">Tất cả đối soát</option>
+            <option value="NONE">Chưa tạo đối soát</option>
+            <option value="DRAFT">Nháp đối soát</option>
+            <option value="CONFIRMED">Đã xác nhận</option>
+            <option value="PAID">Đã thanh toán</option>
+            <option value="CANCELLED">Đã huỷ đối soát</option>
+            <option value="PROBLEM">Có vấn đề</option>
+          </select>
+
+          <select
+            value={orderStatus}
+            onChange={(e) => setOrderStatus(e.target.value)}
+            className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
+          >
+            <option value="ALL">Tất cả trạng thái đơn</option>
+            <option value="NEW">Mới tạo</option>
+            <option value="APPROVED">Đã duyệt</option>
+            <option value="PACKING">Đang đóng hàng</option>
+            <option value="SHIPPED">Đang giao</option>
+            <option value="COMPLETED">Đơn thành công</option>
+            <option value="CANCELLED">Đơn đã huỷ</option>
+          </select>
+
+          <select
+            value={paymentStatus}
+            onChange={(e) => setPaymentStatus(e.target.value)}
+            className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
+          >
+            <option value="ALL">Tất cả thanh toán</option>
+            <option value="UNPAID">Chưa thanh toán</option>
+            <option value="PENDING_COD">Chờ COD</option>
+            <option value="PARTIAL">Thanh toán một phần</option>
+            <option value="PAID">Đã thanh toán</option>
+          </select>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-[260px_1fr]">
           <select
             value={paymentSourceId}
             onChange={(e) => setPaymentSourceId(e.target.value)}
@@ -436,42 +733,46 @@ export default function LocalDeliveryReconciliationPage() {
           >
             <option value="">Chọn nguồn nhận COD</option>
             {paymentSources.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
+              <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
+
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Ghi chú đối soát nội thành..."
+            className="h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
+          />
         </div>
 
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Ghi chú đối soát nội thành..."
-          className="mt-4 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"
-        />
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Filter active={reconciliationStatus === "ALL"} onClick={() => setReconciliationStatus("ALL")}>Tất cả</Filter>
+          <Filter active={reconciliationStatus === "NONE"} onClick={() => setReconciliationStatus("NONE")}>Chưa tạo ĐS</Filter>
+          <Filter active={reconciliationStatus === "DRAFT"} onClick={() => setReconciliationStatus("DRAFT")}>Nháp</Filter>
+          <Filter active={reconciliationStatus === "CONFIRMED"} onClick={() => setReconciliationStatus("CONFIRMED")}>Đã xác nhận</Filter>
+          <Filter active={reconciliationStatus === "PAID"} onClick={() => setReconciliationStatus("PAID")}>Đã thanh toán</Filter>
+          <Filter active={status === "DELIVERED"} onClick={() => setStatus(status === "DELIVERED" ? "ALL" : "DELIVERED")}>Đã giao</Filter>
+          <Filter active={reconciliationStatus === "PROBLEM"} onClick={() => setReconciliationStatus("PROBLEM")}>Có vấn đề</Filter>
+        </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-6">
+      <div className="grid gap-4 xl:grid-cols-8">
         <Stat title="Tổng đơn" value={summary.totalRows || 0} />
-        <Stat title="Chờ đối soát" value={summary.pending || 0} />
-        <Stat title="Đang giao" value={summary.delivering || 0} />
-        <Stat title="Đã giao" value={summary.delivered || 0} ok />
-        <Stat
-          title="COD cần thu"
-          value={currency(summary.totalNeedCollect || 0)}
-        />
+        <Stat title="Chưa tạo ĐS" value={summary.reconciliationNone || 0} />
+        <Stat title="Nháp ĐS" value={summary.reconciliationDraft || 0} />
+        <Stat title="Đã xác nhận" value={summary.reconciliationConfirmed || 0} />
+        <Stat title="Đã thanh toán" value={summary.reconciliationPaid || 0} ok />
+        <Stat title="Có vấn đề" value={summary.problemRows ?? clientProblemCount} danger />
+        <Stat title="COD cần thu" value={currency(summary.totalNeedCollect || 0)} />
         <Stat title="Phí ship" value={currency(summary.totalFee || 0)} />
       </div>
 
       <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-neutral-950">
-              Danh sách đơn nội thành
-            </h2>
+            <h2 className="text-lg font-semibold text-neutral-950">Danh sách đối soát nội thành</h2>
             <p className="mt-1 text-sm text-neutral-500">
-              Nhân viên đối soát có thể tick giao thành công hoặc ghi nhận COD
-              đã nhận.
+              Click mã đơn để mở chi tiết. Bảng đã bổ sung thời gian, trạng thái đơn, trạng thái thanh toán và trạng thái đối soát.
             </p>
           </div>
           <button
@@ -484,32 +785,36 @@ export default function LocalDeliveryReconciliationPage() {
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
           <div className="text-sm text-neutral-600">
-            Đã chọn <b>{selectedRows.length}</b> đơn · Đang hiển thị{" "}
-            <b>{rows.length}</b> đơn
-            {bulkMessage ? (
-              <span className="ml-3 font-medium text-emerald-700">
-                {bulkMessage}
-              </span>
-            ) : null}
+            Đã chọn <b>{selectedRows.length}</b> đơn · Đang hiển thị <b>{rows.length}</b> đơn · Tổng còn <b>{visibleRows.length}</b> dòng
+            {bulkMessage ? <span className="ml-3 font-medium text-emerald-700">{bulkMessage}</span> : null}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => markSelectedDelivered(false)}
-              disabled={!selectedRows.length || actionId === "__bulk__"}
-              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={actionScope}
+              onChange={(e) => setActionScope(e.target.value as ActionScope)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-medium"
             >
-              Xác nhận đã giao
+              <option value="selected">Chỉ dòng đã tích</option>
+              <option value="filtered">Tất cả dòng đang lọc</option>
+              <option value="all">Toàn bộ phiên còn lại</option>
+            </select>
+            <button
+              onClick={bulkCreate}
+              disabled={!scopeRows.length || actionId === "__create_reconciliation__"}
+              className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              Tạo đối soát
             </button>
             <button
-              onClick={() => markSelectedDelivered(true)}
-              disabled={!selectedRows.length || actionId === "__bulk__"}
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              onClick={bulkConfirm}
+              disabled={!scopeRows.length || actionId === "__bulk_reconciliation__"}
+              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium disabled:opacity-50"
             >
-              Thanh toán COD đã chọn
+              Xác nhận ĐS
             </button>
             <button
               onClick={() => hideRows(selectedIds)}
-              disabled={!selectedIds.length || actionId === "__bulk__"}
+              disabled={!selectedIds.length}
               className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 disabled:opacity-50"
             >
               Xóa dòng chọn
@@ -517,112 +822,176 @@ export default function LocalDeliveryReconciliationPage() {
           </div>
         </div>
 
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[1320px] text-left text-sm">
-            <thead>
-              <tr className="border-b text-neutral-400">
-                <th className="w-10 pb-3 font-medium">
-                  <input
-                    type="checkbox"
-                    checked={allRowsSelected}
-                    onChange={toggleAllRows}
-                  />
+        <div className="mt-5 overflow-x-auto rounded-2xl border border-neutral-200">
+          <table className="w-full min-w-[1900px] text-left text-sm">
+            <thead className="bg-neutral-50 text-neutral-500">
+              <tr>
+                <th className="w-10 px-4 py-3 font-medium">
+                  <input type="checkbox" checked={allRowsSelected} onChange={toggleAllRows} />
                 </th>
-                <th className="pb-3 font-medium">Mã đơn</th>
-                <th className="pb-3 font-medium">Khách hàng</th>
-                <th className="pb-3 font-medium">Hãng</th>
-                <th className="pb-3 font-medium">Mã vận đơn</th>
-                <th className="pb-3 font-medium">Trạng thái</th>
-                <th className="pb-3 font-medium text-right">COD</th>
-                <th className="pb-3 font-medium text-right">Đã thu</th>
-                <th className="pb-3 font-medium text-right">Còn thu</th>
-                <th className="pb-3 font-medium">Địa chỉ</th>
-                <th className="pb-3 font-medium text-right">Thao tác</th>
+                <th className="px-4 py-3 font-medium">Mã đơn</th>
+                <th className="px-4 py-3 font-medium">Thời gian</th>
+                <th className="px-4 py-3 font-medium">Khách hàng</th>
+                <th className="px-4 py-3 font-medium">Hãng / vận đơn</th>
+                <th className="px-4 py-3 font-medium">Trạng thái đơn</th>
+                <th className="px-4 py-3 font-medium">Trạng thái giao</th>
+                <th className="px-4 py-3 font-medium">Đối soát</th>
+                <th className="px-4 py-3 text-right font-medium">COD</th>
+                <th className="px-4 py-3 text-right font-medium">Phí ship</th>
+                <th className="px-4 py-3 text-right font-medium">Đã thu</th>
+                <th className="px-4 py-3 text-right font-medium">Còn thu</th>
+                <th className="px-4 py-3 font-medium">Địa chỉ / ghi chú</th>
+                <th className="px-4 py-3 text-right font-medium">Thao tác</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row: any) => (
-                <tr key={getLocalRowKey(row)} className="border-b align-top">
-                  <td className="py-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(getLocalRowKey(row))}
-                      onChange={() => toggleRow(row)}
-                    />
-                  </td>
-                  <td className="py-3 font-semibold">{row.orderCode}</td>
-                  <td className="py-3">
-                    <div className="font-medium">{row.customerName}</div>
-                    <div className="text-xs text-neutral-500">
-                      {row.customerPhone}
-                    </div>
-                  </td>
-                  <td className="py-3">{row.carrierName}</td>
-                  <td className="py-3 font-medium text-purple-700">
-                    {row.trackingCode}
-                  </td>
-                  <td className="py-3">
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(row.localStatus)}`}
-                    >
-                      {row.localStatusLabel}
-                    </span>
-                    <div className="mt-1 text-xs text-neutral-400">
-                      {row.shippingStatus ||
-                        row.partnerStatus ||
-                        row.ahamoveStatus ||
-                        "—"}
-                    </div>
-                  </td>
-                  <td className="py-3 text-right font-medium">
-                    {currency(row.codAmount)}
-                  </td>
-                  <td className="py-3 text-right">
-                    {currency(row.paidAmount)}
-                  </td>
-                  <td className="py-3 text-right font-semibold">
-                    {currency(row.needCollectAmount)}
-                  </td>
-                  <td className="max-w-[260px] py-3 text-neutral-600">
-                    <div className="line-clamp-2">{row.address}</div>
-                    {row.note ? (
+              {rows.map((row: any) => {
+                const rowKey = getLocalRowKey(row);
+                const problem = isProblemRow(row);
+                return (
+                  <tr key={rowKey} className={`border-t align-top ${problem ? "bg-red-50/40" : "bg-white"}`}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(rowKey)}
+                        onChange={() => toggleRow(row)}
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => openOrder(row)}
+                        className="font-semibold text-blue-700 underline-offset-4 hover:underline"
+                      >
+                        {row.orderCode}
+                      </button>
                       <div className="mt-1 text-xs text-neutral-400">
-                        {row.note}
+                        ID: {String(row.orderId || "").slice(0, 8)}
                       </div>
-                    ) : null}
-                  </td>
-                  <td className="py-3 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        disabled={
-                          actionId === row.orderId ||
-                          row.localStatus === "DELIVERED"
-                        }
-                        onClick={() => markDelivered(row, false)}
-                        className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium disabled:opacity-40"
-                      >
-                        Đã giao
-                      </button>
-                      <button
-                        disabled={
-                          actionId === row.orderId ||
-                          row.localStatus === "DELIVERED"
-                        }
-                        onClick={() => markDelivered(row, true)}
-                        className="rounded-xl bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
-                      >
-                        Đã nhận COD
-                      </button>
-                      <button
-                        onClick={() => hideRows([getLocalRowKey(row)])}
-                        className="rounded-xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600"
-                      >
-                        Xóa
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-neutral-900">
+                        Tạo đơn: {formatDateTime(row.orderCreatedAt || row.createdAt)}
+                      </div>
+                      <div className="mt-1 text-xs text-neutral-500">
+                        Tạo vận đơn: {formatDateTime(row.shipmentCreatedAt || row.createdAt)}
+                      </div>
+                      <div className="mt-1 text-xs text-neutral-400">
+                        Cập nhật: {formatDateTime(row.updatedAt)}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{row.customerName}</div>
+                      <div className="text-xs text-neutral-500">{row.customerPhone}</div>
+                      <div className="mt-1 text-xs text-neutral-400">{row.branchName || row.branchId || "—"}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold">{row.carrierName}</div>
+                      <div className="mt-1 font-medium text-purple-700">{row.trackingCode}</div>
+                      <div className="mt-1 text-xs text-neutral-400">{row.carrier || "—"}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(row.orderStatus)}`}>
+                        {orderStatusLabel(row.orderStatus)}
+                      </span>
+                      <div className="mt-2">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(row.paymentStatus)}`}>
+                          {paymentStatusLabel(row.paymentStatus)}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(row.localStatus)}`}>
+                        {row.localStatusLabel}
+                      </span>
+                      <div className="mt-1 text-xs text-neutral-400">
+                        {row.shippingStatus || row.partnerStatus || row.ahamoveStatus || "—"}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {row.reconciliationId ? (
+                        <div>
+                          <div className="font-semibold text-neutral-900">{row.reconciliationCode}</div>
+                          <span className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${reconciliationStatusClass(row.reconciliationStatus)}`}>
+                            {row.reconciliationStatusLabel}
+                          </span>
+                          <div className="mt-1 text-xs text-neutral-500">
+                            Tạo: {formatDateTime(row.reconciliationCreatedAt)}
+                          </div>
+                          {row.reconciliationConfirmedAt ? (
+                            <div className="text-xs text-neutral-500">
+                              Xác nhận: {formatDateTime(row.reconciliationConfirmedAt)}
+                            </div>
+                          ) : null}
+                          {row.reconciliationPaidAt ? (
+                            <div className="text-xs text-emerald-700">
+                              TT: {formatDateTime(row.reconciliationPaidAt)}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-semibold text-neutral-500">
+                          Chưa tạo
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold">{currency(row.codAmount)}</td>
+                    <td className="px-4 py-3 text-right">{currency(row.shippingFee)}</td>
+                    <td className="px-4 py-3 text-right">{currency(row.paidAmount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{currency(row.needCollectAmount)}</td>
+                    <td className="max-w-[280px] px-4 py-3 text-neutral-600">
+                      <div className="line-clamp-2">{row.address}</div>
+                      {row.note ? <div className="mt-1 text-xs text-neutral-400">{row.note}</div> : null}
+                      {problem ? <div className="mt-2 text-xs font-semibold text-red-600">Cần kiểm tra</div> : null}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          disabled={Boolean(row.reconciliationId)}
+                          onClick={() => createReconciliation([row])}
+                          className="rounded-xl bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                        >
+                          Tạo ĐS
+                        </button>
+                        <button
+                          disabled={!row.reconciliationId || row.reconciliationStatus === "PAID" || row.reconciliationStatus === "CANCELLED"}
+                          onClick={() => updateReconciliation(row)}
+                          className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium disabled:opacity-40"
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          disabled={!row.reconciliationId || row.reconciliationStatus === "PAID" || row.reconciliationStatus === "CANCELLED"}
+                          onClick={() => confirmReconciliation(row)}
+                          className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium disabled:opacity-40"
+                        >
+                          Xác nhận
+                        </button>
+                        <button
+                          disabled={!row.reconciliationId || row.reconciliationStatus === "PAID" || row.reconciliationStatus === "CANCELLED"}
+                          onClick={() => openPaymentModal(row)}
+                          className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                        >
+                          Thanh toán
+                        </button>
+                        <button
+                          disabled={!row.reconciliationId || row.reconciliationStatus === "PAID" || row.reconciliationStatus === "CANCELLED"}
+                          onClick={() => cancelReconciliation(row)}
+                          className="rounded-xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600 disabled:opacity-40"
+                        >
+                          Huỷ
+                        </button>
+                        <button
+                          onClick={() => hideRows([rowKey])}
+                          className="rounded-xl border border-red-200 px-3 py-2 text-xs font-medium text-red-600"
+                        >
+                          Ẩn
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -632,28 +1001,117 @@ export default function LocalDeliveryReconciliationPage() {
             Chưa có đơn vận chuyển nội thành trong bộ lọc hiện tại.
           </p>
         ) : null}
+
+        {payingRow ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+            <div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">
+                    Thanh toán đối soát nội thành
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold text-neutral-950">
+                    {payingRow.reconciliationCode} · {payingRow.orderCode}
+                  </h3>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    COD cần thu: <b className="text-neutral-950">{currency(payingRow.reconciliationCodAmount || payingRow.needCollectAmount || 0)}</b>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setPayingRow(null)}
+                  className="rounded-xl border border-neutral-200 px-3 py-2 text-sm"
+                >
+                  Đóng
+                </button>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {paymentRows.map((row, index) => (
+                  <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
+                    <select
+                      value={row.paymentSourceId}
+                      onChange={(e) =>
+                        setPaymentRows((prev) =>
+                          prev.map((item, i) =>
+                            i === index ? { ...item, paymentSourceId: e.target.value } : item,
+                          ),
+                        )
+                      }
+                      className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
+                    >
+                      <option value="">Chọn nguồn tiền</option>
+                      {paymentSources.map((source) => (
+                        <option key={source.id} value={source.id}>{source.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      value={row.amount}
+                      onChange={(e) =>
+                        setPaymentRows((prev) =>
+                          prev.map((item, i) =>
+                            i === index ? { ...item, amount: e.target.value } : item,
+                          ),
+                        )
+                      }
+                      placeholder="Số tiền"
+                      className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
+                    />
+                    <button
+                      onClick={() =>
+                        setPaymentRows((prev) =>
+                          prev.length === 1 ? prev : prev.filter((_, i) => i !== index),
+                        )
+                      }
+                      className="h-11 rounded-xl border border-red-200 px-3 text-sm text-red-600"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <button
+                  onClick={() =>
+                    setPaymentRows((prev) =>
+                      prev.length >= 3 ? prev : [...prev, { paymentSourceId: "", amount: "" }],
+                    )
+                  }
+                  disabled={paymentRows.length >= 3}
+                  className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                >
+                  + Thêm nguồn tiền
+                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPayingRow(null)}
+                    className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium"
+                  >
+                    Huỷ
+                  </button>
+                  <button
+                    onClick={() => submitReconciliationPayment()}
+                    disabled={actionId === payingRow.reconciliationId}
+                    className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    Xác nhận thanh toán
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   );
 }
 
 function getLocalRowKey(row: any) {
-  return String(
-    row?.shipmentId ||
-      row?.orderId ||
-      row?.trackingCode ||
-      row?.orderCode ||
-      "",
-  );
+  return String(row?.shipmentId || row?.orderId || row?.trackingCode || row?.orderCode || "");
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <p className="mb-2 text-xs font-medium text-neutral-500">{label}</p>
@@ -662,20 +1120,45 @@ function Field({
   );
 }
 
+function Filter({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl px-3 py-2 text-sm font-medium ${
+        active ? "bg-black text-white" : "border border-neutral-200 bg-white text-neutral-700"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function Stat({
   title,
   value,
   ok,
+  danger,
 }: {
   title: string;
   value: any;
   ok?: boolean;
+  danger?: boolean;
 }) {
   return (
     <div className="rounded-[24px] border border-neutral-200 bg-white p-5 shadow-sm">
       <p className="text-sm text-neutral-500">{title}</p>
       <p
-        className={`mt-2 text-2xl font-semibold ${ok ? "text-emerald-600" : "text-neutral-950"}`}
+        className={`mt-2 text-2xl font-semibold ${
+          danger ? "text-red-600" : ok ? "text-emerald-600" : "text-neutral-950"
+        }`}
       >
         {value}
       </p>
