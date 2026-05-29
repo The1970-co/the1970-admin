@@ -475,17 +475,34 @@ function isFinalShipmentStatus(status?: string | null) {
   );
 }
 
+const VIETNAM_TIME_ZONE = "Asia/Ho_Chi_Minh";
+
+function normalizeDateTimeInput(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  // Backend/Prisma đôi lúc trả ISO UTC nhưng thiếu hậu tố Z.
+  // Danh sách đơn đang hiển thị theo giờ VN, nên chi tiết đơn cũng ép cùng rule này.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(raw)) {
+    return `${raw}Z`;
+  }
+
+  return raw;
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "";
 
   try {
-    const date = new Date(value);
+    const normalizedValue = normalizeDateTimeInput(value);
+    const date = new Date(normalizedValue);
 
     if (Number.isNaN(date.getTime())) {
       return String(value);
     }
 
     return new Intl.DateTimeFormat("vi-VN", {
+      timeZone: VIETNAM_TIME_ZONE,
       hour: "2-digit",
       minute: "2-digit",
       day: "2-digit",
@@ -1764,7 +1781,7 @@ function MobileOrderDetailView({
                   </p>
                   {entry.createdAt ? (
                     <p className="mt-1 text-[10px] text-neutral-400">
-                      {entry.createdAt}
+                      {formatDateTime(entry.createdAt)}
                     </p>
                   ) : null}
                 </div>
@@ -4592,18 +4609,17 @@ export default function OrderDetailPageClient({
                     <DataRow
                       label="Ngày bán"
                       value={
-                        formatDateTime(viewOrder.soldAt) ||
-                        viewOrder.createdAt ||
+                        formatDateTime(viewOrder.soldAt || viewOrder.createdAt) ||
                         "—"
                       }
                     />
                     <DataRow
                       label="Ngày tạo"
-                      value={viewOrder.createdAt || "—"}
+                      value={formatDateTime(viewOrder.createdAt) || "—"}
                     />
                     <DataRow
                       label="Cập nhật"
-                      value={viewOrder.updatedAt || "—"}
+                      value={formatDateTime(viewOrder.updatedAt) || "—"}
                     />
                     <DataRow
                       label="Nhân viên"
@@ -4632,18 +4648,17 @@ export default function OrderDetailPageClient({
                     <DataRow
                       label="Ngày bán"
                       value={
-                        formatDateTime(viewOrder.soldAt) ||
-                        viewOrder.createdAt ||
+                        formatDateTime(viewOrder.soldAt || viewOrder.createdAt) ||
                         "—"
                       }
                     />
                     <DataRow
                       label="Ngày tạo"
-                      value={viewOrder.createdAt || "—"}
+                      value={formatDateTime(viewOrder.createdAt) || "—"}
                     />
                     <DataRow
                       label="Cập nhật"
-                      value={viewOrder.updatedAt || "—"}
+                      value={formatDateTime(viewOrder.updatedAt) || "—"}
                     />
                     <DataRow
                       label="Nhân viên"
@@ -4754,7 +4769,7 @@ export default function OrderDetailPageClient({
                             value={row.handledByStaffName || "—"}
                           />
                           <DataRow label="Sản phẩm" value={summarizeReturnItems(row.items)} />
-                          <DataRow label="Ngày tạo" value={row.createdAt || "—"} />
+                          <DataRow label="Ngày tạo" value={formatDateTime(row.createdAt) || "—"} />
                         </div>
                       </div>
                     );
@@ -4801,7 +4816,7 @@ export default function OrderDetailPageClient({
                       </div>
                       {entry.createdAt ? (
                         <p className="mt-2 text-[11px] text-neutral-500">
-                          {entry.createdAt}
+                          {formatDateTime(entry.createdAt)}
                         </p>
                       ) : null}
                     </div>

@@ -2858,6 +2858,23 @@ export default function DashboardPage() {
       const adsCostValue = toNumber(
         row.raw?.adsCost ?? parseCompactMetric(row.adsCost || 0),
       );
+      const createdRow = dailyCreatedRowsByDate.get(key);
+      const posCreatedAmount = toNumber(createdRow?.posCreatedAmount);
+      const facebookCreatedAmount = toNumber(createdRow?.facebookCreatedAmount);
+      const estimatedCreatedRevenue = posCreatedAmount + facebookCreatedAmount;
+      const directCreatedCost =
+        toNumber(createdRow?.posCreatedCostEstimate) +
+        toNumber(createdRow?.facebookCreatedCostEstimate);
+      const successCostRate = revenueValue > 0 && costValue > 0 ? costValue / revenueValue : 0;
+      const estimatedCreatedCost =
+        directCreatedCost > 0
+          ? directCreatedCost
+          : estimatedCreatedRevenue > 0
+            ? Math.round(estimatedCreatedRevenue * (successCostRate || 0.42))
+            : 0;
+      const estimatedCreatedGross = estimatedCreatedRevenue - estimatedCreatedCost;
+      const estimatedCreatedProfit = estimatedCreatedGross - adsCostValue;
+      const estimatedCreatedNetProfit = estimatedCreatedProfit - dailyOperatingCostPerDay;
       const grossProfit = revenueValue - costValue;
       const profitAfterAds = grossProfit - adsCostValue;
       const netProfit = profitAfterAds - dailyOperatingCostPerDay;
@@ -2895,6 +2912,23 @@ export default function DashboardPage() {
           operatingCost: dailyOperatingCostPerDay,
           netProfit,
           orders: orderCountValue,
+          createdOrders: toNumber(createdRow?.createdOrders),
+          createdAmount: toNumber(createdRow?.createdAmount),
+          createdCostEstimate: toNumber(createdRow?.createdCostEstimate),
+          estimatedCreatedRevenue,
+          estimatedCreatedCost,
+          estimatedCreatedGross,
+          estimatedCreatedProfit,
+          estimatedCreatedNetProfit,
+          posCreatedOrders: toNumber(createdRow?.posCreatedOrders),
+          posCreatedAmount,
+          posCreatedCostEstimate: toNumber(createdRow?.posCreatedCostEstimate),
+          facebookCreatedOrders: toNumber(createdRow?.facebookCreatedOrders),
+          facebookCreatedAmount,
+          facebookCreatedCostEstimate: toNumber(createdRow?.facebookCreatedCostEstimate),
+          otherCreatedOrders: toNumber(createdRow?.otherCreatedOrders),
+          otherCreatedAmount: toNumber(createdRow?.otherCreatedAmount),
+          otherCreatedCostEstimate: toNumber(createdRow?.otherCreatedCostEstimate),
         },
       };
     });
