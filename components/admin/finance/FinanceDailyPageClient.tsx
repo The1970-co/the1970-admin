@@ -699,6 +699,8 @@ export default function FinanceDailyPageClient() {
   const [transactionSourceFilters, setTransactionSourceFilters] = useState<string[]>([]);
   const [transactionStatusFilter, setTransactionStatusFilter] = useState("ALL");
   const [transactionTypeFilter, setTransactionTypeFilter] = useState("ALL");
+  const [transactionDateFrom, setTransactionDateFrom] = useState("");
+  const [transactionDateTo, setTransactionDateTo] = useState("");
   const [transactionAmountFrom, setTransactionAmountFrom] = useState("");
   const [transactionAmountTo, setTransactionAmountTo] = useState("");
 
@@ -1260,10 +1262,18 @@ export default function FinanceDailyPageClient() {
     const amountTo = transactionAmountTo.trim()
       ? parseMoneyInput(transactionAmountTo)
       : null;
+    const detailDateFrom = transactionDateFrom.trim() || null;
+    const detailDateTo = transactionDateTo.trim() || null;
 
     return rawRows
       .filter((row) => rowMatchesSelectedBranch(row))
       .filter((row) => rowMatchesSelectedSource(row))
+      .filter((row) => {
+        const dateKey = rowDateKey(row);
+        if (detailDateFrom && (!dateKey || dateKey < detailDateFrom)) return false;
+        if (detailDateTo && (!dateKey || dateKey > detailDateTo)) return false;
+        return true;
+      })
       .filter((row) => passFlowFilter(row, flow))
       .filter((row) => {
         if (transactionBranchFilter === "ALL") return true;
@@ -1330,6 +1340,8 @@ export default function FinanceDailyPageClient() {
     transactionSourceFilters,
     transactionStatusFilter,
     transactionTypeFilter,
+    transactionDateFrom,
+    transactionDateTo,
     transactionAmountFrom,
     transactionAmountTo,
     branches,
@@ -2441,6 +2453,8 @@ export default function FinanceDailyPageClient() {
               setTransactionSourceFilters([]);
               setTransactionStatusFilter("ALL");
               setTransactionTypeFilter("ALL");
+              setTransactionDateFrom("");
+              setTransactionDateTo("");
               setTransactionAmountFrom("");
               setTransactionAmountTo("");
               setQ("");
@@ -3359,7 +3373,7 @@ export default function FinanceDailyPageClient() {
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-neutral-500">
             Bộ lọc nhanh bảng giao dịch
           </div>
-          <div className="grid gap-3 xl:grid-cols-[1.4fr_180px_190px_190px_190px_180px_120px_120px_160px]">
+          <div className="grid gap-3 xl:grid-cols-[1.4fr_180px_190px_190px_190px_180px_120px_150px_150px_120px_120px]">
             <input
               value={q}
               onChange={(event) => setQ(event.target.value)}
@@ -3434,6 +3448,20 @@ export default function FinanceDailyPageClient() {
               <option value="VOUCHER">Phiếu thu/chi</option>
             </select>
             <input
+              type="date"
+              value={transactionDateFrom}
+              onChange={(event) => setTransactionDateFrom(event.target.value)}
+              title="Từ ngày giao dịch"
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-700"
+            />
+            <input
+              type="date"
+              value={transactionDateTo}
+              onChange={(event) => setTransactionDateTo(event.target.value)}
+              title="Đến ngày giao dịch"
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-700"
+            />
+            <input
               value={transactionAmountFrom}
               onChange={(event) => setTransactionAmountFrom(event.target.value.replace(/[^\d]/g, ""))}
               placeholder="Từ tiền"
@@ -3456,6 +3484,8 @@ export default function FinanceDailyPageClient() {
                 setTransactionSourceFilters([]);
                 setTransactionStatusFilter("ALL");
                 setTransactionTypeFilter("ALL");
+                setTransactionDateFrom("");
+                setTransactionDateTo("");
                 setTransactionAmountFrom("");
                 setTransactionAmountTo("");
                 setQ("");
