@@ -472,8 +472,122 @@ const TABLE_MIN_WIDTH = 3240;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
+const ORDER_FILTER_PRESETS_STORAGE_KEY = "the1970.orders.filterPresets.v1";
 const ORDER_CLIENT_SEARCH_PAGE_SIZE = 1000;
 const ORDER_CLIENT_SEARCH_MAX_PAGES = 5;
+const ORDER_SUMMARY_CARD_PAGE_SIZE = 1000;
+const ORDER_SUMMARY_CARD_MAX_PAGES = 12;
+
+type QuickStatusCounts = {
+  waitingApprove: number;
+  waitingPayment: number;
+  waitingPacking: number;
+  waitingShip: number;
+  delivering: number;
+  soonDelivery: number;
+  failed: number;
+  redelivery: number;
+  localDelivery: number;
+};
+
+type OrderFilterPresetFilters = {
+  query: string;
+  searchMode: OrderSearchMode;
+  selectedProductSkuValues: string[];
+  quickDate: QuickDateKey;
+  dateFrom: string;
+  dateTo: string;
+  quickStatus: QuickStatusKey;
+  branchFilter: MultiFilterValue;
+  orderFilter: MultiFilterValue;
+  paymentFilter: MultiFilterValue;
+  createdByFilter: MultiFilterValue;
+  assignedStaffFilter: MultiFilterValue;
+  fulfillmentFilter: MultiFilterValue;
+  deliveryStatusFilter: MultiFilterValue;
+  salesChannelFilter: MultiFilterValue;
+  shippingModeFilter: MultiFilterValue;
+  shippingPartnerFilter: MultiFilterValue;
+  trackingFilter: MultiFilterValue;
+  printStatusFilter: MultiFilterValue;
+  codFilter: MultiFilterValue;
+  codReconciliationFilter: MultiFilterValue;
+  amountDueFilter: MultiFilterValue;
+  itemCountFilter: MultiFilterValue;
+  freeTextFilter: string;
+  smartSearchInput: string;
+};
+
+type OrderFilterPreset = {
+  id: string;
+  name: string;
+  createdAt: string;
+  filters: OrderFilterPresetFilters;
+};
+
+const EMPTY_QUICK_STATUS_COUNTS: QuickStatusCounts = {
+  waitingApprove: 0,
+  waitingPayment: 0,
+  waitingPacking: 0,
+  waitingShip: 0,
+  delivering: 0,
+  soonDelivery: 0,
+  failed: 0,
+  redelivery: 0,
+  localDelivery: 0,
+};
+
+const CARD_DATE_FILTER_OPTIONS: Array<{ key: QuickDateKey; label: string }> = [
+  { key: "all", label: "Tất cả ngày" },
+  { key: "today", label: "Hôm nay" },
+  { key: "yesterday", label: "Hôm qua" },
+  { key: "7d", label: "7 ngày" },
+  { key: "30d", label: "30 ngày" },
+  { key: "month", label: "Tháng này" },
+];
+
+
+const QUICK_STATUS_LABELS: Record<QuickStatusKey, string> = {
+  ALL: "Tất cả",
+  WAITING_APPROVE: "Chờ duyệt",
+  WAITING_PAYMENT: "Chờ thanh toán",
+  WAITING_PACKING: "Chờ đóng gói",
+  WAITING_SHIP: "Chờ gửi hãng",
+  DELIVERING: "Đang giao hàng",
+  SOON_DELIVERY: "Sắp giao",
+  FAIL: "Đơn giao không thành công",
+  REDELIVERY: "Đơn giao lại",
+  LOCAL_DELIVERY: "Nội thành",
+};
+
+function isValidQuickDateKey(value: string | null): value is QuickDateKey {
+  return CARD_DATE_FILTER_OPTIONS.some((item) => item.key === value);
+}
+
+function isValidQuickStatusKey(value: string | null): value is QuickStatusKey {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(QUICK_STATUS_LABELS, value));
+}
+
+function readOrdersPageInitialQuery() {
+  if (typeof window === "undefined") {
+    return {
+      quickStatus: "ALL" as QuickStatusKey,
+      cardDate: "all" as QuickDateKey,
+      branchFilter: ["ALL"] as MultiFilterValue,
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const quickStatusRaw = params.get("quickStatus");
+  const cardDateRaw = params.get("cardDate");
+  const branchId = String(params.get("branchId") || "").trim();
+
+  return {
+    quickStatus: isValidQuickStatusKey(quickStatusRaw) ? quickStatusRaw : ("ALL" as QuickStatusKey),
+    cardDate: isValidQuickDateKey(cardDateRaw) ? cardDateRaw : ("all" as QuickDateKey),
+    branchFilter: branchId ? [branchId] : (["ALL"] as MultiFilterValue),
+  };
+}
 
 const COLUMN_DEFS: ColumnDef[] = [
   { key: "orderCode", label: "Mã đơn", defaultVisible: true },
@@ -1099,7 +1213,7 @@ function SmallChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${active
+      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition ${active
           ? "border-neutral-900 bg-neutral-900 text-white"
           : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
         }`}
@@ -1118,9 +1232,9 @@ function SummaryIcon({
 }) {
   return (
     <div
-      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-[18px] ${active
-          ? "border-neutral-900 bg-neutral-900 text-white"
-          : "border-neutral-200 bg-neutral-50 text-neutral-700"
+      className={`flex h-9 w-9 items-center justify-center rounded-xl border text-[15px] ${active
+          ? "border-white bg-white text-neutral-950"
+          : "border-white/70 bg-transparent text-white"
         }`}
     >
       {children}
@@ -1145,21 +1259,18 @@ function SummaryCard({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-[24px] border px-4 py-4 text-left transition ${active
-          ? "border-neutral-900 bg-neutral-50 shadow-sm"
-          : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm"
+      className={`rounded-2xl border bg-neutral-950 px-3 py-3 text-left text-white transition ${active
+          ? "border-white shadow-[0_0_0_1px_rgba(255,255,255,0.9)]"
+          : "border-white/70 hover:border-white hover:bg-neutral-900"
         }`}
     >
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <SummaryIcon active={active}>{icon}</SummaryIcon>
 
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-medium text-neutral-600">{title}</p>
-          <p className="mt-1 text-[34px] font-semibold leading-none tracking-tight text-neutral-900">
+          <p className="truncate text-[11px] font-medium text-white/75">{title}</p>
+          <p className="mt-0.5 text-[26px] font-semibold leading-none tracking-tight text-white">
             {value}
-          </p>
-          <p className="mt-3 text-[12px] font-medium text-neutral-500">
-            Xem chi tiết
           </p>
         </div>
       </div>
@@ -2536,9 +2647,40 @@ function valuesMatchKeyword(values: string[], keyword: string) {
   const rawKeyword = String(keyword || "").trim();
   if (!rawKeyword) return true;
 
-  const haystackText = values.map(normalizeSearchText).filter(Boolean).join(" ");
-  const haystackDigits = values.map(normalizeSearchDigits).filter(Boolean).join(" ");
-  const haystackTracking = values.map(normalizeTrackingLikeText).filter(Boolean).join(" ");
+  const normalizedTextValues = values.map(normalizeSearchText).filter(Boolean);
+  const normalizedDigitValues = values.map(normalizeSearchDigits).filter(Boolean);
+  const normalizedTrackingValues = values.map(normalizeTrackingLikeText).filter(Boolean);
+  const haystackText = normalizedTextValues.join(" ");
+  const haystackDigits = normalizedDigitValues.join(" ");
+  const haystackTracking = normalizedTrackingValues.join(" ");
+
+  const matchOne = (term: string, exactCodeMode = false) => {
+    const textNeedle = normalizeSearchText(term);
+    const digitNeedle = normalizeSearchDigits(term);
+    const trackingNeedle = normalizeTrackingLikeText(term);
+
+    if (exactCodeMode && trackingNeedle && isLikelyExactCarrierCode(term)) {
+      return normalizedTrackingValues.some((value) => value === trackingNeedle);
+    }
+
+    return (
+      Boolean(textNeedle && haystackText.includes(textNeedle)) ||
+      Boolean(digitNeedle && haystackDigits.includes(digitNeedle)) ||
+      Boolean(trackingNeedle && haystackTracking.includes(trackingNeedle))
+    );
+  };
+
+  // Tìm nhiều mã đơn/GHN bằng dấu phẩy/chấm phẩy/xuống dòng: match kiểu OR.
+  // Với mã vận đơn dạng chữ+số dài, dùng exact match để tránh ăn nhầm mã gần giống.
+  const separatedTerms = rawKeyword
+    .split(/[,;\n]+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+
+  if (separatedTerms.length > 1) {
+    return separatedTerms.some((term) => matchOne(term, true));
+  }
+
   const fullTextNeedle = normalizeSearchText(rawKeyword);
   const fullDigitNeedle = normalizeSearchDigits(rawKeyword);
   const fullTrackingNeedle = normalizeTrackingLikeText(rawKeyword);
@@ -2554,17 +2696,7 @@ function valuesMatchKeyword(values: string[], keyword: string) {
 
   if (!terms.length) return true;
 
-  return terms.every((term) => {
-    const textNeedle = normalizeSearchText(term);
-    const digitNeedle = normalizeSearchDigits(term);
-    const trackingNeedle = normalizeTrackingLikeText(term);
-
-    return (
-      Boolean(textNeedle && haystackText.includes(textNeedle)) ||
-      Boolean(digitNeedle && haystackDigits.includes(digitNeedle)) ||
-      Boolean(trackingNeedle && haystackTracking.includes(trackingNeedle))
-    );
-  });
+  return terms.every((term) => matchOne(term));
 }
 
 function orderMatchesKeyword(
@@ -3256,11 +3388,45 @@ function isSoonDeliveryOrder(order: AdminOrder) {
   );
 }
 
+function isCurrentForwardShipmentStatus(order: AdminOrder) {
+  const shipmentStatus = normalizeShipmentStatus(order);
+  if (!shipmentStatus) return false;
+
+  if (
+    shipmentStatus.includes("FAIL") ||
+    shipmentStatus.includes("EXCEPTION") ||
+    shipmentStatus.includes("RETURN") ||
+    shipmentStatus.includes("CANCEL") ||
+    shipmentStatus.includes("DELIVERED") ||
+    shipmentStatus.includes("SUCCESS") ||
+    shipmentStatus.includes("COMPLETED")
+  ) {
+    return false;
+  }
+
+  return (
+    shipmentStatus.includes("CREATED") ||
+    shipmentStatus.includes("READY_TO_PICK") ||
+    shipmentStatus.includes("WAITING_TO_PICK") ||
+    shipmentStatus.includes("PICKING") ||
+    shipmentStatus.includes("PICKED") ||
+    shipmentStatus.includes("STORING") ||
+    shipmentStatus.includes("SORTING") ||
+    shipmentStatus.includes("TRANSPORT") ||
+    shipmentStatus.includes("IN_TRANSIT") ||
+    shipmentStatus.includes("DELIVERING") ||
+    shipmentStatus.includes("READY_TO_DELIVER") ||
+    shipmentStatus.includes("WAITING_TO_DELIVER") ||
+    shipmentStatus.includes("IN_PROCESS")
+  );
+}
+
 function isFailedOrder(order: AdminOrder) {
-  // Card "Đơn giao không thành công" chỉ tính lỗi giao vận thật.
-  // Không gộp đơn huỷ nội bộ và không gộp nhóm hoàn/chuyển hoàn,
-  // vì nhóm hoàn cần đẩy sang card "Đơn giao lại" để xử lý tiếp.
+  // Card "Đơn giao không thành công" chỉ tính lỗi giao vận thật ở trạng thái hiện tại.
+  // Nếu vận đơn hiện đang lấy/giao/trung chuyển thì không được lọt vào nhóm fail,
+  // dù metadata/log cũ còn chứa chữ fail/không thành công.
   if (String(order.status || "").toUpperCase() === "CANCELLED") return false;
+  if (isCurrentForwardShipmentStatus(order)) return false;
 
   const shipmentStatus = normalizeShipmentStatus(order);
   return (
@@ -3271,22 +3437,73 @@ function isFailedOrder(order: AdminOrder) {
   );
 }
 
+function isActiveForwardShipmentOrder(order: AdminOrder) {
+  const text = getShipmentIssueText(order);
+  const shipmentStatus = normalizeShipmentStatus(order);
+
+  if (
+    shipmentStatus.includes("FAIL") ||
+    shipmentStatus.includes("EXCEPTION") ||
+    shipmentStatus.includes("RETURN") ||
+    shipmentStatus.includes("CANCEL") ||
+    shipmentStatus.includes("DELIVERED") ||
+    shipmentStatus.includes("SUCCESS") ||
+    text.includes("that bai") ||
+    text.includes("khong thanh cong") ||
+    text.includes("hoan hang") ||
+    text.includes("chuyen hoan") ||
+    text.includes("cho hoan") ||
+    text.includes("return")
+  ) {
+    return false;
+  }
+
+  return (
+    shipmentStatus.includes("CREATED") ||
+    shipmentStatus.includes("PICKING") ||
+    shipmentStatus.includes("PICKED") ||
+    shipmentStatus.includes("STORING") ||
+    shipmentStatus.includes("SORTING") ||
+    shipmentStatus.includes("TRANSPORT") ||
+    shipmentStatus.includes("IN_TRANSIT") ||
+    shipmentStatus.includes("DELIVERING") ||
+    shipmentStatus.includes("READY_TO_DELIVER") ||
+    shipmentStatus.includes("WAITING_TO_DELIVER") ||
+    text.includes("cho lay") ||
+    text.includes("dang lay") ||
+    text.includes("lay hang") ||
+    text.includes("dang giao") ||
+    text.includes("dang phat") ||
+    text.includes("san sang giao") ||
+    text.includes("ready to deliver") ||
+    text.includes("waiting to deliver") ||
+    text.includes("transporting") ||
+    text.includes("trung chuyen") ||
+    text.includes("phan loai")
+  );
+}
+
 function isRedeliveryOrder(order: AdminOrder) {
   if (String(order.status || "").toUpperCase() === "CANCELLED") return false;
 
   const text = getShipmentIssueText(order);
   const shipmentStatus = normalizeShipmentStatus(order);
-  return (
+  const hasExplicitRedeliverySignal =
     text.includes("giao lai") ||
     text.includes("giao hang lan") ||
     text.includes("hen lai ngay giao") ||
     text.includes("cho xac nhan giao lai") ||
     text.includes("re delivery") ||
     text.includes("redelivery") ||
-    shipmentStatus.includes("REDELIVERY") ||
-    isDeliveryFailureSignal(order) ||
-    isReturnOrWaitingReturnOrder(order)
-  );
+    shipmentStatus.includes("REDELIVERY");
+
+  if (hasExplicitRedeliverySignal) return true;
+
+  // Đơn đang chạy tuyến bình thường như đang lấy hàng/đang giao không được đẩy vào card giao lại.
+  // Card giao lại chỉ dành cho đơn fail/hoàn/chờ hoàn cần xử lý lại.
+  if (isActiveForwardShipmentOrder(order)) return false;
+
+  return isDeliveryFailureSignal(order) || isReturnOrWaitingReturnOrder(order);
 }
 
 type OrderExportScope = "filtered" | "current_page" | "checked";
@@ -3778,21 +3995,29 @@ export default function OrdersPageClient() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
 
+  const initialQueryFilters = useMemo(() => readOrdersPageInitialQuery(), []);
+
   const [orderFilter, setOrderFilter] = useState<MultiFilterValue>(["ALL"]);
   const [appliedOrderFilter, setAppliedOrderFilter] = useState<MultiFilterValue>(["ALL"]);
   const [paymentFilter, setPaymentFilter] = useState<MultiFilterValue>(["ALL"]);
   const [appliedPaymentFilter, setAppliedPaymentFilter] = useState<MultiFilterValue>(["ALL"]);
-  const [branchFilter, setBranchFilter] = useState<MultiFilterValue>(["ALL"]);
-  const [appliedBranchFilter, setAppliedBranchFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [branchFilter, setBranchFilter] = useState<MultiFilterValue>(initialQueryFilters.branchFilter);
+  const [appliedBranchFilter, setAppliedBranchFilter] = useState<MultiFilterValue>(initialQueryFilters.branchFilter);
   const [dateFrom, setDateFrom] = useState("");
   const [appliedDateFrom, setAppliedDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [appliedDateTo, setAppliedDateTo] = useState("");
   const [quickDate, setQuickDate] = useState<QuickDateKey>("all");
   const [appliedQuickDate, setAppliedQuickDate] = useState<QuickDateKey>("all");
-  const [quickStatus, setQuickStatus] = useState<QuickStatusKey>("ALL");
-  const [appliedQuickStatus, setAppliedQuickStatus] = useState<QuickStatusKey>("ALL");
+  const [cardDateFilter, setCardDateFilter] = useState<QuickDateKey>(initialQueryFilters.cardDate);
+  const [cardCounts, setCardCounts] = useState<QuickStatusCounts>(EMPTY_QUICK_STATUS_COUNTS);
+  const [cardCountsLoading, setCardCountsLoading] = useState(false);
+  const [cardCountsLoaded, setCardCountsLoaded] = useState(false);
+  const [quickStatus, setQuickStatus] = useState<QuickStatusKey>(initialQueryFilters.quickStatus);
+  const [appliedQuickStatus, setAppliedQuickStatus] = useState<QuickStatusKey>(initialQueryFilters.quickStatus);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [filterPresets, setFilterPresets] = useState<OrderFilterPreset[]>([]);
+  const [showPresetMenu, setShowPresetMenu] = useState(false);
   const [createdByFilter, setCreatedByFilter] = useState<MultiFilterValue>(["ALL"]);
   const [appliedCreatedByFilter, setAppliedCreatedByFilter] = useState<MultiFilterValue>(["ALL"]);
   const [assignedStaffFilter, setAssignedStaffFilter] = useState<MultiFilterValue>(["ALL"]);
@@ -3837,9 +4062,12 @@ export default function OrdersPageClient() {
 
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
+  const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const ordersRequestSeqRef = useRef(0);
   const ordersAbortRef = useRef<AbortController | null>(null);
+  const cardCountsRequestSeqRef = useRef(0);
+  const cardCountsAbortRef = useRef<AbortController | null>(null);
   const dragStartXRef = useRef(0);
   const dragStartScrollRef = useRef(0);
   const isDraggingRef = useRef(false);
@@ -3861,6 +4089,7 @@ export default function OrdersPageClient() {
   );
 
   const canSeeMoney = isOwnerOrAdminUser(currentUser);
+  const canManageFilterPresets = isOwnerOrAdminUser(currentUser);
   const canDeleteOrder = hasOrderPermission(currentUser, "orders.delete");
 
   const userStorageSuffix = useMemo(() => {
@@ -3881,6 +4110,32 @@ export default function OrdersPageClient() {
     }.${userStorageSuffix}`;
 
   const scrollStorageKey = `${TABLE_SCROLL_STORAGE_KEY}.${userStorageSuffix}`;
+
+  useEffect(() => {
+    if (!canManageFilterPresets || typeof window === "undefined") {
+      setFilterPresets([]);
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(ORDER_FILTER_PRESETS_STORAGE_KEY);
+      const parsed = JSON.parse(raw || "[]");
+      setFilterPresets(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setFilterPresets([]);
+    }
+  }, [canManageFilterPresets]);
+
+  const persistFilterPresets = (items: OrderFilterPreset[]) => {
+    const safeItems = items.slice(0, 80);
+    setFilterPresets(safeItems);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(ORDER_FILTER_PRESETS_STORAGE_KEY, JSON.stringify(safeItems));
+    } catch {
+      // ignore storage quota/private mode
+    }
+  };
 
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>([]);
   const [draftVisibleColumns, setDraftVisibleColumns] = useState<ColumnKey[]>(
@@ -4260,6 +4515,12 @@ export default function OrdersPageClient() {
       ) {
         setShowPrintMenu(false);
       }
+      if (
+        presetMenuRef.current &&
+        !presetMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowPresetMenu(false);
+      }
     };
 
     document.addEventListener("mousedown", onClick);
@@ -4293,11 +4554,16 @@ export default function OrdersPageClient() {
         .filter(Boolean)
         .join(" ");
       const hasAppliedProductSkuFilter = appliedProductSkuValues.length > 0;
+      const multiLookupTerms = splitSmartOrderSearchTerms(serverKeyword);
+      const hasMultiExactLookupSearch =
+        multiLookupTerms.length > 1 && multiLookupTerms.every(isLikelyOrderLookupTerm);
       const shouldUseClientOnlySearch =
         (submittedSearchMode === "PRODUCT" && hasSearchKeyword(serverKeyword)) ||
-        hasAppliedProductSkuFilter;
+        hasAppliedProductSkuFilter ||
+        hasMultiExactLookupSearch;
       const effectiveServerKeyword = shouldUseClientOnlySearch ? "" : serverKeyword;
-      const shouldTryClientSearchFallback = shouldFallbackToClientOrderSearch(effectiveServerKeyword);
+      const shouldTryClientSearchFallback =
+        shouldFallbackToClientOrderSearch(effectiveServerKeyword) || hasMultiExactLookupSearch;
 
       const hasSmartSearch = Boolean(String(smartSearch || "").trim());
       const hasMultiServerFilter = [
@@ -4305,22 +4571,33 @@ export default function OrdersPageClient() {
         appliedOrderFilter,
         appliedPaymentFilter,
       ].some((filterValue) => selectedMultiFilterValues(filterValue).length > 1);
-      const shouldLoadWideForClientFilters = hasSmartSearch || hasMultiServerFilter || shouldUseClientOnlySearch;
+      const hasQuickStatusFilter = appliedQuickStatus !== "ALL";
+      const shouldLoadWideForClientFilters =
+        hasSmartSearch ||
+        hasMultiServerFilter ||
+        shouldUseClientOnlySearch ||
+        hasQuickStatusFilter;
       const requestPageSize = shouldLoadWideForClientFilters
         ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE)
         : pageSize;
       const requestPage = shouldLoadWideForClientFilters ? 1 : page;
+      const quickStatusDateRange = hasQuickStatusFilter
+        ? getQuickDateRange(cardDateFilter)
+        : { from: null, to: null };
+      const quickStatusDateFrom = toInputDateValue(quickStatusDateRange.from);
+      const quickStatusDateTo = toInputDateValue(quickStatusDateRange.to);
 
       const buildParams = (
         targetPage: number,
-        options?: { includeKeyword?: boolean; pageSizeOverride?: number },
+        options?: { includeKeyword?: boolean; pageSizeOverride?: number; keywordOverride?: string },
       ) => {
         const params = new URLSearchParams();
         params.set("page", String(targetPage));
         params.set("pageSize", String(options?.pageSizeOverride || requestPageSize));
         params.set("includeItems", "1");
         params.set("withItems", "1");
-        if (effectiveServerKeyword && options?.includeKeyword !== false) params.set("q", effectiveServerKeyword);
+        const queryKeyword = options?.keywordOverride ?? effectiveServerKeyword;
+        if (queryKeyword && options?.includeKeyword !== false) params.set("q", queryKeyword);
 
         if (!canViewAllOrders && canViewOwnOrders) {
           params.set("viewScope", "own");
@@ -4346,14 +4623,17 @@ export default function OrdersPageClient() {
           params.set("codReconciliationStatus", selectedCodReconciliationStatuses.join(","));
         }
 
-        if (appliedDateFrom) params.set("dateFrom", appliedDateFrom);
-        if (appliedDateTo) params.set("dateTo", appliedDateTo);
+        const serverDateFrom = hasQuickStatusFilter ? quickStatusDateFrom : appliedDateFrom;
+        const serverDateTo = hasQuickStatusFilter ? quickStatusDateTo : appliedDateTo;
+
+        if (serverDateFrom) params.set("dateFrom", serverDateFrom);
+        if (serverDateTo) params.set("dateTo", serverDateTo);
 
         const smartDateRange = getSmartSearchServerDateRange(smartSearch);
-        if (!appliedDateFrom && smartDateRange.from) {
+        if (!hasQuickStatusFilter && !serverDateFrom && smartDateRange.from) {
           params.set("dateFrom", toInputDateValue(smartDateRange.from));
         }
-        if (!appliedDateTo && smartDateRange.to) {
+        if (!hasQuickStatusFilter && !serverDateTo && smartDateRange.to) {
           params.set("dateTo", toInputDateValue(smartDateRange.to));
         }
 
@@ -4362,7 +4642,7 @@ export default function OrdersPageClient() {
 
       const fetchOrderPage = async (
         targetPage: number,
-        options?: { includeKeyword?: boolean; pageSizeOverride?: number },
+        options?: { includeKeyword?: boolean; pageSizeOverride?: number; keywordOverride?: string },
       ) => {
         const res = await apiFetch(`/orders?${buildParams(targetPage, options).toString()}`, {
           method: "GET",
@@ -4402,7 +4682,7 @@ export default function OrdersPageClient() {
       if (shouldLoadWideForClientFilters && Number(firstPage.totalPages || 1) > 1) {
         const wideTotalPages = Math.min(
           Number(firstPage.totalPages || 1),
-          ORDER_CLIENT_SEARCH_MAX_PAGES,
+          hasQuickStatusFilter ? ORDER_SUMMARY_CARD_MAX_PAGES : ORDER_CLIENT_SEARCH_MAX_PAGES,
         );
 
         for (let nextPage = 2; nextPage <= wideTotalPages; nextPage += 1) {
@@ -4447,6 +4727,31 @@ export default function OrdersPageClient() {
         remoteTotalItems = fallbackData.length;
       }
 
+      if (hasMultiExactLookupSearch) {
+        const mergedById = new Map<string, any>();
+
+        data.forEach((order: any) => {
+          const key = String(order?.id || order?.orderCode || order?.code || "").trim();
+          if (key) mergedById.set(key, order);
+        });
+
+        for (const term of multiLookupTerms) {
+          const termResult = await fetchOrderPage(1, {
+            keywordOverride: term,
+            pageSizeOverride: 100,
+          });
+
+          termResult.data.forEach((order: any) => {
+            const key = String(order?.id || order?.orderCode || order?.code || "").trim();
+            if (key) mergedById.set(key, order);
+          });
+        }
+
+        data = Array.from(mergedById.values());
+        remoteTotalPages = 1;
+        remoteTotalItems = data.length;
+      }
+
       const scopedData =
         !canViewAllOrders && canViewOwnOrders
           ? data.filter((order: any) =>
@@ -4477,6 +4782,150 @@ export default function OrdersPageClient() {
     }
   };
 
+  const normalizeOrdersForCards = (rows: AdminOrder[]): NormalizedOrder[] => {
+    return rows.map((order) => {
+      const meta = parseStructuredNote(order.note);
+      return {
+        ...order,
+        _meta: meta,
+        _createdByName: getCreatedByName(order),
+        _assignedStaffName: getAssignedStaffDisplayName(order),
+        _assignedStaffRawName: getAssignedStaffRawName(order),
+        _shippingFee: Number(order.shippingFee || 0),
+        _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
+        _codAmount: Number(order.shipment?.codAmount || 0),
+        _amountDue: amountCustomerStillOwes(order),
+        _createdAtDate: parseOrderDate(order.createdAt),
+      };
+    });
+  };
+
+  const buildQuickStatusCounts = (rows: NormalizedOrder[]): QuickStatusCounts => {
+    const next = { ...EMPTY_QUICK_STATUS_COUNTS };
+
+    for (const o of rows) {
+      const displayStatus = getDisplayOrderStatus(o);
+
+      if (displayStatus === "NEW") next.waitingApprove += 1;
+      if (["UNPAID", "PARTIAL", "PENDING_COD"].includes(String(o.paymentStatus || ""))) {
+        next.waitingPayment += 1;
+      }
+      if (displayStatus === "PACKING") next.waitingPacking += 1;
+      if (["APPROVED", "PACKING"].includes(displayStatus)) next.waitingShip += 1;
+      if (displayStatus === "SHIPPED") next.delivering += 1;
+      if (isSoonDeliveryOrder(o)) next.soonDelivery += 1;
+      if (isFailedOrder(o)) next.failed += 1;
+      if (isRedeliveryOrder(o)) next.redelivery += 1;
+      if (isLocalDeliveryCarrier(o.shipment?.carrier || o._meta.shippingPartner)) {
+        next.localDelivery += 1;
+      }
+    }
+
+    return next;
+  };
+
+  const loadCardCounts = async () => {
+    const requestSeq = cardCountsRequestSeqRef.current + 1;
+    cardCountsRequestSeqRef.current = requestSeq;
+    cardCountsAbortRef.current?.abort();
+    const abortController = new AbortController();
+    cardCountsAbortRef.current = abortController;
+
+    try {
+      setCardCountsLoading(true);
+
+      if (!currentUser || (!canViewAllOrders && !canViewOwnOrders)) {
+        setCardCounts(EMPTY_QUICK_STATUS_COUNTS);
+        setCardCountsLoaded(true);
+        return;
+      }
+
+      const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
+      const dateRange = getQuickDateRange(cardDateFilter);
+      const dateFromValue = toInputDateValue(dateRange.from);
+      const dateToValue = toInputDateValue(dateRange.to);
+
+      const buildSummaryParams = (targetPage: number) => {
+        const params = new URLSearchParams();
+        params.set("page", String(targetPage));
+        params.set("pageSize", String(ORDER_SUMMARY_CARD_PAGE_SIZE));
+        params.set("includeItems", "0");
+        params.set("withItems", "0");
+
+        if (!canViewAllOrders && canViewOwnOrders) {
+          params.set("viewScope", "own");
+          if (currentUser?.id) params.set("createdByStaffId", currentUser.id);
+          if (currentUser?.code) params.set("createdByStaffCode", currentUser.code);
+        }
+
+        if (!canViewAllOrders && currentUser?.branchId) {
+          params.set("branchId", currentUser.branchId);
+        } else if (selectedBranchIds.length === 1) {
+          params.set("branchId", selectedBranchIds[0]);
+        }
+
+        if (dateFromValue) params.set("dateFrom", dateFromValue);
+        if (dateToValue) params.set("dateTo", dateToValue);
+
+        return params;
+      };
+
+      const fetchSummaryPage = async (targetPage: number) => {
+        const res = await apiFetch(`/orders?${buildSummaryParams(targetPage).toString()}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          signal: abortController.signal,
+        });
+
+        const raw = await res.json();
+
+        if (!res.ok) {
+          throw new Error(raw?.message || `Tải thống kê nhanh thất bại. Status ${res.status}`);
+        }
+
+        const data = Array.isArray(raw)
+          ? raw
+          : Array.isArray(raw?.data)
+            ? raw.data
+            : [];
+
+        return {
+          data,
+          totalPages: Number(raw?.pagination?.totalPages || 1),
+        };
+      };
+
+      const firstPage = await fetchSummaryPage(1);
+      const summaryRows = [...firstPage.data];
+      const maxPages = Math.min(Number(firstPage.totalPages || 1), ORDER_SUMMARY_CARD_MAX_PAGES);
+
+      for (let nextPage = 2; nextPage <= maxPages; nextPage += 1) {
+        if (abortController.signal.aborted) break;
+        const next = await fetchSummaryPage(nextPage);
+        summaryRows.push(...next.data);
+      }
+
+      if (requestSeq !== cardCountsRequestSeqRef.current || abortController.signal.aborted) return;
+
+      const scopedRows =
+        !canViewAllOrders && canViewOwnOrders
+          ? summaryRows.filter((order: any) => isOrderCreatedByCurrentUser(order, currentUser))
+          : summaryRows;
+
+      setCardCounts(buildQuickStatusCounts(normalizeOrdersForCards(scopedRows as AdminOrder[])));
+      setCardCountsLoaded(true);
+    } catch {
+      if (abortController.signal.aborted) return;
+      setCardCounts((prev) => prev);
+      setCardCountsLoaded(true);
+    } finally {
+      if (requestSeq === cardCountsRequestSeqRef.current && !abortController.signal.aborted) {
+        setCardCountsLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
     const t = setTimeout(() => {
       void loadOrders();
@@ -4495,14 +4944,34 @@ export default function OrdersPageClient() {
     appliedCodReconciliationFilter,
     appliedDateFrom,
     appliedDateTo,
+    appliedQuickStatus,
+    appliedQuickStatus === "ALL" ? "all" : cardDateFilter,
     page,
     pageSize,
     currentUser,
   ]);
 
   useEffect(() => {
+    if (loading || !currentUser) return;
+
+    const timer = window.setTimeout(() => {
+      void loadCardCounts();
+    }, 160);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    loading,
+    currentUser,
+    canViewAllOrders,
+    canViewOwnOrders,
+    appliedBranchFilter,
+    cardDateFilter,
+  ]);
+
+  useEffect(() => {
     return () => {
       ordersAbortRef.current?.abort();
+      cardCountsAbortRef.current?.abort();
     };
   }, []);
 
@@ -4532,6 +5001,8 @@ export default function OrdersPageClient() {
     appliedProductSkuValues,
     appliedFreeTextFilter,
     smartSearch,
+    appliedQuickStatus,
+    appliedQuickStatus === "ALL" ? "all" : cardDateFilter,
   ]);
 
   const normalizedOrders = useMemo<NormalizedOrder[]>(() => {
@@ -4672,6 +5143,9 @@ export default function OrdersPageClient() {
 
   const activeAdvancedFilterCount =
     [
+      appliedBranchFilter,
+      appliedOrderFilter,
+      appliedPaymentFilter,
       appliedCreatedByFilter,
       appliedAssignedStaffFilter,
       appliedFulfillmentFilter,
@@ -4686,10 +5160,17 @@ export default function OrdersPageClient() {
       appliedAmountDueFilter,
       appliedItemCountFilter,
     ].filter((value) => !isAllMultiFilter(value)).length +
+    (appliedDateFrom || appliedDateTo || appliedQuickDate !== "all" ? 1 : 0) +
     (appliedFreeTextFilter.trim() ? 1 : 0) +
     (smartSearch.trim() ? 1 : 0);
 
   const clearAdvancedFilters = () => {
+    setQuickDate("all");
+    setDateFrom("");
+    setDateTo("");
+    setBranchFilter(["ALL"]);
+    setOrderFilter(["ALL"]);
+    setPaymentFilter(["ALL"]);
     setCreatedByFilter(["ALL"]);
     setAssignedStaffFilter(["ALL"]);
     setFulfillmentFilter(["ALL"]);
@@ -4706,6 +5187,12 @@ export default function OrdersPageClient() {
     setFreeTextFilter("");
     setSmartSearchInput("");
 
+    setAppliedQuickDate("all");
+    setAppliedDateFrom("");
+    setAppliedDateTo("");
+    setAppliedBranchFilter(["ALL"]);
+    setAppliedOrderFilter(["ALL"]);
+    setAppliedPaymentFilter(["ALL"]);
     setAppliedCreatedByFilter(["ALL"]);
     setAppliedAssignedStaffFilter(["ALL"]);
     setAppliedFulfillmentFilter(["ALL"]);
@@ -4767,8 +5254,182 @@ export default function OrdersPageClient() {
     setPage(1);
   };
 
+  const buildCurrentFilterPresetFilters = (): OrderFilterPresetFilters => ({
+    query: query.trim(),
+    searchMode,
+    selectedProductSkuValues,
+    quickDate,
+    dateFrom,
+    dateTo,
+    quickStatus,
+    branchFilter: normalizeMultiFilterValue(branchFilter),
+    orderFilter: normalizeMultiFilterValue(orderFilter),
+    paymentFilter: normalizeMultiFilterValue(paymentFilter),
+    createdByFilter: normalizeMultiFilterValue(createdByFilter),
+    assignedStaffFilter: normalizeMultiFilterValue(assignedStaffFilter),
+    fulfillmentFilter: normalizeMultiFilterValue(fulfillmentFilter),
+    deliveryStatusFilter: normalizeMultiFilterValue(deliveryStatusFilter),
+    salesChannelFilter: normalizeMultiFilterValue(salesChannelFilter),
+    shippingModeFilter: normalizeMultiFilterValue(shippingModeFilter),
+    shippingPartnerFilter: normalizeMultiFilterValue(shippingPartnerFilter),
+    trackingFilter: normalizeMultiFilterValue(trackingFilter),
+    printStatusFilter: normalizeMultiFilterValue(printStatusFilter),
+    codFilter: normalizeMultiFilterValue(codFilter),
+    codReconciliationFilter: normalizeMultiFilterValue(codReconciliationFilter),
+    amountDueFilter: normalizeMultiFilterValue(amountDueFilter),
+    itemCountFilter: normalizeMultiFilterValue(itemCountFilter),
+    freeTextFilter: freeTextFilter.trim(),
+    smartSearchInput: smartSearchInput.trim(),
+  });
+
+  const applyFilterPreset = (preset: OrderFilterPreset) => {
+    const filters = preset.filters;
+    const nextSearchMode = filters.searchMode || "ALL";
+    const nextQuery = String(filters.query || "").trim();
+    const nextProductSkuValues = Array.isArray(filters.selectedProductSkuValues)
+      ? filters.selectedProductSkuValues
+      : [];
+    const nextQuickDate = filters.quickDate || "all";
+    const nextDateFrom = filters.dateFrom || "";
+    const nextDateTo = filters.dateTo || "";
+    const nextQuickStatus = filters.quickStatus || "ALL";
+    const nextSmartSearch = String(filters.smartSearchInput || "").trim();
+    const nextFreeText = String(filters.freeTextFilter || "").trim();
+
+    setQuery(nextQuery);
+    setSubmittedQuery(nextQuery);
+    setSearchMode(nextSearchMode);
+    setSubmittedSearchMode(nextSearchMode);
+    setSelectedProductSkuValues(nextProductSkuValues);
+    setAppliedProductSkuValues(nextProductSkuValues);
+    setQuickDate(nextQuickDate);
+    setAppliedQuickDate(nextQuickDate);
+    setDateFrom(nextDateFrom);
+    setAppliedDateFrom(nextDateFrom);
+    setDateTo(nextDateTo);
+    setAppliedDateTo(nextDateTo);
+    setQuickStatus(nextQuickStatus);
+    setAppliedQuickStatus(nextQuickStatus);
+
+    const nextBranchFilter = normalizeMultiFilterValue(filters.branchFilter);
+    const nextOrderFilter = normalizeMultiFilterValue(filters.orderFilter);
+    const nextPaymentFilter = normalizeMultiFilterValue(filters.paymentFilter);
+    const nextCreatedByFilter = normalizeMultiFilterValue(filters.createdByFilter);
+    const nextAssignedStaffFilter = normalizeMultiFilterValue(filters.assignedStaffFilter);
+    const nextFulfillmentFilter = normalizeMultiFilterValue(filters.fulfillmentFilter);
+    const nextDeliveryStatusFilter = normalizeMultiFilterValue(filters.deliveryStatusFilter);
+    const nextSalesChannelFilter = normalizeMultiFilterValue(filters.salesChannelFilter);
+    const nextShippingModeFilter = normalizeMultiFilterValue(filters.shippingModeFilter);
+    const nextShippingPartnerFilter = normalizeMultiFilterValue(filters.shippingPartnerFilter);
+    const nextTrackingFilter = normalizeMultiFilterValue(filters.trackingFilter);
+    const nextPrintStatusFilter = normalizeMultiFilterValue(filters.printStatusFilter);
+    const nextCodFilter = normalizeMultiFilterValue(filters.codFilter);
+    const nextCodReconciliationFilter = normalizeMultiFilterValue(filters.codReconciliationFilter);
+    const nextAmountDueFilter = normalizeMultiFilterValue(filters.amountDueFilter);
+    const nextItemCountFilter = normalizeMultiFilterValue(filters.itemCountFilter);
+
+    setBranchFilter(nextBranchFilter);
+    setAppliedBranchFilter(nextBranchFilter);
+    setOrderFilter(nextOrderFilter);
+    setAppliedOrderFilter(nextOrderFilter);
+    setPaymentFilter(nextPaymentFilter);
+    setAppliedPaymentFilter(nextPaymentFilter);
+    setCreatedByFilter(nextCreatedByFilter);
+    setAppliedCreatedByFilter(nextCreatedByFilter);
+    setAssignedStaffFilter(nextAssignedStaffFilter);
+    setAppliedAssignedStaffFilter(nextAssignedStaffFilter);
+    setFulfillmentFilter(nextFulfillmentFilter);
+    setAppliedFulfillmentFilter(nextFulfillmentFilter);
+    setDeliveryStatusFilter(nextDeliveryStatusFilter);
+    setAppliedDeliveryStatusFilter(nextDeliveryStatusFilter);
+    setSalesChannelFilter(nextSalesChannelFilter);
+    setAppliedSalesChannelFilter(nextSalesChannelFilter);
+    setShippingModeFilter(nextShippingModeFilter);
+    setAppliedShippingModeFilter(nextShippingModeFilter);
+    setShippingPartnerFilter(nextShippingPartnerFilter);
+    setAppliedShippingPartnerFilter(nextShippingPartnerFilter);
+    setTrackingFilter(nextTrackingFilter);
+    setAppliedTrackingFilter(nextTrackingFilter);
+    setPrintStatusFilter(nextPrintStatusFilter);
+    setAppliedPrintStatusFilter(nextPrintStatusFilter);
+    setCodFilter(nextCodFilter);
+    setAppliedCodFilter(nextCodFilter);
+    setCodReconciliationFilter(nextCodReconciliationFilter);
+    setAppliedCodReconciliationFilter(nextCodReconciliationFilter);
+    setAmountDueFilter(nextAmountDueFilter);
+    setAppliedAmountDueFilter(nextAmountDueFilter);
+    setItemCountFilter(nextItemCountFilter);
+    setAppliedItemCountFilter(nextItemCountFilter);
+    setFreeTextFilter(nextFreeText);
+    setAppliedFreeTextFilter(nextFreeText);
+    setSmartSearchInput(nextSmartSearch);
+    setSmartSearch(nextSmartSearch);
+    setPage(1);
+    setShowPresetMenu(false);
+    setShowAdvancedFilters(false);
+    setActionMessage(`Đã áp dụng bộ lọc mẫu: ${preset.name}`);
+  };
+
+  const saveCurrentFilterPreset = () => {
+    if (!canManageFilterPresets || typeof window === "undefined") return;
+
+    const name = window.prompt("Đặt tên bộ lọc mẫu", "");
+    const safeName = String(name || "").trim();
+    if (!safeName) return;
+
+    const nextPreset: OrderFilterPreset = {
+      id: `preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: safeName,
+      createdAt: new Date().toISOString(),
+      filters: buildCurrentFilterPresetFilters(),
+    };
+
+    persistFilterPresets([nextPreset, ...filterPresets.filter((item) => item.name !== safeName)]);
+    setShowPresetMenu(false);
+    setActionMessage(`Đã lưu bộ lọc mẫu: ${safeName}`);
+  };
+
+  const deleteFilterPreset = (presetId: string) => {
+    persistFilterPresets(filterPresets.filter((item) => item.id !== presetId));
+  };
+
   const submitOrderSearch = () => {
     applySearchAndFilters();
+  };
+
+  const submitUniversalSearch = (overrideQuery?: string) => {
+    const nextQuery = (overrideQuery ?? query).trim();
+    const nextSmartSearch = smartSearchInput.trim();
+
+    setSearchMode("ALL");
+    setSelectedProductSkuValues([]);
+    setSubmittedQuery(nextQuery);
+    setSubmittedSearchMode("ALL");
+    setAppliedProductSkuValues([]);
+    setAppliedBranchFilter(branchFilter);
+    setAppliedOrderFilter(orderFilter);
+    setAppliedPaymentFilter(paymentFilter);
+    setAppliedDateFrom(dateFrom);
+    setAppliedDateTo(dateTo);
+    setAppliedQuickDate(quickDate);
+    setAppliedQuickStatus(quickStatus);
+
+    setAppliedCreatedByFilter(createdByFilter);
+    setAppliedAssignedStaffFilter(assignedStaffFilter);
+    setAppliedFulfillmentFilter(fulfillmentFilter);
+    setAppliedDeliveryStatusFilter(deliveryStatusFilter);
+    setAppliedSalesChannelFilter(salesChannelFilter);
+    setAppliedShippingModeFilter(shippingModeFilter);
+    setAppliedShippingPartnerFilter(shippingPartnerFilter);
+    setAppliedTrackingFilter(trackingFilter);
+    setAppliedPrintStatusFilter(printStatusFilter);
+    setAppliedCodFilter(codFilter);
+    setAppliedCodReconciliationFilter(codReconciliationFilter);
+    setAppliedAmountDueFilter(amountDueFilter);
+    setAppliedItemCountFilter(itemCountFilter);
+    setAppliedFreeTextFilter(freeTextFilter.trim());
+    setSmartSearch(nextSmartSearch);
+    setPage(1);
   };
 
   const applyQuickStatusFilter = (nextStatus: QuickStatusKey) => {
@@ -4779,6 +5440,31 @@ export default function OrdersPageClient() {
 
   const toggleQuickStatusFilter = (status: QuickStatusKey) => {
     applyQuickStatusFilter(quickStatus === status ? "ALL" : status);
+  };
+
+  const openQuickStatusPage = (status: QuickStatusKey) => {
+    if (status === "ALL") return;
+
+    const params = new URLSearchParams();
+    params.set("quickStatus", status);
+    params.set("cardDate", cardDateFilter);
+
+    const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
+    if (selectedBranchIds.length === 1) {
+      params.set("branchId", selectedBranchIds[0]);
+    }
+
+    const href = `/orders?${params.toString()}`;
+    const title = `Đơn hàng · ${QUICK_STATUS_LABELS[status]} · ${CARD_DATE_FILTER_OPTIONS.find((item) => item.key === cardDateFilter)?.label || "Tất cả ngày"}`;
+
+    addWorkspaceTab({
+      id: `orders-${status}-${cardDateFilter}-${selectedBranchIds.join("-") || "all"}`,
+      title,
+      href,
+      type: "order",
+    });
+
+    window.open(href, "_blank", "noopener,noreferrer");
   };
 
   const clearQuickStatusFilter = () => {
@@ -4980,14 +5666,18 @@ export default function OrdersPageClient() {
       .filter(Boolean);
 
     if (keywords.length) {
-      // Nếu người dùng nhập mã vận đơn/GHN/VTP/Aha dạng mã liền, ưu tiên trả đúng mã vận đơn tuyệt đối.
-      // Tránh tình trạng search GYT7YBXA nhưng bảng vẫn xổ cả nhóm GYT7... rồi bắt người dùng tự dò.
+      // Tìm nhiều mã vận đơn/GHN/VTP/Aha bằng dấu phẩy: match OR từng mã.
+      // VD: GYTPRD6P, GYTPV683 phải trả các đơn có một trong hai mã, không bắt 1 đơn chứa đủ cả 2 mã.
+      const keywordTerms = Array.from(
+        new Set(keywords.flatMap((keyword) => splitSmartOrderSearchTerms(keyword))),
+      );
       const exactCarrierKeywords = ["ALL", "ORDER"].includes(submittedSearchMode)
-        ? keywords.filter(isLikelyExactCarrierCode)
+        ? keywordTerms.filter(isLikelyExactCarrierCode)
         : [];
+
       if (exactCarrierKeywords.length) {
         const exactCarrierMatches = result.filter((o) =>
-          exactCarrierKeywords.every((keyword) =>
+          exactCarrierKeywords.some((keyword) =>
             orderMatchesExactCarrierCode(o, keyword),
           ),
         );
@@ -4997,7 +5687,7 @@ export default function OrdersPageClient() {
         } else {
           result = result.filter((o) => {
             const branchName = branchLabel(o.branchId);
-            return keywords.every((keyword) =>
+            return keywordTerms.some((keyword) =>
               orderMatchesKeyword(o, keyword, branchName, submittedSearchMode),
             );
           });
@@ -5060,45 +5750,7 @@ export default function OrdersPageClient() {
     );
   }, [filteredOrders]);
 
-  const counts = useMemo(() => {
-    let waitingApprove = 0;
-    let waitingPayment = 0;
-    let waitingPacking = 0;
-    let waitingShip = 0;
-    let delivering = 0;
-    let soonDelivery = 0;
-    let failed = 0;
-    let redelivery = 0;
-    let localDelivery = 0;
-
-    for (const o of normalizedOrders) {
-      if (getDisplayOrderStatus(o) === "NEW") waitingApprove++;
-      if (["UNPAID", "PARTIAL", "PENDING_COD"].includes(o.paymentStatus)) {
-        waitingPayment++;
-      }
-      if (getDisplayOrderStatus(o) === "PACKING") waitingPacking++;
-      if (["APPROVED", "PACKING"].includes(getDisplayOrderStatus(o))) waitingShip++;
-      if (getDisplayOrderStatus(o) === "SHIPPED") delivering++;
-      if (isSoonDeliveryOrder(o)) soonDelivery++;
-      if (isFailedOrder(o)) failed++;
-      if (isRedeliveryOrder(o)) redelivery++;
-      if (isLocalDeliveryCarrier(o.shipment?.carrier || o._meta.shippingPartner)) {
-        localDelivery++;
-      }
-    }
-
-    return {
-      waitingApprove,
-      waitingPayment,
-      waitingPacking,
-      waitingShip,
-      delivering,
-      soonDelivery,
-      failed,
-      redelivery,
-      localDelivery,
-    };
-  }, [normalizedOrders]);
+  const counts = cardCountsLoaded ? cardCounts : EMPTY_QUICK_STATUS_COUNTS;
 
   const allVisibleIds = visibleOrders.map((o) => o.id);
   const allChecked =
@@ -5240,7 +5892,7 @@ export default function OrdersPageClient() {
         json?.error ||
         json?.details ||
         JSON.stringify(json || {});
-      throw new Error(detail || "Hủy GHN thất bại.");
+      throw new Error(detail || "Hủy HVC thất bại.");
     }
 
     return json;
@@ -5475,11 +6127,11 @@ export default function OrdersPageClient() {
   const handleBulkCancel = async () => {
     if (!checkedIds.length) return;
 
-    setConfirmTitle("Huỷ đơn GHN");
+    setConfirmTitle("Huỷ vận chuyển");
     setConfirmDescription(
-      `Huỷ GHN cho ${checkedIds.length} đơn đã chọn? Nút này gửi yêu cầu huỷ sang GHN nếu đơn đã có mã vận đơn.`,
+      `Huỷ HVC cho ${checkedIds.length} đơn đã chọn? Nút này gửi yêu cầu huỷ sang hãng vận chuyển qua endpoint /shipments/:id/cancel nếu đơn đã có mã vận đơn.`,
     );
-    setConfirmText("Huỷ GHN");
+    setConfirmText("Huỷ HVC");
     setConfirmDanger(false);
     setConfirmAction(() => async () => {
       try {
@@ -5512,10 +6164,10 @@ export default function OrdersPageClient() {
         await loadOrders();
 
         if (failed.length === 0) {
-          setActionMessage(`Đã huỷ GHN ${successCount} đơn.`);
+          setActionMessage(`Đã huỷ HVC ${successCount} đơn.`);
         } else {
           setActionMessage(
-            `Đã huỷ GHN ${successCount} đơn. Lỗi: ${failed.join(" | ")}`,
+            `Đã huỷ HVC ${successCount} đơn. Lỗi: ${failed.join(" | ")}`,
           );
         }
       } catch (err) {
@@ -6321,6 +6973,35 @@ export default function OrdersPageClient() {
     }
   };
 
+  const cardDateLabel =
+    CARD_DATE_FILTER_OPTIONS.find((item) => item.key === cardDateFilter)?.label ||
+    "Tất cả ngày";
+
+  const renderCardDateFilters = (compact = false) => (
+    <div className={`flex flex-wrap items-center gap-2 ${compact ? "" : "justify-end"}`}>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-400">
+        Bộ lọc card
+      </span>
+      {CARD_DATE_FILTER_OPTIONS.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          onClick={() => setCardDateFilter(item.key)}
+          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition ${
+            cardDateFilter === item.key
+              ? "border-white bg-white text-neutral-950 shadow-sm"
+              : "border-white/15 bg-white/5 text-neutral-300 hover:border-white/35 hover:bg-white/10"
+          }`}
+        >
+          {item.label}
+        </button>
+      ))}
+      <span className="text-[10px] font-medium text-neutral-500">
+        {cardCountsLoading ? "Đang cập nhật..." : `Đang tính: ${cardDateLabel}`}
+      </span>
+    </div>
+  );
+
   const mobileSummaryCards = [
     {
       key: "WAITING_APPROVE" as QuickStatusKey,
@@ -6389,6 +7070,7 @@ export default function OrdersPageClient() {
     <>
       <div className="space-y-3 lg:hidden">
         <Panel className="p-3">
+          <div className="mb-3">{renderCardDateFilters(true)}</div>
           <div className="grid grid-cols-2 gap-2">
             {mobileSummaryCards.map((item) => {
               const active = quickStatus === item.key;
@@ -6396,7 +7078,7 @@ export default function OrdersPageClient() {
                 <button
                   key={item.key}
                   type="button"
-                  onClick={() => toggleQuickStatusFilter(item.key)}
+                  onClick={() => openQuickStatusPage(item.key)}
                   className={`rounded-[22px] border p-3 text-left transition ${active
                       ? "border-neutral-900 bg-neutral-950 text-white shadow-sm"
                       : "border-neutral-200 bg-white text-neutral-900"
@@ -6737,75 +7419,84 @@ export default function OrdersPageClient() {
 
       <div className="hidden lg:block">
         <div className="space-y-4">
-          <Panel className="p-5">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-9">
+          <Panel className="!border-neutral-950 !bg-neutral-950 px-3 py-2 text-white">
+            <div className="mb-2 flex flex-col gap-1.5 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
+                  Trạng thái vận hành
+                </p>
+
+              </div>
+              {renderCardDateFilters()}
+            </div>
+            <div className="grid gap-1.5 md:grid-cols-3 xl:grid-cols-6 2xl:grid-cols-9">
               <SummaryCard
                 title="Chờ duyệt"
                 value={counts.waitingApprove}
                 active={quickStatus === "WAITING_APPROVE"}
                 icon="✓"
-                onClick={() => toggleQuickStatusFilter("WAITING_APPROVE")}
+                onClick={() => openQuickStatusPage("WAITING_APPROVE")}
               />
               <SummaryCard
                 title="Chờ thanh toán"
                 value={counts.waitingPayment}
                 active={quickStatus === "WAITING_PAYMENT"}
                 icon="₫"
-                onClick={() => toggleQuickStatusFilter("WAITING_PAYMENT")}
+                onClick={() => openQuickStatusPage("WAITING_PAYMENT")}
               />
               <SummaryCard
                 title="Chờ đóng gói"
                 value={counts.waitingPacking}
                 active={quickStatus === "WAITING_PACKING"}
                 icon="□"
-                onClick={() => toggleQuickStatusFilter("WAITING_PACKING")}
+                onClick={() => openQuickStatusPage("WAITING_PACKING")}
               />
               <SummaryCard
                 title="Chờ gửi hãng"
                 value={counts.waitingShip}
                 active={quickStatus === "WAITING_SHIP"}
                 icon="→"
-                onClick={() => toggleQuickStatusFilter("WAITING_SHIP")}
+                onClick={() => openQuickStatusPage("WAITING_SHIP")}
               />
               <SummaryCard
                 title="Đang giao hàng"
                 value={counts.delivering}
                 active={quickStatus === "DELIVERING"}
                 icon="↗"
-                onClick={() => toggleQuickStatusFilter("DELIVERING")}
+                onClick={() => openQuickStatusPage("DELIVERING")}
               />
               <SummaryCard
                 title="Sắp giao"
                 value={counts.soonDelivery}
                 active={quickStatus === "SOON_DELIVERY"}
                 icon="◔"
-                onClick={() => toggleQuickStatusFilter("SOON_DELIVERY")}
+                onClick={() => openQuickStatusPage("SOON_DELIVERY")}
               />
               <SummaryCard
                 title="Đơn giao không thành công"
                 value={counts.failed}
                 active={quickStatus === "FAIL"}
                 icon="!"
-                onClick={() => toggleQuickStatusFilter("FAIL")}
+                onClick={() => openQuickStatusPage("FAIL")}
               />
               <SummaryCard
                 title="Đơn giao lại"
                 value={counts.redelivery}
                 active={quickStatus === "REDELIVERY"}
                 icon="↺"
-                onClick={() => toggleQuickStatusFilter("REDELIVERY")}
+                onClick={() => openQuickStatusPage("REDELIVERY")}
               />
               <SummaryCard
                 title="Nội thành"
                 value={counts.localDelivery}
                 active={quickStatus === "LOCAL_DELIVERY"}
                 icon="⚡"
-                onClick={() => toggleQuickStatusFilter("LOCAL_DELIVERY")}
+                onClick={() => openQuickStatusPage("LOCAL_DELIVERY")}
               />
             </div>
 
             {quickStatus !== "ALL" ? (
-              <div className="mt-4">
+              <div className="mt-2">
                 <Button onClick={clearQuickStatusFilter} size="sm">
                   Bỏ lọc nhanh
                 </Button>
@@ -6813,161 +7504,153 @@ export default function OrdersPageClient() {
             ) : null}
           </Panel>
 
-          <Panel className="p-4">
-            <div className="flex flex-wrap gap-2">
-              <SmallChip
-                active={quickDate === "all"}
-                onClick={() => applyQuickDate("all")}
-              >
-                Tất cả
-              </SmallChip>
-              <SmallChip
-                active={quickDate === "today"}
-                onClick={() => applyQuickDate("today")}
-              >
-                Hôm nay
-              </SmallChip>
-              <SmallChip
-                active={quickDate === "yesterday"}
-                onClick={() => applyQuickDate("yesterday")}
-              >
-                Hôm qua
-              </SmallChip>
-              <SmallChip
-                active={quickDate === "7d"}
-                onClick={() => applyQuickDate("7d")}
-              >
-                7 ngày
-              </SmallChip>
-              <SmallChip
-                active={quickDate === "30d"}
-                onClick={() => applyQuickDate("30d")}
-              >
-                30 ngày
-              </SmallChip>
-              <SmallChip
-                active={quickDate === "month"}
-                onClick={() => applyQuickDate("month")}
-              >
-                Tháng này
-              </SmallChip>
+
+          <Panel className="px-2 py-1.5">
+            <div className="grid gap-1.5 lg:grid-cols-[minmax(420px,1fr)_100px_auto_auto] lg:items-center">
+              <input
+                className="h-8 rounded-xl border border-neutral-300 px-3 text-xs outline-none focus:border-neutral-900"
+                placeholder="Tìm mã đơn, mã GHN/vận đơn, SĐT, khách, SKU, địa chỉ... Enter để tìm"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const value = e.currentTarget.value.trim();
+                    setQuery(value);
+                    submitUniversalSearch(value);
+                  }
+                }}
+              />
+
+              <Button onClick={() => submitUniversalSearch()} variant="primary" size="md">
+                Tìm
+              </Button>
+
+              {canManageFilterPresets ? (
+                <div className="relative" ref={presetMenuRef}>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => setShowPresetMenu((v) => !v)}
+                  >
+                    Bộ lọc mẫu
+                  </Button>
+
+                  {showPresetMenu ? (
+                    <div className="absolute right-0 top-[42px] z-[95] w-[320px] rounded-2xl border border-neutral-200 bg-white p-2 shadow-2xl">
+                      <div className="mb-2 flex items-center justify-between gap-2 px-2 py-1">
+                        <p className="text-xs font-semibold text-neutral-900">Bộ lọc mẫu</p>
+                        <button
+                          type="button"
+                          onClick={saveCurrentFilterPreset}
+                          className="rounded-full bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-white"
+                        >
+                          Lưu mẫu
+                        </button>
+                      </div>
+
+                      {filterPresets.length ? (
+                        <div className="max-h-[320px] space-y-1 overflow-y-auto">
+                          {filterPresets.map((preset) => (
+                            <div
+                              key={preset.id}
+                              className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 hover:bg-neutral-50"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => applyFilterPreset(preset)}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <span className="block truncate text-xs font-semibold text-neutral-900">
+                                  {preset.name}
+                                </span>
+                                <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
+                                  {preset.filters.quickDate !== "all"
+                                    ? CARD_DATE_FILTER_OPTIONS.find((item) => item.key === preset.filters.quickDate)?.label
+                                    : "Tất cả ngày"}
+                                  {preset.filters.quickStatus !== "ALL"
+                                    ? ` · ${QUICK_STATUS_LABELS[preset.filters.quickStatus]}`
+                                    : ""}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteFilterPreset(preset.id)}
+                                className="shrink-0 rounded-full border border-neutral-200 px-2 py-1 text-[10px] font-semibold text-neutral-500 hover:border-red-200 hover:text-red-600"
+                              >
+                                Xoá
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-neutral-200 px-3 py-4 text-center text-xs text-neutral-500">
+                          Chưa có mẫu. Chọn bộ lọc rồi bấm “Lưu mẫu”.
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="flex items-center justify-end gap-2">
+                {submittedQuery ? (
+                  <Button onClick={clearOrderSearch} size="sm">
+                    Xóa tìm
+                  </Button>
+                ) : null}
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowAdvancedFilters((v) => !v)}
+                >
+                  {showAdvancedFilters ? "Ẩn bộ lọc nâng cao" : "Bộ lọc nâng cao"}
+                  {activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
+                </Button>
+
+                <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
+                  {visibleOrders.length} / {totalItems} đơn
+                </span>
+              </div>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-[190px_1.7fr_1fr_1fr_1fr_auto_auto]">
-              <select
-                className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold outline-none"
-                value={searchMode}
-                onChange={(e) => {
-                  const nextMode = e.target.value as OrderSearchMode;
-                  setSearchMode(nextMode);
-                  if (nextMode !== "PRODUCT") setSelectedProductSkuValues([]);
-                }}
-              >
-                {ORDER_SEARCH_MODE_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              {searchMode === "PRODUCT" ? (
-                <ProductSkuSearchBox
-                  value={query}
-                  onChange={setQuery}
-                  selectedValues={selectedProductSkuValues}
-                  onToggleValue={toggleSelectedProductSku}
-                  onClearSelected={() => setSelectedProductSkuValues([])}
-                  options={visibleProductSkuOptions}
-                  placeholder="Gõ QS28/AP833 để xổ SKU con..."
-                  onEnter={(value) => {
-                    setQuery(value);
-                    applySearchAndFilters(value);
-                  }}
-                />
-              ) : (
-                <input
-                  className="rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-                  placeholder={
-                    searchMode === "PHONE"
-                      ? "Nhập SĐT khách..."
-                      : searchMode === "ORDER"
-                        ? "Nhập mã đơn, mã GHN/vận đơn..."
-                        : "Tìm mã đơn, mã GHN, SĐT, khách, SKU, địa chỉ..."
-                  }
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      const value = e.currentTarget.value.trim();
-                      setQuery(value);
-                      applySearchAndFilters(value);
-                    }
-                  }}
-                />
-              )}
-              <Button onClick={submitOrderSearch} variant="primary">
-                Tìm / Áp dụng lọc
-              </Button>
-              {submittedQuery ? (
-                <Button onClick={clearOrderSearch}>
-                  Xóa tìm
-                </Button>
-              ) : null}
+            {hasPendingFilterChanges ? (
+              <div className="mt-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">
+                Có thay đổi chưa áp dụng · bấm Tìm hoặc Enter
+              </div>
+            ) : null}
 
-              <MultiFilterSelect
-                value={branchFilter}
-                onChange={setBranchFilter}
-                options={branchOptions}
-                allLabel="Tất cả chi nhánh"
-                disabled={
-                  !!currentUser?.branchId &&
-                  currentUser?.role !== "admin" &&
-                  currentUser?.role !== "owner"
-                }
-              />
+            {showAdvancedFilters ? (
+              <div className="mt-2 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 pb-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    <SmallChip active={quickDate === "all"} onClick={() => applyQuickDate("all")}>Tất cả</SmallChip>
+                    <SmallChip active={quickDate === "today"} onClick={() => applyQuickDate("today")}>Hôm nay</SmallChip>
+                    <SmallChip active={quickDate === "yesterday"} onClick={() => applyQuickDate("yesterday")}>Hôm qua</SmallChip>
+                    <SmallChip active={quickDate === "7d"} onClick={() => applyQuickDate("7d")}>7 ngày</SmallChip>
+                    <SmallChip active={quickDate === "30d"} onClick={() => applyQuickDate("30d")}>30 ngày</SmallChip>
+                    <SmallChip active={quickDate === "month"} onClick={() => applyQuickDate("month")}>Tháng này</SmallChip>
+                  </div>
 
-              <MultiFilterSelect
-                value={orderFilter}
-                onChange={setOrderFilter}
-                allLabel="Tất cả trạng thái đơn"
-                options={ORDER_STATUS_FILTER_OPTIONS.filter((item) => item.value !== "ALL")}
-              />
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canManageFilterPresets ? (
+                      <Button onClick={saveCurrentFilterPreset} size="sm">
+                        Lưu bộ lọc mẫu
+                      </Button>
+                    ) : null}
+                    {canExportOrderExcel ? (
+                      <Button onClick={() => setExportOpen(true)} size="sm" variant="primary">
+                        Xuất Excel
+                      </Button>
+                    ) : null}
+                  <div className="relative" ref={columnMenuRef}>
+                    <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">
+                      Cột hiển thị
+                    </Button>
 
-              <MultiFilterSelect
-                value={paymentFilter}
-                onChange={setPaymentFilter}
-                allLabel="Tất cả thanh toán"
-                options={[
-                  { value: "UNPAID", label: "Chưa thanh toán" },
-                  { value: "PARTIAL", label: "Thanh toán một phần" },
-                  { value: "PAID", label: "Đã thanh toán" },
-                  { value: "PENDING_COD", label: "Chờ đối soát COD" },
-                  { value: "REFUNDED", label: "Đã hoàn tiền" },
-                  { value: "FAILED", label: "Thanh toán lỗi" },
-                ]}
-              />
-
-              <Button onClick={() => void loadOrders()} size="md">
-                Làm mới
-              </Button>
-
-              {canExportOrderExcel ? (
-                <Button
-                  onClick={() => setExportOpen(true)}
-                  size="md"
-                  variant="primary"
-                >
-                  Xuất Excel
-                </Button>
-              ) : null}
-
-              <div className="w-full md:col-span-full" ref={columnMenuRef}>
-                <Button onClick={() => setShowColumnMenu((v) => !v)} size="md">
-                  Cột hiển thị
-                </Button>
-
-                {showColumnMenu ? (
-                  <div className="mt-3 rounded-[24px] border border-neutral-200 bg-neutral-50 p-3">
+                                    {showColumnMenu ? (
+                  <div className="absolute right-0 top-[44px] z-[90] w-[min(1120px,calc(100vw-72px))] rounded-[24px] border border-neutral-200 bg-neutral-50 p-3 shadow-2xl">
                     <div className="mb-3 flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-neutral-900">
@@ -7067,102 +7750,89 @@ export default function OrdersPageClient() {
                     </div>
                   </div>
                 ) : null}
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShowAdvancedFilters((v) => !v)}
-              >
-                {showAdvancedFilters ? "Ẩn bộ lọc nâng cao" : "Bộ lọc nâng cao"}
-                {activeAdvancedFilterCount
-                  ? ` (${activeAdvancedFilterCount})`
-                  : ""}
-              </Button>
-
-              {activeAdvancedFilterCount ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={clearAdvancedFilters}
-                >
-                  Xóa lọc nâng cao
-                </Button>
-              ) : null}
-
-              <p className="text-xs text-neutral-500">
-                Đang hiển thị {visibleOrders.length} / {totalItems} đơn theo bộ
-                lọc đã áp dụng
-              </p>
-
-              {hasPendingFilterChanges ? (
-                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
-                  Có thay đổi chưa áp dụng · bấm Tìm hoặc Enter
-                </span>
-              ) : null}
-            </div>
-
-            {showAdvancedFilters ? (
-              <div className="mt-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-3">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <input
-                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                    placeholder="Lọc mọi thông tin trong bảng..."
-                    value={freeTextFilter}
-                    onChange={(e) => setFreeTextFilter(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        applySearchAndFilters();
-                      }
-                    }}
-                  />
-
-                  <div className="md:col-span-2 xl:col-span-2">
-                    <div className="flex gap-2">
-                      <textarea
-                        className="min-h-[48px] flex-1 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none"
-                        placeholder="Tìm thông minh..."
-                        value={smartSearchInput}
-                        onChange={(e) => setSmartSearchInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            submitSmartSearch();
-                          }
-                        }}
-                      />
-                      <div className="flex shrink-0 flex-col gap-2">
-                        <Button size="sm" variant="primary" onClick={submitSmartSearch}>
-                          Tìm
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => setShowSmartSearchHelp((v) => !v)}
-                        >
-                          Hướng dẫn
-                        </Button>
-                      </div>
-                    </div>
-
-                    {showSmartSearchHelp ? (
-                      <div className="mt-2 rounded-2xl border border-neutral-200 bg-white p-3 text-xs leading-5 text-neutral-600 shadow-sm">
-                        <p className="font-semibold text-neutral-900">Hướng dẫn tìm kiếm thông minh</p>
-                        <p className="mt-1">Tìm nhiều đơn cùng lúc: nhập <b>ORD-A, ORD-B, ORD-C</b> hoặc mỗi mã một dòng.</p>
-                        <p>Tìm theo vận đơn: nhập mã GHN / Viettel Post / AhaMove.</p>
-                        <p>Tìm theo nhân viên + thời gian + trạng thái: nhập <b>Nguyễn Văn A tháng này hoàn thành</b>.</p>
-                        <p>Nhấn <b>Enter</b> hoặc nút <b>Tìm</b> để áp dụng. Giữ <b>Shift + Enter</b> để xuống dòng.</p>
-                      </div>
+                  </div>
+                    <Button onClick={() => void loadOrders()} size="sm">
+                      Làm mới
+                    </Button>
+                    {activeAdvancedFilterCount ? (
+                      <Button variant="secondary" size="sm" onClick={clearAdvancedFilters}>
+                        Xóa lọc nâng cao
+                      </Button>
                     ) : null}
                   </div>
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="block">
+                    <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Từ ngày</span>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => {
+                        setQuickDate("all");
+                        setDateFrom(e.target.value);
+                      }}
+                      className="h-9 w-full rounded-xl border border-neutral-300 bg-white px-3 text-xs outline-none"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Đến ngày</span>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => {
+                        setQuickDate("all");
+                        setDateTo(e.target.value);
+                      }}
+                      className="h-9 w-full rounded-xl border border-neutral-300 bg-white px-3 text-xs outline-none"
+                    />
+                  </label>
+
+                  <MultiFilterSelect
+                    value={branchFilter}
+                    onChange={setBranchFilter}
+                    options={branchOptions}
+                    allLabel="Tất cả chi nhánh"
+                    disabled={
+                      !!currentUser?.branchId &&
+                      currentUser?.role !== "admin" &&
+                      currentUser?.role !== "owner"
+                    }
+                  />
 
                   <MultiFilterSelect
                     value={orderFilter}
                     onChange={setOrderFilter}
                     allLabel="Tất cả trạng thái đơn"
                     options={ORDER_STATUS_FILTER_OPTIONS.filter((item) => item.value !== "ALL")}
+                  />
+
+                  <MultiFilterSelect
+                    value={paymentFilter}
+                    onChange={setPaymentFilter}
+                    allLabel="Tất cả thanh toán"
+                    options={[
+                      { value: "UNPAID", label: "Chưa thanh toán" },
+                      { value: "PARTIAL", label: "Thanh toán một phần" },
+                      { value: "PAID", label: "Đã thanh toán" },
+                      { value: "PENDING_COD", label: "Chờ đối soát COD" },
+                      { value: "REFUNDED", label: "Đã hoàn tiền" },
+                      { value: "FAILED", label: "Thanh toán lỗi" },
+                    ]}
+                  />
+
+                  <input
+                    className="h-10 rounded-xl border border-neutral-300 bg-white px-3 text-xs outline-none"
+                    placeholder="Lọc mọi thông tin trong bảng..."
+                    value={freeTextFilter}
+                    onChange={(e) => setFreeTextFilter(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitUniversalSearch();
+                      }
+                    }}
                   />
 
                   <MultiFilterSelect
@@ -7287,8 +7957,41 @@ export default function OrdersPageClient() {
                   />
                 </div>
 
+                <div className="mt-2 grid gap-2 xl:grid-cols-[1fr_auto]">
+                  <textarea
+                    className="min-h-[42px] rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs outline-none"
+                    placeholder="Tìm thông minh / tìm nhiều đơn: ORD-A, ORD-B hoặc mã GHN cách nhau bằng dấu phẩy..."
+                    value={smartSearchInput}
+                    onChange={(e) => setSmartSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        submitUniversalSearch();
+                      }
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="primary" onClick={() => submitUniversalSearch()}>
+                      Áp dụng lọc
+                    </Button>
+                    <Button size="sm" onClick={() => setShowSmartSearchHelp((v) => !v)}>
+                      Hướng dẫn
+                    </Button>
+                  </div>
+                </div>
+
+                {showSmartSearchHelp ? (
+                  <div className="mt-2 rounded-2xl border border-neutral-200 bg-white p-3 text-xs leading-5 text-neutral-600 shadow-sm">
+                    <p className="font-semibold text-neutral-900">Hướng dẫn tìm kiếm thông minh</p>
+                    <p className="mt-1">Tìm nhiều đơn cùng lúc: nhập <b>ORD-A, ORD-B, ORD-C</b> hoặc mỗi mã một dòng.</p>
+                    <p>Tìm theo vận đơn: nhập mã GHN / Viettel Post / AhaMove.</p>
+                    <p>Tìm theo nhân viên + thời gian + trạng thái: nhập <b>Nguyễn Văn A tháng này hoàn thành</b>.</p>
+                    <p>Nhấn <b>Enter</b> hoặc nút <b>Tìm</b> để áp dụng. Giữ <b>Shift + Enter</b> để xuống dòng.</p>
+                  </div>
+                ) : null}
+
                 {smartSearch.trim() ? (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
                     <p className="text-xs font-medium text-neutral-600">
                       Đang áp dụng tìm thông minh
                       {parsedSmartSearch.hasMultiTerms
@@ -7304,217 +8007,166 @@ export default function OrdersPageClient() {
                 ) : null}
               </div>
             ) : null}
-
-            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Từ ngày
-                </label>
-                <input
-                  type="date"
-                  value={dateFrom}
-                  onChange={(e) => {
-                    setQuickDate("all");
-                    setDateFrom(e.target.value);
-                  }}
-                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Đến ngày
-                </label>
-                <input
-                  type="date"
-                  value={dateTo}
-                  onChange={(e) => {
-                    setQuickDate("all");
-                    setDateTo(e.target.value);
-                  }}
-                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none"
-                />
-              </div>
-
-              <div className="flex items-end">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setQuickDate("all");
-                    setDateFrom("");
-                    setDateTo("");
-                  }}
-                >
-                  Xóa lọc ngày
-                </Button>
-              </div>
-            </div>
           </Panel>
 
-          <Panel className="p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              {canApproveOrder ? (
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() => void handleBulkApprove()}
-                  disabled={!checkedIds.length || savingOrderStatus}
-                >
-                  Duyệt đơn
-                </Button>
-              ) : null}
+          {checkedIds.length ? (
+            <Panel className="border-neutral-200 bg-white px-4 py-2.5">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 pr-2">
+                  <span className="inline-flex h-8 min-w-[92px] items-center justify-center rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white">
+                    Đã chọn {checkedIds.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCheckedIds([])}
+                    className="h-8 min-w-[86px] rounded-full border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 hover:bg-neutral-50"
+                  >
+                    Bỏ chọn
+                  </button>
+                </div>
 
-              {canPackShipOrder ? (
-                <Button
-                  variant="secondary"
-                  size="md"
-                  onClick={() => void handleBulkSendToCarrier()}
-                  disabled={!checkedIds.length || savingOrderStatus}
-                >
-                  Gửi hãng vận chuyển
-                </Button>
-              ) : null}
-
-              {canPayOrder ? (
-                <Button
-                  variant="secondary"
-                  size="md"
-                  onClick={() => void handleBulkMarkPaid()}
-                  disabled={!checkedIds.length || savingPaymentStatus}
-                >
-                  Đánh dấu đã thanh toán
-                </Button>
-              ) : null}
-
-              {canCreateOrder && singleCheckedOrder ? (
-                <Button
-                  variant="secondary"
-                  size="md"
-                  onClick={() => copyOrderToNewTab(singleCheckedOrder)}
-                >
-                  Sao chép đơn
-                </Button>
-              ) : null}
-
-              {canCancelOrder ? (
-                <Button
-                  variant="warning"
-                  size="md"
-                  onClick={() => void handleBulkInternalCancel()}
-                  disabled={!checkedIds.length || savingOrderStatus}
-                >
-                  Huỷ nội bộ
-                </Button>
-              ) : null}
-
-              {canRedeliverySelected && singleCheckedOrder ? (
-                <Button
-                  variant="secondary"
-                  size="md"
-                  onClick={() =>
-                    openOrderInNewTab(singleCheckedOrder, "redelivery")
-                  }
-                >
-                  Giao lại
-                </Button>
-              ) : null}
-
-              {canCancelOrder ? (
-                <Button
-                  variant="warning"
-                  size="md"
-                  onClick={() => void handleBulkCancel()}
-                  disabled={!checkedIds.length || savingOrderStatus}
-                >
-                  Hủy GHN
-                </Button>
-              ) : null}
-
-              {canDeleteOrder ? (
-                <Button
-                  variant="danger"
-                  size="md"
-                  onClick={() => void handleBulkDelete()}
-                  disabled={!checkedIds.length || deletingOrders}
-                >
-                  {deletingOrders ? "Đang xóa..." : "Xóa đơn"}
-                </Button>
-              ) : null}
-
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={openAssignDialog}
-                disabled={!checkedIds.length || assigningOrders}
-              >
-                Gán nhân viên
-              </Button>
-
-              <span
-                className={`ml-2 rounded-full px-3 py-1 text-sm font-semibold ${checkedIds.length
-                    ? "bg-neutral-900 text-white"
-                    : "bg-neutral-100 text-neutral-500"
-                  }`}
-              >
-                {checkedIds.length
-                  ? `Đã chọn ${checkedIds.length} kết quả`
-                  : "Chưa chọn kết quả"}
-              </span>
-
-              <div className="relative" ref={printMenuRef}>
-                <Button
-                  onClick={() => setShowPrintMenu((v) => !v)}
-                  disabled={!checkedIds.length}
-                >
-                  In đơn hàng
-                </Button>
-
-                {showPrintMenu ? (
-                  <div className="absolute right-0 z-[200] mt-2 w-64 rounded-3xl border border-neutral-200 bg-white p-2 shadow-2xl">
+                <div className="flex flex-wrap items-center justify-start gap-3">
+                  {canApproveOrder ? (
                     <button
-                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                      onClick={() => {
-                        setShowPrintMenu(false);
-                        void void handlePrint("shipping", "80mm");
-                      }}
+                      type="button"
+                      onClick={() => void handleBulkApprove()}
+                      disabled={savingOrderStatus}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Phiếu giao hàng 80mm
+                      Duyệt đơn
+                    </button>
+                  ) : null}
+
+                  {canPackShipOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkSendToCarrier()}
+                      disabled={savingOrderStatus}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Gửi HVC
+                    </button>
+                  ) : null}
+
+                  {canCreateOrder && singleCheckedOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => copyOrderToNewTab(singleCheckedOrder)}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50"
+                    >
+                      Sao chép
+                    </button>
+                  ) : null}
+
+                  {canRedeliverySelected && singleCheckedOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => openOrderInNewTab(singleCheckedOrder, "redelivery")}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50"
+                    >
+                      Giao lại
+                    </button>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={openAssignDialog}
+                    disabled={assigningOrders}
+                    className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Gán NV
+                  </button>
+
+                  <div className="relative" ref={printMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setShowPrintMenu((v) => !v)}
+                      className="h-9 min-w-[124px] rounded-2xl border-2 border-neutral-900 bg-white px-4 text-xs font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50"
+                    >
+                      In đơn
                     </button>
 
-                    <button
-                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                      onClick={() => {
-                        setShowPrintMenu(false);
-                        void void handlePrint("shipping", "A4");
-                      }}
-                    >
-                      Phiếu giao hàng A4
-                    </button>
+                    {showPrintMenu ? (
+                      <div className="absolute right-0 z-[200] mt-2 w-64 rounded-3xl border border-neutral-200 bg-white p-2 shadow-2xl">
+                        <button
+                          className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                          onClick={() => {
+                            setShowPrintMenu(false);
+                            void void handlePrint("shipping", "80mm");
+                          }}
+                        >
+                          Phiếu giao hàng 80mm
+                        </button>
 
-                    <button
-                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                      onClick={() => {
-                        setShowPrintMenu(false);
-                        void void handlePrint("shipping", "A5");
-                      }}
-                    >
-                      Phiếu giao hàng A5
-                    </button>
+                        <button
+                          className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                          onClick={() => {
+                            setShowPrintMenu(false);
+                            void void handlePrint("shipping", "A4");
+                          }}
+                        >
+                          Phiếu giao hàng A4
+                        </button>
 
-                    <button
-                      className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                      onClick={() => {
-                        setShowPrintMenu(false);
-                        void void handlePrint("sales", "80mm");
-                      }}
-                    >
-                      Phiếu bán hàng 80mm
-                    </button>
+                        <button
+                          className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                          onClick={() => {
+                            setShowPrintMenu(false);
+                            void void handlePrint("shipping", "A5");
+                          }}
+                        >
+                          Phiếu giao hàng A5
+                        </button>
+
+                        <button
+                          className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                          onClick={() => {
+                            setShowPrintMenu(false);
+                            void void handlePrint("sales", "80mm");
+                          }}
+                        >
+                          Phiếu bán hàng 80mm
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
+
+                  {canCancelOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkInternalCancel()}
+                      disabled={savingOrderStatus}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Huỷ nội bộ
+                    </button>
+                  ) : null}
+
+                  {canCancelOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkCancel()}
+                      disabled={savingOrderStatus}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Huỷ HVC
+                    </button>
+                  ) : null}
+
+                  {canDeleteOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkDelete()}
+                      disabled={deletingOrders}
+                      className="h-9 min-w-[112px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingOrders ? "Đang xoá..." : "Xoá đơn"}
+                    </button>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </Panel>
+            </Panel>
+          ) : null}
 
           {actionMessage ? (
             <Panel className="p-3">

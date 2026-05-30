@@ -627,6 +627,13 @@ function isCancelledStatusValue(value?: unknown) {
   );
 }
 
+function isInternallyCancelledOrder(order: DashboardOrderRow) {
+  // Card/bảng "Đơn tạo" chỉ được loại theo trạng thái đơn nội bộ.
+  // Không dùng trạng thái vận đơn ở đây, vì vận đơn có thể từng bị huỷ/tạo lại
+  // nhưng order vẫn là đơn hợp lệ đã xuất kho.
+  return isCancelledStatusValue(order.status);
+}
+
 function isCancelledOrder(order: DashboardOrderRow) {
   return (
     isCancelledStatusValue(order.status) ||
@@ -1299,9 +1306,10 @@ function buildOrderBreakdownFromWarRoomPayload(
     ? payload.successOrders
     : [];
 
-  // Card "Đơn tạo" phải loại đơn huỷ. Không dùng trực tiếp aggregate
-  // payload.orderCreated nếu backend còn trả cả CANCELLED trong createdOrders.
-  const createdOrders = createdOrdersRaw.filter((order) => !isCancelledOrder(order));
+  // Card "Đơn tạo" chỉ loại đơn huỷ nội bộ (Order.status = CANCELLED).
+  // Không loại theo trạng thái vận đơn, vì shipment có thể từng huỷ/tạo lại
+  // nhưng order vẫn là đơn tạo hợp lệ.
+  const createdOrders = createdOrdersRaw.filter((order) => !isInternallyCancelledOrder(order));
   const successOrders = successOrdersRaw.filter((order) => !isCancelledOrder(order));
 
   const createdBreakdown = buildOrderBreakdown(createdOrders);
@@ -1370,7 +1378,7 @@ function buildDailyCreatedRowsFromOrders(
   const map = new Map<string, WarRoomDailyCreatedRow>();
 
   orders
-    .filter((order) => !isCancelledOrder(order))
+    .filter((order) => !isInternallyCancelledOrder(order))
     .forEach((order) => {
       const rawDate = order.createdAt || order.updatedAt;
       if (!rawDate) return;

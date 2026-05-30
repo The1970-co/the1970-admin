@@ -536,6 +536,8 @@ function refTypeLabel(type?: string | null) {
     STOCKTAKE_SESSION: "Phiên kiểm kho",
     STOCK_TRANSFER: "Phiếu chuyển kho",
     RETURN: "Phiếu trả hàng",
+    RETURN_EXCHANGE: "Đơn đổi / trả hàng",
+    GHN_RETURN_RECEIVED: "Nhận hàng hoàn GHN",
     SHIPMENT: "Phiếu giao hàng",
     MANUAL: "Ghi nhận thủ công",
     ADJUSTMENT: "Phiếu điều chỉnh",
@@ -593,6 +595,28 @@ function statusTone(status?: string | null): Tone {
   return "gray";
 }
 
+function pickBusinessCodeFromText(...values: any[]) {
+  const text = values
+    .map((value) => String(value || ""))
+    .filter(Boolean)
+    .join(" | ");
+
+  const patterns = [
+    /\bORD[-_][A-Z0-9-]+\b/i,
+    /\bRTN[-_][A-Z0-9-]+\b/i,
+    /\bCVK[-_][A-Z0-9-]+\b/i,
+    /\bSTK[-_][A-Z0-9-]+\b/i,
+    /\bPNK[-_][A-Z0-9-]+\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[0]) return match[0].toUpperCase();
+  }
+
+  return "";
+}
+
 function getReferenceCode(row: InventoryMovementV2) {
   const meta = getMeta(row);
 
@@ -619,8 +643,60 @@ function getReferenceCode(row: InventoryMovementV2) {
     meta.returnCode,
     meta.shipmentCode,
     meta.sourceCode,
-    row.refId
+    getNestedValue(meta, [
+      "order.code",
+      "order.orderCode",
+      "order.displayCode",
+      "order.internalCode",
+      "shipment.orderCode",
+      "shipment.code",
+      "return.orderCode",
+      "return.code",
+      "returnExchange.code",
+      "purchaseReceipt.code",
+      "stockTransfer.code",
+      "stocktakeSession.code",
+      "stocktakeSession.name",
+    ]),
+    pickBusinessCodeFromText(row.note, meta.note, meta.reason)
   );
+}
+
+function getSystemReferenceId(row: InventoryMovementV2) {
+  const meta = getMeta(row);
+  return firstText(row.refId, meta.refId, meta.referenceId, meta.orderId, meta.stocktakeSessionId, meta.stockTransferId);
+}
+
+function shortSystemId(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 14) return text;
+  return `${text.slice(0, 10)}…`;
+}
+
+function referenceLabelByType(type?: string | null) {
+  const key = String(type || "").toUpperCase();
+
+  if (key === "ORDER") return "Mã đơn";
+  if (key === "RETURN" || key === "RETURN_EXCHANGE" || key === "GHN_RETURN_RECEIVED") return "Mã đơn/hoàn";
+  if (key === "STOCKTAKE" || key === "STOCKTAKE_SESSION") return "Mã kiểm kho";
+  if (key === "STOCK_TRANSFER") return "Mã chuyển kho";
+  if (key === "PURCHASE_RECEIPT") return "Mã phiếu nhập";
+  if (key === "SHIPMENT") return "Mã vận đơn";
+  return "Mã nghiệp vụ";
+}
+
+function getReferenceDisplay(row: InventoryMovementV2) {
+  const refType = getRefType(row);
+  const code = getReferenceCode(row);
+  const systemId = getSystemReferenceId(row);
+
+  return {
+    label: referenceLabelByType(refType),
+    code,
+    systemId,
+    shortSystemId: shortSystemId(systemId),
+  };
 }
 
 function getActorLabel(row: InventoryMovementV2) {
@@ -699,6 +775,54 @@ function getActorLabel(row: InventoryMovementV2) {
       "stocktakeSession.createdById",
     ])
   );
+}
+
+function getActorIds(row: InventoryMovementV2) {
+  const meta = getMeta(row);
+
+  return [
+    row.createdById,
+    row.actorId,
+    row.staffId,
+    row.userId,
+    row.createdBy?.id,
+    row.actor?.id,
+    row.staff?.id,
+    row.user?.id,
+    meta.createdById,
+    meta.actorId,
+    meta.staffId,
+    meta.userId,
+    getNestedValue(meta, [
+      "order.createdByStaffId",
+      "order.assignedStaffId",
+      "purchaseReceipt.createdById",
+      "stockTransfer.createdById",
+      "stockTransfer.confirmedById",
+      "stocktakeSession.createdById",
+    ]),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function looksLikeSystemId(value?: string | null) {
+  const text = String(value || "").trim();
+  return /^c[a-z0-9]{8,}$/i.test(text) || /^[0-9a-f]{24}$/i.test(text);
+}
+
+function getActorDisplayLabel(row: InventoryMovementV2, actors: InventoryActorOption[]) {
+  const rawLabel = getActorLabel(row);
+  const ids = getActorIds(row);
+
+  for (const id of ids) {
+    const found = actors.find((actor) => String(actor.id) === String(id));
+    if (found?.label) return found.label;
+  }
+
+  if (rawLabel && !looksLikeSystemId(rawLabel)) return rawLabel;
+
+  return rawLabel || "";
 }
 
 function getStatus(row: InventoryMovementV2) {
@@ -1021,7 +1145,7 @@ export default function InventoryLogsPageClient() {
     };
 
     actorDirectory.forEach(push);
-    getUniqueOptions(scopedRows, (row) => getActorLabel(row)).forEach(push);
+    getUniqueOptions(scopedRows, (row) => getActorDisplayLabel(row, actorDirectory)).forEach(push);
 
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, "vi"));
   }, [actorDirectory, scopedRows]);
@@ -1040,7 +1164,7 @@ export default function InventoryLogsPageClient() {
       const matchBranch = appliedBranchFilters.length === 0 || appliedBranchFilters.includes(String(row.branchId || ""));
       const matchRefType = appliedRefTypeFilters.length === 0 || appliedRefTypeFilters.includes(String(getRefType(row) || ""));
       const matchStatus = appliedStatusFilters.length === 0 || appliedStatusFilters.includes(String(getStatus(row) || ""));
-      const rowActor = getActorLabel(row);
+      const rowActor = getActorDisplayLabel(row, actorDirectory);
       const matchActor =
         appliedActorFilters.length === 0 ||
         appliedActorFilters.some((value) =>
@@ -1080,6 +1204,7 @@ export default function InventoryLogsPageClient() {
     appliedRefTypeFilters,
     appliedStatusFilters,
     appliedActorFilters,
+    actorDirectory,
     appliedFromDate,
     appliedToDate,
   ]);
@@ -1088,7 +1213,7 @@ export default function InventoryLogsPageClient() {
   const totalOut = Math.abs(filtered.filter((r) => r.qty < 0).reduce((sum, r) => sum + r.qty, 0));
   const adjustmentRows = filtered.filter((r) => String(r.type || "").toUpperCase().includes("ADJUSTMENT")).length;
   const uniqueSkuRows = Array.from(new Set(filtered.map((r) => String(r.sku || "").trim()).filter(Boolean))).length;
-  const missingActorRows = filtered.filter((r) => !getActorLabel(r)).length;
+  const missingActorRows = filtered.filter((r) => !getActorDisplayLabel(r, actorDirectory)).length;
 
   const branchOptions = useMemo<MultiFilterOption[]>(() => {
     return visibleBranches.map((branch) => ({
@@ -1425,8 +1550,8 @@ export default function InventoryLogsPageClient() {
                   <th className="px-4 py-3 font-medium">Trạng thái</th>
                   <th className="px-4 py-3 font-medium">SL</th>
                   <th className="px-4 py-3 font-medium">Tồn trước → sau</th>
-                  <th className="px-4 py-3 font-medium">Nguồn chứng từ</th>
-                  <th className="px-4 py-3 font-medium">Mã chứng từ</th>
+                  <th className="px-4 py-3 font-medium">Loại nghiệp vụ</th>
+                  <th className="px-4 py-3 font-medium">Mã nghiệp vụ</th>
                   <th className="px-4 py-3 font-medium">Nhân viên thao tác</th>
                   <th className="px-4 py-3 font-medium">Ghi chú</th>
                 </tr>
@@ -1437,8 +1562,9 @@ export default function InventoryLogsPageClient() {
                   const isExpanded = expandedId === row.id;
                   const beforeQty = getBeforeQty(row);
                   const afterQty = getAfterQty(row);
-                  const refCode = getReferenceCode(row);
-                  const actor = getActorLabel(row);
+                  const reference = getReferenceDisplay(row);
+                  const refCode = reference.code;
+                  const actor = getActorDisplayLabel(row, actorDirectory);
                   const status = getStatus(row);
                   const meta = getMeta(row);
 
@@ -1504,9 +1630,12 @@ export default function InventoryLogsPageClient() {
                         </td>
 
                         <td className="px-4 py-3">
-                          <div className="max-w-[180px] break-all font-medium text-neutral-900">{refCode || "—"}</div>
-                          {row.refId && row.refId !== refCode ? (
-                            <div className="mt-1 text-xs text-neutral-400">Ref ID: {row.refId}</div>
+                          <div className="text-xs font-medium text-neutral-500">{reference.label}</div>
+                          <div className="mt-1 max-w-[190px] break-all font-semibold text-neutral-900">
+                            {refCode || (reference.shortSystemId ? `ID ${reference.shortSystemId}` : "—")}
+                          </div>
+                          {reference.systemId && reference.systemId !== refCode ? (
+                            <div className="mt-1 text-xs text-neutral-400">ID hệ thống: {reference.shortSystemId}</div>
                           ) : null}
                         </td>
 
@@ -1528,11 +1657,11 @@ export default function InventoryLogsPageClient() {
                           <td colSpan={12} className="px-5 py-4">
                             <div className="grid gap-4 lg:grid-cols-4">
                               <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Chứng từ</p>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Nghiệp vụ</p>
                                 <div className="mt-3 space-y-2 text-sm">
-                                  <p><span className="text-neutral-500">Nguồn:</span> {refTypeLabel(getRefType(row))}</p>
-                                  <p><span className="text-neutral-500">Mã:</span> {refCode || "—"}</p>
-                                  <p><span className="text-neutral-500">Ref ID:</span> {row.refId || "—"}</p>
+                                  <p><span className="text-neutral-500">Loại:</span> {refTypeLabel(getRefType(row))}</p>
+                                  <p><span className="text-neutral-500">{reference.label}:</span> {refCode || "—"}</p>
+                                  <p><span className="text-neutral-500">ID hệ thống:</span> {reference.systemId || row.refId || "—"}</p>
                                   <p><span className="text-neutral-500">Trạng thái:</span> {status ? statusLabel(status) : "—"}</p>
                                 </div>
                               </div>
