@@ -87,6 +87,15 @@ const MENU: MenuItem[] = [
     ],
   },
   {
+    label: "Bán hàng đa kênh",
+    permission: PERMISSIONS.MENU_OMNI_INBOX,
+    children: [
+      { href: "/messages", label: "Tin nhắn", permission: PERMISSIONS.MENU_OMNI_MESSAGES },
+      { href: "/comments", label: "Bình luận", permission: PERMISSIONS.MENU_OMNI_COMMENTS },
+      { href: "/livestream", label: "Livestream", permission: PERMISSIONS.MENU_OMNI_LIVESTREAM },
+    ],
+  },
+  {
     label: "Hệ thống",
     permission: "menu.system_group",
     children: [
@@ -108,6 +117,22 @@ function userRoles(user: any) {
   return [...(Array.isArray(user?.roles) ? user.roles : []), user?.role]
     .map((role) => String(role || "").toLowerCase())
     .filter(Boolean);
+}
+
+function isAdminLikeUser(user: any) {
+  const roles = userRoles(user);
+  return roles.some((role) => ["owner", "admin"].includes(role));
+}
+
+const OMNI_ADMIN_ONLY_PERMISSIONS = new Set<string>([
+  PERMISSIONS.MENU_OMNI_INBOX,
+  PERMISSIONS.MENU_OMNI_MESSAGES,
+  PERMISSIONS.MENU_OMNI_COMMENTS,
+  PERMISSIONS.MENU_OMNI_LIVESTREAM,
+]);
+
+function isOmniMenuPermission(permission?: string | null) {
+  return OMNI_ADMIN_ONLY_PERMISSIONS.has(String(permission || ""));
 }
 
 function normalizeDisplayName(value?: string | null) {
@@ -264,9 +289,18 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     setMounted(true);
   }, []);
 
-  const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
+  const visibleMenu = useMemo(() => {
+    const adminOnlyCan = (permission?: string | null) => {
+      if (isOmniMenuPermission(permission) && !isAdminLikeUser(user)) return false;
+      return can(permission);
+    };
+
+    return filterMenu(MENU, adminOnlyCan);
+  }, [can, user]);
   const requiredPermission = useMemo(() => getRequiredPermissionForPath(pathname), [pathname]);
-  const canAccessCurrentRoute = !requiredPermission || can(requiredPermission);
+  const canAccessCurrentRoute =
+    (!requiredPermission || can(requiredPermission)) &&
+    (!isOmniMenuPermission(requiredPermission) || isAdminLikeUser(user));
 
   useEffect(() => {
     if (!checked || loading || !user || canAccessCurrentRoute) return;
