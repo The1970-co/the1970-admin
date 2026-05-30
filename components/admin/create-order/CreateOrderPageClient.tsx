@@ -43,6 +43,7 @@ import {
 import { BRANCH_LABELS } from "@/lib/authz";
 import {
   getCurrentUserFromStorage,
+  getTokenFromStorage,
   getUserBranchIds,
   getWorkingBranchId,
   isOwnerUser,
@@ -592,6 +593,50 @@ function getViettelOldCarrierAddressOverride(input: {
     province: input.province || "",
     district: input.district || "",
     ward: input.ward || "",
+  };
+}
+
+function getDisplayMergedAddressAfterAdminMerge(input: {
+  addressLine?: string | null;
+  ward?: string | null;
+  district?: string | null;
+  province?: string | null;
+}) {
+  // Chỉ dùng để HIỂN THỊ so sánh địa chỉ hành chính sau sáp nhập trên UI tạo đơn.
+  // Không dùng payload này để gửi hãng vận chuyển, vì flow gửi hãng vẫn đi theo địa chỉ GHN/VTP hiện tại.
+  const addressLine = normalizeSpaces(input.addressLine || "");
+  const ward = normalizeSpaces(input.ward || "");
+  const district = normalizeSpaces(input.district || "");
+  const province = normalizeSpaces(input.province || "");
+  const token = normalizeAddressToken([addressLine, ward, district, province].filter(Boolean).join(" "));
+
+  const isOldSaiSonQuocOai =
+    token.includes("quoc oai") &&
+    token.includes("sai son") &&
+    (token.includes("cho thay") || token.includes("cho thay") || token.includes("khanh tan"));
+
+  if (isOldSaiSonQuocOai) {
+    const cleanLine = addressLine || "chợ thầy";
+    const hasKhanhTan = normalizeAddressToken(cleanLine).includes("khanh tan");
+    const nextLine = [cleanLine, hasKhanhTan ? "" : "thôn Khánh Tân"].filter(Boolean).join(", ");
+
+    return {
+      addressLine: nextLine,
+      ward: "Xã Quốc Oai",
+      district: "",
+      province: "Hà Nội",
+      display: [nextLine, "Xã Quốc Oai", "Hà Nội"].filter(Boolean).join(", "),
+      matched: true,
+    };
+  }
+
+  return {
+    addressLine,
+    ward,
+    district,
+    province,
+    display: [addressLine, ward, district, province].filter(Boolean).join(", "),
+    matched: false,
   };
 }
 
@@ -1886,6 +1931,7 @@ export default function CreateOrderPageClient() {
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
     null,
   );
+  const [showMergedAddressCompare, setShowMergedAddressCompare] = useState(false);
 
   const [addressSelectorOpen, setAddressSelectorOpen] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
@@ -3174,6 +3220,23 @@ export default function CreateOrderPageClient() {
     province: carrierQuoteProvince,
   });
 
+  const displayAddressLine = normalizeSpaces(
+    selectedAddress?.addressLine1 || addressLine1.trim() || shippingAddress.trim(),
+  );
+  const displayAddressWard = normalizeSpaces(currentWardRaw || "");
+  const displayAddressDistrict = normalizeSpaces(currentDistrictRaw || "");
+  const displayAddressProvince = normalizeSpaces(currentProvinceRaw || "");
+  const hasAddressParts = Boolean(
+    displayAddressLine || displayAddressWard || displayAddressDistrict || displayAddressProvince,
+  );
+  const mergedAddressPreview = getDisplayMergedAddressAfterAdminMerge({
+    addressLine: displayAddressLine,
+    ward: displayAddressWard,
+    district: displayAddressDistrict,
+    province: displayAddressProvince,
+  });
+  const mergedAddressDisplay = mergedAddressPreview.display;
+
   const viettelOldCarrierAddress = getViettelOldCarrierAddressOverride({
     address:
       selectedAddress?.addressLine1 ||
@@ -3441,24 +3504,133 @@ export default function CreateOrderPageClient() {
     };
   };
 
-  const loadDefaultCustomerSuggestions = async () => {
-    try {
-      const result: any = await findCustomerByPhone("");
+  const customerSuggestionKey = (customer: CustomerSuggestionItem) =>
+    String(customer.id || customer.phone || customer.label || "").trim();
 
-      const rows = Array.isArray(result)
-        ? result
-        : Array.isArray(result?.items)
-          ? result.items
-          : Array.isArray(result?.data)
-            ? result.data
+  const customerMatchesKeyword = (customer: CustomerSuggestionItem, keyword: string) => {
+    const cleaned = normalizePhone(keyword);
+    const normalizedKeyword = removeVietnameseTones(String(keyword || ""))
+      .toLowerCase()
+      .trim();
+    const phone = normalizePhone(customer.phone);
+    const name = removeVietnameseTones(String(customer.fullName || ""))
+      .toLowerCase()
+      .trim();
+
+    return Boolean(
+      (cleaned && phone.includes(cleaned)) ||
+      (normalizedKeyword && name.includes(normalizedKeyword)),
+    );
+  };
+
+  const getCachedCustomerMatches = (keyword: string, limit = 20) => {
+    const source = customerDefaultSuggestions.length
+      ? customerDefaultSuggestions
+      : customerSuggestions;
+    const matches = String(keyword || "").trim()
+      ? source.filter((item) => customerMatchesKeyword(item, keyword))
+      : source;
+
+    return matches.slice(0, limit);
+  };
+
+  const mergeCustomerSuggestions = (
+    primary: CustomerSuggestionItem[],
+    fallback: CustomerSuggestionItem[],
+    limit = 20,
+  ) => {
+    const seen = new Set<string>();
+    const rows: CustomerSuggestionItem[] = [];
+
+    [...primary, ...fallback].forEach((item) => {
+      const key = customerSuggestionKey(item);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      rows.push(item);
+    });
+
+    return rows.slice(0, limit);
+  };
+
+  const normalizeCustomerRows = (result: any) => {
+    const rows = Array.isArray(result)
+      ? result
+      : Array.isArray(result?.items)
+        ? result.items
+        : Array.isArray(result?.data)
+          ? result.data
+          : Array.isArray(result?.customers)
+            ? result.customers
             : result
               ? [result]
               : [];
 
-      const normalizedRows = rows
-        .filter(Boolean)
-        .map(buildCustomerSuggestion)
-        .slice(0, 12);
+    return rows.filter(Boolean).map(buildCustomerSuggestion);
+  };
+
+  const fetchCustomerSuggestionsByKeyword = async (keyword: string) => {
+    const rawKeyword = String(keyword || "").trim();
+    const phoneKeyword = normalizePhone(rawKeyword);
+    const query = phoneKeyword || rawKeyword;
+    const rows: CustomerSuggestionItem[] = [];
+
+    const pushRows = (items: CustomerSuggestionItem[]) => {
+      rows.push(
+        ...items.filter((item) => customerMatchesKeyword(item, rawKeyword || query)),
+      );
+    };
+
+    if (query) {
+      try {
+        pushRows(normalizeCustomerRows(await findCustomerByPhone(query)));
+      } catch {
+        // Fallback sang các endpoint tìm kiếm khách nếu hàm tìm theo SĐT chỉ hỗ trợ khớp chính xác.
+      }
+    }
+
+    const token = getTokenFromStorage?.();
+    const headers = {
+      Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
+    const requestCandidates = [
+      { endpoint: "/customers", params: { search: rawKeyword, limit: "20" } },
+      { endpoint: "/customers", params: { phone: phoneKeyword || rawKeyword, limit: "20" } },
+      { endpoint: "/customers/search", params: { q: rawKeyword, limit: "20" } },
+      { endpoint: "/customers/autocomplete", params: { q: rawKeyword, limit: "20" } },
+    ];
+
+    for (const candidate of requestCandidates) {
+      const cleanParams = Object.fromEntries(
+        Object.entries(candidate.params).filter(([, value]) => String(value || "").trim()),
+      );
+      if (!Object.keys(cleanParams).length) continue;
+
+      try {
+        const url = new URL(`${API_BASE}${candidate.endpoint}`);
+        Object.entries(cleanParams).forEach(([key, value]) => {
+          url.searchParams.set(key, String(value));
+        });
+
+        const res = await fetch(url.toString(), { headers });
+        if (!res.ok) continue;
+
+        const json = await res.json().catch(() => null);
+        pushRows(normalizeCustomerRows(json));
+      } catch {
+        // Không chặn tạo đơn nếu một endpoint tìm khách không tồn tại.
+      }
+    }
+
+    return mergeCustomerSuggestions(rows, getCachedCustomerMatches(rawKeyword), 20);
+  };
+
+  const loadDefaultCustomerSuggestions = async () => {
+    try {
+      const result: any = await findCustomerByPhone("");
+
+      const normalizedRows = normalizeCustomerRows(result).slice(0, 30);
 
       setCustomerDefaultSuggestions(normalizedRows);
       setCustomerSuggestions(normalizedRows);
@@ -3469,6 +3641,11 @@ export default function CreateOrderPageClient() {
       setCustomerSuggestionOpen(false);
     }
   };
+
+
+  useEffect(() => {
+    void loadDefaultCustomerSuggestions();
+  }, []);
 
   const handlePhoneChange = (value: string) => {
     suppressPhoneSuggestionRef.current = false;
@@ -3481,31 +3658,32 @@ export default function CreateOrderPageClient() {
     }
 
     const cleaned = normalizePhone(value);
-
     const lookupSeq = ++phoneLookupSeqRef.current;
 
     if (cleaned.length < 1) {
-      setCustomerSuggestions(customerDefaultSuggestions);
-      setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
+      const defaults = customerDefaultSuggestions.slice(0, 20);
+      setCustomerSuggestions(defaults);
+      setCustomerSuggestionOpen(defaults.length > 0);
       setCustomerHint("");
       return;
+    }
+
+    const cachedMatches = getCachedCustomerMatches(value);
+    if (cachedMatches.length) {
+      setCustomerSuggestions(cachedMatches);
+      setCustomerSuggestionOpen(true);
+      setCustomerHint(`Tìm thấy ${cachedMatches.length} khách.`);
+    } else {
+      setCustomerSuggestions([]);
+      setCustomerSuggestionOpen(true);
+      setCustomerHint("Đang tìm khách cũ...");
     }
 
     phoneLookupTimerRef.current = setTimeout(async () => {
       try {
         setPhoneSearching(true);
 
-        const result: any = await findCustomerByPhone(cleaned);
-
-        const rows = Array.isArray(result)
-          ? result
-          : Array.isArray(result?.items)
-            ? result.items
-            : Array.isArray(result?.data)
-              ? result.data
-              : result
-                ? [result]
-                : [];
+        const normalizedRows = await fetchCustomerSuggestionsByKeyword(value);
 
         if (
           lookupSeq !== phoneLookupSeqRef.current ||
@@ -3514,24 +3692,8 @@ export default function CreateOrderPageClient() {
           return;
         }
 
-        const normalizedRows = rows
-          .filter(Boolean)
-          .map(buildCustomerSuggestion)
-          .filter((item) => {
-            const phone = normalizePhone(item.phone);
-            const name = removeVietnameseTones(String(item.fullName || ""))
-              .toLowerCase()
-              .trim();
-            const keyword = removeVietnameseTones(String(value || ""))
-              .toLowerCase()
-              .trim();
-
-            return phone.includes(cleaned) || name.includes(keyword);
-          })
-          .slice(0, 12);
-
         setCustomerSuggestions(normalizedRows);
-        setCustomerSuggestionOpen(normalizedRows.length > 0);
+        setCustomerSuggestionOpen(true);
         setCustomerHint(
           normalizedRows.length
             ? `Tìm thấy ${normalizedRows.length} khách.`
@@ -3545,9 +3707,10 @@ export default function CreateOrderPageClient() {
           return;
         }
 
-        setCustomerSuggestions([]);
-        setCustomerSuggestionOpen(false);
-        setCustomerHint("");
+        const fallbackRows = getCachedCustomerMatches(value);
+        setCustomerSuggestions(fallbackRows);
+        setCustomerSuggestionOpen(fallbackRows.length > 0);
+        setCustomerHint(fallbackRows.length ? `Tìm thấy ${fallbackRows.length} khách.` : "");
       } finally {
         if (lookupSeq === phoneLookupSeqRef.current) {
           setPhoneSearching(false);
@@ -5208,6 +5371,12 @@ export default function CreateOrderPageClient() {
     .filter(Boolean)
     .join(" · ");
 
+  const branchLabel =
+    branchOptions.find((item) => item.value === branchId)?.label ||
+    BRANCH_LABELS[branchId as keyof typeof BRANCH_LABELS] ||
+    branchId ||
+    "Chưa chọn";
+
   const isPickupView =
     shippingUiMode === "pickup" ||
     shippingMode === "pickup" ||
@@ -5223,10 +5392,35 @@ export default function CreateOrderPageClient() {
 
   return (
     <>
-      <form onSubmit={(e) => e.preventDefault()} className="space-y-5 p-6">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Tạo đơn</h2>
-          <p className="mt-1 text-sm text-neutral-500"></p>
+      <form onSubmit={(e) => e.preventDefault()} className="space-y-4 p-6">
+        <div className="overflow-hidden rounded-[2rem] border border-neutral-900 bg-neutral-950 shadow-sm">
+          <div className="flex flex-col gap-4 p-5 text-white lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="mb-2 inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-neutral-300">
+                Tạo đơn nhanh
+              </div>
+              <h2 className="text-2xl font-semibold tracking-tight">Tạo đơn</h2>
+            </div>
+
+            <div className="grid gap-2 text-sm sm:grid-cols-4 lg:min-w-[680px]">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Khách</p>
+                <p className="mt-1 truncate font-semibold text-white">{customerName || "Khách lẻ"}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Kênh / CN</p>
+                <p className="mt-1 truncate font-semibold text-white">{salesChannel} · {branchLabel}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Sản phẩm</p>
+                <p className="mt-1 font-semibold text-white">{lines.length} dòng</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Còn phải trả</p>
+                <p className="mt-1 font-semibold text-white">{currency(remaining)}</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {shouldShowGlobalError ? (
@@ -5249,19 +5443,16 @@ export default function CreateOrderPageClient() {
           </Panel>
         ) : null}
 
-        <div className="grid gap-5 xl:grid-cols-[1.65fr_0.95fr]">
-          <div className="space-y-5">
+        <div className="grid gap-4 xl:grid-cols-[1.65fr_0.95fr]">
+          <div className="space-y-4">
             <Panel className="p-4">
-              <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
-                <div className="space-y-4">
+              <div className="grid items-start gap-4 xl:grid-cols-[1.1fr_1fr]">
+                <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="text-lg font-semibold">
                         Thông tin khách hàng
                       </h3>
-                      <p className="mt-1 text-sm text-neutral-500">
-                        Nhập tên và tra khách cũ bằng số điện thoại.
-                      </p>
                     </div>
                     <Button
                       variant="secondary"
@@ -5274,9 +5465,9 @@ export default function CreateOrderPageClient() {
                     </Button>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-2 lg:grid-cols-[0.85fr_1.15fr]">
                     <input
-                      className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+                      className="h-11 w-full rounded-xl border border-neutral-300 px-3 text-sm outline-none focus:border-neutral-900"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       placeholder="Tên khách hàng"
@@ -5287,140 +5478,240 @@ export default function CreateOrderPageClient() {
                       ref={phoneSuggestionRef}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <input
-                        className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-                        value={customerPhone}
-                        onChange={(e) => handlePhoneChange(e.target.value)}
-                        onFocus={() => {
-                          if (suppressPhoneSuggestionRef.current) return;
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">
+                          ⌕
+                        </span>
+                        <input
+                          className="h-11 w-full rounded-xl border border-neutral-300 px-10 pr-11 text-sm outline-none focus:border-neutral-900"
+                          value={customerPhone}
+                          onChange={(e) => handlePhoneChange(e.target.value)}
+                          onFocus={() => {
+                            if (suppressPhoneSuggestionRef.current) return;
 
-                          if (customerPhone.trim()) {
-                            if (customerSuggestions.length)
-                              setCustomerSuggestionOpen(true);
-                            return;
-                          }
-
-                          if (customerDefaultSuggestions.length) {
-                            setCustomerSuggestions(customerDefaultSuggestions);
-                            setCustomerSuggestionOpen(true);
-                            return;
-                          }
-
-                          void loadDefaultCustomerSuggestions();
-                        }}
-                        placeholder="Nhập sđt để tìm khách cũ"
-                      />
-
-                      {customerSuggestionOpen &&
-                        customerSuggestions.length > 0 ? (
-                        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 max-h-[280px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
-                          {customerSuggestions.map((item, index) => (
-                            <button
-                              key={`${item.id || item.phone || "customer"}-${index}`}
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() =>
-                                void handlePickSuggestedCustomer(item)
+                            if (customerPhone.trim()) {
+                              const cachedMatches = getCachedCustomerMatches(customerPhone);
+                              if (cachedMatches.length) {
+                                setCustomerSuggestions(cachedMatches);
+                                setCustomerSuggestionOpen(true);
+                                return;
                               }
-                              className="flex w-full flex-col rounded-xl px-3 py-3 text-left transition hover:bg-neutral-50"
-                            >
-                              <span className="text-sm font-semibold text-neutral-900">
-                                {item.fullName || "Khách hàng"}
-                                {item.phone ? ` · ${item.phone}` : ""}
-                              </span>
-                              {item.subLabel ? (
-                                <span className="mt-1 text-xs text-neutral-500">
-                                  {item.subLabel}
+                              setCustomerSuggestionOpen(customerSuggestions.length > 0);
+                              return;
+                            }
+
+                            if (customerDefaultSuggestions.length) {
+                              setCustomerSuggestions(customerDefaultSuggestions.slice(0, 20));
+                              setCustomerSuggestionOpen(true);
+                              return;
+                            }
+
+                            void loadDefaultCustomerSuggestions();
+                          }}
+                          placeholder="Gõ SĐT / tên khách cũ"
+                        />
+                        {customerPhone ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomerPhone("");
+                              setCustomerHint("");
+                              setCustomerSuggestions(customerDefaultSuggestions.slice(0, 20));
+                              setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
+                            }}
+                            className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-neutral-200 text-xs font-semibold text-neutral-500 hover:bg-neutral-300"
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {customerSuggestionOpen ? (
+                        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 max-h-[360px] min-w-[520px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-2xl">
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              resetNewCustomerForm();
+                              setNewCustomerPhone(customerPhone.trim());
+                              setNewCustomerRecipientName(customerName.trim());
+                              setNewCustomerOpen(true);
+                              setCustomerSuggestionOpen(false);
+                            }}
+                            className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-blue-600 hover:bg-blue-50"
+                          >
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-lg">
+                              +
+                            </span>
+                            <span>Thêm mới khách hàng</span>
+                          </button>
+
+                          {customerSuggestions.length > 0 ? (
+                            customerSuggestions.map((item, index) => (
+                              <button
+                                key={`${item.id || item.phone || "customer"}-${index}`}
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() =>
+                                  void handlePickSuggestedCustomer(item)
+                                }
+                                className="flex w-full items-start gap-3 rounded-xl border-t border-neutral-100 px-3 py-3 text-left transition first:border-t-0 hover:bg-neutral-50"
+                              >
+                                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-sm font-semibold text-neutral-500">
+                                  {(item.fullName || "K").slice(0, 1).toUpperCase()}
                                 </span>
-                              ) : null}
-                            </button>
-                          ))}
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-semibold text-neutral-900">
+                                    {item.fullName || "Khách hàng"}
+                                  </span>
+                                  <span className="mt-0.5 block text-sm text-neutral-700">
+                                    {item.phone || "Chưa có SĐT"}
+                                  </span>
+                                  {item.subLabel ? (
+                                    <span className="mt-0.5 block truncate text-xs text-neutral-500">
+                                      {item.subLabel}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="rounded-xl px-3 py-4 text-sm text-neutral-500">
+                              {phoneSearching ? "Đang tìm khách cũ..." : "Chưa thấy khách phù hợp. Có thể thêm mới khách hàng."}
+                            </div>
+                          )}
                         </div>
                       ) : null}
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-neutral-300 p-4">
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        className="rounded-2xl border border-neutral-200 px-3 py-2 text-sm font-medium"
-                        onClick={() => void openAddressSelector()}
-                      >
-                        Thay đổi
-                      </Button>
+                  <div className="rounded-2xl border border-neutral-200 bg-neutral-50/80 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-900">
+                          Địa chỉ giao hàng
+                        </p>
 
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          if (!customerId) {
-                            setCustomerHint("Cần chọn khách hàng trước.");
-                            return;
-                          }
+                        {hasAddressParts ? (
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Số nhà / đường</p>
+                              <p className="mt-0.5 line-clamp-2 text-sm font-semibold text-neutral-950">{displayAddressLine || "—"}</p>
+                            </div>
+                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Phường / xã</p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">{displayAddressWard || "—"}</p>
+                            </div>
+                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Quận / huyện</p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">{displayAddressDistrict || "—"}</p>
+                            </div>
+                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Tỉnh / thành</p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">{displayAddressProvince || "—"}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-950">
+                            Chưa có địa chỉ khách hàng
+                          </p>
+                        )}
+                      </div>
 
-                          openCreateAddressModal();
-                        }}
-                        disabled={!customerId}
-                      >
-                        + Địa chỉ mới
-                      </Button>
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          className="rounded-xl px-3 py-2 text-xs"
+                          onClick={() => void openAddressSelector()}
+                        >
+                          Chọn địa chỉ
+                        </Button>
+
+                        <Button
+                          variant="secondary"
+                          className="rounded-xl px-3 py-2 text-xs"
+                          onClick={() => {
+                            if (!customerId) {
+                              setCustomerHint("Cần chọn khách hàng trước.");
+                              return;
+                            }
+
+                            openCreateAddressModal();
+                          }}
+                          disabled={!customerId}
+                        >
+                          + Địa chỉ
+                        </Button>
+
+                        {hasAddressParts ? (
+                          <Button
+                            variant="secondary"
+                            className="rounded-xl px-3 py-2 text-xs"
+                            onClick={() => setShowMergedAddressCompare((prev) => !prev)}
+                          >
+                            {showMergedAddressCompare ? "Ẩn so sánh" : "So sánh sau sáp nhập"}
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
 
-                    <div className="mt-3 min-h-[54px] rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-6 text-neutral-800">
-                      {customerAddressDisplay ? (
-                        customerAddressDisplay
-                      ) : (
-                        <span className="text-neutral-400">
-                          Chưa có địa chỉ khách hàng
-                        </span>
-                      )}
-                    </div>
+                    {showMergedAddressCompare && hasAddressParts ? (
+                      <div className="mt-3 grid gap-2 border-t border-neutral-200 pt-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-neutral-200 bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Địa chỉ đang lưu</p>
+                          <p className="mt-2 text-sm font-semibold leading-5 text-neutral-950">
+                            {customerAddressDisplay || [displayAddressLine, displayAddressWard, displayAddressDistrict, displayAddressProvince].filter(Boolean).join(", ")}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-neutral-900 bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-900">Địa chỉ sau sáp nhập (xem tham chiếu)</p>
+                          <p className="mt-2 text-sm font-semibold leading-5 text-neutral-950">
+                            {mergedAddressDisplay || "Chưa có bản so sánh sau sáp nhập"}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
 
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700">
+                        {customerId ? "Khách cũ" : "Khách lẻ"}
+                      </span>
                       {selectedAddress ? (
-                        <>
-                          <span className="inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-medium text-neutral-700">
-                            {addressShortLabel(selectedAddress)}
-                          </span>
-                          {selectedAddress.isDefault ? (
-                            <span className="inline-flex rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
-                              Mặc định
-                            </span>
-                          ) : null}
-                        </>
+                        <span className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700">
+                          {addressShortLabel(selectedAddress)}
+                        </span>
+                      ) : null}
+                      {selectedAddress?.isDefault ? (
+                        <span className="inline-flex rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
+                          Mặc định
+                        </span>
+                      ) : null}
+                      {customerPolicyLabel ? (
+                        <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                          {customerPolicyLabel}
+                        </span>
+                      ) : null}
+                      {customerDiscountPercent > 0 ? (
+                        <span className="inline-flex rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
+                          Giảm {customerDiscountPercent}%
+                        </span>
+                      ) : null}
+                      {customerHint ? (
+                        <span className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-500">
+                          {phoneSearching ? "Đang tìm..." : customerHint}
+                        </span>
                       ) : null}
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <span className="inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-medium text-neutral-700">
-                      {customerId ? "Khách cũ" : "Khách lẻ"}
-                    </span>
-                    {customerPolicyLabel ? (
-                      <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                        {customerPolicyLabel}
-                      </span>
-                    ) : null}
-                    {customerDiscountPercent > 0 ? (
-                      <span className="inline-flex rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
-                        Giảm {customerDiscountPercent}%
-                      </span>
-                    ) : null}
-                    {customerHint ? (
-                      <span className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-500">
-                        {phoneSearching ? "Đang tìm..." : customerHint}
-                      </span>
-                    ) : null}
-                  </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+                <div className="grid items-start gap-3 md:grid-cols-2">
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Kênh bán
                     </p>
                     <select
-                      className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+                      className="h-11 w-full rounded-xl border border-neutral-300 px-3 text-sm outline-none"
                       value={salesChannel}
                       onChange={(e) => setSalesChannel(e.target.value)}
                     >
@@ -5433,21 +5724,21 @@ export default function CreateOrderPageClient() {
                   </div>
 
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Chi nhánh
                     </p>
                     {branchLoading ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-500">
+                      <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-500">
                         Đang tải kho hàng...
                       </div>
                     ) : branchOptions.length <= 1 &&
                       !isOwnerUser(getCurrentUserFromStorage()) ? (
-                      <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700">
+                      <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-700">
                         {branchOptions[0]?.label || "—"}
                       </div>
                     ) : (
                       <select
-                        className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+                        className="h-11 w-full rounded-xl border border-neutral-300 px-3 text-sm outline-none"
                         value={branchId}
                         onChange={(e) => setBranchId(e.target.value)}
                       >
@@ -5461,7 +5752,7 @@ export default function CreateOrderPageClient() {
                   </div>
 
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Nhân viên phụ trách
                     </p>
                     {assignStaffLoading ? (
@@ -5480,17 +5771,15 @@ export default function CreateOrderPageClient() {
                         searchPlaceholder="Tìm tên, mã NV hoặc chi nhánh..."
                       />
                     )}
-                    <p className="mt-1 text-xs text-neutral-500">
-                      Có thể gán cho nhân viên ở bất kỳ chi nhánh nào.
-                    </p>
+                    <p className="mt-1 text-[11px] text-neutral-400">Tuỳ chọn.</p>
                   </div>
 
                   <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Người trả ship
                     </p>
                     <select
-                      className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+                      className="h-11 w-full rounded-xl border border-neutral-300 px-3 text-sm outline-none"
                       value={shippingPayer}
                       onChange={(e) =>
                         setShippingPayer(e.target.value as ShippingPayer)
@@ -5501,15 +5790,15 @@ export default function CreateOrderPageClient() {
                     </select>
                   </div>
 
-                  <div>
-                    <p className="mb-2 text-sm font-medium text-neutral-700">
+                  <div className="md:col-span-2">
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Yêu cầu giao hàng
                     </p>
-                    <div className="space-y-2 rounded-2xl border border-neutral-300 bg-white p-3">
+                    <div className="grid gap-2 rounded-2xl border border-neutral-300 bg-white p-3 sm:grid-cols-3">
                       {deliveryRequirementOptions.map((item) => (
                         <label
                           key={item.value}
-                          className="flex cursor-pointer items-center gap-2 text-sm text-neutral-800"
+                          className="flex cursor-pointer items-center gap-2 text-xs text-neutral-800"
                         >
                           <input
                             type="checkbox"
@@ -5523,8 +5812,8 @@ export default function CreateOrderPageClient() {
                         </label>
                       ))}
 
-                      <div className="border-t border-neutral-100 pt-2">
-                        <label className="flex cursor-pointer items-start gap-2 text-sm font-semibold text-neutral-900">
+                      <div className="border-t border-neutral-100 pt-2 sm:col-span-3">
+                        <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-neutral-900">
                           <input
                             type="checkbox"
                             checked={failedDeliveryFee30k}
@@ -5533,7 +5822,7 @@ export default function CreateOrderPageClient() {
                             }
                             className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
                           />
-                          <span className="min-w-0 whitespace-nowrap leading-5">{DELIVERY_FAILED_FEE_NOTE}</span>
+                          <span className="min-w-0 leading-5">{DELIVERY_FAILED_FEE_NOTE}</span>
                         </label>
                       </div>
                     </div>
@@ -5560,7 +5849,7 @@ export default function CreateOrderPageClient() {
 
                 <div className="mt-4 grid gap-3 md:grid-cols-[1fr_300px]">
                   <input
-                    className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+                    className="h-11 w-full rounded-xl border border-neutral-300 px-3 text-sm outline-none"
                     placeholder="Tìm theo tên sản phẩm, SKU, màu, size..."
                     value={productSearch}
                     onChange={(e) => setProductSearch(e.target.value)}
