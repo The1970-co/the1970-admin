@@ -244,6 +244,15 @@ type OrderHistoryEntry = {
   tone?: "default" | "success" | "warning";
 };
 
+type ConfirmAction = {
+  title: string;
+  description: ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  tone?: "default" | "danger" | "success";
+  resolve: (ok: boolean) => void;
+};
+
 type ReturnExchangeSummary = {
   id: string;
   code?: string | null;
@@ -471,7 +480,9 @@ function isFinalShipmentStatus(status?: string | null) {
     s.includes("SUCCESS") ||
     s.includes("CANCEL") ||
     s.includes("FAILED") ||
-    s.includes("RETURN")
+    s.includes("RETURNED") ||
+    s.includes("DA_HOAN") ||
+    s.includes("ĐÃ_HOÀN")
   );
 }
 
@@ -1921,6 +1932,7 @@ export default function OrderDetailPageClient({
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [showCreatedToast, setShowCreatedToast] = useState(false);
   const createdToastShownRef = useRef(false);
   const loadProvinces = async () => {
@@ -2323,12 +2335,36 @@ export default function OrderDetailPageClient({
   };
 
 
+  const askConfirm = (input: Omit<ConfirmAction, "resolve">) => {
+    return new Promise<boolean>((resolve) => {
+      setConfirmAction({
+        ...input,
+        resolve,
+      });
+    });
+  };
+
+  const closeConfirmAction = (ok: boolean) => {
+    if (!confirmAction) return;
+    confirmAction.resolve(ok);
+    setConfirmAction(null);
+  };
+
   const handleConfirmReturnReceived = async () => {
     if (!order?.id || returnConfirming) return;
 
-    const ok = window.confirm(
-      "Xác nhận shop đã nhận hàng hoàn từ GHN? Thao tác này chỉ nên bấm sau khi nhân viên đã cầm/kiểm hàng hoàn.",
-    );
+    const ok = await askConfirm({
+      title: "Xác nhận nhận hàng hoàn GHN",
+      description: (
+        <div className="space-y-2 text-sm leading-6 text-neutral-600">
+          <p>Chỉ xác nhận khi shop đã cầm/kiểm hàng hoàn thực tế.</p>
+          <p>Hệ thống sẽ nhập lại tồn kho, ghi lịch sử kho và lưu người xác nhận thao tác.</p>
+        </div>
+      ),
+      confirmText: "Xác nhận & nhập kho",
+      cancelText: "Để sau",
+      tone: "success",
+    });
 
     if (!ok) return;
 
@@ -2375,7 +2411,13 @@ export default function OrderDetailPageClient({
           : prev,
       );
 
-      setMessage(json?.message || "Đã xác nhận shop nhận hàng hoàn.");
+      const restoredQty = Number(json?.restoredItems?.reduce?.((sum: number, item: any) => sum + Number(item?.qty || 0), 0) || 0);
+      setMessage(
+        json?.message ||
+          (restoredQty > 0
+            ? `Đã xác nhận nhận hàng hoàn và nhập lại ${restoredQty} sản phẩm vào kho.`
+            : "Đã xác nhận nhận hàng hoàn. Kho đã được ghi nhận trước đó, không cộng lại lần 2."),
+      );
       await refreshShipmentTracking(false);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không xác nhận được hàng hoàn.");
@@ -2662,6 +2704,10 @@ export default function OrderDetailPageClient({
   const openTrackingUrl = trackingLinkForShipment(viewOrder?.shipment);
   const returnReceiveStatus = getReturnReceiveStatus(viewOrder?.shipment);
   const returnReceiveLabel = returnReceiveStatusLabel(returnReceiveStatus);
+  const visibleShipmentLabel =
+    returnReceiveStatus === "RECEIVED" || returnReceiveStatus === "RECEIVED_WITH_ISSUE"
+      ? returnReceiveLabel || "Đã nhận hàng hoàn"
+      : currentShipmentLabel;
   const showConfirmReturnReceived = returnReceiveStatus === "WAITING_CONFIRM";
 
   const canEdit =
@@ -3212,9 +3258,13 @@ export default function OrderDetailPageClient({
 
   const handleInternalCancelOrder = async () => {
     if (!order) return;
-    const ok = window.confirm(
-      `Huỷ nội bộ đơn ${order.orderCode}? Nút này chỉ đổi trạng thái trong hệ thống, không gửi lệnh huỷ sang GHN.`,
-    );
+    const ok = await askConfirm({
+      title: `Huỷ nội bộ đơn ${order.orderCode}?`,
+      description: "Nút này chỉ đổi trạng thái trong hệ thống, không gửi lệnh huỷ sang hãng vận chuyển.",
+      confirmText: "Huỷ nội bộ",
+      cancelText: "Không huỷ",
+      tone: "danger",
+    });
     if (!ok) return;
 
     try {
@@ -3238,9 +3288,13 @@ export default function OrderDetailPageClient({
     if (!order) return;
     const carrierLabel = getCarrierLabel(order, meta);
     const carrierCode = getCarrierCode(order, meta);
-    const ok = window.confirm(
-      `Huỷ ${carrierLabel} cho đơn ${order.orderCode}? Nút này gửi yêu cầu huỷ vận đơn sang ${carrierLabel}.`,
-    );
+    const ok = await askConfirm({
+      title: `Huỷ ${carrierLabel} cho đơn ${order.orderCode}?`,
+      description: "Nếu đơn đã xuất kho, hệ thống sẽ hoàn tồn kho và ghi lịch sử kho. Thao tác có guard chống hoàn tồn 2 lần.",
+      confirmText: `Huỷ ${carrierLabel}`,
+      cancelText: "Không huỷ",
+      tone: "danger",
+    });
     if (!ok) return;
 
     try {
@@ -3270,7 +3324,7 @@ export default function OrderDetailPageClient({
       } as OrderDetail;
       setOrder(nextOrder);
       setDraftOrder(nextOrder);
-      setMessage(`Đã gửi yêu cầu huỷ ${carrierLabel}.`);
+      setMessage(`Đã huỷ ${carrierLabel}. Nếu đơn đã xuất kho, hệ thống đã hoàn tồn kho và ghi lịch sử kho.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : `Huỷ ${carrierLabel} thất bại.`);
     } finally {
@@ -3315,7 +3369,13 @@ export default function OrderDetailPageClient({
       return;
     }
 
-    const ok = window.confirm(`Đẩy đơn ${order.orderCode} qua ${carrierLabel}?`);
+    const ok = await askConfirm({
+      title: `Đẩy đơn ${order.orderCode} qua ${carrierLabel}?`,
+      description: "Nếu đơn chưa xuất kho trước đó, hệ thống sẽ trừ kho và ghi lịch sử kho. Nếu đơn đã xuất kho, hệ thống sẽ không trừ kho lần 2.",
+      confirmText: `Gửi ${carrierLabel}`,
+      cancelText: "Để sau",
+      tone: "default",
+    });
     if (!ok) return;
 
     try {
@@ -3405,7 +3465,7 @@ export default function OrderDetailPageClient({
 
       setOrder(nextOrder);
       setDraftOrder(nextOrder);
-      setMessage(`Đã đẩy đơn qua ${carrierLabel}.`);
+      setMessage(`Đã đẩy đơn qua ${carrierLabel}. Nếu đơn chưa xuất kho trước đó, hệ thống đã trừ kho và ghi lịch sử kho.`);
       void refreshShipmentTracking(true);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : `Đẩy ${carrierLabel} thất bại.`);
@@ -3484,6 +3544,47 @@ export default function OrderDetailPageClient({
 
   return (
     <div className="min-h-screen bg-neutral-50 p-3 lg:space-y-3 lg:p-4">
+      {confirmAction ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-neutral-950/45 px-4 backdrop-blur-[1px]">
+          <div className="w-full max-w-[460px] overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-2xl">
+            <div className="border-b border-neutral-100 px-6 py-5">
+              <div className="mb-3 inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-500">
+                Xác nhận thao tác
+              </div>
+              <h3 className="text-lg font-semibold tracking-tight text-neutral-950">
+                {confirmAction.title}
+              </h3>
+            </div>
+
+            <div className="px-6 py-5 text-sm leading-6 text-neutral-600">
+              {confirmAction.description}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-neutral-100 bg-neutral-50 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => closeConfirmAction(false)}
+                className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-700 hover:bg-neutral-100"
+              >
+                {confirmAction.cancelText || "Huỷ"}
+              </button>
+              <button
+                type="button"
+                onClick={() => closeConfirmAction(true)}
+                className={`rounded-2xl px-4 py-2.5 text-sm font-semibold text-white ${
+                  confirmAction.tone === "danger"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : confirmAction.tone === "success"
+                      ? "bg-emerald-700 hover:bg-emerald-800"
+                      : "bg-neutral-950 hover:bg-neutral-800"
+                }`}
+              >
+                {confirmAction.confirmText || "Xác nhận"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showCreatedToast ? (
         <div className="fixed right-4 top-4 z-50 w-[360px] rounded-2xl border border-emerald-200 bg-white p-4 shadow-xl">
           <div className="flex items-start gap-3">
@@ -3707,20 +3808,67 @@ export default function OrderDetailPageClient({
           </div>
         </div>
 
-        {message ? (
-          <Panel className="px-4 py-3">
-            <p
-              className={`text-sm ${message.includes("Đã lưu") ||
-                  message.includes("Đã cập nhật") ||
-                  message.includes("Đã xác thực")
-                  ? "text-emerald-600"
-                  : "text-red-600"
-                }`}
+        {message ? (() => {
+          const normalizedMessage = message.toLowerCase();
+          const isSuccessMessage =
+            message.includes("Đã lưu") ||
+            message.includes("Đã cập nhật") ||
+            message.includes("Đã xác thực") ||
+            message.includes("Đã xác nhận") ||
+            message.includes("Đã gửi") ||
+            message.includes("Đã đẩy") ||
+            message.includes("Đã huỷ") ||
+            message.includes("Đã hủy") ||
+            message.includes("nhập lại") ||
+            normalizedMessage.includes("đã nhận hàng hoàn") ||
+            normalizedMessage.includes("hoàn tồn kho") ||
+            normalizedMessage.includes("ghi lịch sử kho");
+
+          return (
+            <Panel
+              className={`overflow-hidden px-4 py-3 ${
+                isSuccessMessage
+                  ? "border-neutral-200 bg-white"
+                  : "border-red-200 bg-red-50"
+              }`}
             >
-              {message}
-            </p>
-          </Panel>
-        ) : null}
+              <div className="flex items-start gap-3">
+                <span
+                  className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                    isSuccessMessage
+                      ? "bg-neutral-950 text-white"
+                      : "bg-red-600 text-white"
+                  }`}
+                >
+                  {isSuccessMessage ? "✓" : "!"}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p
+                      className={`text-sm font-semibold ${
+                        isSuccessMessage ? "text-neutral-950" : "text-red-700"
+                      }`}
+                    >
+                      {isSuccessMessage ? "Đã cập nhật vận hành" : "Có lỗi xảy ra"}
+                    </p>
+                    {isSuccessMessage ? (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                        Đã ghi nhận
+                      </span>
+                    ) : null}
+                  </div>
+                  <p
+                    className={`mt-1 text-sm leading-6 ${
+                      isSuccessMessage ? "text-neutral-700" : "text-red-600"
+                    }`}
+                  >
+                    {message}
+                  </p>
+                </div>
+              </div>
+            </Panel>
+          );
+        })() : null}
 
         {viewOrder.shipment?.trackingCode ? (
           <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -3742,7 +3890,7 @@ export default function OrderDetailPageClient({
                 Trạng thái realtime
               </p>
               <p className="mt-2 text-sm font-semibold text-neutral-950">
-                {currentShipmentLabel}
+                {visibleShipmentLabel}
               </p>
               {returnReceiveLabel ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">

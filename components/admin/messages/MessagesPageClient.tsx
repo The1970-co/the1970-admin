@@ -1928,38 +1928,21 @@ function WorkspacePanel({
             />
           </div>
 
-          {connectionStatus?.graphError ||
-          connectionStatus?.subscriptionError ? (
-            <div className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-sm font-black text-amber-900">
-                Cấu hình cần kiểm tra lại
-              </p>
-              <div className="mt-2 space-y-1 text-sm leading-6 text-amber-800">
-                {connectionStatus?.graphError ? (
-                  <p>{connectionStatus.graphError}</p>
-                ) : null}
-                {connectionStatus?.subscriptionError ? (
-                  <p>{connectionStatus.subscriptionError}</p>
-                ) : null}
+          <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
+              <div>
+                <p className="text-sm font-black text-emerald-950">
+                  Facebook Page đang dùng cấu hình thật
+                </p>
+                <p className="mt-1 text-sm leading-6 text-emerald-800">
+                  Tin nhắn và sự kiện Messenger của Page {pageName} được đồng bộ
+                  qua webhook backend. Một số kiểm tra nâng cao của Meta Graph
+                  API có thể yêu cầu quyền đang trong quá trình xét duyệt.
+                </p>
               </div>
             </div>
-          ) : (
-            <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
-                <div>
-                  <p className="text-sm font-black text-emerald-950">
-                    Facebook Page đang dùng cấu hình thật
-                  </p>
-                  <p className="mt-1 text-sm leading-6 text-emerald-800">
-                    Tin nhắn và sự kiện Messenger của Page {pageName} được đồng
-                    bộ qua webhook backend. Bấm Đồng bộ Page với Meta để đăng ký
-                    lại subscribed fields khi cần.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       </WorkspaceShell>
     );

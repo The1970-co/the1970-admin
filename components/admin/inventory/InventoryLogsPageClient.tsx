@@ -699,8 +699,71 @@ function getReferenceDisplay(row: InventoryMovementV2) {
   };
 }
 
+function cleanActorName(value?: string | null) {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[.;,]+$/g, "")
+    .trim();
+
+  if (!text) return "";
+
+  const lowered = normalizeSearchValue(text);
+  if (
+    ["system", "unknown", "null", "undefined", "chua ghi nhan", "chua ro"].includes(lowered)
+  ) {
+    return "";
+  }
+
+  if (looksLikeSystemId(text)) return "";
+
+  return text;
+}
+
+function extractActorNameFromText(...values: any[]) {
+  const text = values
+    .map((value) => String(value || ""))
+    .filter(Boolean)
+    .join(" | ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "";
+
+  const patterns: RegExp[] = [
+    /(?:Người xác nhận|Nguoi xac nhan|Nhân viên xác nhận|Nhan vien xac nhan|Người thao tác|Nguoi thao tac|Nhân viên thao tác|Nhan vien thao tac|Người kiểm|Nguoi kiem|Người chốt|Nguoi chot|Người tạo|Nguoi tao|Người xử lý|Nguoi xu ly|Người huỷ|Nguoi huy|Người hủy|Nguoi huy|Thực hiện bởi|Thuc hien boi|Xác nhận bởi|Xac nhan boi)\s*:\s*([^|;,]+)/i,
+    /(?:Nhân viên|Nhan vien)\s+([^|;,]+?)\s+(?:đã xác nhận|da xac nhan|đã chốt|da chot|đã xử lý|da xu ly)/i,
+    /(?:Người xác nhận|Nguoi xac nhan)\s+([^|;,]+?)(?:\s+đã|\s+da|$)/i,
+    /(?:confirmedByName|createdByName|actorName|staffName|userName)\s*["'=:\s]+\s*([^"',|;}]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const actor = cleanActorName(match?.[1]);
+    if (actor) return actor;
+  }
+
+  return "";
+}
+
 function getActorLabel(row: InventoryMovementV2) {
   const meta = getMeta(row);
+  const parsedActor = extractActorNameFromText(
+    row.note,
+    meta.note,
+    meta.reason,
+    meta.description,
+    meta.message,
+    getNestedValue(meta, [
+      "audit.note",
+      "audit.message",
+      "movement.note",
+      "movement.reason",
+      "stockTransfer.note",
+      "stocktakeSession.note",
+      "return.note",
+      "order.note",
+    ]),
+  );
 
   return firstText(
     row.createdByName,
@@ -719,6 +782,11 @@ function getActorLabel(row: InventoryMovementV2) {
     meta.actorName,
     meta.staffName,
     meta.userName,
+    meta.returnReceivedByName,
+    meta.confirmedByName,
+    meta.createdByStaffName,
+    meta.assignedStaffName,
+    parsedActor,
     getNestedValue(meta, [
       "createdBy.fullName",
       "createdBy.name",
@@ -730,10 +798,26 @@ function getActorLabel(row: InventoryMovementV2) {
       "user.name",
       "order.createdByStaffName",
       "order.assignedStaffName",
+      "order.createdBy.name",
+      "order.createdBy.fullName",
       "purchaseReceipt.createdBy.name",
+      "purchaseReceipt.createdBy.fullName",
       "stockTransfer.createdByName",
       "stockTransfer.confirmedByName",
+      "stockTransfer.createdBy.name",
+      "stockTransfer.confirmedBy.name",
       "stocktakeWorker.name",
+      "stocktakeWorker.fullName",
+      "stocktakeSession.createdByName",
+      "stocktakeSession.confirmedByName",
+      "stocktakeSession.staffName",
+      "stocktakeSession.workerName",
+      "worker.name",
+      "worker.fullName",
+      "confirmedBy.name",
+      "confirmedBy.fullName",
+      "handledByStaffName",
+      "returnReceivedByName",
     ]),
     row.createdByEmail,
     row.actorEmail,
@@ -753,6 +837,8 @@ function getActorLabel(row: InventoryMovementV2) {
       "staff.email",
       "user.email",
       "purchaseReceipt.createdBy.email",
+      "stockTransfer.createdBy.email",
+      "stocktakeSession.createdBy.email",
     ]),
     row.createdById,
     row.actorId,
@@ -766,13 +852,23 @@ function getActorLabel(row: InventoryMovementV2) {
     meta.actorId,
     meta.staffId,
     meta.userId,
+    meta.returnReceivedById,
     getNestedValue(meta, [
       "order.createdByStaffId",
       "order.assignedStaffId",
+      "order.createdBy.id",
       "purchaseReceipt.createdById",
       "stockTransfer.createdById",
       "stockTransfer.confirmedById",
       "stocktakeSession.createdById",
+      "stocktakeSession.confirmedById",
+      "stocktakeSession.staffId",
+      "stocktakeSession.workerId",
+      "stocktakeWorker.id",
+      "worker.id",
+      "createdBy.id",
+      "confirmedBy.id",
+      "returnReceivedById",
     ])
   );
 }
@@ -793,15 +889,29 @@ function getActorIds(row: InventoryMovementV2) {
     meta.actorId,
     meta.staffId,
     meta.userId,
+    meta.returnReceivedById,
     getNestedValue(meta, [
       "order.createdByStaffId",
       "order.assignedStaffId",
+      "order.createdBy.id",
       "purchaseReceipt.createdById",
+      "purchaseReceipt.createdBy.id",
       "stockTransfer.createdById",
       "stockTransfer.confirmedById",
+      "stockTransfer.createdBy.id",
+      "stockTransfer.confirmedBy.id",
       "stocktakeSession.createdById",
+      "stocktakeSession.confirmedById",
+      "stocktakeSession.staffId",
+      "stocktakeSession.workerId",
+      "stocktakeWorker.id",
+      "worker.id",
+      "createdBy.id",
+      "confirmedBy.id",
+      "returnReceivedById",
     ]),
   ]
+    .flatMap((value) => Array.isArray(value) ? value : [value])
     .map((value) => String(value || "").trim())
     .filter(Boolean);
 }
@@ -812,7 +922,7 @@ function looksLikeSystemId(value?: string | null) {
 }
 
 function getActorDisplayLabel(row: InventoryMovementV2, actors: InventoryActorOption[]) {
-  const rawLabel = getActorLabel(row);
+  const rawLabel = cleanActorName(getActorLabel(row));
   const ids = getActorIds(row);
 
   for (const id of ids) {
@@ -820,9 +930,19 @@ function getActorDisplayLabel(row: InventoryMovementV2, actors: InventoryActorOp
     if (found?.label) return found.label;
   }
 
-  if (rawLabel && !looksLikeSystemId(rawLabel)) return rawLabel;
+  if (rawLabel) {
+    const normalizedRaw = normalizeSearchValue(rawLabel);
+    const foundByLabel = actors.find((actor) =>
+      normalizeSearchValue(actor.label) === normalizedRaw ||
+      normalizeSearchValue(actor.name) === normalizedRaw ||
+      normalizeSearchValue(actor.email) === normalizedRaw,
+    );
+    if (foundByLabel?.label) return foundByLabel.label;
 
-  return rawLabel || "";
+    return rawLabel;
+  }
+
+  return "";
 }
 
 function getStatus(row: InventoryMovementV2) {

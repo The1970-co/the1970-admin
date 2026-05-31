@@ -1410,17 +1410,49 @@ function normalizeShipmentTextForUi(value?: string | null) {
 }
 
 function shipmentDisplayStatusLabel(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const shipment: any = anyOrder.shipment || {};
+  const returnReceiveStatus = String(
+    shipment.returnReceiveStatus ||
+      shipment.return_receive_status ||
+      shipment.metadata?.returnReceiveStatus ||
+      shipment.metadata?.return_receive_status ||
+      anyOrder.returnReceiveStatus ||
+      anyOrder.return_receive_status ||
+      "",
+  )
+    .toUpperCase()
+    .trim();
+
   const value = shipmentStatusValue(order).toUpperCase();
   const normalizedValue = normalizeShipmentTextForUi(shipmentStatusValue(order));
-
-  if (
+  const fulfillmentStatus = String(anyOrder.fulfillmentStatus || "").toUpperCase().trim();
+  const orderStatus = String(anyOrder.status || "").toUpperCase().trim();
+  const looksLikeReturnShipment =
     normalizedValue.includes("CHUYEN HOAN") ||
     normalizedValue.includes("CHO HOAN") ||
     normalizedValue.includes("DANG HOAN") ||
     normalizedValue.includes("HOAN HANG") ||
     normalizedValue.includes("HANG HOAN") ||
-    normalizedValue.includes("RETURN")
-  ) {
+    normalizedValue.includes("RETURN");
+
+  if (returnReceiveStatus === "RECEIVED" || returnReceiveStatus === "RECEIVED_WITH_ISSUE") {
+    return "Đã nhận hàng hoàn";
+  }
+
+  // Một số API danh sách đơn chưa trả metadata.returnReceiveStatus,
+  // nhưng sau khi xác nhận nhận hoàn backend đã set fulfillmentStatus = RETURNED.
+  // Ưu tiên hiển thị trạng thái vận hành cuối cùng để DS đơn đồng bộ với chi tiết đơn.
+  if ((fulfillmentStatus === "RETURNED" || orderStatus === "RETURNED") && looksLikeReturnShipment) {
+    return "Đã nhận hàng hoàn";
+  }
+
+  if (returnReceiveStatus === "WAITING_CONFIRM" || returnReceiveStatus === "CONFIRMED") {
+    return "Chờ xác nhận hàng hoàn";
+  }
+
+
+  if (looksLikeReturnShipment) {
     return "Đang hoàn hàng";
   }
 
