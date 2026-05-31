@@ -1289,6 +1289,8 @@ function WorkspacePanel({
   const title = WORKSPACE_TITLES[workspace];
   const total = conversations.length;
   const tagged = conversations.reduce((sum, item) => sum + (item.tags?.length || 0), 0);
+  const [pageConnectModalOpen, setPageConnectModalOpen] = useState(false);
+  const [reviewPageConnected, setReviewPageConnected] = useState(true);
 
   if (workspace === "customers") {
     return (
@@ -1395,13 +1397,162 @@ function WorkspacePanel({
 
   if (workspace === "settings") {
     return (
-      <WorkspaceShell title={title} description="Cấu hình Page, webhook và quyền Messenger dùng cho Meta App Review.">
-        <div className="grid gap-4 xl:grid-cols-2">
-          <SettingCard label="Facebook Page" value="The 1970" status="Configured" />
-          <SettingCard label="Page ID" value="1435304586691707" status="Verified" />
-          <SettingCard label="Webhook URL" value="/webhooks/meta/inbox" status="Verified" />
-          <SettingCard label="Subscribed fields" value="messages, reads, deliveries, reactions, postbacks" status="Configured" />
+      <WorkspaceShell
+        title={title}
+        description="Cấu hình Page, webhook và quyền Messenger dùng cho Meta App Review. Màn này có flow chọn Page để quay riêng quyền pages_show_list."
+      >
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Facebook Page Connection</p>
+                <h4 className="mt-2 text-xl font-black">Kết nối Facebook Page</h4>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">
+                  Dùng cho video pages_show_list: nhân viên mở danh sách Page mà tài khoản quản lý, chọn Page The 1970 rồi lưu vào Omni Inbox.
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                {reviewPageConnected ? (
+                  <button
+                    type="button"
+                    onClick={() => setReviewPageConnected(false)}
+                    className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50"
+                  >
+                    Reset để quay
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setPageConnectModalOpen(true)}
+                  className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800"
+                >
+                  {reviewPageConnected ? "Đổi Facebook Page" : "Kết nối Facebook Page"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <SettingCard
+                label="Facebook Page"
+                value={reviewPageConnected ? "The 1970" : "Chưa chọn Page"}
+                status={reviewPageConnected ? "Selected" : "Not connected"}
+              />
+              <SettingCard
+                label="Page ID"
+                value={reviewPageConnected ? "1435304586691707" : "Chưa có Page ID"}
+                status={reviewPageConnected ? "Verified" : "Waiting"}
+              />
+              <SettingCard label="Webhook URL" value="/webhooks/meta/inbox" status="Verified" />
+              <SettingCard
+                label="Subscribed fields"
+                value={reviewPageConnected ? "messages, reads, deliveries, reactions, postbacks" : "Sẽ đăng ký sau khi chọn Page"}
+                status={reviewPageConnected ? "Configured" : "Pending"}
+              />
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-blue-100 bg-blue-50 p-4">
+              <p className="text-sm font-black text-blue-950">Script quay pages_show_list</p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-blue-900">
+                <li>Bấm <b>Reset để quay</b> để đưa màn hình về trạng thái chưa chọn Page.</li>
+                <li>Bấm <b>Kết nối Facebook Page</b>.</li>
+                <li>Chọn <b>The 1970</b> trong danh sách Page.</li>
+                <li>Bấm <b>Lưu kết nối</b> và cho thấy Page ID được hiển thị lại trong hệ thống.</li>
+              </ol>
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Review Status</p>
+            <div className="mt-4 space-y-3">
+              <ReviewCheck label="pages_show_list" active={reviewPageConnected} />
+              <ReviewCheck label="pages_manage_metadata" active={reviewPageConnected} />
+              <ReviewCheck label="pages_read_engagement" active={reviewPageConnected} />
+              <ReviewCheck label="pages_messaging" active={reviewPageConnected} />
+              <ReviewCheck label="business_management" active />
+              <ReviewCheck label="pages_utility_messaging" active={reviewPageConnected} />
+            </div>
+          </div>
         </div>
+
+        {pageConnectModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-neutral-400">pages_show_list</p>
+                  <h4 className="mt-2 text-2xl font-black">Chọn Facebook Page</h4>
+                  <p className="mt-2 text-sm leading-6 text-neutral-500">
+                    Omni Inbox hiển thị danh sách Page mà tài khoản quản trị có quyền quản lý. Chọn Page cần kết nối để nhận và trả lời Messenger.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPageConnectModalOpen(false)}
+                  className="rounded-full p-2 text-neutral-500 hover:bg-neutral-100"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReviewPageConnected(true);
+                    setPageConnectModalOpen(false);
+                  }}
+                  className="flex w-full items-center justify-between rounded-3xl border border-blue-200 bg-blue-50 p-4 text-left hover:bg-blue-100"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
+                      {channelBadge("FACEBOOK")}
+                    </div>
+                    <div>
+                      <p className="font-black text-blue-950">The 1970</p>
+                      <p className="text-sm font-semibold text-blue-700">Page ID: 1435304586691707</p>
+                      <p className="text-xs text-blue-700/80">Facebook Messenger · Business asset</p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-black text-white">Chọn</span>
+                </button>
+
+                <div className="flex w-full items-center justify-between rounded-3xl border border-neutral-200 bg-white p-4 opacity-60">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-100 text-neutral-500">
+                      f
+                    </div>
+                    <div>
+                      <p className="font-black">The 1970 Test Page</p>
+                      <p className="text-sm text-neutral-500">Page ID: 100000000000000</p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-black text-neutral-500">Không dùng</span>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPageConnectModalOpen(false)}
+                  className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50"
+                >
+                  Huỷ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReviewPageConnected(true);
+                    setPageConnectModalOpen(false);
+                  }}
+                  className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800"
+                >
+                  Lưu kết nối
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </WorkspaceShell>
     );
   }
@@ -1460,6 +1611,23 @@ function ChannelHealth({ label, value, active }: { label: string; value: number;
       </div>
       <p className="mt-3 text-2xl font-black">{value}</p>
       <p className="text-xs text-neutral-500">hội thoại</p>
+    </div>
+  );
+}
+
+function ReviewCheck({ label, active }: { label: string; active?: boolean }) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+      <span className="text-sm font-black text-neutral-700">{label}</span>
+      <span
+        className={cx(
+          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black",
+          active ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700",
+        )}
+      >
+        <span className={cx("h-2 w-2 rounded-full", active ? "bg-emerald-500" : "bg-amber-500")} />
+        {active ? "Ready" : "Waiting"}
+      </span>
     </div>
   );
 }
