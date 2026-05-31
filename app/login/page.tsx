@@ -358,13 +358,6 @@ export default function LoginPage() {
                   </button>
                 </form>
               )}
-
-              <div className="mt-6 text-xs text-neutral-400">
-                API:{" "}
-                {step === "login"
-                  ? `${API_BASE}/auth/login`
-                  : `${API_BASE}/auth/second-password/verify`}
-              </div>
             </div>
           </div>
         </div>
