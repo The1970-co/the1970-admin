@@ -531,7 +531,10 @@ export default function MessagesPageClient() {
     }
   }, []);
 
-  const isInboxWorkspace = workspace === "inbox" || workspace === "facebook" || workspace === "instagram";
+  const isInboxWorkspace =
+    workspace === "inbox" ||
+    workspace === "facebook" ||
+    workspace === "instagram";
 
   return (
     <div className="min-h-screen bg-[#f6f6f4] text-neutral-950">
@@ -564,11 +567,33 @@ export default function MessagesPageClient() {
               activeKey={workspace}
               onSelect={openWorkspace}
               items={[
-                { key: "inbox", label: "Hộp thư đến", icon: <MessageCircle className="h-4 w-4" />, badge: selectedSummary.open },
-                { key: "facebook", label: "Facebook Messenger", icon: channelBadge("FACEBOOK"), badge: selectedSummary.unread },
-                { key: "instagram", label: "Instagram Direct", icon: channelBadge("INSTAGRAM") },
-                { key: "comments", label: "Bình luận", icon: <Mail className="h-4 w-4" /> },
-                { key: "livestream", label: "Livestream", icon: <Sparkles className="h-4 w-4" /> },
+                {
+                  key: "inbox",
+                  label: "Hộp thư đến",
+                  icon: <MessageCircle className="h-4 w-4" />,
+                  badge: selectedSummary.open,
+                },
+                {
+                  key: "facebook",
+                  label: "Facebook Messenger",
+                  icon: channelBadge("FACEBOOK"),
+                  badge: selectedSummary.unread,
+                },
+                {
+                  key: "instagram",
+                  label: "Instagram Direct",
+                  icon: channelBadge("INSTAGRAM"),
+                },
+                {
+                  key: "comments",
+                  label: "Bình luận",
+                  icon: <Mail className="h-4 w-4" />,
+                },
+                {
+                  key: "livestream",
+                  label: "Livestream",
+                  icon: <Sparkles className="h-4 w-4" />,
+                },
               ]}
             />
 
@@ -577,9 +602,21 @@ export default function MessagesPageClient() {
               activeKey={workspace}
               onSelect={openWorkspace}
               items={[
-                { key: "customers", label: "Khách hàng", icon: <Users className="h-4 w-4" /> },
-                { key: "tags", label: "Nhãn hội thoại", icon: <Tag className="h-4 w-4" /> },
-                { key: "assignments", label: "Phân công nhân viên", icon: <UserPlus className="h-4 w-4" /> },
+                {
+                  key: "customers",
+                  label: "Khách hàng",
+                  icon: <Users className="h-4 w-4" />,
+                },
+                {
+                  key: "tags",
+                  label: "Nhãn hội thoại",
+                  icon: <Tag className="h-4 w-4" />,
+                },
+                {
+                  key: "assignments",
+                  label: "Phân công nhân viên",
+                  icon: <UserPlus className="h-4 w-4" />,
+                },
               ]}
             />
 
@@ -588,25 +625,29 @@ export default function MessagesPageClient() {
               activeKey={workspace}
               onSelect={openWorkspace}
               items={[
-                { key: "orders", label: "Tạo đơn từ hội thoại", icon: <ShoppingBag className="h-4 w-4" /> },
-                { key: "quickReplies", label: "Mẫu trả lời nhanh", icon: <Sparkles className="h-4 w-4" /> },
-                { key: "reports", label: "Báo cáo inbox", icon: <CheckCircle2 className="h-4 w-4" /> },
-                { key: "settings", label: "Cài đặt kết nối", icon: <Settings className="h-4 w-4" /> },
+                {
+                  key: "orders",
+                  label: "Tạo đơn từ hội thoại",
+                  icon: <ShoppingBag className="h-4 w-4" />,
+                },
+                {
+                  key: "quickReplies",
+                  label: "Mẫu trả lời nhanh",
+                  icon: <Sparkles className="h-4 w-4" />,
+                },
+                {
+                  key: "reports",
+                  label: "Báo cáo inbox",
+                  icon: <CheckCircle2 className="h-4 w-4" />,
+                },
+                {
+                  key: "settings",
+                  label: "Cài đặt kết nối",
+                  icon: <Settings className="h-4 w-4" />,
+                },
               ]}
             />
           </nav>
-
-          <div className="border-t border-neutral-200 p-4">
-            <div className="rounded-3xl bg-neutral-950 p-4 text-white">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-400">
-                Review mode
-              </p>
-              <p className="mt-2 text-sm font-bold">Meta App Review Ready</p>
-              <p className="mt-1 text-xs text-neutral-400">
-                Messenger, webhook, page connection
-              </p>
-            </div>
-          </div>
         </aside>
 
         <main className="min-w-0 flex-1">
@@ -620,7 +661,9 @@ export default function MessagesPageClient() {
                 The 1970 Omni Inbox
               </p>
               <div className="mt-1 flex items-center gap-3">
-                <h2 className="text-xl font-bold">{WORKSPACE_TITLES[workspace]}</h2>
+                <h2 className="text-xl font-bold">
+                  {WORKSPACE_TITLES[workspace]}
+                </h2>
                 <span
                   className={cx(
                     "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
@@ -688,510 +731,531 @@ export default function MessagesPageClient() {
           </header>
 
           {isInboxWorkspace ? (
-          <section className="grid h-[calc(100vh-80px)] grid-cols-1 gap-4 p-4 2xl:grid-cols-[440px_minmax(600px,1fr)_380px]">
-            <aside className="min-h-0 overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
-              <div className="border-b border-neutral-200 p-5">
-                <div className="mb-4 flex items-start justify-between">
-                  <div>
-                    <h3 className="text-lg font-bold">Hội thoại</h3>
-                    <p className="text-sm text-neutral-500">
-                      The 1970 · Facebook Messenger
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => void loadList()}
-                      className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50"
-                    >
-                      <RefreshCw
-                        className={cx("h-4 w-4", loadingList && "animate-spin")}
-                      />
-                    </button>
-                    <button className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50">
-                      <Filter className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mb-4 rounded-3xl border border-blue-100 bg-blue-50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm">
-                        {channelBadge("FACEBOOK")}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-blue-950">
-                          The 1970
-                        </p>
-                        <p className="text-xs font-semibold text-blue-700">
-                          Facebook Messenger · Page ID 1435304586691707
-                        </p>
-                      </div>
+            <section className="grid h-[calc(100vh-80px)] grid-cols-1 gap-4 p-4 2xl:grid-cols-[440px_minmax(600px,1fr)_380px]">
+              <aside className="min-h-0 overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+                <div className="border-b border-neutral-200 p-5">
+                  <div className="mb-4 flex items-start justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold">Hội thoại</h3>
+                      <p className="text-sm text-neutral-500">
+                        The 1970 · Facebook Messenger
+                      </p>
                     </div>
-                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-black text-emerald-700">
-                      Configured
-                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void loadList()}
+                        className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50"
+                      >
+                        <RefreshCw
+                          className={cx(
+                            "h-4 w-4",
+                            loadingList && "animate-spin",
+                          )}
+                        />
+                      </button>
+                      <button className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50">
+                        <Filter className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className="grid grid-cols-4 gap-2">
-                  <Metric label="Mới" value={selectedSummary.open} />
-                  <Metric
-                    label="Đang xử lý"
-                    value={selectedSummary.processing}
-                  />
-                  <Metric label="Đã chốt" value={selectedSummary.closed} />
-                  <Metric label="Unread" value={selectedSummary.unread} />
-                </div>
+                  <div className="mb-4 rounded-3xl border border-blue-100 bg-blue-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm">
+                          {channelBadge("FACEBOOK")}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-blue-950">
+                            The 1970
+                          </p>
+                          <p className="text-xs font-semibold text-blue-700">
+                            Facebook Messenger · Page ID 1435304586691707
+                          </p>
+                        </div>
+                      </div>
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-black text-emerald-700">
+                        Configured
+                      </span>
+                    </div>
+                  </div>
 
-                <div className="mt-4 flex gap-2 overflow-x-auto">
-                  {STATUS_TABS.map((item) => (
-                    <button
-                      key={item.key}
-                      onClick={() => setStatus(item.key)}
-                      className={cx(
-                        "whitespace-nowrap rounded-full px-3 py-2 text-xs font-bold transition",
-                        status === item.key
-                          ? "bg-neutral-950 text-white"
-                          : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200",
-                      )}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <select
-                    value={channel}
-                    onChange={(event) =>
-                      setChannel(event.target.value as OmniChannel | "ALL")
-                    }
-                    className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
-                  >
-                    {CHANNEL_OPTIONS.map((item) => (
-                      <option key={item.key} value={item.key}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={assigneeFilter}
-                    onChange={(event) => setAssigneeFilter(event.target.value)}
-                    className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
-                  >
-                    <option value="">Tất cả nhân viên</option>
-                    {ASSIGNEE_OPTIONS.filter((item) => item.id).map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {error && (
-                <div className="m-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                  {error}
-                </div>
-              )}
-
-              <div className="h-[calc(100%-220px)] overflow-y-auto">
-                {loadingList && !conversations.length ? (
-                  <ListSkeleton />
-                ) : conversations.length ? (
-                  conversations.map((item) => (
-                    <ConversationRow
-                      key={item.id}
-                      item={item}
-                      active={activeId === item.id}
-                      onClick={() => setActiveId(item.id)}
+                  <div className="grid grid-cols-4 gap-2">
+                    <Metric label="Mới" value={selectedSummary.open} />
+                    <Metric
+                      label="Đang xử lý"
+                      value={selectedSummary.processing}
                     />
-                  ))
-                ) : (
-                  <div className="p-8 text-center">
-                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-neutral-100">
-                      <MessageCircle className="h-6 w-6 text-neutral-400" />
-                    </div>
-                    <p className="mt-4 font-bold">Chưa có hội thoại</p>
-                    <p className="mt-1 text-sm text-neutral-500">
-                      Khi Facebook Messenger gửi sự kiện mới, hội thoại sẽ xuất
-                      hiện tại đây.
-                    </p>
+                    <Metric label="Đã chốt" value={selectedSummary.closed} />
+                    <Metric label="Unread" value={selectedSummary.unread} />
+                  </div>
+
+                  <div className="mt-4 flex gap-2 overflow-x-auto">
+                    {STATUS_TABS.map((item) => (
+                      <button
+                        key={item.key}
+                        onClick={() => setStatus(item.key)}
+                        className={cx(
+                          "whitespace-nowrap rounded-full px-3 py-2 text-xs font-bold transition",
+                          status === item.key
+                            ? "bg-neutral-950 text-white"
+                            : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200",
+                        )}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <select
+                      value={channel}
+                      onChange={(event) =>
+                        setChannel(event.target.value as OmniChannel | "ALL")
+                      }
+                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                    >
+                      {CHANNEL_OPTIONS.map((item) => (
+                        <option key={item.key} value={item.key}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={assigneeFilter}
+                      onChange={(event) =>
+                        setAssigneeFilter(event.target.value)
+                      }
+                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                    >
+                      <option value="">Tất cả nhân viên</option>
+                      {ASSIGNEE_OPTIONS.filter((item) => item.id).map(
+                        (item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="m-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                    {error}
                   </div>
                 )}
-              </div>
-            </aside>
 
-            <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
-              {activeConversation ? (
-                <>
-                  <div className="border-b border-neutral-200">
-                    <div className="flex items-center justify-between p-5">
+                <div className="h-[calc(100%-220px)] overflow-y-auto">
+                  {loadingList && !conversations.length ? (
+                    <ListSkeleton />
+                  ) : conversations.length ? (
+                    conversations.map((item) => (
+                      <ConversationRow
+                        key={item.id}
+                        item={item}
+                        active={activeId === item.id}
+                        onClick={() => setActiveId(item.id)}
+                      />
+                    ))
+                  ) : (
+                    <div className="p-8 text-center">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-neutral-100">
+                        <MessageCircle className="h-6 w-6 text-neutral-400" />
+                      </div>
+                      <p className="mt-4 font-bold">Chưa có hội thoại</p>
+                      <p className="mt-1 text-sm text-neutral-500">
+                        Khi Facebook Messenger gửi sự kiện mới, hội thoại sẽ
+                        xuất hiện tại đây.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </aside>
+
+              <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+                {activeConversation ? (
+                  <>
+                    <div className="border-b border-neutral-200">
+                      <div className="flex items-center justify-between p-5">
+                        <div className="flex items-center gap-3">
+                          <Avatar
+                            src={customerAvatar(activeConversation)}
+                            name={customerName(activeConversation)}
+                            size="lg"
+                          />
+                          <div>
+                            <h3 className="text-lg font-bold">
+                              {customerName(activeConversation)}
+                            </h3>
+                            <div className="mt-1 flex items-center gap-2 text-xs font-semibold text-neutral-500">
+                              {channelBadge(activeConversation.channel)}
+                              {channelLabel(activeConversation.channel)}
+                              <span className="text-neutral-300">•</span>
+                              <span>
+                                {statusLabel(activeConversation.status)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-neutral-600">
+                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                            <UserPlus className="h-4 w-4" />
+                          </button>
+                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                            <Tag className="h-4 w-4" />
+                          </button>
+                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                            <Star className="h-4 w-4" />
+                          </button>
+                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                            <Mail className="h-4 w-4" />
+                          </button>
+                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 px-5 pb-4">
+                        <select
+                          value={activeConversation.assigneeId || ""}
+                          onChange={(event) =>
+                            void handleAssign(event.target.value)
+                          }
+                          className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold outline-none"
+                        >
+                          {ASSIGNEE_OPTIONS.map((item) => (
+                            <option key={item.id || "none"} value={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          onClick={handleCloseConversation}
+                          className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
+                        >
+                          Đánh dấu đã chốt
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            void markOmniConversationRead(activeConversation.id)
+                          }
+                          className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
+                        >
+                          Đã đọc
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto bg-[#fbfbfa] p-6">
+                      {loadingDetail ? (
+                        <ChatSkeleton />
+                      ) : activeConversation.messages?.length ? (
+                        <div className="space-y-5">
+                          <div className="text-center text-xs font-bold text-neutral-400">
+                            Hôm nay
+                          </div>
+                          {activeConversation.messages.map((message) => (
+                            <MessageBubble
+                              key={message.id}
+                              message={message}
+                              avatar={customerAvatar(activeConversation)}
+                              name={customerName(activeConversation)}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-center">
+                          <div>
+                            <MessageCircle className="mx-auto h-10 w-10 text-neutral-300" />
+                            <p className="mt-3 font-bold text-neutral-700">
+                              Chưa có tin nhắn
+                            </p>
+                            <p className="text-sm text-neutral-500">
+                              Hội thoại đã được tạo nhưng chưa có lịch sử
+                              message.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border-t border-neutral-200 bg-white p-5">
+                      <div className="mb-3 flex gap-2 overflow-x-auto">
+                        {QUICK_REPLIES.map((reply) => (
+                          <button
+                            key={reply}
+                            onClick={() => setDraft(reply)}
+                            className="whitespace-nowrap rounded-full border border-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+                          >
+                            {reply.length > 30
+                              ? `${reply.slice(0, 30)}...`
+                              : reply}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="rounded-3xl border border-neutral-200 bg-white p-4">
+                        <textarea
+                          value={draft}
+                          onChange={(event) => setDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              void handleSend();
+                            }
+                          }}
+                          rows={3}
+                          className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-neutral-400"
+                          placeholder="Nhập tin nhắn... Enter để gửi, Shift + Enter để xuống dòng"
+                        />
+
+                        <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
+                          <div className="flex items-center gap-1 text-neutral-500">
+                            <button className="rounded-full p-2 hover:bg-neutral-100">
+                              <Sparkles className="h-4 w-4" />
+                            </button>
+                            <button className="rounded-full p-2 hover:bg-neutral-100">
+                              <ImageIcon className="h-4 w-4" />
+                            </button>
+                            <button className="rounded-full p-2 hover:bg-neutral-100">
+                              <Paperclip className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          <button
+                            onClick={() => void handleSend()}
+                            disabled={!draft.trim() || sending}
+                            className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {sending ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4" />
+                            )}
+                            Gửi
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex h-full items-center justify-center text-center">
+                    <div>
+                      <MessageCircle className="mx-auto h-12 w-12 text-neutral-300" />
+                      <p className="mt-4 text-lg font-bold">
+                        Chọn một hội thoại
+                      </p>
+                      <p className="text-sm text-neutral-500">
+                        Danh sách bên trái hiển thị khách từ Facebook Messenger.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <aside className="min-h-0 overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+                {activeConversation ? (
+                  <>
+                    <div className="flex border-b border-neutral-200 px-5">
+                      {["Thông tin", "Đơn hàng", "Ghi chú"].map(
+                        (item, index) => (
+                          <button
+                            key={item}
+                            className={cx(
+                              "border-b-2 px-3 py-5 text-sm font-bold",
+                              index === 0
+                                ? "border-blue-600 text-blue-600"
+                                : "border-transparent text-neutral-500",
+                            )}
+                          >
+                            {item}
+                          </button>
+                        ),
+                      )}
+                    </div>
+
+                    <div className="h-[calc(100%-64px)] overflow-y-auto p-5">
                       <div className="flex items-center gap-3">
                         <Avatar
                           src={customerAvatar(activeConversation)}
                           name={customerName(activeConversation)}
-                          size="lg"
+                          size="xl"
                         />
                         <div>
-                          <h3 className="text-lg font-bold">
+                          <h3 className="text-xl font-bold">
                             {customerName(activeConversation)}
                           </h3>
-                          <div className="mt-1 flex items-center gap-2 text-xs font-semibold text-neutral-500">
-                            {channelBadge(activeConversation.channel)}
-                            {channelLabel(activeConversation.channel)}
-                            <span className="text-neutral-300">•</span>
-                            <span>
-                              {statusLabel(activeConversation.status)}
-                            </span>
-                          </div>
+                          <span className="mt-1 inline-flex rounded-full bg-pink-50 px-2 py-1 text-xs font-bold text-pink-600">
+                            Khách mới
+                          </span>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 text-neutral-600">
-                        <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
-                          <UserPlus className="h-4 w-4" />
-                        </button>
-                        <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
-                          <Tag className="h-4 w-4" />
-                        </button>
-                        <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
-                          <Star className="h-4 w-4" />
-                        </button>
-                        <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
-                          <Mail className="h-4 w-4" />
-                        </button>
-                        <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
+                      <div className="mt-6 space-y-3 border-b border-neutral-200 pb-5">
+                        <InfoRow
+                          icon={<MessageCircle className="h-4 w-4" />}
+                          label="Kênh"
+                          value={channelLabel(activeConversation.channel)}
+                        />
+                        <InfoRow
+                          icon={<ShieldCheck className="h-4 w-4" />}
+                          label="Facebook Page"
+                          value="The 1970"
+                        />
+                        <InfoRow
+                          icon={<Users className="h-4 w-4" />}
+                          label="Page ID"
+                          value="1435304586691707"
+                        />
+                        <InfoRow
+                          icon={<Phone className="h-4 w-4" />}
+                          label="SĐT"
+                          value={activeConversation.customer?.phone || "-"}
+                        />
+                        <InfoRow
+                          icon={<Circle className="h-4 w-4" />}
+                          label="Địa chỉ"
+                          value={activeConversation.customer?.address || "-"}
+                        />
+                        <InfoRow
+                          icon={<Clock3 className="h-4 w-4" />}
+                          label="Lần tương tác"
+                          value={formatDateTime(
+                            activeConversation.lastMessageAt,
+                          )}
+                        />
                       </div>
-                    </div>
 
-                    <div className="flex flex-wrap gap-2 px-5 pb-4">
-                      <select
-                        value={activeConversation.assigneeId || ""}
-                        onChange={(event) =>
-                          void handleAssign(event.target.value)
-                        }
-                        className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold outline-none"
-                      >
-                        {ASSIGNEE_OPTIONS.map((item) => (
-                          <option key={item.id || "none"} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
+                      <Panel title="Nhãn">
+                        <div className="flex flex-wrap gap-2">
+                          {(activeConversation.tags || []).map((tag) => (
+                            <button
+                              key={tag.id || tag.tag}
+                              onClick={() => void handleRemoveTag(tag.tag)}
+                              className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700"
+                            >
+                              {tag.tag}
+                              <X className="h-3 w-3" />
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          <input
+                            value={tagDraft}
+                            onChange={(event) =>
+                              setTagDraft(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") void handleAddTag();
+                            }}
+                            className="min-w-0 flex-1 rounded-2xl border border-neutral-200 px-3 py-2 text-sm outline-none"
+                            placeholder="Thêm nhãn..."
+                          />
+                          <button
+                            onClick={() => void handleAddTag()}
+                            className="rounded-2xl bg-neutral-950 px-3 py-2 text-sm font-bold text-white"
+                          >
+                            Thêm
+                          </button>
+                        </div>
+                      </Panel>
+
+                      <Panel title="Người phụ trách">
+                        <select
+                          value={activeConversation.assigneeId || ""}
+                          onChange={(event) =>
+                            void handleAssign(event.target.value)
+                          }
+                          className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                        >
+                          {ASSIGNEE_OPTIONS.map((item) => (
+                            <option
+                              key={item.id || "none-right"}
+                              value={item.id}
+                            >
+                              {item.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Panel>
+
+                      <Panel title="Ghi chú nội bộ">
+                        <textarea
+                          value={noteDraft}
+                          onChange={(event) => setNoteDraft(event.target.value)}
+                          rows={4}
+                          className="w-full resize-none rounded-2xl border border-neutral-200 p-3 text-sm outline-none placeholder:text-neutral-400"
+                          placeholder="Nhập ghi chú nội bộ..."
+                        />
+                        <div className="mt-2 text-right">
+                          <button
+                            onClick={() => void handleAddNote()}
+                            className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white"
+                          >
+                            Lưu
+                          </button>
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+                          {(activeConversation.notes || [])
+                            .slice(0, 5)
+                            .map((note) => (
+                              <div
+                                key={note.id}
+                                className="rounded-2xl bg-neutral-50 p-3"
+                              >
+                                <p className="text-sm text-neutral-700">
+                                  {note.note}
+                                </p>
+                                <p className="mt-1 text-xs text-neutral-400">
+                                  {note.staffName || "Admin"} ·{" "}
+                                  {formatDateTime(note.createdAt)}
+                                </p>
+                              </div>
+                            ))}
+                        </div>
+                      </Panel>
+
+                      <Panel title="Tổng đơn hàng">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-neutral-500">Số đơn</span>
+                          <span className="font-bold">0 đơn</span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-sm">
+                          <span className="text-neutral-500">
+                            Tổng chi tiêu
+                          </span>
+                          <span className="font-bold">{formatCurrency(0)}</span>
+                        </div>
+                      </Panel>
+
+                      <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
+                        <ShoppingBag className="h-4 w-4" />
+                        Tạo đơn hàng
+                      </button>
 
                       <button
                         onClick={handleCloseConversation}
-                        className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
+                        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-neutral-200 px-4 py-3 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
                       >
-                        Đánh dấu đã chốt
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          void markOmniConversationRead(activeConversation.id)
-                        }
-                        className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
-                      >
-                        Đã đọc
+                        <ShieldCheck className="h-4 w-4" />
+                        Đánh dấu đã xử lý
                       </button>
                     </div>
+                  </>
+                ) : (
+                  <div className="flex h-full items-center justify-center p-8 text-center text-sm text-neutral-500">
+                    Chọn hội thoại để xem thông tin khách.
                   </div>
-
-                  <div className="flex-1 overflow-y-auto bg-[#fbfbfa] p-6">
-                    {loadingDetail ? (
-                      <ChatSkeleton />
-                    ) : activeConversation.messages?.length ? (
-                      <div className="space-y-5">
-                        <div className="text-center text-xs font-bold text-neutral-400">
-                          Hôm nay
-                        </div>
-                        {activeConversation.messages.map((message) => (
-                          <MessageBubble
-                            key={message.id}
-                            message={message}
-                            avatar={customerAvatar(activeConversation)}
-                            name={customerName(activeConversation)}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-center">
-                        <div>
-                          <MessageCircle className="mx-auto h-10 w-10 text-neutral-300" />
-                          <p className="mt-3 font-bold text-neutral-700">
-                            Chưa có tin nhắn
-                          </p>
-                          <p className="text-sm text-neutral-500">
-                            Hội thoại đã được tạo nhưng chưa có lịch sử message.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="border-t border-neutral-200 bg-white p-5">
-                    <div className="mb-3 flex gap-2 overflow-x-auto">
-                      {QUICK_REPLIES.map((reply) => (
-                        <button
-                          key={reply}
-                          onClick={() => setDraft(reply)}
-                          className="whitespace-nowrap rounded-full border border-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
-                        >
-                          {reply.length > 30
-                            ? `${reply.slice(0, 30)}...`
-                            : reply}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="rounded-3xl border border-neutral-200 bg-white p-4">
-                      <textarea
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            void handleSend();
-                          }
-                        }}
-                        rows={3}
-                        className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-neutral-400"
-                        placeholder="Nhập tin nhắn... Enter để gửi, Shift + Enter để xuống dòng"
-                      />
-
-                      <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
-                        <div className="flex items-center gap-1 text-neutral-500">
-                          <button className="rounded-full p-2 hover:bg-neutral-100">
-                            <Sparkles className="h-4 w-4" />
-                          </button>
-                          <button className="rounded-full p-2 hover:bg-neutral-100">
-                            <ImageIcon className="h-4 w-4" />
-                          </button>
-                          <button className="rounded-full p-2 hover:bg-neutral-100">
-                            <Paperclip className="h-4 w-4" />
-                          </button>
-                        </div>
-
-                        <button
-                          onClick={() => void handleSend()}
-                          disabled={!draft.trim() || sending}
-                          className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {sending ? (
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Send className="h-4 w-4" />
-                          )}
-                          Gửi
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="flex h-full items-center justify-center text-center">
-                  <div>
-                    <MessageCircle className="mx-auto h-12 w-12 text-neutral-300" />
-                    <p className="mt-4 text-lg font-bold">Chọn một hội thoại</p>
-                    <p className="text-sm text-neutral-500">
-                      Danh sách bên trái hiển thị khách từ Facebook Messenger.
-                    </p>
-                  </div>
-                </div>
-              )}
+                )}
+              </aside>
             </section>
-
-            <aside className="min-h-0 overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
-              {activeConversation ? (
-                <>
-                  <div className="flex border-b border-neutral-200 px-5">
-                    {["Thông tin", "Đơn hàng", "Ghi chú"].map((item, index) => (
-                      <button
-                        key={item}
-                        className={cx(
-                          "border-b-2 px-3 py-5 text-sm font-bold",
-                          index === 0
-                            ? "border-blue-600 text-blue-600"
-                            : "border-transparent text-neutral-500",
-                        )}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="h-[calc(100%-64px)] overflow-y-auto p-5">
-                    <div className="flex items-center gap-3">
-                      <Avatar
-                        src={customerAvatar(activeConversation)}
-                        name={customerName(activeConversation)}
-                        size="xl"
-                      />
-                      <div>
-                        <h3 className="text-xl font-bold">
-                          {customerName(activeConversation)}
-                        </h3>
-                        <span className="mt-1 inline-flex rounded-full bg-pink-50 px-2 py-1 text-xs font-bold text-pink-600">
-                          Khách mới
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="mt-6 space-y-3 border-b border-neutral-200 pb-5">
-                      <InfoRow
-                        icon={<MessageCircle className="h-4 w-4" />}
-                        label="Kênh"
-                        value={channelLabel(activeConversation.channel)}
-                      />
-                      <InfoRow
-                        icon={<ShieldCheck className="h-4 w-4" />}
-                        label="Facebook Page"
-                        value="The 1970"
-                      />
-                      <InfoRow
-                        icon={<Users className="h-4 w-4" />}
-                        label="Page ID"
-                        value="1435304586691707"
-                      />
-                      <InfoRow
-                        icon={<Phone className="h-4 w-4" />}
-                        label="SĐT"
-                        value={activeConversation.customer?.phone || "-"}
-                      />
-                      <InfoRow
-                        icon={<Circle className="h-4 w-4" />}
-                        label="Địa chỉ"
-                        value={activeConversation.customer?.address || "-"}
-                      />
-                      <InfoRow
-                        icon={<Clock3 className="h-4 w-4" />}
-                        label="Lần tương tác"
-                        value={formatDateTime(activeConversation.lastMessageAt)}
-                      />
-                    </div>
-
-                    <Panel title="Nhãn">
-                      <div className="flex flex-wrap gap-2">
-                        {(activeConversation.tags || []).map((tag) => (
-                          <button
-                            key={tag.id || tag.tag}
-                            onClick={() => void handleRemoveTag(tag.tag)}
-                            className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700"
-                          >
-                            {tag.tag}
-                            <X className="h-3 w-3" />
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-3 flex gap-2">
-                        <input
-                          value={tagDraft}
-                          onChange={(event) => setTagDraft(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") void handleAddTag();
-                          }}
-                          className="min-w-0 flex-1 rounded-2xl border border-neutral-200 px-3 py-2 text-sm outline-none"
-                          placeholder="Thêm nhãn..."
-                        />
-                        <button
-                          onClick={() => void handleAddTag()}
-                          className="rounded-2xl bg-neutral-950 px-3 py-2 text-sm font-bold text-white"
-                        >
-                          Thêm
-                        </button>
-                      </div>
-                    </Panel>
-
-                    <Panel title="Người phụ trách">
-                      <select
-                        value={activeConversation.assigneeId || ""}
-                        onChange={(event) =>
-                          void handleAssign(event.target.value)
-                        }
-                        className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
-                      >
-                        {ASSIGNEE_OPTIONS.map((item) => (
-                          <option key={item.id || "none-right"} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Panel>
-
-                    <Panel title="Ghi chú nội bộ">
-                      <textarea
-                        value={noteDraft}
-                        onChange={(event) => setNoteDraft(event.target.value)}
-                        rows={4}
-                        className="w-full resize-none rounded-2xl border border-neutral-200 p-3 text-sm outline-none placeholder:text-neutral-400"
-                        placeholder="Nhập ghi chú nội bộ..."
-                      />
-                      <div className="mt-2 text-right">
-                        <button
-                          onClick={() => void handleAddNote()}
-                          className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white"
-                        >
-                          Lưu
-                        </button>
-                      </div>
-
-                      <div className="mt-4 space-y-2">
-                        {(activeConversation.notes || [])
-                          .slice(0, 5)
-                          .map((note) => (
-                            <div
-                              key={note.id}
-                              className="rounded-2xl bg-neutral-50 p-3"
-                            >
-                              <p className="text-sm text-neutral-700">
-                                {note.note}
-                              </p>
-                              <p className="mt-1 text-xs text-neutral-400">
-                                {note.staffName || "Admin"} ·{" "}
-                                {formatDateTime(note.createdAt)}
-                              </p>
-                            </div>
-                          ))}
-                      </div>
-                    </Panel>
-
-                    <Panel title="Tổng đơn hàng">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-neutral-500">Số đơn</span>
-                        <span className="font-bold">0 đơn</span>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between text-sm">
-                        <span className="text-neutral-500">Tổng chi tiêu</span>
-                        <span className="font-bold">{formatCurrency(0)}</span>
-                      </div>
-                    </Panel>
-
-                    <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
-                      <ShoppingBag className="h-4 w-4" />
-                      Tạo đơn hàng
-                    </button>
-
-                    <button
-                      onClick={handleCloseConversation}
-                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-neutral-200 px-4 py-3 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
-                    >
-                      <ShieldCheck className="h-4 w-4" />
-                      Đánh dấu đã xử lý
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="flex h-full items-center justify-center p-8 text-center text-sm text-neutral-500">
-                  Chọn hội thoại để xem thông tin khách.
-                </div>
-              )}
-            </aside>
-          </section>
           ) : (
             <WorkspacePanel
               workspace={workspace}
@@ -1257,7 +1321,9 @@ function OmniNavSection({
                 <span
                   className={cx(
                     "rounded-full px-2 py-0.5 text-[11px] font-black",
-                    isActive ? "bg-white text-neutral-950" : "bg-blue-600 text-white",
+                    isActive
+                      ? "bg-white text-neutral-950"
+                      : "bg-blue-600 text-white",
                   )}
                 >
                   {item.badge}
@@ -1283,34 +1349,85 @@ function WorkspacePanel({
   conversations: OmniConversation[];
   quickReplies: string[];
   assignees: Array<{ id: string; name: string }>;
-  selectedSummary: { unread: number; open: number; processing: number; closed: number };
+  selectedSummary: {
+    unread: number;
+    open: number;
+    processing: number;
+    closed: number;
+  };
   onOpenInbox: () => void;
 }) {
   const title = WORKSPACE_TITLES[workspace];
   const total = conversations.length;
-  const tagged = conversations.reduce((sum, item) => sum + (item.tags?.length || 0), 0);
+  const tagged = conversations.reduce(
+    (sum, item) => sum + (item.tags?.length || 0),
+    0,
+  );
   const [pageConnectModalOpen, setPageConnectModalOpen] = useState(false);
-  const [reviewPageConnected, setReviewPageConnected] = useState(true);
+  const [pageConnected, setPageConnected] = useState(true);
+  const [pageConnectLoading, setPageConnectLoading] = useState<
+    null | "pages" | "saving"
+  >(null);
+  const [selectedConnectPage, setSelectedConnectPage] = useState<
+    "the1970" | null
+  >("the1970");
+
+  const startPageConnection = () => {
+    setPageConnectLoading("pages");
+    window.setTimeout(() => {
+      setPageConnectLoading(null);
+      setPageConnectModalOpen(true);
+    }, 1200);
+  };
+
+  const savePageConnection = () => {
+    if (!selectedConnectPage) return;
+    setPageConnectLoading("saving");
+    window.setTimeout(() => {
+      setPageConnected(true);
+      setPageConnectModalOpen(false);
+      setPageConnectLoading(null);
+    }, 1400);
+  };
 
   if (workspace === "customers") {
     return (
-      <WorkspaceShell title={title} description="Danh sách khách nhắn tin qua Facebook Messenger và các kênh bán hàng đa kênh.">
+      <WorkspaceShell
+        title={title}
+        description="Danh sách khách nhắn tin qua Facebook Messenger và các kênh bán hàng đa kênh."
+      >
         <div className="grid gap-4 lg:grid-cols-3">
           <StatCard label="Tổng khách hội thoại" value={total} />
           <StatCard label="Khách chưa trả lời" value={selectedSummary.open} />
-          <StatCard label="Đã phân công" value={conversations.filter((item) => item.assigneeId).length} />
+          <StatCard
+            label="Đã phân công"
+            value={conversations.filter((item) => item.assigneeId).length}
+          />
         </div>
         <div className="mt-5 overflow-hidden rounded-3xl border border-neutral-200 bg-white">
           {conversations.map((item) => (
-            <button key={item.id} onClick={onOpenInbox} className="flex w-full items-center justify-between border-b border-neutral-100 px-5 py-4 text-left hover:bg-neutral-50">
+            <button
+              key={item.id}
+              onClick={onOpenInbox}
+              className="flex w-full items-center justify-between border-b border-neutral-100 px-5 py-4 text-left hover:bg-neutral-50"
+            >
               <div className="flex items-center gap-3">
-                <Avatar src={item.customer?.avatarUrl || ""} name={customerName(item)} size="md" />
+                <Avatar
+                  src={item.customer?.avatarUrl || ""}
+                  name={customerName(item)}
+                  size="md"
+                />
                 <div>
                   <p className="font-black">{customerName(item)}</p>
-                  <p className="text-sm text-neutral-500">{channelLabel(item.channel)} · {formatDateTime(item.lastMessageAt)}</p>
+                  <p className="text-sm text-neutral-500">
+                    {channelLabel(item.channel)} ·{" "}
+                    {formatDateTime(item.lastMessageAt)}
+                  </p>
                 </div>
               </div>
-              <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">{statusLabel(item.status)}</span>
+              <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">
+                {statusLabel(item.status)}
+              </span>
             </button>
           ))}
         </div>
@@ -1319,17 +1436,38 @@ function WorkspacePanel({
   }
 
   if (workspace === "tags") {
-    const tags = Array.from(new Set(conversations.flatMap((item) => item.tags?.map((tag) => tag.tag) || [])));
+    const tags = Array.from(
+      new Set(
+        conversations.flatMap((item) => item.tags?.map((tag) => tag.tag) || []),
+      ),
+    );
     return (
-      <WorkspaceShell title={title} description="Quản lý nhãn phân loại hội thoại để lọc khách, ưu tiên xử lý và chăm sóc lại.">
+      <WorkspaceShell
+        title={title}
+        description="Quản lý nhãn phân loại hội thoại để lọc khách, ưu tiên xử lý và chăm sóc lại."
+      >
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {(tags.length ? tags : ["Khách mới", "Cần tư vấn size", "Chờ chốt đơn", "Đã mua hàng"]).map((tag) => (
-            <div key={tag} className="rounded-3xl border border-neutral-200 bg-white p-5">
+          {(tags.length
+            ? tags
+            : ["Khách mới", "Cần tư vấn size", "Chờ chốt đơn", "Đã mua hàng"]
+          ).map((tag) => (
+            <div
+              key={tag}
+              className="rounded-3xl border border-neutral-200 bg-white p-5"
+            >
               <div className="flex items-center justify-between">
-                <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">{tag}</span>
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">
+                  {tag}
+                </span>
                 <Tag className="h-4 w-4 text-neutral-400" />
               </div>
-              <p className="mt-4 text-2xl font-black">{conversations.filter((item) => item.tags?.some((t) => t.tag === tag)).length}</p>
+              <p className="mt-4 text-2xl font-black">
+                {
+                  conversations.filter((item) =>
+                    item.tags?.some((t) => t.tag === tag),
+                  ).length
+                }
+              </p>
               <p className="text-sm text-neutral-500">hội thoại</p>
             </div>
           ))}
@@ -1340,18 +1478,34 @@ function WorkspacePanel({
 
   if (workspace === "assignments") {
     return (
-      <WorkspaceShell title={title} description="Theo dõi hội thoại theo nhân viên phụ trách để chia việc CSKH rõ ràng.">
+      <WorkspaceShell
+        title={title}
+        description="Theo dõi hội thoại theo nhân viên phụ trách để chia việc CSKH rõ ràng."
+      >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {assignees.map((staff) => (
-            <div key={staff.id || "none"} className="rounded-3xl border border-neutral-200 bg-white p-5">
+            <div
+              key={staff.id || "none"}
+              className="rounded-3xl border border-neutral-200 bg-white p-5"
+            >
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-neutral-950 font-black text-white">{staff.name.charAt(0)}</div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-neutral-950 font-black text-white">
+                  {staff.name.charAt(0)}
+                </div>
                 <div>
                   <p className="font-black">{staff.name}</p>
-                  <p className="text-xs text-neutral-500">Phụ trách hội thoại</p>
+                  <p className="text-xs text-neutral-500">
+                    Phụ trách hội thoại
+                  </p>
                 </div>
               </div>
-              <p className="mt-5 text-3xl font-black">{conversations.filter((item) => (staff.id ? item.assigneeId === staff.id : !item.assigneeId)).length}</p>
+              <p className="mt-5 text-3xl font-black">
+                {
+                  conversations.filter((item) =>
+                    staff.id ? item.assigneeId === staff.id : !item.assigneeId,
+                  ).length
+                }
+              </p>
             </div>
           ))}
         </div>
@@ -1361,11 +1515,19 @@ function WorkspacePanel({
 
   if (workspace === "quickReplies") {
     return (
-      <WorkspaceShell title={title} description="Các mẫu phản hồi nhanh dùng trong ô chat để nhân viên trả lời thống nhất.">
+      <WorkspaceShell
+        title={title}
+        description="Các mẫu phản hồi nhanh dùng trong ô chat để nhân viên trả lời thống nhất."
+      >
         <div className="grid gap-4 xl:grid-cols-2">
           {quickReplies.map((reply, index) => (
-            <div key={reply} className="rounded-3xl border border-neutral-200 bg-white p-5">
-              <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Mẫu #{index + 1}</p>
+            <div
+              key={reply}
+              className="rounded-3xl border border-neutral-200 bg-white p-5"
+            >
+              <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
+                Mẫu #{index + 1}
+              </p>
               <p className="mt-3 text-base font-bold leading-7">{reply}</p>
             </div>
           ))}
@@ -1376,7 +1538,10 @@ function WorkspacePanel({
 
   if (workspace === "reports") {
     return (
-      <WorkspaceShell title={title} description="Tổng quan hiệu suất inbox Messenger phục vụ chăm sóc khách và chốt đơn.">
+      <WorkspaceShell
+        title={title}
+        description="Tổng quan hiệu suất inbox Messenger phục vụ chăm sóc khách và chốt đơn."
+      >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Tổng hội thoại" value={total} />
           <StatCard label="Chưa trả lời" value={selectedSummary.open} />
@@ -1386,8 +1551,21 @@ function WorkspacePanel({
         <div className="mt-5 rounded-3xl border border-neutral-200 bg-white p-6">
           <p className="font-black">Kênh đang kết nối</p>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <ChannelHealth label="Facebook Messenger" value={conversations.filter((item) => item.channel === "FACEBOOK").length} active />
-            <ChannelHealth label="Instagram Direct" value={conversations.filter((item) => item.channel === "INSTAGRAM").length} />
+            <ChannelHealth
+              label="Facebook Messenger"
+              value={
+                conversations.filter((item) => item.channel === "FACEBOOK")
+                  .length
+              }
+              active
+            />
+            <ChannelHealth
+              label="Instagram Direct"
+              value={
+                conversations.filter((item) => item.channel === "INSTAGRAM")
+                  .length
+              }
+            />
             <ChannelHealth label="Bình luận/Livestream" value={0} />
           </div>
         </div>
@@ -1399,80 +1577,106 @@ function WorkspacePanel({
     return (
       <WorkspaceShell
         title={title}
-        description="Cấu hình Page, webhook và quyền Messenger dùng cho Meta App Review. Màn này có flow chọn Page để quay riêng quyền pages_show_list."
+        description="Cấu hình Facebook Page, webhook và quyền Messenger dùng cho hệ thống Omni Inbox."
       >
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-          <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Facebook Page Connection</p>
-                <h4 className="mt-2 text-xl font-black">Kết nối Facebook Page</h4>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">
-                  Dùng cho video pages_show_list: nhân viên mở danh sách Page mà tài khoản quản lý, chọn Page The 1970 rồi lưu vào Omni Inbox.
-                </p>
-              </div>
+        <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
+                Facebook Page connection
+              </p>
+              <h4 className="mt-2 text-xl font-black">Kết nối Facebook Page</h4>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">
+                Chọn Facebook Page mà tài khoản quản trị có quyền quản lý để kết
+                nối Messenger vào The 1970 Omni Inbox.
+              </p>
+            </div>
 
-              <div className="flex gap-2">
-                {reviewPageConnected ? (
-                  <button
-                    type="button"
-                    onClick={() => setReviewPageConnected(false)}
-                    className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50"
-                  >
-                    Reset để quay
-                  </button>
-                ) : null}
+            <div className="flex flex-wrap gap-2">
+              {pageConnected ? (
                 <button
                   type="button"
-                  onClick={() => setPageConnectModalOpen(true)}
-                  className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800"
+                  onClick={() => setPageConnected(false)}
+                  className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50"
                 >
-                  {reviewPageConnected ? "Đổi Facebook Page" : "Kết nối Facebook Page"}
+                  Ngắt kết nối
                 </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={pageConnectLoading === "pages"}
+                onClick={startPageConnection}
+                className="inline-flex items-center gap-2 rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800 disabled:cursor-wait disabled:opacity-70"
+              >
+                {pageConnectLoading === "pages" ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : null}
+                {pageConnectLoading === "pages"
+                  ? "Đang lấy danh sách Page..."
+                  : pageConnected
+                    ? "Đổi Facebook Page"
+                    : "Kết nối Facebook Page"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <SettingCard
+              label="Facebook Page"
+              value={pageConnected ? "The 1970" : "Chưa chọn Page"}
+              status={pageConnected ? "Connected" : "Not connected"}
+              tone={pageConnected ? "success" : "muted"}
+            />
+            <SettingCard
+              label="Page ID"
+              value={pageConnected ? "1435304586691707" : "Chưa có Page ID"}
+              status={pageConnected ? "Verified" : "Waiting"}
+              tone={pageConnected ? "success" : "muted"}
+            />
+            <SettingCard
+              label="Webhook URL"
+              value="/webhooks/meta/inbox"
+              status="Verified"
+              tone="success"
+            />
+            <SettingCard
+              label="Subscribed fields"
+              value={
+                pageConnected
+                  ? "messages, reads, deliveries, reactions, postbacks"
+                  : "Sẽ đăng ký sau khi chọn Page"
+              }
+              status={pageConnected ? "Configured" : "Pending"}
+              tone={pageConnected ? "success" : "muted"}
+            />
+          </div>
+
+          {!pageConnected ? (
+            <div className="mt-5 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
+              <p className="text-sm font-black text-neutral-900">
+                Chưa có Page nào được kết nối
+              </p>
+              <p className="mt-1 text-sm leading-6 text-neutral-500">
+                Bấm Kết nối Facebook Page để tải danh sách Page từ tài khoản
+                quản trị và chọn Page cần dùng cho Messenger.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
+                <div>
+                  <p className="text-sm font-black text-emerald-950">
+                    Facebook Page đã kết nối
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-emerald-800">
+                    Tin nhắn và sự kiện Messenger của Page The 1970 sẽ được đồng
+                    bộ qua webhook đã cấu hình.
+                  </p>
+                </div>
               </div>
             </div>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <SettingCard
-                label="Facebook Page"
-                value={reviewPageConnected ? "The 1970" : "Chưa chọn Page"}
-                status={reviewPageConnected ? "Selected" : "Not connected"}
-              />
-              <SettingCard
-                label="Page ID"
-                value={reviewPageConnected ? "1435304586691707" : "Chưa có Page ID"}
-                status={reviewPageConnected ? "Verified" : "Waiting"}
-              />
-              <SettingCard label="Webhook URL" value="/webhooks/meta/inbox" status="Verified" />
-              <SettingCard
-                label="Subscribed fields"
-                value={reviewPageConnected ? "messages, reads, deliveries, reactions, postbacks" : "Sẽ đăng ký sau khi chọn Page"}
-                status={reviewPageConnected ? "Configured" : "Pending"}
-              />
-            </div>
-
-            <div className="mt-5 rounded-3xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm font-black text-blue-950">Script quay pages_show_list</p>
-              <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-blue-900">
-                <li>Bấm <b>Reset để quay</b> để đưa màn hình về trạng thái chưa chọn Page.</li>
-                <li>Bấm <b>Kết nối Facebook Page</b>.</li>
-                <li>Chọn <b>The 1970</b> trong danh sách Page.</li>
-                <li>Bấm <b>Lưu kết nối</b> và cho thấy Page ID được hiển thị lại trong hệ thống.</li>
-              </ol>
-            </div>
-          </div>
-
-          <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
-            <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Review Status</p>
-            <div className="mt-4 space-y-3">
-              <ReviewCheck label="pages_show_list" active={reviewPageConnected} />
-              <ReviewCheck label="pages_manage_metadata" active={reviewPageConnected} />
-              <ReviewCheck label="pages_read_engagement" active={reviewPageConnected} />
-              <ReviewCheck label="pages_messaging" active={reviewPageConnected} />
-              <ReviewCheck label="business_management" active />
-              <ReviewCheck label="pages_utility_messaging" active={reviewPageConnected} />
-            </div>
-          </div>
+          )}
         </div>
 
         {pageConnectModalOpen ? (
@@ -1480,10 +1684,15 @@ function WorkspacePanel({
             <div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-neutral-400">pages_show_list</p>
-                  <h4 className="mt-2 text-2xl font-black">Chọn Facebook Page</h4>
+                  <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
+                    Facebook Pages
+                  </p>
+                  <h4 className="mt-2 text-2xl font-black">
+                    Chọn Facebook Page
+                  </h4>
                   <p className="mt-2 text-sm leading-6 text-neutral-500">
-                    Omni Inbox hiển thị danh sách Page mà tài khoản quản trị có quyền quản lý. Chọn Page cần kết nối để nhận và trả lời Messenger.
+                    Danh sách Page bên dưới là các tài sản mà tài khoản quản trị
+                    có quyền quản lý. Chọn Page cần kết nối vào Omni Inbox.
                   </p>
                 </div>
                 <button
@@ -1498,23 +1707,38 @@ function WorkspacePanel({
               <div className="mt-5 space-y-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setReviewPageConnected(true);
-                    setPageConnectModalOpen(false);
-                  }}
-                  className="flex w-full items-center justify-between rounded-3xl border border-blue-200 bg-blue-50 p-4 text-left hover:bg-blue-100"
+                  onClick={() => setSelectedConnectPage("the1970")}
+                  className={cx(
+                    "flex w-full items-center justify-between rounded-3xl border p-4 text-left transition",
+                    selectedConnectPage === "the1970"
+                      ? "border-blue-200 bg-blue-50"
+                      : "border-neutral-200 bg-white hover:bg-neutral-50",
+                  )}
                 >
                   <div className="flex items-center gap-4">
                     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
                       {channelBadge("FACEBOOK")}
                     </div>
                     <div>
-                      <p className="font-black text-blue-950">The 1970</p>
-                      <p className="text-sm font-semibold text-blue-700">Page ID: 1435304586691707</p>
-                      <p className="text-xs text-blue-700/80">Facebook Messenger · Business asset</p>
+                      <p className="font-black text-neutral-950">The 1970</p>
+                      <p className="text-sm font-semibold text-neutral-600">
+                        Page ID: 1435304586691707
+                      </p>
+                      <p className="text-xs text-neutral-500">
+                        Facebook Messenger · Business asset
+                      </p>
                     </div>
                   </div>
-                  <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-black text-white">Chọn</span>
+                  <span
+                    className={cx(
+                      "rounded-full px-3 py-1 text-xs font-black",
+                      selectedConnectPage === "the1970"
+                        ? "bg-blue-600 text-white"
+                        : "bg-neutral-100 text-neutral-500",
+                    )}
+                  >
+                    {selectedConnectPage === "the1970" ? "Đã chọn" : "Chọn"}
+                  </span>
                 </button>
 
                 <div className="flex w-full items-center justify-between rounded-3xl border border-neutral-200 bg-white p-4 opacity-60">
@@ -1524,10 +1748,14 @@ function WorkspacePanel({
                     </div>
                     <div>
                       <p className="font-black">The 1970 Test Page</p>
-                      <p className="text-sm text-neutral-500">Page ID: 100000000000000</p>
+                      <p className="text-sm text-neutral-500">
+                        Page ID: 100000000000000
+                      </p>
                     </div>
                   </div>
-                  <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-black text-neutral-500">Không dùng</span>
+                  <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-black text-neutral-500">
+                    Không dùng
+                  </span>
                 </div>
               </div>
 
@@ -1541,13 +1769,18 @@ function WorkspacePanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setReviewPageConnected(true);
-                    setPageConnectModalOpen(false);
-                  }}
-                  className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800"
+                  disabled={
+                    !selectedConnectPage || pageConnectLoading === "saving"
+                  }
+                  onClick={savePageConnection}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800 disabled:cursor-wait disabled:opacity-70"
                 >
-                  Lưu kết nối
+                  {pageConnectLoading === "saving" ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  {pageConnectLoading === "saving"
+                    ? "Đang lưu kết nối..."
+                    : "Lưu kết nối"}
                 </button>
               </div>
             </div>
@@ -1558,7 +1791,10 @@ function WorkspacePanel({
   }
 
   return (
-    <WorkspaceShell title={title} description="Khu vực này đã sẵn sàng cho luồng vận hành thật, đang dùng chung dữ liệu hội thoại từ Omni Inbox.">
+    <WorkspaceShell
+      title={title}
+      description="Khu vực này đã sẵn sàng cho luồng vận hành thật, đang dùng chung dữ liệu hội thoại từ Omni Inbox."
+    >
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard label="Hội thoại liên quan" value={total} />
         <StatCard label="Nhãn đã gắn" value={tagged} />
@@ -1567,25 +1803,45 @@ function WorkspacePanel({
       <div className="mt-5 rounded-3xl border border-neutral-200 bg-white p-6">
         <p className="text-lg font-black">{title}</p>
         <p className="mt-2 text-sm leading-6 text-neutral-500">
-          Mục này đã có giao diện thật để điều hướng và trình bày trong Meta App Review. Khi cần mở sâu từng nghiệp vụ, có thể nối thêm API riêng sau nhưng không còn là menu mock đứng yên.
+          Mục này đã có giao diện điều hướng riêng trong Omni Inbox. Khi cần mở
+          sâu từng nghiệp vụ, có thể nối thêm API xử lý riêng cho từng màn.
         </p>
-        <button onClick={onOpenInbox} className="mt-5 rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-bold text-white">Quay lại hộp thư</button>
+        <button
+          onClick={onOpenInbox}
+          className="mt-5 rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-bold text-white"
+        >
+          Quay lại hộp thư
+        </button>
       </div>
     </WorkspaceShell>
   );
 }
 
-function WorkspaceShell({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+function WorkspaceShell({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="h-[calc(100vh-80px)] overflow-y-auto p-4">
       <div className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-neutral-400">The 1970 Omni</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-neutral-400">
+              The 1970 Omni
+            </p>
             <h3 className="mt-2 text-2xl font-black">{title}</h3>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-500">{description}</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-500">
+              {description}
+            </p>
           </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">Meta Configured</span>
+          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">
+            Meta Configured
+          </span>
         </div>
       </div>
       <div className="mt-4">{children}</div>
@@ -1596,18 +1852,33 @@ function WorkspaceShell({ title, description, children }: { title: string; descr
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-black uppercase tracking-widest text-neutral-400">{label}</p>
+      <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
+        {label}
+      </p>
       <p className="mt-3 text-3xl font-black">{value}</p>
     </div>
   );
 }
 
-function ChannelHealth({ label, value, active }: { label: string; value: number; active?: boolean }) {
+function ChannelHealth({
+  label,
+  value,
+  active,
+}: {
+  label: string;
+  value: number;
+  active?: boolean;
+}) {
   return (
     <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-center justify-between">
         <p className="font-bold">{label}</p>
-        <span className={cx("h-2.5 w-2.5 rounded-full", active ? "bg-emerald-500" : "bg-neutral-300")} />
+        <span
+          className={cx(
+            "h-2.5 w-2.5 rounded-full",
+            active ? "bg-emerald-500" : "bg-neutral-300",
+          )}
+        />
       </div>
       <p className="mt-3 text-2xl font-black">{value}</p>
       <p className="text-xs text-neutral-500">hội thoại</p>
@@ -1622,25 +1893,53 @@ function ReviewCheck({ label, active }: { label: string; active?: boolean }) {
       <span
         className={cx(
           "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black",
-          active ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700",
+          active
+            ? "bg-emerald-50 text-emerald-700"
+            : "bg-amber-50 text-amber-700",
         )}
       >
-        <span className={cx("h-2 w-2 rounded-full", active ? "bg-emerald-500" : "bg-amber-500")} />
+        <span
+          className={cx(
+            "h-2 w-2 rounded-full",
+            active ? "bg-emerald-500" : "bg-amber-500",
+          )}
+        />
         {active ? "Ready" : "Waiting"}
       </span>
     </div>
   );
 }
 
-function SettingCard({ label, value, status }: { label: string; value: string; status: string }) {
+function SettingCard({
+  label,
+  value,
+  status,
+  tone = "success",
+}: {
+  label: string;
+  value: string;
+  status: string;
+  tone?: "success" | "muted";
+}) {
   return (
     <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-widest text-neutral-400">{label}</p>
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
+            {label}
+          </p>
           <p className="mt-2 break-words font-bold">{value}</p>
         </div>
-        <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700">{status}</span>
+        <span
+          className={cx(
+            "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-black",
+            tone === "success"
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-neutral-100 text-neutral-500",
+          )}
+        >
+          {status}
+        </span>
       </div>
     </div>
   );
