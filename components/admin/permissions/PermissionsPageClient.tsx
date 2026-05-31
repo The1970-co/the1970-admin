@@ -2277,61 +2277,76 @@ export default function PermissionsPageClient() {
           const employee = employees.find((item) => item.id === staffId);
           if (!employee) throw new Error(`Không tìm thấy nhân viên ${staffId}`);
 
-          const roleMap = new Map<string, string>();
+          const normalizedBulkRoleId = normalizeRole(bulkRoleId);
+          const rolePermissionKeys = roleKeys(normalizedBulkRoleId);
 
-          employee.branchRoles.forEach((row) => {
-            if (!row.branchId) return;
-            roleMap.set(row.branchId, normalizeRole(row.roleCode || employee.roleId || "retail-staff"));
-          });
+          let branchRoles: { branchId: string; roleCode: string }[] = [];
+          let branchPermissions: BranchPermission[] = [];
 
-          if (!roleMap.size && employee.branchId) {
-            roleMap.set(employee.branchId, normalizeRole(employee.roleId || "retail-staff"));
+          if (bulkApplyMode === "replace") {
+            // Replace nghĩa là reset nhân viên về đúng 1 chi nhánh đang chọn.
+            // Không giữ branchRoles / branchPermissions cũ của chi nhánh khác,
+            // tránh case nhân viên vẫn còn 2 badge chi nhánh sau khi bấm "Đặt lại".
+            branchRoles = [
+              {
+                branchId: bulkBranchId,
+                roleCode: normalizedBulkRoleId,
+              },
+            ];
+
+            branchPermissions = [
+              sanitizeBranchPermission({
+                ...buildLegacyFlags(rolePermissionKeys, bulkBranchId),
+                branchId: bulkBranchId,
+                note: `Bulk replace role ${normalizedBulkRoleId}`,
+              }),
+            ];
+          } else {
+            const roleMap = new Map<string, string>();
+
+            employee.branchRoles.forEach((row) => {
+              if (!row.branchId) return;
+              roleMap.set(row.branchId, normalizeRole(row.roleCode || employee.roleId || "retail-staff"));
+            });
+
+            if (!roleMap.size && employee.branchId) {
+              roleMap.set(employee.branchId, normalizeRole(employee.roleId || "retail-staff"));
+            }
+
+            roleMap.set(bulkBranchId, normalizedBulkRoleId);
+
+            branchRoles = Array.from(roleMap.entries()).map(([branchId, roleCode]) => ({
+              branchId,
+              roleCode,
+            }));
+
+            const permissionMap = new Map<string, BranchPermission>();
+
+            employee.branchPermissions.forEach((row) => {
+              if (!row.branchId) return;
+              permissionMap.set(row.branchId, sanitizeBranchPermission(row));
+            });
+
+            const currentPermission = permissionMap.get(bulkBranchId);
+            const currentKeys = currentPermission
+              ? getPermissionKeysFromBranchPermission(currentPermission)
+              : [];
+            const nextKeys = unique([...currentKeys, ...rolePermissionKeys]);
+
+            permissionMap.set(bulkBranchId, {
+              ...buildLegacyFlags(nextKeys, bulkBranchId),
+              branchId: bulkBranchId,
+              note: `Bulk merge role ${normalizedBulkRoleId}`,
+            });
+
+            branchPermissions = Array.from(permissionMap.values()).map(sanitizeBranchPermission);
           }
-
-          // Enterprise rule:
-          // - replace: chỉ thay role/quyền của đúng chi nhánh đang chọn, giữ nguyên chi nhánh khác.
-          // - merge: cộng thêm quyền của role mới vào đúng chi nhánh đang chọn, vẫn giữ chi nhánh khác.
-          roleMap.set(bulkBranchId, normalizeRole(bulkRoleId));
-
-          const branchRoles = Array.from(roleMap.entries()).map(([branchId, roleCode]) => ({
-            branchId,
-            roleCode,
-          }));
-
-          const permissionMap = new Map<string, BranchPermission>();
-
-          employee.branchPermissions.forEach((row) => {
-            if (!row.branchId) return;
-            permissionMap.set(row.branchId, sanitizeBranchPermission(row));
-          });
-
-          const rolePermissionKeys = roleKeys(bulkRoleId);
-          const currentPermission = permissionMap.get(bulkBranchId);
-          const currentKeys = currentPermission
-            ? getPermissionKeysFromBranchPermission(currentPermission)
-            : [];
-
-          const nextKeys =
-            bulkApplyMode === "replace"
-              ? rolePermissionKeys
-              : unique([...currentKeys, ...rolePermissionKeys]);
-
-          permissionMap.set(bulkBranchId, {
-            ...buildLegacyFlags(nextKeys, bulkBranchId),
-            branchId: bulkBranchId,
-            note:
-              bulkApplyMode === "replace"
-                ? `Bulk replace role ${bulkRoleId}`
-                : `Bulk merge role ${bulkRoleId}`,
-          });
-
-          const branchPermissions = Array.from(permissionMap.values()).map(sanitizeBranchPermission);
 
           await apiJson(`/staff/${staffId}`, {
             method: "PATCH",
             body: JSON.stringify({
-              role: branchRoles[0]?.roleCode || employee.roleId || bulkRoleId,
-              branchId: employee.branchId || branchRoles[0]?.branchId || bulkBranchId,
+              role: branchRoles[0]?.roleCode || normalizedBulkRoleId,
+              branchId: branchRoles[0]?.branchId || bulkBranchId,
             }),
           });
 
@@ -3127,10 +3142,10 @@ Lưu override
                 <div className="mt-4 rounded-2xl bg-neutral-50 p-4 space-y-2 text-sm">
                   <p><span className="font-bold">Vai trò:</span> {getRoleName(bulkRoleId)}</p>
                   <p><span className="font-bold">Chi nhánh:</span> {getBranchName(branches, bulkBranchId)}</p>
-                  <p><span className="font-bold">Chế độ:</span> {bulkApplyMode === "replace" ? "Đặt lại quyền chi nhánh này theo vai trò mới" : "Giữ quyền hiện tại + cộng thêm vai trò mới"}</p>
+                  <p><span className="font-bold">Chế độ:</span> {bulkApplyMode === "replace" ? "Reset về đúng chi nhánh này theo vai trò mới" : "Giữ quyền hiện tại + cộng thêm vai trò mới"}</p>
                   {bulkApplyMode === "replace" && (
                     <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-amber-800 text-xs">
-                      ⚠ Chỉ cập nhật quyền tại chi nhánh đang chọn. Không ảnh hưởng quyền ở chi nhánh khác.
+                      ⚠ Nhân viên sẽ chỉ còn chi nhánh đang chọn. Các chi nhánh cũ sẽ bị xoá khỏi branchRoles và branchPermissions.
                     </div>
                   )}
                 </div>
@@ -3318,7 +3333,7 @@ Lưu override
             </div>
             <p className="mt-1 text-xs text-neutral-500">
               {bulkApplyMode === "replace"
-                ? "Đặt lại quyền tại chi nhánh đang chọn theo vai trò mới. Quyền ở chi nhánh khác không bị ảnh hưởng."
+                ? "Đặt lại nhân viên về đúng chi nhánh đang chọn. Các chi nhánh cũ của nhân viên sẽ bị xoá khỏi phân quyền."
                 : "Giữ quyền hiện tại của chi nhánh đang chọn và cộng thêm quyền từ vai trò mới."}
             </p>
 

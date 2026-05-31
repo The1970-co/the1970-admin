@@ -119,22 +119,6 @@ function userRoles(user: any) {
     .filter(Boolean);
 }
 
-function isAdminLikeUser(user: any) {
-  const roles = userRoles(user);
-  return roles.some((role) => ["owner", "admin"].includes(role));
-}
-
-const OMNI_ADMIN_ONLY_PERMISSIONS = new Set<string>([
-  PERMISSIONS.MENU_OMNI_INBOX,
-  PERMISSIONS.MENU_OMNI_MESSAGES,
-  PERMISSIONS.MENU_OMNI_COMMENTS,
-  PERMISSIONS.MENU_OMNI_LIVESTREAM,
-]);
-
-function isOmniMenuPermission(permission?: string | null) {
-  return OMNI_ADMIN_ONLY_PERMISSIONS.has(String(permission || ""));
-}
-
 function normalizeDisplayName(value?: string | null) {
   return String(value || "")
     .replace(/\s+-\s+[A-Za-z0-9À-ỹ]+\s*$/i, "")
@@ -289,18 +273,9 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     setMounted(true);
   }, []);
 
-  const visibleMenu = useMemo(() => {
-    const adminOnlyCan = (permission?: string | null) => {
-      if (isOmniMenuPermission(permission) && !isAdminLikeUser(user)) return false;
-      return can(permission);
-    };
-
-    return filterMenu(MENU, adminOnlyCan);
-  }, [can, user]);
+  const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
   const requiredPermission = useMemo(() => getRequiredPermissionForPath(pathname), [pathname]);
-  const canAccessCurrentRoute =
-    (!requiredPermission || can(requiredPermission)) &&
-    (!isOmniMenuPermission(requiredPermission) || isAdminLikeUser(user));
+  const canAccessCurrentRoute = !requiredPermission || can(requiredPermission);
 
   useEffect(() => {
     if (!checked || loading || !user || canAccessCurrentRoute) return;

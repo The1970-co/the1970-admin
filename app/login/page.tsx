@@ -48,6 +48,66 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const collectPermissionKeys = (user: any) => {
+    const keys = new Set<string>();
+
+    const addKeys = (values: any) => {
+      if (!Array.isArray(values)) return;
+      values
+        .map((key: any) => String(key || "").trim())
+        .filter(Boolean)
+        .forEach((key: string) => keys.add(key));
+    };
+
+    addKeys(user?.permissions);
+    addKeys(user?.permissionKeys);
+
+    if (Array.isArray(user?.branchPermissions)) {
+      user.branchPermissions.forEach((row: any) => {
+        addKeys(row?.permissionKeys);
+        addKeys(row?.extraPermissionKeys);
+
+        if (Array.isArray(row?.deniedPermissionKeys)) {
+          row.deniedPermissionKeys
+            .map((key: any) => String(key || "").trim())
+            .filter(Boolean)
+            .forEach((key: string) => keys.delete(key));
+        }
+      });
+    }
+
+    return keys;
+  };
+
+  const getLandingPath = (permissions: Set<string>) => {
+    const landingRules: Array<[string, string]> = [
+      ["menu.dashboard", "/control"],
+      ["menu.omni_messages", "/messages"],
+      ["menu.omni_inbox", "/messages"],
+      ["menu.omni_comments", "/comments"],
+      ["menu.omni_livestream", "/livestream"],
+      ["menu.create_order", "/create-order"],
+      ["menu.pos", "/pos"],
+      ["menu.orders", "/orders"],
+      ["menu.products", "/products"],
+      ["menu.inventory", "/inventory"],
+      ["menu.inventory_logs", "/inventory-logs"],
+      ["menu.purchase_receipt", "/control/purchase-receipts"],
+      ["menu.stock_transfer", "/control/stock-transfers"],
+      ["menu.stocktake", "/stocktake"],
+      ["menu.finance", "/finance/daily"],
+      ["menu.cash_voucher", "/finance/cash-receipts"],
+      ["menu.finance_ghn_reconciliation", "/finance/ghn-reconciliation"],
+      ["menu.finance_local_delivery", "/finance/local-delivery"],
+      ["menu.reports", "/finance/revenue"],
+      ["menu.customers", "/control/customers"],
+      ["menu.staff_transfer", "/staff-transfer"],
+      ["menu.print_center", "/print-center"],
+    ];
+
+    return landingRules.find(([permission]) => permissions.has(permission))?.[1] || "";
+  };
+
   const saveSession = (data: any) => {
     const token = data?.token || data?.accessToken || data?.access_token;
     const user = data?.user || data?.staff || data?.data?.user;
@@ -68,10 +128,7 @@ export default function LoginPage() {
       window.dispatchEvent(new Event("the1970:auth-changed"));
     }
 
-    const permissions = new Set<string>([
-      ...(Array.isArray(user?.permissions) ? user.permissions : []),
-      ...(Array.isArray(user?.permissionKeys) ? user.permissionKeys : []),
-    ]);
+    const permissions = collectPermissionKeys(user);
 
     const roles = [
       ...(Array.isArray(user?.roles) ? user.roles : []),
@@ -80,33 +137,14 @@ export default function LoginPage() {
       .map((role: any) => String(role || "").toLowerCase())
       .filter(Boolean);
 
-    if (roles.includes("owner") || roles.includes("admin")) {
+    if (roles.includes("owner") || roles.includes("admin") || permissions.has("*")) {
       router.replace("/control");
       return;
     }
 
-    if (permissions.has("menu.create_order")) {
-      router.replace("/create-order");
-      return;
-    }
-
-    if (permissions.has("menu.pos")) {
-      router.replace("/pos");
-      return;
-    }
-
-    if (permissions.has("menu.orders")) {
-      router.replace("/orders");
-      return;
-    }
-
-    if (permissions.has("menu.products")) {
-      router.replace("/products");
-      return;
-    }
-
-    if (permissions.has("menu.inventory")) {
-      router.replace("/inventory");
+    const landingPath = getLandingPath(permissions);
+    if (landingPath) {
+      router.replace(landingPath);
       return;
     }
 

@@ -28,6 +28,7 @@ import {
 import {
   createCustomerAddress,
   getCustomerAddresses,
+  getCustomers,
   setDefaultCustomerAddress,
   updateCustomerAddress,
   type CustomerAddressItem,
@@ -2815,10 +2816,9 @@ export default function CreateOrderPageClient() {
       try {
         const rows = await getProvinces();
         setProvinceOptions(rows);
-        if (rows.length) {
-          setAddressProvince((prev) => prev || rows[0].name);
-          setNewCustomerProvince((prev) => prev || rows[0].name);
-        }
+        // Không tự lấy tỉnh đầu tiên làm mặc định.
+        // Danh sách tỉnh đang sắp xếp theo alphabet/API nên phần tử đầu có thể là Lào Cai,
+        // làm form trống bị hiểu nhầm là có địa chỉ. Chỉ set tỉnh khi khách/địa chỉ thật có dữ liệu.
       } catch (err) {
         console.error(err);
       }
@@ -3377,7 +3377,7 @@ export default function CreateOrderPageClient() {
     setAddressRecipientName(customerName || "");
     setAddressPhone(customerPhone || "");
     setAddressEmail("");
-    setAddressProvince(provinceOptions[0]?.name || "");
+    setAddressProvince("");
     setAddressDistrict("");
     setAddressWard("");
     setAddressPostalCode("");
@@ -3572,6 +3572,7 @@ export default function CreateOrderPageClient() {
     const rawKeyword = String(keyword || "").trim();
     const phoneKeyword = normalizePhone(rawKeyword);
     const query = phoneKeyword || rawKeyword;
+    const cachedMatches = getCachedCustomerMatches(rawKeyword, 20);
     const rows: CustomerSuggestionItem[] = [];
 
     const pushRows = (items: CustomerSuggestionItem[]) => {
@@ -3579,6 +3580,12 @@ export default function CreateOrderPageClient() {
         ...items.filter((item) => customerMatchesKeyword(item, rawKeyword || query)),
       );
     };
+
+    // Nếu cache danh sách khách đã có kết quả thì trả luôn để gõ 3-4 số đầu hiện ngay,
+    // không bị treo chờ API search vốn có thể chỉ hỗ trợ khớp gần đủ số.
+    if (cachedMatches.length) {
+      return cachedMatches;
+    }
 
     if (query) {
       try {
@@ -3595,50 +3602,72 @@ export default function CreateOrderPageClient() {
     };
 
     const requestCandidates = [
+      { endpoint: "/customers/search", params: { phone: phoneKeyword || rawKeyword, limit: "20" } },
+      { endpoint: "/customers/search", params: { q: rawKeyword, limit: "20" } },
       { endpoint: "/customers", params: { search: rawKeyword, limit: "20" } },
       { endpoint: "/customers", params: { phone: phoneKeyword || rawKeyword, limit: "20" } },
-      { endpoint: "/customers/search", params: { q: rawKeyword, limit: "20" } },
       { endpoint: "/customers/autocomplete", params: { q: rawKeyword, limit: "20" } },
     ];
 
-    for (const candidate of requestCandidates) {
-      const cleanParams = Object.fromEntries(
-        Object.entries(candidate.params).filter(([, value]) => String(value || "").trim()),
-      );
-      if (!Object.keys(cleanParams).length) continue;
+    const requestRows = await Promise.allSettled(
+      requestCandidates.map(async (candidate) => {
+        const cleanParams = Object.fromEntries(
+          Object.entries(candidate.params).filter(([, value]) => String(value || "").trim()),
+        );
+        if (!Object.keys(cleanParams).length) return [] as CustomerSuggestionItem[];
 
-      try {
         const url = new URL(`${API_BASE}${candidate.endpoint}`);
         Object.entries(cleanParams).forEach(([key, value]) => {
           url.searchParams.set(key, String(value));
         });
 
-        const res = await fetch(url.toString(), { headers });
-        if (!res.ok) continue;
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 700);
+        try {
+          const res = await fetch(url.toString(), {
+            headers,
+            signal: controller.signal,
+            cache: "no-store",
+          });
+          if (!res.ok) return [] as CustomerSuggestionItem[];
 
-        const json = await res.json().catch(() => null);
-        pushRows(normalizeCustomerRows(json));
-      } catch {
-        // Không chặn tạo đơn nếu một endpoint tìm khách không tồn tại.
-      }
-    }
+          const json = await res.json().catch(() => null);
+          return normalizeCustomerRows(json);
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      }),
+    );
 
-    return mergeCustomerSuggestions(rows, getCachedCustomerMatches(rawKeyword), 20);
+    requestRows.forEach((result) => {
+      if (result.status === "fulfilled") pushRows(result.value);
+    });
+
+    return mergeCustomerSuggestions(rows, cachedMatches, 20);
   };
 
   const loadDefaultCustomerSuggestions = async () => {
     try {
-      const result: any = await findCustomerByPhone("");
-
-      const normalizedRows = normalizeCustomerRows(result).slice(0, 30);
+      // /customers là endpoint danh sách khách đang dùng ở trang khách hàng.
+      // Tải cache 1 lần để lọc prefix SĐT trực tiếp trên UI, không phụ thuộc search API exact-match.
+      const result: any = await getCustomers();
+      const normalizedRows = normalizeCustomerRows(result).slice(0, 5000);
 
       setCustomerDefaultSuggestions(normalizedRows);
-      setCustomerSuggestions(normalizedRows);
-      setCustomerSuggestionOpen(normalizedRows.length > 0);
-    } catch {
-      setCustomerDefaultSuggestions([]);
-      setCustomerSuggestions([]);
+      setCustomerSuggestions(normalizedRows.slice(0, 30));
       setCustomerSuggestionOpen(false);
+    } catch {
+      try {
+        const fallback: any = await findCustomerByPhone("");
+        const normalizedRows = normalizeCustomerRows(fallback).slice(0, 5000);
+        setCustomerDefaultSuggestions(normalizedRows);
+        setCustomerSuggestions(normalizedRows.slice(0, 30));
+        setCustomerSuggestionOpen(false);
+      } catch {
+        setCustomerDefaultSuggestions([]);
+        setCustomerSuggestions([]);
+        setCustomerSuggestionOpen(false);
+      }
     }
   };
 
@@ -3646,6 +3675,20 @@ export default function CreateOrderPageClient() {
   useEffect(() => {
     void loadDefaultCustomerSuggestions();
   }, []);
+
+  useEffect(() => {
+    if (customerId || suppressPhoneSuggestionRef.current) return;
+
+    const keyword = String(customerPhone || "").trim();
+    if (!keyword || !customerDefaultSuggestions.length) return;
+
+    const matches = getCachedCustomerMatches(keyword, 20);
+    if (!matches.length) return;
+
+    setCustomerSuggestions(matches);
+    setCustomerSuggestionOpen(true);
+    setCustomerHint(`Tìm thấy ${matches.length} khách.`);
+  }, [customerDefaultSuggestions, customerPhone, customerId]);
 
   const handlePhoneChange = (value: string) => {
     suppressPhoneSuggestionRef.current = false;
@@ -3716,7 +3759,7 @@ export default function CreateOrderPageClient() {
           setPhoneSearching(false);
         }
       }
-    }, 120);
+    }, 80);
   };
 
   const handlePickSuggestedCustomer = async (
@@ -4084,7 +4127,7 @@ export default function CreateOrderPageClient() {
     setCustomerSuggestionOpen(false);
     setCustomerAddresses([]);
     setSelectedAddressId(null);
-    setAddressProvince(provinceOptions[0]?.name || "");
+    setAddressProvince("");
     setAddressDistrict("");
     setAddressWard("");
     setAddressLine1("");
@@ -4127,7 +4170,7 @@ export default function CreateOrderPageClient() {
     setNewCustomerPhone("");
     setNewCustomerEmail("");
     setNewCustomerRecipientName("");
-    setNewCustomerProvince(provinceOptions[0]?.name || "");
+    setNewCustomerProvince("");
     setNewCustomerDistrict("");
     setNewCustomerWard("");
     setNewCustomerPostalCode("");
@@ -4353,7 +4396,7 @@ export default function CreateOrderPageClient() {
     setAddressRecipientName(address.recipientName || customerName || "");
     setAddressPhone(address.phone || customerPhone || "");
     setAddressEmail((address as any).email || "");
-    setAddressProvince(address.province || provinceOptions[0]?.name || "");
+    setAddressProvince(address.province || "");
     setAddressDistrict((address as any).district || "");
     setAddressWard(address.ward || "");
     setAddressPostalCode(address.postalCode || "");

@@ -35,6 +35,8 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { apiJson } from "@/lib/api";
+import { useAuth } from "@/components/admin/auth/AuthProvider";
 import {
   assignOmniConversation,
   createOmniConversationNote,
@@ -103,12 +105,32 @@ const QUICK_REPLIES = [
   "Dạ mình cho em xin SĐT, địa chỉ nhận hàng và mã sản phẩm để em lên đơn nhé.",
 ];
 
-const ASSIGNEE_OPTIONS = [
-  { id: "", name: "Chưa gán" },
-  { id: "admin", name: "Admin" },
-  { id: "minh-anh", name: "Minh Anh" },
-  { id: "thu-ha", name: "Thu Hà" },
-  { id: "mai-trang", name: "Mai Trang" },
+type AssigneeOption = { id: string; name: string };
+
+type MetaConnectionStatus = {
+  pageId?: string;
+  pageName?: string;
+  channel?: OmniChannel;
+  webhookPath?: string;
+  subscribedFields?: string[];
+  tokenConfigured?: boolean;
+  graphVerified?: boolean;
+  subscriptionVerified?: boolean;
+  lastWebhookAt?: string | null;
+  graphError?: string;
+  subscriptionError?: string;
+};
+
+const UNASSIGNED_ASSIGNEE: AssigneeOption = { id: "", name: "Chưa gán" };
+const DEFAULT_META_PAGE_ID = "1435304586691707";
+const DEFAULT_META_PAGE_NAME = "The 1970";
+const DEFAULT_WEBHOOK_PATH = "/webhooks/meta/inbox";
+const DEFAULT_SUBSCRIBED_FIELDS = [
+  "messages",
+  "message_reads",
+  "message_deliveries",
+  "message_reactions",
+  "messaging_postbacks",
 ];
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -191,7 +213,160 @@ function parseEventPayload(event: MessageEvent) {
   }
 }
 
+function normalizeApiList(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.users)) return data.users;
+  if (Array.isArray(data?.staff)) return data.staff;
+  return [];
+}
+
+function normalizeName(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function getUserDisplayName(user: any) {
+  return (
+    normalizeName(user?.name) ||
+    normalizeName(user?.fullName) ||
+    normalizeName(user?.username) ||
+    normalizeName(user?.email) ||
+    "Tài khoản"
+  );
+}
+
+function getUserRoleLabel(user: any) {
+  const raw = String(
+    user?.role || user?.roleName || user?.activeRole || "",
+  ).trim();
+  if (!raw) return "Người dùng";
+  const upper = raw.toUpperCase();
+  if (upper === "OWNER") return "Chủ sở hữu";
+  if (upper === "ADMIN") return "Quản trị viên";
+  if (upper === "MANAGER") return "Quản lý";
+  if (upper === "STAFF") return "Nhân viên";
+  return raw;
+}
+
+function normalizeBranchCode(value?: string | null) {
+  const raw = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!raw) return "";
+  if (/^[A-Z0-9]{1,4}$/.test(raw)) return raw;
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/Đ/g, "D")
+    .replace(/đ/g, "d")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 4)
+    .toUpperCase();
+}
+
+function getActiveBranchName(user: any, activeBranchId?: string) {
+  const branches = Array.isArray(user?.branchRoles)
+    ? user.branchRoles
+    : Array.isArray(user?.branches)
+      ? user.branches
+      : [];
+  const activeBranch = branches.find((item: any) => {
+    const id = item?.branchId || item?.branch?.id || item?.id;
+    return id && activeBranchId && id === activeBranchId;
+  });
+
+  return (
+    normalizeName(activeBranch?.branchName) ||
+    normalizeName(activeBranch?.branch?.name) ||
+    normalizeName(user?.branchName) ||
+    normalizeName(user?.branch?.name) ||
+    normalizeName(user?.branchCode) ||
+    "Chi nhánh làm việc"
+  );
+}
+
+function getInitials(name: string) {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "U"
+  );
+}
+
+function normalizeStaffOption(item: any): AssigneeOption | null {
+  const id = String(item?.id || item?.staffId || item?.userId || "").trim();
+  const name =
+    normalizeName(item?.name) ||
+    normalizeName(item?.fullName) ||
+    normalizeName(item?.username) ||
+    normalizeName(item?.email);
+  if (!id || !name) return null;
+  return { id, name };
+}
+
+function normalizeMetaConnectionStatus(data: any): MetaConnectionStatus | null {
+  const source = data?.data || data?.connection || data;
+  if (!source || typeof source !== "object") return null;
+  return {
+    pageId: normalizeName(source.pageId || source.providerPageId || source.id),
+    pageName: normalizeName(source.pageName || source.name),
+    channel: source.channel || "FACEBOOK",
+    webhookPath: normalizeName(source.webhookPath || source.webhookUrl),
+    subscribedFields: Array.isArray(source.subscribedFields)
+      ? source.subscribedFields.map((item: any) => String(item)).filter(Boolean)
+      : undefined,
+    tokenConfigured: Boolean(source.tokenConfigured),
+    graphVerified: Boolean(source.graphVerified),
+    subscriptionVerified: Boolean(source.subscriptionVerified),
+    lastWebhookAt: source.lastWebhookAt || null,
+    graphError: normalizeName(source.graphError),
+    subscriptionError: normalizeName(source.subscriptionError),
+  };
+}
+
+function getPageName(
+  connection?: MetaConnectionStatus | null,
+  conversation?: OmniConversation | null,
+) {
+  return (
+    normalizeName(connection?.pageName) ||
+    normalizeName((conversation as any)?.page?.pageName) ||
+    DEFAULT_META_PAGE_NAME
+  );
+}
+
+function getPageId(
+  connection?: MetaConnectionStatus | null,
+  conversation?: OmniConversation | null,
+) {
+  return (
+    normalizeName(connection?.pageId) ||
+    normalizeName((conversation as any)?.page?.providerPageId) ||
+    DEFAULT_META_PAGE_ID
+  );
+}
+
+function getConnectionFields(connection?: MetaConnectionStatus | null) {
+  const fields = connection?.subscribedFields?.length
+    ? connection.subscribedFields
+    : DEFAULT_SUBSCRIBED_FIELDS;
+  return fields.join(", ");
+}
+
 export default function MessagesPageClient() {
+  const { user, activeBranchId } = useAuth();
+  const currentUserName = getUserDisplayName(user);
+  const currentUserRole = getUserRoleLabel(user);
+  const currentBranchName = getActiveBranchName(user, activeBranchId);
+
   const [conversations, setConversations] = useState<OmniConversation[]>([]);
   const [activeConversation, setActiveConversation] =
     useState<OmniConversation | null>(null);
@@ -201,6 +376,11 @@ export default function MessagesPageClient() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [staffOptions, setStaffOptions] = useState<AssigneeOption[]>([]);
+  const [metaConnection, setMetaConnection] =
+    useState<MetaConnectionStatus | null>(null);
+  const [loadingConnection, setLoadingConnection] = useState(false);
+  const [loadingStaff, setLoadingStaff] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [sending, setSending] = useState(false);
@@ -213,6 +393,98 @@ export default function MessagesPageClient() {
   >("connecting");
   const [workspace, setWorkspace] = useState<WorkspaceKey>("inbox");
   const listRequestId = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStaff() {
+      setLoadingStaff(true);
+      try {
+        const data = await apiJson("/staff", {
+          redirectOnUnauthorized: false,
+          timeoutMs: 10000,
+        } as any);
+        if (cancelled) return;
+        const options = normalizeApiList(data)
+          .map(normalizeStaffOption)
+          .filter(Boolean) as AssigneeOption[];
+        setStaffOptions(options);
+      } catch {
+        if (!cancelled) setStaffOptions([]);
+      } finally {
+        if (!cancelled) setLoadingStaff(false);
+      }
+    }
+
+    void loadStaff();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadMetaConnection = useCallback(async () => {
+    setLoadingConnection(true);
+    try {
+      const data = await apiJson("/omni-inbox/meta/connection", {
+        redirectOnUnauthorized: false,
+        timeoutMs: 10000,
+      } as any);
+      setMetaConnection(normalizeMetaConnectionStatus(data));
+    } catch {
+      setMetaConnection(null);
+    } finally {
+      setLoadingConnection(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMetaConnection();
+  }, [loadMetaConnection]);
+
+  const assigneeOptions = useMemo(() => {
+    const map = new Map<string, AssigneeOption>();
+    map.set(UNASSIGNED_ASSIGNEE.id, UNASSIGNED_ASSIGNEE);
+
+    staffOptions.forEach((item) => map.set(item.id, item));
+
+    if (user?.id) {
+      map.set(String(user.id), { id: String(user.id), name: currentUserName });
+    }
+
+    conversations.forEach((conversation) => {
+      if (conversation.assigneeId && conversation.assigneeName) {
+        map.set(conversation.assigneeId, {
+          id: conversation.assigneeId,
+          name: conversation.assigneeName,
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [conversations, currentUserName, staffOptions, user?.id]);
+
+  async function handleSyncMetaConnection() {
+    setLoadingConnection(true);
+    setError("");
+    try {
+      const data = await apiJson("/omni-inbox/meta/subscribe-page", {
+        method: "POST",
+        redirectOnUnauthorized: false,
+        timeoutMs: 20000,
+      } as any);
+      setMetaConnection(normalizeMetaConnectionStatus(data));
+      await loadList();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không đồng bộ được kết nối Facebook Page.",
+      );
+    } finally {
+      setLoadingConnection(false);
+    }
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 350);
@@ -396,7 +668,7 @@ export default function MessagesPageClient() {
 
   async function handleAssign(assigneeId: string) {
     if (!activeConversation?.id) return;
-    const assignee = ASSIGNEE_OPTIONS.find((item) => item.id === assigneeId);
+    const assignee = assigneeOptions.find((item) => item.id === assigneeId);
     if (!assignee || !assignee.id) return;
 
     try {
@@ -550,13 +822,17 @@ export default function MessagesPageClient() {
             <div className="mt-4 rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
               <div className="flex items-center gap-2 text-sm font-black text-emerald-800">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                Meta Configured
+                {metaConnection?.graphVerified
+                  ? "Meta Connected"
+                  : "Meta Configured"}
               </div>
               <p className="mt-1 text-xs font-semibold text-emerald-700">
-                Facebook Page · The 1970
+                Facebook Page · {getPageName(metaConnection)}
               </p>
               <p className="mt-0.5 text-[11px] text-emerald-700/80">
-                Messenger webhook configured
+                {metaConnection?.lastWebhookAt
+                  ? `Webhook ${formatDateTime(metaConnection.lastWebhookAt)}`
+                  : "Messenger webhook configured"}
               </p>
             </div>
           </div>
@@ -720,11 +996,13 @@ export default function MessagesPageClient() {
               </button>
               <div className="hidden items-center gap-3 rounded-2xl border border-neutral-200 bg-white px-3 py-2 shadow-sm md:flex">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-neutral-950 text-sm font-bold text-white">
-                  A
+                  {getInitials(currentUserName)}
                 </div>
                 <div>
-                  <p className="text-sm font-bold">ADMIN - ALL</p>
-                  <p className="text-xs text-neutral-500">Chi nhánh làm việc</p>
+                  <p className="text-sm font-bold">{currentUserName}</p>
+                  <p className="text-xs text-neutral-500">
+                    {currentUserRole} · {currentBranchName}
+                  </p>
                 </div>
               </div>
             </div>
@@ -767,10 +1045,11 @@ export default function MessagesPageClient() {
                         </div>
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black text-blue-950">
-                            The 1970
+                            {getPageName(metaConnection, activeConversation)}
                           </p>
                           <p className="text-xs font-semibold text-blue-700">
-                            Facebook Messenger · Page ID 1435304586691707
+                            Facebook Messenger · Page ID{" "}
+                            {getPageId(metaConnection, activeConversation)}
                           </p>
                         </div>
                       </div>
@@ -830,13 +1109,13 @@ export default function MessagesPageClient() {
                       className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
                     >
                       <option value="">Tất cả nhân viên</option>
-                      {ASSIGNEE_OPTIONS.filter((item) => item.id).map(
-                        (item) => (
+                      {assigneeOptions
+                        .filter((item) => item.id)
+                        .map((item) => (
                           <option key={item.id} value={item.id}>
                             {item.name}
                           </option>
-                        ),
-                      )}
+                        ))}
                     </select>
                   </div>
                 </div>
@@ -927,7 +1206,7 @@ export default function MessagesPageClient() {
                           }
                           className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold outline-none"
                         >
-                          {ASSIGNEE_OPTIONS.map((item) => (
+                          {assigneeOptions.map((item) => (
                             <option key={item.id || "none"} value={item.id}>
                               {item.name}
                             </option>
@@ -1106,12 +1385,15 @@ export default function MessagesPageClient() {
                         <InfoRow
                           icon={<ShieldCheck className="h-4 w-4" />}
                           label="Facebook Page"
-                          value="The 1970"
+                          value={getPageName(
+                            metaConnection,
+                            activeConversation,
+                          )}
                         />
                         <InfoRow
                           icon={<Users className="h-4 w-4" />}
                           label="Page ID"
-                          value="1435304586691707"
+                          value={getPageId(metaConnection, activeConversation)}
                         />
                         <InfoRow
                           icon={<Phone className="h-4 w-4" />}
@@ -1174,7 +1456,7 @@ export default function MessagesPageClient() {
                           }
                           className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
                         >
-                          {ASSIGNEE_OPTIONS.map((item) => (
+                          {assigneeOptions.map((item) => (
                             <option
                               key={item.id || "none-right"}
                               value={item.id}
@@ -1214,7 +1496,7 @@ export default function MessagesPageClient() {
                                   {note.note}
                                 </p>
                                 <p className="mt-1 text-xs text-neutral-400">
-                                  {note.staffName || "Admin"} ·{" "}
+                                  {note.staffName || "-"} ·{" "}
                                   {formatDateTime(note.createdAt)}
                                 </p>
                               </div>
@@ -1261,8 +1543,12 @@ export default function MessagesPageClient() {
               workspace={workspace}
               conversations={conversations}
               quickReplies={QUICK_REPLIES}
-              assignees={ASSIGNEE_OPTIONS}
+              assignees={assigneeOptions}
               selectedSummary={selectedSummary}
+              connectionStatus={metaConnection}
+              connectionLoading={loadingConnection}
+              onSyncConnection={() => void handleSyncMetaConnection()}
+              onReloadConnection={() => void loadMetaConnection()}
               onOpenInbox={() => openWorkspace("inbox")}
             />
           )}
@@ -1343,18 +1629,26 @@ function WorkspacePanel({
   quickReplies,
   assignees,
   selectedSummary,
+  connectionStatus,
+  connectionLoading,
+  onSyncConnection,
+  onReloadConnection,
   onOpenInbox,
 }: {
   workspace: WorkspaceKey;
   conversations: OmniConversation[];
   quickReplies: string[];
-  assignees: Array<{ id: string; name: string }>;
+  assignees: AssigneeOption[];
   selectedSummary: {
     unread: number;
     open: number;
     processing: number;
     closed: number;
   };
+  connectionStatus: MetaConnectionStatus | null;
+  connectionLoading: boolean;
+  onSyncConnection: () => void;
+  onReloadConnection: () => void;
   onOpenInbox: () => void;
 }) {
   const title = WORKSPACE_TITLES[workspace];
@@ -1363,32 +1657,6 @@ function WorkspacePanel({
     (sum, item) => sum + (item.tags?.length || 0),
     0,
   );
-  const [pageConnectModalOpen, setPageConnectModalOpen] = useState(false);
-  const [pageConnected, setPageConnected] = useState(true);
-  const [pageConnectLoading, setPageConnectLoading] = useState<
-    null | "pages" | "saving"
-  >(null);
-  const [selectedConnectPage, setSelectedConnectPage] = useState<
-    "the1970" | null
-  >("the1970");
-
-  const startPageConnection = () => {
-    setPageConnectLoading("pages");
-    window.setTimeout(() => {
-      setPageConnectLoading(null);
-      setPageConnectModalOpen(true);
-    }, 1200);
-  };
-
-  const savePageConnection = () => {
-    if (!selectedConnectPage) return;
-    setPageConnectLoading("saving");
-    window.setTimeout(() => {
-      setPageConnected(true);
-      setPageConnectModalOpen(false);
-      setPageConnectLoading(null);
-    }, 1400);
-  };
 
   if (workspace === "customers") {
     return (
@@ -1574,10 +1842,18 @@ function WorkspacePanel({
   }
 
   if (workspace === "settings") {
+    const pageName = getPageName(connectionStatus);
+    const pageId = getPageId(connectionStatus);
+    const isVerified = Boolean(
+      connectionStatus?.graphVerified || connectionStatus?.tokenConfigured,
+    );
+    const isSubscribed = Boolean(connectionStatus?.subscriptionVerified);
+
     return (
       <WorkspaceShell
         title={title}
         description="Cấu hình Facebook Page, webhook và quyền Messenger dùng cho hệ thống Omni Inbox."
+        connectionStatus={connectionStatus}
       >
         <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1585,37 +1861,42 @@ function WorkspacePanel({
               <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
                 Facebook Page connection
               </p>
-              <h4 className="mt-2 text-xl font-black">Kết nối Facebook Page</h4>
+              <h4 className="mt-2 text-xl font-black">
+                Kết nối Facebook Page thật
+              </h4>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">
-                Chọn Facebook Page mà tài khoản quản trị có quyền quản lý để kết
-                nối Messenger vào The 1970 Omni Inbox.
+                Màn này đọc cấu hình thật từ backend và gọi Meta Graph API để
+                kiểm tra Page, token, webhook subscription. Không còn dữ liệu
+                demo.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {pageConnected ? (
-                <button
-                  type="button"
-                  onClick={() => setPageConnected(false)}
-                  className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50"
-                >
-                  Ngắt kết nối
-                </button>
-              ) : null}
               <button
                 type="button"
-                disabled={pageConnectLoading === "pages"}
-                onClick={startPageConnection}
+                disabled={connectionLoading}
+                onClick={onReloadConnection}
+                className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50 disabled:cursor-wait disabled:opacity-70"
+              >
+                <RefreshCw
+                  className={cx("h-4 w-4", connectionLoading && "animate-spin")}
+                />
+                Kiểm tra lại
+              </button>
+              <button
+                type="button"
+                disabled={connectionLoading}
+                onClick={onSyncConnection}
                 className="inline-flex items-center gap-2 rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800 disabled:cursor-wait disabled:opacity-70"
               >
-                {pageConnectLoading === "pages" ? (
+                {connectionLoading ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
-                ) : null}
-                {pageConnectLoading === "pages"
-                  ? "Đang lấy danh sách Page..."
-                  : pageConnected
-                    ? "Đổi Facebook Page"
-                    : "Kết nối Facebook Page"}
+                ) : (
+                  <ShieldCheck className="h-4 w-4" />
+                )}
+                {connectionLoading
+                  ? "Đang đồng bộ Meta..."
+                  : "Đồng bộ Page với Meta"}
               </button>
             </div>
           </div>
@@ -1623,43 +1904,44 @@ function WorkspacePanel({
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <SettingCard
               label="Facebook Page"
-              value={pageConnected ? "The 1970" : "Chưa chọn Page"}
-              status={pageConnected ? "Connected" : "Not connected"}
-              tone={pageConnected ? "success" : "muted"}
+              value={pageName}
+              status={isVerified ? "Verified" : "Chưa xác minh"}
+              tone={isVerified ? "success" : "muted"}
             />
             <SettingCard
               label="Page ID"
-              value={pageConnected ? "1435304586691707" : "Chưa có Page ID"}
-              status={pageConnected ? "Verified" : "Waiting"}
-              tone={pageConnected ? "success" : "muted"}
+              value={pageId}
+              status={connectionStatus?.pageId ? "Live config" : "Env fallback"}
+              tone={connectionStatus?.pageId ? "success" : "muted"}
             />
             <SettingCard
               label="Webhook URL"
-              value="/webhooks/meta/inbox"
-              status="Verified"
+              value={connectionStatus?.webhookPath || DEFAULT_WEBHOOK_PATH}
+              status="Configured"
               tone="success"
             />
             <SettingCard
               label="Subscribed fields"
-              value={
-                pageConnected
-                  ? "messages, reads, deliveries, reactions, postbacks"
-                  : "Sẽ đăng ký sau khi chọn Page"
-              }
-              status={pageConnected ? "Configured" : "Pending"}
-              tone={pageConnected ? "success" : "muted"}
+              value={getConnectionFields(connectionStatus)}
+              status={isSubscribed ? "Subscribed" : "Cần đồng bộ"}
+              tone={isSubscribed ? "success" : "muted"}
             />
           </div>
 
-          {!pageConnected ? (
-            <div className="mt-5 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
-              <p className="text-sm font-black text-neutral-900">
-                Chưa có Page nào được kết nối
+          {connectionStatus?.graphError ||
+          connectionStatus?.subscriptionError ? (
+            <div className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-black text-amber-900">
+                Cấu hình cần kiểm tra lại
               </p>
-              <p className="mt-1 text-sm leading-6 text-neutral-500">
-                Bấm Kết nối Facebook Page để tải danh sách Page từ tài khoản
-                quản trị và chọn Page cần dùng cho Messenger.
-              </p>
+              <div className="mt-2 space-y-1 text-sm leading-6 text-amber-800">
+                {connectionStatus?.graphError ? (
+                  <p>{connectionStatus.graphError}</p>
+                ) : null}
+                {connectionStatus?.subscriptionError ? (
+                  <p>{connectionStatus.subscriptionError}</p>
+                ) : null}
+              </div>
             </div>
           ) : (
             <div className="mt-5 rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
@@ -1667,125 +1949,18 @@ function WorkspacePanel({
                 <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
                 <div>
                   <p className="text-sm font-black text-emerald-950">
-                    Facebook Page đã kết nối
+                    Facebook Page đang dùng cấu hình thật
                   </p>
                   <p className="mt-1 text-sm leading-6 text-emerald-800">
-                    Tin nhắn và sự kiện Messenger của Page The 1970 sẽ được đồng
-                    bộ qua webhook đã cấu hình.
+                    Tin nhắn và sự kiện Messenger của Page {pageName} được đồng
+                    bộ qua webhook backend. Bấm Đồng bộ Page với Meta để đăng ký
+                    lại subscribed fields khi cần.
                   </p>
                 </div>
               </div>
             </div>
           )}
         </div>
-
-        {pageConnectModalOpen ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
-                    Facebook Pages
-                  </p>
-                  <h4 className="mt-2 text-2xl font-black">
-                    Chọn Facebook Page
-                  </h4>
-                  <p className="mt-2 text-sm leading-6 text-neutral-500">
-                    Danh sách Page bên dưới là các tài sản mà tài khoản quản trị
-                    có quyền quản lý. Chọn Page cần kết nối vào Omni Inbox.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setPageConnectModalOpen(false)}
-                  className="rounded-full p-2 text-neutral-500 hover:bg-neutral-100"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="mt-5 space-y-3">
-                <button
-                  type="button"
-                  onClick={() => setSelectedConnectPage("the1970")}
-                  className={cx(
-                    "flex w-full items-center justify-between rounded-3xl border p-4 text-left transition",
-                    selectedConnectPage === "the1970"
-                      ? "border-blue-200 bg-blue-50"
-                      : "border-neutral-200 bg-white hover:bg-neutral-50",
-                  )}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
-                      {channelBadge("FACEBOOK")}
-                    </div>
-                    <div>
-                      <p className="font-black text-neutral-950">The 1970</p>
-                      <p className="text-sm font-semibold text-neutral-600">
-                        Page ID: 1435304586691707
-                      </p>
-                      <p className="text-xs text-neutral-500">
-                        Facebook Messenger · Business asset
-                      </p>
-                    </div>
-                  </div>
-                  <span
-                    className={cx(
-                      "rounded-full px-3 py-1 text-xs font-black",
-                      selectedConnectPage === "the1970"
-                        ? "bg-blue-600 text-white"
-                        : "bg-neutral-100 text-neutral-500",
-                    )}
-                  >
-                    {selectedConnectPage === "the1970" ? "Đã chọn" : "Chọn"}
-                  </span>
-                </button>
-
-                <div className="flex w-full items-center justify-between rounded-3xl border border-neutral-200 bg-white p-4 opacity-60">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-100 text-neutral-500">
-                      f
-                    </div>
-                    <div>
-                      <p className="font-black">The 1970 Test Page</p>
-                      <p className="text-sm text-neutral-500">
-                        Page ID: 100000000000000
-                      </p>
-                    </div>
-                  </div>
-                  <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-black text-neutral-500">
-                    Không dùng
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-6 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPageConnectModalOpen(false)}
-                  className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-black text-neutral-700 hover:bg-neutral-50"
-                >
-                  Huỷ
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    !selectedConnectPage || pageConnectLoading === "saving"
-                  }
-                  onClick={savePageConnection}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-black text-white hover:bg-neutral-800 disabled:cursor-wait disabled:opacity-70"
-                >
-                  {pageConnectLoading === "saving" ? (
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                  ) : null}
-                  {pageConnectLoading === "saving"
-                    ? "Đang lưu kết nối..."
-                    : "Lưu kết nối"}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </WorkspaceShell>
     );
   }
@@ -1821,10 +1996,12 @@ function WorkspaceShell({
   title,
   description,
   children,
+  connectionStatus,
 }: {
   title: string;
   description: string;
   children: React.ReactNode;
+  connectionStatus?: MetaConnectionStatus | null;
 }) {
   return (
     <section className="h-[calc(100vh-80px)] overflow-y-auto p-4">
@@ -1840,7 +2017,9 @@ function WorkspaceShell({
             </p>
           </div>
           <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">
-            Meta Configured
+            {connectionStatus?.graphVerified
+              ? "Meta Connected"
+              : "Meta Configured"}
           </span>
         </div>
       </div>
