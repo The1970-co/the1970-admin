@@ -1530,6 +1530,66 @@ function buildProductLabelBarcode(
   return parts.join("-");
 }
 
+function normalizeProductSkuRoot(value?: string | null) {
+  return normalizeBarcodeToken(value) || "SP";
+}
+
+function buildCompactVariantSku(
+  rootValue: string,
+  color?: string | null,
+  size?: string | null,
+  index?: number,
+) {
+  const root = normalizeProductSkuRoot(rootValue);
+  const colorCode = compactColorCode(color);
+  const sizeCode = compactSizeCode(size);
+  const fallbackIndex = Number.isFinite(Number(index)) ? String(Number(index) + 1) : "1";
+
+  const parts = [root];
+  if (colorCode) parts.push(colorCode);
+  if (sizeCode && sizeCode !== "OS") parts.push(sizeCode);
+  if (parts.length === 1) parts.push(fallbackIndex);
+
+  return parts.join("-");
+}
+
+function buildCompactVariantRows(params: {
+  productName: string;
+  skuRoot: string;
+  colors: string[];
+  sizes: string[];
+  price: number;
+  costPrice: number;
+  branchStocks?: Record<string, number>;
+}) {
+  const rows: Array<Record<string, any>> = [];
+  const safeColors = params.colors.length ? params.colors : [""];
+  const safeSizes = params.sizes.length ? params.sizes : [""];
+
+  safeColors.forEach((color, colorIndex) => {
+    safeSizes.forEach((size, sizeIndex) => {
+      const index = colorIndex * safeSizes.length + sizeIndex;
+      const sku = buildCompactVariantSku(params.skuRoot, color, size, index);
+
+      rows.push({
+        sku,
+        barcode: sku,
+        color,
+        size,
+        variantName:
+          params.productName && color && size
+            ? `${params.productName} - ${color} - ${size}`
+            : params.productName || sku,
+        price: params.price,
+        costPrice: params.costPrice,
+        branchStocks: params.branchStocks || {},
+      });
+    });
+  });
+
+  return rows;
+}
+
 const defaultExportColumns: ExportColumnState = {
   productName: true,
   slug: true,
@@ -2990,29 +3050,54 @@ export default function ProductsPageClient() {
       setSavingProduct(true);
       setActionMessage("");
 
-      const payload: CreateProductPayload = {
+      const colorOptions = parseCommaTokens(colors);
+      const sizeOptions = parseCommaTokens(sizes);
+      const skuRoot = normalizeProductSkuRoot(skuCode);
+      const defaultBranchStocks = canManageInventory
+        ? Object.fromEntries(
+            branches.map((branch) => [
+              branch.id,
+              Number(branchStocks[branch.id] || 0),
+            ]),
+          )
+        : {};
+      const defaultPriceValue = canEditProductPrice ? Number(defaultPrice || 0) : 0;
+      const defaultCostPriceValue = canEditProductCost
+        ? Number(defaultCostPrice || 0)
+        : 0;
+
+      const payload = {
         name: name.trim(),
-        slug: skuCode.trim(),
+        // Mã gốc cũng phải không dấu/không ký tự lạ để SKU và barcode luôn ngắn, sạch.
+        slug: skuRoot,
+        skuCode: skuRoot,
+        code: skuRoot,
         category,
         categoryId: categoryId || undefined,
         brand,
         weight: Number(weight || 0),
         imageUrl: imageUrl.trim(),
         description: description.trim(),
-        defaultPrice: canEditProductPrice ? Number(defaultPrice || 0) : 0,
-        defaultCostPrice: canEditProductCost
-          ? Number(defaultCostPrice || 0)
-          : 0,
-        colorOptions: parseCommaTokens(colors),
-        sizeOptions: parseCommaTokens(sizes),
-        defaultBranchStocks: canManageInventory
-          ? Object.fromEntries(
-              branches.map((branch) => [
-                branch.id,
-                Number(branchStocks[branch.id] || 0),
-              ]),
-            )
-          : {},
+        defaultPrice: defaultPriceValue,
+        defaultCostPrice: defaultCostPriceValue,
+        colorOptions,
+        sizeOptions,
+        defaultBranchStocks,
+        // Gửi sẵn SKU compact để backend không tự ghép màu dài kiểu M999-BLACK-S.
+        // Ví dụ: ĐEN => D, TRẮNG => T, XANH => XH/BL, XÁM => X, Black => BL.
+        variants: buildCompactVariantRows({
+          productName: name.trim(),
+          skuRoot,
+          colors: colorOptions,
+          sizes: sizeOptions,
+          price: defaultPriceValue,
+          costPrice: defaultCostPriceValue,
+          branchStocks: defaultBranchStocks,
+        }),
+      } as CreateProductPayload & {
+        skuCode?: string;
+        code?: string;
+        variants?: Array<Record<string, any>>;
       };
 
       await createProduct(payload);
@@ -3375,9 +3460,25 @@ export default function ProductsPageClient() {
       setSavingProduct(true);
       setActionMessage("");
 
+      const editColorOptions = parseCommaTokens(editColors);
+      const editSizeOptions = parseCommaTokens(editSizes);
+      const editSkuRoot = normalizeProductSkuRoot(editSkuCode);
+      const editBranchStockPayload = canManageInventory
+        ? Object.fromEntries(
+            branches.map((branch) => [
+              branch.id,
+              Number(editBranchStocks[branch.id] || 0),
+            ]),
+          )
+        : {};
+      const editDefaultPriceValue = Number(editDefaultPrice || 0);
+      const editDefaultCostPriceValue = Number(editDefaultCostPrice || 0);
+
       await updateProduct(editingProductId, {
         name: editName.trim(),
-        slug: editSkuCode.trim(),
+        slug: editSkuRoot,
+        skuCode: editSkuRoot,
+        code: editSkuRoot,
         category: editCategory.trim(),
         categoryId: editCategoryId || undefined,
         brand: editBrand,
@@ -3385,25 +3486,25 @@ export default function ProductsPageClient() {
         imageUrl: editImageUrl.trim(),
         description: editDescription.trim(),
         ...(canEditProductPrice
-          ? { defaultPrice: Number(editDefaultPrice || 0) }
+          ? { defaultPrice: editDefaultPriceValue }
           : {}),
         ...(canEditProductCost
-          ? { defaultCostPrice: Number(editDefaultCostPrice || 0) }
+          ? { defaultCostPrice: editDefaultCostPriceValue }
           : {}),
-        colors: parseCommaTokens(editColors),
-        sizes: parseCommaTokens(editSizes),
-        ...(canManageInventory
-          ? {
-              branchStocks: Object.fromEntries(
-                branches.map((branch) => [
-                  branch.id,
-                  Number(editBranchStocks[branch.id] || 0),
-                ]),
-              ),
-            }
-          : {}),
+        colors: editColorOptions,
+        sizes: editSizeOptions,
+        ...(canManageInventory ? { branchStocks: editBranchStockPayload } : {}),
+        variants: buildCompactVariantRows({
+          productName: editName.trim(),
+          skuRoot: editSkuRoot,
+          colors: editColorOptions,
+          sizes: editSizeOptions,
+          price: canEditProductPrice ? editDefaultPriceValue : 0,
+          costPrice: canEditProductCost ? editDefaultCostPriceValue : 0,
+          branchStocks: editBranchStockPayload,
+        }),
         applyPriceToAllVariants,
-      });
+      } as any);
 
       const currentScrollY = typeof window !== "undefined" ? window.scrollY : 0;
 
@@ -3519,9 +3620,26 @@ export default function ProductsPageClient() {
       setSavingVariant(true);
       setActionMessage("");
 
-      const payload: AddVariantPayload = {
+      const activeProduct = products.find((product) => product.id === activeProductId);
+      const variantSkuRoot = normalizeProductSkuRoot(
+        activeProduct?.slug || activeProduct?.variants?.[0]?.sku || activeProductId,
+      );
+      const nextVariantIndex = activeProduct?.variants?.length || 0;
+      const compactSku = buildCompactVariantSku(
+        variantSkuRoot,
+        variantColor.trim(),
+        variantSize.trim(),
+        nextVariantIndex,
+      );
+
+      const payload = {
+        sku: compactSku,
+        barcode: compactSku,
         color: variantColor.trim(),
         size: variantSize.trim(),
+        variantName: activeProduct?.name
+          ? `${activeProduct.name} - ${variantColor.trim()} - ${variantSize.trim()}`
+          : compactSku,
         price: canEditProductPrice ? Number(variantPrice || 0) : 0,
         costPrice: canEditProductCost ? Number(variantCostPrice || 0) : 0,
         branchStocks: canManageInventory
@@ -3532,7 +3650,7 @@ export default function ProductsPageClient() {
               ]),
             )
           : {},
-      };
+      } as AddVariantPayload & { sku?: string; barcode?: string; variantName?: string };
 
       await addVariant(activeProductId, payload);
       setVariantOpen(false);
