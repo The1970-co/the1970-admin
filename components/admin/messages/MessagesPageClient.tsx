@@ -15,6 +15,7 @@ import {
   Clock3,
   Filter,
   ImageIcon,
+  LogOut,
   Mail,
   Menu,
   MessageCircle,
@@ -366,6 +367,50 @@ export default function MessagesPageClient() {
   const currentUserName = getUserDisplayName(user);
   const currentUserRole = getUserRoleLabel(user);
   const currentBranchName = getActiveBranchName(user, activeBranchId);
+
+  const handleLogout = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    const shouldRemoveKey = (key: string) => {
+      const normalized = key.toLowerCase();
+      return (
+        normalized.includes("token") ||
+        normalized.includes("auth") ||
+        normalized.includes("user") ||
+        normalized.includes("session") ||
+        normalized.includes("admin") ||
+        normalized.includes("the1970")
+      );
+    };
+
+    try {
+      Object.keys(window.localStorage || {}).forEach((key) => {
+        if (shouldRemoveKey(key)) window.localStorage.removeItem(key);
+      });
+    } catch {
+      // Ignore storage errors in private mode.
+    }
+
+    try {
+      Object.keys(window.sessionStorage || {}).forEach((key) => {
+        if (shouldRemoveKey(key)) window.sessionStorage.removeItem(key);
+      });
+    } catch {
+      // Ignore storage errors in private mode.
+    }
+
+    try {
+      document.cookie.split(";").forEach((cookie) => {
+        const name = cookie.split("=")[0]?.trim();
+        if (!name) return;
+        document.cookie = `${name}=; Max-Age=0; path=/`;
+      });
+    } catch {
+      // Ignore cookie cleanup errors.
+    }
+
+    window.location.href = "/login";
+  }, []);
 
   const [conversations, setConversations] = useState<OmniConversation[]>([]);
   const [activeConversation, setActiveConversation] =
@@ -1005,6 +1050,14 @@ export default function MessagesPageClient() {
                   </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-bold text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+              >
+                <LogOut className="h-4 w-4" />
+                Đăng xuất
+              </button>
             </div>
           </header>
 
