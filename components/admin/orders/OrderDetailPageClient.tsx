@@ -1822,7 +1822,7 @@ function ShipmentRealtimeTimeline({
     <Panel>
       <SectionHeader
         title="Tracking realtime"
-        subtitle="Tự cập nhật realtime, hiển thị tài xế/ETA khi hãng trả dữ liệu."
+        subtitle="Hiển thị tài xế/ETA khi hãng trả dữ liệu. Bấm Refresh để đồng bộ thủ công."
         action={
           <ActionButton disabled={refreshing} onClick={onRefresh}>
             {refreshing ? "Đang refresh..." : "Refresh"}
@@ -2167,6 +2167,7 @@ export default function OrderDetailPageClient({
   const [trackingMessage, setTrackingMessage] = useState("");
   const [returnConfirming, setReturnConfirming] = useState(false);
   const forcedTrackingRefreshRef = useRef<Record<string, boolean>>({});
+  const trackingRequestInFlightRef = useRef(false);
 
   useEffect(() => {
     const run = async () => {
@@ -2261,6 +2262,12 @@ export default function OrderDetailPageClient({
   }, [order?.id]);
 
   const refreshShipmentTracking = async (force = false) => {
+    if (trackingRequestInFlightRef.current) {
+      return;
+    }
+
+    trackingRequestInFlightRef.current = true;
+
     try {
       if (force) {
         setTrackingRefreshing(true);
@@ -2328,6 +2335,8 @@ export default function OrderDetailPageClient({
         );
       }
     } finally {
+      trackingRequestInFlightRef.current = false;
+
       if (force) {
         setTrackingRefreshing(false);
       }
@@ -2431,9 +2440,7 @@ export default function OrderDetailPageClient({
 
     const status =
       order.shipment.shippingStatus ||
-      order.shipment.partnerStatus ||
-      latestShipmentTimelineEntry(shipmentTimeline)?.status ||
-      latestShipmentTimelineEntry(shipmentTimeline)?.partnerStatus;
+      order.shipment.partnerStatus;
 
     if (isFinalShipmentStatus(status)) return;
 
@@ -2441,24 +2448,14 @@ export default function OrderDetailPageClient({
     const shouldForceRefresh = !forcedTrackingRefreshRef.current[forceKey];
     forcedTrackingRefreshRef.current[forceKey] = true;
 
-    // Lần đầu mở chi tiết đơn phải gọi force=true để bỏ qua cache cũ,
-    // vì nhiều đơn GHN đã giao thành công trên web GHN nhưng cache nội bộ vẫn là DELIVERING.
+    // Chỉ đồng bộ tracking 1 lần khi mở chi tiết đơn hoặc khi đổi mã vận đơn.
+    // Không polling theo interval để tránh spam /shipments/order/:id/tracking.
     void refreshShipmentTracking(shouldForceRefresh);
-
-    const intervalMs =
-      typeof document !== "undefined" && document.hidden ? 60000 : 15000;
-
-    const timer = window.setInterval(() => {
-      void refreshShipmentTracking(false);
-    }, intervalMs);
-
-    return () => window.clearInterval(timer);
   }, [
     orderId,
     order?.shipment?.trackingCode,
     order?.shipment?.shippingStatus,
     order?.shipment?.partnerStatus,
-    shipmentTimeline,
   ]);
 
   useEffect(() => {
