@@ -59,6 +59,14 @@ export type CarrierDeliveryNoteFields = {
   required_note?: string;
   /** Nhãn tiếng Việt: Cho xem hàng, không cho thử... */
   requiredNoteLabel?: string;
+  /** GHN: bật/tắt yêu cầu giao thất bại thu tiền. */
+  failedDeliveryFee30k?: boolean;
+  /** GHN: số tiền thu khi giao thất bại. */
+  failedDeliveryCodAmount?: number;
+  /** Alias camelCase cho backend cũ/mới. */
+  codFailedAmount?: number;
+  /** Alias snake_case đúng payload GHN. */
+  cod_failed_amount?: number;
 };
 
 export type OrderProductVariant = {
@@ -104,6 +112,10 @@ export type CreateOrderShippingSnapshot = {
   requiredNote?: string;
   required_note?: string;
   requiredNoteLabel?: string;
+  failedDeliveryFee30k?: boolean;
+  failedDeliveryCodAmount?: number;
+  codFailedAmount?: number;
+  cod_failed_amount?: number;
   selectedServiceId?: number;
   selectedServiceTypeId?: number;
   weight?: number;
@@ -136,6 +148,10 @@ export type CreateOrderPayload = {
   requiredNote?: string;
   required_note?: string;
   requiredNoteLabel?: string;
+  failedDeliveryFee30k?: boolean;
+  failedDeliveryCodAmount?: number;
+  codFailedAmount?: number;
+  cod_failed_amount?: number;
   finalAmount?: number;
   items: Array<{
     variantId: string;
@@ -596,6 +612,10 @@ export async function createOrder(
     requiredNote: payload.requiredNote,
     required_note: payload.required_note,
     requiredNoteLabel: payload.requiredNoteLabel,
+    failedDeliveryFee30k: payload.failedDeliveryFee30k,
+    failedDeliveryCodAmount: payload.failedDeliveryCodAmount,
+    codFailedAmount: payload.codFailedAmount,
+    cod_failed_amount: payload.cod_failed_amount,
     finalAmount:
       payload.finalAmount !== undefined
         ? toNumber(payload.finalAmount)
@@ -609,6 +629,10 @@ export async function createOrder(
           requiredNote: payload.shippingSnapshot.requiredNote,
           required_note: payload.shippingSnapshot.required_note,
           requiredNoteLabel: payload.shippingSnapshot.requiredNoteLabel,
+          failedDeliveryFee30k: payload.shippingSnapshot.failedDeliveryFee30k,
+          failedDeliveryCodAmount: payload.shippingSnapshot.failedDeliveryCodAmount,
+          codFailedAmount: payload.shippingSnapshot.codFailedAmount,
+          cod_failed_amount: payload.shippingSnapshot.cod_failed_amount,
           shippingAddressId: payload.shippingSnapshot.shippingAddressId,
           shippingFee: customerShippingFee,
           customerShippingFee,

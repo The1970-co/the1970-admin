@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createCustomer,
@@ -61,26 +61,34 @@ const AHAMOVE_PAYMENT_METHOD_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-    {
-      value: "BALANCE",
-      label: "Trừ ví / công nợ AhaMove",
-      description: "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.",
-    },
-    {
-      value: "CASH",
-      label: "Shop trả tiền mặt cho tài xế",
-      description: "Tài xế thu phí ship từ shop lúc lấy hàng.",
-    },
-    {
-      value: "CASH_BY_RECIPIENT",
-      label: "Khách trả tiền ship",
-      description: "Tài xế thu phí ship từ khách nhận hàng.",
-    },
-  ];
+  {
+    value: "BALANCE",
+    label: "Trừ ví / công nợ AhaMove",
+    description: "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.",
+  },
+  {
+    value: "CASH",
+    label: "Shop trả tiền mặt cho tài xế",
+    description: "Tài xế thu phí ship từ shop lúc lấy hàng.",
+  },
+  {
+    value: "CASH_BY_RECIPIENT",
+    label: "Khách trả tiền ship",
+    description: "Tài xế thu phí ship từ khách nhận hàng.",
+  },
+];
 
-function normalizeAhamovePaymentMethod(value?: string | null): AhamovePaymentMethod {
-  const normalized = String(value || "").trim().toUpperCase();
-  if (normalized === "CASH" || normalized === "CASH_BY_RECIPIENT" || normalized === "BALANCE") {
+function normalizeAhamovePaymentMethod(
+  value?: string | null,
+): AhamovePaymentMethod {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (
+    normalized === "CASH" ||
+    normalized === "CASH_BY_RECIPIENT" ||
+    normalized === "BALANCE"
+  ) {
     return normalized as AhamovePaymentMethod;
   }
   return "BALANCE";
@@ -88,16 +96,26 @@ function normalizeAhamovePaymentMethod(value?: string | null): AhamovePaymentMet
 
 function getAhamovePaymentMethodLabel(value?: string | null) {
   const method = normalizeAhamovePaymentMethod(value);
-  return AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)?.label || "Trừ ví / công nợ AhaMove";
+  return (
+    AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)
+      ?.label || "Trừ ví / công nợ AhaMove"
+  );
 }
 
 function getAhamovePaymentMethodDescription(value?: string | null) {
   const method = normalizeAhamovePaymentMethod(value);
-  return AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)?.description || "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop.";
+  return (
+    AHAMOVE_PAYMENT_METHOD_OPTIONS.find((item) => item.value === method)
+      ?.description || "AhaMove trừ tiền từ ví hoặc hạn mức công nợ của shop."
+  );
 }
 
-function inferShippingPayerFromAhamovePaymentMethod(value?: string | null): ShippingPayer {
-  return normalizeAhamovePaymentMethod(value) === "CASH_BY_RECIPIENT" ? "customer" : "shop";
+function inferShippingPayerFromAhamovePaymentMethod(
+  value?: string | null,
+): ShippingPayer {
+  return normalizeAhamovePaymentMethod(value) === "CASH_BY_RECIPIENT"
+    ? "customer"
+    : "shop";
 }
 
 const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
@@ -123,7 +141,9 @@ function safeJsonParse(value: string | null) {
 
 function readCustomAhamovePickups(): PickupLocation[] {
   if (typeof window === "undefined") return [];
-  const raw = safeJsonParse(localStorage.getItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY));
+  const raw = safeJsonParse(
+    localStorage.getItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY),
+  );
   if (!Array.isArray(raw)) return [];
 
   return raw
@@ -261,7 +281,7 @@ function isPromotionActiveForContext(
     promotion.salesChannel &&
     input.salesChannel &&
     String(promotion.salesChannel).toUpperCase() !==
-    String(input.salesChannel).toUpperCase()
+      String(input.salesChannel).toUpperCase()
   ) {
     return false;
   }
@@ -609,17 +629,23 @@ function getDisplayMergedAddressAfterAdminMerge(input: {
   const ward = normalizeSpaces(input.ward || "");
   const district = normalizeSpaces(input.district || "");
   const province = normalizeSpaces(input.province || "");
-  const token = normalizeAddressToken([addressLine, ward, district, province].filter(Boolean).join(" "));
+  const token = normalizeAddressToken(
+    [addressLine, ward, district, province].filter(Boolean).join(" "),
+  );
 
   const isOldSaiSonQuocOai =
     token.includes("quoc oai") &&
     token.includes("sai son") &&
-    (token.includes("cho thay") || token.includes("cho thay") || token.includes("khanh tan"));
+    (token.includes("cho thay") ||
+      token.includes("cho thay") ||
+      token.includes("khanh tan"));
 
   if (isOldSaiSonQuocOai) {
     const cleanLine = addressLine || "chợ thầy";
     const hasKhanhTan = normalizeAddressToken(cleanLine).includes("khanh tan");
-    const nextLine = [cleanLine, hasKhanhTan ? "" : "thôn Khánh Tân"].filter(Boolean).join(", ");
+    const nextLine = [cleanLine, hasKhanhTan ? "" : "thôn Khánh Tân"]
+      .filter(Boolean)
+      .join(", ");
 
     return {
       addressLine: nextLine,
@@ -680,7 +706,6 @@ function normalizeAddressToken(value?: string | null) {
     .trim();
 }
 
-
 function normalizeAddressCompact(value?: string | null) {
   return normalizeAddressToken(value).replace(/[^a-z0-9]/g, "");
 }
@@ -738,7 +763,8 @@ function SearchableSelect({
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, []);
 
-  const selectedLabel = options.find((item) => item.value === value)?.label || "";
+  const selectedLabel =
+    options.find((item) => item.value === value)?.label || "";
   const normalizedKeyword = normalizeSearchText(keyword);
   const filteredOptions = useMemo(() => {
     if (!normalizedKeyword) return options;
@@ -752,15 +778,18 @@ function SearchableSelect({
           : labelCompact.includes(compactKeyword)
             ? 90
             : normalizedKeyword
-              .split(/\s+/)
-              .filter(Boolean)
-              .every((term) => labelText.includes(term))
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .every((term) => labelText.includes(term))
               ? 70
               : 0;
         return { item, score };
       })
       .filter((row) => row.score > 0)
-      .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label, "vi"))
+      .sort(
+        (a, b) =>
+          b.score - a.score || a.item.label.localeCompare(b.item.label, "vi"),
+      )
       .map((row) => row.item);
   }, [options, normalizedKeyword]);
 
@@ -776,7 +805,9 @@ function SearchableSelect({
         }}
         className={`flex w-full items-center justify-between rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-left text-sm outline-none ${disabled ? "cursor-not-allowed opacity-60" : "hover:border-neutral-400"}`}
       >
-        <span className={selectedLabel ? "text-neutral-900" : "text-neutral-500"}>
+        <span
+          className={selectedLabel ? "text-neutral-900" : "text-neutral-500"}
+        >
           {selectedLabel || placeholder}
         </span>
         <span className="text-neutral-400">⌄</span>
@@ -820,7 +851,9 @@ function SearchableSelect({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-3 text-sm text-neutral-500">Không tìm thấy địa điểm phù hợp</div>
+              <div className="px-3 py-3 text-sm text-neutral-500">
+                Không tìm thấy địa điểm phù hợp
+              </div>
             )}
           </div>
         </div>
@@ -855,15 +888,15 @@ function getFeeNumber(row: ShipmentQuoteResult) {
   const raw = row as any;
   return Number(
     raw?.fee?.total ||
-    raw?.fee?.total_fee ||
-    raw?.fee?.service_fee ||
-    raw?.data?.user_price_details?.total_fee ||
-    raw?.data?.user_price_details?.total_price ||
-    raw?.data?.total_price ||
-    raw?.data?.total_fee ||
-    raw?.data?.service_fee ||
-    raw?.fee ||
-    0,
+      raw?.fee?.total_fee ||
+      raw?.fee?.service_fee ||
+      raw?.data?.user_price_details?.total_fee ||
+      raw?.data?.user_price_details?.total_price ||
+      raw?.data?.total_price ||
+      raw?.data?.total_fee ||
+      raw?.data?.service_fee ||
+      raw?.fee ||
+      0,
   );
 }
 
@@ -877,20 +910,20 @@ function getQuoteKey(row: ShipmentQuoteResult) {
 
   return String(
     raw?._quoteKey ||
-    raw?._ahamoveServiceId ||
-    raw?.service_id ||
-    raw?.serviceCode ||
-    raw?._viettelServiceCode ||
-    [
-      carrier,
-      row.serviceId || 0,
-      row.serviceTypeId || 0,
-      raw?._serviceName || "",
-      raw?.shortName || "",
-      raw?.serviceName || "",
-      raw?._durationMinutes || "",
-      getFeeNumber(row) || "",
-    ].join("-"),
+      raw?._ahamoveServiceId ||
+      raw?.service_id ||
+      raw?.serviceCode ||
+      raw?._viettelServiceCode ||
+      [
+        carrier,
+        row.serviceId || 0,
+        row.serviceTypeId || 0,
+        raw?._serviceName || "",
+        raw?.shortName || "",
+        raw?.serviceName || "",
+        raw?._durationMinutes || "",
+        getFeeNumber(row) || "",
+      ].join("-"),
   );
 }
 
@@ -979,21 +1012,21 @@ function parseAhamoveQuoteFee(rawQuote: any) {
   const quoteData = rawQuote?.data || rawQuote || {};
   const quoteFee = Number(
     quoteData?.user_price_details?.total_fee ||
-    quoteData?.user_price_details?.total_price ||
-    quoteData?.total_fee ||
-    quoteData?.totalFee ||
-    quoteData?.total_price ||
-    quoteData?.totalPrice ||
-    quoteData?.subtotal_price ||
-    quoteData?.subtotalPrice ||
-    quoteData?.service_fee ||
-    quoteData?.serviceFee ||
-    quoteData?.distance_fee ||
-    quoteData?.distanceFee ||
-    rawQuote?.fee ||
-    rawQuote?.totalFee ||
-    rawQuote?.total_fee ||
-    0,
+      quoteData?.user_price_details?.total_price ||
+      quoteData?.total_fee ||
+      quoteData?.totalFee ||
+      quoteData?.total_price ||
+      quoteData?.totalPrice ||
+      quoteData?.subtotal_price ||
+      quoteData?.subtotalPrice ||
+      quoteData?.service_fee ||
+      quoteData?.serviceFee ||
+      quoteData?.distance_fee ||
+      quoteData?.distanceFee ||
+      rawQuote?.fee ||
+      rawQuote?.totalFee ||
+      rawQuote?.total_fee ||
+      0,
   );
 
   const serviceLabel =
@@ -1264,25 +1297,35 @@ function getApiBaseUrl() {
 function normalizeStaffAssignName(row: any) {
   return normalizeSpaces(
     row?.name ||
-    row?.fullName ||
-    row?.staffName ||
-    row?.displayName ||
-    row?.username ||
-    row?.email ||
-    "Nhân viên",
+      row?.fullName ||
+      row?.staffName ||
+      row?.displayName ||
+      row?.username ||
+      row?.email ||
+      "Nhân viên",
   );
 }
 
 function mapStaffAssignOption(row: any): StaffAssignOption | null {
-  const value = String(row?.id || row?.staffId || row?.userId || row?.code || "").trim();
+  const value = String(
+    row?.id || row?.staffId || row?.userId || row?.code || "",
+  ).trim();
   if (!value) return null;
 
   const name = normalizeStaffAssignName(row);
-  const branchId = String(row?.branchId || row?.workingBranchId || row?.mainBranchId || row?.branch?.id || "").trim();
+  const branchId = String(
+    row?.branchId ||
+      row?.workingBranchId ||
+      row?.mainBranchId ||
+      row?.branch?.id ||
+      "",
+  ).trim();
   const branchName = normalizeSpaces(
     row?.branchName || row?.branch?.name || row?.mainBranch?.name || branchId,
   );
-  const code = String(row?.code || row?.staffCode || row?.username || "").trim();
+  const code = String(
+    row?.code || row?.staffCode || row?.username || "",
+  ).trim();
   const suffix = [code, branchName].filter(Boolean).join(" · ");
 
   return {
@@ -1311,7 +1354,10 @@ function resolveVariantImageUrl(product: any, variant: any) {
 
   const colorKey = normalizeColorImageKey(variant?.color);
   const colorImages =
-    product?.colorImages || product?.imagesByColor || product?.colorImageMap || {};
+    product?.colorImages ||
+    product?.imagesByColor ||
+    product?.colorImageMap ||
+    {};
 
   if (
     colorKey &&
@@ -1321,8 +1367,7 @@ function resolveVariantImageUrl(product: any, variant: any) {
   ) {
     const matched = Object.entries(colorImages).find(
       ([key, value]) =>
-        normalizeColorImageKey(key) === colorKey &&
-        String(value || "").trim(),
+        normalizeColorImageKey(key) === colorKey && String(value || "").trim(),
     );
 
     if (matched) return String(matched[1] || "").trim();
@@ -1475,9 +1520,14 @@ function findBestProvinceName(
   provinceOptions: ProvinceItem[],
 ): string | null {
   const hit = provinceOptions
-    .map((item) => ({ original: item.name, score: addressCandidateScore(raw, item.name) }))
+    .map((item) => ({
+      original: item.name,
+      score: addressCandidateScore(raw, item.name),
+    }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || b.original.length - a.original.length)[0];
+    .sort(
+      (a, b) => b.score - a.score || b.original.length - a.original.length,
+    )[0];
 
   return hit?.original || null;
 }
@@ -1487,9 +1537,14 @@ function findBestDistrictName(
   districtOptions: DistrictItem[],
 ): string | null {
   const hit = districtOptions
-    .map((item) => ({ original: item.name, score: addressCandidateScore(raw, item.name) }))
+    .map((item) => ({
+      original: item.name,
+      score: addressCandidateScore(raw, item.name),
+    }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || b.original.length - a.original.length)[0];
+    .sort(
+      (a, b) => b.score - a.score || b.original.length - a.original.length,
+    )[0];
 
   return hit?.original || null;
 }
@@ -1506,10 +1561,15 @@ function findBestWardName(raw: string, wardOptions: WardItem[]): string | null {
   const hit = wardOptions
     .map((item) => ({
       original: item.name,
-      score: Math.max(addressCandidateScore(raw, item.name), addressCandidateScore(replaced, item.name)),
+      score: Math.max(
+        addressCandidateScore(raw, item.name),
+        addressCandidateScore(replaced, item.name),
+      ),
     }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || b.original.length - a.original.length)[0];
+    .sort(
+      (a, b) => b.score - a.score || b.original.length - a.original.length,
+    )[0];
 
   return hit?.original || null;
 }
@@ -1813,27 +1873,27 @@ const shippingUiModeOptions: Array<{
   label: string;
   description: string;
 }> = [
-    {
-      value: "carrier",
-      label: "Đẩy qua hãng vận chuyển",
-      description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
-    },
-    {
-      value: "external",
-      label: "Đẩy vận chuyển ngoài",
-      description: "Shipper ngoài / đối tác ngoài hệ thống.",
-    },
-    {
-      value: "pickup",
-      label: "Khách nhận tại cửa hàng",
-      description: "Không tính phí ship.",
-    },
-    {
-      value: "schedule",
-      label: "Giao hàng sau",
-      description: "Tạo đơn trước, xử lý ship sau.",
-    },
-  ];
+  {
+    value: "carrier",
+    label: "Đẩy qua hãng vận chuyển",
+    description: "Chọn GHN hoặc AhaMove để lấy phí ship và đẩy đơn.",
+  },
+  {
+    value: "external",
+    label: "Đẩy vận chuyển ngoài",
+    description: "Shipper ngoài / đối tác ngoài hệ thống.",
+  },
+  {
+    value: "pickup",
+    label: "Khách nhận tại cửa hàng",
+    description: "Không tính phí ship.",
+  },
+  {
+    value: "schedule",
+    label: "Giao hàng sau",
+    description: "Tạo đơn trước, xử lý ship sau.",
+  },
+];
 
 const shippingPartnerOptions = [
   { value: "ghn", label: "GHN", enabled: true },
@@ -1848,10 +1908,10 @@ const deliveryRequirementOptions: Array<{
   value: DeliveryRequirement;
   label: string;
 }> = [
-    { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
-    { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
-    { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
-  ];
+  { value: "CHOXEMHANG_KHONGTHU", label: "Cho xem hàng, không cho thử" },
+  { value: "CHOXEMHANG_CHOTHU", label: "Cho xem hàng, cho thử" },
+  { value: "KHONGCHOXEMHANG", label: "Không cho xem hàng" },
+];
 
 export default function CreateOrderPageClient() {
   const applyShippingRef = useRef<
@@ -1887,7 +1947,7 @@ export default function CreateOrderPageClient() {
       );
     };
   }, [router]);
-  
+
   const [products, setProducts] = useState<OrderProduct[]>([]);
   const [promotions, setPromotions] = useState<PromotionRow[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
@@ -1904,7 +1964,9 @@ export default function CreateOrderPageClient() {
   const [userBranchIds, setUserBranchIds] = useState<string[]>([]);
   const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
   const [branchLoading, setBranchLoading] = useState(false);
-  const [assignStaffOptions, setAssignStaffOptions] = useState<StaffAssignOption[]>([]);
+  const [assignStaffOptions, setAssignStaffOptions] = useState<
+    StaffAssignOption[]
+  >([]);
   const [assignStaffLoading, setAssignStaffLoading] = useState(false);
   const [assignedStaffId, setAssignedStaffId] = useState("");
 
@@ -1932,7 +1994,8 @@ export default function CreateOrderPageClient() {
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
     null,
   );
-  const [showMergedAddressCompare, setShowMergedAddressCompare] = useState(false);
+  const [showMergedAddressCompare, setShowMergedAddressCompare] =
+    useState(false);
 
   const [addressSelectorOpen, setAddressSelectorOpen] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
@@ -1969,6 +2032,7 @@ export default function CreateOrderPageClient() {
   const [smartAddressLoading, setSmartAddressLoading] = useState(false);
 
   const [productSearch, setProductSearch] = useState("");
+  const deferredProductSearch = useDeferredValue(productSearch);
   const [barcodeInput, setBarcodeInput] = useState("");
   const [lines, setLines] = useState<OrderLine[]>([]);
 
@@ -2023,9 +2087,8 @@ export default function CreateOrderPageClient() {
   >();
   const [pickupLocations, setPickupLocations] = useState<PickupLocation[]>([]);
   const [pickupLocationsLoading, setPickupLocationsLoading] = useState(false);
-  const [selectedPickupLocationId, setSelectedPickupLocationId] = useState(
-    "default",
-  );
+  const [selectedPickupLocationId, setSelectedPickupLocationId] =
+    useState("default");
 
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [newCustomerSaving, setNewCustomerSaving] = useState(false);
@@ -2176,11 +2239,11 @@ export default function CreateOrderPageClient() {
         setNote(
           getCleanCopyOrderNote(
             order?.internalNote ||
-            order?.orderNote ||
-            order?.customerNote ||
-            order?.shippingNote ||
-            order?.note ||
-            "",
+              order?.orderNote ||
+              order?.customerNote ||
+              order?.shippingNote ||
+              order?.note ||
+              "",
           ),
         );
 
@@ -2365,18 +2428,18 @@ export default function CreateOrderPageClient() {
           .map((item: any) => {
             const variantId = String(
               item.variantId ||
-              item.productVariantId ||
-              item.variant?.id ||
-              item.productVariant?.id ||
-              "",
+                item.productVariantId ||
+                item.variant?.id ||
+                item.productVariant?.id ||
+                "",
             );
 
             const itemSku = String(
               item.sku ||
-              item.variantSku ||
-              item.productVariant?.sku ||
-              item.variant?.sku ||
-              "",
+                item.variantSku ||
+                item.productVariant?.sku ||
+                item.variant?.sku ||
+                "",
             );
 
             const found = allProductVariants.find(
@@ -2419,11 +2482,11 @@ export default function CreateOrderPageClient() {
                 "",
               price: Number(
                 item.price ??
-                item.unitPrice ??
-                item.salePrice ??
-                item.productVariant?.price ??
-                found?.price ??
-                0,
+                  item.unitPrice ??
+                  item.salePrice ??
+                  item.productVariant?.price ??
+                  found?.price ??
+                  0,
               ),
               stock: Number(found?.stock || 0),
               totalStock: Number(
@@ -2474,7 +2537,10 @@ export default function CreateOrderPageClient() {
         setPickupLocations(mergeCustomAhamovePickups(pickupRows));
 
         setSelectedViettelInventoryId((current) => {
-          if (current && inventoryRows.some((row) => row.groupAddressId === current))
+          if (
+            current &&
+            inventoryRows.some((row) => row.groupAddressId === current)
+          )
             return current;
           const preferred =
             inventoryRows.find((row) => row.phone === "0975615475") ||
@@ -2537,8 +2603,9 @@ export default function CreateOrderPageClient() {
       const mapping = raw ? (JSON.parse(raw) as CarrierPickupMapping) : {};
       const branchMapping = mapping?.[branchId] || {};
       configuredPickupId =
-        String(branchMapping?.[shippingPartner as keyof typeof branchMapping] || "") ||
-        "default";
+        String(
+          branchMapping?.[shippingPartner as keyof typeof branchMapping] || "",
+        ) || "default";
     } catch {
       configuredPickupId = "default";
     }
@@ -2557,8 +2624,8 @@ export default function CreateOrderPageClient() {
     if (shippingPartner !== "viettelpost" || !selectedCarrierPickup) return;
     const groupAddressId = Number(
       selectedCarrierPickup.viettelGroupAddressId ||
-      selectedCarrierPickup.groupAddressId ||
-      0,
+        selectedCarrierPickup.groupAddressId ||
+        0,
     );
     if (groupAddressId) setSelectedViettelInventoryId(groupAddressId);
   }, [selectedCarrierPickup, shippingPartner]);
@@ -2621,7 +2688,7 @@ export default function CreateOrderPageClient() {
             : [];
 
         setPaymentSources(rows);
-      } catch { }
+      } catch {}
     };
 
     void run();
@@ -2688,11 +2755,11 @@ export default function CreateOrderPageClient() {
           .map((row: any) => ({
             value: String(
               row?.id ??
-              row?.branchId ??
-              row?.warehouseId ??
-              row?.code ??
-              row?.slug ??
-              "",
+                row?.branchId ??
+                row?.warehouseId ??
+                row?.code ??
+                row?.slug ??
+                "",
             ),
             label: branchLabelFromAny(row),
             code: row?.code ? String(row.code) : undefined,
@@ -2706,13 +2773,13 @@ export default function CreateOrderPageClient() {
             ? canPickAll
               ? mapped
               : mapped.filter(
-                (item) =>
-                  userBranchIds.includes(item.value) ||
-                  (item.code && userBranchIds.includes(item.code)),
-              )
+                  (item) =>
+                    userBranchIds.includes(item.value) ||
+                    (item.code && userBranchIds.includes(item.code)),
+                )
             : Object.entries(BRANCH_LABELS)
-              .filter(([id]) => canPickAll || userBranchIds.includes(id))
-              .map(([id, label]) => ({ value: id, label }));
+                .filter(([id]) => canPickAll || userBranchIds.includes(id))
+                .map(([id, label]) => ({ value: id, label }));
 
         setBranchOptions(filtered);
         setBranchId((prev) => {
@@ -2739,7 +2806,8 @@ export default function CreateOrderPageClient() {
   useEffect(() => {
     const run = async () => {
       const apiBase = getApiBaseUrl();
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
       try {
         setAssignStaffLoading(true);
@@ -2995,15 +3063,35 @@ export default function CreateOrderPageClient() {
         const branchStock = Number(branchStocks[branchId] || 0);
         const stock = canPickBranch ? totalStock : branchStock;
 
+        const productName = String(product.name || "");
+        const sku = String((variant as any).sku || "");
+        const color = String((variant as any).color || "");
+        const size = String((variant as any).size || "");
+        const barcode = String((variant as any).barcode || "");
+        const barcodeValue = String((variant as any).barcodeValue || "");
+        const searchSku = normalizeSkuSearch(sku);
+        const searchText = normalizeSearchText(
+          [productName, color, size].filter(Boolean).join(" "),
+        );
+
         return {
           ...variant,
           productId: (product as any).id,
-          productName: product.name,
+          productName,
           imageUrl: resolveVariantImageUrl(product, variant),
           stock,
           totalStock,
           branchStock,
           branchStocks,
+          _searchSku: searchSku,
+          _searchText: searchText,
+          _searchCompact: searchText.replace(/[^a-z0-9]/g, ""),
+          _barcodeKeys: [
+            searchSku,
+            normalizeSkuSearch((variant as any).id || ""),
+            normalizeSkuSearch(barcode),
+            normalizeSkuSearch(barcodeValue),
+          ].filter(Boolean),
         };
       }),
     );
@@ -3031,30 +3119,72 @@ export default function CreateOrderPageClient() {
       .filter(Boolean);
   }, [lines]);
 
+  const allVariantById = useMemo(() => {
+    const map = new Map<string, any>();
+    allVariants.forEach((variant: any) => {
+      if (variant?.id) map.set(String(variant.id), variant);
+    });
+    return map;
+  }, [allVariants]);
+
+  const barcodeVariantByKey = useMemo(() => {
+    const map = new Map<string, any>();
+    allVariants.forEach((variant: any) => {
+      (variant?._barcodeKeys || []).forEach((key: string) => {
+        if (key && !map.has(key)) map.set(key, variant);
+      });
+    });
+    return map;
+  }, [allVariants]);
+
   const filteredVariants = useMemo(() => {
-    const raw = productSearch.trim();
+    const raw = deferredProductSearch.trim();
     const skuQuery = normalizeSkuSearch(raw);
     const textQuery = normalizeSearchText(raw);
+    const compactTextQuery = textQuery.replace(/[^a-z0-9]/g, "");
+    const textTerms = textQuery.split(/\s+/).filter(Boolean);
 
     // Ô tìm sản phẩm mới được mở danh sách gợi ý.
     // Ô scan chỉ dùng để cộng mã chính xác vào đơn, không làm xổ list để tránh nhìn như nhảy sang SKU khác.
     if (!skuQuery && !textQuery) return [];
 
-    return allVariants.filter((variant) => {
-      const sku = normalizeSkuSearch(variant.sku || "");
-      const productName = normalizeSearchText(
-        (variant as any).productName || "",
-      );
-      const color = normalizeSearchText((variant as any).color || "");
-      const size = normalizeSearchText((variant as any).size || "");
-      const combinedText = [productName, color, size].filter(Boolean).join(" ");
+    return allVariants
+      .map((variant: any) => {
+        const sku = String(variant?._searchSku || "");
+        const text = String(variant?._searchText || "");
+        const compactText = String(variant?._searchCompact || "");
 
-      return (
-        Boolean(skuQuery && sku.includes(skuQuery)) ||
-        Boolean(textQuery && combinedText.includes(textQuery))
-      );
-    });
-  }, [allVariants, productSearch]);
+        let score = 0;
+        if (skuQuery) {
+          if (sku === skuQuery) score = Math.max(score, 120);
+          else if (sku.startsWith(skuQuery)) score = Math.max(score, 105);
+          else if (sku.includes(skuQuery)) score = Math.max(score, 90);
+        }
+
+        if (textQuery) {
+          if (text.includes(textQuery)) score = Math.max(score, 80);
+          else if (compactTextQuery && compactText.includes(compactTextQuery))
+            score = Math.max(score, 72);
+          else if (
+            textTerms.length &&
+            textTerms.every((term) => text.includes(term))
+          )
+            score = Math.max(score, 65);
+        }
+
+        return { variant, score };
+      })
+      .filter((row) => row.score > 0)
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          String(a.variant.sku || "").localeCompare(
+            String(b.variant.sku || ""),
+          ),
+      )
+      .slice(0, 80)
+      .map((row) => row.variant);
+  }, [allVariants, deferredProductSearch]);
 
   const shouldShowProductResults = productSearch.trim().length > 0;
 
@@ -3221,13 +3351,18 @@ export default function CreateOrderPageClient() {
   });
 
   const displayAddressLine = normalizeSpaces(
-    selectedAddress?.addressLine1 || addressLine1.trim() || shippingAddress.trim(),
+    selectedAddress?.addressLine1 ||
+      addressLine1.trim() ||
+      shippingAddress.trim(),
   );
   const displayAddressWard = normalizeSpaces(currentWardRaw || "");
   const displayAddressDistrict = normalizeSpaces(currentDistrictRaw || "");
   const displayAddressProvince = normalizeSpaces(currentProvinceRaw || "");
   const hasAddressParts = Boolean(
-    displayAddressLine || displayAddressWard || displayAddressDistrict || displayAddressProvince,
+    displayAddressLine ||
+    displayAddressWard ||
+    displayAddressDistrict ||
+    displayAddressProvince,
   );
   const mergedAddressPreview = getDisplayMergedAddressAfterAdminMerge({
     addressLine: displayAddressLine,
@@ -3273,7 +3408,9 @@ export default function CreateOrderPageClient() {
       height: Number(shippingHeight || 10),
       weight: Math.max(
         1,
-        Math.floor(Number(shippingWeight || 200) / Math.max(activeLines.length, 1)),
+        Math.floor(
+          Number(shippingWeight || 200) / Math.max(activeLines.length, 1),
+        ),
       ),
     }));
   }, [lines, shippingLength, shippingWidth, shippingHeight, shippingWeight]);
@@ -3319,7 +3456,10 @@ export default function CreateOrderPageClient() {
 
   const selectedQuote =
     shippingQuotes.find(
-      (q) => selectedShippingQuoteKey && getQuoteKey(q) === selectedShippingQuoteKey && !(q as any)?._disabled,
+      (q) =>
+        selectedShippingQuoteKey &&
+        getQuoteKey(q) === selectedShippingQuoteKey &&
+        !(q as any)?._disabled,
     ) ||
     shippingQuotes.find(
       (q) =>
@@ -3329,7 +3469,6 @@ export default function CreateOrderPageClient() {
         !(q as any)?._disabled,
     ) ||
     null;
-
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3344,10 +3483,14 @@ export default function CreateOrderPageClient() {
     }
   }, []);
 
-  const ahamovePaymentMethodLabel = getAhamovePaymentMethodLabel(ahamovePaymentMethod);
-  const ahamovePaymentMethodDescription = getAhamovePaymentMethodDescription(ahamovePaymentMethod);
+  const ahamovePaymentMethodLabel =
+    getAhamovePaymentMethodLabel(ahamovePaymentMethod);
+  const ahamovePaymentMethodDescription =
+    getAhamovePaymentMethodDescription(ahamovePaymentMethod);
 
-  const handleAhamovePaymentMethodChange = (nextValue: AhamovePaymentMethod) => {
+  const handleAhamovePaymentMethodChange = (
+    nextValue: AhamovePaymentMethod,
+  ) => {
     const safeValue = normalizeAhamovePaymentMethod(nextValue);
     setAhamovePaymentMethod(safeValue);
     setShippingPayer(inferShippingPayerFromAhamovePaymentMethod(safeValue));
@@ -3417,10 +3560,10 @@ export default function CreateOrderPageClient() {
 
     appendCustomerFacingNote(
       (address as any).shippingNote ||
-      (address as any).deliveryNote ||
-      (address as any).note ||
-      (address as any).customerNote ||
-      "",
+        (address as any).deliveryNote ||
+        (address as any).note ||
+        (address as any).customerNote ||
+        "",
     );
   };
 
@@ -3449,16 +3592,16 @@ export default function CreateOrderPageClient() {
     setCustomerDiscountPercent(Number(customer.defaultDiscountPercent || 0));
     appendCustomerFacingNote(
       (customer as any).customerNote ||
-      (customer as any).note ||
-      (customer as any).defaultAddress?.note ||
-      (customer as any).defaultAddress?.shippingNote ||
-      "",
+        (customer as any).note ||
+        (customer as any).defaultAddress?.note ||
+        (customer as any).defaultAddress?.shippingNote ||
+        "",
     );
 
     if (customer.id) {
       try {
         await loadCustomerAddressBook(customer.id);
-      } catch { }
+      } catch {}
     }
   };
 
@@ -3475,9 +3618,9 @@ export default function CreateOrderPageClient() {
   const buildCustomerSuggestion = (customer: any): CustomerSuggestionItem => {
     const fullName = String(
       customer?.fullName ||
-      customer?.name ||
-      customer?.customerName ||
-      "Khách hàng",
+        customer?.name ||
+        customer?.customerName ||
+        "Khách hàng",
     );
     const phone = String(customer?.phone || "");
     const email = String(customer?.email || "");
@@ -3507,7 +3650,10 @@ export default function CreateOrderPageClient() {
   const customerSuggestionKey = (customer: CustomerSuggestionItem) =>
     String(customer.id || customer.phone || customer.label || "").trim();
 
-  const customerMatchesKeyword = (customer: CustomerSuggestionItem, keyword: string) => {
+  const customerMatchesKeyword = (
+    customer: CustomerSuggestionItem,
+    keyword: string,
+  ) => {
     const cleaned = normalizePhone(keyword);
     const normalizedKeyword = removeVietnameseTones(String(keyword || ""))
       .toLowerCase()
@@ -3577,7 +3723,9 @@ export default function CreateOrderPageClient() {
 
     const pushRows = (items: CustomerSuggestionItem[]) => {
       rows.push(
-        ...items.filter((item) => customerMatchesKeyword(item, rawKeyword || query)),
+        ...items.filter((item) =>
+          customerMatchesKeyword(item, rawKeyword || query),
+        ),
       );
     };
 
@@ -3602,19 +3750,31 @@ export default function CreateOrderPageClient() {
     };
 
     const requestCandidates = [
-      { endpoint: "/customers/search", params: { phone: phoneKeyword || rawKeyword, limit: "20" } },
+      {
+        endpoint: "/customers/search",
+        params: { phone: phoneKeyword || rawKeyword, limit: "20" },
+      },
       { endpoint: "/customers/search", params: { q: rawKeyword, limit: "20" } },
       { endpoint: "/customers", params: { search: rawKeyword, limit: "20" } },
-      { endpoint: "/customers", params: { phone: phoneKeyword || rawKeyword, limit: "20" } },
-      { endpoint: "/customers/autocomplete", params: { q: rawKeyword, limit: "20" } },
+      {
+        endpoint: "/customers",
+        params: { phone: phoneKeyword || rawKeyword, limit: "20" },
+      },
+      {
+        endpoint: "/customers/autocomplete",
+        params: { q: rawKeyword, limit: "20" },
+      },
     ];
 
     const requestRows = await Promise.allSettled(
       requestCandidates.map(async (candidate) => {
         const cleanParams = Object.fromEntries(
-          Object.entries(candidate.params).filter(([, value]) => String(value || "").trim()),
+          Object.entries(candidate.params).filter(([, value]) =>
+            String(value || "").trim(),
+          ),
         );
-        if (!Object.keys(cleanParams).length) return [] as CustomerSuggestionItem[];
+        if (!Object.keys(cleanParams).length)
+          return [] as CustomerSuggestionItem[];
 
         const url = new URL(`${API_BASE}${candidate.endpoint}`);
         Object.entries(cleanParams).forEach(([key, value]) => {
@@ -3670,7 +3830,6 @@ export default function CreateOrderPageClient() {
       }
     }
   };
-
 
   useEffect(() => {
     void loadDefaultCustomerSuggestions();
@@ -3753,7 +3912,9 @@ export default function CreateOrderPageClient() {
         const fallbackRows = getCachedCustomerMatches(value);
         setCustomerSuggestions(fallbackRows);
         setCustomerSuggestionOpen(fallbackRows.length > 0);
-        setCustomerHint(fallbackRows.length ? `Tìm thấy ${fallbackRows.length} khách.` : "");
+        setCustomerHint(
+          fallbackRows.length ? `Tìm thấy ${fallbackRows.length} khách.` : "",
+        );
       } finally {
         if (lookupSeq === phoneLookupSeqRef.current) {
           setPhoneSearching(false);
@@ -3995,7 +4156,7 @@ export default function CreateOrderPageClient() {
   }, [subtotal, customerDiscountPercent]);
 
   const addVariantToOrder = (variantId: string) => {
-    const found = allVariants.find((v) => v.id === variantId);
+    const found = allVariantById.get(String(variantId));
     if (!found) return;
 
     const stockWarning = buildStockWarning(found, 1);
@@ -4010,10 +4171,10 @@ export default function CreateOrderPageClient() {
         return prev.map((line) =>
           line.variantId === variantId
             ? {
-              ...line,
-              // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
-              qty: line.qty + 1,
-            }
+                ...line,
+                // ✅ Cho phép bán âm, không giới hạn số lượng theo tồn kho hiện tại.
+                qty: line.qty + 1,
+              }
             : line,
         );
       }
@@ -4051,19 +4212,7 @@ export default function CreateOrderPageClient() {
     const code = normalizeSkuSearch(originalCode);
     if (!code) return;
 
-    const exactFound = allVariants.find((v) => {
-      const sku = normalizeSkuSearch(v.sku || "");
-      const id = normalizeSkuSearch((v as any).id || "");
-      const barcode = normalizeSkuSearch((v as any).barcode || "");
-      const barcodeValue = normalizeSkuSearch((v as any).barcodeValue || "");
-
-      return (
-        sku === code ||
-        id === code ||
-        barcode === code ||
-        barcodeValue === code
-      );
-    });
+    const exactFound = barcodeVariantByKey.get(code);
 
     if (exactFound) {
       addVariantToOrder(exactFound.id);
@@ -4075,8 +4224,8 @@ export default function CreateOrderPageClient() {
 
     // Chỉ cho match gần đúng khi mã đủ dài và chỉ khớp duy nhất 1 variant.
     // Tránh trường hợp tít thiếu/kẹt ký tự rồi cộng nhầm sang SKU gần giống.
-    const looseMatches = allVariants.filter((v) => {
-      const sku = normalizeSkuSearch(v.sku || "");
+    const looseMatches = allVariants.filter((v: any) => {
+      const sku = String(v?._searchSku || "");
       return code.length >= 6 && sku.includes(code);
     });
 
@@ -4651,10 +4800,11 @@ export default function CreateOrderPageClient() {
                 leadtime: {
                   label:
                     parsed.distanceKm || parsed.durationMinutes
-                      ? `${parsed.distanceKm ? `${parsed.distanceKm}km` : ""}${parsed.distanceKm && parsed.durationMinutes
-                        ? " · "
-                        : ""
-                      }${parsed.durationMinutes ? `${parsed.durationMinutes} phút` : ""}`
+                      ? `${parsed.distanceKm ? `${parsed.distanceKm}km` : ""}${
+                          parsed.distanceKm && parsed.durationMinutes
+                            ? " · "
+                            : ""
+                        }${parsed.durationMinutes ? `${parsed.durationMinutes} phút` : ""}`
                       : "Nội thành",
                 },
                 ...({
@@ -4666,7 +4816,9 @@ export default function CreateOrderPageClient() {
                   _raw: parsed.raw,
                   _disabled: Boolean((parsed.raw as any)?._disabled),
                   _disabledReason: (parsed.raw as any)?._disabledReason || "",
-                  _applyFeeToInput: parsed.quoteFee > 0 && !Boolean((parsed.raw as any)?._disabled),
+                  _applyFeeToInput:
+                    parsed.quoteFee > 0 &&
+                    !Boolean((parsed.raw as any)?._disabled),
                 } as any),
               };
 
@@ -4706,9 +4858,13 @@ export default function CreateOrderPageClient() {
               senderWardId:
                 selectedCarrierPickup?.viettelWardId ||
                 selectedViettelInventory?.wardId,
-              fromName: selectedCarrierPickup?.name || selectedViettelInventory?.name,
-              fromPhone: selectedCarrierPickup?.phone || selectedViettelInventory?.phone,
-              fromAddress: selectedCarrierPickup?.address || selectedViettelInventory?.address,
+              fromName:
+                selectedCarrierPickup?.name || selectedViettelInventory?.name,
+              fromPhone:
+                selectedCarrierPickup?.phone || selectedViettelInventory?.phone,
+              fromAddress:
+                selectedCarrierPickup?.address ||
+                selectedViettelInventory?.address,
               province: viettelOldCarrierAddress.province,
               district: viettelOldCarrierAddress.district,
               ward: viettelOldCarrierAddress.ward,
@@ -4980,6 +5136,11 @@ export default function CreateOrderPageClient() {
         failedDeliveryFee30k,
       });
 
+      const failedDeliveryCodAmount =
+        !isPickupOrder && shippingPartner === "ghn" && failedDeliveryFee30k
+          ? 30000
+          : 0;
+
       const extraNoteParts = [
         customerFacingShippingNote
           ? `Ghi chú giao hàng: ${customerFacingShippingNote}`
@@ -4990,8 +5151,12 @@ export default function CreateOrderPageClient() {
         couponCode.trim() ? `Mã giảm giá: ${couponCode.trim()}` : "",
         customerId ? `CustomerId: ${customerId}` : "",
         selectedAddressId ? `CustomerAddressId: ${selectedAddressId}` : "",
-        selectedAssignedStaff ? `Nhân viên phụ trách: ${selectedAssignedStaff.name}` : "",
-        selectedAssignedStaff?.branchName ? `Chi nhánh NV phụ trách: ${selectedAssignedStaff.branchName}` : "",
+        selectedAssignedStaff
+          ? `Nhân viên phụ trách: ${selectedAssignedStaff.name}`
+          : "",
+        selectedAssignedStaff?.branchName
+          ? `Chi nhánh NV phụ trách: ${selectedAssignedStaff.branchName}`
+          : "",
         customerPolicyLabel ? `Policy: ${customerPolicyLabel}` : "",
         customerDiscountPercent
           ? `Chiết khấu mặc định: ${customerDiscountPercent}%`
@@ -5074,6 +5239,12 @@ export default function CreateOrderPageClient() {
         requiredNoteLabel: isPickupOrder
           ? undefined
           : deliveryRequirementPrintLabel,
+        failedDeliveryFee30k: isPickupOrder ? undefined : failedDeliveryFee30k,
+        failedDeliveryCodAmount: isPickupOrder
+          ? undefined
+          : failedDeliveryCodAmount,
+        codFailedAmount: isPickupOrder ? undefined : failedDeliveryCodAmount,
+        cod_failed_amount: isPickupOrder ? undefined : failedDeliveryCodAmount,
 
         shippingSnapshot: {
           skipAutoShipment: shouldCreateCarrierShipmentManually,
@@ -5089,9 +5260,9 @@ export default function CreateOrderPageClient() {
           shippingAddressLine1: isPickupOrder
             ? "Khách nhận tại cửa hàng"
             : selectedAddress?.addressLine1 ||
-            addressLine1.trim() ||
-            shippingAddress.trim() ||
-            undefined,
+              addressLine1.trim() ||
+              shippingAddress.trim() ||
+              undefined,
           shippingAddressLine2: isPickupOrder
             ? undefined
             : selectedAddress?.addressLine2 || addressLine2.trim() || undefined,
@@ -5131,6 +5302,12 @@ export default function CreateOrderPageClient() {
           requiredNoteLabel: isPickupOrder
             ? undefined
             : deliveryRequirementPrintLabel,
+          failedDeliveryFee30k: isPickupOrder ? undefined : failedDeliveryFee30k,
+          failedDeliveryCodAmount: isPickupOrder
+            ? undefined
+            : failedDeliveryCodAmount,
+          codFailedAmount: isPickupOrder ? undefined : failedDeliveryCodAmount,
+          cod_failed_amount: isPickupOrder ? undefined : failedDeliveryCodAmount,
           selectedServiceId: isPickupOrder
             ? undefined
             : selectedShippingServiceId,
@@ -5143,21 +5320,29 @@ export default function CreateOrderPageClient() {
               ? getQuoteKey(selectedQuote)
               : undefined,
           carrier: isPickupOrder ? "pickup" : shippingPartner,
-          pickupLocationId: isPickupOrder ? undefined : selectedCarrierPickup?.id,
-          pickupLocationName: isPickupOrder ? undefined : selectedCarrierPickup?.name,
-          pickupLocationPhone: isPickupOrder ? undefined : selectedCarrierPickup?.phone,
-          pickupLocationAddress: isPickupOrder ? undefined : selectedCarrierPickup?.address,
+          pickupLocationId: isPickupOrder
+            ? undefined
+            : selectedCarrierPickup?.id,
+          pickupLocationName: isPickupOrder
+            ? undefined
+            : selectedCarrierPickup?.name,
+          pickupLocationPhone: isPickupOrder
+            ? undefined
+            : selectedCarrierPickup?.phone,
+          pickupLocationAddress: isPickupOrder
+            ? undefined
+            : selectedCarrierPickup?.address,
           viettelServiceCode:
             !isPickupOrder && shippingPartner === "viettelpost"
               ? (selectedQuote as any)?._viettelServiceCode ||
-              (selectedQuote as any)?._serviceName ||
-              undefined
+                (selectedQuote as any)?._serviceName ||
+                undefined
               : undefined,
           viettelSenderGroupAddressId:
             !isPickupOrder && shippingPartner === "viettelpost"
               ? (selectedQuote as any)?._viettelSenderGroupAddressId ||
-              selectedViettelInventory?.groupAddressId ||
-              undefined
+                selectedViettelInventory?.groupAddressId ||
+                undefined
               : undefined,
           viettelReceiverProvinceId:
             !isPickupOrder && shippingPartner === "viettelpost"
@@ -5204,6 +5389,10 @@ export default function CreateOrderPageClient() {
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
           requiredNoteLabel: deliveryRequirementPrintLabel,
+          failedDeliveryFee30k,
+          failedDeliveryCodAmount,
+          codFailedAmount: failedDeliveryCodAmount,
+          cod_failed_amount: failedDeliveryCodAmount,
           clientOrderCode: created.orderCode,
           content: `Đơn hàng ${created.orderCode}`,
           weight: shippingWeight,
@@ -5335,9 +5524,12 @@ export default function CreateOrderPageClient() {
           senderWardId:
             selectedCarrierPickup?.viettelWardId ||
             selectedViettelInventory?.wardId,
-          fromName: selectedCarrierPickup?.name || selectedViettelInventory?.name,
-          fromPhone: selectedCarrierPickup?.phone || selectedViettelInventory?.phone,
-          fromAddress: selectedCarrierPickup?.address || selectedViettelInventory?.address,
+          fromName:
+            selectedCarrierPickup?.name || selectedViettelInventory?.name,
+          fromPhone:
+            selectedCarrierPickup?.phone || selectedViettelInventory?.phone,
+          fromAddress:
+            selectedCarrierPickup?.address || selectedViettelInventory?.address,
           toProvince: quoteProvince,
           toDistrict: quoteDistrict,
           toWard: quoteWard,
@@ -5447,20 +5639,36 @@ export default function CreateOrderPageClient() {
 
             <div className="grid gap-2 text-sm sm:grid-cols-4 lg:min-w-[680px]">
               <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Khách</p>
-                <p className="mt-1 truncate font-semibold text-white">{customerName || "Khách lẻ"}</p>
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  Khách
+                </p>
+                <p className="mt-1 truncate font-semibold text-white">
+                  {customerName || "Khách lẻ"}
+                </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Kênh / CN</p>
-                <p className="mt-1 truncate font-semibold text-white">{salesChannel} · {branchLabel}</p>
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  Kênh / CN
+                </p>
+                <p className="mt-1 truncate font-semibold text-white">
+                  {salesChannel} · {branchLabel}
+                </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Sản phẩm</p>
-                <p className="mt-1 font-semibold text-white">{lines.length} dòng</p>
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  Sản phẩm
+                </p>
+                <p className="mt-1 font-semibold text-white">
+                  {lines.length} dòng
+                </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-neutral-500">Còn phải trả</p>
-                <p className="mt-1 font-semibold text-white">{currency(remaining)}</p>
+                <p className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  Còn phải trả
+                </p>
+                <p className="mt-1 font-semibold text-white">
+                  {currency(remaining)}
+                </p>
               </div>
             </div>
           </div>
@@ -5533,18 +5741,23 @@ export default function CreateOrderPageClient() {
                             if (suppressPhoneSuggestionRef.current) return;
 
                             if (customerPhone.trim()) {
-                              const cachedMatches = getCachedCustomerMatches(customerPhone);
+                              const cachedMatches =
+                                getCachedCustomerMatches(customerPhone);
                               if (cachedMatches.length) {
                                 setCustomerSuggestions(cachedMatches);
                                 setCustomerSuggestionOpen(true);
                                 return;
                               }
-                              setCustomerSuggestionOpen(customerSuggestions.length > 0);
+                              setCustomerSuggestionOpen(
+                                customerSuggestions.length > 0,
+                              );
                               return;
                             }
 
                             if (customerDefaultSuggestions.length) {
-                              setCustomerSuggestions(customerDefaultSuggestions.slice(0, 20));
+                              setCustomerSuggestions(
+                                customerDefaultSuggestions.slice(0, 20),
+                              );
                               setCustomerSuggestionOpen(true);
                               return;
                             }
@@ -5559,8 +5772,12 @@ export default function CreateOrderPageClient() {
                             onClick={() => {
                               setCustomerPhone("");
                               setCustomerHint("");
-                              setCustomerSuggestions(customerDefaultSuggestions.slice(0, 20));
-                              setCustomerSuggestionOpen(customerDefaultSuggestions.length > 0);
+                              setCustomerSuggestions(
+                                customerDefaultSuggestions.slice(0, 20),
+                              );
+                              setCustomerSuggestionOpen(
+                                customerDefaultSuggestions.length > 0,
+                              );
                             }}
                             className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-neutral-200 text-xs font-semibold text-neutral-500 hover:bg-neutral-300"
                           >
@@ -5601,7 +5818,9 @@ export default function CreateOrderPageClient() {
                                 className="flex w-full items-start gap-3 rounded-xl border-t border-neutral-100 px-3 py-3 text-left transition first:border-t-0 hover:bg-neutral-50"
                               >
                                 <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-sm font-semibold text-neutral-500">
-                                  {(item.fullName || "K").slice(0, 1).toUpperCase()}
+                                  {(item.fullName || "K")
+                                    .slice(0, 1)
+                                    .toUpperCase()}
                                 </span>
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate text-sm font-semibold text-neutral-900">
@@ -5620,7 +5839,9 @@ export default function CreateOrderPageClient() {
                             ))
                           ) : (
                             <div className="rounded-xl px-3 py-4 text-sm text-neutral-500">
-                              {phoneSearching ? "Đang tìm khách cũ..." : "Chưa thấy khách phù hợp. Có thể thêm mới khách hàng."}
+                              {phoneSearching
+                                ? "Đang tìm khách cũ..."
+                                : "Chưa thấy khách phù hợp. Có thể thêm mới khách hàng."}
                             </div>
                           )}
                         </div>
@@ -5638,20 +5859,36 @@ export default function CreateOrderPageClient() {
                         {hasAddressParts ? (
                           <div className="mt-2 grid gap-2 sm:grid-cols-2">
                             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Số nhà / đường</p>
-                              <p className="mt-0.5 line-clamp-2 text-sm font-semibold text-neutral-950">{displayAddressLine || "—"}</p>
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                                Số nhà / đường
+                              </p>
+                              <p className="mt-0.5 line-clamp-2 text-sm font-semibold text-neutral-950">
+                                {displayAddressLine || "—"}
+                              </p>
                             </div>
                             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Phường / xã</p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">{displayAddressWard || "—"}</p>
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                                Phường / xã
+                              </p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">
+                                {displayAddressWard || "—"}
+                              </p>
                             </div>
                             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Quận / huyện</p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">{displayAddressDistrict || "—"}</p>
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                                Quận / huyện
+                              </p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">
+                                {displayAddressDistrict || "—"}
+                              </p>
                             </div>
                             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Tỉnh / thành</p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">{displayAddressProvince || "—"}</p>
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                                Tỉnh / thành
+                              </p>
+                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">
+                                {displayAddressProvince || "—"}
+                              </p>
                             </div>
                           </div>
                         ) : (
@@ -5690,9 +5927,13 @@ export default function CreateOrderPageClient() {
                           <Button
                             variant="secondary"
                             className="rounded-xl px-3 py-2 text-xs"
-                            onClick={() => setShowMergedAddressCompare((prev) => !prev)}
+                            onClick={() =>
+                              setShowMergedAddressCompare((prev) => !prev)
+                            }
                           >
-                            {showMergedAddressCompare ? "Ẩn so sánh" : "So sánh sau sáp nhập"}
+                            {showMergedAddressCompare
+                              ? "Ẩn so sánh"
+                              : "So sánh sau sáp nhập"}
                           </Button>
                         ) : null}
                       </div>
@@ -5701,15 +5942,28 @@ export default function CreateOrderPageClient() {
                     {showMergedAddressCompare && hasAddressParts ? (
                       <div className="mt-3 grid gap-2 border-t border-neutral-200 pt-3 md:grid-cols-2">
                         <div className="rounded-2xl border border-neutral-200 bg-white p-3">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Địa chỉ đang lưu</p>
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                            Địa chỉ đang lưu
+                          </p>
                           <p className="mt-2 text-sm font-semibold leading-5 text-neutral-950">
-                            {customerAddressDisplay || [displayAddressLine, displayAddressWard, displayAddressDistrict, displayAddressProvince].filter(Boolean).join(", ")}
+                            {customerAddressDisplay ||
+                              [
+                                displayAddressLine,
+                                displayAddressWard,
+                                displayAddressDistrict,
+                                displayAddressProvince,
+                              ]
+                                .filter(Boolean)
+                                .join(", ")}
                           </p>
                         </div>
                         <div className="rounded-2xl border border-neutral-900 bg-white p-3">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-900">Địa chỉ sau sáp nhập (xem tham chiếu)</p>
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-900">
+                            Địa chỉ sau sáp nhập (xem tham chiếu)
+                          </p>
                           <p className="mt-2 text-sm font-semibold leading-5 text-neutral-950">
-                            {mergedAddressDisplay || "Chưa có bản so sánh sau sáp nhập"}
+                            {mergedAddressDisplay ||
+                              "Chưa có bản so sánh sau sáp nhập"}
                           </p>
                         </div>
                       </div>
@@ -5814,7 +6068,9 @@ export default function CreateOrderPageClient() {
                         searchPlaceholder="Tìm tên, mã NV hoặc chi nhánh..."
                       />
                     )}
-                    <p className="mt-1 text-[11px] text-neutral-400">Tuỳ chọn.</p>
+                    <p className="mt-1 text-[11px] text-neutral-400">
+                      Tuỳ chọn.
+                    </p>
                   </div>
 
                   <div>
@@ -5846,9 +6102,7 @@ export default function CreateOrderPageClient() {
                           <input
                             type="checkbox"
                             checked={deliveryRequirement === item.value}
-                            onChange={() =>
-                              setDeliveryRequirement(item.value)
-                            }
+                            onChange={() => setDeliveryRequirement(item.value)}
                             className="h-4 w-4 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
                           />
                           <span>{item.label}</span>
@@ -5865,7 +6119,9 @@ export default function CreateOrderPageClient() {
                             }
                             className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-neutral-900 accent-neutral-900"
                           />
-                          <span className="min-w-0 leading-5">{DELIVERY_FAILED_FEE_NOTE}</span>
+                          <span className="min-w-0 leading-5">
+                            {DELIVERY_FAILED_FEE_NOTE}
+                          </span>
                         </label>
                       </div>
                     </div>
@@ -5939,7 +6195,11 @@ export default function CreateOrderPageClient() {
                               {(variant as any).imageUrl ? (
                                 <img
                                   src={(variant as any).imageUrl}
-                                  alt={(variant as any).productName || variant.sku || "Sản phẩm"}
+                                  alt={
+                                    (variant as any).productName ||
+                                    variant.sku ||
+                                    "Sản phẩm"
+                                  }
                                   className="h-full w-full object-cover"
                                 />
                               ) : null}
@@ -5957,15 +6217,15 @@ export default function CreateOrderPageClient() {
                               </p>
                               {Number((variant as any).totalStock || 0) <= 0 ? (
                                 <p className="mt-1 text-xs font-semibold text-red-600">
-                                  Hết hàng toàn hệ thống · vẫn cho phép tạo đơn âm
-                                  kho
+                                  Hết hàng toàn hệ thống · vẫn cho phép tạo đơn
+                                  âm kho
                                 </p>
                               ) : Number((variant as any).branchStock || 0) <=
                                 0 ? (
                                 <p className="mt-1 text-xs font-medium text-amber-700">
                                   Chi nhánh này hết hàng · còn{" "}
-                                  {Number((variant as any).totalStock || 0)} ở chi
-                                  nhánh khác
+                                  {Number((variant as any).totalStock || 0)} ở
+                                  chi nhánh khác
                                 </p>
                               ) : null}
                             </div>
@@ -5978,16 +6238,16 @@ export default function CreateOrderPageClient() {
                               Tồn CN:{" "}
                               {Number(
                                 (variant as any).branchStock ??
-                                (variant as any).stock ??
-                                0,
+                                  (variant as any).stock ??
+                                  0,
                               )}
                             </p>
                             <p className="mt-1 text-xs text-neutral-400">
                               Tổng tồn:{" "}
                               {Number(
                                 (variant as any).totalStock ??
-                                (variant as any).stock ??
-                                0,
+                                  (variant as any).stock ??
+                                  0,
                               )}
                             </p>
                           </div>
@@ -6046,9 +6306,9 @@ export default function CreateOrderPageClient() {
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{line.productName}</p>
                               {line.productId &&
-                                discountedProductIdSet.has(
-                                  String(line.productId),
-                                ) ? (
+                              discountedProductIdSet.has(
+                                String(line.productId),
+                              ) ? (
                                 <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                                   Đang KM
                                 </span>
@@ -6074,8 +6334,8 @@ export default function CreateOrderPageClient() {
                                 Hết hàng toàn hệ thống · đơn này sẽ xuất âm kho.
                               </p>
                             ) : Number(
-                              (line as any).branchStock ?? line.stock ?? 0,
-                            ) < Number(line.qty || 1) ? (
+                                (line as any).branchStock ?? line.stock ?? 0,
+                              ) < Number(line.qty || 1) ? (
                               <p className="mt-1 text-xs font-medium text-amber-700">
                                 Không đủ tồn ở chi nhánh này · vẫn cho phép bán
                                 âm.
@@ -6253,10 +6513,11 @@ export default function CreateOrderPageClient() {
                     key={item.value}
                     type="button"
                     onClick={() => setShippingUiMode(item.value)}
-                    className={`rounded-2xl border p-3 text-left transition ${shippingUiMode === item.value
+                    className={`rounded-2xl border p-3 text-left transition ${
+                      shippingUiMode === item.value
                         ? "border-neutral-900 bg-neutral-50"
                         : "border-neutral-200 hover:bg-neutral-50"
-                      }`}
+                    }`}
                   >
                     <div className="text-sm font-medium text-neutral-900">
                       {item.label}
@@ -6277,15 +6538,19 @@ export default function CreateOrderPageClient() {
                     onClick={() =>
                       item.enabled && setShippingPartner(item.value)
                     }
-                    className={`rounded-2xl border px-3 py-3 text-left transition ${shippingPartner === item.value
+                    className={`rounded-2xl border px-3 py-3 text-left transition ${
+                      shippingPartner === item.value
                         ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
                         : "border-neutral-200 bg-white text-neutral-900"
-                      } ${item.enabled ? "hover:border-neutral-900" : "cursor-not-allowed opacity-50"}`}
+                    } ${item.enabled ? "hover:border-neutral-900" : "cursor-not-allowed opacity-50"}`}
                   >
                     <div className="text-sm font-semibold">{item.label}</div>
                     <div
-                      className={`mt-1 text-xs ${shippingPartner === item.value ? "text-neutral-200" : "text-neutral-500"
-                        }`}
+                      className={`mt-1 text-xs ${
+                        shippingPartner === item.value
+                          ? "text-neutral-200"
+                          : "text-neutral-500"
+                      }`}
                     >
                       {item.enabled ? "Đang bật" : "Sẽ bật sau"}
                     </div>
@@ -6362,8 +6627,13 @@ export default function CreateOrderPageClient() {
 
               {shippingUiMode === "carrier" && selectedCarrierPickup ? (
                 <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  Kho lấy hàng đã cấu hình: <span className="font-semibold text-neutral-900">{selectedCarrierPickup.name || selectedCarrierPickup.label}</span>
-                  {selectedCarrierPickup.address ? ` · ${selectedCarrierPickup.address}` : ""}
+                  Kho lấy hàng đã cấu hình:{" "}
+                  <span className="font-semibold text-neutral-900">
+                    {selectedCarrierPickup.name || selectedCarrierPickup.label}
+                  </span>
+                  {selectedCarrierPickup.address
+                    ? ` · ${selectedCarrierPickup.address}`
+                    : ""}
                 </div>
               ) : null}
 
@@ -6380,8 +6650,8 @@ export default function CreateOrderPageClient() {
               ) : null}
 
               {shippingLoading &&
-                shippingUiMode === "carrier" &&
-                !shippingQuotes.length ? (
+              shippingUiMode === "carrier" &&
+              !shippingQuotes.length ? (
                 <div className="mt-4 overflow-hidden rounded-3xl border border-dashed border-neutral-300 bg-white shadow-sm">
                   <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
                     <div className="text-sm font-semibold text-neutral-950">
@@ -6410,339 +6680,360 @@ export default function CreateOrderPageClient() {
 
               {shippingQuotes.length > 0
                 ? (() => {
-                  const customerShippingFee = parseNumber(shippingFee) || 0;
-                  const activeQuote =
-                    selectedQuote ||
-                    shippingQuotes.find(
-                      (q) =>
-                        getQuoteCarrier(q) === shippingPartner &&
-                        q.serviceId === selectedShippingServiceId &&
-                        q.serviceTypeId === selectedShippingServiceTypeId &&
-                        !(q as any)?._disabled,
-                    ) ||
-                    null;
+                    const customerShippingFee = parseNumber(shippingFee) || 0;
+                    const activeQuote =
+                      selectedQuote ||
+                      shippingQuotes.find(
+                        (q) =>
+                          getQuoteCarrier(q) === shippingPartner &&
+                          q.serviceId === selectedShippingServiceId &&
+                          q.serviceTypeId === selectedShippingServiceTypeId &&
+                          !(q as any)?._disabled,
+                      ) ||
+                      null;
 
-                  const validQuotes = shippingQuotes.filter(
-                    (quote) =>
-                      getFeeNumber(quote) > 0 && !(quote as any)?._disabled,
-                  );
-                  const cheapestQuote = [...validQuotes].sort(
-                    (a, b) => getFeeNumber(a) - getFeeNumber(b),
-                  )[0];
-                  const fastestQuote = [...validQuotes]
-                    .filter(
+                    const validQuotes = shippingQuotes.filter(
                       (quote) =>
-                        Number((quote as any)?._durationMinutes || 0) > 0,
-                    )
-                    .sort(
-                      (a, b) =>
-                        Number((a as any)?._durationMinutes || 0) -
-                        Number((b as any)?._durationMinutes || 0),
+                        getFeeNumber(quote) > 0 && !(quote as any)?._disabled,
+                    );
+                    const cheapestQuote = [...validQuotes].sort(
+                      (a, b) => getFeeNumber(a) - getFeeNumber(b),
                     )[0];
-                  const recommendedQuote =
-                    validQuotes.find((quote) =>
-                      getQuoteBadges(quote).includes("Khuyên dùng"),
-                    ) ||
-                    cheapestQuote ||
-                    validQuotes[0];
+                    const fastestQuote = [...validQuotes]
+                      .filter(
+                        (quote) =>
+                          Number((quote as any)?._durationMinutes || 0) > 0,
+                      )
+                      .sort(
+                        (a, b) =>
+                          Number((a as any)?._durationMinutes || 0) -
+                          Number((b as any)?._durationMinutes || 0),
+                      )[0];
+                    const recommendedQuote =
+                      validQuotes.find((quote) =>
+                        getQuoteBadges(quote).includes("Khuyên dùng"),
+                      ) ||
+                      cheapestQuote ||
+                      validQuotes[0];
 
-                  const quickCards = [
-                    {
-                      key: "recommended",
-                      title: "Khuyên dùng",
-                      quote: recommendedQuote,
-                      tone: "emerald",
-                    },
-                    {
-                      key: "cheapest",
-                      title: "Rẻ nhất",
-                      quote: cheapestQuote,
-                      tone: "orange",
-                    },
-                    {
-                      key: "fastest",
-                      title: "Nhanh nhất",
-                      quote: fastestQuote,
-                      tone: "blue",
-                    },
-                  ].filter((item) => item.quote);
+                    const quickCards = [
+                      {
+                        key: "recommended",
+                        title: "Khuyên dùng",
+                        quote: recommendedQuote,
+                        tone: "emerald",
+                      },
+                      {
+                        key: "cheapest",
+                        title: "Rẻ nhất",
+                        quote: cheapestQuote,
+                        tone: "orange",
+                      },
+                      {
+                        key: "fastest",
+                        title: "Nhanh nhất",
+                        quote: fastestQuote,
+                        tone: "blue",
+                      },
+                    ].filter((item) => item.quote);
 
-                  const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
-                  const insight = getShippingInsight(
-                    activeQuote,
-                    customerShippingFee,
-                  );
+                    const groupedQuotes = groupQuotesByCarrier(shippingQuotes);
+                    const insight = getShippingInsight(
+                      activeQuote,
+                      customerShippingFee,
+                    );
 
-                  const applyQuote = (quote: ShipmentQuoteResult) => {
-                    const carrier = getQuoteCarrier(quote);
-                    const feeValue = getFeeNumber(quote);
+                    const applyQuote = (quote: ShipmentQuoteResult) => {
+                      const carrier = getQuoteCarrier(quote);
+                      const feeValue = getFeeNumber(quote);
 
-                    applyShippingRef.current?.({
-                      shippingFee: feeValue,
-                      applyFeeToInput: Boolean(
-                        (quote as any)._applyFeeToInput,
-                      ),
-                      shippingPartner: carrier,
-                      shippingMode: "partner",
-                      selectedServiceId: quote.serviceId,
-                      selectedServiceTypeId: quote.serviceTypeId,
-                      selectedQuoteKey: getQuoteKey(quote),
-                      weight: Number(shippingWeight || 200),
-                      length: Number(shippingLength || 10),
-                      width: Number(shippingWidth || 10),
-                      height: Number(shippingHeight || 10),
-                      ghnDistrictId:
-                        (quote as any)._ghnDistrictId || ghnDistrictId,
-                      ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
-                    });
-                  };
+                      applyShippingRef.current?.({
+                        shippingFee: feeValue,
+                        applyFeeToInput: Boolean(
+                          (quote as any)._applyFeeToInput,
+                        ),
+                        shippingPartner: carrier,
+                        shippingMode: "partner",
+                        selectedServiceId: quote.serviceId,
+                        selectedServiceTypeId: quote.serviceTypeId,
+                        selectedQuoteKey: getQuoteKey(quote),
+                        weight: Number(shippingWeight || 200),
+                        length: Number(shippingLength || 10),
+                        width: Number(shippingWidth || 10),
+                        height: Number(shippingHeight || 10),
+                        ghnDistrictId:
+                          (quote as any)._ghnDistrictId || ghnDistrictId,
+                        ghnWardCode: (quote as any)._ghnWardCode || ghnWardCode,
+                      });
+                    };
 
-                  return (
-                    <div className="mt-4 space-y-4">
-                      <div className="grid gap-3 md:grid-cols-3">
-                        {quickCards.map((item) => {
-                          const quote = item.quote as ShipmentQuoteResult;
-                          const carrier = getQuoteCarrier(quote);
-                          const meta = getCarrierMeta(carrier);
-                          const active =
-                            activeQuote &&
-                            getQuoteKey(activeQuote) === getQuoteKey(quote);
-                          const feeValue = getFeeNumber(quote);
+                    return (
+                      <div className="mt-4 space-y-4">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          {quickCards.map((item) => {
+                            const quote = item.quote as ShipmentQuoteResult;
+                            const carrier = getQuoteCarrier(quote);
+                            const meta = getCarrierMeta(carrier);
+                            const active =
+                              activeQuote &&
+                              getQuoteKey(activeQuote) === getQuoteKey(quote);
+                            const feeValue = getFeeNumber(quote);
 
-                          const tone =
-                            item.tone === "emerald"
-                              ? "border-emerald-200 bg-emerald-50"
-                              : item.tone === "blue"
-                                ? "border-blue-200 bg-blue-50"
-                                : "border-orange-200 bg-orange-50";
+                            const tone =
+                              item.tone === "emerald"
+                                ? "border-emerald-200 bg-emerald-50"
+                                : item.tone === "blue"
+                                  ? "border-blue-200 bg-blue-50"
+                                  : "border-orange-200 bg-orange-50";
 
-                          return (
-                            <button
-                              key={`${item.key}-${getQuoteKey(quote)}`}
-                              type="button"
-                              onClick={() => applyQuote(quote)}
-                              className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${active
-                                  ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10"
-                                  : tone
+                            return (
+                              <button
+                                key={`${item.key}-${getQuoteKey(quote)}`}
+                                type="button"
+                                onClick={() => applyQuote(quote)}
+                                className={`rounded-3xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                                  active
+                                    ? "border-neutral-900 bg-white ring-2 ring-neutral-900/10"
+                                    : tone
                                 }`}
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
-                                  {item.title}
-                                </span>
-                                <span
-                                  className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}
-                                >
-                                  {meta.short}
-                                </span>
-                              </div>
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-neutral-700">
+                                    {item.title}
+                                  </span>
+                                  <span
+                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${meta.accent}`}
+                                  >
+                                    {meta.short}
+                                  </span>
+                                </div>
 
-                              <div className="mt-3 text-sm font-semibold text-neutral-950">
-                                {meta.name} ·{" "}
-                                {getQuoteServiceCleanName(quote)}
-                              </div>
+                                <div className="mt-3 text-sm font-semibold text-neutral-950">
+                                  {meta.name} ·{" "}
+                                  {getQuoteServiceCleanName(quote)}
+                                </div>
 
-                              <div className="mt-2 flex items-end justify-between gap-3">
-                                <div>
-                                  <div className="text-2xl font-bold tracking-tight text-neutral-950">
-                                    {currency(feeValue)}
+                                <div className="mt-2 flex items-end justify-between gap-3">
+                                  <div>
+                                    <div className="text-2xl font-bold tracking-tight text-neutral-950">
+                                      {currency(feeValue)}
+                                    </div>
+                                    <div className="mt-1 text-xs text-neutral-600">
+                                      {getQuoteLeadtimeLabel(quote)}
+                                    </div>
                                   </div>
-                                  <div className="mt-1 text-xs text-neutral-600">
-                                    {getQuoteLeadtimeLabel(quote)}
+                                  <div className="text-right text-[11px] font-medium text-neutral-500">
+                                    {getSmartQuoteNote(quote)}
                                   </div>
                                 </div>
-                                <div className="text-right text-[11px] font-medium text-neutral-500">
-                                  {getSmartQuoteNote(quote)}
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div
-                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span>{insight.label}</span>
-                          <span className="text-xs font-medium opacity-80">
-                            Phí khách đang trả:{" "}
-                            {currency(customerShippingFee)} · Gói đang chọn:{" "}
-                            {activeQuote
-                              ? currency(getFeeNumber(activeQuote))
-                              : "—"}
-                          </span>
+                              </button>
+                            );
+                          })}
                         </div>
-                      </div>
 
-                      <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
-                        <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
+                        <div
+                          className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${insight.className}`}
+                        >
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <div className="text-sm font-semibold text-neutral-950">
-                                So sánh gói vận chuyển
-                              </div>
-                              <div className="mt-0.5 text-xs text-neutral-500">
-                                Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn
-                                này.
-                              </div>
-                            </div>
-                            <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
-                              {shippingQuotes.length} gói
-                            </div>
+                            <span>{insight.label}</span>
+                            <span className="text-xs font-medium opacity-80">
+                              Phí khách đang trả:{" "}
+                              {currency(customerShippingFee)} · Gói đang chọn:{" "}
+                              {activeQuote
+                                ? currency(getFeeNumber(activeQuote))
+                                : "—"}
+                            </span>
                           </div>
                         </div>
 
-                        <div className="divide-y divide-neutral-100">
-                          {groupedQuotes.map((group) => (
-                            <div
-                              key={group.carrier}
-                              className="grid grid-cols-[148px_1fr]"
-                            >
-                              <div
-                                className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}
-                              >
-                                <div className="sticky top-3">
-                                  <div
-                                    className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}
-                                  >
-                                    {group.meta.name}
-                                  </div>
-                                  <div className="mt-2 text-xs text-neutral-500">
-                                    {group.meta.sub}
-                                  </div>
-                                  <div className="mt-3 text-[11px] font-semibold text-neutral-500">
-                                    {group.quotes.length} lựa chọn
-                                  </div>
-
-                                  {group.carrier === "ahamove" ? (
-                                    <div className="mt-3 rounded-2xl border border-orange-200 bg-white/80 p-2">
-                                      <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-orange-700">
-                                        Thanh toán Aha
-                                      </div>
-                                      <div className="grid gap-1.5">
-                                        {AHAMOVE_PAYMENT_METHOD_OPTIONS.map((item) => (
-                                          <button
-                                            key={item.value}
-                                            type="button"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              handleAhamovePaymentMethodChange(item.value);
-                                            }}
-                                            className={`rounded-xl border px-2 py-2 text-left text-[11px] leading-4 transition ${ahamovePaymentMethod === item.value
-                                                ? "border-orange-500 bg-orange-50 text-orange-900 ring-1 ring-orange-200"
-                                                : "border-orange-100 bg-white text-neutral-600 hover:border-orange-300"
-                                              }`}
-                                          >
-                                            <div className="flex items-center justify-between gap-2">
-                                              <span className="font-semibold">{item.label}</span>
-                                              <span
-                                                className={`h-2.5 w-2.5 shrink-0 rounded-full border ${ahamovePaymentMethod === item.value
-                                                    ? "border-orange-600 bg-orange-600"
-                                                    : "border-orange-200 bg-white"
-                                                  }`}
-                                              />
-                                            </div>
-                                          </button>
-                                        ))}
-                                      </div>
-                                      <div className="mt-2 rounded-xl bg-orange-50 px-2 py-1.5 text-[11px] leading-4 text-orange-800">
-                                        API: <span className="font-semibold">{ahamovePaymentMethod}</span> · {shippingPayer === "customer" ? "Khách chịu phí" : "Shop chịu phí"}
-                                      </div>
-                                    </div>
-                                  ) : null}
+                        <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
+                          <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="text-sm font-semibold text-neutral-950">
+                                  So sánh gói vận chuyển
+                                </div>
+                                <div className="mt-0.5 text-xs text-neutral-500">
+                                  Nhóm theo hãng, chọn nhanh gói phù hợp cho đơn
+                                  này.
                                 </div>
                               </div>
-
-                              <div className="divide-y divide-neutral-100">
-                                {group.quotes.map((quote) => {
-                                  const carrier = getQuoteCarrier(quote);
-                                  const active =
-                                    selectedShippingQuoteKey
-                                      ? getQuoteKey(quote) === selectedShippingQuoteKey
-                                      : carrier === shippingPartner &&
-                                      quote.serviceId ===
-                                      selectedShippingServiceId &&
-                                      quote.serviceTypeId ===
-                                      selectedShippingServiceTypeId;
-                                  const badges = getQuoteBadges(quote);
-                                  const feeValue = getFeeNumber(quote);
-                                  const disabled = Boolean(
-                                    (quote as any)?._disabled,
-                                  );
-
-                                  return (
-                                    <button
-                                      key={getQuoteKey(quote)}
-                                      type="button"
-                                      disabled={disabled}
-                                      onClick={() => applyQuote(quote)}
-                                      className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${active
-                                          ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
-                                          : "hover:bg-neutral-50"
-                                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                                    >
-                                      <div className="flex items-start gap-3">
-                                        <span
-                                          className={`mt-1 h-4 w-4 rounded-full border ${active
-                                              ? "border-neutral-900 bg-neutral-900"
-                                              : "border-neutral-300 bg-white"
-                                            }`}
-                                        />
-                                        <div>
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-sm font-semibold text-neutral-950">
-                                              {getQuoteServiceCleanName(
-                                                quote,
-                                              )}
-                                            </span>
-                                            {badges.map((badge) => (
-                                              <span
-                                                key={badge}
-                                                className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${badge === "Rẻ nhất"
-                                                    ? "bg-orange-50 text-orange-600"
-                                                    : badge === "Nhanh nhất"
-                                                      ? "bg-blue-50 text-blue-600"
-                                                      : "bg-emerald-50 text-emerald-700"
-                                                  }`}
-                                              >
-                                                {badge}
-                                              </span>
-                                            ))}
-                                          </div>
-
-                                          <div className="mt-1 text-xs text-neutral-500">
-                                            {getSmartQuoteNote(quote)}
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      <div className="text-sm text-neutral-700">
-                                        {getQuoteLeadtimeLabel(quote)}
-                                      </div>
-
-                                      <div className="text-right">
-                                        <div className="text-sm font-bold text-neutral-950">
-                                          {currency(feeValue)}
-                                        </div>
-                                        <div className="mt-0.5 text-[11px] text-neutral-400">
-                                          Service {quote.serviceId}
-                                          {quote.serviceTypeId
-                                            ? ` · Type ${quote.serviceTypeId}`
-                                            : ""}
-                                        </div>
-                                      </div>
-                                    </button>
-                                  );
-                                })}
+                              <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm">
+                                {shippingQuotes.length} gói
                               </div>
                             </div>
-                          ))}
+                          </div>
+
+                          <div className="divide-y divide-neutral-100">
+                            {groupedQuotes.map((group) => (
+                              <div
+                                key={group.carrier}
+                                className="grid grid-cols-[148px_1fr]"
+                              >
+                                <div
+                                  className={`border-r border-neutral-100 p-4 ${group.meta.soft}`}
+                                >
+                                  <div className="sticky top-3">
+                                    <div
+                                      className={`inline-flex rounded-2xl border px-3 py-2 text-sm font-bold ${group.meta.accent}`}
+                                    >
+                                      {group.meta.name}
+                                    </div>
+                                    <div className="mt-2 text-xs text-neutral-500">
+                                      {group.meta.sub}
+                                    </div>
+                                    <div className="mt-3 text-[11px] font-semibold text-neutral-500">
+                                      {group.quotes.length} lựa chọn
+                                    </div>
+
+                                    {group.carrier === "ahamove" ? (
+                                      <div className="mt-3 rounded-2xl border border-orange-200 bg-white/80 p-2">
+                                        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-orange-700">
+                                          Thanh toán Aha
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                          {AHAMOVE_PAYMENT_METHOD_OPTIONS.map(
+                                            (item) => (
+                                              <button
+                                                key={item.value}
+                                                type="button"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  handleAhamovePaymentMethodChange(
+                                                    item.value,
+                                                  );
+                                                }}
+                                                className={`rounded-xl border px-2 py-2 text-left text-[11px] leading-4 transition ${
+                                                  ahamovePaymentMethod ===
+                                                  item.value
+                                                    ? "border-orange-500 bg-orange-50 text-orange-900 ring-1 ring-orange-200"
+                                                    : "border-orange-100 bg-white text-neutral-600 hover:border-orange-300"
+                                                }`}
+                                              >
+                                                <div className="flex items-center justify-between gap-2">
+                                                  <span className="font-semibold">
+                                                    {item.label}
+                                                  </span>
+                                                  <span
+                                                    className={`h-2.5 w-2.5 shrink-0 rounded-full border ${
+                                                      ahamovePaymentMethod ===
+                                                      item.value
+                                                        ? "border-orange-600 bg-orange-600"
+                                                        : "border-orange-200 bg-white"
+                                                    }`}
+                                                  />
+                                                </div>
+                                              </button>
+                                            ),
+                                          )}
+                                        </div>
+                                        <div className="mt-2 rounded-xl bg-orange-50 px-2 py-1.5 text-[11px] leading-4 text-orange-800">
+                                          API:{" "}
+                                          <span className="font-semibold">
+                                            {ahamovePaymentMethod}
+                                          </span>{" "}
+                                          ·{" "}
+                                          {shippingPayer === "customer"
+                                            ? "Khách chịu phí"
+                                            : "Shop chịu phí"}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                <div className="divide-y divide-neutral-100">
+                                  {group.quotes.map((quote) => {
+                                    const carrier = getQuoteCarrier(quote);
+                                    const active = selectedShippingQuoteKey
+                                      ? getQuoteKey(quote) ===
+                                        selectedShippingQuoteKey
+                                      : carrier === shippingPartner &&
+                                        quote.serviceId ===
+                                          selectedShippingServiceId &&
+                                        quote.serviceTypeId ===
+                                          selectedShippingServiceTypeId;
+                                    const badges = getQuoteBadges(quote);
+                                    const feeValue = getFeeNumber(quote);
+                                    const disabled = Boolean(
+                                      (quote as any)?._disabled,
+                                    );
+
+                                    return (
+                                      <button
+                                        key={getQuoteKey(quote)}
+                                        type="button"
+                                        disabled={disabled}
+                                        onClick={() => applyQuote(quote)}
+                                        className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
+                                          active
+                                            ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
+                                            : "hover:bg-neutral-50"
+                                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                                      >
+                                        <div className="flex items-start gap-3">
+                                          <span
+                                            className={`mt-1 h-4 w-4 rounded-full border ${
+                                              active
+                                                ? "border-neutral-900 bg-neutral-900"
+                                                : "border-neutral-300 bg-white"
+                                            }`}
+                                          />
+                                          <div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="text-sm font-semibold text-neutral-950">
+                                                {getQuoteServiceCleanName(
+                                                  quote,
+                                                )}
+                                              </span>
+                                              {badges.map((badge) => (
+                                                <span
+                                                  key={badge}
+                                                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                                    badge === "Rẻ nhất"
+                                                      ? "bg-orange-50 text-orange-600"
+                                                      : badge === "Nhanh nhất"
+                                                        ? "bg-blue-50 text-blue-600"
+                                                        : "bg-emerald-50 text-emerald-700"
+                                                  }`}
+                                                >
+                                                  {badge}
+                                                </span>
+                                              ))}
+                                            </div>
+
+                                            <div className="mt-1 text-xs text-neutral-500">
+                                              {getSmartQuoteNote(quote)}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="text-sm text-neutral-700">
+                                          {getQuoteLeadtimeLabel(quote)}
+                                        </div>
+
+                                        <div className="text-right">
+                                          <div className="text-sm font-bold text-neutral-950">
+                                            {currency(feeValue)}
+                                          </div>
+                                          <div className="mt-0.5 text-[11px] text-neutral-400">
+                                            Service {quote.serviceId}
+                                            {quote.serviceTypeId
+                                              ? ` · Type ${quote.serviceTypeId}`
+                                              : ""}
+                                          </div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })()
+                    );
+                  })()
                 : null}
             </Panel>
           </div>
@@ -7165,10 +7456,11 @@ export default function CreateOrderPageClient() {
                 return (
                   <div
                     key={address.id}
-                    className={`rounded-2xl border p-4 ${isActive
+                    className={`rounded-2xl border p-4 ${
+                      isActive
                         ? "border-neutral-900 bg-neutral-50"
                         : "border-neutral-200"
-                      }`}
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-2">
