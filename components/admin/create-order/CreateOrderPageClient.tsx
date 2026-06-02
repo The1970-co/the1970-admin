@@ -5851,42 +5851,42 @@ export default function CreateOrderPageClient() {
 
                   <div className="rounded-2xl border border-neutral-200 bg-neutral-50/80 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-[280px] flex-1">
                         <p className="text-xs font-semibold uppercase tracking-wide text-neutral-900">
                           Địa chỉ giao hàng
                         </p>
 
                         {hasAddressParts ? (
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            <div className="min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-2 sm:col-span-3">
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                                 Số nhà / đường
                               </p>
-                              <p className="mt-0.5 line-clamp-2 text-sm font-semibold text-neutral-950">
+                              <p className="mt-1 whitespace-normal break-words text-sm font-semibold leading-5 text-neutral-950">
                                 {displayAddressLine || "—"}
                               </p>
                             </div>
-                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                            <div className="min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-2">
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                                 Phường / xã
                               </p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">
+                              <p className="mt-1 line-clamp-2 break-words text-sm font-semibold leading-5 text-neutral-950">
                                 {displayAddressWard || "—"}
                               </p>
                             </div>
-                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                            <div className="min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-2">
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                                 Quận / huyện
                               </p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">
+                              <p className="mt-1 line-clamp-2 break-words text-sm font-semibold leading-5 text-neutral-950">
                                 {displayAddressDistrict || "—"}
                               </p>
                             </div>
-                            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2">
+                            <div className="min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-2">
                               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                                 Tỉnh / thành
                               </p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-neutral-950">
+                              <p className="mt-1 line-clamp-2 break-words text-sm font-semibold leading-5 text-neutral-950">
                                 {displayAddressProvince || "—"}
                               </p>
                             </div>
