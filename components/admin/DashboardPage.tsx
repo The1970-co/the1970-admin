@@ -2072,7 +2072,7 @@ function Panel({
 }) {
   return (
     <div
-      className={`rounded-[28px] border border-neutral-200 bg-white shadow-sm ${className}`}
+      className={`min-w-0 max-w-full rounded-[28px] border border-neutral-200 bg-white shadow-sm ${className}`}
       style={style}
     >
       {children}
@@ -3307,7 +3307,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="relative space-y-4 pb-20 text-[12px]">
+    <div className="relative w-full max-w-full space-y-4 overflow-x-hidden pb-20 text-[12px] md:overflow-x-visible">
       <Panel className="overflow-hidden p-0">
         <div className="rounded-[28px] bg-neutral-950 p-4 text-white md:p-5">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
@@ -3365,7 +3365,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid items-stretch gap-3 p-3 md:p-4 xl:grid-cols-4">
+        <div className="grid min-w-0 max-w-full items-stretch gap-3 p-3 md:p-4 xl:grid-cols-4">
           <div className="h-[246px] overflow-hidden rounded-[26px] border border-neutral-200 bg-white p-0">
             <div className="border-b border-neutral-100 px-4 py-2.5">
               <div className="flex items-start justify-between gap-3">
@@ -3722,7 +3722,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+        <div className="mt-4 grid min-w-0 max-w-full gap-3 md:grid-cols-2 xl:grid-cols-7">
           <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.18em] text-neutral-400">
               Doanh thu
@@ -3817,8 +3817,8 @@ export default function DashboardPage() {
           Công thức: <span className="font-medium text-neutral-800">Lãi gộp trước ads = Doanh thu - Giá vốn</span> · <span className="font-medium text-neutral-800">Lãi sau ads = Lãi gộp - Ads Meta</span> · <span className="font-medium text-neutral-800">Lợi nhuận thực tế = Lãi sau ads - Chi phí vận hành phân bổ</span> · <span className="font-medium text-neutral-800">Lợi nhuận ước tính = Doanh thu ước tính - Giá vốn ước tính - Ads Meta - Chi phí vận hành</span>. Dòng hôm nay là tạm tính trong ngày.
         </div>
 
-        <div className="mt-4 overflow-x-auto rounded-[24px] border border-neutral-200">
-          <table className="min-w-[1660px] w-full text-left">
+        <div className="mt-4 max-w-full overflow-x-auto overscroll-x-contain rounded-[24px] border border-neutral-200">
+          <table className="w-full min-w-[1660px] text-left">
             <thead className="bg-neutral-950 text-sm text-white">
               <tr>
                 <th className="px-4 py-4 font-medium">Ngày</th>
@@ -4045,8 +4045,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="mt-4 overflow-x-auto rounded-[24px] border border-neutral-200">
-          <table className="min-w-[1080px] w-full text-left">
+        <div className="mt-4 max-w-full overflow-x-auto overscroll-x-contain rounded-[24px] border border-neutral-200">
+          <table className="w-full min-w-[1080px] text-left">
             <thead className="bg-neutral-950 text-sm text-white">
               <tr>
                 <th className="px-4 py-4 font-medium">#</th>
