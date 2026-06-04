@@ -28,7 +28,6 @@ import {
 import {
   createCustomerAddress,
   getCustomerAddresses,
-  getCustomers,
   setDefaultCustomerAddress,
   updateCustomerAddress,
   type CustomerAddressItem,
@@ -3755,15 +3754,6 @@ export default function CreateOrderPageClient() {
         params: { phone: phoneKeyword || rawKeyword, limit: "20" },
       },
       { endpoint: "/customers/search", params: { q: rawKeyword, limit: "20" } },
-      { endpoint: "/customers", params: { search: rawKeyword, limit: "20" } },
-      {
-        endpoint: "/customers",
-        params: { phone: phoneKeyword || rawKeyword, limit: "20" },
-      },
-      {
-        endpoint: "/customers/autocomplete",
-        params: { q: rawKeyword, limit: "20" },
-      },
     ];
 
     const requestRows = await Promise.allSettled(
@@ -3807,33 +3797,13 @@ export default function CreateOrderPageClient() {
   };
 
   const loadDefaultCustomerSuggestions = async () => {
-    try {
-      // /customers là endpoint danh sách khách đang dùng ở trang khách hàng.
-      // Tải cache 1 lần để lọc prefix SĐT trực tiếp trên UI, không phụ thuộc search API exact-match.
-      const result: any = await getCustomers();
-      const normalizedRows = normalizeCustomerRows(result).slice(0, 5000);
-
-      setCustomerDefaultSuggestions(normalizedRows);
-      setCustomerSuggestions(normalizedRows.slice(0, 30));
-      setCustomerSuggestionOpen(false);
-    } catch {
-      try {
-        const fallback: any = await findCustomerByPhone("");
-        const normalizedRows = normalizeCustomerRows(fallback).slice(0, 5000);
-        setCustomerDefaultSuggestions(normalizedRows);
-        setCustomerSuggestions(normalizedRows.slice(0, 30));
-        setCustomerSuggestionOpen(false);
-      } catch {
-        setCustomerDefaultSuggestions([]);
-        setCustomerSuggestions([]);
-        setCustomerSuggestionOpen(false);
-      }
-    }
+    // Không tải toàn bộ /customers khi mở trang tạo đơn.
+    // Endpoint này từng trả ~24MB/lần mở form, gây egress Railway rất cao.
+    // Chỉ search khách khi người dùng gõ SĐT/tên ở ô khách hàng.
+    setCustomerDefaultSuggestions([]);
+    setCustomerSuggestions([]);
+    setCustomerSuggestionOpen(false);
   };
-
-  useEffect(() => {
-    void loadDefaultCustomerSuggestions();
-  }, []);
 
   useEffect(() => {
     if (customerId || suppressPhoneSuggestionRef.current) return;
