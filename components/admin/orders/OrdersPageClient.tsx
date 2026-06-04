@@ -4607,8 +4607,7 @@ export default function OrdersPageClient() {
       const shouldLoadWideForClientFilters =
         hasSmartSearch ||
         hasMultiServerFilter ||
-        shouldUseClientOnlySearch ||
-        hasQuickStatusFilter;
+        shouldUseClientOnlySearch;
       const requestPageSize = shouldLoadWideForClientFilters
         ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE)
         : pageSize;
@@ -4660,6 +4659,7 @@ export default function OrdersPageClient() {
 
         if (serverDateFrom) params.set("dateFrom", serverDateFrom);
         if (serverDateTo) params.set("dateTo", serverDateTo);
+        if (hasQuickStatusFilter) params.set("quickStatus", appliedQuickStatus);
 
         const smartDateRange = getSmartSearchServerDateRange(smartSearch);
         if (!hasQuickStatusFilter && !serverDateFrom && smartDateRange.from) {
@@ -4714,7 +4714,7 @@ export default function OrdersPageClient() {
       if (shouldLoadWideForClientFilters && Number(firstPage.totalPages || 1) > 1) {
         const wideTotalPages = Math.min(
           Number(firstPage.totalPages || 1),
-          hasQuickStatusFilter ? ORDER_SUMMARY_CARD_MAX_PAGES : ORDER_CLIENT_SEARCH_MAX_PAGES,
+          ORDER_CLIENT_SEARCH_MAX_PAGES,
         );
 
         for (let nextPage = 2; nextPage <= wideTotalPages; nextPage += 1) {
@@ -4877,75 +4877,50 @@ export default function OrdersPageClient() {
       const dateFromValue = toInputDateValue(dateRange.from);
       const dateToValue = toInputDateValue(dateRange.to);
 
-      const buildSummaryParams = (targetPage: number) => {
-        const params = new URLSearchParams();
-        params.set("page", String(targetPage));
-        params.set("pageSize", String(ORDER_SUMMARY_CARD_PAGE_SIZE));
-        params.set("includeItems", "0");
-        params.set("withItems", "0");
+      const params = new URLSearchParams();
 
-        if (!canViewAllOrders && canViewOwnOrders) {
-          params.set("viewScope", "own");
-          if (currentUser?.id) params.set("createdByStaffId", currentUser.id);
-          if (currentUser?.code) params.set("createdByStaffCode", currentUser.code);
-        }
+      if (!canViewAllOrders && canViewOwnOrders) {
+        params.set("viewScope", "own");
+        if (currentUser?.id) params.set("createdByStaffId", currentUser.id);
+        if (currentUser?.code) params.set("createdByStaffCode", currentUser.code);
+      }
 
-        if (!canViewAllOrders && currentUser?.branchId) {
-          params.set("branchId", currentUser.branchId);
-        } else if (selectedBranchIds.length === 1) {
-          params.set("branchId", selectedBranchIds[0]);
-        }
+      if (!canViewAllOrders && currentUser?.branchId) {
+        params.set("branchId", currentUser.branchId);
+      } else if (selectedBranchIds.length === 1) {
+        params.set("branchId", selectedBranchIds[0]);
+      }
 
-        if (dateFromValue) params.set("dateFrom", dateFromValue);
-        if (dateToValue) params.set("dateTo", dateToValue);
+      if (dateFromValue) params.set("dateFrom", dateFromValue);
+      if (dateToValue) params.set("dateTo", dateToValue);
 
-        return params;
-      };
+      const res = await apiFetch(`/orders/quick-status-counts?${params.toString()}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: abortController.signal,
+      });
 
-      const fetchSummaryPage = async (targetPage: number) => {
-        const res = await apiFetch(`/orders?${buildSummaryParams(targetPage).toString()}`, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          cache: "no-store",
-          signal: abortController.signal,
-        });
+      const raw = await res.json();
 
-        const raw = await res.json();
-
-        if (!res.ok) {
-          throw new Error(raw?.message || `Tải thống kê nhanh thất bại. Status ${res.status}`);
-        }
-
-        const data = Array.isArray(raw)
-          ? raw
-          : Array.isArray(raw?.data)
-            ? raw.data
-            : [];
-
-        return {
-          data,
-          totalPages: Number(raw?.pagination?.totalPages || 1),
-        };
-      };
-
-      const firstPage = await fetchSummaryPage(1);
-      const summaryRows = [...firstPage.data];
-      const maxPages = Math.min(Number(firstPage.totalPages || 1), ORDER_SUMMARY_CARD_MAX_PAGES);
-
-      for (let nextPage = 2; nextPage <= maxPages; nextPage += 1) {
-        if (abortController.signal.aborted) break;
-        const next = await fetchSummaryPage(nextPage);
-        summaryRows.push(...next.data);
+      if (!res.ok) {
+        throw new Error(raw?.message || `Tải thống kê nhanh thất bại. Status ${res.status}`);
       }
 
       if (requestSeq !== cardCountsRequestSeqRef.current || abortController.signal.aborted) return;
 
-      const scopedRows =
-        !canViewAllOrders && canViewOwnOrders
-          ? summaryRows.filter((order: any) => isOrderCreatedByCurrentUser(order, currentUser))
-          : summaryRows;
-
-      setCardCounts(buildQuickStatusCounts(normalizeOrdersForCards(scopedRows as AdminOrder[])));
+      setCardCounts({
+        ...EMPTY_QUICK_STATUS_COUNTS,
+        waitingApprove: Number(raw?.waitingApprove || 0),
+        waitingPayment: Number(raw?.waitingPayment || 0),
+        waitingPacking: Number(raw?.waitingPacking || 0),
+        waitingShip: Number(raw?.waitingShip || 0),
+        delivering: Number(raw?.delivering || 0),
+        soonDelivery: Number(raw?.soonDelivery || 0),
+        failed: Number(raw?.failed || 0),
+        redelivery: Number(raw?.redelivery || 0),
+        localDelivery: Number(raw?.localDelivery || 0),
+      });
       setCardCountsLoaded(true);
     } catch {
       if (abortController.signal.aborted) return;
