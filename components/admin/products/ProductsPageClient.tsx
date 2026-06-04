@@ -744,12 +744,11 @@ function productHasSavedColorImageMap(product?: ProductItem | null) {
 function productNeedsFullColorImageDetail(product?: ProductItem | null) {
   if (!product?.id) return false;
 
-  // Không dựa vào số màu của response /products list nữa.
-  // List API nhiều lúc chỉ trả ảnh đại diện hoặc vài variant đầu nên mã như 812 nhìn ngoài
-  // vẫn tưởng chỉ có màu THAN, trong khi detail có đủ ảnh từng màu.
-  // Vì vậy mỗi sản phẩm trên trang hiện tại sẽ fetch detail đúng 1 lần rồi dùng detail
-  // để render preview màu. Nếu detail chỉ có 1 màu thì ngoài list cũng chỉ hiện 1 ảnh.
-  return true;
+  // Không auto gọi /products/:id cho từng sản phẩm trong danh sách nữa.
+  // Endpoint /products list đã trả colorImages/imagesByColor từ variant imageUrl.
+  // Việc auto fetch detail 20-80 sản phẩm mỗi lần mở trang làm tăng egress rất mạnh.
+  // Khi cần sửa/xem chi tiết sản phẩm, flow mở chi tiết vẫn gọi /products/:id riêng.
+  return false;
 }
 
 function getProductListAuthHeaders() {
