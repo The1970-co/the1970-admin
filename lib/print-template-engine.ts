@@ -1095,7 +1095,10 @@ export function renderProductLabelTemplateHtml(params: {
     barcodeBlock:
       template?.showBarcode === false || !labelOptions.showBarcode
         ? ""
-        : `<div style="width:${labelOptions.barcodeWidthMm}mm;height:${labelOptions.barcodeHeightMm}mm;overflow:hidden;display:flex;align-items:flex-start;justify-content:center;margin:0 auto;"><img src="${barcodeUrl(data.barcodeValue)}" style="width:${labelOptions.barcodeWidthMm}mm;height:${labelOptions.barcodeHeightMm + 6}mm;object-fit:fill;display:block;margin:0 auto;transform:translateY(-1.6mm);" /></div>`,
+        // Barcode sản phẩm phải render nguyên ảnh, không crop/translate.
+        // Crop ảnh để giấu dòng chữ nhỏ có thể làm máy quét đọc sai SKU
+        // kiểu QSJ950-XA-34 thành QQQSJ950XA34.
+        : `<div style="width:${labelOptions.barcodeWidthMm}mm;height:${labelOptions.barcodeHeightMm}mm;display:flex;align-items:center;justify-content:center;margin:0 auto;padding:0 .8mm;box-sizing:border-box;background:#fff;"><img src="${barcodeUrl(data.barcodeValue)}" alt="${escapeHtml(data.barcodeValue)}" style="width:100%;height:100%;object-fit:contain;display:block;margin:0 auto;" /></div>`,
     qrBlock:
       template?.showQr === false || !labelOptions.showQr
         ? ""
