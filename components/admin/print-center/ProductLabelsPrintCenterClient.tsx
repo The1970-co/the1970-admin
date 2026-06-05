@@ -11,7 +11,7 @@ import {
   type ProductLabelPrintOptions,
 } from "@/lib/print-template-engine";
 
-const DRAFT_KEY = "the1970.print-center.product-labels.draft";
+const DRAFT_KEY = "the1970.print-center.product-labels.draft.v2";
 // Dùng localStorage để truyền draft từ tab Danh sách sản phẩm sang tab Trung tâm in ấn.
 // sessionStorage là theo từng tab nên window.open(..., noopener) không đọc được draft mới.
 function readStoredLabelDraft() {
