@@ -1862,6 +1862,15 @@ export default function StocktakePageClient() {
     return parsed;
   };
 
+  const normalizeNonNegativeInt = (value: string, fallback = 0) => {
+    const raw = String(value ?? "").trim();
+    if (raw === "") return fallback;
+
+    const parsed = Math.floor(Number(raw.replace(/[^0-9]/g, "")));
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+  };
+
   const getScanQty = () => normalizePositiveInt(scanQty, 1);
 
   const applyOptimisticScanRow = (
@@ -2221,11 +2230,12 @@ export default function StocktakePageClient() {
   };
 
   const setRowExactCount = async (row: ReviewRow) => {
-    const targetQty = normalizePositiveInt(
-      quickQtyBySku[row.sku] ?? String(row.counted || 0),
-      row.counted || 0,
+    const currentCount = Number(row.counted || 0);
+    const targetQty = normalizeNonNegativeInt(
+      quickQtyBySku[row.sku] ?? String(currentCount),
+      currentCount,
     );
-    const delta = targetQty - Number(row.counted || 0);
+    const delta = targetQty - currentCount;
 
     if (delta === 0) {
       setMessage(`SKU ${row.sku} đã đang là ${targetQty}.`);
