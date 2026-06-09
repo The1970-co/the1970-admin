@@ -492,10 +492,17 @@ function normalizeDateTimeInput(value?: string | null) {
   const raw = String(value || "").trim();
   if (!raw) return "";
 
-  // Backend/Prisma đôi lúc trả ISO UTC nhưng thiếu hậu tố Z.
-  // Danh sách đơn đang hiển thị theo giờ VN, nên chi tiết đơn cũng ép cùng rule này.
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(raw)) {
-    return `${raw}Z`;
+  // Backend/Prisma có case trả UTC nhưng thiếu hậu tố timezone:
+  // - 2026-06-09T01:50:40.414
+  // - 2026-06-09 01:50:40.414
+  // Nếu để browser tự parse, nó hiểu là giờ local và chi tiết đơn bị lệch 7 tiếng
+  // so với danh sách đơn hàng. Chuẩn hoá về ISO UTC rồi mới format Asia/Ho_Chi_Minh.
+  const hasTimezoneSuffix = /(Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  if (!hasTimezoneSuffix) {
+    const isoLikeWithoutTimezone = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)$/.exec(raw);
+    if (isoLikeWithoutTimezone) {
+      return `${isoLikeWithoutTimezone[1]}T${isoLikeWithoutTimezone[2]}Z`;
+    }
   }
 
   return raw;
