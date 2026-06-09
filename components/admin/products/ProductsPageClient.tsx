@@ -389,6 +389,46 @@ function StatCard({
   );
 }
 
+function ProductOpsSummaryIcon({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/70 bg-transparent text-[15px] text-white">
+      {children}
+    </div>
+  );
+}
+
+function ProductOpsSummaryCard({
+  title,
+  value,
+  sub,
+  icon,
+}: {
+  title: string;
+  value: ReactNode;
+  sub: string;
+  icon: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/70 bg-neutral-950 px-3 py-3 text-left text-white transition hover:border-white hover:bg-neutral-900">
+      <div className="flex items-center gap-3">
+        <ProductOpsSummaryIcon>{icon}</ProductOpsSummaryIcon>
+
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[11px] font-medium text-white/75">{title}</p>
+          <p className="mt-0.5 truncate text-[26px] font-semibold leading-none tracking-tight text-white">
+            {value}
+          </p>
+          <p className="mt-1 truncate text-[10px] font-medium text-white/45">{sub}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SectionTitle({
   title,
   description,
@@ -2011,6 +2051,7 @@ export default function ProductsPageClient() {
     useState<CurrentUserPermissionProfile | null>(null);
   const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
 
+  const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState(categoryFromUrl);
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -2044,6 +2085,7 @@ export default function ProductsPageClient() {
   const [exportingProducts, setExportingProducts] = useState(false);
   const [categoryNormalizerOpen, setCategoryNormalizerOpen] = useState(false);
   const [displayOptionsOpen, setDisplayOptionsOpen] = useState(false);
+  const [advancedActionsOpen, setAdvancedActionsOpen] = useState(false);
   const [displayPreset, setDisplayPreset] =
     useState<ProductDisplayPreset>("default");
   const [draftDisplayPreset, setDraftDisplayPreset] =
@@ -4549,117 +4591,96 @@ export default function ProductsPageClient() {
 
   return (
     <div className="space-y-4 p-3 pb-24 md:space-y-6 md:p-6">
-      <SectionTitle
-        title="Sản phẩm"
-        description="Xem nhanh catalog theo dạng bảng, ảnh lớn hơn để lướt nhanh và nhìn rõ tồn kho theo từng chi nhánh."
-        action={
-          <div className="flex flex-wrap gap-3">
-            {canExportProducts ? (
-              <Button
-                variant="secondary"
-                onClick={() => setExportOpen(true)}
-                className="rounded-full"
-                disabled={loading || !products.length}
-              >
-                Xuất Excel
-              </Button>
-            ) : null}
-
-            {canManageProductMasterData ? (
-              <Button
-                variant="danger"
-                onClick={() => void handleClearAllDescriptions()}
-                className="rounded-full"
-                disabled={loading}
-              >
-                Xoá mô tả SP
-              </Button>
-            ) : null}
-
-            {canImportProducts ? (
-              <>
-                <Button
-                  variant="secondary"
-                  onClick={() => openImportModal("products")}
-                  className="rounded-full"
-                >
-                  Nhập Excel
-                </Button>
-
-                <Button
-                  variant="secondary"
-                  onClick={() => openImportModal("images")}
-                  className="rounded-full"
-                >
-                  Nhập Excel ảnh
-                </Button>
-              </>
-            ) : null}
-
-            {canManageProductMasterData ? (
-              <Link
-                href="/control/product-categories"
-                className="inline-flex items-center justify-center rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-900 transition hover:bg-neutral-50"
-              >
-                Danh mục
-              </Link>
-            ) : null}
-
+      <Panel className="!border-neutral-950 !bg-neutral-950 px-3 py-2 text-white">
+        <div className="mb-2 flex flex-col gap-1.5 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-neutral-400">
+              Tình trạng catalog
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             {canCreateProduct ? (
-              <Button
+              <button
+                type="button"
                 onClick={() => {
                   resetCreateForm();
                   setCreateOpen(true);
                 }}
-                className="rounded-full"
+                className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-neutral-950 transition hover:bg-neutral-200"
               >
                 + Thêm sản phẩm
-              </Button>
+              </button>
             ) : null}
+            <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-neutral-300">
+              {totalProducts} sản phẩm
+            </span>
+            <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-neutral-300">
+              {totalVariants} variants
+            </span>
           </div>
-        }
-      />
+        </div>
 
-      <div className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="Tổng sản phẩm"
-          value={totalProducts}
-          sub="Theo bộ lọc hiện tại"
-        />
-        <StatCard
-          title="Tổng variants"
-          value={totalVariants}
-          sub="Tất cả size / màu đang có"
-        />
-        <StatCard
-          title="SKU tồn thấp"
-          value={lowStockCount}
-          sub="<= 3 sản phẩm"
-        />
-
-        {canViewInventoryValue ? (
-          <StatCard
-            title="Giá trị catalog"
-            value={currency(catalogValue)}
-            sub="Giá nhập × tồn kho"
+        <div className={`grid gap-1.5 md:grid-cols-2 ${canViewInventoryValue ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
+          <ProductOpsSummaryCard
+            title="Tổng sản phẩm"
+            value={totalProducts}
+            sub="Theo bộ lọc hiện tại"
+            icon="□"
           />
-        ) : null}
-      </div>
+          <ProductOpsSummaryCard
+            title="Tổng variants"
+            value={totalVariants}
+            sub="Tất cả size / màu đang có"
+            icon="≡"
+          />
+          <ProductOpsSummaryCard
+            title="SKU tồn thấp"
+            value={lowStockCount}
+            sub="≤ 3 sản phẩm"
+            icon="!"
+          />
 
-      <Panel className="p-4">
-        <div className="grid gap-3 md:grid-cols-[1.7fr_0.7fr_0.7fr_auto_auto]">
+          {canViewInventoryValue ? (
+            <ProductOpsSummaryCard
+              title="Giá trị catalog"
+              value={currency(catalogValue)}
+              sub="Giá nhập × tồn kho"
+              icon="₫"
+            />
+          ) : null}
+        </div>
+      </Panel>
+
+      <Panel className="p-3">
+        <div className="grid gap-2 md:grid-cols-[minmax(260px,1.8fr)_auto_minmax(190px,0.55fr)_minmax(190px,0.55fr)_auto_auto_auto] md:items-center">
           <input
-            className="rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
-            value={query}
+            className="min-h-[42px] rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm outline-none focus:border-neutral-900"
+            value={searchInput}
             onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
+              setSearchInput(e.target.value);
             }}
-            placeholder="Tìm theo tên, mã sản phẩm, danh mục hoặc SKU..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                setPage(1);
+                setQuery(searchInput.trim());
+              }
+            }}
+            placeholder="Tìm sản phẩm, SKU... ngăn cách bằng dấu phẩy"
           />
+
+          <Button
+            onClick={() => {
+              setPage(1);
+              setQuery(searchInput.trim());
+            }}
+            className="min-h-[42px] rounded-2xl px-6"
+          >
+            Tìm
+          </Button>
 
           <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+            className="min-h-[42px] rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm outline-none focus:border-neutral-900"
             value={groupFilter}
             onChange={(e) => {
               setGroupFilter(e.target.value);
@@ -4675,7 +4696,7 @@ export default function ProductsPageClient() {
           </select>
 
           <select
-            className="rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
+            className="min-h-[42px] rounded-2xl border border-neutral-300 px-4 py-2.5 text-sm outline-none focus:border-neutral-900"
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);
@@ -4688,7 +4709,7 @@ export default function ProductsPageClient() {
             <option value="DRAFT">DRAFT</option>
           </select>
 
-          <div className="flex items-center justify-end text-sm text-neutral-500">
+          <div className="hidden items-center justify-end rounded-full bg-neutral-100 px-3 py-2 text-xs font-semibold text-neutral-500 lg:flex">
             {totalProducts} sản phẩm
           </div>
 
@@ -4697,11 +4718,107 @@ export default function ProductsPageClient() {
             onClick={() => {
               setDraftDisplayPreset(displayPreset);
               setDisplayOptionsOpen((prev) => !prev);
+              setAdvancedActionsOpen(false);
             }}
-            className="rounded-2xl whitespace-nowrap"
+            className="min-h-[42px] rounded-2xl whitespace-nowrap px-4"
           >
             Tuỳ chọn hiển thị
           </Button>
+
+          <div className="relative">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setAdvancedActionsOpen((prev) => !prev);
+                setDisplayOptionsOpen(false);
+              }}
+              className="min-h-[42px] w-full rounded-2xl whitespace-nowrap px-4"
+            >
+              Nâng cao
+            </Button>
+
+            {advancedActionsOpen ? (
+              <div className="absolute right-0 z-40 mt-2 w-[260px] overflow-hidden rounded-2xl border border-neutral-200 bg-white p-2 text-sm shadow-xl">
+                {canExportProducts ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdvancedActionsOpen(false);
+                      setExportOpen(true);
+                    }}
+                    disabled={loading || !products.length}
+                    className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span>Xuất Excel</span>
+                    <span className="text-xs text-neutral-400">Catalog</span>
+                  </button>
+                ) : null}
+
+                {canImportProducts ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdvancedActionsOpen(false);
+                        openImportModal("products");
+                      }}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold text-neutral-800 hover:bg-neutral-50"
+                    >
+                      <span>Nhập Excel</span>
+                      <span className="text-xs text-neutral-400">Sản phẩm</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdvancedActionsOpen(false);
+                        openImportModal("images");
+                      }}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold text-neutral-800 hover:bg-neutral-50"
+                    >
+                      <span>Nhập Excel ảnh</span>
+                      <span className="text-xs text-neutral-400">Ảnh màu</span>
+                    </button>
+                  </>
+                ) : null}
+
+                {canManageProductMasterData ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdvancedActionsOpen(false);
+                        setCategoryNormalizerOpen((prev) => !prev);
+                      }}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold text-neutral-800 hover:bg-neutral-50"
+                    >
+                      <span>Chuẩn hoá danh mục</span>
+                      <span className="text-xs text-neutral-400">Gộp</span>
+                    </button>
+                    <Link
+                      href="/control/product-categories"
+                      onClick={() => setAdvancedActionsOpen(false)}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold text-neutral-800 hover:bg-neutral-50"
+                    >
+                      <span>Danh mục</span>
+                      <span className="text-xs text-neutral-400">Quản lý</span>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdvancedActionsOpen(false);
+                        void handleClearAllDescriptions();
+                      }}
+                      disabled={loading}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span>Xoá mô tả SP</span>
+                      <span className="text-xs text-red-300">Cẩn thận</span>
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {displayOptionsOpen ? (
@@ -4805,45 +4922,36 @@ export default function ProductsPageClient() {
         </Panel>
       ) : null}
 
-      {canManageProductMasterData ? (
+      {canManageProductMasterData && categoryNormalizerOpen ? (
         <Panel className="overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setCategoryNormalizerOpen((prev) => !prev)}
-            className="flex w-full items-center justify-between px-5 py-4 text-left"
-            title={
-              categoryNormalizerOpen
-                ? "Thu gọn chuẩn hoá danh mục"
-                : "Mở chuẩn hoá danh mục"
-            }
-          >
+          <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-3">
             <div>
               <h3 className="text-base font-semibold text-neutral-900">
                 Chuẩn hoá danh mục sản phẩm
               </h3>
               <p className="mt-1 text-xs text-neutral-500">
-                Gộp danh mục dư thừa khi cần. Mặc định thu gọn để bảng sản phẩm
-                gọn hơn.
+                Gộp danh mục dư thừa khi cần.
               </p>
             </div>
-            <span className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-700">
-              {categoryNormalizerOpen ? "Thu gọn ↑" : "Mở ra ↓"}
-            </span>
-          </button>
-
-          {categoryNormalizerOpen ? (
-            <div className="border-t border-neutral-100 p-4">
-              <CategoryNormalizer
-                categories={productGroups}
-                onDone={async () => {
-                  await loadProductCategoryOptions();
-                  await loadCategories();
-                  await loadProducts(1, limit);
-                  setPage(1);
-                }}
-              />
-            </div>
-          ) : null}
+            <button
+              type="button"
+              onClick={() => setCategoryNormalizerOpen(false)}
+              className="rounded-full border border-neutral-200 px-3 py-1 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+            >
+              Đóng
+            </button>
+          </div>
+          <div className="p-4">
+            <CategoryNormalizer
+              categories={productGroups}
+              onDone={async () => {
+                await loadProductCategoryOptions();
+                await loadCategories();
+                await loadProducts(1, limit);
+                setPage(1);
+              }}
+            />
+          </div>
         </Panel>
       ) : null}
 
