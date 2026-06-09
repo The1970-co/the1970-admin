@@ -492,17 +492,19 @@ function normalizeDateTimeInput(value?: string | null) {
   const raw = String(value || "").trim();
   if (!raw) return "";
 
-  // Backend/Prisma có case trả UTC nhưng thiếu hậu tố timezone:
-  // - 2026-06-09T01:50:40.414
-  // - 2026-06-09 01:50:40.414
-  // Nếu để browser tự parse, nó hiểu là giờ local và chi tiết đơn bị lệch 7 tiếng
-  // so với danh sách đơn hàng. Chuẩn hoá về ISO UTC rồi mới format Asia/Ho_Chi_Minh.
-  const hasTimezoneSuffix = /(Z|[+-]\d{2}:?\d{2})$/i.test(raw);
-  if (!hasTimezoneSuffix) {
-    const isoLikeWithoutTimezone = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)$/.exec(raw);
-    if (isoLikeWithoutTimezone) {
-      return `${isoLikeWithoutTimezone[1]}T${isoLikeWithoutTimezone[2]}Z`;
-    }
+  // Backend/detail có thể trả datetime thiếu timezone hoặc kèm offset sai ngữ nghĩa.
+  // Danh sách đơn đang coi mốc DB là UTC rồi format sang giờ Việt Nam.
+  // Vì vậy ở chi tiết đơn cũng lấy phần yyyy-mm-dd hh:mm:ss và ép về UTC để khớp DS đơn.
+  const dbDateTime = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:Z|[+-]\d{2}:?\d{2})?$/i.exec(raw);
+  if (dbDateTime) {
+    return `${dbDateTime[1]}T${dbDateTime[2]}Z`;
+  }
+
+  // Fallback cho trường hợp dữ liệu đã bị format sẵn dạng "01:50 09/06/2026".
+  const displayDateTime = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  if (displayDateTime) {
+    const [, hour, minute, second = "00", day, month, year] = displayDateTime;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute}:${second}Z`;
   }
 
   return raw;
