@@ -398,6 +398,9 @@ type ColumnKey =
   | "shippingFee"
   | "carrierShippingFee"
   | "assignedStaff"
+  | "goodsSubtotal"
+  | "productDiscount"
+  | "goodsAfterDiscount"
   | "codAmount"
   | "amountDue"
   | "finalAmount";
@@ -463,12 +466,15 @@ type NormalizedOrder = AdminOrder & {
   _assignedStaffName: string;
   /** Tên nhân viên được gán thật sự, dùng riêng cho filter "chưa gán". */
   _assignedStaffRawName: string;
+  _goodsSubtotal: number;
+  _productDiscount: number;
+  _goodsAfterDiscount: number;
   _codAmount: number;
   _amountDue: number;
   _createdAtDate: Date | null;
 };
 
-const TABLE_MIN_WIDTH = 3240;
+const TABLE_MIN_WIDTH = 3600;
 const TABLE_SCROLL_STORAGE_KEY = "orders.tableScrollLeft";
 const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const ORDER_PRINT_COUNT_STORAGE_KEY = "the1970_order_print_counts";
@@ -625,7 +631,10 @@ const COLUMN_DEFS: ColumnDef[] = [
     defaultVisible: true,
   },
   { key: "assignedStaff", label: "NV phụ trách", defaultVisible: true },
-  { key: "codAmount", label: "Thu hộ COD", money: true, defaultVisible: true },
+  { key: "goodsSubtotal", label: "Tiền hàng", money: true, defaultVisible: true },
+  { key: "productDiscount", label: "Chiết khấu sản phẩm", money: true, defaultVisible: true },
+  { key: "goodsAfterDiscount", label: "Tiền hàng sau chiết khấu", money: true, defaultVisible: true },
+  { key: "codAmount", label: "Tiền COD", money: true, defaultVisible: true },
   {
     key: "amountDue",
     label: "Khách còn phải trả",
@@ -637,6 +646,172 @@ const COLUMN_DEFS: ColumnDef[] = [
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
+}
+
+
+function positiveNumber(value: any) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function getItemQuantity(item: any) {
+  return positiveNumber(
+    item?.quantity ?? item?.qty ?? item?.quantityOrdered ?? item?.orderedQty ?? 1,
+  ) || 1;
+}
+
+function getItemUnitPrice(item: any) {
+  return positiveNumber(
+    item?.unitPrice ??
+      item?.price ??
+      item?.salePrice ??
+      item?.sellingPrice ??
+      item?.variant?.price ??
+      item?.product?.price,
+  );
+}
+
+function getItemOriginalUnitPrice(item: any) {
+  return positiveNumber(
+    item?.originalUnitPrice ??
+      item?.originalPrice ??
+      item?.listPrice ??
+      item?.basePrice ??
+      item?.compareAtPrice ??
+      item?.variant?.originalPrice ??
+      item?.product?.originalPrice,
+  );
+}
+
+function getItemLineTotalAfterDiscount(item: any) {
+  const explicit = positiveNumber(
+    item?.lineTotal ??
+      item?.total ??
+      item?.finalLineTotal ??
+      item?.amount ??
+      item?.subtotalAfterDiscount,
+  );
+
+  if (explicit > 0) return explicit;
+
+  return getItemQuantity(item) * getItemUnitPrice(item);
+}
+
+function getItemLineSubtotalBeforeDiscount(item: any) {
+  const explicit = positiveNumber(
+    item?.lineSubtotal ??
+      item?.subtotal ??
+      item?.originalLineTotal ??
+      item?.beforeDiscountTotal ??
+      item?.totalBeforeDiscount,
+  );
+
+  if (explicit > 0) return explicit;
+
+  const originalUnitPrice = getItemOriginalUnitPrice(item);
+  if (originalUnitPrice > 0) return getItemQuantity(item) * originalUnitPrice;
+
+  const discount = getItemDiscountAmount(item);
+  return getItemLineTotalAfterDiscount(item) + discount;
+}
+
+function getItemDiscountAmount(item: any) {
+  const direct = positiveNumber(
+    item?.discountAmount ??
+      item?.productDiscountAmount ??
+      item?.lineDiscountAmount ??
+      item?.lineDiscount ??
+      item?.discountValue,
+  );
+
+  if (direct > 0) return direct;
+
+  const qty = getItemQuantity(item);
+  const originalUnitPrice = getItemOriginalUnitPrice(item);
+  const unitPrice = getItemUnitPrice(item);
+  if (originalUnitPrice > unitPrice && unitPrice > 0) {
+    return (originalUnitPrice - unitPrice) * qty;
+  }
+
+  return 0;
+}
+
+function getOrderGoodsSubtotal(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const itemSubtotal = Array.isArray(anyOrder.items)
+    ? anyOrder.items.reduce(
+        (sum: number, item: any) => sum + getItemLineSubtotalBeforeDiscount(item),
+        0,
+      )
+    : 0;
+
+  if (itemSubtotal > 0) return itemSubtotal;
+
+  return positiveNumber(
+    anyOrder.goodsSubtotal ??
+      anyOrder.itemsSubtotal ??
+      anyOrder.productSubtotal ??
+      anyOrder.subtotalAmount ??
+      anyOrder.subtotal ??
+      anyOrder.totalBeforeDiscount,
+  );
+}
+
+function getOrderProductDiscount(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const itemDiscount = Array.isArray(anyOrder.items)
+    ? anyOrder.items.reduce(
+        (sum: number, item: any) => sum + getItemDiscountAmount(item),
+        0,
+      )
+    : 0;
+
+  if (itemDiscount > 0) return itemDiscount;
+
+  const direct = positiveNumber(
+    anyOrder.productDiscountAmount ??
+      anyOrder.itemsDiscountAmount ??
+      anyOrder.discountAmount ??
+      anyOrder.totalDiscount ??
+      anyOrder.discountTotal,
+  );
+
+  if (direct > 0) return direct;
+
+  const subtotal = getOrderGoodsSubtotal(order);
+  const afterDiscount = getOrderGoodsAfterDiscount(order, true);
+  return Math.max(0, subtotal - afterDiscount);
+}
+
+function getOrderGoodsAfterDiscount(order: AdminOrder, skipDiscountFallback = false) {
+  const anyOrder: any = order || {};
+  const itemTotal = Array.isArray(anyOrder.items)
+    ? anyOrder.items.reduce(
+        (sum: number, item: any) => sum + getItemLineTotalAfterDiscount(item),
+        0,
+      )
+    : 0;
+
+  if (itemTotal > 0) return itemTotal;
+
+  const direct = positiveNumber(
+    anyOrder.goodsAfterDiscount ??
+      anyOrder.itemsTotalAfterDiscount ??
+      anyOrder.productTotalAfterDiscount ??
+      anyOrder.subtotalAfterDiscount,
+  );
+
+  if (direct > 0) return direct;
+
+  const subtotal = getOrderGoodsSubtotal(order);
+  if (subtotal > 0) {
+    const discount = skipDiscountFallback ? 0 : getOrderProductDiscount(order);
+    return Math.max(0, subtotal - discount);
+  }
+
+  const finalAmount = positiveNumber(anyOrder.finalAmount);
+  const shippingFee = positiveNumber(anyOrder.shippingFee);
+  return Math.max(0, finalAmount - shippingFee);
 }
 
 type ConfiguredSalesChannel = {
@@ -3287,6 +3462,33 @@ function defaultVisibleColumns(canSeeMoney: boolean) {
   }).map((col) => col.key);
 }
 
+function mergeStoredColumnsWithDefaults(storedColumns: ColumnKey[], defaults: ColumnKey[]) {
+  const defaultSet = new Set(defaults);
+  const next = storedColumns.filter((key, index, arr) => {
+    return defaultSet.has(key) && arr.indexOf(key) === index;
+  });
+
+  for (const key of defaults) {
+    if (next.includes(key)) continue;
+
+    const defaultIndex = defaults.indexOf(key);
+    let insertAt = next.length;
+
+    for (let i = defaultIndex - 1; i >= 0; i -= 1) {
+      const previousDefaultKey = defaults[i];
+      const previousIndex = next.indexOf(previousDefaultKey);
+      if (previousIndex >= 0) {
+        insertAt = previousIndex + 1;
+        break;
+      }
+    }
+
+    next.splice(insertAt, 0, key);
+  }
+
+  return next;
+}
+
 function normalizeShipmentStatus(order: AdminOrder) {
   const anyOrder: any = order || {};
   const shipment: any = anyOrder.shipment || {};
@@ -3567,6 +3769,9 @@ type OrderExportColumnKey =
   | "shippingFee"
   | "carrierShippingFee"
   | "assignedStaff"
+  | "goodsSubtotal"
+  | "productDiscount"
+  | "goodsAfterDiscount"
   | "codAmount"
   | "amountDue"
   | "finalAmount";
@@ -3599,6 +3804,9 @@ const defaultOrderExportColumns: OrderExportColumnState = {
   shippingFee: true,
   carrierShippingFee: true,
   assignedStaff: true,
+  goodsSubtotal: true,
+  productDiscount: true,
+  goodsAfterDiscount: true,
   codAmount: true,
   amountDue: true,
   finalAmount: true,
@@ -3630,7 +3838,10 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   shippingFee: "Phí khách trả",
   carrierShippingFee: "Phí hãng VC",
   assignedStaff: "NV phụ trách",
-  codAmount: "Thu hộ COD",
+  goodsSubtotal: "Tiền hàng",
+  productDiscount: "Chiết khấu sản phẩm",
+  goodsAfterDiscount: "Tiền hàng sau chiết khấu",
+  codAmount: "Tiền COD",
   amountDue: "Khách còn phải trả",
   finalAmount: "Tổng tiền",
 };
@@ -3835,7 +4046,7 @@ function exportOrdersExcel({
       "Chi nhánh":
         branches.find((b) => b.id === o.branchId)?.name || o.branchId || "",
       "Thanh toán": orderPaymentStatusLabel(o),
-      COD: o._codAmount,
+      "Tiền COD": o._codAmount,
       "Còn phải trả": o._amountDue,
       "Tổng tiền": Number(o.finalAmount || 0),
       "Mã vận đơn": o.shipment?.trackingCode || "",
@@ -4482,10 +4693,10 @@ export default function OrdersPageClient() {
       const cleaned = parsed.filter((key) => allowed.includes(key));
       const defaults = defaultVisibleColumns(canSeeMoney);
       const merged = cleaned.length
-        ? [...cleaned, ...defaults.filter((key) => !cleaned.includes(key))]
+        ? mergeStoredColumnsWithDefaults(cleaned, defaults)
         : defaults;
 
-      // Giữ đúng thứ tự đã kéo thả trong localStorage, không sort lại theo COLUMN_DEFS.
+      // Giữ đúng thứ tự đã kéo thả trong localStorage, nhưng cột mới được chèn theo vị trí mặc định.
       const nextColumns = merged;
       setVisibleColumns(nextColumns);
       setDraftVisibleColumns(nextColumns);
@@ -4825,6 +5036,9 @@ export default function OrdersPageClient() {
         _assignedStaffRawName: getAssignedStaffRawName(order),
         _shippingFee: Number(order.shippingFee || 0),
         _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
+        _goodsSubtotal: getOrderGoodsSubtotal(order),
+        _productDiscount: getOrderProductDiscount(order),
+        _goodsAfterDiscount: getOrderGoodsAfterDiscount(order),
         _codAmount: Number(order.shipment?.codAmount || 0),
         _amountDue: amountCustomerStillOwes(order),
         _createdAtDate: parseOrderDate(order.createdAt),
@@ -5023,6 +5237,9 @@ export default function OrdersPageClient() {
         _assignedStaffRawName: getAssignedStaffRawName(order),
         _shippingFee: Number(order.shippingFee || 0),
         _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
+        _goodsSubtotal: getOrderGoodsSubtotal(order),
+        _productDiscount: getOrderProductDiscount(order),
+        _goodsAfterDiscount: getOrderGoodsAfterDiscount(order),
         _codAmount: Number(order.shipment?.codAmount || 0),
         _amountDue: amountCustomerStillOwes(order),
         _createdAtDate: parseOrderDate(order.createdAt),
@@ -6474,6 +6691,9 @@ export default function OrdersPageClient() {
     shippingFee: "w-[120px]",
     carrierShippingFee: "w-[120px]",
     assignedStaff: "w-[150px]",
+    goodsSubtotal: "w-[130px]",
+    productDiscount: "w-[170px]",
+    goodsAfterDiscount: "w-[210px]",
     codAmount: "w-[125px]",
     amountDue: "w-[150px]",
     finalAmount: "w-[130px]",
@@ -6899,6 +7119,33 @@ export default function OrdersPageClient() {
             className="border-b border-neutral-100 px-3 py-3 whitespace-nowrap text-xs text-neutral-700"
           >
             {order._assignedStaffName || "—"}
+          </td>
+        );
+      case "goodsSubtotal":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {currency(order._goodsSubtotal)}
+          </td>
+        );
+      case "productDiscount":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {order._productDiscount ? `-${currency(order._productDiscount)}` : currency(0)}
+          </td>
+        );
+      case "goodsAfterDiscount":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
+          >
+            {currency(order._goodsAfterDiscount)}
           </td>
         );
       case "codAmount":
