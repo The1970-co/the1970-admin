@@ -2052,6 +2052,26 @@ export default function ProductsPageClient() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
 
+  const getProductServerSortParams = (
+    key: ProductSortKey,
+    direction: SortDirection,
+  ) => {
+    // Quan trọng: cột Tồn phải sort ở backend trước khi phân trang,
+    // nếu không UI chỉ xếp lại các sản phẩm của trang hiện tại.
+    // Backend vẫn trả đúng page/limit nên không tăng egress khi mở danh sách.
+    if (key === "stock") {
+      return {
+        sortBy: "stockTotal",
+        sortOrder: direction,
+      };
+    }
+
+    return {};
+  };
+
+  const serverSortSignature =
+    sortKey === "stock" ? `${sortKey}:${sortDirection}` : "";
+
   const [labelPrintOpen, setLabelPrintOpen] = useState(false);
   const [labelPrintProduct, setLabelPrintProduct] =
     useState<ProductItem | null>(null);
@@ -2429,6 +2449,7 @@ export default function ProductsPageClient() {
           !isOwner && !canViewInventory && currentBranchId
             ? currentBranchId
             : undefined,
+        ...getProductServerSortParams(sortKey, sortDirection),
       });
 
       const nextProducts = Array.isArray(result) ? result : result?.data || [];
@@ -2466,7 +2487,16 @@ export default function ProductsPageClient() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [page, limit, query, groupFilter, statusFilter, currentBranchId, isOwner]);
+  }, [
+    page,
+    limit,
+    query,
+    groupFilter,
+    statusFilter,
+    currentBranchId,
+    isOwner,
+    serverSortSignature,
+  ]);
 
   useEffect(() => {
     const candidates = products
@@ -2704,6 +2734,7 @@ export default function ProductsPageClient() {
 
   const handleSort = (key: ProductSortKey) => {
     setDisplayPreset("default");
+    setPage(1);
 
     if (sortKey === key) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -2716,6 +2747,7 @@ export default function ProductsPageClient() {
 
   const applyDisplayPreset = (preset: ProductDisplayPreset) => {
     setDisplayPreset(preset);
+    setPage(1);
 
     if (preset === "newest") {
       setSortKey("createdAt");

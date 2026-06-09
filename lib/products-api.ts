@@ -156,6 +156,8 @@ export async function getProducts(params?: {
   q?: string;
   category?: string;
   status?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc" | string;
 }) {
   const role = getCurrentRole();
   const showCost = canViewCost(role);
@@ -170,6 +172,12 @@ export async function getProducts(params?: {
   }
   if (params?.status && params.status !== "ALL") {
     search.set("status", params.status);
+  }
+  if (params?.sortBy) {
+    search.set("sortBy", params.sortBy);
+  }
+  if (params?.sortOrder) {
+    search.set("sortOrder", params.sortOrder);
   }
 
   const result = await request<any>(
