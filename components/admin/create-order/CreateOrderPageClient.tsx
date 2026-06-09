@@ -3192,12 +3192,48 @@ export default function CreateOrderPageClient() {
     [lines],
   );
 
+  const canEditOnlineOrderDiscount =
+    hasCurrentUserPermission("promotions.price_policy.online_discount_only") ||
+    hasCurrentUserPermission("promotions.price_policy.online_discount_price") ||
+    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_only") ||
+    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+
+  const canEditOnlineOrderPrice =
+    hasCurrentUserPermission("promotions.price_policy.online_discount_price") ||
+    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+
+  const canEditPosOrderDiscount =
+    hasCurrentUserPermission("promotions.price_policy.pos_discount_only") ||
+    hasCurrentUserPermission("promotions.price_policy.pos_discount_price") ||
+    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_only") ||
+    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+
+  const canEditPosOrderPrice =
+    hasCurrentUserPermission("promotions.price_policy.pos_discount_price") ||
+    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+
+  const isCreateOrderPosContext =
+    shippingUiMode === "pickup" ||
+    shippingMode === "pickup" ||
+    shippingPartner === "pickup";
+
+  const canEditManualDiscount = isCreateOrderPosContext
+    ? canEditPosOrderDiscount
+    : canEditOnlineOrderDiscount;
+
+  const canEditLinePrice = isCreateOrderPosContext
+    ? canEditPosOrderPrice
+    : canEditOnlineOrderPrice;
+
   const lineDiscountTotal = useMemo(
-    () => lines.reduce((sum, line) => sum + Number(line.discount || 0), 0),
-    [lines],
+    () =>
+      canEditManualDiscount
+        ? lines.reduce((sum, line) => sum + Number(line.discount || 0), 0)
+        : 0,
+    [lines, canEditManualDiscount],
   );
 
-  const manualDiscount = parseNumber(discountTotal);
+  const manualDiscount = canEditManualDiscount ? parseNumber(discountTotal) : 0;
   const fee = parseNumber(shippingFee);
   const paid = parseNumber(customerPaid);
   const promotionPreview = useMemo(
@@ -4118,12 +4154,24 @@ export default function CreateOrderPageClient() {
     }
   };
   useEffect(() => {
+    if (!canEditManualDiscount) return;
+
     if (customerDiscountPercent > 0 && subtotal > 0) {
       setDiscountTotal(
         String(Math.floor((subtotal * customerDiscountPercent) / 100)),
       );
     }
-  }, [subtotal, customerDiscountPercent]);
+  }, [subtotal, customerDiscountPercent, canEditManualDiscount]);
+
+  useEffect(() => {
+    if (canEditManualDiscount) return;
+
+    setDiscountTotal("0");
+    setLines((prev) => {
+      if (!prev.some((line) => Number(line.discount || 0) > 0)) return prev;
+      return prev.map((line) => ({ ...line, discount: 0 }));
+    });
+  }, [canEditManualDiscount]);
 
   const addVariantToOrder = (variantId: string) => {
     const found = allVariantById.get(String(variantId));
@@ -4216,10 +4264,20 @@ export default function CreateOrderPageClient() {
   };
 
   const updateLine = (variantId: string, patch: Partial<OrderLine>) => {
+    const safePatch = { ...patch };
+
+    if ("discount" in safePatch && !canEditManualDiscount) {
+      delete safePatch.discount;
+    }
+
+    if ("price" in safePatch && !canEditLinePrice) {
+      delete safePatch.price;
+    }
+
     setLines((prev) =>
       prev.map((line) => {
         if (line.variantId !== variantId) return line;
-        const next = { ...line, ...patch };
+        const next = { ...line, ...safePatch };
         if (next.qty < 1) next.qty = 1;
         // ✅ Cho phép bán âm, không tự ép số lượng về tồn kho.
         if (next.discount < 0) next.discount = 0;
@@ -6330,24 +6388,42 @@ export default function CreateOrderPageClient() {
                           <div>
                             <input
                               value={line.price}
-                              onChange={(e) =>
+                              disabled={!canEditLinePrice}
+                              title={
+                                canEditLinePrice
+                                  ? "Được phép sửa giá bán"
+                                  : "Bạn chưa có quyền sửa giá bán trên kênh này"
+                              }
+                              onChange={(e) => {
+                                if (!canEditLinePrice) return;
                                 updateLine(line.variantId, {
                                   price: parseNumber(e.target.value),
-                                })
-                              }
-                              className="w-24 rounded-xl border border-neutral-300 px-3 py-2 outline-none"
+                                });
+                              }}
+                              className={`w-24 rounded-xl border border-neutral-300 px-3 py-2 outline-none ${
+                                canEditLinePrice ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                              }`}
                             />
                           </div>
 
                           <div>
                             <input
                               value={line.discount}
-                              onChange={(e) =>
+                              disabled={!canEditManualDiscount}
+                              title={
+                                canEditManualDiscount
+                                  ? "Được phép sửa chiết khấu dòng"
+                                  : "Bạn chưa có quyền sửa chiết khấu trên kênh này"
+                              }
+                              onChange={(e) => {
+                                if (!canEditManualDiscount) return;
                                 updateLine(line.variantId, {
                                   discount: parseNumber(e.target.value),
-                                })
-                              }
-                              className="w-24 rounded-xl border border-neutral-300 px-3 py-2 outline-none"
+                                });
+                              }}
+                              className={`w-24 rounded-xl border border-neutral-300 px-3 py-2 outline-none ${
+                                canEditManualDiscount ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                              }`}
                             />
                           </div>
 
@@ -7058,11 +7134,20 @@ export default function CreateOrderPageClient() {
                   <div className="flex items-center justify-between gap-3 text-sm">
                     <span className="text-neutral-500">Giảm giá nhập tay</span>
                     <input
-                      className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
+                      className={`w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none ${
+                        canEditManualDiscount ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                      }`}
                       value={formatVndInput(discountTotal)}
-                      onChange={(e) =>
-                        setDiscountTotal(String(parseNumber(e.target.value)))
+                      disabled={!canEditManualDiscount}
+                      title={
+                        canEditManualDiscount
+                          ? "Được phép nhập giảm giá tay"
+                          : "Bạn chưa có quyền sửa chiết khấu trên kênh này"
                       }
+                      onChange={(e) => {
+                        if (!canEditManualDiscount) return;
+                        setDiscountTotal(String(parseNumber(e.target.value)));
+                      }}
                       inputMode="numeric"
                     />
                   </div>

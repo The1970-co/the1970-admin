@@ -240,6 +240,58 @@ function normalize(value: any) {
     .trim();
 }
 
+function getPermissionKeysFromUser(user: any) {
+  const keys = new Set<string>();
+
+  if (isOwnerUser(user)) keys.add("*");
+
+  if (Array.isArray(user?.permissions)) {
+    user.permissions.forEach((key: any) => {
+      const value = String(key || "").trim();
+      if (value) keys.add(value);
+    });
+  }
+
+  if (Array.isArray(user?.permissionKeys)) {
+    user.permissionKeys.forEach((key: any) => {
+      const value = String(key || "").trim();
+      if (value) keys.add(value);
+    });
+  }
+
+  if (Array.isArray(user?.branchPermissions)) {
+    user.branchPermissions.forEach((row: any) => {
+      if (Array.isArray(row?.permissionKeys)) {
+        row.permissionKeys.forEach((key: any) => {
+          const value = String(key || "").trim();
+          if (value) keys.add(value);
+        });
+      }
+
+      if (Array.isArray(row?.extraPermissionKeys)) {
+        row.extraPermissionKeys.forEach((key: any) => {
+          const value = String(key || "").trim();
+          if (value) keys.add(value);
+        });
+      }
+
+      if (Array.isArray(row?.deniedPermissionKeys)) {
+        row.deniedPermissionKeys.forEach((key: any) => {
+          const value = String(key || "").trim();
+          if (value) keys.delete(value);
+        });
+      }
+    });
+  }
+
+  return keys;
+}
+
+function userHasPermission(user: any, permission: string) {
+  const keys = getPermissionKeysFromUser(user);
+  return keys.has("*") || keys.has(permission);
+}
+
 function getApiBaseUrl() {
   return (
     process.env.NEXT_PUBLIC_API_BASE_URL ||
@@ -411,6 +463,23 @@ export default function PosPageClient() {
     typeof window !== "undefined" ? getCurrentUserFromStorage() : null;
   const userBranchIds = currentUser ? getUserBranchIds(currentUser) : [];
   const canPickAll = isOwnerUser(currentUser);
+
+  const canEditPosManualDiscount =
+    userHasPermission(currentUser, "promotions.price_policy.pos_discount_only") ||
+    userHasPermission(currentUser, "promotions.price_policy.pos_discount_price") ||
+    userHasPermission(currentUser, "promotions.price_policy.all_channels_discount_only") ||
+    userHasPermission(currentUser, "promotions.price_policy.all_channels_discount_price");
+
+  const canEditPosLinePrice =
+    userHasPermission(currentUser, "promotions.price_policy.pos_discount_price") ||
+    userHasPermission(currentUser, "promotions.price_policy.all_channels_discount_price");
+
+  useEffect(() => {
+    if (canEditPosManualDiscount) return;
+    setDiscount("0");
+    setPromoOpen(false);
+    setPromoValue("");
+  }, [canEditPosManualDiscount]);
 
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + line.price * line.qty, 0),
@@ -1121,15 +1190,30 @@ export default function PosPageClient() {
       label: "Thêm dịch vụ",
       action: () => setError("Tính năng thêm dịch vụ sẽ làm sau."),
     },
-    { label: "Chiết khấu đơn", action: () => setPromoOpen(true) },
-    { label: "Khuyến mãi", action: () => setPromoOpen(true) },
+    {
+      label: "Chiết khấu đơn",
+      action: () =>
+        canEditPosManualDiscount
+          ? setPromoOpen(true)
+          : setError("Bạn chưa có quyền sửa chiết khấu tại quầy POS."),
+    },
+    {
+      label: "Khuyến mãi",
+      action: () =>
+        canEditPosManualDiscount
+          ? setPromoOpen(true)
+          : setError("Bạn chưa có quyền áp dụng chiết khấu tại quầy POS."),
+    },
     {
       label: "Đổi quà",
       action: () => setError("Tính năng đổi quà sẽ làm sau."),
     },
     {
       label: "Đổi giá bán hàng",
-      action: () => setError("Đổi giá cần phân quyền riêng."),
+      action: () =>
+        canEditPosLinePrice
+          ? setError("Tính năng đổi giá POS sẽ làm sau.")
+          : setError("Bạn chưa có quyền sửa giá bán tại quầy POS."),
     },
     { label: "Phiếu thu/chi", action: () => setCashVoucherOpen(true) },
     {
@@ -1969,10 +2053,19 @@ export default function PosPageClient() {
               <span>Chiết khấu nhập tay</span>
               <input
                 value={formatMoneyInput(discount)}
-                onChange={(e) =>
-                  setDiscount(String(moneyNumber(e.target.value)))
+                disabled={!canEditPosManualDiscount}
+                title={
+                  canEditPosManualDiscount
+                    ? "Được phép nhập chiết khấu POS"
+                    : "Bạn chưa có quyền sửa chiết khấu tại quầy POS"
                 }
-                className="h-9 w-32 rounded-xl border border-neutral-200 px-3 text-right outline-none"
+                onChange={(e) => {
+                  if (!canEditPosManualDiscount) return;
+                  setDiscount(String(moneyNumber(e.target.value)));
+                }}
+                className={`h-9 w-32 rounded-xl border border-neutral-200 px-3 text-right outline-none ${
+                  canEditPosManualDiscount ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                }`}
               />
             </div>
 
@@ -2193,7 +2286,7 @@ export default function PosPageClient() {
         </div>
       ) : null}
 
-      {promoOpen ? (
+      {promoOpen && canEditPosManualDiscount ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
@@ -2221,6 +2314,12 @@ export default function PosPageClient() {
 
             <button
               onClick={() => {
+                if (!canEditPosManualDiscount) {
+                  setError("Bạn chưa có quyền sửa chiết khấu tại quầy POS.");
+                  setPromoOpen(false);
+                  return;
+                }
+
                 const value = moneyNumber(promoValue);
                 const nextDiscount =
                   promoType === "percent"
