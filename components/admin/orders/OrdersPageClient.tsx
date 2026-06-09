@@ -649,9 +649,28 @@ function currency(n: number) {
 }
 
 
+function toFiniteNumber(value: any) {
+  if (value === null || value === undefined || value === "") return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function positiveNumber(value: any) {
-  const n = Number(value || 0);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  const n = toFiniteNumber(value);
+  return n > 0 ? n : 0;
+}
+
+function positiveAbsNumber(value: any) {
+  const n = toFiniteNumber(value);
+  return Number.isFinite(n) && n !== 0 ? Math.abs(n) : 0;
+}
+
+function firstPositiveNumber(...values: any[]) {
+  for (const value of values) {
+    const n = positiveNumber(value);
+    if (n > 0) return n;
+  }
+  return 0;
 }
 
 function getItemQuantity(item: any) {
@@ -661,35 +680,45 @@ function getItemQuantity(item: any) {
 }
 
 function getItemUnitPrice(item: any) {
-  return positiveNumber(
-    item?.unitPrice ??
-      item?.price ??
-      item?.salePrice ??
-      item?.sellingPrice ??
-      item?.variant?.price ??
-      item?.product?.price,
+  return firstPositiveNumber(
+    item?.unitPrice,
+    item?.price,
+    item?.salePrice,
+    item?.sellingPrice,
+    item?.finalUnitPrice,
+    item?.discountedUnitPrice,
+    item?.variant?.price,
+    item?.variant?.salePrice,
+    item?.product?.price,
+    item?.product?.salePrice,
   );
 }
 
 function getItemOriginalUnitPrice(item: any) {
-  return positiveNumber(
-    item?.originalUnitPrice ??
-      item?.originalPrice ??
-      item?.listPrice ??
-      item?.basePrice ??
-      item?.compareAtPrice ??
-      item?.variant?.originalPrice ??
-      item?.product?.originalPrice,
+  return firstPositiveNumber(
+    item?.originalUnitPrice,
+    item?.originalPrice,
+    item?.listPrice,
+    item?.basePrice,
+    item?.compareAtPrice,
+    item?.regularPrice,
+    item?.retailPrice,
+    item?.variant?.originalPrice,
+    item?.variant?.listPrice,
+    item?.product?.originalPrice,
+    item?.product?.listPrice,
   );
 }
 
 function getItemLineTotalAfterDiscount(item: any) {
-  const explicit = positiveNumber(
-    item?.lineTotal ??
-      item?.total ??
-      item?.finalLineTotal ??
-      item?.amount ??
-      item?.subtotalAfterDiscount,
+  const explicit = firstPositiveNumber(
+    item?.lineTotal,
+    item?.total,
+    item?.finalLineTotal,
+    item?.finalTotal,
+    item?.amount,
+    item?.subtotalAfterDiscount,
+    item?.totalAfterDiscount,
   );
 
   if (explicit > 0) return explicit;
@@ -698,12 +727,13 @@ function getItemLineTotalAfterDiscount(item: any) {
 }
 
 function getItemLineSubtotalBeforeDiscount(item: any) {
-  const explicit = positiveNumber(
-    item?.lineSubtotal ??
-      item?.subtotal ??
-      item?.originalLineTotal ??
-      item?.beforeDiscountTotal ??
-      item?.totalBeforeDiscount,
+  const explicit = firstPositiveNumber(
+    item?.lineSubtotal,
+    item?.subtotal,
+    item?.originalLineTotal,
+    item?.beforeDiscountTotal,
+    item?.totalBeforeDiscount,
+    item?.amountBeforeDiscount,
   );
 
   if (explicit > 0) return explicit;
@@ -711,17 +741,19 @@ function getItemLineSubtotalBeforeDiscount(item: any) {
   const originalUnitPrice = getItemOriginalUnitPrice(item);
   if (originalUnitPrice > 0) return getItemQuantity(item) * originalUnitPrice;
 
+  const lineTotal = getItemLineTotalAfterDiscount(item);
   const discount = getItemDiscountAmount(item);
-  return getItemLineTotalAfterDiscount(item) + discount;
+  return lineTotal > 0 ? lineTotal + discount : 0;
 }
 
 function getItemDiscountAmount(item: any) {
-  const direct = positiveNumber(
+  const direct = positiveAbsNumber(
     item?.discountAmount ??
       item?.productDiscountAmount ??
       item?.lineDiscountAmount ??
       item?.lineDiscount ??
-      item?.discountValue,
+      item?.discountValue ??
+      item?.discount,
   );
 
   if (direct > 0) return direct;
@@ -733,75 +765,157 @@ function getItemDiscountAmount(item: any) {
     return (originalUnitPrice - unitPrice) * qty;
   }
 
+  const subtotal = firstPositiveNumber(
+    item?.lineSubtotal,
+    item?.subtotal,
+    item?.originalLineTotal,
+    item?.beforeDiscountTotal,
+    item?.totalBeforeDiscount,
+    item?.amountBeforeDiscount,
+  );
+  const afterDiscount = firstPositiveNumber(
+    item?.lineTotal,
+    item?.total,
+    item?.finalLineTotal,
+    item?.finalTotal,
+    item?.amount,
+    item?.subtotalAfterDiscount,
+    item?.totalAfterDiscount,
+  );
+
+  if (subtotal > afterDiscount && afterDiscount > 0) return subtotal - afterDiscount;
+
   return 0;
 }
 
-function getOrderGoodsSubtotal(order: AdminOrder) {
+function getOrderDirectProductDiscount(order: AdminOrder) {
   const anyOrder: any = order || {};
-  const itemSubtotal = Array.isArray(anyOrder.items)
+  return positiveAbsNumber(
+    anyOrder.productDiscountAmount ??
+      anyOrder.itemsDiscountAmount ??
+      anyOrder.itemDiscountAmount ??
+      anyOrder.discountAmount ??
+      anyOrder.totalDiscount ??
+      anyOrder.discountTotal ??
+      anyOrder.orderDiscountAmount ??
+      anyOrder.manualDiscountAmount ??
+      anyOrder.discount,
+  );
+}
+
+function getOrderItemSubtotal(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  return Array.isArray(anyOrder.items)
     ? anyOrder.items.reduce(
         (sum: number, item: any) => sum + getItemLineSubtotalBeforeDiscount(item),
         0,
       )
     : 0;
-
-  if (itemSubtotal > 0) return itemSubtotal;
-
-  return positiveNumber(
-    anyOrder.goodsSubtotal ??
-      anyOrder.itemsSubtotal ??
-      anyOrder.productSubtotal ??
-      anyOrder.subtotalAmount ??
-      anyOrder.subtotal ??
-      anyOrder.totalBeforeDiscount,
-  );
 }
 
-function getOrderProductDiscount(order: AdminOrder) {
+function getOrderItemDiscount(order: AdminOrder) {
   const anyOrder: any = order || {};
-  const itemDiscount = Array.isArray(anyOrder.items)
+  return Array.isArray(anyOrder.items)
     ? anyOrder.items.reduce(
         (sum: number, item: any) => sum + getItemDiscountAmount(item),
         0,
       )
     : 0;
-
-  if (itemDiscount > 0) return itemDiscount;
-
-  const direct = positiveNumber(
-    anyOrder.productDiscountAmount ??
-      anyOrder.itemsDiscountAmount ??
-      anyOrder.discountAmount ??
-      anyOrder.totalDiscount ??
-      anyOrder.discountTotal,
-  );
-
-  if (direct > 0) return direct;
-
-  const subtotal = getOrderGoodsSubtotal(order);
-  const afterDiscount = getOrderGoodsAfterDiscount(order, true);
-  return Math.max(0, subtotal - afterDiscount);
 }
 
-function getOrderGoodsAfterDiscount(order: AdminOrder, skipDiscountFallback = false) {
+function getOrderItemTotalAfterDiscount(order: AdminOrder) {
   const anyOrder: any = order || {};
-  const itemTotal = Array.isArray(anyOrder.items)
+  return Array.isArray(anyOrder.items)
     ? anyOrder.items.reduce(
         (sum: number, item: any) => sum + getItemLineTotalAfterDiscount(item),
         0,
       )
     : 0;
+}
 
-  if (itemTotal > 0) return itemTotal;
+function getOrderDirectGoodsAfterDiscount(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  return firstPositiveNumber(
+    anyOrder.goodsAfterDiscount,
+    anyOrder.itemsTotalAfterDiscount,
+    anyOrder.productTotalAfterDiscount,
+    anyOrder.subtotalAfterDiscount,
+    anyOrder.totalAfterDiscount,
+    anyOrder.amountAfterDiscount,
+    anyOrder.totalItemsAmount,
+    anyOrder.itemsTotal,
+  );
+}
 
-  const direct = positiveNumber(
-    anyOrder.goodsAfterDiscount ??
-      anyOrder.itemsTotalAfterDiscount ??
-      anyOrder.productTotalAfterDiscount ??
-      anyOrder.subtotalAfterDiscount,
+function getOrderFinalGoodsEstimate(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const finalAmount = positiveNumber(anyOrder.finalAmount ?? anyOrder.totalAmount ?? anyOrder.amount);
+  if (finalAmount <= 0) return 0;
+
+  const shippingFee = positiveNumber(
+    anyOrder.shippingFee ??
+      anyOrder.customerShippingFee ??
+      anyOrder.deliveryFee ??
+      anyOrder.shipment?.shippingFee,
   );
 
+  return Math.max(0, finalAmount - shippingFee);
+}
+
+function getOrderGoodsSubtotal(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const itemSubtotal = getOrderItemSubtotal(order);
+
+  if (itemSubtotal > 0) return itemSubtotal;
+
+  const directSubtotal = firstPositiveNumber(
+    anyOrder.goodsSubtotal,
+    anyOrder.itemsSubtotal,
+    anyOrder.productSubtotal,
+    anyOrder.productsSubtotal,
+    anyOrder.subtotalAmount,
+    anyOrder.subtotal,
+    anyOrder.totalBeforeDiscount,
+    anyOrder.amountBeforeDiscount,
+    anyOrder.originalAmount,
+    anyOrder.originalTotal,
+  );
+
+  if (directSubtotal > 0) return directSubtotal;
+
+  // Một số API danh sách chỉ trả "tiền hàng sau chiết khấu" + discount,
+  // không trả riêng subtotal trước giảm. Khi đó phải cộng ngược lại,
+  // nếu không cột "Tiền hàng" sẽ toàn 0 dù đơn vẫn có tổng tiền.
+  const afterDiscount = getOrderDirectGoodsAfterDiscount(order) || getOrderFinalGoodsEstimate(order);
+  const discount = getOrderItemDiscount(order) || getOrderDirectProductDiscount(order);
+  if (afterDiscount > 0) return afterDiscount + discount;
+
+  return 0;
+}
+
+function getOrderProductDiscount(order: AdminOrder) {
+  const itemDiscount = getOrderItemDiscount(order);
+  if (itemDiscount > 0) return itemDiscount;
+
+  const direct = getOrderDirectProductDiscount(order);
   if (direct > 0) return direct;
+
+  const subtotal = getOrderGoodsSubtotal(order);
+  const afterDiscount = getOrderDirectGoodsAfterDiscount(order) || getOrderFinalGoodsEstimate(order);
+  if (subtotal > afterDiscount && afterDiscount > 0) return subtotal - afterDiscount;
+
+  return 0;
+}
+
+function getOrderGoodsAfterDiscount(order: AdminOrder, skipDiscountFallback = false) {
+  const itemTotal = getOrderItemTotalAfterDiscount(order);
+  if (itemTotal > 0) return itemTotal;
+
+  const direct = getOrderDirectGoodsAfterDiscount(order);
+  if (direct > 0) return direct;
+
+  const finalGoods = getOrderFinalGoodsEstimate(order);
+  if (finalGoods > 0) return finalGoods;
 
   const subtotal = getOrderGoodsSubtotal(order);
   if (subtotal > 0) {
@@ -809,9 +923,7 @@ function getOrderGoodsAfterDiscount(order: AdminOrder, skipDiscountFallback = fa
     return Math.max(0, subtotal - discount);
   }
 
-  const finalAmount = positiveNumber(anyOrder.finalAmount);
-  const shippingFee = positiveNumber(anyOrder.shippingFee);
-  return Math.max(0, finalAmount - shippingFee);
+  return 0;
 }
 
 type ConfiguredSalesChannel = {
