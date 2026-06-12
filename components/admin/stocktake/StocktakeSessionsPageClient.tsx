@@ -65,6 +65,8 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 type EnrichedStocktakeSession = StocktakeSessionListItem & {
+  code?: string | null;
+  sessionCode?: string | null;
   note?: string | null;
   productMatches?: Array<{
     sku?: string | null;
@@ -146,6 +148,7 @@ function buildStocktakeSessionsPath(input: {
   page?: number;
   limit?: number;
   productQuery?: string;
+  sessionQuery?: string;
 }) {
   const params = new URLSearchParams();
   appendQueryParam(params, "branchId", input.branchId);
@@ -154,14 +157,14 @@ function buildStocktakeSessionsPath(input: {
   appendQueryParam(params, "to", input.to);
   appendQueryParam(params, "page", input.page || 1);
   appendQueryParam(params, "limit", input.limit || 50);
+  appendQueryParam(params, "query", input.sessionQuery);
 
-  // Gửi nhiều alias để backend mới/cũ đều bắt được. Backend không dùng key nào sẽ tự bỏ qua.
+  // Tìm sản phẩm/SKU tách riêng với tìm phiên. Không gửi key q để tránh backend hiểu nhầm là tìm phiên.
   const productText = String(input.productQuery || "").trim();
   if (productText) {
     params.set("productQuery", productText);
     params.set("productQ", productText);
     params.set("sku", productText);
-    params.set("q", productText);
   }
 
   const query = params.toString();
@@ -254,6 +257,30 @@ function diffText(value?: number | null) {
 function compactText(value?: string | null) {
   const text = String(value || "").trim();
   return text || "—";
+}
+
+function normalizeBranchCode(value?: string | null) {
+  const text = String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+
+  if (text.includes("THAI HA") || text.includes("THÁI HÀ")) return "TH";
+  if (text.includes("CHUA LANG") || text.includes("CHÙA LÁNG")) return "CL";
+  if (text.includes("XA DAN") || text.includes("XÃ ĐÀN")) return "XD";
+  if (text.includes("QUOC OAI") || text.includes("QUỐC OAI")) return "QO";
+
+  const letters = text.replace(/[^A-Z0-9]+/g, "").slice(0, 2);
+  return letters || "CN";
+}
+
+function getSessionDisplayCode(item: EnrichedStocktakeSession, branchName?: string) {
+  const explicitCode = String((item as any).code || (item as any).sessionCode || "").trim();
+  if (explicitCode) return explicitCode.toUpperCase();
+
+  const branchCode = normalizeBranchCode(branchName || item.branchId);
+  const shortId = String(item.id || "").replace(/[^a-zA-Z0-9]/g, "").slice(-6).toUpperCase();
+  return shortId ? `KK-${branchCode}-${shortId}` : `KK-${branchCode}`;
 }
 
 function collectPermissionKeys(user: any) {
@@ -470,8 +497,8 @@ export default function StocktakeSessionsPageClient() {
     async (options?: { force?: boolean; silent?: boolean; preserveScroll?: boolean }) => {
       if (!ready) return;
 
-      const params = { branchId, status, from, to, page, limit, productQuery: productQuery.trim() };
-      const summaryParams = { branchId, status, from, to };
+      const params = { branchId, status, from, to, page, limit, productQuery: productQuery.trim(), sessionQuery: query.trim() };
+      const summaryParams = { branchId, status, from, to, productQuery: productQuery.trim(), query: query.trim() } as any;
       const requestKey = JSON.stringify(params);
 
       if (!options?.force && inFlightSessionKeyRef.current === requestKey) return;
@@ -513,7 +540,7 @@ export default function StocktakeSessionsPageClient() {
         }
       }
     },
-    [branchId, from, limit, page, productQuery, ready, status, to],
+    [branchId, from, limit, page, productQuery, query, ready, status, to],
   );
 
   useEffect(() => {
@@ -528,7 +555,7 @@ export default function StocktakeSessionsPageClient() {
   useEffect(() => {
     setPage(1);
     loadedSessionKeyRef.current = "";
-  }, [branchId, status, from, to, productQuery]);
+  }, [branchId, status, from, to, productQuery, query]);
 
 
   useEffect(() => {
@@ -555,7 +582,8 @@ export default function StocktakeSessionsPageClient() {
       const productMatchText = getProductMatches(item)
         .map((row) => `${row.sku} ${row.productName}`)
         .join(" ");
-      const searchBlob = `${item.id} ${item.name} ${item.note || ""} ${item.branchId} ${branchName} ${creatorName} ${workerText} ${productMatchText}`.toLowerCase();
+      const displayCode = getSessionDisplayCode(item, branchName);
+      const searchBlob = `${displayCode} ${item.id} ${(item as any).code || ""} ${(item as any).sessionCode || ""} ${item.name} ${item.note || ""} ${item.branchId} ${branchName} ${creatorName} ${workerText} ${productMatchText}`.toLowerCase();
 
       if (q && !searchBlob.includes(q)) return false;
       if (creator && !creatorName.toLowerCase().includes(creator)) return false;
@@ -1418,6 +1446,7 @@ Không xoá phiên đã chốt tồn.`,
                   const creatorName = getCreatorName(item);
                   const finishedByName = getFinishedByName(item);
                   const appliedByName = getAppliedByName(item);
+                  const sessionDisplayCode = getSessionDisplayCode(item, branchMap.get(item.branchId));
 
                   return (
                     <tr key={item.id} className={`border-t border-neutral-100 align-top hover:bg-neutral-50/70 ${selectedSessionIdSet.has(item.id) ? "bg-purple-50/40" : ""}`}>
@@ -1432,9 +1461,10 @@ Không xoá phiên đã chốt tồn.`,
                       </td>
                       <td className="px-4 py-3">
                         <Link href={`/stocktake-sessions/${item.id}`} prefetch={false} target="_blank" rel="noopener noreferrer" className="font-bold text-neutral-950 hover:underline">
-                          {item.name || item.id}
+                          {item.name || sessionDisplayCode}
                         </Link>
-                        <p className="mt-1 font-mono text-xs text-neutral-400">{item.id}</p>
+                        <p className="mt-1 font-mono text-xs font-bold text-neutral-500">{sessionDisplayCode}</p>
+                        <p className="mt-0.5 font-mono text-[10px] text-neutral-300">ID: {item.id}</p>
                         {editingNoteSessionId === item.id ? (
                           <div className="mt-2 w-[280px] space-y-2">
                             <textarea
@@ -1615,7 +1645,7 @@ Không xoá phiên đã chốt tồn.`,
                           ) : null}
                           {canExportStocktake ? (
                             <button
-                              onClick={() => void downloadStocktakeSessionExcel(item.id, `kiem-kho-${item.id}.xlsx`)}
+                              onClick={() => void downloadStocktakeSessionExcel(item.id, `kiem-kho-${sessionDisplayCode}.xlsx`)}
                               className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100"
                             >
                               Xuất Excel

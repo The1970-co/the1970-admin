@@ -3854,6 +3854,10 @@ function isRedeliveryOrder(order: AdminOrder) {
 
 type OrderExportScope = "filtered" | "current_page" | "checked";
 type OrderExportSortMode = "created_desc" | "amount_desc" | "cod_desc";
+type OrderExportDateMode = "current_filter" | "month" | "year" | "custom";
+
+const ORDER_EXPORT_PAGE_SIZE = 1000;
+const ORDER_EXPORT_MAX_ROWS = 20000;
 
 type OrderExportColumnKey =
   | "orderCode"
@@ -3989,6 +3993,43 @@ function safeOrderSheetName(name: string) {
       .trim()
       .slice(0, 31) || "Sheet"
   );
+}
+
+function getOrderExportDateRange(input: {
+  mode: OrderExportDateMode;
+  month: string;
+  year: string;
+  from: string;
+  to: string;
+  currentFrom: string;
+  currentTo: string;
+}) {
+  const now = new Date();
+  const safeYear = Math.min(2999, Math.max(2000, Number(input.year || now.getFullYear())));
+  const safeMonth = Math.min(12, Math.max(1, Number(input.month || now.getMonth() + 1)));
+
+  if (input.mode === "month") {
+    const from = new Date(safeYear, safeMonth - 1, 1);
+    const to = new Date(safeYear, safeMonth, 0);
+    return { from: toInputDateValue(from), to: toInputDateValue(to) };
+  }
+
+  if (input.mode === "year") {
+    return { from: `${safeYear}-01-01`, to: `${safeYear}-12-31` };
+  }
+
+  if (input.mode === "custom") {
+    return { from: input.from, to: input.to };
+  }
+
+  return { from: input.currentFrom, to: input.currentTo };
+}
+
+function orderExportDateLabel(input: { mode: OrderExportDateMode; month: string; year: string; from: string; to: string }) {
+  if (input.mode === "month") return `tháng ${String(input.month).padStart(2, "0")}/${input.year}`;
+  if (input.mode === "year") return `năm ${input.year}`;
+  if (input.mode === "custom") return `${input.from || "..."} → ${input.to || "..."}`;
+  return "theo bộ lọc ngày hiện tại";
 }
 
 function getOrderExportRows(
@@ -4294,6 +4335,12 @@ export default function OrdersPageClient() {
   const [exportIncludeItemSheet, setExportIncludeItemSheet] = useState(true);
   const [exportSortMode, setExportSortMode] =
     useState<OrderExportSortMode>("created_desc");
+  const [exportDateMode, setExportDateMode] =
+    useState<OrderExportDateMode>("current_filter");
+  const [exportMonth, setExportMonth] = useState(String(new Date().getMonth() + 1).padStart(2, "0"));
+  const [exportYear, setExportYear] = useState(String(new Date().getFullYear()));
+  const [exportDateFrom, setExportDateFrom] = useState("");
+  const [exportDateTo, setExportDateTo] = useState("");
   const [exportingOrders, setExportingOrders] = useState(false);
 
   const loadBranches = async () => {
@@ -6559,17 +6606,104 @@ export default function OrdersPageClient() {
     setActionMessage(`Đã gửi lệnh in ${sourceOrders.length} đơn.`);
   };
 
-  const handleExportOrdersExcel = () => {
+  const fetchOrdersForExcelExport = async () => {
+    const selectedBranchIds = exportBranchIds.length
+      ? exportBranchIds
+      : !canViewAllOrders && currentUser?.branchId
+        ? [currentUser.branchId]
+        : [];
+    const branchTargets = selectedBranchIds.length ? selectedBranchIds : [""];
+    const serverKeyword = [submittedQuery, appliedFreeTextFilter]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    const dateRange = getOrderExportDateRange({
+      mode: exportDateMode,
+      month: exportMonth,
+      year: exportYear,
+      from: exportDateFrom,
+      to: exportDateTo,
+      currentFrom: appliedDateFrom,
+      currentTo: appliedDateTo,
+    });
+    const selectedOrderStatuses = selectedMultiFilterValues(appliedOrderFilter);
+    const selectedPaymentStatuses = selectedMultiFilterValues(appliedPaymentFilter);
+    const selectedCodReconciliationStatuses = selectedMultiFilterValues(appliedCodReconciliationFilter);
+    const rows: AdminOrder[] = [];
+    const seen = new Set<string>();
+
+    for (const targetBranchId of branchTargets) {
+      let pageCursor = 1;
+      let totalPagesForBranch = 1;
+
+      do {
+        const params = new URLSearchParams();
+        params.set("page", String(pageCursor));
+        params.set("pageSize", String(ORDER_EXPORT_PAGE_SIZE));
+        params.set("exportMode", "1");
+        params.set("includeItems", "1");
+        params.set("withItems", "1");
+
+        if (serverKeyword) params.set("q", serverKeyword);
+        if (targetBranchId) params.set("branchId", targetBranchId);
+        if (dateRange.from) params.set("dateFrom", dateRange.from);
+        if (dateRange.to) params.set("dateTo", dateRange.to);
+        if (appliedQuickStatus !== "ALL") params.set("quickStatus", appliedQuickStatus);
+        if (selectedOrderStatuses.length === 1) params.set("orderStatus", selectedOrderStatuses[0]);
+        if (selectedPaymentStatuses.length === 1) params.set("paymentStatus", selectedPaymentStatuses[0]);
+        if (selectedCodReconciliationStatuses.length) {
+          params.set("codReconciliationStatus", selectedCodReconciliationStatuses.join(","));
+        }
+        if (!canViewAllOrders && canViewOwnOrders) {
+          params.set("viewScope", "own");
+          if (currentUser?.id) params.set("createdByStaffId", currentUser.id);
+          if (currentUser?.code) params.set("createdByStaffCode", currentUser.code);
+        }
+
+        const res = await apiFetch(`/orders?${params.toString()}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        const raw = await res.json();
+        if (!res.ok) throw new Error(raw?.message || `Tải dữ liệu xuất Excel thất bại. Status ${res.status}`);
+
+        const data = Array.isArray(raw)
+          ? raw
+          : Array.isArray(raw?.data)
+            ? raw.data
+            : [];
+
+        data.forEach((order: any) => {
+          const key = String(order?.id || order?.orderCode || "").trim();
+          if (!key || seen.has(key) || rows.length >= ORDER_EXPORT_MAX_ROWS) return;
+          seen.add(key);
+          rows.push(order as AdminOrder);
+        });
+
+        totalPagesForBranch = Number(raw?.pagination?.totalPages || 1);
+        pageCursor += 1;
+      } while (pageCursor <= totalPagesForBranch && rows.length < ORDER_EXPORT_MAX_ROWS);
+    }
+
+    return rows;
+  };
+
+  const handleExportOrdersExcel = async () => {
     try {
       setExportingOrders(true);
-      setActionMessage("Đang tạo file Excel đơn hàng...");
+      setActionMessage("Đang tải dữ liệu và tạo file Excel đơn hàng...");
 
-      let sourceOrders =
-        exportScope === "checked"
-          ? checkedOrders
-          : exportScope === "current_page"
-            ? normalizedOrders
-            : visibleOrders;
+      let sourceOrders: NormalizedOrder[];
+
+      if (exportScope === "checked") {
+        sourceOrders = checkedOrders;
+      } else if (exportScope === "current_page") {
+        sourceOrders = normalizedOrders;
+      } else {
+        const fetchedOrders = await fetchOrdersForExcelExport();
+        sourceOrders = normalizeOrdersForCards(fetchedOrders);
+      }
 
       if (exportBranchIds.length) {
         sourceOrders = sourceOrders.filter((order) =>
@@ -6589,6 +6723,10 @@ export default function OrdersPageClient() {
             order.paymentStatus === "PENDING_COD" ||
             Number(order._codAmount || 0) > 0,
         );
+      }
+
+      if (sourceOrders.length > ORDER_EXPORT_MAX_ROWS) {
+        sourceOrders = sourceOrders.slice(0, ORDER_EXPORT_MAX_ROWS);
       }
 
       const branchListForExport = exportBranchIds.length
@@ -8969,7 +9107,7 @@ export default function OrdersPageClient() {
                     </div>
                   </Panel>
 
-                  <div className="grid gap-4 lg:grid-cols-3">
+                  <div className="grid gap-4 lg:grid-cols-4">
                     <Panel className="p-4">
                       <p className="text-sm font-semibold text-neutral-900">
                         Phạm vi đơn hàng
@@ -9018,6 +9156,82 @@ export default function OrdersPageClient() {
                           />
                           Chỉ đơn có COD
                         </label>
+                      </div>
+                    </Panel>
+
+                    <Panel className="p-4">
+                      <p className="text-sm font-semibold text-neutral-900">Bộ lọc ngày xuất</p>
+                      <div className="mt-3 grid gap-2 text-sm">
+                        <select
+                          value={exportDateMode}
+                          onChange={(e) => setExportDateMode(e.target.value as OrderExportDateMode)}
+                          className="rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                          disabled={exportScope !== "filtered"}
+                        >
+                          <option value="current_filter">Theo ngày đang lọc</option>
+                          <option value="month">Chọn tháng</option>
+                          <option value="year">Chọn năm</option>
+                          <option value="custom">Khoảng ngày tuỳ chọn</option>
+                        </select>
+
+                        {exportDateMode === "month" ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={exportMonth}
+                              onChange={(e) => setExportMonth(e.target.value)}
+                              className="rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                              disabled={exportScope !== "filtered"}
+                            >
+                              {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0")).map((month) => (
+                                <option key={month} value={month}>Tháng {month}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="number"
+                              value={exportYear}
+                              onChange={(e) => setExportYear(e.target.value)}
+                              className="rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                              min={2000}
+                              max={2999}
+                              disabled={exportScope !== "filtered"}
+                            />
+                          </div>
+                        ) : null}
+
+                        {exportDateMode === "year" ? (
+                          <input
+                            type="number"
+                            value={exportYear}
+                            onChange={(e) => setExportYear(e.target.value)}
+                            className="rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                            min={2000}
+                            max={2999}
+                            disabled={exportScope !== "filtered"}
+                          />
+                        ) : null}
+
+                        {exportDateMode === "custom" ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="date"
+                              value={exportDateFrom}
+                              onChange={(e) => setExportDateFrom(e.target.value)}
+                              className="rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                              disabled={exportScope !== "filtered"}
+                            />
+                            <input
+                              type="date"
+                              value={exportDateTo}
+                              onChange={(e) => setExportDateTo(e.target.value)}
+                              className="rounded-2xl border border-neutral-300 px-3 py-2 outline-none"
+                              disabled={exportScope !== "filtered"}
+                            />
+                          </div>
+                        ) : null}
+
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                          Xuất tối đa {ORDER_EXPORT_MAX_ROWS.toLocaleString("vi-VN")} đơn/lần để tránh treo trình duyệt.
+                        </div>
                       </div>
                     </Panel>
 
@@ -9201,16 +9415,12 @@ export default function OrdersPageClient() {
 
                   <div className="flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-neutral-50 p-4 md:flex-row md:items-center md:justify-between">
                     <div className="text-sm text-neutral-600">
-                      Xuất{" "}
-                      {exportScope === "checked"
-                        ? checkedIds.length
-                        : exportScope === "current_page"
-                          ? normalizedOrders.length
-                          : visibleOrders.length}{" "}
-                      đơn ·{" "}
+                      {exportScope === "filtered"
+                        ? `Xuất theo bộ lọc ${orderExportDateLabel({ mode: exportDateMode, month: exportMonth, year: exportYear, from: exportDateFrom, to: exportDateTo })}`
+                        : `Xuất ${exportScope === "checked" ? checkedIds.length : normalizedOrders.length} đơn`} ·{" "}
                       {exportBranchIds.length
                         ? `${exportBranchIds.length} chi nhánh`
-                        : "Tất cả chi nhánh"}
+                        : "Tất cả chi nhánh"} · tối đa {ORDER_EXPORT_MAX_ROWS.toLocaleString("vi-VN")} đơn
                     </div>
                     <div className="flex justify-end gap-2">
                       <Button
