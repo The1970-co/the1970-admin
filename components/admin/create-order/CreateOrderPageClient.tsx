@@ -995,16 +995,53 @@ function getAhamoveServiceDisplayName(serviceLabel: string) {
   if (label.includes("TRUCK-1000")) return "Xe tải 1000kg";
   if (label.includes("TRUCK-2000")) return "Xe tải 2000kg";
   if (label.includes("TRUCK-5000")) return "Xe tải 5000kg";
-  if (
-    label.includes("2H") ||
-    label.includes("SAVING") ||
-    label.includes("ECONOMY")
-  ) {
-    return "Siêu Tốc - Tiết Kiệm";
+
+  // HAN-BIKE là gói siêu tốc lấy/giao ngay của AhaMove.
+  // HAN-2H là gói tiết kiệm có thể bị lên lịch lấy sau, không được gọi là “siêu tốc” để tránh nhân viên chọn nhầm.
+  if (label.includes("2H") || label.includes("SAVING") || label.includes("ECONOMY")) {
+    return "Tiết kiệm 2H";
   }
-  if (label.includes("BIKE") || label.includes("EXPRESS")) return "Siêu Tốc";
+  if (label.includes("BIKE") || label.includes("EXPRESS")) return "Siêu tốc - Lấy ngay";
 
   return serviceLabel || "AhaMove";
+}
+
+function getAhamoveServiceCodeFromQuote(row?: ShipmentQuoteResult | null) {
+  const raw = (row || {}) as any;
+  return String(
+    raw?._ahamoveServiceId ||
+      raw?._serviceName ||
+      raw?.service_id ||
+      raw?.serviceId ||
+      raw?.serviceCode ||
+      "",
+  )
+    .trim()
+    .toUpperCase();
+}
+
+function isAhamoveBikeQuote(row?: ShipmentQuoteResult | null) {
+  if (!row || getQuoteCarrier(row) !== "ahamove") return false;
+  const serviceCode = getAhamoveServiceCodeFromQuote(row);
+  return serviceCode === "HAN-BIKE" || serviceCode.includes("BIKE");
+}
+
+function isAhamoveSavingQuote(row?: ShipmentQuoteResult | null) {
+  if (!row || getQuoteCarrier(row) !== "ahamove") return false;
+  const serviceCode = getAhamoveServiceCodeFromQuote(row);
+  return serviceCode === "HAN-2H" || serviceCode.includes("2H");
+}
+
+function getPreferredAhamoveQuote(rows: ShipmentQuoteResult[]) {
+  const valid = rows.filter((row) => getQuoteCarrier(row) === "ahamove" && !(row as any)?._disabled);
+  return valid.find(isAhamoveBikeQuote) || valid[0] || null;
+}
+
+function getDefaultQuoteForCarrier(rows: ShipmentQuoteResult[], carrier: string) {
+  const carrierRows = rows.filter((row) => getQuoteCarrier(row) === carrier && !(row as any)?._disabled);
+  if (!carrierRows.length) return null;
+  if (carrier === "ahamove") return getPreferredAhamoveQuote(carrierRows);
+  return carrierRows[0];
 }
 
 function parseAhamoveQuoteFee(rawQuote: any) {
@@ -1064,6 +1101,9 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
   );
 
   const hasFastest = Number.isFinite(fastestMinutes);
+  const ahamoveRecommendedKey = getPreferredAhamoveQuote(valid)
+    ? getQuoteKey(getPreferredAhamoveQuote(valid) as ShipmentQuoteResult)
+    : "";
   const recommendedKey =
     valid.find(
       (row) =>
@@ -1080,8 +1120,12 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
     if (fee > 0 && fee === cheapestFee) badges.push("Rẻ nhất");
     if (hasFastest && minutes > 0 && minutes === fastestMinutes)
       badges.push("Nhanh nhất");
-    if (getQuoteKey(row) === getQuoteKey(recommendedKey))
+    if (getQuoteCarrier(row) === "ahamove") {
+      if (getQuoteKey(row) === ahamoveRecommendedKey) badges.push("Khuyên dùng");
+      if (isAhamoveSavingQuote(row)) badges.push("2H");
+    } else if (getQuoteKey(row) === getQuoteKey(recommendedKey)) {
       badges.push("Khuyên dùng");
+    }
 
     return {
       ...(row as any),
@@ -4839,6 +4883,7 @@ export default function CreateOrderPageClient() {
                   _carrier: "ahamove",
                   _quoteKey: `ahamove-${parsed.serviceLabel}`,
                   _serviceName: parsed.serviceLabel,
+                  _ahamoveServiceId: parsed.serviceLabel,
                   _durationMinutes: parsed.durationMinutes,
                   _distanceKm: parsed.distanceKm,
                   _raw: parsed.raw,
@@ -4968,11 +5013,15 @@ export default function CreateOrderPageClient() {
           (row) => getQuoteCarrier(row) === shippingPartner,
         );
         const recommended =
+          getDefaultQuoteForCarrier(sortedQuotes, shippingPartner) ||
           sortedQuotes.find((row) =>
             getQuoteBadges(row).includes("Khuyên dùng"),
-          ) || sortedQuotes[0];
+          ) ||
+          sortedQuotes[0];
         const selected =
-          currentCarrierQuotes[0] || recommended || sortedQuotes[0];
+          getDefaultQuoteForCarrier(currentCarrierQuotes, shippingPartner) ||
+          recommended ||
+          sortedQuotes[0];
 
         applyShippingRef.current?.({
           shippingFee: getFeeNumber(selected),
@@ -5476,15 +5525,21 @@ export default function CreateOrderPageClient() {
           toPhone: selectedAddress?.phone || customerPhone.trim(),
           toAddress,
           codAmount: remaining > 0 ? remaining : 0,
-          serviceId:
-            (
+          serviceId: (() => {
+            const ahamoveQuote =
+              (selectedQuote && getQuoteCarrier(selectedQuote) === "ahamove"
+                ? selectedQuote
+                : null) ||
               shippingQuotes.find(
                 (quote) =>
+                  selectedShippingQuoteKey &&
                   getQuoteCarrier(quote) === "ahamove" &&
-                  quote.serviceId === selectedShippingServiceId &&
-                  quote.serviceTypeId === selectedShippingServiceTypeId,
-              ) as any
-            )?._serviceName || "HAN-BIKE",
+                  getQuoteKey(quote) === selectedShippingQuoteKey,
+              ) ||
+              getPreferredAhamoveQuote(shippingQuotes);
+
+            return getAhamoveServiceCodeFromQuote(ahamoveQuote) || "HAN-BIKE";
+          })(),
           payment_method: ahamovePaymentMethod,
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
@@ -6581,9 +6636,41 @@ export default function CreateOrderPageClient() {
                     key={item.value}
                     type="button"
                     disabled={!item.enabled}
-                    onClick={() =>
-                      item.enabled && setShippingPartner(item.value)
-                    }
+                    onClick={() => {
+                      if (!item.enabled) return;
+
+                      setShippingPartner(item.value);
+
+                      // Nếu nhân viên chỉ bấm chọn hãng mà chưa chọn dòng dịch vụ,
+                      // tự áp dụng gói mặc định của hãng. Riêng AhaMove phải ưu tiên HAN-BIKE
+                      // thay vì gói rẻ nhất HAN-2H để tránh bị hẹn lấy sau.
+                      const defaultQuote = getDefaultQuoteForCarrier(
+                        shippingQuotes,
+                        item.value,
+                      );
+
+                      if (defaultQuote) {
+                        applyShippingRef.current?.({
+                          shippingFee: getFeeNumber(defaultQuote),
+                          applyFeeToInput: Boolean((defaultQuote as any)._applyFeeToInput),
+                          shippingPartner: item.value,
+                          shippingMode: "partner",
+                          selectedServiceId: defaultQuote.serviceId,
+                          selectedServiceTypeId: defaultQuote.serviceTypeId,
+                          selectedQuoteKey: getQuoteKey(defaultQuote),
+                          weight: Number(shippingWeight || 200),
+                          length: Number(shippingLength || 10),
+                          width: Number(shippingWidth || 10),
+                          height: Number(shippingHeight || 10),
+                          ghnDistrictId: (defaultQuote as any)._ghnDistrictId || ghnDistrictId,
+                          ghnWardCode: (defaultQuote as any)._ghnWardCode || ghnWardCode,
+                        });
+                      } else {
+                        setSelectedShippingQuoteKey("");
+                        setSelectedShippingServiceId(undefined);
+                        setSelectedShippingServiceTypeId(undefined);
+                      }
+                    }}
                     className={`rounded-2xl border px-3 py-3 text-left transition ${
                       shippingPartner === item.value
                         ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
@@ -6756,6 +6843,7 @@ export default function CreateOrderPageClient() {
                           Number((b as any)?._durationMinutes || 0),
                       )[0];
                     const recommendedQuote =
+                      getDefaultQuoteForCarrier(validQuotes, shippingPartner) ||
                       validQuotes.find((quote) =>
                         getQuoteBadges(quote).includes("Khuyên dùng"),
                       ) ||
