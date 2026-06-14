@@ -18,7 +18,7 @@ export type ViettelPostInventory = {
 };
 
 
-export type PickupCarrier = "ghn" | "viettelpost" | "ahamove";
+export type PickupCarrier = "ghn" | "viettelpost" | "ahamove" | "spx";
 
 export type PickupLocation = {
   id: string;
@@ -365,6 +365,49 @@ export type CreateViettelPostShipmentPayload = ViettelPostQuotePayload &
       price?: number;
       weight?: number;
     }>;
+  };
+
+export type SpxQuotePayload = {
+  toName?: string;
+  toPhone?: string;
+  toAddress?: string;
+  toProvince?: string;
+  toDistrict?: string;
+  toWard?: string;
+
+  fromName?: string;
+  fromPhone?: string;
+  fromAddress?: string;
+
+  province?: string;
+  district?: string;
+  ward?: string;
+
+  codAmount?: number;
+  productPrice?: number;
+  insuranceValue?: number;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  serviceCode?: string;
+  services?: string;
+  items?: Array<{
+    name: string;
+    quantity?: number;
+    qty?: number;
+    num?: number;
+    price?: number;
+    weight?: number;
+  }>;
+};
+
+export type CreateSpxShipmentPayload = SpxQuotePayload &
+  CarrierDeliveryNoteFields & {
+    clientOrderCode?: string;
+    orderCode?: string;
+    content?: string;
+    shippingNote?: string;
   };
 
 export type AhamoveQuoteResult =
@@ -733,6 +776,44 @@ export async function createViettelPostShipment(
   return request<any>(`/shipments/${orderId}/viettelpost/create`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function quoteSpxShipment(
+  payload: SpxQuotePayload,
+): Promise<ShipmentQuoteResult[]> {
+  const data = await request<any>("/shipments/spx/quote", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.items)
+        ? data.items
+        : [];
+}
+
+export async function createSpxShipment(
+  orderId: string,
+  payload: CreateSpxShipmentPayload,
+) {
+  return request<any>(`/shipments/${orderId}/spx/create`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cancelSpxShipment(orderId: string) {
+  return request<any>(`/shipments/${orderId}/spx/cancel`, {
+    method: "POST",
+  });
+}
+
+export async function trackSpxShipmentById(shipmentId: string) {
+  return request<any>(`/shipments/${shipmentId}/spx/tracking`, {
+    method: "GET",
   });
 }
 

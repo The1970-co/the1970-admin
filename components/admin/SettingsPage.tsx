@@ -104,6 +104,7 @@ type CarrierPickupMapping = Record<
     ghn?: string;
     viettelpost?: string;
     ahamove?: string;
+    spx?: string;
   }
 >;
 
@@ -323,6 +324,12 @@ const PICKUP_CARRIER_META: Record<PickupCarrier, { label: string; code: string; 
     accent: "border-orange-200 bg-orange-50 text-orange-700",
     hint: "Tên, SĐT, địa chỉ điểm lấy hàng nội thành",
   },
+  spx: {
+    label: "Shopee Express",
+    code: "SPX",
+    accent: "border-orange-200 bg-orange-50 text-orange-700",
+    hint: "User ID, Secret Key và kho lấy hàng SPX",
+  },
 };
 
 function getPickupCode(item?: PickupLocation | null, carrier?: PickupCarrier) {
@@ -346,6 +353,19 @@ function getPickupCode(item?: PickupLocation | null, carrier?: PickupCarrier) {
       item.viettelProvinceId ? `P${item.viettelProvinceId}` : "",
       item.viettelDistrictId ? `D${item.viettelDistrictId}` : "",
       item.viettelWardId ? `W${item.viettelWardId}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (carrier === "spx") {
+    return [
+      (item as any).spxShopId || (item as any).spxUserId
+        ? `User ${(item as any).spxShopId || (item as any).spxUserId}`
+        : "SPX",
+      (item as any).spxPickupAddressId
+        ? `Pickup ${(item as any).spxPickupAddressId}`
+        : "",
     ]
       .filter(Boolean)
       .join(" · ");
@@ -376,6 +396,17 @@ const shippingSeed: ShippingProviderItem[] = [
     isConnected: false,
     isActive: true,
     note: "Chưa nối token",
+  },
+  {
+    id: "s_spx",
+    code: "SPX",
+    name: "Shopee Express",
+    mode: "PRODUCTION",
+    apiKey: "",
+    shopId: "",
+    isConnected: false,
+    isActive: true,
+    note: "User ID và User Secret cài trong env backend",
   },
   {
     id: "s3",
@@ -1742,8 +1773,8 @@ const addWarehouse = async () => {
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              {(["ghn", "viettelpost", "ahamove"] as PickupCarrier[]).map((carrier) => {
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              {(["ghn", "spx", "viettelpost", "ahamove"] as PickupCarrier[]).map((carrier) => {
                 const meta = PICKUP_CARRIER_META[carrier];
                 const count = pickupOptionsByCarrier(carrier).length;
                 const mapped = warehouses.filter(
@@ -2066,7 +2097,7 @@ const addWarehouse = async () => {
             </div>
 
             <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-              Bấm <b>Lưu cấu hình</b> sau khi map kho. Với AhaMove, điểm lấy hàng thủ công sẽ ưu tiên hơn env Railway khi chi nhánh đã map vào điểm đó. Hiện cấu hình đang lưu localStorage key <b>the1970_carrier_pickup_mapping</b> và <b>the1970_custom_ahamove_pickups</b>; bước sau nên đưa vào DB để tất cả máy dùng chung giống Sapo thật.
+              Bấm <b>Lưu cấu hình</b> sau khi map kho. Với AhaMove, điểm lấy hàng thủ công sẽ ưu tiên hơn env Railway khi chi nhánh đã map vào điểm đó. Với SPX, hệ thống sẽ dùng kho SPX backend trả về hoặc fallback env SPX_USER_ID/SPX_USER_SECRET. Hiện cấu hình đang lưu localStorage key <b>the1970_carrier_pickup_mapping</b> và <b>the1970_custom_ahamove_pickups</b>; bước sau nên đưa vào DB để tất cả máy dùng chung giống Sapo thật.
             </div>
           </Panel>
 

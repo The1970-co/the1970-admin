@@ -9,11 +9,13 @@ import {
   createGhnShipment,
   createAhamoveShipment,
   createViettelPostShipment,
+  createSpxShipment,
   findCustomerByPhone,
   getProductsForOrder,
   quoteShipment,
   quoteAhamoveShipment,
   quoteViettelPostShipment,
+  quoteSpxShipment,
   getViettelPostInventories,
   getPickupLocations,
   resolveGhnAddress,
@@ -126,6 +128,7 @@ type CarrierPickupMapping = Record<
     ghn?: string;
     viettelpost?: string;
     ahamove?: string;
+    spx?: string;
   }
 >;
 
@@ -942,6 +945,10 @@ function getQuoteDisplayName(row: ShipmentQuoteResult) {
     return `Viettel Post - ${rawName}`;
   }
 
+  if (carrier === "spx") {
+    return `Shopee Express - ${rawName}`;
+  }
+
   if (carrier === "ghn") {
     return `GHN - ${rawName}`;
   }
@@ -1159,6 +1166,17 @@ function getCarrierMeta(carrier: string) {
     };
   }
 
+  if (normalized === "spx") {
+    return {
+      name: "Shopee Express",
+      sub: "SPX / COD",
+      short: "SPX",
+      accent: "border-orange-200 bg-orange-50 text-orange-700",
+      soft: "bg-orange-50",
+      ring: "ring-orange-200",
+    };
+  }
+
   return {
     name: "GHN",
     sub: "Giao hàng nhanh",
@@ -1183,6 +1201,7 @@ function getSmartQuoteNote(row: ShipmentQuoteResult) {
   if (carrier === "viettelpost" && name.includes("nhanh"))
     return "Gói VTP cân bằng tốc độ và chi phí";
   if (carrier === "ahamove") return "Phù hợp nội thành cần realtime";
+  if (carrier === "spx") return "Gói SPX phù hợp đơn COD qua Shopee Express";
   if (carrier === "ghn") return "Gói phổ thông, dễ vận hành";
   return "Có thể chọn cho đơn này";
 }
@@ -1197,12 +1216,14 @@ function getQuoteServiceCleanName(row: ShipmentQuoteResult) {
     .replace(/^Viettel\s*Post\s*-\s*/i, "")
     .replace(/^Viettel\s*Post\s*-\s*Viettel\s*Post\s*-\s*/i, "")
     .replace(/^Viettel\s*Post\s*-\s*/i, "")
+    .replace(/^Shopee\s*Express\s*-\s*/i, "")
+    .replace(/^SPX\s*-\s*/i, "")
     .replace(carrier === "viettelpost" ? /^Viettel\s*Post\s*-\s*/i : /^$/, "")
     .trim();
 }
 
 function groupQuotesByCarrier(rows: ShipmentQuoteResult[]) {
-  const order = ["ghn", "viettelpost", "ahamove"];
+  const order = ["ghn", "spx", "viettelpost", "ahamove"];
   const grouped = new Map<string, ShipmentQuoteResult[]>();
 
   for (const row of rows) {
@@ -1940,10 +1961,11 @@ const shippingUiModeOptions: Array<{
 
 const shippingPartnerOptions = [
   { value: "ghn", label: "GHN", enabled: true },
-  { value: "ghtk", label: "GHTK", enabled: false },
+  { value: "spx", label: "Shopee Express", enabled: true },
   { value: "viettelpost", label: "Viettel Post", enabled: true },
-  { value: "grab", label: "Grab Express", enabled: false },
   { value: "ahamove", label: "AhaMove", enabled: true },
+  { value: "ghtk", label: "GHTK", enabled: false },
+  { value: "grab", label: "Grab Express", enabled: false },
   { value: "outside", label: "Vận chuyển ngoài", enabled: false },
 ];
 
@@ -4818,6 +4840,101 @@ export default function CreateOrderPageClient() {
           errors.push("GHN: Thiếu tỉnh/thành, quận/huyện hoặc xã/phường.");
         }
 
+        if (toAddress && quoteProvince && quoteDistrict && quoteWard) {
+          try {
+            const spxRows = await quoteSpxShipment({
+              fromName: selectedCarrierPickup?.name,
+              fromPhone: selectedCarrierPickup?.phone,
+              fromAddress: selectedCarrierPickup?.address,
+              toName:
+                selectedAddress?.recipientName ||
+                customerName.trim() ||
+                "Khách hàng",
+              toPhone: selectedAddress?.phone || customerPhone.trim(),
+              toAddress,
+              toProvince: quoteProvince,
+              toDistrict: quoteDistrict,
+              toWard: quoteWard,
+              province: quoteProvince,
+              district: quoteDistrict,
+              ward: quoteWard,
+              codAmount: remaining > 0 ? remaining : 0,
+              productPrice: orderValueForInsurance,
+              insuranceValue: orderValueForInsurance,
+              weight: Number(shippingWeight || 200),
+              length: Number(shippingLength || 10),
+              width: Number(shippingWidth || 10),
+              height: Number(shippingHeight || 10),
+              items: quoteItems.map((item) => ({
+                name: item.name,
+                quantity: item.quantity,
+                qty: item.quantity,
+                price: 0,
+                weight: item.weight,
+              })),
+            });
+
+            const mappedSpx = (Array.isArray(spxRows) ? spxRows : []).map(
+              (row: any, index: number) => {
+                const fee = Number(
+                  row?.fee?.total ||
+                    row?.fee?.total_fee ||
+                    row?.fee?.service_fee ||
+                    row?.total_fee ||
+                    row?.totalFee ||
+                    row?.fee ||
+                    0,
+                );
+                const serviceCode = String(
+                  row?._spxServiceCode ||
+                    row?.serviceCode ||
+                    row?.service_code ||
+                    row?.code ||
+                    row?.shortName ||
+                    "STANDARD",
+                );
+
+                return {
+                  ...row,
+                  serviceId: Number(row.serviceId || row.service_id || index + 1),
+                  serviceTypeId: Number(row.serviceTypeId || row.service_type_id || 0),
+                  shortName:
+                    row.shortName ||
+                    row.serviceName ||
+                    row._serviceName ||
+                    serviceCode ||
+                    "SPX Standard",
+                  fee: {
+                    total: fee,
+                    total_fee: fee,
+                    service_fee: fee,
+                  },
+                  _carrier: "spx",
+                  _quoteKey: row._quoteKey || `spx-${serviceCode}-${index}`,
+                  _serviceName:
+                    row._serviceName ||
+                    row.shortName ||
+                    row.serviceName ||
+                    serviceCode ||
+                    "SPX Standard",
+                  _spxServiceCode: serviceCode,
+                  _applyFeeToInput: fee > 0 && !(row as any)?._disabled,
+                } as ShipmentQuoteResult;
+              },
+            );
+
+            resultQuotes.push(...mappedSpx);
+          } catch (err) {
+            errors.push(
+              err instanceof Error
+                ? `SPX: ${err.message}`
+                : "SPX: Không lấy được báo giá.",
+            );
+          }
+        } else {
+          errors.push("SPX: Thiếu địa chỉ giao hàng hoặc tỉnh/quận/xã.");
+        }
+
         if (toAddress) {
           try {
             const rawAhamoveQuote = await quoteAhamoveShipment({
@@ -4989,7 +5106,7 @@ export default function CreateOrderPageClient() {
           const carrierA = getQuoteCarrier(a);
           const carrierB = getQuoteCarrier(b);
           if (carrierA !== carrierB) {
-            const order = ["ghn", "viettelpost", "ahamove"];
+            const order = ["ghn", "spx", "viettelpost", "ahamove"];
             return order.indexOf(carrierA) - order.indexOf(carrierB);
           }
           return getFeeNumber(a) - getFeeNumber(b);
@@ -5268,6 +5385,13 @@ export default function CreateOrderPageClient() {
         finalCreateMode === "ship" &&
         shippingUiMode === "carrier";
 
+      // Khi chọn tạo vận đơn qua carrier riêng (GHN/SPX/VTP/Aha), không để API tạo order
+      // tự sinh vận đơn mặc định. Nếu gửi mode="ship" xuống createOrder, backend cũ có thể
+      // auto tạo GHN trước, làm route /spx/create báo "Đơn đã có vận đơn GHN".
+      // Tạo order ở bước approve trước, sau đó gọi đúng route carrier bên dưới để đẩy vận đơn.
+      const orderCreateModeForPayload: CreateOrderMode =
+        shouldCreateCarrierShipmentManually ? "approve" : finalCreateMode;
+
       const payload = {
         ...(customerId ? ({ customerId } as any) : {}),
         salesChannel: (isPickupOrder ? "POS" : salesChannel) as any,
@@ -5279,8 +5403,16 @@ export default function CreateOrderPageClient() {
         assignedStaffBranchId: selectedAssignedStaff?.branchId || undefined,
         assignedStaffBranchName: selectedAssignedStaff?.branchName || undefined,
         note: extraNoteParts.join(" | "),
-        mode: finalCreateMode,
+        mode: orderCreateModeForPayload,
+        requestedMode: finalCreateMode,
         skipAutoShipment: shouldCreateCarrierShipmentManually,
+        skipShipmentCreation: shouldCreateCarrierShipmentManually,
+        skipCreateShipment: shouldCreateCarrierShipmentManually,
+        createShipment: !shouldCreateCarrierShipmentManually,
+        autoCreateShipment: !shouldCreateCarrierShipmentManually,
+        shipmentProvider: isPickupOrder ? "pickup" : shippingPartner,
+        carrier: isPickupOrder ? "pickup" : shippingPartner,
+        shippingPartner: isPickupOrder ? "pickup" : shippingPartner,
 
         // Pickup phải được gửi rõ xuống backend để backend set COMPLETED + FULFILLED như POS.
         deliveryMethod: isPickupOrder ? "PICKUP" : "DELIVERY",
@@ -5568,6 +5700,86 @@ export default function CreateOrderPageClient() {
           ahamoveCreated?.ahamoveOrderId ||
           ahamoveCreated?.order_id ||
           ahamoveCreated?.id ||
+          "";
+      }
+
+      if (
+        !isPickupOrder &&
+        finalCreateMode === "ship" &&
+        shippingUiMode === "carrier" &&
+        shippingPartner === "spx"
+      ) {
+        const toAddress =
+          selectedAddress?.addressLine1 ||
+          addressLine1.trim() ||
+          shippingAddress.trim();
+
+        const selectedSpxQuote =
+          (selectedQuote && getQuoteCarrier(selectedQuote) === "spx"
+            ? selectedQuote
+            : null) ||
+          shippingQuotes.find(
+            (quote) =>
+              getQuoteCarrier(quote) === "spx" &&
+              !(quote as any)?._disabled &&
+              getQuoteKey(quote) === selectedShippingQuoteKey,
+          );
+
+        const spxCreated = await createSpxShipment(created.id, {
+          fromName: selectedCarrierPickup?.name,
+          fromPhone: selectedCarrierPickup?.phone,
+          fromAddress: selectedCarrierPickup?.address,
+          toName: selectedAddress?.recipientName || customerName.trim(),
+          toPhone: selectedAddress?.phone || customerPhone.trim(),
+          toAddress,
+          toProvince: quoteProvince,
+          toDistrict: quoteDistrict,
+          toWard: quoteWard,
+          province: quoteProvince,
+          district: quoteDistrict,
+          ward: quoteWard,
+          codAmount: remaining > 0 ? remaining : 0,
+          insuranceValue: customerMustPay,
+          productPrice: customerMustPay,
+          serviceCode:
+            (selectedSpxQuote as any)?._spxServiceCode ||
+            (selectedSpxQuote as any)?._serviceName ||
+            "STANDARD",
+          clientOrderCode: created.orderCode,
+          orderCode: created.orderCode,
+          content: `Đơn hàng ${created.orderCode}`,
+          note: customerFacingShippingNote,
+          shippingNote: customerFacingShippingNote,
+          deliveryRequirement,
+          requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
+          required_note: mapRequiredNoteForGhn(deliveryRequirement),
+          requiredNoteLabel: deliveryRequirementPrintLabel,
+          weight: shippingWeight,
+          length: shippingLength,
+          width: shippingWidth,
+          height: shippingHeight,
+          items: lines.map((line) => ({
+            name: line.productName || line.sku || "Sản phẩm",
+            sku: line.sku,
+            quantity: Number(line.qty || 0),
+            qty: Number(line.qty || 0),
+            price: Number(line.price || 0),
+            weight: Math.max(
+              1,
+              Math.floor(
+                Number(shippingWeight || 200) / Math.max(lines.length, 1),
+              ),
+            ),
+          })),
+        });
+
+        carrierTrackingCode =
+          spxCreated?.shipment?.trackingCode ||
+          spxCreated?.trackingCode ||
+          spxCreated?.spx?.trackingCode ||
+          spxCreated?.spx?.tracking_code ||
+          spxCreated?.spx?.orderCode ||
+          spxCreated?.spx?.order_code ||
           "";
       }
 
