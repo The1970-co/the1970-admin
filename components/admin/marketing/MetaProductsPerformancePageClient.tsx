@@ -280,7 +280,7 @@ function SourceBadges({ row, adInfo }: { row: ProductRow; adInfo?: SkuAdInfo }) 
 
 function productDetailHref(row: ProductRow) {
   const sku = normalizeSku(row.sku || row.key) || extractSkuFromText(row.productName);
-  return sku ? `/control/products/${encodeURIComponent(sku.toLowerCase())}` : "";
+  return sku ? `/products/${encodeURIComponent(sku.toLowerCase())}` : "";
 }
 
 function statusLabel(row: ProductRow) {
