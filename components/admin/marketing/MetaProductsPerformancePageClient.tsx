@@ -9,6 +9,9 @@ type ProductStatus = "winner" | "scale" | "watch" | "weak";
 
 type ProductRow = {
   key: string;
+  id?: string;
+  productId?: string;
+  product?: { id?: string | null } | null;
   sku?: string;
   productName: string;
   orderCount: number;
@@ -132,6 +135,105 @@ function extractSkuFromText(...parts: Array<string | null | undefined>) {
   const text = parts.filter(Boolean).join(" ").replace(/[_-]+/g, " ");
   const matches = text.match(/\b[A-Z]{2,5}\d{3,5}\b/gi) || [];
   return normalizeSku(matches[0]);
+}
+
+function isUuid(value?: string | null) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
+
+function getProductIdFromRow(row?: ProductRow | null) {
+  const candidates = [row?.productId, row?.product?.id, row?.id];
+  return candidates.map((value) => String(value || "").trim()).find(isUuid) || "";
+}
+
+function productDetailHrefFromId(productId?: string | null) {
+  const cleanId = String(productId || "").trim();
+  return isUuid(cleanId) ? `/products/${encodeURIComponent(cleanId)}` : "";
+}
+
+function productDetailHrefFromRow(row?: ProductRow | null) {
+  return productDetailHrefFromId(getProductIdFromRow(row));
+}
+
+function unwrapProductRows(payload: any): any[] {
+  const candidates = [
+    payload?.data?.items,
+    payload?.data?.rows,
+    payload?.data?.data,
+    payload?.data,
+    payload?.items,
+    payload?.rows,
+    payload?.products,
+    payload,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+
+  return [];
+}
+
+function productMatchesSku(product: any, sku: string) {
+  const mainSku = normalizeSku(sku);
+  if (!mainSku) return false;
+
+  const directValues = [
+    product?.sku,
+    product?.skuCode,
+    product?.code,
+    product?.familySku,
+    product?.productSku,
+    product?.key,
+  ].map(normalizeSku);
+
+  if (directValues.some((value) => value === mainSku)) return true;
+
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  return variants.some((variant: any) => {
+    const variantSku = normalizeSku(variant?.sku || variant?.code || variant?.barcode);
+    return variantSku === mainSku || variantSku.startsWith(`${mainSku}-`);
+  });
+}
+
+async function lookupProductIdBySku(sku: string) {
+  const mainSku = normalizeSku(sku);
+  if (!mainSku) return "";
+
+  const paramsList = [
+    `page=1&limit=50&q=${encodeURIComponent(mainSku)}`,
+    `page=1&limit=50&search=${encodeURIComponent(mainSku)}`,
+  ];
+
+  for (const params of paramsList) {
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/products?${params}`, {
+        cache: "no-store",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) continue;
+
+      const text = await res.text();
+      if (!text) continue;
+
+      const payload = JSON.parse(text);
+      const rows = unwrapProductRows(payload);
+      const exact = rows.find((product) => productMatchesSku(product, mainSku));
+      const fallback = rows.find((product) => isUuid(product?.id));
+      const productId = String((exact || fallback)?.id || "").trim();
+      if (isUuid(productId)) return productId;
+    } catch {
+      // Thử query tiếp theo, không làm hỏng popup ads.
+    }
+  }
+
+  return "";
 }
 
 function adSpend(row: LiveAdRow) {
@@ -277,12 +379,6 @@ function SourceBadges({ row, adInfo }: { row: ProductRow; adInfo?: SkuAdInfo }) 
   );
 }
 
-
-function productDetailHref(row: ProductRow) {
-  const sku = normalizeSku(row.sku || row.key) || extractSkuFromText(row.productName);
-  return sku ? `/products/${encodeURIComponent(sku.toLowerCase())}` : "";
-}
-
 function statusLabel(row: ProductRow) {
   const statuses = row.statuses || {};
   const entries = Object.entries(statuses)
@@ -416,13 +512,47 @@ function ProductMobileCard({ row, index, onOpen, adInfo }: { row: ProductRow; in
 }
 
 function DetailDrawer({ row, onClose, adInfo }: { row: ProductRow | null; onClose: () => void; adInfo?: SkuAdInfo }) {
+  const [detailHref, setDetailHref] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resolveDetailHref() {
+      setDetailHref("");
+      setDetailLoading(false);
+      if (!row) return;
+
+      const directHref = productDetailHrefFromRow(row);
+      if (directHref) {
+        setDetailHref(directHref);
+        return;
+      }
+
+      const sku = normalizeSku(row.sku || row.key) || extractSkuFromText(row.productName);
+      if (!sku) return;
+
+      setDetailLoading(true);
+      const productId = await lookupProductIdBySku(sku);
+      if (!cancelled) {
+        setDetailHref(productDetailHrefFromId(productId));
+        setDetailLoading(false);
+      }
+    }
+
+    void resolveDetailHref();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [row]);
+
   if (!row) return null;
   const state = productState(row);
   const sources = row.sources || {};
   const fb = n(sources.Facebook || sources.facebook || sources.FACEBOOK || sources.FACEBOOK_MANUAL);
   const pos = n(sources.POS || sources.pos);
   const samples = row.sampleOrders || [];
-  const detailHref = productDetailHref(row);
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/40">
@@ -435,14 +565,18 @@ function DetailDrawer({ row, onClose, adInfo }: { row: ProductRow | null; onClos
               <div className="mt-1 text-sm font-bold text-emerald-700">SKU: {row.sku || row.key}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {detailHref ? (
-                <a
-                  href={detailHref}
-                  className="rounded-full bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800"
-                >
-                  Xem chi tiết sản phẩm
-                </a>
-              ) : null}
+              <a
+                href={detailHref || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => {
+                  if (!detailHref) event.preventDefault();
+                }}
+                className={`rounded-full px-4 py-2 text-sm font-bold ${detailHref ? "bg-neutral-950 text-white hover:bg-neutral-800" : "cursor-not-allowed bg-neutral-100 text-neutral-400"}`}
+                title={detailHref ? "Mở trang chi tiết sản phẩm" : "Chưa tìm được productId để mở chi tiết"}
+              >
+                {detailLoading ? "Đang lấy link..." : "Xem chi tiết"}
+              </a>
               <button onClick={onClose} className="rounded-full border border-neutral-200 px-4 py-2 text-sm font-bold hover:bg-neutral-50">
                 Đóng
               </button>
