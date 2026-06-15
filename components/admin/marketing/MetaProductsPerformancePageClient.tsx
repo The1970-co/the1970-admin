@@ -277,6 +277,12 @@ function SourceBadges({ row, adInfo }: { row: ProductRow; adInfo?: SkuAdInfo }) 
   );
 }
 
+
+function productDetailHref(row: ProductRow) {
+  const sku = normalizeSku(row.sku || row.key) || extractSkuFromText(row.productName);
+  return sku ? `/control/products/${encodeURIComponent(sku.toLowerCase())}` : "";
+}
+
 function statusLabel(row: ProductRow) {
   const statuses = row.statuses || {};
   const entries = Object.entries(statuses)
@@ -416,6 +422,7 @@ function DetailDrawer({ row, onClose, adInfo }: { row: ProductRow | null; onClos
   const fb = n(sources.Facebook || sources.facebook || sources.FACEBOOK || sources.FACEBOOK_MANUAL);
   const pos = n(sources.POS || sources.pos);
   const samples = row.sampleOrders || [];
+  const detailHref = productDetailHref(row);
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/40">
@@ -427,9 +434,19 @@ function DetailDrawer({ row, onClose, adInfo }: { row: ProductRow | null; onClos
               <h2 className="mt-1 text-2xl font-black leading-tight">{row.productName}</h2>
               <div className="mt-1 text-sm font-bold text-emerald-700">SKU: {row.sku || row.key}</div>
             </div>
-            <button onClick={onClose} className="rounded-full border border-neutral-200 px-4 py-2 text-sm font-bold hover:bg-neutral-50">
-              Đóng
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {detailHref ? (
+                <a
+                  href={detailHref}
+                  className="rounded-full bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800"
+                >
+                  Xem chi tiết sản phẩm
+                </a>
+              ) : null}
+              <button onClick={onClose} className="rounded-full border border-neutral-200 px-4 py-2 text-sm font-bold hover:bg-neutral-50">
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
 
