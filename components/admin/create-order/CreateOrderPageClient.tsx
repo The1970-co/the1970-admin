@@ -56,6 +56,56 @@ type ShippingPayer = "shop" | "customer";
 type ShippingUiMode = "carrier" | "external" | "pickup" | "schedule";
 type AhamovePaymentMethod = "BALANCE" | "CASH" | "CASH_BY_RECIPIENT";
 
+type AhamoveSpecialRequestKey =
+  | "returnToPickup"
+  | "thermalBag"
+  | "insurance"
+  | "bulky"
+  | "fragile";
+
+type AhamoveSpecialRequests = Record<AhamoveSpecialRequestKey, boolean>;
+
+const AHAMOVE_SPECIAL_REQUEST_OPTIONS: Array<{
+  key: AhamoveSpecialRequestKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "returnToPickup",
+    label: "Quay lại điểm lấy hàng",
+    description: "ROUND-TRIP",
+  },
+  {
+    key: "insurance",
+    label: "Bảo hiểm hàng hóa",
+    description: "INSURANCE + item_value",
+  },
+  {
+    key: "bulky",
+    label: "Giao hàng cồng kềnh",
+    description: "BULKY / TIER_2",
+  },
+  {
+    key: "fragile",
+    label: "Hàng dễ vỡ",
+    description: "FRAGILE",
+  },
+];
+
+const DEFAULT_AHAMOVE_SPECIAL_REQUESTS: AhamoveSpecialRequests = {
+  returnToPickup: false,
+  thermalBag: false,
+  insurance: false,
+  bulky: false,
+  fragile: false,
+};
+
+function getSelectedAhamoveOptionLabels(options: AhamoveSpecialRequests) {
+  return AHAMOVE_SPECIAL_REQUEST_OPTIONS.filter(
+    (item) => options[item.key],
+  ).map((item) => item.label);
+}
+
 const AHAMOVE_PAYMENT_METHOD_STORAGE_KEY = "the1970_ahamove_payment_method";
 const AHAMOVE_PAYMENT_METHOD_OPTIONS: Array<{
   value: AhamovePaymentMethod;
@@ -1005,10 +1055,15 @@ function getAhamoveServiceDisplayName(serviceLabel: string) {
 
   // HAN-BIKE là gói siêu tốc lấy/giao ngay của AhaMove.
   // HAN-2H là gói tiết kiệm có thể bị lên lịch lấy sau, không được gọi là “siêu tốc” để tránh nhân viên chọn nhầm.
-  if (label.includes("2H") || label.includes("SAVING") || label.includes("ECONOMY")) {
+  if (
+    label.includes("2H") ||
+    label.includes("SAVING") ||
+    label.includes("ECONOMY")
+  ) {
     return "Tiết kiệm 2H";
   }
-  if (label.includes("BIKE") || label.includes("EXPRESS")) return "Siêu tốc - Lấy ngay";
+  if (label.includes("BIKE") || label.includes("EXPRESS"))
+    return "Siêu tốc - Lấy ngay";
 
   return serviceLabel || "AhaMove";
 }
@@ -1040,12 +1095,19 @@ function isAhamoveSavingQuote(row?: ShipmentQuoteResult | null) {
 }
 
 function getPreferredAhamoveQuote(rows: ShipmentQuoteResult[]) {
-  const valid = rows.filter((row) => getQuoteCarrier(row) === "ahamove" && !(row as any)?._disabled);
+  const valid = rows.filter(
+    (row) => getQuoteCarrier(row) === "ahamove" && !(row as any)?._disabled,
+  );
   return valid.find(isAhamoveBikeQuote) || valid[0] || null;
 }
 
-function getDefaultQuoteForCarrier(rows: ShipmentQuoteResult[], carrier: string) {
-  const carrierRows = rows.filter((row) => getQuoteCarrier(row) === carrier && !(row as any)?._disabled);
+function getDefaultQuoteForCarrier(
+  rows: ShipmentQuoteResult[],
+  carrier: string,
+) {
+  const carrierRows = rows.filter(
+    (row) => getQuoteCarrier(row) === carrier && !(row as any)?._disabled,
+  );
   if (!carrierRows.length) return null;
   if (carrier === "ahamove") return getPreferredAhamoveQuote(carrierRows);
   return carrierRows[0];
@@ -1128,7 +1190,8 @@ function withQuoteBadges(rows: ShipmentQuoteResult[]) {
     if (hasFastest && minutes > 0 && minutes === fastestMinutes)
       badges.push("Nhanh nhất");
     if (getQuoteCarrier(row) === "ahamove") {
-      if (getQuoteKey(row) === ahamoveRecommendedKey) badges.push("Khuyên dùng");
+      if (getQuoteKey(row) === ahamoveRecommendedKey)
+        badges.push("Khuyên dùng");
       if (isAhamoveSavingQuote(row)) badges.push("2H");
     } else if (getQuoteKey(row) === getQuoteKey(recommendedKey)) {
       badges.push("Khuyên dùng");
@@ -2117,6 +2180,8 @@ export default function CreateOrderPageClient() {
   const [shippingPartner, setShippingPartner] = useState("ghn");
   const [ahamovePaymentMethod, setAhamovePaymentMethod] =
     useState<AhamovePaymentMethod>("BALANCE");
+  const [ahamoveSpecialRequests, setAhamoveSpecialRequests] =
+    useState<AhamoveSpecialRequests>(DEFAULT_AHAMOVE_SPECIAL_REQUESTS);
   const [deliveryRequirement, setDeliveryRequirement] =
     useState<DeliveryRequirement>("CHOXEMHANG_KHONGTHU");
   const [failedDeliveryFee30k, setFailedDeliveryFee30k] = useState(true);
@@ -2134,6 +2199,7 @@ export default function CreateOrderPageClient() {
   const [shippingLength, setShippingLength] = useState(10);
   const [shippingWidth, setShippingWidth] = useState(10);
   const [shippingHeight, setShippingHeight] = useState(10);
+  const [shippingInsuranceValue, setShippingInsuranceValue] = useState("");
 
   const [shippingLoading, setShippingLoading] = useState(false);
   const [shippingHint, setShippingHint] = useState("");
@@ -3261,22 +3327,34 @@ export default function CreateOrderPageClient() {
   const canEditOnlineOrderDiscount =
     hasCurrentUserPermission("promotions.price_policy.online_discount_only") ||
     hasCurrentUserPermission("promotions.price_policy.online_discount_price") ||
-    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_only") ||
-    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+    hasCurrentUserPermission(
+      "promotions.price_policy.all_channels_discount_only",
+    ) ||
+    hasCurrentUserPermission(
+      "promotions.price_policy.all_channels_discount_price",
+    );
 
   const canEditOnlineOrderPrice =
     hasCurrentUserPermission("promotions.price_policy.online_discount_price") ||
-    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+    hasCurrentUserPermission(
+      "promotions.price_policy.all_channels_discount_price",
+    );
 
   const canEditPosOrderDiscount =
     hasCurrentUserPermission("promotions.price_policy.pos_discount_only") ||
     hasCurrentUserPermission("promotions.price_policy.pos_discount_price") ||
-    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_only") ||
-    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+    hasCurrentUserPermission(
+      "promotions.price_policy.all_channels_discount_only",
+    ) ||
+    hasCurrentUserPermission(
+      "promotions.price_policy.all_channels_discount_price",
+    );
 
   const canEditPosOrderPrice =
     hasCurrentUserPermission("promotions.price_policy.pos_discount_price") ||
-    hasCurrentUserPermission("promotions.price_policy.all_channels_discount_price");
+    hasCurrentUserPermission(
+      "promotions.price_policy.all_channels_discount_price",
+    );
 
   const isCreateOrderPosContext =
     shippingUiMode === "pickup" ||
@@ -3325,6 +3403,12 @@ export default function CreateOrderPageClient() {
   const customerMustPay = Math.max(0, subtotal - totalDiscount + fee);
   const remaining = Math.max(0, customerMustPay - paid);
   const orderValueForInsurance = Math.max(0, subtotal - totalDiscount);
+  const effectiveShippingInsuranceValue = Math.max(
+    0,
+    shippingInsuranceValue.trim()
+      ? parseNumber(shippingInsuranceValue)
+      : orderValueForInsurance,
+  );
 
   useEffect(() => {
     const selected = paymentSources.find((s) => s.id === paymentSourceId);
@@ -3461,9 +3545,9 @@ export default function CreateOrderPageClient() {
   const displayAddressProvince = normalizeSpaces(currentProvinceRaw || "");
   const hasAddressParts = Boolean(
     displayAddressLine ||
-    displayAddressWard ||
-    displayAddressDistrict ||
-    displayAddressProvince,
+      displayAddressWard ||
+      displayAddressDistrict ||
+      displayAddressProvince,
   );
   const mergedAddressPreview = getDisplayMergedAddressAfterAdminMerge({
     addressLine: displayAddressLine,
@@ -3588,6 +3672,9 @@ export default function CreateOrderPageClient() {
     getAhamovePaymentMethodLabel(ahamovePaymentMethod);
   const ahamovePaymentMethodDescription =
     getAhamovePaymentMethodDescription(ahamovePaymentMethod);
+  const selectedAhamoveOptionLabels = getSelectedAhamoveOptionLabels(
+    ahamoveSpecialRequests,
+  );
 
   const handleAhamovePaymentMethodChange = (
     nextValue: AhamovePaymentMethod,
@@ -3766,7 +3853,7 @@ export default function CreateOrderPageClient() {
 
     return Boolean(
       (cleaned && phone.includes(cleaned)) ||
-      (normalizedKeyword && name.includes(normalizedKeyword)),
+        (normalizedKeyword && name.includes(normalizedKeyword)),
     );
   };
 
@@ -4797,7 +4884,10 @@ export default function CreateOrderPageClient() {
             const ghnRows = await quoteShipment({
               toDistrictId: Number(resolved.districtId),
               toWardCode: String(resolved.wardCode),
-              insuranceValue: orderValueForInsurance,
+              insuranceValue: effectiveShippingInsuranceValue,
+              ...((couponCode.trim()
+                ? { coupon: couponCode.trim(), couponCode: couponCode.trim() }
+                : {}) as Record<string, any>),
               length: Number(shippingLength || 10),
               width: Number(shippingWidth || 10),
               height: Number(shippingHeight || 10),
@@ -4859,8 +4949,8 @@ export default function CreateOrderPageClient() {
               district: quoteDistrict,
               ward: quoteWard,
               codAmount: remaining > 0 ? remaining : 0,
-              productPrice: orderValueForInsurance,
-              insuranceValue: orderValueForInsurance,
+              productPrice: effectiveShippingInsuranceValue,
+              insuranceValue: effectiveShippingInsuranceValue,
               weight: Number(shippingWeight || 200),
               length: Number(shippingLength || 10),
               width: Number(shippingWidth || 10),
@@ -4896,8 +4986,12 @@ export default function CreateOrderPageClient() {
 
                 return {
                   ...row,
-                  serviceId: Number(row.serviceId || row.service_id || index + 1),
-                  serviceTypeId: Number(row.serviceTypeId || row.service_type_id || 0),
+                  serviceId: Number(
+                    row.serviceId || row.service_id || index + 1,
+                  ),
+                  serviceTypeId: Number(
+                    row.serviceTypeId || row.service_type_id || 0,
+                  ),
                   shortName:
                     row.shortName ||
                     row.serviceName ||
@@ -4953,6 +5047,17 @@ export default function CreateOrderPageClient() {
               serviceId: "HAN-BIKE",
               payment_method: ahamovePaymentMethod,
               paymentMethod: ahamovePaymentMethod,
+              ...((couponCode.trim()
+                ? {
+                    promoCode: couponCode.trim(),
+                    promo_code: couponCode.trim(),
+                  }
+                : {}) as Record<string, any>),
+              ...({
+                itemValue: effectiveShippingInsuranceValue,
+                insuranceValue: effectiveShippingInsuranceValue,
+                ahamoveSpecialRequests,
+              } as Record<string, any>),
               weight: Number(shippingWeight || 200),
               length: Number(shippingLength || 10),
               width: Number(shippingWidth || 10),
@@ -5062,8 +5167,8 @@ export default function CreateOrderPageClient() {
               toDistrict: viettelOldCarrierAddress.district,
               toWard: viettelOldCarrierAddress.ward,
               codAmount: remaining > 0 ? remaining : 0,
-              productPrice: orderValueForInsurance,
-              insuranceValue: orderValueForInsurance,
+              productPrice: effectiveShippingInsuranceValue,
+              insuranceValue: effectiveShippingInsuranceValue,
               weight: Number(shippingWeight || 200),
               length: Number(shippingLength || 10),
               width: Number(shippingWidth || 10),
@@ -5343,6 +5448,9 @@ export default function CreateOrderPageClient() {
         shippingAddress.trim() ? `Địa chỉ: ${shippingAddress.trim()}` : "",
         tags.trim() ? `Ghi chú nội bộ: ${tags.trim()}` : "",
         couponCode.trim() ? `Mã giảm giá: ${couponCode.trim()}` : "",
+        selectedAhamoveOptionLabels.length
+          ? `Tuỳ chọn AhaMove: ${selectedAhamoveOptionLabels.join(", ")}`
+          : "",
         customerId ? `CustomerId: ${customerId}` : "",
         selectedAddressId ? `CustomerAddressId: ${selectedAddressId}` : "",
         selectedAssignedStaff
@@ -5511,12 +5619,16 @@ export default function CreateOrderPageClient() {
           requiredNoteLabel: isPickupOrder
             ? undefined
             : deliveryRequirementPrintLabel,
-          failedDeliveryFee30k: isPickupOrder ? undefined : failedDeliveryFee30k,
+          failedDeliveryFee30k: isPickupOrder
+            ? undefined
+            : failedDeliveryFee30k,
           failedDeliveryCodAmount: isPickupOrder
             ? undefined
             : failedDeliveryCodAmount,
           codFailedAmount: isPickupOrder ? undefined : failedDeliveryCodAmount,
-          cod_failed_amount: isPickupOrder ? undefined : failedDeliveryCodAmount,
+          cod_failed_amount: isPickupOrder
+            ? undefined
+            : failedDeliveryCodAmount,
           selectedServiceId: isPickupOrder
             ? undefined
             : selectedShippingServiceId,
@@ -5592,7 +5704,10 @@ export default function CreateOrderPageClient() {
           toDistrictId: Number(submitGhnDistrictId),
           toWardCode: String(submitGhnWardCode),
           codAmount: remaining > 0 ? remaining : 0,
-          insuranceValue: customerMustPay,
+          insuranceValue: effectiveShippingInsuranceValue,
+          ...((couponCode.trim()
+            ? { coupon: couponCode.trim(), couponCode: couponCode.trim() }
+            : {}) as Record<string, any>),
           note: customerFacingShippingNote,
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
@@ -5673,6 +5788,14 @@ export default function CreateOrderPageClient() {
             return getAhamoveServiceCodeFromQuote(ahamoveQuote) || "HAN-BIKE";
           })(),
           payment_method: ahamovePaymentMethod,
+          ...((couponCode.trim()
+            ? { promoCode: couponCode.trim(), promo_code: couponCode.trim() }
+            : {}) as Record<string, any>),
+          ...({
+            itemValue: effectiveShippingInsuranceValue,
+            insuranceValue: effectiveShippingInsuranceValue,
+            ahamoveSpecialRequests,
+          } as Record<string, any>),
           clientOrderCode: created.orderCode,
           orderCode: created.orderCode,
           note: customerFacingShippingNote,
@@ -5739,8 +5862,8 @@ export default function CreateOrderPageClient() {
           district: quoteDistrict,
           ward: quoteWard,
           codAmount: remaining > 0 ? remaining : 0,
-          insuranceValue: customerMustPay,
-          productPrice: customerMustPay,
+          insuranceValue: effectiveShippingInsuranceValue,
+          productPrice: effectiveShippingInsuranceValue,
           serviceCode:
             (selectedSpxQuote as any)?._spxServiceCode ||
             (selectedSpxQuote as any)?._serviceName ||
@@ -5832,8 +5955,8 @@ export default function CreateOrderPageClient() {
           district: quoteDistrict,
           ward: quoteWard,
           codAmount: remaining > 0 ? remaining : 0,
-          insuranceValue: customerMustPay,
-          productPrice: customerMustPay,
+          insuranceValue: effectiveShippingInsuranceValue,
+          productPrice: effectiveShippingInsuranceValue,
           serviceCode:
             (selectedViettelQuote as any)?._viettelServiceCode ||
             (selectedViettelQuote as any)?._serviceName ||
@@ -6668,7 +6791,9 @@ export default function CreateOrderPageClient() {
                                 });
                               }}
                               className={`w-24 rounded-xl border border-neutral-300 px-3 py-2 outline-none ${
-                                canEditLinePrice ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                                canEditLinePrice
+                                  ? ""
+                                  : "cursor-not-allowed bg-neutral-100 text-neutral-500"
                               }`}
                             />
                           </div>
@@ -6689,7 +6814,9 @@ export default function CreateOrderPageClient() {
                                 });
                               }}
                               className={`w-24 rounded-xl border border-neutral-300 px-3 py-2 outline-none ${
-                                canEditManualDiscount ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                                canEditManualDiscount
+                                  ? ""
+                                  : "cursor-not-allowed bg-neutral-100 text-neutral-500"
                               }`}
                             />
                           </div>
@@ -6864,7 +6991,9 @@ export default function CreateOrderPageClient() {
                       if (defaultQuote) {
                         applyShippingRef.current?.({
                           shippingFee: getFeeNumber(defaultQuote),
-                          applyFeeToInput: Boolean((defaultQuote as any)._applyFeeToInput),
+                          applyFeeToInput: Boolean(
+                            (defaultQuote as any)._applyFeeToInput,
+                          ),
                           shippingPartner: item.value,
                           shippingMode: "partner",
                           selectedServiceId: defaultQuote.serviceId,
@@ -6874,8 +7003,11 @@ export default function CreateOrderPageClient() {
                           length: Number(shippingLength || 10),
                           width: Number(shippingWidth || 10),
                           height: Number(shippingHeight || 10),
-                          ghnDistrictId: (defaultQuote as any)._ghnDistrictId || ghnDistrictId,
-                          ghnWardCode: (defaultQuote as any)._ghnWardCode || ghnWardCode,
+                          ghnDistrictId:
+                            (defaultQuote as any)._ghnDistrictId ||
+                            ghnDistrictId,
+                          ghnWardCode:
+                            (defaultQuote as any)._ghnWardCode || ghnWardCode,
                         });
                       } else {
                         setSelectedShippingQuoteKey("");
@@ -7231,60 +7363,6 @@ export default function CreateOrderPageClient() {
                                     <div className="mt-3 text-[11px] font-semibold text-neutral-500">
                                       {group.quotes.length} lựa chọn
                                     </div>
-
-                                    {group.carrier === "ahamove" ? (
-                                      <div className="mt-3 rounded-2xl border border-orange-200 bg-white/80 p-2">
-                                        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-orange-700">
-                                          Thanh toán Aha
-                                        </div>
-                                        <div className="grid gap-1.5">
-                                          {AHAMOVE_PAYMENT_METHOD_OPTIONS.map(
-                                            (item) => (
-                                              <button
-                                                key={item.value}
-                                                type="button"
-                                                onClick={(event) => {
-                                                  event.stopPropagation();
-                                                  handleAhamovePaymentMethodChange(
-                                                    item.value,
-                                                  );
-                                                }}
-                                                className={`rounded-xl border px-2 py-2 text-left text-[11px] leading-4 transition ${
-                                                  ahamovePaymentMethod ===
-                                                  item.value
-                                                    ? "border-orange-500 bg-orange-50 text-orange-900 ring-1 ring-orange-200"
-                                                    : "border-orange-100 bg-white text-neutral-600 hover:border-orange-300"
-                                                }`}
-                                              >
-                                                <div className="flex items-center justify-between gap-2">
-                                                  <span className="font-semibold">
-                                                    {item.label}
-                                                  </span>
-                                                  <span
-                                                    className={`h-2.5 w-2.5 shrink-0 rounded-full border ${
-                                                      ahamovePaymentMethod ===
-                                                      item.value
-                                                        ? "border-orange-600 bg-orange-600"
-                                                        : "border-orange-200 bg-white"
-                                                    }`}
-                                                  />
-                                                </div>
-                                              </button>
-                                            ),
-                                          )}
-                                        </div>
-                                        <div className="mt-2 rounded-xl bg-orange-50 px-2 py-1.5 text-[11px] leading-4 text-orange-800">
-                                          API:{" "}
-                                          <span className="font-semibold">
-                                            {ahamovePaymentMethod}
-                                          </span>{" "}
-                                          ·{" "}
-                                          {shippingPayer === "customer"
-                                            ? "Khách chịu phí"
-                                            : "Shop chịu phí"}
-                                        </div>
-                                      </div>
-                                    ) : null}
                                   </div>
                                 </div>
 
@@ -7306,70 +7384,225 @@ export default function CreateOrderPageClient() {
                                     );
 
                                     return (
-                                      <button
-                                        key={getQuoteKey(quote)}
-                                        type="button"
-                                        disabled={disabled}
-                                        onClick={() => applyQuote(quote)}
-                                        className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
-                                          active
-                                            ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
-                                            : "hover:bg-neutral-50"
-                                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                                      >
-                                        <div className="flex items-start gap-3">
-                                          <span
-                                            className={`mt-1 h-4 w-4 rounded-full border ${
-                                              active
-                                                ? "border-neutral-900 bg-neutral-900"
-                                                : "border-neutral-300 bg-white"
-                                            }`}
-                                          />
-                                          <div>
-                                            <div className="flex flex-wrap items-center gap-2">
-                                              <span className="text-sm font-semibold text-neutral-950">
-                                                {getQuoteServiceCleanName(
-                                                  quote,
-                                                )}
-                                              </span>
-                                              {badges.map((badge) => (
-                                                <span
-                                                  key={badge}
-                                                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                                                    badge === "Rẻ nhất"
-                                                      ? "bg-orange-50 text-orange-600"
-                                                      : badge === "Nhanh nhất"
-                                                        ? "bg-blue-50 text-blue-600"
-                                                        : "bg-emerald-50 text-emerald-700"
-                                                  }`}
-                                                >
-                                                  {badge}
+                                      <div key={getQuoteKey(quote)}>
+                                        <button
+                                          type="button"
+                                          disabled={disabled}
+                                          onClick={() => applyQuote(quote)}
+                                          className={`grid w-full grid-cols-[1fr_150px_128px] items-center gap-3 px-4 py-3 text-left transition ${
+                                            active
+                                              ? "bg-neutral-50 ring-1 ring-inset ring-neutral-900"
+                                              : "hover:bg-neutral-50"
+                                          } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                                        >
+                                          <div className="flex items-start gap-3">
+                                            <span
+                                              className={`mt-1 h-4 w-4 rounded-full border ${
+                                                active
+                                                  ? "border-neutral-900 bg-neutral-900"
+                                                  : "border-neutral-300 bg-white"
+                                              }`}
+                                            />
+                                            <div>
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <span className="text-sm font-semibold text-neutral-950">
+                                                  {getQuoteServiceCleanName(
+                                                    quote,
+                                                  )}
                                                 </span>
-                                              ))}
+                                                {badges.map((badge) => (
+                                                  <span
+                                                    key={badge}
+                                                    className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                                      badge === "Rẻ nhất"
+                                                        ? "bg-orange-50 text-orange-600"
+                                                        : badge === "Nhanh nhất"
+                                                          ? "bg-blue-50 text-blue-600"
+                                                          : "bg-emerald-50 text-emerald-700"
+                                                    }`}
+                                                  >
+                                                    {badge}
+                                                  </span>
+                                                ))}
+                                              </div>
+
+                                              <div className="mt-1 text-xs text-neutral-500">
+                                                {getSmartQuoteNote(quote)}
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <div className="text-sm text-neutral-700">
+                                            {getQuoteLeadtimeLabel(quote)}
+                                          </div>
+
+                                          <div className="text-right">
+                                            <div className="text-sm font-bold text-neutral-950">
+                                              {currency(feeValue)}
+                                            </div>
+                                            <div className="mt-0.5 text-[11px] text-neutral-400">
+                                              Service {quote.serviceId}
+                                              {quote.serviceTypeId
+                                                ? ` · Type ${quote.serviceTypeId}`
+                                                : ""}
+                                            </div>
+                                          </div>
+                                        </button>
+
+                                        {active && carrier === "ahamove" ? (
+                                          <div className="mx-4 mb-4 rounded-2xl border border-orange-200 bg-orange-50/60 p-4 shadow-sm">
+                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                              <div>
+                                                <div className="text-xs font-bold uppercase tracking-wide text-orange-700">
+                                                  Tuỳ chọn AhaMove
+                                                </div>
+                                              </div>
+                                              {couponCode.trim() ? (
+                                                <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-orange-800 ring-1 ring-orange-200">
+                                                  Mã giảm giá:{" "}
+                                                  {couponCode.trim()}
+                                                </div>
+                                              ) : null}
                                             </div>
 
-                                            <div className="mt-1 text-xs text-neutral-500">
-                                              {getSmartQuoteNote(quote)}
+                                            <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.25fr]">
+                                              <div>
+                                                <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-neutral-500">
+                                                  Thanh toán Aha
+                                                </div>
+                                                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                                                  {AHAMOVE_PAYMENT_METHOD_OPTIONS.map(
+                                                    (item) => (
+                                                      <button
+                                                        key={item.value}
+                                                        type="button"
+                                                        onClick={() =>
+                                                          handleAhamovePaymentMethodChange(
+                                                            item.value,
+                                                          )
+                                                        }
+                                                        className={`rounded-xl border px-3 py-2 text-left text-xs leading-4 transition ${
+                                                          ahamovePaymentMethod ===
+                                                          item.value
+                                                            ? "border-orange-500 bg-white text-orange-900 ring-1 ring-orange-200"
+                                                            : "border-orange-100 bg-white/80 text-neutral-600 hover:border-orange-300"
+                                                        }`}
+                                                      >
+                                                        <div className="flex items-center justify-between gap-2">
+                                                          <span className="font-semibold">
+                                                            {item.label}
+                                                          </span>
+                                                          <span
+                                                            className={`h-2.5 w-2.5 shrink-0 rounded-full border ${
+                                                              ahamovePaymentMethod ===
+                                                              item.value
+                                                                ? "border-orange-600 bg-orange-600"
+                                                                : "border-orange-200 bg-white"
+                                                            }`}
+                                                          />
+                                                        </div>
+                                                      </button>
+                                                    ),
+                                                  )}
+                                                </div>
+                                              </div>
+
+                                              <div>
+                                                <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-neutral-500">
+                                                  Dịch vụ thêm
+                                                </div>
+                                                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                                  {AHAMOVE_SPECIAL_REQUEST_OPTIONS.map(
+                                                    (item) => {
+                                                      const checked =
+                                                        ahamoveSpecialRequests[
+                                                          item.key
+                                                        ];
+                                                      return (
+                                                        <label
+                                                          key={item.key}
+                                                          className={`flex cursor-pointer items-center gap-2 rounded-xl border bg-white px-3 py-2 text-xs font-semibold transition ${
+                                                            checked
+                                                              ? "border-orange-500 text-orange-900 ring-1 ring-orange-200"
+                                                              : "border-orange-100 text-neutral-700 hover:border-orange-300"
+                                                          }`}
+                                                          title={
+                                                            item.description
+                                                          }
+                                                        >
+                                                          <input
+                                                            type="checkbox"
+                                                            checked={checked}
+                                                            onChange={(
+                                                              event,
+                                                            ) => {
+                                                              const nextChecked =
+                                                                event.target
+                                                                  .checked;
+                                                              setAhamoveSpecialRequests(
+                                                                (prev) => ({
+                                                                  ...prev,
+                                                                  [item.key]:
+                                                                    nextChecked,
+                                                                }),
+                                                              );
+                                                            }}
+                                                            className="h-4 w-4 shrink-0 rounded border-orange-300 text-orange-600"
+                                                          />
+                                                          <span>
+                                                            {item.label}
+                                                          </span>
+                                                        </label>
+                                                      );
+                                                    },
+                                                  )}
+                                                </div>
+                                              </div>
                                             </div>
                                           </div>
-                                        </div>
+                                        ) : null}
 
-                                        <div className="text-sm text-neutral-700">
-                                          {getQuoteLeadtimeLabel(quote)}
-                                        </div>
-
-                                        <div className="text-right">
-                                          <div className="text-sm font-bold text-neutral-950">
-                                            {currency(feeValue)}
+                                        {active && carrier === "ghn" ? (
+                                          <div className="mx-4 mb-4 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-sm">
+                                            <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-end">
+                                              <div>
+                                                <div className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-700">
+                                                  Khai giá GHN
+                                                </div>
+                                                <input
+                                                  value={
+                                                    shippingInsuranceValue ||
+                                                    formatVndInput(
+                                                      orderValueForInsurance,
+                                                    )
+                                                  }
+                                                  onChange={(event) =>
+                                                    setShippingInsuranceValue(
+                                                      formatVndInput(
+                                                        event.target.value,
+                                                      ),
+                                                    )
+                                                  }
+                                                  className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-900 outline-none focus:border-amber-500"
+                                                  placeholder="Giá trị hàng"
+                                                />
+                                              </div>
+                                              <div className="text-xs leading-5 text-neutral-600">
+                                                Gửi sang GHN bằng{" "}
+                                                <span className="font-semibold text-neutral-900">
+                                                  insurance_value
+                                                </span>{" "}
+                                                khi báo phí và tạo vận đơn.
+                                                {couponCode.trim() ? (
+                                                  <span className="ml-2 inline-flex rounded-full bg-white px-3 py-1 font-semibold text-amber-800 ring-1 ring-amber-200">
+                                                    Coupon: {couponCode.trim()}
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                            </div>
                                           </div>
-                                          <div className="mt-0.5 text-[11px] text-neutral-400">
-                                            Service {quote.serviceId}
-                                            {quote.serviceTypeId
-                                              ? ` · Type ${quote.serviceTypeId}`
-                                              : ""}
-                                          </div>
-                                        </div>
-                                      </button>
+                                        ) : null}
+                                      </div>
                                     );
                                   })}
                                 </div>
@@ -7435,7 +7668,9 @@ export default function CreateOrderPageClient() {
                     <span className="text-neutral-500">Giảm giá nhập tay</span>
                     <input
                       className={`w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none ${
-                        canEditManualDiscount ? "" : "cursor-not-allowed bg-neutral-100 text-neutral-500"
+                        canEditManualDiscount
+                          ? ""
+                          : "cursor-not-allowed bg-neutral-100 text-neutral-500"
                       }`}
                       value={formatVndInput(discountTotal)}
                       disabled={!canEditManualDiscount}
