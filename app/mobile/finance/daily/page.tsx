@@ -1,6 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { clearMobileSession, getMobileToken } from "@/lib/mobile-auth-token";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -76,18 +77,8 @@ const RANGE_OPTIONS = [
   { key: "30d", label: "30 ngày" },
 ] as const;
 
-function token() {
-  if (typeof window === "undefined") return "";
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("the1970_access_token") ||
-    ""
-  );
-}
-
 async function getJson<T>(path: string): Promise<T> {
-  const accessToken = token();
+  const accessToken = await getMobileToken();
 
   if (!accessToken) {
     window.location.href = "/mobile/login";
@@ -101,7 +92,7 @@ async function getJson<T>(path: string): Promise<T> {
   });
 
   if (res.status === 401) {
-    localStorage.removeItem("token");
+    await clearMobileSession();
     window.location.href = "/mobile/login";
     throw new Error("Phiên đăng nhập hết hạn.");
   }

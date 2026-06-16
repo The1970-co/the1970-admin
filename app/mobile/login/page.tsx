@@ -1,6 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { saveMobileSession } from "@/lib/mobile-auth-token";
 import { useState } from "react";
 export default function MobileLoginPage() {
 
@@ -43,17 +44,10 @@ export default function MobileLoginPage() {
         throw new Error("Không nhận được token");
       }
 
-      localStorage.setItem("token", token);
-      localStorage.setItem("accessToken", token);
-      localStorage.setItem("the1970_access_token", token);
-      localStorage.setItem("currentUser", JSON.stringify(user));
-      localStorage.setItem("the1970_current_user", JSON.stringify(user));
-      localStorage.setItem("the1970_mobile_user", JSON.stringify(user));
-      localStorage.setItem("the1970_login_from", "mobile");
-      window.dispatchEvent(new Event("the1970:auth-changed"));
+      await saveMobileSession(token, user);
 
       // Dùng hard reload để WebView/Next guard đọc lại token mới ngay lập tức.
-      // Nếu dùng router.replace, lần login đầu có thể còn state cũ và bị đá sang /control.
+      // Token được lưu vào native iOS Preferences nên tắt/mở app vẫn giữ đăng nhập.
       window.location.replace("/mobile");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
