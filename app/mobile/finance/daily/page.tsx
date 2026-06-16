@@ -23,21 +23,50 @@ type FinanceSummary = {
   totalIn?: number;
   totalOut?: number;
   netAmount?: number;
+  netCashFlow?: number;
+  totalCollected?: number;
+  totalReceipt?: number;
+  totalPayment?: number;
+  totalSpent?: number;
+  totalPaid?: number;
+  totalPayments?: number;
   posAmount?: number;
   bankAmount?: number;
   cashAmount?: number;
   cashRemain?: number;
   cashOnHand?: number;
+  cashClosingBalance?: number;
+  ledgerOpeningBalance?: number;
+  ledgerClosingBalance?: number;
+  ledgerTotalReceipt?: number;
+  ledgerTotalPayment?: number;
+  ledgerNetAmount?: number;
   endBalance?: number;
   endingBalance?: number;
   transactionCount?: number;
   totalDifference?: number;
   sources?: AnyRow[];
   sourceRows?: AnyRow[];
+  bySource?: AnyRow[];
   branches?: AnyRow[];
   branchRows?: AnyRow[];
   dailyRows?: AnyRow[];
   closeRows?: AnyRow[];
+  ledgerRows?: AnyRow[];
+};
+
+type FinanceDailyResponse = {
+  dateFrom?: string;
+  dateTo?: string;
+  summary?: FinanceSummary;
+  bySource?: AnyRow[];
+  payments?: AnyRow[];
+  ledgerRows?: AnyRow[];
+  dailyRows?: AnyRow[];
+  ledger?: {
+    rows?: AnyRow[];
+    summary?: AnyRow;
+  };
 };
 
 const RANGE_OPTIONS = [
@@ -49,7 +78,12 @@ const RANGE_OPTIONS = [
 
 function token() {
   if (typeof window === "undefined") return "";
-  return localStorage.getItem("token") || "";
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken") ||
+    localStorage.getItem("the1970_access_token") ||
+    ""
+  );
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -61,6 +95,7 @@ async function getJson<T>(path: string): Promise<T> {
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
@@ -179,9 +214,46 @@ function rowDate(row: AnyRow) {
   });
 }
 
-function buildSources(summary: FinanceSummary | null, rows: AnyRow[]) {
-  const apiRows = summary?.sources || summary?.sourceRows || [];
-  if (apiRows.length) return apiRows;
+function buildSources(summary: FinanceSummary | null, rows: AnyRow[]): AnyRow[] {
+  const apiRows =
+    summary?.sources ||
+    summary?.sourceRows ||
+    summary?.bySource ||
+    [];
+
+  if (apiRows.length) {
+    return apiRows
+      .map((row) => {
+        const totalIn = firstNumber(
+          row.totalIn,
+          row.collectedAmount,
+          row.paidAmount,
+          row.receiptAmount,
+          row.totalReceipt,
+          num(row.totalAmount) > 0 ? row.totalAmount : 0,
+        );
+        const totalOut = firstNumber(
+          row.totalOut,
+          row.paymentAmount,
+          row.spentAmount,
+          row.totalPayment,
+          row.refundedAmount,
+          num(row.totalAmount) < 0 ? Math.abs(num(row.totalAmount)) : 0,
+        );
+        const netAmount = firstNumber(row.netAmount, row.totalAmount, totalIn - totalOut);
+
+        return {
+          ...row,
+          sourceName: sourceName(row),
+          sourceType: row.sourceType || sourceKind(row),
+          totalIn,
+          totalOut,
+          netAmount,
+          transactionCount: firstNumber(row.transactionCount, row.count),
+        };
+      })
+      .sort((a, b) => Math.abs(num(b.netAmount)) - Math.abs(num(a.netAmount)));
+  }
 
   const map = new Map<string, AnyRow>();
 
@@ -208,7 +280,7 @@ function buildSources(summary: FinanceSummary | null, rows: AnyRow[]) {
   return Array.from(map.values()).sort((a, b) => Math.abs(num(b.netAmount)) - Math.abs(num(a.netAmount)));
 }
 
-function buildBranches(summary: FinanceSummary | null, rows: AnyRow[]) {
+function buildBranches(summary: FinanceSummary | null, rows: AnyRow[]): AnyRow[] {
   const apiRows = summary?.branches || summary?.branchRows || [];
   if (apiRows.length) return apiRows;
 
@@ -226,23 +298,72 @@ function buildBranches(summary: FinanceSummary | null, rows: AnyRow[]) {
       sources: [],
     };
 
-    const amount = Math.abs(num(row.amount));
-    if (isReceipt(row)) current.totalIn += amount;
-    else current.totalOut += amount;
+    const receipt = firstNumber(row.totalReceipt, row.receiptAmount, row.manualReceiptAmount, row.posReceiptAmount);
+    const payment = firstNumber(row.totalPayment, row.paymentAmount, row.manualPaymentAmount);
+    const hasLedgerAmount = receipt !== 0 || payment !== 0 || row.closingBalance !== undefined;
 
-    if (sourceKind(row) === "CASH") current.cashRemain += isReceipt(row) ? amount : -amount;
+    if (hasLedgerAmount) {
+      current.totalIn += receipt;
+      current.totalOut += payment;
+      current.netAmount += firstNumber(row.netAmount, row.net, receipt - payment);
+      if (sourceKind(row) === "CASH") {
+        current.cashRemain += firstNumber(row.cashRemain, row.cashOnHand, row.closingBalance);
+      }
+      current.transactionCount += firstNumber(row.transactionCount, row.count, 1);
+    } else {
+      const amount = Math.abs(num(row.amount));
+      if (isReceipt(row)) current.totalIn += amount;
+      else current.totalOut += amount;
 
-    current.netAmount = current.totalIn - current.totalOut;
-    current.transactionCount += 1;
+      if (sourceKind(row) === "CASH") current.cashRemain += isReceipt(row) ? amount : -amount;
+
+      current.netAmount = current.totalIn - current.totalOut;
+      current.transactionCount += 1;
+    }
+
     map.set(key, current);
   });
 
   return Array.from(map.values()).sort((a, b) => num(b.netAmount) - num(a.netAmount));
 }
 
-function buildDailyRows(summary: FinanceSummary | null, rows: AnyRow[]) {
-  const apiRows = summary?.dailyRows || summary?.closeRows || [];
-  if (apiRows.length) return apiRows;
+function buildDailyRows(summary: FinanceSummary | null, rows: AnyRow[]): AnyRow[] {
+  const apiRows = summary?.dailyRows || summary?.ledgerRows || summary?.closeRows || [];
+  if (apiRows.length) {
+    const map = new Map<string, AnyRow>();
+
+    apiRows.forEach((row) => {
+      const key = String(row.date || row.day || new Date().toISOString()).slice(0, 10);
+      const current = map.get(key) || {
+        date: key,
+        beginningBalance: 0,
+        posAmount: 0,
+        receiptAmount: 0,
+        paymentAmount: 0,
+        netAmount: 0,
+        endingBalance: 0,
+        cashRemain: 0,
+        difference: 0,
+        branches: [],
+      };
+
+      current.beginningBalance += num(row.openingBalance || row.beginningBalance);
+      current.posAmount += num(row.posAmount || row.posReceiptAmount);
+      current.receiptAmount += num(row.receiptAmount || row.totalReceipt || row.manualReceiptAmount);
+      current.paymentAmount += num(row.paymentAmount || row.totalPayment || row.manualPaymentAmount);
+      current.netAmount += num(row.netAmount);
+      current.endingBalance += num(row.endingBalance || row.closingBalance);
+      if (sourceKind(row) === "CASH") {
+        current.cashRemain += num(row.cashRemain || row.cashOnHand || row.closingBalance);
+      }
+      current.difference += num(row.difference || row.differenceAmount);
+
+      current.branches.push(row);
+      map.set(key, current);
+    });
+
+    return Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }
 
   const map = new Map<string, AnyRow>();
 
@@ -359,14 +480,47 @@ export default function MobileFinanceDailyPage() {
       setError("");
 
       const { from, to } = rangeDates(range);
+      const params = new URLSearchParams({
+        dateFrom: from,
+        dateTo: to,
+        branchId: "ALL",
+        paymentSourceId: "ALL",
+        status: "ALL",
+        q: "",
+      });
 
-      const [summaryRes, rowsRes] = await Promise.all([
-        optionalJson<FinanceSummary>(`/finance/daily?from=${from}&to=${to}&branchId=all&paymentSourceId=all`, {}),
-        optionalJson<AnyRow[]>(`/finance/daily/rows?from=${from}&to=${to}&branchId=all&paymentSourceId=all`, []),
+      const [dailyRes, ledgerRes] = await Promise.all([
+        optionalJson<FinanceDailyResponse>(`/finance/daily?${params.toString()}`, {}),
+        optionalJson<{ rows?: AnyRow[]; summary?: AnyRow }>(`/finance/daily-ledger?${params.toString()}`, {}),
       ]);
 
-      setSummary(summaryRes);
-      setRows(Array.isArray(rowsRes) ? rowsRes : []);
+      const ledgerRows = Array.isArray(ledgerRes?.rows)
+        ? ledgerRes.rows
+        : Array.isArray(dailyRes?.ledgerRows)
+          ? dailyRes.ledgerRows
+          : Array.isArray(dailyRes?.dailyRows)
+            ? dailyRes.dailyRows
+            : Array.isArray(dailyRes?.ledger?.rows)
+              ? dailyRes.ledger.rows
+              : [];
+
+      setSummary({
+        ...(dailyRes?.summary || {}),
+        ...(ledgerRes?.summary
+          ? {
+              ledgerOpeningBalance: ledgerRes.summary.openingBalance,
+              ledgerClosingBalance: ledgerRes.summary.closingBalance,
+              ledgerTotalReceipt: ledgerRes.summary.totalReceipt,
+              ledgerTotalPayment: ledgerRes.summary.totalPayment,
+              ledgerNetAmount: ledgerRes.summary.netAmount,
+            }
+          : {}),
+        bySource: Array.isArray(dailyRes?.bySource) ? dailyRes.bySource : [],
+        ledgerRows,
+        dailyRows: ledgerRows,
+      });
+
+      setRows(Array.isArray(dailyRes?.payments) ? dailyRes.payments : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra.");
     } finally {
@@ -380,25 +534,42 @@ export default function MobileFinanceDailyPage() {
   }, [load]);
 
   const sources = useMemo(() => buildSources(summary, rows), [summary, rows]);
-  const branches = useMemo(() => buildBranches(summary, rows), [summary, rows]);
   const dailyRows = useMemo(() => buildDailyRows(summary, rows), [summary, rows]);
+  const branches = useMemo(() => buildBranches(summary, dailyRows.length ? dailyRows.flatMap((row) => row.branches || [row]) : rows), [summary, dailyRows, rows]);
 
   const computed = useMemo(() => {
-    const totalIn = firstNumber(summary?.totalIn, sources.reduce((s, row) => s + num(row.totalIn), 0));
-    const totalOut = firstNumber(summary?.totalOut, sources.reduce((s, row) => s + num(row.totalOut), 0));
-    const netAmount = firstNumber(summary?.netAmount, totalIn - totalOut);
-    const posAmount = firstNumber(summary?.posAmount, rows.filter(isReceipt).reduce((s, row) => s + Math.abs(num(row.amount)), 0));
+    const totalIn = firstNumber(
+      summary?.totalIn,
+      summary?.totalCollected,
+      summary?.totalReceipt,
+      summary?.ledgerTotalReceipt,
+      sources.reduce<number>((sum, row) => sum + num(row.totalIn), 0),
+    );
+    const totalOut = firstNumber(
+      summary?.totalOut,
+      summary?.totalPayment,
+      summary?.totalSpent,
+      summary?.ledgerTotalPayment,
+      sources.reduce<number>((sum, row) => sum + num(row.totalOut), 0),
+    );
+    const netAmount = firstNumber(summary?.netAmount, summary?.netCashFlow, summary?.ledgerNetAmount, totalIn - totalOut);
+    const posAmount = firstNumber(
+      summary?.posAmount,
+      dailyRows.reduce<number>((sum, row) => sum + num(row.posAmount || row.posReceiptAmount), 0),
+      rows.filter(isReceipt).reduce<number>((sum, row) => sum + Math.abs(num(row.amount)), 0),
+    );
     const bankAmount = firstNumber(
       summary?.bankAmount,
       sources
         .filter((row) => ["BANK", "CARD"].includes(String(row.sourceType || sourceKind(row)).toUpperCase()))
-        .reduce((s, row) => s + num(row.netAmount), 0),
+        .reduce<number>((sum, row) => sum + num(row.netAmount), 0),
     );
     const cashRemain = firstNumber(
       summary?.cashRemain,
       summary?.cashOnHand,
+      summary?.cashClosingBalance,
       summary?.cashAmount,
-      branches.reduce((s, row) => s + firstNumber(row.cashRemain, row.cashOnHand, row.netAmount), 0),
+      branches.reduce<number>((sum, row) => sum + firstNumber(row.cashRemain, row.cashOnHand, row.closingBalance, row.netAmount), 0),
     );
 
     return {
@@ -408,11 +579,14 @@ export default function MobileFinanceDailyPage() {
       posAmount,
       bankAmount,
       cashRemain,
-      transactionCount: firstNumber(summary?.transactionCount, rows.length),
-      endBalance: firstNumber(summary?.endingBalance, summary?.endBalance, netAmount),
-      totalDifference: firstNumber(summary?.totalDifference),
+      transactionCount: firstNumber(summary?.transactionCount, summary?.totalPayments, rows.length),
+      endBalance: firstNumber(summary?.endingBalance, summary?.endBalance, summary?.ledgerClosingBalance, netAmount),
+      totalDifference: firstNumber(
+        summary?.totalDifference,
+        dailyRows.reduce<number>((sum, row) => sum + num(row.difference || row.differenceAmount), 0),
+      ),
     };
-  }, [summary, sources, rows, branches]);
+  }, [summary, sources, rows, branches, dailyRows]);
 
   const filteredRows = useMemo(() => {
     const q = normalize(query);
@@ -437,8 +611,8 @@ export default function MobileFinanceDailyPage() {
   const maxSource = Math.max(...sources.map((row) => Math.abs(num(row.netAmount))), 1);
 
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-950">
-      <div className="mx-auto min-h-screen w-full max-w-md px-4 pb-28 pt-5">
+    <div className="min-h-[100dvh] overflow-y-auto bg-neutral-100 text-neutral-950 [-webkit-overflow-scrolling:touch]">
+      <div className="mx-auto min-h-[100dvh] w-full max-w-md px-4 pb-[calc(120px+env(safe-area-inset-bottom))] pt-5">
         <header className="mb-5 flex items-center justify-between">
           <Link href="/mobile" className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm">
             <ArrowLeft className="h-5 w-5" />
@@ -607,12 +781,12 @@ export default function MobileFinanceDailyPage() {
                             <div>
                               <div className="text-sm font-black">{date}</div>
                               <div className="mt-1 text-xs text-neutral-500">
-                                POS {money(row.posAmount)} · Phiếu thu {money(row.receiptAmount || row.totalIn)} · Phiếu chi {money(row.paymentAmount || row.totalOut)}
+                                POS {money(firstNumber(row.posAmount, row.posReceiptAmount))} · Phiếu thu {money(firstNumber(row.receiptAmount, row.totalReceipt, row.totalIn))} · Phiếu chi {money(firstNumber(row.paymentAmount, row.totalPayment, row.totalOut))}
                               </div>
                             </div>
                             <div className="text-right">
                               <div className="text-sm font-black">{money(row.netAmount)}</div>
-                              <div className="mt-1 text-xs text-neutral-500">TM {money(row.cashRemain)}</div>
+                              <div className="mt-1 text-xs text-neutral-500">TM {money(firstNumber(row.cashRemain, row.cashOnHand, row.closingBalance))}</div>
                             </div>
                           </div>
                         </button>

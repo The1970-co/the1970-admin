@@ -24,3 +24,27 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Mobile app WebView scroll fix */
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  overscroll-behavior-y: none;
+}
+
+.mobile-app-shell {
+  height: 100dvh;
+  overflow: hidden;
+  background: #f5f5f4;
+}
+
+.mobile-app-scroll {
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
