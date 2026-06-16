@@ -2,15 +2,7 @@
 
 import { API_BASE } from "@/lib/api-base";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import {
-  setTokenToStorage,
-  clearCurrentUserFromStorage,
-} from "@/lib/current-user";
-
-
 export default function MobileLoginPage() {
-  const router = useRouter();
 
   const [username, setUsername] = useState("ADMIN");
   const [password, setPassword] = useState("123456");
@@ -22,9 +14,6 @@ export default function MobileLoginPage() {
       setLoading(true);
       setError("");
 
-      clearCurrentUserFromStorage();
-      localStorage.setItem("the1970_login_from", "mobile");
-
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         credentials: "include",
@@ -32,20 +21,19 @@ export default function MobileLoginPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          username,
+          username: username.trim(),
           password,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
       if (!res.ok) {
         throw new Error(data?.message || "Đăng nhập thất bại");
       }
 
       if (data?.needsSecondPassword) {
-        window.location.href = "/login?next=/mobile/home";
-        return;
+        throw new Error("Tài khoản này đang bật bảo mật lớp 2. Vui lòng đăng nhập trên bản web hoặc tắt bảo mật lớp 2 cho tài khoản mobile.");
       }
 
       const token = data?.token || data?.accessToken || data?.access_token;
@@ -55,15 +43,18 @@ export default function MobileLoginPage() {
         throw new Error("Không nhận được token");
       }
 
-      setTokenToStorage(token);
       localStorage.setItem("token", token);
       localStorage.setItem("accessToken", token);
+      localStorage.setItem("the1970_access_token", token);
       localStorage.setItem("currentUser", JSON.stringify(user));
       localStorage.setItem("the1970_current_user", JSON.stringify(user));
       localStorage.setItem("the1970_mobile_user", JSON.stringify(user));
+      localStorage.setItem("the1970_login_from", "mobile");
       window.dispatchEvent(new Event("the1970:auth-changed"));
 
-      router.replace("/mobile/home");
+      // Dùng hard reload để WebView/Next guard đọc lại token mới ngay lập tức.
+      // Nếu dùng router.replace, lần login đầu có thể còn state cũ và bị đá sang /control.
+      window.location.replace("/mobile");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
     } finally {
