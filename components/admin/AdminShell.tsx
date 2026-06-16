@@ -49,6 +49,7 @@ const MENU: MenuItem[] = [
       { href: "/control/purchase-receipts", label: "Phiếu nhập", permission: PERMISSIONS.MENU_PURCHASE_RECEIPT },
       { href: "/control/stock-transfers", label: "Phiếu chuyển kho", permission: PERMISSIONS.MENU_STOCK_TRANSFER },
       { href: "/stocktake", label: "Kiểm kho", permission: PERMISSIONS.MENU_STOCKTAKE },
+      { href: "/stocktake-sessions", label: "Lịch sử kiểm kho", permission: PERMISSIONS.MENU_STOCKTAKE },
       { href: "/control/warehouse-map", label: "Sơ đồ kho 3D", permission: PERMISSIONS.MENU_WAREHOUSE_MAP },
     ],
   },

@@ -4532,7 +4532,9 @@ export default function OrdersPageClient() {
     "orders.excel.export",
   );
 
-  const canSeeMoney = isOwnerOrAdminUser(currentUser);
+  // Danh sách đơn hàng là màn vận hành bán hàng: nhân viên bán lẻ/fulltime cũng cần thấy đủ các cột tiền như admin.
+  // Quyền xem đơn đã được chặn bằng orders.view / orders.view_own ở API và UI; không tách ẩn cột tiền theo role nữa.
+  const canSeeMoney = true;
   const canManageFilterPresets = isOwnerOrAdminUser(currentUser);
   const canDeleteOrder = hasOrderPermission(currentUser, "orders.delete");
 
