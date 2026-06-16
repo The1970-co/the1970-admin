@@ -3,6 +3,10 @@
 import { API_BASE } from "@/lib/api-base";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  setTokenToStorage,
+  clearCurrentUserFromStorage,
+} from "@/lib/current-user";
 
 
 export default function MobileLoginPage() {
@@ -18,8 +22,12 @@ export default function MobileLoginPage() {
       setLoading(true);
       setError("");
 
+      clearCurrentUserFromStorage();
+      localStorage.setItem("the1970_login_from", "mobile");
+
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -35,12 +43,25 @@ export default function MobileLoginPage() {
         throw new Error(data?.message || "Đăng nhập thất bại");
       }
 
-      if (!data?.token) {
+      if (data?.needsSecondPassword) {
+        window.location.href = "/login?next=/mobile/home";
+        return;
+      }
+
+      const token = data?.token || data?.accessToken || data?.access_token;
+      const user = data?.user || data?.staff || data?.data?.user || {};
+
+      if (!token) {
         throw new Error("Không nhận được token");
       }
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("the1970_mobile_user", JSON.stringify(data.user || {}));
+      setTokenToStorage(token);
+      localStorage.setItem("token", token);
+      localStorage.setItem("accessToken", token);
+      localStorage.setItem("currentUser", JSON.stringify(user));
+      localStorage.setItem("the1970_current_user", JSON.stringify(user));
+      localStorage.setItem("the1970_mobile_user", JSON.stringify(user));
+      window.dispatchEvent(new Event("the1970:auth-changed"));
 
       router.replace("/mobile/home");
     } catch (err) {

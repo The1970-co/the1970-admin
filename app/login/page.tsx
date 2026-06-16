@@ -137,6 +137,38 @@ export default function LoginPage() {
       .map((role: any) => String(role || "").toLowerCase())
       .filter(Boolean);
 
+    const isMobileLoginContext = () => {
+      if (typeof window === "undefined") return false;
+
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get("next") || params.get("redirect") || "";
+
+      let referrerPath = "";
+      try {
+        referrerPath = document.referrer ? new URL(document.referrer).pathname : "";
+      } catch {
+        referrerPath = "";
+      }
+
+      return (
+        window.location.pathname.startsWith("/mobile") ||
+        next.startsWith("/mobile") ||
+        referrerPath.startsWith("/mobile") ||
+        localStorage.getItem("the1970_login_from") === "mobile"
+      );
+    };
+
+    const goToMobile = isMobileLoginContext();
+
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("the1970_login_from");
+    }
+
+    if (goToMobile) {
+      router.replace("/mobile/home");
+      return;
+    }
+
     if (roles.includes("owner") || roles.includes("admin") || permissions.has("*")) {
       router.replace("/control");
       return;

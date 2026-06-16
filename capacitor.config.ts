@@ -6,8 +6,8 @@ const config: CapacitorConfig = {
   webDir: "public",
 
   server: {
-    url: "https://operations.the1970.co/mobile/login",
-    cleartext: true,
+    url: "https://operations.the1970.co/mobile",
+    cleartext: false,
   },
 
   ios: {
