@@ -3405,7 +3405,9 @@ export default function CreateOrderPageClient() {
   const orderValueForInsurance = Math.max(0, subtotal - totalDiscount);
   const effectiveShippingInsuranceValue = Math.max(
     0,
-    shippingInsuranceValue.trim() ? parseNumber(shippingInsuranceValue) : 0,
+    shippingInsuranceValue.trim()
+      ? parseNumber(shippingInsuranceValue)
+      : orderValueForInsurance,
   );
 
   useEffect(() => {
@@ -7568,7 +7570,12 @@ export default function CreateOrderPageClient() {
                                                   Khai giá GHN
                                                 </div>
                                                 <input
-                                                  value={shippingInsuranceValue}
+                                                  value={
+                                                    shippingInsuranceValue ||
+                                                    formatVndInput(
+                                                      orderValueForInsurance,
+                                                    )
+                                                  }
                                                   onChange={(event) =>
                                                     setShippingInsuranceValue(
                                                       formatVndInput(
@@ -7581,7 +7588,11 @@ export default function CreateOrderPageClient() {
                                                 />
                                               </div>
                                               <div className="text-xs leading-5 text-neutral-600">
-                                                Chỉ nhập khi cần khai giá hàng hoá.
+                                                Gửi sang GHN bằng{" "}
+                                                <span className="font-semibold text-neutral-900">
+                                                  insurance_value
+                                                </span>{" "}
+                                                khi báo phí và tạo vận đơn.
                                                 {couponCode.trim() ? (
                                                   <span className="ml-2 inline-flex rounded-full bg-white px-3 py-1 font-semibold text-amber-800 ring-1 ring-amber-200">
                                                     Coupon: {couponCode.trim()}

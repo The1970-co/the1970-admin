@@ -40,6 +40,7 @@ export type StocktakeSessionListItem = {
   startedAt?: string | null;
   finishedAt?: string | null;
   appliedAt?: string | null;
+  snapshotPurgedAt?: string | null;
   workers?: Array<{ id: string; name: string; zone?: string | null; deviceName?: string | null; status?: string | null }>;
   _count?: { scanEvents?: number };
 };
@@ -85,6 +86,8 @@ export type StocktakeDetailItem = {
   costPrice?: number;
   diffValue?: number;
   valueDiff?: number;
+  beforeApplyQty?: number | null;
+  afterApplyQty?: number | null;
   status: StocktakeItemStatus;
   statusLabel?: string;
   diffType?: string;
@@ -138,6 +141,17 @@ export type StocktakeSessionListResponse = {
   page: number;
   limit: number;
   totalPages: number;
+};
+
+export type CleanupStocktakeSnapshotsResponse = {
+  ok: boolean;
+  sessionId?: string;
+  processedSessions?: number;
+  deletedSnapshots: number;
+  resultItemCount: number;
+  failed?: number;
+  limit?: number;
+  alreadyCleaned?: boolean;
 };
 
 export type StocktakeSessionsOverview = {
@@ -288,5 +302,20 @@ export async function cancelStocktakeSession(id: string): Promise<StocktakeSessi
 export async function deleteStocktakeSession(id: string): Promise<{ ok: boolean; deleted: boolean; id: string }> {
   return request<{ ok: boolean; deleted: boolean; id: string }>(`/stocktake-sessions/${id}`, {
     method: "DELETE",
+  });
+}
+
+
+export async function cleanupStocktakeSessionSnapshots(id: string): Promise<CleanupStocktakeSnapshotsResponse> {
+  return request<CleanupStocktakeSnapshotsResponse>(`/stocktake-sessions/${id}/cleanup-snapshots`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function cleanupSelectedStocktakeSnapshots(sessionIds: string[]): Promise<CleanupStocktakeSnapshotsResponse> {
+  return request<CleanupStocktakeSnapshotsResponse>("/stocktake-sessions/cleanup-snapshots", {
+    method: "POST",
+    body: JSON.stringify({ sessionIds }),
   });
 }

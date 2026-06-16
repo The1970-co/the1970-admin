@@ -17,6 +17,7 @@ type Tone = "gray" | "green" | "amber" | "red" | "blue" | "purple" | "black";
 type ApplyFilter = "ALL" | "APPLIED" | "NOT_APPLIED";
 type ConfirmFilter = "ALL" | "FINISHED_OR_APPLIED" | "NOT_FINISHED";
 type WorkerFilter = "ALL" | "HAS_WORKER" | "NO_WORKER";
+type SnapshotCleanupFilter = "ALL" | "CLEANED" | "NOT_CLEANED" | "NOT_APPLIED";
 type ConfirmDialogState = {
   title: string;
   description: React.ReactNode;
@@ -93,6 +94,7 @@ type EnrichedStocktakeSession = StocktakeSessionListItem & {
   finishedByName?: string | null;
   appliedById?: string | null;
   appliedByName?: string | null;
+  snapshotPurgedAt?: string | null;
   cancelledById?: string | null;
   cancelledByName?: string | null;
   workers?: Array<{
@@ -380,6 +382,20 @@ function isApplied(item: EnrichedStocktakeSession) {
   return String(item.status || "").toUpperCase() === "APPLIED" || Boolean(item.appliedAt);
 }
 
+function isSnapshotCleaned(item: EnrichedStocktakeSession) {
+  return Boolean((item as any).snapshotPurgedAt);
+}
+
+function snapshotCleanupLabel(item: EnrichedStocktakeSession) {
+  if (!isApplied(item)) return "Chưa chốt tồn";
+  return isSnapshotCleaned(item) ? "Đã dọn snapshot" : "Chưa dọn snapshot";
+}
+
+function snapshotCleanupTone(item: EnrichedStocktakeSession): Tone {
+  if (!isApplied(item)) return "gray";
+  return isSnapshotCleaned(item) ? "green" : "amber";
+}
+
 export default function StocktakeSessionsPageClient() {
   const [sessions, setSessions] = useState<EnrichedStocktakeSession[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
@@ -400,6 +416,7 @@ export default function StocktakeSessionsPageClient() {
   const [noteDraft, setNoteDraft] = useState("");
   const [noteSavingId, setNoteSavingId] = useState<string | null>(null);
   const [applyingSessionId, setApplyingSessionId] = useState<string | null>(null);
+  const [cleanupAllRunning, setCleanupAllRunning] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<"apply" | "cancel" | "delete" | null>(null);
   const [creatorQuery, setCreatorQuery] = useState("");
@@ -407,6 +424,7 @@ export default function StocktakeSessionsPageClient() {
   const [applyFilter, setApplyFilter] = useState<ApplyFilter>("ALL");
   const [confirmFilter, setConfirmFilter] = useState<ConfirmFilter>("ALL");
   const [workerFilter, setWorkerFilter] = useState<WorkerFilter>("ALL");
+  const [snapshotCleanupFilter, setSnapshotCleanupFilter] = useState<SnapshotCleanupFilter>("ALL");
   const [minScanCount, setMinScanCount] = useState("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
   const [ready, setReady] = useState(false);
@@ -598,6 +616,10 @@ export default function StocktakeSessionsPageClient() {
       if (workerFilter === "HAS_WORKER" && getWorkerCount(item) <= 0) return false;
       if (workerFilter === "NO_WORKER" && getWorkerCount(item) > 0) return false;
 
+      if (snapshotCleanupFilter === "CLEANED" && !isSnapshotCleaned(item)) return false;
+      if (snapshotCleanupFilter === "NOT_CLEANED" && (!isApplied(item) || isSnapshotCleaned(item))) return false;
+      if (snapshotCleanupFilter === "NOT_APPLIED" && isApplied(item)) return false;
+
       if (minScan > 0 && getScanCount(item) < minScan) return false;
 
       return true;
@@ -611,6 +633,7 @@ export default function StocktakeSessionsPageClient() {
     applyFilter,
     confirmFilter,
     workerFilter,
+    snapshotCleanupFilter,
     branchMap,
   ]);
 
@@ -630,6 +653,9 @@ export default function StocktakeSessionsPageClient() {
     (item) => !isApplied(item) && String(item.status || "").toUpperCase() !== "CANCELLED",
   );
   const selectedDeleteSessions = selectedSessions.filter((item) => !isApplied(item));
+  const selectedCleanupSessions = selectedSessions.filter(
+    (item) => isApplied(item) && !isSnapshotCleaned(item),
+  );
 
   const total = overview?.total ?? totalItems;
   const applied = overview?.applied ?? visibleSessions.filter((s) => isApplied(s)).length;
@@ -956,6 +982,7 @@ Không xoá phiên đã chốt tồn.`,
     setApplyFilter("ALL");
     setConfirmFilter("ALL");
     setWorkerFilter("ALL");
+    setSnapshotCleanupFilter("ALL");
     setMinScanCount("");
     setFrom("");
     setTo("");
@@ -1012,6 +1039,54 @@ Không xoá phiên đã chốt tồn.`,
     }
   };
 
+
+  const cleanupSelectedSnapshots = async () => {
+    if (!canApplyStocktake) {
+      showToast("error", "Không có quyền", "Bạn không có quyền dọn snapshot kiểm kho.");
+      return;
+    }
+
+    if (!selectedCleanupSessions.length) {
+      showToast("info", "Chưa chọn phiên hợp lệ", "Chỉ dọn snapshot cho các phiên đã chốt tồn và chưa dọn.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Dọn snapshot cho ${selectedCleanupSessions.length} phiên đã chọn?\n\n` +
+        "Chỉ các phiên đã chốt tồn mới được xử lý. Hệ thống sẽ lưu kết quả nhẹ trước khi xoá snapshot nền.",
+    );
+    if (!ok) return;
+
+    try {
+      setCleanupAllRunning(true);
+      const sessionIds = selectedCleanupSessions.map((item) => item.id);
+      const result = await apiRequest<{ processedSessions?: number; deletedSnapshots?: number; resultItemCount?: number; failed?: number }>(
+        "/stocktake-sessions/cleanup-snapshots",
+        { method: "POST", body: JSON.stringify({ sessionIds }) },
+      );
+
+      const cleanedSet = new Set(sessionIds);
+      setSessions((current) =>
+        current.map((row) =>
+          cleanedSet.has(row.id) ? { ...row, snapshotPurgedAt: new Date().toISOString() } : row,
+        ),
+      );
+
+      showToast(
+        "success",
+        "Đã dọn snapshot đã chọn",
+        `Xử lý ${formatNumber(result.processedSessions || 0)} phiên, xoá ${formatNumber(result.deletedSnapshots || 0)} snapshot, lưu ${formatNumber(result.resultItemCount || 0)} dòng kết quả${result.failed ? `, lỗi ${formatNumber(result.failed)} phiên` : ""}.`,
+      );
+      setSelectedSessionIds((current) => current.filter((id) => !cleanedSet.has(id)));
+      loadedSessionKeyRef.current = "";
+      await loadSessions({ force: true, silent: true, preserveScroll: true });
+    } catch (err) {
+      showToast("error", "Không dọn được snapshot đã chọn", err instanceof Error ? err.message : "Không dọn được snapshot đã chọn.");
+    } finally {
+      setCleanupAllRunning(false);
+    }
+  };
+
   return (
     <div className="min-h-screen space-y-5 bg-[#f7f7f8] p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1023,11 +1098,23 @@ Không xoá phiên đã chốt tồn.`,
             Theo dõi người tạo, nhân viên tham gia, trạng thái kết thúc/chốt tồn, lượt scan và lọc nhanh phiên kiểm.
           </p>
         </div>
-        {canOpenRealtime ? (
-          <Link href="/stocktake" prefetch={false} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800">
-            + Vào màn kiểm realtime
-          </Link>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {canApplyStocktake ? (
+            <button
+              type="button"
+              onClick={() => void cleanupSelectedSnapshots()}
+              disabled={cleanupAllRunning || !selectedCleanupSessions.length}
+              className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {cleanupAllRunning ? "Đang dọn snapshot..." : `Dọn snapshot đã chọn${selectedCleanupSessions.length ? ` (${selectedCleanupSessions.length})` : ""}`}
+            </button>
+          ) : null}
+          {canOpenRealtime ? (
+            <Link href="/stocktake" prefetch={false} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white hover:bg-neutral-800">
+              + Vào màn kiểm realtime
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       {message ? (
@@ -1284,6 +1371,20 @@ Không xoá phiên đã chốt tồn.`,
             </label>
 
             <label className="text-xs font-semibold text-neutral-500">
+              Trạng thái snapshot
+              <select
+                value={snapshotCleanupFilter}
+                onChange={(e) => setSnapshotCleanupFilter(e.target.value as SnapshotCleanupFilter)}
+                className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium outline-none focus:border-neutral-500"
+              >
+                <option value="ALL">Tất cả</option>
+                <option value="CLEANED">Đã dọn snapshot</option>
+                <option value="NOT_CLEANED">Chưa dọn snapshot</option>
+                <option value="NOT_APPLIED">Chưa chốt tồn</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-neutral-500">
               Lượt scan tối thiểu
               <input
                 type="number"
@@ -1417,6 +1518,7 @@ Không xoá phiên đã chốt tồn.`,
                 <th className="px-4 py-3 font-bold">Bắt đầu</th>
                 <th className="px-4 py-3 font-bold">Kết thúc / xác nhận</th>
                 <th className="px-4 py-3 font-bold">Chốt tồn</th>
+                <th className="px-4 py-3 font-bold">Snapshot</th>
                 <th className="px-4 py-3 font-bold">KPI kiểm kho</th>
                 <th className="px-4 py-3 font-bold">Máy / lượt scan</th>
                 <th className="px-4 py-3 font-bold text-right">Thao tác</th>
@@ -1426,13 +1528,13 @@ Không xoá phiên đã chốt tồn.`,
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={13} className="px-4 py-10 text-center text-neutral-500">
                     Đang tải lịch sử...
                   </td>
                 </tr>
               ) : visibleSessions.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={13} className="px-4 py-10 text-center text-neutral-500">
                     Không có phiên kiểm phù hợp.
                   </td>
                 </tr>
@@ -1581,6 +1683,17 @@ Không xoá phiên đã chốt tồn.`,
                         </div>
                         <p className="mt-1 text-xs text-neutral-500">{formatDateTime(item.appliedAt)}</p>
                         {appliedByName ? <p className="mt-1 text-xs text-neutral-500">Bởi: {appliedByName}</p> : null}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <Badge tone={snapshotCleanupTone(item)}>{snapshotCleanupLabel(item)}</Badge>
+                        {item.snapshotPurgedAt ? (
+                          <p className="mt-1 text-xs text-neutral-500">{formatDateTime(item.snapshotPurgedAt)}</p>
+                        ) : isApplied(item) ? (
+                          <p className="mt-1 text-xs text-amber-600">Có thể tích chọn để dọn</p>
+                        ) : (
+                          <p className="mt-1 text-xs text-neutral-400">Dọn sau khi chốt tồn</p>
+                        )}
                       </td>
 
                       <td className="px-4 py-3">
