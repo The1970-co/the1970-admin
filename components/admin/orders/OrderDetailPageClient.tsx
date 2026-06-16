@@ -82,6 +82,7 @@ type ShipmentItem = {
   ahamoveTrackingUrl?: string | null;
   ahamoveStatus?: string | null;
   ahamoveSubStatus?: string | null;
+  ahamoveRaw?: any;
   metadata?: any;
   returnReceiveStatus?: string | null;
   returnReceivedAt?: string | null;
@@ -284,6 +285,48 @@ type ReturnExchangeSummary = {
 
 function currency(n?: number | null) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
+}
+
+function getShipmentCarrierShippingFee(shipment?: ShipmentItem | null) {
+  const candidates = [
+    shipment?.shippingFee,
+    shipment?.metadata?.shippingFee,
+    shipment?.metadata?.fee,
+    shipment?.metadata?.total_fee,
+    shipment?.metadata?.totalFee,
+    shipment?.metadata?.total_pay,
+    shipment?.metadata?.totalPay,
+    shipment?.metadata?.subtotal_price,
+    shipment?.metadata?.subtotalPrice,
+    shipment?.metadata?.total_price,
+    shipment?.metadata?.totalPrice,
+    shipment?.metadata?.order?.fee,
+    shipment?.metadata?.order?.total_fee,
+    shipment?.metadata?.order?.totalFee,
+    shipment?.metadata?.order?.total_pay,
+    shipment?.metadata?.order?.totalPay,
+    shipment?.metadata?.order?.subtotal_price,
+    shipment?.metadata?.order?.subtotalPrice,
+    shipment?.metadata?.order?.total_price,
+    shipment?.metadata?.order?.totalPrice,
+    shipment?.ahamoveRaw?.fee,
+    shipment?.ahamoveRaw?.total_fee,
+    shipment?.ahamoveRaw?.totalFee,
+    shipment?.ahamoveRaw?.total_pay,
+    shipment?.ahamoveRaw?.totalPay,
+    shipment?.ahamoveRaw?.order?.fee,
+    shipment?.ahamoveRaw?.order?.total_fee,
+    shipment?.ahamoveRaw?.order?.totalFee,
+    shipment?.ahamoveRaw?.order?.total_pay,
+    shipment?.ahamoveRaw?.order?.totalPay,
+  ];
+
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+
+  return 0;
 }
 
 function returnExchangeTypeText(type?: string | null) {
@@ -1741,7 +1784,7 @@ function MobileOrderDetailView({
             />
             <MobileInfoLine
               label={`Phí ${getCarrierLabel(viewOrder, meta)}`}
-              value={currency(viewOrder.shipment?.shippingFee)}
+              value={currency(getShipmentCarrierShippingFee(viewOrder.shipment))}
             />
             <MobileInfoLine
               label="Đối soát COD"

@@ -648,6 +648,48 @@ function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
 }
 
+function getShipmentCarrierShippingFee(shipment?: any) {
+  const candidates = [
+    shipment?.shippingFee,
+    shipment?.metadata?.shippingFee,
+    shipment?.metadata?.fee,
+    shipment?.metadata?.total_fee,
+    shipment?.metadata?.totalFee,
+    shipment?.metadata?.total_pay,
+    shipment?.metadata?.totalPay,
+    shipment?.metadata?.subtotal_price,
+    shipment?.metadata?.subtotalPrice,
+    shipment?.metadata?.total_price,
+    shipment?.metadata?.totalPrice,
+    shipment?.metadata?.order?.fee,
+    shipment?.metadata?.order?.total_fee,
+    shipment?.metadata?.order?.totalFee,
+    shipment?.metadata?.order?.total_pay,
+    shipment?.metadata?.order?.totalPay,
+    shipment?.metadata?.order?.subtotal_price,
+    shipment?.metadata?.order?.subtotalPrice,
+    shipment?.metadata?.order?.total_price,
+    shipment?.metadata?.order?.totalPrice,
+    shipment?.ahamoveRaw?.fee,
+    shipment?.ahamoveRaw?.total_fee,
+    shipment?.ahamoveRaw?.totalFee,
+    shipment?.ahamoveRaw?.total_pay,
+    shipment?.ahamoveRaw?.totalPay,
+    shipment?.ahamoveRaw?.order?.fee,
+    shipment?.ahamoveRaw?.order?.total_fee,
+    shipment?.ahamoveRaw?.order?.totalFee,
+    shipment?.ahamoveRaw?.order?.total_pay,
+    shipment?.ahamoveRaw?.order?.totalPay,
+  ];
+
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+
+  return 0;
+}
+
 
 function toFiniteNumber(value: any) {
   if (value === null || value === undefined || value === "") return 0;
@@ -5194,7 +5236,7 @@ export default function OrdersPageClient() {
         _assignedStaffName: getAssignedStaffDisplayName(order),
         _assignedStaffRawName: getAssignedStaffRawName(order),
         _shippingFee: Number(order.shippingFee || 0),
-        _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
+        _carrierShippingFee: getShipmentCarrierShippingFee(order.shipment),
         _goodsSubtotal: getOrderGoodsSubtotal(order),
         _productDiscount: getOrderProductDiscount(order),
         _goodsAfterDiscount: getOrderGoodsAfterDiscount(order),
@@ -5395,7 +5437,7 @@ export default function OrdersPageClient() {
         _assignedStaffName: getAssignedStaffDisplayName(order),
         _assignedStaffRawName: getAssignedStaffRawName(order),
         _shippingFee: Number(order.shippingFee || 0),
-        _carrierShippingFee: Number(order.shipment?.shippingFee || 0),
+        _carrierShippingFee: getShipmentCarrierShippingFee(order.shipment),
         _goodsSubtotal: getOrderGoodsSubtotal(order),
         _productDiscount: getOrderProductDiscount(order),
         _goodsAfterDiscount: getOrderGoodsAfterDiscount(order),
