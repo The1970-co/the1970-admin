@@ -46,9 +46,13 @@ export default function MobileLoginPage() {
 
       await saveMobileSession(token, user);
 
-      // Dùng hard reload để WebView/Next guard đọc lại token mới ngay lập tức.
-      // Token được lưu vào native iOS Preferences nên tắt/mở app vẫn giữ đăng nhập.
-      window.location.replace("/mobile");
+      // Đánh dấu rõ đây là login từ app mobile để nếu có guard/login web chen vào
+      // thì vẫn bị kéo ngược về mobile, không rơi sang /control.
+      localStorage.setItem("the1970_login_from", "mobile");
+      localStorage.setItem("the1970_force_mobile", "1");
+
+      // Dùng full production URL để Capacitor WebView reload thẳng vào mobile shell.
+      window.location.replace("https://operations.the1970.co/mobile");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
     } finally {

@@ -123,6 +123,8 @@ export default function LoginPage() {
     if (typeof window !== "undefined") {
       localStorage.setItem("token", token);
       localStorage.setItem("accessToken", token);
+      localStorage.setItem("the1970_access_token", token);
+      document.cookie = `the1970_mobile_token=${encodeURIComponent(token)}; path=/; max-age=${60 * 60 * 24 * 90}; secure; samesite=lax`;
       localStorage.setItem("currentUser", JSON.stringify(user));
       localStorage.setItem("the1970_current_user", JSON.stringify(user));
       window.dispatchEvent(new Event("the1970:auth-changed"));
@@ -153,19 +155,19 @@ export default function LoginPage() {
       return (
         window.location.pathname.startsWith("/mobile") ||
         next.startsWith("/mobile") ||
+        document.referrer.includes("/mobile") ||
         referrerPath.startsWith("/mobile") ||
-        localStorage.getItem("the1970_login_from") === "mobile"
+        localStorage.getItem("the1970_login_from") === "mobile" ||
+        localStorage.getItem("the1970_force_mobile") === "1"
       );
     };
 
     const goToMobile = isMobileLoginContext();
 
-    if (typeof window !== "undefined") {
+    if (goToMobile && typeof window !== "undefined") {
       localStorage.removeItem("the1970_login_from");
-    }
-
-    if (goToMobile) {
-      router.replace("/mobile/home");
+      localStorage.removeItem("the1970_force_mobile");
+      window.location.replace("https://operations.the1970.co/mobile");
       return;
     }
 
