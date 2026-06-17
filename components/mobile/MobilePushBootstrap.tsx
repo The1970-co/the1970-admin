@@ -1,26 +1,39 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { getMobileToken } from "@/lib/mobile-auth-token";
 import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
-function getAuthToken() {
-  if (typeof window === "undefined") return "";
+function rememberDebug(message: string, extra?: unknown) {
+  if (typeof window === "undefined") return;
 
-  return (
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("the1970_access_token") ||
-    ""
-  );
+  try {
+    const line = `[${new Date().toISOString()}] ${message}${
+      extra ? ` ${JSON.stringify(extra)}` : ""
+    }`;
+    console.info("[MobilePush]", message, extra || "");
+    localStorage.setItem("the1970_mobile_push_debug", line);
+  } catch {
+    // ignore debug storage errors
+  }
 }
 
 async function savePushToken(token: string) {
-  const accessToken = getAuthToken();
-  if (!accessToken || !token) return;
+  if (!token) {
+    rememberDebug("skip register: empty APNs token");
+    return;
+  }
 
-  await fetch(`${API_BASE}/mobile/push/register`, {
+  const accessToken = await getMobileToken();
+
+  if (!accessToken) {
+    rememberDebug("skip register: missing auth token");
+    return;
+  }
+
+  const response = await fetch(`${API_BASE}/mobile/push/register`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -31,33 +44,52 @@ async function savePushToken(token: string) {
       provider: "apns",
       token,
     }),
-  }).catch((error) => {
-    console.error("[MobilePush] save token failed", error);
   });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    rememberDebug("register failed", {
+      status: response.status,
+      body: text.slice(0, 300),
+    });
+    return;
+  }
+
+  rememberDebug("register success", { status: response.status });
 }
 
 export default function MobilePushBootstrap() {
+  const startedRef = useRef(false);
+
   useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
+    if (startedRef.current) return;
+    startedRef.current = true;
+
+    if (!Capacitor.isNativePlatform()) {
+      rememberDebug("skip: not native platform");
+      return;
+    }
 
     let active = true;
 
     async function setupPush() {
       try {
-        const permission = await PushNotifications.requestPermissions();
-        if (!active || permission.receive !== "granted") return;
+        rememberDebug("setup start", { platform: Capacitor.getPlatform() });
 
         await PushNotifications.removeAllListeners();
 
-        PushNotifications.addListener("registration", async (token) => {
+        await PushNotifications.addListener("registration", async (token) => {
+          rememberDebug("registration token received", {
+            tokenLength: token.value?.length || 0,
+          });
           await savePushToken(token.value);
         });
 
-        PushNotifications.addListener("registrationError", (error) => {
-          console.error("[MobilePush] registration error", error);
+        await PushNotifications.addListener("registrationError", (error) => {
+          rememberDebug("registration error", error);
         });
 
-        PushNotifications.addListener("pushNotificationActionPerformed", (event) => {
+        await PushNotifications.addListener("pushNotificationActionPerformed", (event) => {
           const data = event.notification.data || {};
           const orderId = data.orderId || data.order_id;
 
@@ -69,9 +101,15 @@ export default function MobilePushBootstrap() {
           window.location.href = "/mobile";
         });
 
+        const permission = await PushNotifications.requestPermissions();
+        rememberDebug("permission result", permission);
+
+        if (!active || permission.receive !== "granted") return;
+
         await PushNotifications.register();
+        rememberDebug("register called");
       } catch (error) {
-        console.error("[MobilePush] setup failed", error);
+        rememberDebug("setup failed", error);
       }
     }
 
