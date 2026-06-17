@@ -9,6 +9,7 @@ import {
 
 type QuickRange = "today" | "yesterday" | "7d" | "30d" | "custom";
 type ActionScope = "selected" | "filtered" | "all";
+type ShippingFeePayer = "SHOP" | "CUSTOMER";
 
 function currency(n: number) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
@@ -168,6 +169,8 @@ export default function LocalDeliveryReconciliationPage() {
   const [paymentRows, setPaymentRows] = useState<
     Array<{ paymentSourceId: string; amount: string }>
   >([{ paymentSourceId: "", amount: "" }]);
+  const [shippingFeePayer, setShippingFeePayer] = useState<ShippingFeePayer>("SHOP");
+  const [shippingFeeAmount, setShippingFeeAmount] = useState("");
 
   const applyQuickRange = (range: QuickRange) => {
     setQuickRange(range);
@@ -470,8 +473,11 @@ export default function LocalDeliveryReconciliationPage() {
     }
 
     const amount = Number(row.reconciliationCodAmount || row.needCollectAmount || 0);
+    const fee = Number(row.reconciliationShippingFee || row.shippingFee || 0);
     setPayingRow(row);
     setPaymentRows([{ paymentSourceId, amount: amount ? String(amount) : "" }]);
+    setShippingFeePayer("SHOP");
+    setShippingFeeAmount(fee ? String(fee) : "");
   };
 
   const submitReconciliationPayment = async () => {
@@ -491,9 +497,15 @@ export default function LocalDeliveryReconciliationPage() {
 
     const total = cleanRows.reduce((sum, row) => sum + row.amount, 0);
     const target = Number(payingRow.reconciliationCodAmount || payingRow.needCollectAmount || 0);
+    const shippingFeeValue = Number(String(shippingFeeAmount || "0").replace(/[^\d]/g, "") || 0);
 
     if (target > 0 && total > target) {
       alert("Tổng tiền thanh toán không được lớn hơn COD cần thu.");
+      return;
+    }
+
+    if (shippingFeePayer === "SHOP" && shippingFeeValue > 0 && !cleanRows[0]?.paymentSourceId) {
+      alert("Chọn nguồn tiền để ghi phiếu chi phí ship.");
       return;
     }
 
@@ -506,6 +518,11 @@ export default function LocalDeliveryReconciliationPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             payments: cleanRows,
+            shippingFeeSettlement: {
+              payer: shippingFeePayer,
+              amount: shippingFeeValue,
+              paymentSourceId: cleanRows[0]?.paymentSourceId || undefined,
+            },
             note: note || undefined,
             paidById: currentUser?.id,
             paidByName: currentUser?.name || currentUser?.fullName,
@@ -1016,6 +1033,9 @@ export default function LocalDeliveryReconciliationPage() {
                   <p className="mt-1 text-sm text-neutral-500">
                     COD cần thu: <b className="text-neutral-950">{currency(payingRow.reconciliationCodAmount || payingRow.needCollectAmount || 0)}</b>
                   </p>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Phí ship cần chi: <b className="text-neutral-950">{currency(Number(shippingFeeAmount || payingRow.reconciliationShippingFee || payingRow.shippingFee || 0))}</b>
+                  </p>
                 </div>
                 <button
                   onClick={() => setPayingRow(null)}
@@ -1023,6 +1043,36 @@ export default function LocalDeliveryReconciliationPage() {
                 >
                   Đóng
                 </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">Tiền ship</label>
+                    <input
+                      value={shippingFeeAmount}
+                      onChange={(e) => setShippingFeeAmount(e.target.value.replace(/[^\d]/g, ""))}
+                      placeholder="Phí ship"
+                      className="mt-2 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-950"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">Người trả phí ship</label>
+                    <select
+                      value={shippingFeePayer}
+                      onChange={(e) => setShippingFeePayer(e.target.value as ShippingFeePayer)}
+                      className="mt-2 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-950"
+                    >
+                      <option value="SHOP">Shop trả · tự tạo phiếu chi</option>
+                      <option value="CUSTOMER">Khách trả · không tạo phiếu chi</option>
+                    </select>
+                    <p className="mt-2 text-xs text-neutral-500">
+                      {shippingFeePayer === "SHOP"
+                        ? "Khi xác nhận: tiền COD vào phiếu thu, phí ship vào phiếu chi cùng nguồn tiền."
+                        : "Khi xác nhận: chỉ ghi phiếu thu COD, không sinh phiếu chi phí ship."}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="mt-5 space-y-3">
