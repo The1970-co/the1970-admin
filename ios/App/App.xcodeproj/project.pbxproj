@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		10072BCE2FE2799400B3563B /* BarcodeScannerNativePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10072BCD2FE2799400B3563B /* BarcodeScannerNativePlugin.swift */; };
+		10072BD22FE27F4600B3563B /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10072BD12FE27F4600B3563B /* MainViewController.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -23,6 +24,7 @@
 		10072BCC2FE2799400B3563B /* BarcodeScannerNativePlugin.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BarcodeScannerNativePlugin.m; sourceTree = "<group>"; };
 		10072BCD2FE2799400B3563B /* BarcodeScannerNativePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeScannerNativePlugin.swift; sourceTree = "<group>"; };
 		10072BD02FE279B700B3563B /* App-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "App-Bridging-Header.h"; sourceTree = "<group>"; };
+		10072BD12FE27F4600B3563B /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -68,6 +70,7 @@
 			isa = PBXGroup;
 			children = (
 				10072BCB2FE1877700B3563B /* App.entitlements */,
+				10072BD12FE27F4600B3563B /* MainViewController.swift */,
 				10072BCC2FE2799400B3563B /* BarcodeScannerNativePlugin.m */,
 				10072BCD2FE2799400B3563B /* BarcodeScannerNativePlugin.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -165,6 +168,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				10072BD22FE27F4600B3563B /* MainViewController.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				10072BCE2FE2799400B3563B /* BarcodeScannerNativePlugin.swift in Sources */,
 			);
@@ -321,7 +325,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "The 1970";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -352,7 +356,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "The 1970";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
