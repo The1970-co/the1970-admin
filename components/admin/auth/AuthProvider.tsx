@@ -23,7 +23,11 @@ import {
   setActiveBranchIdToStorage,
 } from "@/lib/current-user";
 import { uniquePermissions } from "@/lib/permissions";
-import { clearMobileSession, getMobileToken, restoreMobileUser } from "@/lib/mobile-auth-token";
+import {
+  clearMobileSession,
+  getMobileToken,
+  restoreMobileUser,
+} from "@/lib/mobile-auth-token";
 
 type AuthContextValue = {
   user: any;
@@ -39,6 +43,10 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+// Web admin vẫn có thể tự kiểm tra lại auth định kỳ.
+// Mobile app thì không tự đá logout khi để lâu / quay lại foreground,
+// vì iOS WebView có thể làm localStorage/cookie refresh chậm hơn native Preferences.
 const AUTH_RELOAD_TTL_MS = 2 * 60 * 1000;
 const AUTH_EVENT_DEBOUNCE_MS = 1500;
 
@@ -78,6 +86,15 @@ function extractUser(data: any) {
   return data?.user || data?.staff || data?.data?.user || data || null;
 }
 
+async function restoreMobileSessionIfNeeded() {
+  const token = getTokenFromStorage() || (await getMobileToken());
+
+  if (!token) return { token: "", user: null };
+
+  const user = getCurrentUserFromStorage() || (await restoreMobileUser());
+  return { token, user };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -109,7 +126,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return cachedUser;
   }, []);
 
+  const keepCurrentSession = useCallback((nextUser?: any) => {
+    const cachedUser = nextUser || getCurrentUserFromStorage();
+
+    setUser(cachedUser || null);
+    setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
+    setChecked(true);
+    setLoading(false);
+    setError("");
+
+    return cachedUser;
+  }, []);
+
   const logout = useCallback(async () => {
+    const currentPath = pathnameRef.current;
+
     try {
       await apiJson("/auth/logout", {
         method: "POST",
@@ -120,16 +151,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ignore logout API errors
     } finally {
       clearCurrentUserFromStorage();
-      await clearMobileSession();
+      if (isMobilePath(currentPath)) {
+        await clearMobileSession();
+      }
       setUser(null);
       setChecked(true);
       setLoading(false);
-      router.replace(loginPathFor(pathnameRef.current));
+      router.replace(loginPathFor(currentPath));
     }
   }, [router]);
 
   const reloadAuth = useCallback(async () => {
     const currentPath = pathnameRef.current;
+    const isMobile = isMobilePath(currentPath);
 
     if (reloadPromiseRef.current) {
       return reloadPromiseRef.current;
@@ -143,13 +177,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let token = getTokenFromStorage();
 
-    // Trong app iOS/Capacitor, localStorage có thể rỗng sau khi WebView reload.
-    // Khôi phục lại token/user từ native Preferences trước khi quyết định đá về login.
-    if (!token && isMobilePath(currentPath)) {
-      token = await getMobileToken();
-      if (token) {
-        await restoreMobileUser();
-      }
+    if (!token && isMobile) {
+      const restored = await restoreMobileSessionIfNeeded();
+      token = restored.token;
+      if (restored.user) keepCurrentSession(restored.user);
     }
 
     if (!token) {
@@ -164,10 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const cachedUser = getCurrentUserFromStorage();
 
     if (cachedUser) {
-      setUser(cachedUser);
-      setActiveBranchIdState(getActiveBranchIdFromStorage(cachedUser));
-      setChecked(true);
-      setLoading(false);
+      keepCurrentSession(cachedUser);
     } else {
       setLoading(true);
     }
@@ -190,47 +218,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (nextToken) setTokenToStorage(nextToken);
         setCurrentUserToStorage(nextUser);
-        setUser(nextUser);
-        setActiveBranchIdState(getActiveBranchIdFromStorage(nextUser));
-        setChecked(true);
-        setLoading(false);
-        setError("");
+        keepCurrentSession(nextUser);
         lastReloadAtRef.current = Date.now();
 
         return nextUser;
       } catch (err) {
-        /**
-         * Không xoá cache ngay khi /auth/me timeout hoặc đang refresh.
-         * Các API vận hành vẫn được JwtGuard xác thực bằng access token/refresh flow.
-         * Chỉ đá login khi không còn cả token lẫn cached user.
-         */
-        const latestToken = getTokenFromStorage();
-        const latestUser = getCurrentUserFromStorage();
+        const latestToken =
+          getTokenFromStorage() || (isMobile ? await getMobileToken() : "");
+        const latestUser =
+          getCurrentUserFromStorage() || (isMobile ? await restoreMobileUser() : null);
+
         const errorMessage =
           err instanceof Error
             ? err.message
             : "Không xác thực được phiên đăng nhập.";
+
         const isAuthExpired =
           errorMessage.includes("hết hạn") ||
           errorMessage.includes("Unauthorized") ||
           errorMessage.includes("401");
 
+        /**
+         * Mobile rule:
+         * - Không tự logout chỉ vì /auth/me fail khi app để lâu rồi mở lại.
+         * - Native Preferences là nguồn giữ phiên chính.
+         * - Chỉ về /mobile/login khi không còn cả token lẫn cached user.
+         */
+        if (isMobile && latestToken && latestUser) {
+          keepCurrentSession(latestUser);
+          lastReloadAtRef.current = Date.now();
+          return latestUser;
+        }
+
+        /**
+         * Web rule cũ:
+         * - Timeout/network fail thì giữ cache.
+         * - 401 thật thì logout.
+         */
         if (latestToken && latestUser && !isAuthExpired) {
-          setUser(latestUser);
-          setActiveBranchIdState(getActiveBranchIdFromStorage(latestUser));
-          setChecked(true);
-          setLoading(false);
-          setError("");
+          keepCurrentSession(latestUser);
           return latestUser;
         }
 
         setUser(null);
         setError(errorMessage);
-
         clearCurrentUserFromStorage();
-        if (isMobilePath(currentPath)) {
-          await clearMobileSession();
-        }
         router.replace(loginPathFor(currentPath));
         return null;
       } finally {
@@ -242,41 +274,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     reloadPromiseRef.current = run;
     return run;
-  }, [router, syncCachedUser]);
+  }, [keepCurrentSession, router, syncCachedUser]);
 
   useEffect(() => {
-    const cachedUser = syncCachedUser();
+    let cancelled = false;
 
-    if (isPublicPath(pathname)) return;
+    const boot = async () => {
+      const cachedUser = syncCachedUser();
 
-    const token = getTokenFromStorage();
-    if (!token) {
-      if (isMobilePath(pathname)) {
-        void (async () => {
-          const nativeToken = await getMobileToken();
+      if (isPublicPath(pathname)) return;
 
-          if (nativeToken) {
-            await restoreMobileUser();
-            syncCachedUser();
-            void reloadAuth();
-            return;
-          }
+      let token = getTokenFromStorage();
 
-          router.replace("/mobile/login");
-        })();
+      if (!token && isMobilePath(pathname)) {
+        const restored = await restoreMobileSessionIfNeeded();
+        if (cancelled) return;
+
+        token = restored.token;
+        if (restored.user) {
+          keepCurrentSession(restored.user);
+        }
+      }
+
+      if (!token) {
+        router.replace(loginPathFor(pathname));
         return;
       }
 
-      router.replace("/login");
-      return;
-    }
+      const isMobile = isMobilePath(pathname);
+      const isStale = Date.now() - lastReloadAtRef.current > AUTH_RELOAD_TTL_MS;
 
-    const isStale = Date.now() - lastReloadAtRef.current > AUTH_RELOAD_TTL_MS;
+      // Mobile có token/cache rồi thì không tự reload auth theo TTL nữa.
+      if (isMobile && (cachedUser || getCurrentUserFromStorage())) {
+        setChecked(true);
+        setLoading(false);
+        setError("");
+        return;
+      }
 
-    if (!cachedUser || isStale) {
-      void reloadAuth();
-    }
-  }, [pathname, reloadAuth, router, syncCachedUser]);
+      if (!cachedUser || isStale) {
+        void reloadAuth();
+      }
+    };
+
+    void boot();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, keepCurrentSession, reloadAuth, router, syncCachedUser]);
 
   useEffect(() => {
     const handleAuthChanged = () => {
@@ -285,6 +331,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now();
       if (now - lastAuthEventAtRef.current < AUTH_EVENT_DEBOUNCE_MS) return;
       lastAuthEventAtRef.current = now;
+
+      // Mobile không tự gọi /auth/me khi chỉ có storage/auth event.
+      if (isMobilePath(pathnameRef.current)) return;
 
       if (Date.now() - lastReloadAtRef.current > AUTH_RELOAD_TTL_MS) {
         void reloadAuth();
@@ -304,6 +353,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isPublicPath(pathname)) return;
 
     const reloadIfStale = () => {
+      const currentPath = pathnameRef.current;
+
+      // Chặn lỗi mobile để lâu bị đá logout khi app quay lại foreground.
+      if (isMobilePath(currentPath)) {
+        void restoreMobileSessionIfNeeded().then((restored) => {
+          if (restored.user) keepCurrentSession(restored.user);
+        });
+        return;
+      }
+
       const token = getTokenFromStorage();
       if (!token) return;
       if (Date.now() - lastReloadAtRef.current < AUTH_RELOAD_TTL_MS) return;
@@ -335,7 +394,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         handlePermissionInvalidated,
       );
     };
-  }, [logout, pathname, reloadAuth]);
+  }, [keepCurrentSession, logout, pathname, reloadAuth]);
 
   const setActiveBranchId = useCallback(
     (branchId: string) => {
