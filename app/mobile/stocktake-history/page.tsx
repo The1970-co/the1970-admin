@@ -7,6 +7,7 @@ import {
   getCurrentUserFromStorage,
 } from "@/lib/current-user";
 import {
+  CheckCircle2,
   ChevronRight,
   ClipboardList,
   Filter,
@@ -227,6 +228,11 @@ function scanCount(item: StocktakeSession) {
   return Number(item._count?.scanEvents || item.scanEventCount || item.scanCount || 0);
 }
 
+function canApplySession(item: StocktakeSession) {
+  const status = String(item.status || "").toUpperCase();
+  return status === "FINISHED" && !item.appliedAt;
+}
+
 
 async function loadBranchesForMobileHistory(user: any): Promise<BranchItem[]> {
   const fromUser = branchRowsFromUser(user);
@@ -263,6 +269,7 @@ export default function MobileStocktakeHistoryPage() {
   const [sessions, setSessions] = useState<StocktakeSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [applyingId, setApplyingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -338,6 +345,40 @@ export default function MobileStocktakeHistoryPage() {
   const handleSearch = () => {
     setPage(1);
     setQuery(queryDraft.trim());
+  };
+
+  const handleApplySession = async (item: StocktakeSession) => {
+    if (!canApplySession(item)) return;
+    const mismatch = Number(item.kpi?.mismatchSku ?? item.kpi?.discrepancySku ?? 0);
+    const diffQty = Number(item.kpi?.totalDiffQty || 0);
+    const ok = window.confirm(
+      `Chốt tồn cho phiên ${item.name || item.id}?\n\nSKU lệch: ${formatNumber(mismatch)}\nTổng lệch SL: ${diffText(diffQty)}\n\nHệ thống sẽ ghi nhận điều chỉnh tồn kho theo chênh lệch kiểm.`,
+    );
+    if (!ok) return;
+
+    try {
+      setApplyingId(item.id);
+      setMessage("");
+      await apiJson(`/stocktake-sessions/${item.id}/apply`, {
+        method: "PATCH",
+        redirectOnUnauthorized: true,
+        timeoutMs: 60000,
+        body: JSON.stringify({ note: item.note || "Chốt tồn từ mobile lịch sử kiểm kho" }),
+      } as any);
+
+      setSessions((current) =>
+        current.map((row) =>
+          row.id === item.id
+            ? { ...row, status: "APPLIED", appliedAt: new Date().toISOString() }
+            : row,
+        ),
+      );
+      setMessage("Đã chốt tồn phiên kiểm kho.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không chốt tồn được phiên kiểm kho.");
+    } finally {
+      setApplyingId(null);
+    }
   };
 
   return (
@@ -500,6 +541,22 @@ export default function MobileStocktakeHistoryPage() {
                   </span>
                   <ChevronRight className="h-5 w-5 shrink-0 text-neutral-400" />
                 </div>
+
+                {canApplySession(item) ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void handleApplySession(item);
+                    }}
+                    disabled={applyingId === item.id}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    {applyingId === item.id ? "Đang chốt tồn..." : "Chốt tồn kho"}
+                  </button>
+                ) : null}
 
                 {totalSku > 0 || Number(kpi.totalDiffQty || 0) !== 0 ? (
                   <p className="mt-2 text-xs font-bold text-neutral-400">

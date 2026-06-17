@@ -26,7 +26,9 @@ import { uniquePermissions } from "@/lib/permissions";
 import {
   clearMobileSession,
   getMobileToken,
+  getMobileRefreshToken,
   restoreMobileUser,
+  saveMobileSession,
 } from "@/lib/mobile-auth-token";
 
 type AuthContextValue = {
@@ -86,13 +88,49 @@ function extractUser(data: any) {
   return data?.user || data?.staff || data?.data?.user || data || null;
 }
 
+function extractRefreshToken(data: any) {
+  return (
+    data?.refreshToken ||
+    data?.refresh_token ||
+    data?.data?.refreshToken ||
+    data?.data?.refresh_token ||
+    ""
+  );
+}
+
 async function restoreMobileSessionIfNeeded() {
-  const token = getTokenFromStorage() || (await getMobileToken());
+  let token = getTokenFromStorage() || (await getMobileToken());
+  let user = getCurrentUserFromStorage() || (await restoreMobileUser());
 
-  if (!token) return { token: "", user: null };
+  if (token) return { token, user };
 
-  const user = getCurrentUserFromStorage() || (await restoreMobileUser());
-  return { token, user };
+  const refreshToken = await getMobileRefreshToken();
+  if (!refreshToken) return { token: "", user };
+
+  try {
+    const data: any = await apiJson("/auth/refresh", {
+      method: "POST",
+      redirectOnUnauthorized: false,
+      skipRefresh: true,
+      timeoutMs: 10000,
+      body: JSON.stringify({ refreshToken }),
+    } as any);
+
+    token = extractToken(data);
+    user = extractUser(data) || user;
+    const nextRefreshToken = extractRefreshToken(data) || refreshToken;
+
+    if (token) {
+      setTokenToStorage(token);
+      if (user) setCurrentUserToStorage(user);
+      await saveMobileSession(token, user || undefined, nextRefreshToken);
+      return { token, user };
+    }
+  } catch (error) {
+    console.warn("[mobile-auth] restore by refresh failed", error);
+  }
+
+  return { token: "", user };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -376,6 +414,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     const handlePermissionInvalidated = () => {
+      // Mobile không tự logout vì event quyền/cookie stale từ WebView.
+      // Quyền sẽ được cập nhật ở lần login/refresh sau; chỉ logout khi user bấm đăng xuất.
+      if (isMobilePath(pathnameRef.current)) {
+        void restoreMobileSessionIfNeeded().then((restored) => {
+          if (restored.user) keepCurrentSession(restored.user);
+        });
+        return;
+      }
       void logout();
     };
 

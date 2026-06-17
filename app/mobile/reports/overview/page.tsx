@@ -123,6 +123,24 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: "30d", label: "30 ngày" },
 ];
 
+function rangeText(range: RangeKey) {
+  if (range === "today") return "hôm nay";
+  if (range === "yesterday") return "hôm qua";
+  if (range === "7d") return "7 ngày";
+  if (range === "10d") return "10 ngày";
+  if (range === "30d") return "30 ngày";
+  return "khoảng lọc";
+}
+
+function rangeTitle(range: RangeKey) {
+  if (range === "today") return "Hiệu quả hôm nay";
+  if (range === "yesterday") return "Hiệu quả hôm qua";
+  if (range === "7d") return "Hiệu quả 7 ngày";
+  if (range === "10d") return "Hiệu quả 10 ngày";
+  if (range === "30d") return "Hiệu quả 30 ngày";
+  return "Hiệu quả";
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
   return apiJson<T>(path, {
     redirectOnUnauthorized: true,
@@ -358,6 +376,58 @@ function KPI({ label, value, sub, icon, dark = false }: { label: string; value: 
   );
 }
 
+function CreatedOrdersCard({
+  label,
+  total,
+  amount,
+  posOrders,
+  posAmount,
+  facebookOrders,
+  facebookAmount,
+}: {
+  label: string;
+  total: number;
+  amount: number;
+  posOrders: number;
+  posAmount: number;
+  facebookOrders: number;
+  facebookAmount: number;
+}) {
+  return (
+    <section className="rounded-[1.75rem] bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-base font-semibold text-neutral-500">{label}</div>
+          <div className="mt-4 text-4xl font-black tracking-tight">{count(total)}</div>
+        </div>
+        <div className="rounded-2xl border border-neutral-950 px-4 py-3 text-right">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">Tổng tiền tạo</div>
+          <div className="mt-1 text-lg font-black">{compact(amount)}</div>
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-[1.5rem] bg-neutral-950 p-3 text-white">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.22em] text-white/55">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" /> POS
+            </div>
+            <div className="mt-3 text-3xl font-black">{count(posOrders)}</div>
+            <div className="mt-1 text-sm font-semibold text-white/55">{compact(posAmount)}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.22em] text-white/55">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" /> Facebook
+            </div>
+            <div className="mt-3 text-3xl font-black">{count(facebookOrders)}</div>
+            <div className="mt-1 text-sm font-semibold text-white/55">{compact(facebookAmount)}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TinyBar({ value, max }: { value: number; max: number }) {
   const width = Math.max(8, Math.min(100, Math.round((Math.abs(value) / Math.max(max, 1)) * 100)));
   return (
@@ -486,6 +556,10 @@ export default function MobileReportOverviewPage() {
       successOrders,
       createdOrders: createdTotal,
       createdAmount,
+      posCreatedOrders: row.posCreatedOrders,
+      facebookCreatedOrders: row.facebookCreatedOrders,
+      posCreatedAmount: row.posCreatedAmount,
+      facebookCreatedAmount: row.facebookCreatedAmount,
       estimatedRevenue,
       adsCost: row.ads,
       operatingCost,
@@ -495,6 +569,10 @@ export default function MobileReportOverviewPage() {
     };
   }, [rows, warRoom, range, operatingCost]);
 
+  const currentRangeText = rangeText(range);
+  const currentRangeTitle = rangeTitle(range);
+  const createdOrdersLabel = `Đơn tạo ${currentRangeText}`;
+  const adsSubtitle = model.roas ? `ROAS ${model.roas.toFixed(2)}x` : `Chi phí ads ${currentRangeText}`;
   const maxRevenue = Math.max(...rows.map((row) => row.revenue), model.revenue, 1);
 
   return (
@@ -502,7 +580,7 @@ export default function MobileReportOverviewPage() {
       <div className="mx-auto min-h-screen w-full max-w-md px-4 pb-28 pt-5">
         <header className="mb-5 flex items-center justify-between">
           <Link href="/mobile" className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"><ArrowLeft className="h-5 w-5" /></Link>
-          <div className="text-center"><div className="text-xs font-black uppercase tracking-[0.24em] text-neutral-400">War Room</div><div className="text-lg font-black">Hiệu quả hôm nay</div></div>
+          <div className="text-center"><div className="text-xs font-black uppercase tracking-[0.24em] text-neutral-400">War Room</div><div className="text-lg font-black">{currentRangeTitle}</div></div>
           <button type="button" onClick={() => void load(true)} className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"><RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} /></button>
         </header>
 
@@ -518,10 +596,20 @@ export default function MobileReportOverviewPage() {
           <div className="rounded-[1.75rem] border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
         ) : (
           <div className="space-y-4">
-            <KPI dark label="Revenue success" value={compact(model.revenue)} sub={`Doanh thu thành công · ${count(model.successOrders)} đơn`} icon={<Wallet className="h-5 w-5" />} />
+            <KPI dark label="Revenue success" value={compact(model.revenue)} sub={`Doanh thu thành công ${currentRangeText} · ${count(model.successOrders)} đơn`} icon={<Wallet className="h-5 w-5" />} />
+
+            <CreatedOrdersCard
+              label={createdOrdersLabel}
+              total={model.createdOrders}
+              amount={model.createdAmount}
+              posOrders={model.posCreatedOrders}
+              posAmount={model.posCreatedAmount}
+              facebookOrders={model.facebookCreatedOrders}
+              facebookAmount={model.facebookCreatedAmount}
+            />
+
             <div className="grid grid-cols-2 gap-3">
-              <KPI label="Đơn tạo hôm nay" value={count(model.createdOrders)} sub={`Tổng tiền tạo ${compact(model.createdAmount)}`} icon={<Truck className="h-5 w-5" />} />
-              <KPI label="Ads realtime" value={compact(model.adsCost)} sub={model.roas ? `ROAS ${model.roas.toFixed(2)}x` : "Chi phí ads hôm nay"} icon={<Megaphone className="h-5 w-5" />} />
+              <KPI label="Ads realtime" value={compact(model.adsCost)} sub={adsSubtitle} icon={<Megaphone className="h-5 w-5" />} />
               <KPI label="Lợi nhuận thực tế" value={compact(model.actualProfit)} sub="Theo đơn đã giao" icon={<ShoppingBag className="h-5 w-5" />} dark />
               <KPI label="Ước tính" value={compact(model.estimatedProfit)} sub="Theo đơn tạo - huỷ" icon={<ShoppingBag className="h-5 w-5" />} />
             </div>

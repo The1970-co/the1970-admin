@@ -86,7 +86,11 @@ async function refreshMobileAccessToken() {
           10000,
         );
 
-        if (!res.ok) return null;
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          console.warn("[mobile-auth] refresh rejected", res.status, text.slice(0, 300));
+          return null;
+        }
 
         const data = await res.json().catch(() => null);
         const token =
@@ -105,9 +109,11 @@ async function refreshMobileAccessToken() {
 
         if (!token) return null;
 
+        const cachedUser = user || (await mobileAuth.restoreMobileUser());
+
         setTokenToStorage(token);
-        if (user) setCurrentUserToStorage(user);
-        await mobileAuth.saveMobileSession(token, user || undefined, nextRefreshToken);
+        if (cachedUser) setCurrentUserToStorage(cachedUser);
+        await mobileAuth.saveMobileSession(token, cachedUser || undefined, nextRefreshToken);
 
         return token as string;
       } catch (error) {
@@ -152,6 +158,16 @@ async function refreshWebAccessToken() {
 
 async function refreshAccessToken(mobile: boolean) {
   return mobile ? refreshMobileAccessToken() : refreshWebAccessToken();
+}
+
+async function hasMobileRefreshToken() {
+  if (!isMobileRuntime()) return false;
+  try {
+    const mobileAuth = await import("@/lib/mobile-auth-token");
+    return Boolean(await mobileAuth.getMobileRefreshToken());
+  } catch {
+    return false;
+  }
 }
 
 function redirectToLogin(mobile: boolean) {
@@ -220,6 +236,12 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
   const newToken = await refreshAccessToken(mobile);
 
   if (!newToken) {
+    // Mobile: đừng đá thẳng về login khi refresh lỗi tạm thời sau 15 phút.
+    // Nếu còn refreshToken trong Preferences/localStorage thì giữ app ở màn hiện tại để user thử lại.
+    if (mobile && (await hasMobileRefreshToken())) {
+      throw new Error("Không làm mới được phiên đăng nhập. Vui lòng thử tải lại màn hình.");
+    }
+
     if (redirectOnUnauthorized) redirectToLogin(mobile);
     throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
   }
@@ -227,6 +249,10 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
   res = await makeRequest(newToken);
 
   if (res.status === 401) {
+    if (mobile && (await hasMobileRefreshToken())) {
+      throw new Error("Phiên mobile chưa xác thực được request sau khi refresh. Vui lòng thử lại.");
+    }
+
     if (redirectOnUnauthorized) redirectToLogin(mobile);
     throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
   }

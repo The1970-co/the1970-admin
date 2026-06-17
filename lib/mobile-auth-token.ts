@@ -92,13 +92,21 @@ export async function saveMobileSession(
 
   hydrateToken(token);
   hydrateRefreshToken(refreshToken || "");
-  hydrateUser(user || {});
+
+  // Khi refresh endpoint chỉ trả accessToken/refreshToken mà không trả user,
+  // không được ghi đè user cũ thành {} vì sẽ làm mất quyền/chi nhánh trên mobile.
+  if (user !== undefined && user !== null) {
+    hydrateUser(user);
+  }
+
   safeLocalStorageSet("the1970_login_from", "mobile");
   safeLocalStorageSet("the1970_force_mobile", "1");
 
   if (isNativeApp()) {
     await Preferences.set({ key: TOKEN_KEY, value: token });
-    await Preferences.set({ key: USER_KEY, value: JSON.stringify(user || {}) });
+    if (user !== undefined && user !== null) {
+      await Preferences.set({ key: USER_KEY, value: JSON.stringify(user) });
+    }
     if (refreshToken) {
       await Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken });
     }
