@@ -19,6 +19,43 @@ function isAuthPath(path: string) {
   return path === "/auth/me" || path === "/auth/refresh" || path === "/auth/logout";
 }
 
+function isMobileContext() {
+  if (typeof window === "undefined") return false;
+
+  const pathname = window.location.pathname || "";
+  if (pathname === "/mobile" || pathname.startsWith("/mobile/")) return true;
+
+  try {
+    return (
+      localStorage.getItem("the1970_login_from") === "mobile" ||
+      localStorage.getItem("the1970_force_mobile") === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function restoreNativeMobileSession() {
+  if (!isMobileContext()) return "";
+
+  try {
+    const mobileAuth = await import("@/lib/mobile-auth-token");
+    const token = await mobileAuth.getMobileToken();
+    await mobileAuth.restoreMobileUser();
+    return token || "";
+  } catch (error) {
+    console.warn("[API_MOBILE_SESSION_RESTORE_FAILED]", error);
+    return "";
+  }
+}
+
+async function getRequestToken() {
+  const token = getTokenFromStorage();
+  if (token) return token;
+
+  return restoreNativeMobileSession();
+}
+
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs?: number) {
   if (!timeoutMs || timeoutMs <= 0 || typeof AbortController === "undefined") {
     return fetch(input, init);
@@ -66,8 +103,24 @@ async function refreshAccessToken() {
 }
 
 function redirectToLogin() {
+  if (typeof window === "undefined") return;
+
+  if (isMobileContext()) {
+    // Mobile chỉ về login mobile, không clear native Preferences ở đây.
+    // Nếu clear cả native session thì app sẽ bị logout sau khi để lâu dù vẫn còn token/user lưu bền.
+    window.location.href = "/mobile/login";
+    return;
+  }
+
+  // Web admin giữ nguyên hành vi cũ.
   clearCurrentUserFromStorage();
-  if (typeof window !== "undefined") window.location.href = "/login";
+  window.location.href = "/login";
+}
+
+function unauthorizedMessage() {
+  return isMobileContext()
+    ? "Phiên mobile cần xác thực lại, vui lòng đăng nhập lại."
+    : "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.";
 }
 
 export async function apiFetch(path: string, options: RequestOptions = {}) {
@@ -114,22 +167,25 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
     );
   };
 
-  let res = await makeRequest(getTokenFromStorage());
+  let requestToken = auth ? await getRequestToken() : null;
+  let res = await makeRequest(requestToken);
 
   if (res.status !== 401 || !auth || skipRefresh) return res;
 
-  const newToken = await refreshAccessToken();
+  const refreshedToken = await refreshAccessToken();
+  const nativeMobileToken = refreshedToken ? "" : await restoreNativeMobileSession();
+  const retryToken = refreshedToken || nativeMobileToken || "";
 
-  if (!newToken) {
+  if (!retryToken) {
     if (redirectOnUnauthorized) redirectToLogin();
-    throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
+    throw new Error(unauthorizedMessage());
   }
 
-  res = await makeRequest(newToken);
+  res = await makeRequest(retryToken);
 
   if (res.status === 401) {
     if (redirectOnUnauthorized) redirectToLogin();
-    throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
+    throw new Error(unauthorizedMessage());
   }
 
   return res;

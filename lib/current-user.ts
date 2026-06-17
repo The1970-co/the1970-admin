@@ -1,7 +1,8 @@
 const TOKEN_KEY = "token";
 const ACCESS_TOKEN_KEY = "accessToken";
 const ACTIVE_BRANCH_KEY = "the1970_active_branch_id";
-const USER_KEYS = ["currentUser", "the1970_current_user", "user"];
+const MOBILE_ACCESS_TOKEN_KEY = "the1970_access_token";
+const USER_KEYS = ["currentUser", "the1970_current_user", "the1970_mobile_user", "user"];
 
 function safeJsonParse(value: string | null) {
   if (!value) return null;
@@ -150,6 +151,7 @@ export function getTokenFromStorage() {
   return (
     localStorage.getItem(TOKEN_KEY) ||
     localStorage.getItem(ACCESS_TOKEN_KEY) ||
+    localStorage.getItem(MOBILE_ACCESS_TOKEN_KEY) ||
     null
   );
 }
@@ -160,6 +162,7 @@ export function setTokenToStorage(token: string) {
 
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  localStorage.setItem(MOBILE_ACCESS_TOKEN_KEY, token);
 }
 
 export function clearCurrentUserFromStorage() {
@@ -167,6 +170,7 @@ export function clearCurrentUserFromStorage() {
 
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(MOBILE_ACCESS_TOKEN_KEY);
   localStorage.removeItem("user");
   localStorage.removeItem("currentUser");
   localStorage.removeItem("the1970_current_user");
