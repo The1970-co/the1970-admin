@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { AlertTriangle, BarChart3, Boxes, ClipboardCheck, ShoppingBag, WalletCards } from "lucide-react";
+import { BarChart3, Boxes, ClipboardCheck, ShoppingBag, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -13,7 +13,9 @@ function rolesOf(user: any) {
     user?.role,
     user?.roleCode,
     user?.staffRole,
-  ].map((item) => String(item || "").toLowerCase()).filter(Boolean);
+  ]
+    .map((item) => String(item || "").toLowerCase())
+    .filter(Boolean);
 }
 
 function isOwnerOrAdmin(user: any) {
@@ -29,20 +31,84 @@ function isStocktakeOnlyUser(user: any) {
   if (!user || isOwnerOrAdmin(user)) return false;
   const keys = getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId);
   if (keys.includes("*")) return false;
-  const hasStocktake = hasAny(keys, ["stocktake.view", "stocktake.scan", "stocktake.create", "stocktake.apply", "stocktake.edit", "inventory.stocktake"]);
-  const hasOtherMobileArea = hasAny(keys, ["dashboard.view", "reports.view", "orders.view", "orders.create", "finance.view", "cash_voucher.view", "products.view", "inventory.view", "marketing.view"]);
+
+  const hasStocktake = hasAny(keys, [
+    "stocktake.view",
+    "stocktake.scan",
+    "stocktake.create",
+    "stocktake.apply",
+    "stocktake.edit",
+    "inventory.stocktake",
+  ]);
+
+  const hasOtherMobileArea = hasAny(keys, [
+    "dashboard.view",
+    "reports.view",
+    "orders.view",
+    "orders.create",
+    "finance.view",
+    "cash_voucher.view",
+    "products.view",
+    "inventory.view",
+    "marketing.view",
+  ]);
+
   const roleText = rolesOf(user).join(" ");
-  return (hasStocktake && !hasOtherMobileArea) || roleText.includes("stocktake") || roleText.includes("kiemkho") || roleText.includes("kiểm kho");
+  return (
+    (hasStocktake && !hasOtherMobileArea) ||
+    roleText.includes("stocktake") ||
+    roleText.includes("kiemkho") ||
+    roleText.includes("kiểm kho")
+  );
 }
 
-function EntryCard({ href, eyebrow, title, description, icon, accent = "black" }: { href: string; eyebrow: string; title: string; description: string; icon: React.ReactNode; accent?: "black" | "gold" | "green" }) {
-  const accentClass = accent === "gold" ? "bg-amber-100 text-amber-800" : accent === "green" ? "bg-emerald-100 text-emerald-800" : "bg-neutral-950 text-white";
+function MainCard({
+  href,
+  eyebrow,
+  title,
+  description,
+  icon,
+}: {
+  href: string;
+  eyebrow: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+}) {
   return (
-    <Link href={href} className="rounded-[2rem] bg-white p-5 shadow-sm transition active:scale-[0.985]">
-      <div className={`inline-flex rounded-2xl p-3 ${accentClass}`}>{icon}</div>
-      <p className="mt-5 text-xs font-bold uppercase tracking-[0.22em] text-neutral-400">{eyebrow}</p>
-      <h2 className="mt-2 text-xl font-black text-neutral-950">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-neutral-500">{description}</p>
+    <Link
+      href={href}
+      className="block rounded-[2rem] bg-neutral-950 p-6 text-white shadow-sm transition active:scale-[0.985]"
+    >
+      <div className="inline-flex rounded-2xl bg-white/10 p-3 text-white">{icon}</div>
+      <p className="mt-6 text-xs font-black uppercase tracking-[0.24em] text-white/40">{eyebrow}</p>
+      <h2 className="mt-2 text-2xl font-black leading-tight">{title}</h2>
+      <p className="mt-3 text-sm leading-6 text-white/60">{description}</p>
+    </Link>
+  );
+}
+
+function SmallCard({
+  href,
+  title,
+  description,
+  icon,
+}: {
+  href: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex min-h-[150px] flex-col justify-between rounded-[1.75rem] bg-neutral-950 p-5 text-white shadow-sm transition active:scale-[0.985]"
+    >
+      <div className="text-white">{icon}</div>
+      <div>
+        <div className="text-lg font-black leading-tight">{title}</div>
+        <div className="mt-2 text-xs leading-5 text-white/55">{description}</div>
+      </div>
     </Link>
   );
 }
@@ -68,11 +134,11 @@ export default function MobileEntryPage() {
             <h1 className="mt-4 text-3xl font-black">Kiểm kho mobile</h1>
             <p className="mt-3 text-sm leading-6 text-white/60">Tài khoản này chỉ dùng cho kiểm kho trên điện thoại.</p>
           </div>
-          <Link href="/mobile/stocktake" className="mt-5 flex items-center gap-4 rounded-[2rem] bg-white p-5 shadow-sm active:scale-[0.985]">
-            <div className="rounded-2xl bg-emerald-100 p-3 text-emerald-800"><ClipboardCheck className="h-6 w-6" /></div>
+          <Link href="/mobile/stocktake" className="mt-5 flex items-center gap-4 rounded-[2rem] bg-neutral-950 p-5 text-white shadow-sm active:scale-[0.985]">
+            <div className="rounded-2xl bg-white/10 p-3 text-white"><ClipboardCheck className="h-6 w-6" /></div>
             <div>
               <p className="text-lg font-black">Vào kiểm kho</p>
-              <p className="mt-1 text-sm text-neutral-500">Quét mã vạch, nhập số lượng, tiếp tục phiên đang mở.</p>
+              <p className="mt-1 text-sm text-white/55">Quét mã vạch, nhập số lượng, tiếp tục phiên đang mở.</p>
             </div>
           </Link>
         </div>
@@ -89,17 +155,46 @@ export default function MobileEntryPage() {
           <h1 className="mt-4 text-3xl font-bold leading-tight text-neutral-950">Bạn muốn xem gì hôm nay?</h1>
           <p className="mt-3 text-sm leading-6 text-neutral-500">Chọn một khu vực để xem nhanh tình hình vận hành, doanh thu, đơn hàng và kiểm kho.</p>
         </div>
-        <div className="flex flex-1 flex-col justify-center gap-5">
-          <EntryCard href="/mobile/stocktake" eyebrow="Kiểm kho" title="Quét kiểm kho" description="Dùng camera iPhone hoặc nhập SKU để ghi số lượng kiểm ngay tại kho." icon={<ClipboardCheck className="h-6 w-6" />} accent="green" />
-          <EntryCard href="/mobile/reports/overview" eyebrow="Báo cáo vận hành" title="Tổng quan báo cáo" description="Đơn hàng đã tạo, doanh thu, sản phẩm bán chạy và cảnh báo tồn kho." icon={<BarChart3 className="h-6 w-6" />} />
-          <EntryCard href="/mobile/finance/daily" eyebrow="Dòng tiền hôm nay" title="Tổng quan nguồn tiền" description="Tiền mặt, chuyển khoản, COD pending, phiếu thu chi và số dư cuối ngày." icon={<WalletCards className="h-6 w-6" />} accent="gold" />
+
+        <div className="flex flex-col gap-5">
+          <MainCard
+            href="/mobile/reports/overview"
+            eyebrow="Báo cáo vận hành"
+            title="Tổng quan báo cáo"
+            description="Đơn hàng đã tạo, doanh thu, sản phẩm bán chạy và cảnh báo tồn kho."
+            icon={<BarChart3 className="h-7 w-7" />}
+          />
+
+          <MainCard
+            href="/mobile/finance/daily"
+            eyebrow="Dòng tiền hôm nay"
+            title="Tổng quan nguồn tiền"
+            description="Tiền mặt, chuyển khoản, COD pending, phiếu thu chi và số dư cuối ngày."
+            icon={<WalletCards className="h-7 w-7" />}
+          />
+
           <div className="grid grid-cols-2 gap-4">
-            <Link href="/mobile/orders" className="rounded-[1.75rem] bg-white p-5 shadow-sm active:scale-[0.985] transition"><ShoppingBag className="h-6 w-6 text-neutral-950" /><div className="mt-4 text-base font-bold">Đơn hàng</div><div className="mt-1 text-xs leading-5 text-neutral-500">Xem đơn mới, chi tiết đơn.</div></Link>
-            <Link href="/mobile/products" className="rounded-[1.75rem] bg-white p-5 shadow-sm active:scale-[0.985] transition"><Boxes className="h-6 w-6 text-neutral-950" /><div className="mt-4 text-base font-bold">Sản phẩm</div><div className="mt-1 text-xs leading-5 text-neutral-500">Tra SKU, tồn kho, biến thể.</div></Link>
+            <SmallCard
+              href="/mobile/orders"
+              title="Đơn hàng"
+              description="Xem đơn mới, chi tiết đơn."
+              icon={<ShoppingBag className="h-7 w-7" />}
+            />
+            <SmallCard
+              href="/mobile/products"
+              title="Sản phẩm"
+              description="Tra SKU, tồn kho, biến thể."
+              icon={<Boxes className="h-7 w-7" />}
+            />
+            <SmallCard
+              href="/mobile/stocktake"
+              title="Kiểm kho"
+              description="Quét mã vạch, nhập số lượng."
+              icon={<ClipboardCheck className="h-7 w-7" />}
+            />
           </div>
-          <Link href="/mobile/reports/overview#alerts" className="rounded-[1.75rem] bg-white p-5 shadow-sm active:scale-[0.985] transition"><AlertTriangle className="h-6 w-6 text-amber-600" /><div className="mt-4 text-base font-bold">Cảnh báo</div><div className="mt-1 text-xs leading-5 text-neutral-500">SKU thiếu, đơn cần xử lý.</div></Link>
         </div>
-        <div className="mt-8 rounded-3xl border border-neutral-200 bg-white p-4 text-center text-xs leading-5 text-neutral-500 shadow-sm">Gợi ý: nhân viên kiểm kho dùng tab Kiểm để scan trực tiếp bằng điện thoại.</div>
+
         <MobileBottomNav />
       </div>
     </div>

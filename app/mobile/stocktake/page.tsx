@@ -2,6 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
+import { getBranches, type BranchItem } from "@/lib/products-api";
 import {
   getActiveBranchIdFromStorage,
   getCurrentUserFromStorage,
@@ -137,9 +138,53 @@ function clearResumeState() {
   window.localStorage.removeItem(STORAGE_BRANCH_ID);
 }
 
+function cleanBranchId(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (["ALL", "all", "null", "undefined", "*"] .includes(text)) return "";
+  return text;
+}
+
+function branchIdsFromUser(user: any) {
+  const ids = new Set<string>();
+  const add = (value: any) => {
+    const id = cleanBranchId(value);
+    if (id) ids.add(id);
+  };
+
+  add(user?.activeBranchId);
+  add(user?.workingBranchId);
+  add(user?.branchId);
+
+  if (Array.isArray(user?.branchIds)) user.branchIds.forEach(add);
+  if (Array.isArray(user?.branchOptions)) {
+    user.branchOptions.forEach((row: any) => add(row?.branchId || row?.id));
+  }
+  if (Array.isArray(user?.branchRoles)) {
+    user.branchRoles.forEach((row: any) => add(row?.branchId || row?.branch?.id));
+  }
+  if (Array.isArray(user?.branchPermissions)) {
+    user.branchPermissions.forEach((row: any) => add(row?.branchId || row?.branch?.id));
+  }
+
+  return Array.from(ids);
+}
+
+function pickDefaultBranchId(user: any, savedBranchId?: string | null) {
+  const saved = cleanBranchId(savedBranchId);
+  if (saved) return saved;
+
+  const active = cleanBranchId(getActiveBranchIdFromStorage(user));
+  if (active) return active;
+
+  const ids = branchIdsFromUser(user);
+  return ids[0] || "";
+}
+
 export default function MobileStocktakePage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [branchId, setBranchId] = useState("");
+  const [branches, setBranches] = useState<BranchItem[]>([]);
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const [worker, setWorker] = useState<RealtimeWorker | null>(null);
   const [summary, setSummary] = useState<SummaryItem[]>([]);
@@ -163,9 +208,11 @@ export default function MobileStocktakePage() {
   const detectTimerRef = useRef<number | null>(null);
 
   const branchLabel = useMemo(() => {
-    if (!currentUser) return branchId || "—";
-    return getCurrentUserBranchLabel(currentUser, branchId) || branchId || "—";
-  }, [branchId, currentUser]);
+    const fromList = branches.find((branch) => String(branch.id) === String(branchId));
+    if (fromList?.name) return fromList.name;
+    if (!currentUser) return branchId || "Chưa chọn";
+    return getCurrentUserBranchLabel(currentUser, branchId) || branchId || "Chưa chọn";
+  }, [branchId, branches, currentUser]);
 
   const closed = isClosed(session?.status);
   const paused = String(session?.status || "").toUpperCase() === "PAUSED";
@@ -228,9 +275,35 @@ export default function MobileStocktakePage() {
   useEffect(() => {
     const user = getCurrentUserFromStorage();
     setCurrentUser(user);
-    const activeBranchId = getActiveBranchIdFromStorage(user);
+
     const savedBranchId = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_BRANCH_ID) : "";
-    setBranchId(savedBranchId || activeBranchId || user?.branchId || "");
+    const initialBranchId = pickDefaultBranchId(user, savedBranchId);
+    if (initialBranchId) setBranchId(initialBranchId);
+
+    let alive = true;
+    (async () => {
+      try {
+        const list = await getBranches();
+        if (!alive) return;
+        const safeList = Array.isArray(list) ? list : [];
+        setBranches(safeList);
+
+        setBranchId((current) => {
+          const cleanCurrent = cleanBranchId(current);
+          if (cleanCurrent) return cleanCurrent;
+
+          const allowed = branchIdsFromUser(user);
+          const firstAllowed = allowed.find((id) => safeList.some((branch) => String(branch.id) === String(id)));
+          return firstAllowed || cleanBranchId(safeList[0]?.id) || "";
+        });
+      } catch {
+        // Không chặn màn kiểm kho nếu API danh sách chi nhánh lỗi.
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -287,7 +360,7 @@ export default function MobileStocktakePage() {
 
   async function loadActiveSession() {
     if (!branchId) {
-      setMessage("Tài khoản chưa có chi nhánh để kiểm kho.");
+      setMessage("Chưa chọn được chi nhánh kiểm kho. Chọn chi nhánh ở ô bên dưới rồi thử lại.");
       return;
     }
 
@@ -322,7 +395,7 @@ export default function MobileStocktakePage() {
 
   async function createSession() {
     if (!branchId) {
-      setMessage("Tài khoản chưa có chi nhánh để tạo phiên kiểm kho.");
+      setMessage("Chưa chọn được chi nhánh để tạo phiên kiểm kho. Chọn chi nhánh ở ô bên dưới rồi thử lại.");
       return;
     }
 
@@ -358,7 +431,7 @@ export default function MobileStocktakePage() {
 
   async function scanCode(rawCode?: string, deltaInput?: number) {
     const nextCode = String(rawCode ?? code).trim();
-   const delta = Number((deltaInput ?? qtyDelta) || 1);
+    const delta = Number((deltaInput ?? qtyDelta) || 1);
     if (!nextCode) {
       setMessage("Chưa có mã SKU/mã vạch để scan.");
       inputRef.current?.focus();
@@ -565,6 +638,33 @@ export default function MobileStocktakePage() {
       {!session?.id ? (
         <section className="mt-4 rounded-[2rem] border border-stone-200 bg-white p-4 shadow-sm">
           <div className="space-y-3">
+            {branches.length ? (
+              <>
+                <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Chi nhánh kiểm</label>
+                <select
+                  value={branchId}
+                  onChange={(e) => {
+                    const next = cleanBranchId(e.target.value);
+                    setBranchId(next);
+                    saveResumeState({ branchId: next });
+                  }}
+                  className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-neutral-950"
+                >
+                  <option value="">Chọn chi nhánh</option>
+                  {branches
+                    .filter((branch) => {
+                      const allowed = branchIdsFromUser(currentUser);
+                      return !allowed.length || allowed.includes(String(branch.id));
+                    })
+                    .map((branch) => (
+                      <option key={branch.id} value={String(branch.id)}>
+                        {branch.name || branch.id}
+                      </option>
+                    ))}
+                </select>
+              </>
+            ) : null}
+
             <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Tên phiên</label>
             <input
               value={sessionName}
