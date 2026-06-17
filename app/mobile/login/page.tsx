@@ -3,8 +3,8 @@
 import { API_BASE } from "@/lib/api-base";
 import { saveMobileSession } from "@/lib/mobile-auth-token";
 import { useState } from "react";
-export default function MobileLoginPage() {
 
+export default function MobileLoginPage() {
   const [username, setUsername] = useState("ADMIN");
   const [password, setPassword] = useState("123456");
   const [loading, setLoading] = useState(false);
@@ -34,24 +34,35 @@ export default function MobileLoginPage() {
       }
 
       if (data?.needsSecondPassword) {
-        throw new Error("Tài khoản này đang bật bảo mật lớp 2. Vui lòng đăng nhập trên bản web hoặc tắt bảo mật lớp 2 cho tài khoản mobile.");
+        throw new Error(
+          "Tài khoản này đang bật bảo mật lớp 2. Vui lòng đăng nhập trên bản web hoặc tắt bảo mật lớp 2 cho tài khoản mobile.",
+        );
       }
 
-      const token = data?.token || data?.accessToken || data?.access_token;
+      const token =
+        data?.token ||
+        data?.accessToken ||
+        data?.access_token ||
+        data?.data?.token ||
+        data?.data?.accessToken ||
+        "";
+      const refreshToken =
+        data?.refreshToken ||
+        data?.refresh_token ||
+        data?.data?.refreshToken ||
+        data?.data?.refresh_token ||
+        "";
       const user = data?.user || data?.staff || data?.data?.user || {};
 
       if (!token) {
         throw new Error("Không nhận được token");
       }
 
-      await saveMobileSession(token, user);
+      await saveMobileSession(token, user, refreshToken);
 
-      // Đánh dấu rõ đây là login từ app mobile để nếu có guard/login web chen vào
-      // thì vẫn bị kéo ngược về mobile, không rơi sang /control.
       localStorage.setItem("the1970_login_from", "mobile");
       localStorage.setItem("the1970_force_mobile", "1");
 
-      // Dùng full production URL để Capacitor WebView reload thẳng vào mobile shell.
       window.location.replace("https://operations.the1970.co/mobile");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
@@ -71,7 +82,7 @@ export default function MobileLoginPage() {
             Operations Mobile
           </h1>
           <p className="mt-2 text-sm text-neutral-500">
-            Đăng nhập để xem báo cáo, tồn kho và cảnh báo vận hành.
+            Đăng nhập để kiểm kho và theo dõi vận hành mobile.
           </p>
         </div>
 

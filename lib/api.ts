@@ -4,6 +4,7 @@ import {
   setTokenToStorage,
   clearCurrentUserFromStorage,
   getWorkingBranchId,
+  setCurrentUserToStorage,
 } from "@/lib/current-user";
 
 type RequestOptions = RequestInit & {
@@ -14,15 +15,16 @@ type RequestOptions = RequestInit & {
 };
 
 let refreshPromise: Promise<string | null> | null = null;
+let mobileRefreshPromise: Promise<string | null> | null = null;
 
 function isAuthPath(path: string) {
   return path === "/auth/me" || path === "/auth/refresh" || path === "/auth/logout";
 }
 
-function isMobileContext() {
+function isMobileRuntime() {
   if (typeof window === "undefined") return false;
 
-  const pathname = window.location.pathname || "";
+  const pathname = window.location?.pathname || "";
   if (pathname === "/mobile" || pathname.startsWith("/mobile/")) return true;
 
   try {
@@ -33,27 +35,6 @@ function isMobileContext() {
   } catch {
     return false;
   }
-}
-
-async function restoreNativeMobileSession() {
-  if (!isMobileContext()) return "";
-
-  try {
-    const mobileAuth = await import("@/lib/mobile-auth-token");
-    const token = await mobileAuth.getMobileToken();
-    await mobileAuth.restoreMobileUser();
-    return token || "";
-  } catch (error) {
-    console.warn("[API_MOBILE_SESSION_RESTORE_FAILED]", error);
-    return "";
-  }
-}
-
-async function getRequestToken() {
-  const token = getTokenFromStorage();
-  if (token) return token;
-
-  return restoreNativeMobileSession();
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs?: number) {
@@ -74,7 +55,75 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   }
 }
 
-async function refreshAccessToken() {
+async function getMobileAccessToken() {
+  try {
+    const mod = await import("@/lib/mobile-auth-token");
+    return await mod.getMobileToken();
+  } catch {
+    return "";
+  }
+}
+
+async function refreshMobileAccessToken() {
+  if (!mobileRefreshPromise) {
+    mobileRefreshPromise = (async () => {
+      try {
+        const mobileAuth = await import("@/lib/mobile-auth-token");
+        const refreshToken = await mobileAuth.getMobileRefreshToken();
+        if (!refreshToken) return null;
+
+        const res = await fetchWithTimeout(
+          `${API_BASE}/auth/refresh`,
+          {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: {
+              "Content-Type": "application/json",
+              "x-mobile-app": "1",
+            },
+            body: JSON.stringify({ refreshToken }),
+          },
+          10000,
+        );
+
+        if (!res.ok) return null;
+
+        const data = await res.json().catch(() => null);
+        const token =
+          data?.accessToken ||
+          data?.token ||
+          data?.data?.accessToken ||
+          data?.data?.token ||
+          "";
+        const nextRefreshToken =
+          data?.refreshToken ||
+          data?.refresh_token ||
+          data?.data?.refreshToken ||
+          data?.data?.refresh_token ||
+          refreshToken;
+        const user = data?.user || data?.staff || data?.data?.user || null;
+
+        if (!token) return null;
+
+        setTokenToStorage(token);
+        if (user) setCurrentUserToStorage(user);
+        await mobileAuth.saveMobileSession(token, user || undefined, nextRefreshToken);
+
+        return token as string;
+      } catch (error) {
+        console.warn("[mobile-auth] refresh failed", error);
+        return null;
+      } finally {
+        mobileRefreshPromise = null;
+      }
+    })();
+  }
+
+  return mobileRefreshPromise;
+}
+
+async function refreshWebAccessToken() {
   if (!refreshPromise) {
     refreshPromise = fetchWithTimeout(
       `${API_BASE}/auth/refresh`,
@@ -102,25 +151,21 @@ async function refreshAccessToken() {
   return refreshPromise;
 }
 
-function redirectToLogin() {
-  if (typeof window === "undefined") return;
+async function refreshAccessToken(mobile: boolean) {
+  return mobile ? refreshMobileAccessToken() : refreshWebAccessToken();
+}
 
-  if (isMobileContext()) {
-    // Mobile chỉ về login mobile, không clear native Preferences ở đây.
-    // Nếu clear cả native session thì app sẽ bị logout sau khi để lâu dù vẫn còn token/user lưu bền.
-    window.location.href = "/mobile/login";
+function redirectToLogin(mobile: boolean) {
+  if (mobile) {
+    // Mobile không xoá native Preferences ở api wrapper.
+    // Nếu refresh thật sự fail, chỉ đưa về login mobile, tránh rơi sang /login web.
+    clearCurrentUserFromStorage();
+    if (typeof window !== "undefined") window.location.href = "/mobile/login";
     return;
   }
 
-  // Web admin giữ nguyên hành vi cũ.
   clearCurrentUserFromStorage();
-  window.location.href = "/login";
-}
-
-function unauthorizedMessage() {
-  return isMobileContext()
-    ? "Phiên mobile cần xác thực lại, vui lòng đăng nhập lại."
-    : "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.";
+  if (typeof window !== "undefined") window.location.href = "/login";
 }
 
 export async function apiFetch(path: string, options: RequestOptions = {}) {
@@ -133,12 +178,15 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
     ...rest
   } = options;
 
+  const mobile = isMobileRuntime();
+
   const makeRequest = async (token?: string | null) => {
     const finalHeaders: Record<string, string> = {
       ...(headers as Record<string, string>),
     };
 
     if (auth && token) finalHeaders.Authorization = `Bearer ${token}`;
+    if (mobile) finalHeaders["x-mobile-app"] = "1";
 
     const activeBranchId = getWorkingBranchId();
     if (auth && activeBranchId && !finalHeaders["x-active-branch-id"]) {
@@ -167,25 +215,23 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
     );
   };
 
-  let requestToken = auth ? await getRequestToken() : null;
-  let res = await makeRequest(requestToken);
+  const initialToken = getTokenFromStorage() || (mobile ? await getMobileAccessToken() : "");
+  let res = await makeRequest(initialToken);
 
   if (res.status !== 401 || !auth || skipRefresh) return res;
 
-  const refreshedToken = await refreshAccessToken();
-  const nativeMobileToken = refreshedToken ? "" : await restoreNativeMobileSession();
-  const retryToken = refreshedToken || nativeMobileToken || "";
+  const newToken = await refreshAccessToken(mobile);
 
-  if (!retryToken) {
-    if (redirectOnUnauthorized) redirectToLogin();
-    throw new Error(unauthorizedMessage());
+  if (!newToken) {
+    if (redirectOnUnauthorized) redirectToLogin(mobile);
+    throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
   }
 
-  res = await makeRequest(retryToken);
+  res = await makeRequest(newToken);
 
   if (res.status === 401) {
-    if (redirectOnUnauthorized) redirectToLogin();
-    throw new Error(unauthorizedMessage());
+    if (redirectOnUnauthorized) redirectToLogin(mobile);
+    throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
   }
 
   return res;

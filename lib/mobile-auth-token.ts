@@ -2,6 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 
 const TOKEN_KEY = "the1970_mobile_token";
+const REFRESH_TOKEN_KEY = "the1970_mobile_refresh_token";
 const USER_KEY = "the1970_mobile_user";
 
 function safeLocalStorageSet(key: string, value: string) {
@@ -64,6 +65,15 @@ function hydrateToken(token: string) {
   setCookie(TOKEN_KEY, token, 60 * 60 * 24 * 90);
 }
 
+function hydrateRefreshToken(refreshToken: string) {
+  if (!refreshToken) return;
+
+  safeLocalStorageSet("refreshToken", refreshToken);
+  safeLocalStorageSet("the1970_refresh_token", refreshToken);
+  safeLocalStorageSet("the1970_mobile_refresh_token", refreshToken);
+  setCookie(REFRESH_TOKEN_KEY, refreshToken, 60 * 60 * 24 * 90);
+}
+
 function hydrateUser(user: unknown) {
   if (!user) return;
 
@@ -73,16 +83,25 @@ function hydrateUser(user: unknown) {
   safeLocalStorageSet("the1970_mobile_user", text);
 }
 
-export async function saveMobileSession(token: string, user?: unknown) {
+export async function saveMobileSession(
+  token: string,
+  user?: unknown,
+  refreshToken?: string,
+) {
   if (!token) return;
 
   hydrateToken(token);
+  hydrateRefreshToken(refreshToken || "");
   hydrateUser(user || {});
   safeLocalStorageSet("the1970_login_from", "mobile");
+  safeLocalStorageSet("the1970_force_mobile", "1");
 
   if (isNativeApp()) {
     await Preferences.set({ key: TOKEN_KEY, value: token });
     await Preferences.set({ key: USER_KEY, value: JSON.stringify(user || {}) });
+    if (refreshToken) {
+      await Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken });
+    }
   }
 
   if (typeof window !== "undefined") {
@@ -105,6 +124,23 @@ export async function getMobileToken() {
 
   if (token) hydrateToken(token);
   return token;
+}
+
+export async function getMobileRefreshToken() {
+  let refreshToken =
+    safeLocalStorageGet("refreshToken") ||
+    safeLocalStorageGet("the1970_refresh_token") ||
+    safeLocalStorageGet("the1970_mobile_refresh_token") ||
+    getCookie(REFRESH_TOKEN_KEY) ||
+    "";
+
+  if (!refreshToken && isNativeApp()) {
+    const result = await Preferences.get({ key: REFRESH_TOKEN_KEY });
+    refreshToken = result.value || "";
+  }
+
+  if (refreshToken) hydrateRefreshToken(refreshToken);
+  return refreshToken;
 }
 
 export async function restoreMobileUser() {
@@ -135,14 +171,20 @@ export async function clearMobileSession() {
   safeLocalStorageRemove("token");
   safeLocalStorageRemove("accessToken");
   safeLocalStorageRemove("the1970_access_token");
+  safeLocalStorageRemove("refreshToken");
+  safeLocalStorageRemove("the1970_refresh_token");
+  safeLocalStorageRemove("the1970_mobile_refresh_token");
   safeLocalStorageRemove("currentUser");
   safeLocalStorageRemove("the1970_current_user");
   safeLocalStorageRemove("the1970_mobile_user");
   safeLocalStorageRemove("the1970_login_from");
+  safeLocalStorageRemove("the1970_force_mobile");
   setCookie(TOKEN_KEY, "", 0);
+  setCookie(REFRESH_TOKEN_KEY, "", 0);
 
   if (isNativeApp()) {
     await Preferences.remove({ key: TOKEN_KEY });
+    await Preferences.remove({ key: REFRESH_TOKEN_KEY });
     await Preferences.remove({ key: USER_KEY });
   }
 
