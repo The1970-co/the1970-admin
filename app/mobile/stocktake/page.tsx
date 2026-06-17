@@ -2,13 +2,29 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
-import type { BranchItem } from "@/lib/products-api";
+import {
+  getBranches,
+  getProducts,
+  type BranchItem,
+  type ProductItem,
+} from "@/lib/products-api";
 import {
   getActiveBranchIdFromStorage,
   getCurrentUserFromStorage,
   getCurrentUserBranchLabel,
 } from "@/lib/current-user";
-import { Camera, Minus, Pause, Play, Plus, RotateCcw, Search, Square, StopCircle, X } from "lucide-react";
+import {
+  Camera,
+  Minus,
+  Pause,
+  Play,
+  Plus,
+  RotateCcw,
+  Search,
+  Square,
+  StopCircle,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type RealtimeWorker = {
@@ -107,7 +123,9 @@ function statusText(status?: string | null) {
 }
 
 function isClosed(status?: string | null) {
-  return ["FINISHED", "APPLIED", "CANCELLED"].includes(String(status || "").toUpperCase());
+  return ["FINISHED", "APPLIED", "CANCELLED"].includes(
+    String(status || "").toUpperCase(),
+  );
 }
 
 function countedOf(row: SummaryItem) {
@@ -124,11 +142,18 @@ function diffOf(row: SummaryItem) {
   return countedOf(row) - systemOf(row);
 }
 
-function saveResumeState(input: { sessionId?: string | null; workerId?: string | null; branchId?: string | null }) {
+function saveResumeState(input: {
+  sessionId?: string | null;
+  workerId?: string | null;
+  branchId?: string | null;
+}) {
   if (typeof window === "undefined") return;
-  if (input.sessionId) window.localStorage.setItem(STORAGE_SESSION_ID, input.sessionId);
-  if (input.workerId) window.localStorage.setItem(STORAGE_WORKER_ID, input.workerId);
-  if (input.branchId) window.localStorage.setItem(STORAGE_BRANCH_ID, input.branchId);
+  if (input.sessionId)
+    window.localStorage.setItem(STORAGE_SESSION_ID, input.sessionId);
+  if (input.workerId)
+    window.localStorage.setItem(STORAGE_WORKER_ID, input.workerId);
+  if (input.branchId)
+    window.localStorage.setItem(STORAGE_BRANCH_ID, input.branchId);
 }
 
 function clearResumeState() {
@@ -141,7 +166,7 @@ function clearResumeState() {
 function cleanBranchId(value: any) {
   const text = String(value || "").trim();
   if (!text) return "";
-  if (["ALL", "all", "null", "undefined", "*"] .includes(text)) return "";
+  if (["ALL", "all", "null", "undefined", "*"].includes(text)) return "";
   return text;
 }
 
@@ -161,15 +186,18 @@ function branchIdsFromUser(user: any) {
     user.branchOptions.forEach((row: any) => add(row?.branchId || row?.id));
   }
   if (Array.isArray(user?.branchRoles)) {
-    user.branchRoles.forEach((row: any) => add(row?.branchId || row?.branch?.id));
+    user.branchRoles.forEach((row: any) =>
+      add(row?.branchId || row?.branch?.id),
+    );
   }
   if (Array.isArray(user?.branchPermissions)) {
-    user.branchPermissions.forEach((row: any) => add(row?.branchId || row?.branch?.id));
+    user.branchPermissions.forEach((row: any) =>
+      add(row?.branchId || row?.branch?.id),
+    );
   }
 
   return Array.from(ids);
 }
-
 
 function normalizeBranchRows(input: any): BranchItem[] {
   const raw = Array.isArray(input)
@@ -185,8 +213,12 @@ function normalizeBranchRows(input: any): BranchItem[] {
   const seen = new Set<string>();
   return raw
     .map((row: any) => {
-      const id = cleanBranchId(row?.id || row?.branchId || row?.code || row?.value);
-      const name = String(row?.name || row?.branchName || row?.label || row?.title || id || "").trim();
+      const id = cleanBranchId(
+        row?.id || row?.branchId || row?.code || row?.value,
+      );
+      const name = String(
+        row?.name || row?.branchName || row?.label || row?.title || id || "",
+      ).trim();
       return id ? ({ ...row, id, name: name || id } as BranchItem) : null;
     })
     .filter((row: BranchItem | null): row is BranchItem => {
@@ -201,36 +233,64 @@ function branchesFromUser(user: any): BranchItem[] {
 
   if (Array.isArray(user?.branchOptions)) rows.push(...user.branchOptions);
   if (Array.isArray(user?.branchRoles)) {
-    rows.push(...user.branchRoles.map((row: any) => ({
-      id: row?.branchId || row?.branch?.id,
-      name: row?.branchName || row?.branch?.name,
-    })));
+    rows.push(
+      ...user.branchRoles.map((row: any) => ({
+        id: row?.branchId || row?.branch?.id,
+        name: row?.branchName || row?.branch?.name,
+      })),
+    );
   }
   if (Array.isArray(user?.branchPermissions)) {
-    rows.push(...user.branchPermissions.map((row: any) => ({
-      id: row?.branchId || row?.branch?.id,
-      name: row?.branchName || row?.branch?.name,
-    })));
+    rows.push(
+      ...user.branchPermissions.map((row: any) => ({
+        id: row?.branchId || row?.branch?.id,
+        name: row?.branchName || row?.branch?.name,
+      })),
+    );
   }
   if (Array.isArray(user?.branchIds)) {
-    rows.push(...user.branchIds.map((id: any) => ({ id, name: getCurrentUserBranchLabel(user, String(id || "")) || String(id || "") })));
+    rows.push(
+      ...user.branchIds.map((id: any) => ({
+        id,
+        name:
+          getCurrentUserBranchLabel(user, String(id || "")) || String(id || ""),
+      })),
+    );
   }
-  if (user?.branchId) rows.push({ id: user.branchId, name: user.branchName || user.branch || user.branchId });
+  if (user?.branchId)
+    rows.push({
+      id: user.branchId,
+      name: user.branchName || user.branch || user.branchId,
+    });
 
   return normalizeBranchRows(rows);
 }
 
 async function loadBranchesForMobile(user: any): Promise<BranchItem[]> {
   const fromUser = branchesFromUser(user);
+
+  // Bản web kiểm kho lấy kho/chi nhánh qua getBranches() trong products-api.
+  // Mobile phải đi cùng đường này để không bị kẹt "All" hoặc thiếu kho khi tạo phiên.
+  try {
+    const rows = normalizeBranchRows(await getBranches());
+    if (rows.length) return rows;
+  } catch {
+    // fallback dưới
+  }
+
   const endpoints = [
-    "/products/branches",
     "/branches",
+    "/settings/branches",
+    "/warehouses",
     "/inventory/branches",
+    "/products/branches",
   ];
 
   for (const endpoint of endpoints) {
     try {
-      const data = await apiJson<any>(endpoint, { redirectOnUnauthorized: false });
+      const data = await apiJson<any>(endpoint, {
+        redirectOnUnauthorized: false,
+      });
       const rows = normalizeBranchRows(data);
       if (rows.length) return rows;
     } catch {
@@ -252,10 +312,25 @@ function pickDefaultBranchId(user: any, savedBranchId?: string | null) {
   return ids[0] || "";
 }
 
+function getVariantBranchStock(variant: any, selectedBranchId: string) {
+  const branchStocks =
+    variant?.branchStocks || variant?.inventoryByBranch || {};
+  return Number(branchStocks?.[selectedBranchId] ?? variant?.branchStock ?? 0);
+}
+
+function normalizeProductsResult(result: any): ProductItem[] {
+  if (Array.isArray(result)) return result as ProductItem[];
+  if (Array.isArray(result?.data)) return result.data as ProductItem[];
+  if (Array.isArray(result?.items)) return result.items as ProductItem[];
+  return [];
+}
+
 export default function MobileStocktakePage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [branchId, setBranchId] = useState("");
   const [branches, setBranches] = useState<BranchItem[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const [worker, setWorker] = useState<RealtimeWorker | null>(null);
   const [summary, setSummary] = useState<SummaryItem[]>([]);
@@ -279,10 +354,16 @@ export default function MobileStocktakePage() {
   const detectTimerRef = useRef<number | null>(null);
 
   const branchLabel = useMemo(() => {
-    const fromList = branches.find((branch) => String(branch.id) === String(branchId));
+    const fromList = branches.find(
+      (branch) => String(branch.id) === String(branchId),
+    );
     if (fromList?.name) return fromList.name;
     if (!currentUser) return branchId || "Chưa chọn";
-    return getCurrentUserBranchLabel(currentUser, branchId) || branchId || "Chưa chọn";
+    return (
+      getCurrentUserBranchLabel(currentUser, branchId) ||
+      branchId ||
+      "Chưa chọn"
+    );
   }, [branchId, branches, currentUser]);
 
   const closed = isClosed(session?.status);
@@ -296,6 +377,43 @@ export default function MobileStocktakePage() {
     });
     return rows.length ? rows : branches;
   }, [branches, currentUser]);
+
+  const allVariants = useMemo(
+    () =>
+      products.flatMap((product: any) =>
+        (product.variants || []).map((variant: any) => ({
+          ...variant,
+          productId: product.id,
+          productName: variant.productName || product.name,
+          branchStocks: variant.branchStocks || variant.inventoryByBranch || {},
+        })),
+      ),
+    [products],
+  );
+
+  const branchScopedVariantCount = useMemo(() => {
+    if (!branchId) return 0;
+    return allVariants.filter(
+      (variant: any) => getVariantBranchStock(variant, branchId) > 0,
+    ).length;
+  }, [allVariants, branchId]);
+
+  const findVariantByCode = useCallback(
+    (rawCode: string) => {
+      const q = String(rawCode || "")
+        .trim()
+        .toLowerCase();
+      if (!q) return null;
+      return (
+        allVariants.find((v: any) => String(v.sku || "").toLowerCase() === q) ||
+        allVariants.find(
+          (v: any) => String(v.barcode || "").toLowerCase() === q,
+        ) ||
+        null
+      );
+    },
+    [allVariants],
+  );
 
   const kpi = useMemo(() => {
     const total = summary.length;
@@ -316,7 +434,8 @@ export default function MobileStocktakePage() {
     if (!q) return rows.slice(0, 80);
     return rows
       .filter((row) => {
-        const text = `${row.sku || ""} ${row.productName || ""} ${row.barcode || ""}`.toLowerCase();
+        const text =
+          `${row.sku || ""} ${row.productName || ""} ${row.barcode || ""}`.toLowerCase();
         return text.includes(q);
       })
       .slice(0, 80);
@@ -324,38 +443,60 @@ export default function MobileStocktakePage() {
 
   const loadSummary = useCallback(async (sessionId: string) => {
     try {
-      const rows = await apiJson<SummaryItem[]>(`/stocktake-sessions/${sessionId}/summary`, {
-        redirectOnUnauthorized: false,
-      });
+      const rows = await apiJson<SummaryItem[]>(
+        `/stocktake-sessions/${sessionId}/summary`,
+        {
+          redirectOnUnauthorized: false,
+        },
+      );
       if (Array.isArray(rows)) setSummary(rows);
     } catch (error) {
       console.warn("[MobileStocktake] summary failed", error);
     }
   }, []);
 
-  const loadSession = useCallback(async (sessionId: string) => {
-    const data = await apiJson<RealtimeSession>(`/stocktake-sessions/${sessionId}`, {
-      redirectOnUnauthorized: false,
-    });
-    setSession(data);
-    setBranchId(data.branchId || branchId);
+  const loadSession = useCallback(
+    async (sessionId: string) => {
+      const data = await apiJson<RealtimeSession>(
+        `/stocktake-sessions/${sessionId}`,
+        {
+          redirectOnUnauthorized: false,
+        },
+      );
+      setSession(data);
+      setBranchId(data.branchId || branchId);
 
-    const savedWorkerId = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_WORKER_ID) : "";
-    const foundWorker = data.workers?.find((item) => item.id === savedWorkerId) || data.workers?.[0] || null;
-    if (foundWorker) {
-      setWorker(foundWorker);
-      saveResumeState({ sessionId: data.id, workerId: foundWorker.id, branchId: data.branchId });
-    }
+      const savedWorkerId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(STORAGE_WORKER_ID)
+          : "";
+      const foundWorker =
+        data.workers?.find((item) => item.id === savedWorkerId) ||
+        data.workers?.[0] ||
+        null;
+      if (foundWorker) {
+        setWorker(foundWorker);
+        saveResumeState({
+          sessionId: data.id,
+          workerId: foundWorker.id,
+          branchId: data.branchId,
+        });
+      }
 
-    await loadSummary(data.id);
-    return data;
-  }, [branchId, loadSummary]);
+      await loadSummary(data.id);
+      return data;
+    },
+    [branchId, loadSummary],
+  );
 
   useEffect(() => {
     const user = getCurrentUserFromStorage();
     setCurrentUser(user);
 
-    const savedBranchId = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_BRANCH_ID) : "";
+    const savedBranchId =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(STORAGE_BRANCH_ID)
+        : "";
     const userBranches = branchesFromUser(user);
     if (userBranches.length) setBranches(userBranches);
 
@@ -371,17 +512,53 @@ export default function MobileStocktakePage() {
 
       setBranchId((current) => {
         const cleanCurrent = cleanBranchId(current);
-        if (cleanCurrent && safeList.some((branch) => String(branch.id) === String(cleanCurrent))) {
+        if (
+          cleanCurrent &&
+          safeList.some((branch) => String(branch.id) === String(cleanCurrent))
+        ) {
           return cleanCurrent;
         }
 
         const saved = cleanBranchId(savedBranchId);
-        if (saved && safeList.some((branch) => String(branch.id) === String(saved))) return saved;
+        if (
+          saved &&
+          safeList.some((branch) => String(branch.id) === String(saved))
+        )
+          return saved;
 
         const allowed = branchIdsFromUser(user);
-        const firstAllowed = allowed.find((id) => safeList.some((branch) => String(branch.id) === String(id)));
+        const firstAllowed = allowed.find((id) =>
+          safeList.some((branch) => String(branch.id) === String(id)),
+        );
         return firstAllowed || cleanBranchId(safeList[0]?.id) || "";
       });
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        setLoadingProducts(true);
+        const result = await getProducts({ page: 1, limit: 1000 } as any);
+        if (!alive) return;
+        setProducts(normalizeProductsResult(result));
+      } catch (error) {
+        if (!alive) return;
+        setProducts([]);
+        setMessage(
+          error instanceof Error
+            ? `Không tải được dữ liệu kho: ${error.message}`
+            : "Không tải được dữ liệu kho.",
+        );
+      } finally {
+        if (alive) setLoadingProducts(false);
+      }
     })();
 
     return () => {
@@ -409,7 +586,11 @@ export default function MobileStocktakePage() {
       } catch (error) {
         if (!alive) return;
         clearResumeState();
-        setMessage(error instanceof Error ? error.message : "Không khôi phục được phiên cũ.");
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "Không khôi phục được phiên cũ.",
+        );
       }
     })();
 
@@ -427,34 +608,48 @@ export default function MobileStocktakePage() {
   }, [loadSummary, session?.id]);
 
   async function joinSession(targetSession: RealtimeSession) {
-    const joined = await apiJson<RealtimeWorker>(`/stocktake-sessions/${targetSession.id}/join`, {
-      method: "POST",
-      redirectOnUnauthorized: false,
-      body: JSON.stringify({
-        name: getDisplayName(currentUser),
-        zone,
-        deviceName: "iPhone mobile app",
-      }),
-    });
+    const joined = await apiJson<RealtimeWorker>(
+      `/stocktake-sessions/${targetSession.id}/join`,
+      {
+        method: "POST",
+        redirectOnUnauthorized: false,
+        body: JSON.stringify({
+          name: getDisplayName(currentUser),
+          zone,
+          deviceName: "iPhone mobile app",
+        }),
+      },
+    );
     setWorker(joined);
-    saveResumeState({ sessionId: targetSession.id, workerId: joined.id, branchId: targetSession.branchId });
+    saveResumeState({
+      sessionId: targetSession.id,
+      workerId: joined.id,
+      branchId: targetSession.branchId,
+    });
     return joined;
   }
 
   async function loadActiveSession() {
     if (!branchId) {
-      setMessage("Chưa chọn được chi nhánh kiểm kho. Chọn chi nhánh ở ô bên dưới rồi thử lại.");
+      setMessage(
+        "Chưa chọn được chi nhánh kiểm kho. Chọn chi nhánh ở ô bên dưới rồi thử lại.",
+      );
       return;
     }
 
     try {
       setLoading(true);
       setMessage("Đang tìm phiên kiểm đang mở...");
-      const active = await apiJson<RealtimeSession | null>(`/stocktake-sessions/active/current?branchId=${encodeURIComponent(branchId)}`, {
-        redirectOnUnauthorized: false,
-      });
+      const active = await apiJson<RealtimeSession | null>(
+        `/stocktake-sessions/active/current?branchId=${encodeURIComponent(branchId)}`,
+        {
+          redirectOnUnauthorized: false,
+        },
+      );
       if (!active?.id) {
-        setMessage("Chưa có phiên đang mở. Có thể tạo phiên mới trên điện thoại.");
+        setMessage(
+          "Chưa có phiên đang mở. Có thể tạo phiên mới trên điện thoại.",
+        );
         return;
       }
       setSession(active);
@@ -462,7 +657,11 @@ export default function MobileStocktakePage() {
       const existingWorker = active.workers?.[0] || null;
       if (existingWorker) {
         setWorker(existingWorker);
-        saveResumeState({ sessionId: active.id, workerId: existingWorker.id, branchId: active.branchId });
+        saveResumeState({
+          sessionId: active.id,
+          workerId: existingWorker.id,
+          branchId: active.branchId,
+        });
       } else {
         await joinSession(active);
       }
@@ -470,7 +669,11 @@ export default function MobileStocktakePage() {
       setMessage("Đã vào phiên kiểm đang mở.");
       window.setTimeout(() => inputRef.current?.focus(), 150);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không tải được phiên kiểm đang mở.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Không tải được phiên kiểm đang mở.",
+      );
     } finally {
       setLoading(false);
     }
@@ -478,13 +681,25 @@ export default function MobileStocktakePage() {
 
   async function createSession() {
     if (!branchId) {
-      setMessage("Chưa chọn được chi nhánh để tạo phiên kiểm kho. Chọn chi nhánh ở ô bên dưới rồi thử lại.");
+      setMessage(
+        "Chưa chọn được chi nhánh để tạo phiên kiểm kho. Chọn chi nhánh ở ô bên dưới rồi thử lại.",
+      );
       return;
     }
 
     try {
       setLoading(true);
-      setMessage("Đang tạo phiên kiểm kho mobile...");
+      if (loadingProducts) {
+        setMessage("Đang tải dữ liệu kho, chờ một chút rồi tạo phiên...");
+      } else if (!products.length) {
+        setMessage(
+          "Chưa tải được dữ liệu kho hàng. Vẫn tạo phiên trước, scan sẽ kiểm tra bằng backend.",
+        );
+      } else {
+        setMessage(
+          `Đang tạo phiên kiểm kho mobile · ${branchScopedVariantCount.toLocaleString("vi-VN")} SKU có tồn ở kho này...`,
+        );
+      }
       clearResumeState();
       const created = await apiJson<RealtimeSession>("/stocktake-sessions", {
         method: "POST",
@@ -506,7 +721,11 @@ export default function MobileStocktakePage() {
       setMessage("Đã tạo phiên. Đưa camera vào mã vạch hoặc nhập SKU để kiểm.");
       window.setTimeout(() => inputRef.current?.focus(), 150);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không tạo được phiên kiểm kho.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Không tạo được phiên kiểm kho.",
+      );
     } finally {
       setLoading(false);
     }
@@ -521,12 +740,32 @@ export default function MobileStocktakePage() {
       return;
     }
     if (!canScan || !session?.id || !worker?.id) {
-      setMessage(paused ? "Phiên đang tạm dừng." : closed ? "Phiên đã đóng." : "Cần tạo hoặc vào phiên kiểm trước.");
+      setMessage(
+        paused
+          ? "Phiên đang tạm dừng."
+          : closed
+            ? "Phiên đã đóng."
+            : "Cần tạo hoặc vào phiên kiểm trước.",
+      );
       return;
     }
 
     try {
       setScanning(true);
+
+      // Bản web kiểm kho tra SKU/barcode từ dữ liệu kho đã tải trước, rồi gửi SKU chuẩn lên backend.
+      // Mobile cũng làm vậy để tránh scan barcode lạ hoặc khác format làm backend không map được tồn kho.
+      const localVariant = findVariantByCode(nextCode);
+      const finalCode = localVariant?.sku || nextCode;
+
+      if (products.length && !localVariant) {
+        setMessage(
+          `Không tìm thấy SKU/barcode trong dữ liệu kho: ${nextCode}. Mở lại trang hoặc kiểm tra mã vạch.`,
+        );
+        window.setTimeout(() => inputRef.current?.focus(), 80);
+        return;
+      }
+
       const result = await apiJson<ScanResult>("/stocktake-sessions/scan", {
         method: "POST",
         redirectOnUnauthorized: false,
@@ -534,20 +773,23 @@ export default function MobileStocktakePage() {
           sessionId: session.id,
           workerId: worker.id,
           branchId: session.branchId || branchId,
-          code: nextCode,
+          code: finalCode,
           zone,
           qtyDelta: delta,
           note: "Scan từ app mobile",
         }),
       });
       setLastScan(result);
-      const scannedSku = result?.variant?.sku || result?.sku || nextCode;
+      const scannedSku =
+        result?.variant?.sku || result?.sku || localVariant?.sku || nextCode;
       setMessage(`Đã ghi ${delta > 0 ? "+" : ""}${delta} cho ${scannedSku}.`);
       setCode("");
       await loadSummary(session.id);
       window.setTimeout(() => inputRef.current?.focus(), 80);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không ghi được mã vừa scan.");
+      setMessage(
+        error instanceof Error ? error.message : "Không ghi được mã vừa scan.",
+      );
     } finally {
       setScanning(false);
     }
@@ -559,7 +801,10 @@ export default function MobileStocktakePage() {
 
   async function setRowCount(row: SummaryItem) {
     const current = countedOf(row);
-    const input = window.prompt(`Nhập số lượng thực tế cho ${row.sku}`, String(current));
+    const input = window.prompt(
+      `Nhập số lượng thực tế cho ${row.sku}`,
+      String(current),
+    );
     if (input === null) return;
     const target = Number(input);
     if (!Number.isFinite(target) || target < 0) {
@@ -578,14 +823,21 @@ export default function MobileStocktakePage() {
     if (!session?.id) return;
     try {
       setLoading(true);
-      await apiJson(`/stocktake-sessions/${session.id}/${paused ? "resume" : "pause"}`, {
-        method: "PATCH",
-        redirectOnUnauthorized: false,
-      });
+      await apiJson(
+        `/stocktake-sessions/${session.id}/${paused ? "resume" : "pause"}`,
+        {
+          method: "PATCH",
+          redirectOnUnauthorized: false,
+        },
+      );
       await loadSession(session.id);
-      setMessage(paused ? "Đã tiếp tục phiên kiểm." : "Đã tạm dừng phiên kiểm.");
+      setMessage(
+        paused ? "Đã tiếp tục phiên kiểm." : "Đã tạm dừng phiên kiểm.",
+      );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không đổi trạng thái phiên.");
+      setMessage(
+        error instanceof Error ? error.message : "Không đổi trạng thái phiên.",
+      );
     } finally {
       setLoading(false);
     }
@@ -593,7 +845,9 @@ export default function MobileStocktakePage() {
 
   async function finishCounting() {
     if (!session?.id) return;
-    const ok = window.confirm("Kết thúc phiên kiểm? Sau bước này nhân viên không scan thêm được, quản lý sẽ chốt/cân bằng tồn sau.");
+    const ok = window.confirm(
+      "Kết thúc phiên kiểm? Sau bước này nhân viên không scan thêm được, quản lý sẽ chốt/cân bằng tồn sau.",
+    );
     if (!ok) return;
     try {
       setLoading(true);
@@ -604,7 +858,11 @@ export default function MobileStocktakePage() {
       await loadSession(session.id);
       setMessage("Đã kết thúc phiên kiểm. Chờ quản lý kiểm tra và chốt tồn.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Không kết thúc được phiên kiểm.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Không kết thúc được phiên kiểm.",
+      );
     } finally {
       setLoading(false);
     }
@@ -626,7 +884,9 @@ export default function MobileStocktakePage() {
       return;
     }
     if (!window.BarcodeDetector) {
-      setCameraMessage("Máy này chưa hỗ trợ quét barcode trực tiếp trong WebView. Dùng ô nhập mã/SKU hoặc cài plugin native ở bước sau.");
+      setCameraMessage(
+        "Máy này chưa hỗ trợ quét barcode trực tiếp trong WebView. Dùng ô nhập mã/SKU hoặc cài plugin native ở bước sau.",
+      );
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -652,7 +912,9 @@ export default function MobileStocktakePage() {
         await video.play().catch(() => null);
       }
 
-      const detector = new window.BarcodeDetector({ formats: ["code_128", "code_39", "ean_13", "ean_8", "qr_code"] });
+      const detector = new window.BarcodeDetector({
+        formats: ["code_128", "code_39", "ean_13", "ean_8", "qr_code"],
+      });
       setCameraMessage("Đưa mã vạch vào khung. App sẽ tự ghi +1 khi nhận mã.");
 
       const loop = async () => {
@@ -663,7 +925,11 @@ export default function MobileStocktakePage() {
             const results = await detector.detect(currentVideo);
             const value = String(results?.[0]?.rawValue || "").trim();
             const now = Date.now();
-            if (value && (value !== lastCameraCodeRef.current || now - lastCameraAtRef.current > 2500)) {
+            if (
+              value &&
+              (value !== lastCameraCodeRef.current ||
+                now - lastCameraAtRef.current > 2500)
+            ) {
               lastCameraCodeRef.current = value;
               lastCameraAtRef.current = now;
               setCameraMessage(`Đã nhận mã ${value}, đang ghi...`);
@@ -673,13 +939,16 @@ export default function MobileStocktakePage() {
         } catch (error) {
           console.warn("[MobileStocktake] camera detect failed", error);
         } finally {
-          if (streamRef.current) detectTimerRef.current = window.setTimeout(loop, 450);
+          if (streamRef.current)
+            detectTimerRef.current = window.setTimeout(loop, 450);
         }
       };
 
       void loop();
     } catch (error) {
-      setCameraMessage(error instanceof Error ? error.message : "Không mở được camera.");
+      setCameraMessage(
+        error instanceof Error ? error.message : "Không mở được camera.",
+      );
       stopCamera();
     }
   }
@@ -691,13 +960,18 @@ export default function MobileStocktakePage() {
       <section className="rounded-[2rem] bg-neutral-950 p-5 text-white shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.28em] text-stone-400">Mobile</p>
+            <p className="text-xs font-bold uppercase tracking-[0.28em] text-stone-400">
+              Mobile
+            </p>
             <h1 className="mt-2 text-2xl font-black">Kiểm kho</h1>
             <p className="mt-2 text-sm leading-6 text-stone-300">
-              Quét mã vạch bằng camera iPhone hoặc nhập SKU để ghi số lượng kiểm ngay tại kho.
+              Quét mã vạch bằng camera iPhone hoặc nhập SKU để ghi số lượng kiểm
+              ngay tại kho.
             </p>
           </div>
-          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white">{statusText(session?.status)}</span>
+          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white">
+            {statusText(session?.status)}
+          </span>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -707,7 +981,9 @@ export default function MobileStocktakePage() {
           </div>
           <div className="rounded-2xl bg-white/10 p-3">
             <p className="text-white/45">Phiên</p>
-            <p className="mt-1 truncate font-mono font-black">{session?.id ? session.id.slice(-8).toUpperCase() : "Chưa có"}</p>
+            <p className="mt-1 truncate font-mono font-black">
+              {session?.id ? session.id.slice(-8).toUpperCase() : "Chưa có"}
+            </p>
           </div>
         </div>
       </section>
@@ -723,7 +999,9 @@ export default function MobileStocktakePage() {
           <div className="space-y-3">
             {branchOptions.length ? (
               <>
-                <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Chi nhánh kiểm</label>
+                <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">
+                  Chi nhánh kiểm
+                </label>
                 <select
                   value={branchId}
                   onChange={(e) => {
@@ -734,28 +1012,40 @@ export default function MobileStocktakePage() {
                   className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-neutral-950"
                 >
                   <option value="">Chọn chi nhánh</option>
-                  {branchOptions
-                    .map((branch) => (
-                      <option key={branch.id} value={String(branch.id)}>
-                        {branch.name || branch.id}
-                      </option>
-                    ))}
+                  {branchOptions.map((branch) => (
+                    <option key={branch.id} value={String(branch.id)}>
+                      {branch.name || branch.id}
+                    </option>
+                  ))}
                 </select>
               </>
             ) : (
               <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-900">
-                Chưa tải được danh sách chi nhánh. Kiểm tra lại token mobile hoặc quyền xem chi nhánh rồi mở lại app.
+                Chưa tải được danh sách chi nhánh. Kiểm tra lại token mobile
+                hoặc quyền xem chi nhánh rồi mở lại app.
               </div>
             )}
 
-            <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Tên phiên</label>
+            <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4 text-xs font-bold leading-5 text-stone-700">
+              {loadingProducts
+                ? "Đang tải dữ liệu kho hàng giống bản web..."
+                : products.length
+                  ? `Đã tải ${allVariants.length.toLocaleString("vi-VN")} SKU · kho ${branchLabel}: ${branchScopedVariantCount.toLocaleString("vi-VN")} SKU có tồn.`
+                  : "Chưa tải được dữ liệu kho hàng. Có thể tạo phiên, nhưng nên mở lại app nếu scan không nhận SKU."}
+            </div>
+
+            <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">
+              Tên phiên
+            </label>
             <input
               value={sessionName}
               onChange={(e) => setSessionName(e.target.value)}
               className="w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm font-bold outline-none focus:border-neutral-950"
               placeholder="Kiểm kho mobile"
             />
-            <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Khu vực</label>
+            <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">
+              Khu vực
+            </label>
             <input
               value={zone}
               onChange={(e) => setZone(e.target.value)}
@@ -786,34 +1076,69 @@ export default function MobileStocktakePage() {
         <>
           <section className="mt-4 grid grid-cols-4 gap-2">
             <div className="rounded-3xl bg-white p-3 text-center shadow-sm">
-              <p className="text-[10px] font-bold uppercase text-stone-400">SKU</p>
+              <p className="text-[10px] font-bold uppercase text-stone-400">
+                SKU
+              </p>
               <p className="mt-1 text-xl font-black">{numberText(kpi.total)}</p>
             </div>
             <div className="rounded-3xl bg-white p-3 text-center shadow-sm">
-              <p className="text-[10px] font-bold uppercase text-stone-400">Đã kiểm</p>
-              <p className="mt-1 text-xl font-black">{numberText(kpi.counted)}</p>
+              <p className="text-[10px] font-bold uppercase text-stone-400">
+                Đã kiểm
+              </p>
+              <p className="mt-1 text-xl font-black">
+                {numberText(kpi.counted)}
+              </p>
             </div>
             <div className="rounded-3xl bg-white p-3 text-center shadow-sm">
-              <p className="text-[10px] font-bold uppercase text-stone-400">Lệch</p>
-              <p className="mt-1 text-xl font-black">{numberText(kpi.mismatch)}</p>
+              <p className="text-[10px] font-bold uppercase text-stone-400">
+                Lệch
+              </p>
+              <p className="mt-1 text-xl font-black">
+                {numberText(kpi.mismatch)}
+              </p>
             </div>
             <div className="rounded-3xl bg-white p-3 text-center shadow-sm">
-              <p className="text-[10px] font-bold uppercase text-stone-400">Delta</p>
-              <p className={`mt-1 text-xl font-black ${kpi.totalDiff > 0 ? "text-emerald-600" : kpi.totalDiff < 0 ? "text-red-600" : ""}`}>{kpi.totalDiff > 0 ? "+" : ""}{numberText(kpi.totalDiff)}</p>
+              <p className="text-[10px] font-bold uppercase text-stone-400">
+                Delta
+              </p>
+              <p
+                className={`mt-1 text-xl font-black ${kpi.totalDiff > 0 ? "text-emerald-600" : kpi.totalDiff < 0 ? "text-red-600" : ""}`}
+              >
+                {kpi.totalDiff > 0 ? "+" : ""}
+                {numberText(kpi.totalDiff)}
+              </p>
             </div>
           </section>
 
           <section className="mt-4 rounded-[2rem] border border-stone-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-stone-400">Quét mã</p>
-                <p className="text-sm font-bold text-stone-900">{worker?.name || "Máy kiểm mobile"}</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-stone-400">
+                  Quét mã
+                </p>
+                <p className="text-sm font-bold text-stone-900">
+                  {worker?.name || "Máy kiểm mobile"}
+                </p>
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={pauseOrResume} disabled={loading || closed} className="rounded-2xl border border-stone-200 p-3 text-stone-700 disabled:opacity-40">
-                  {paused ? <Play className="h-5 w-5" /> : <Pause className="h-5 w-5" />}
+                <button
+                  type="button"
+                  onClick={pauseOrResume}
+                  disabled={loading || closed}
+                  className="rounded-2xl border border-stone-200 p-3 text-stone-700 disabled:opacity-40"
+                >
+                  {paused ? (
+                    <Play className="h-5 w-5" />
+                  ) : (
+                    <Pause className="h-5 w-5" />
+                  )}
                 </button>
-                <button type="button" onClick={finishCounting} disabled={loading || closed} className="rounded-2xl border border-red-200 bg-red-50 p-3 text-red-600 disabled:opacity-40">
+                <button
+                  type="button"
+                  onClick={finishCounting}
+                  disabled={loading || closed}
+                  className="rounded-2xl border border-red-200 bg-red-50 p-3 text-red-600 disabled:opacity-40"
+                >
                   <StopCircle className="h-5 w-5" />
                 </button>
               </div>
@@ -847,7 +1172,12 @@ export default function MobileStocktakePage() {
 
             <div className="mt-3 grid grid-cols-4 gap-2">
               {[1, 2, 5, -1].map((value) => (
-                <button key={value} type="button" onClick={() => setQtyDelta(value)} className={`rounded-2xl px-3 py-2 text-sm font-black ${qtyDelta === value ? "bg-neutral-950 text-white" : "bg-stone-100 text-stone-700"}`}>
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setQtyDelta(value)}
+                  className={`rounded-2xl px-3 py-2 text-sm font-black ${qtyDelta === value ? "bg-neutral-950 text-white" : "bg-stone-100 text-stone-700"}`}
+                >
                   {value > 0 ? `+${value}` : value}
                 </button>
               ))}
@@ -868,31 +1198,50 @@ export default function MobileStocktakePage() {
                 onClick={() => (cameraOn ? stopCamera() : void startCamera())}
                 className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-black text-stone-800"
               >
-                <span className="inline-flex items-center gap-2"><Camera className="h-4 w-4" /> {cameraOn ? "Tắt camera" : "Mở camera"}</span>
+                <span className="inline-flex items-center gap-2">
+                  <Camera className="h-4 w-4" />{" "}
+                  {cameraOn ? "Tắt camera" : "Mở camera"}
+                </span>
               </button>
               <button
                 type="button"
                 onClick={() => void loadSummary(session.id)}
                 className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-black text-stone-800"
               >
-                <span className="inline-flex items-center gap-2"><RotateCcw className="h-4 w-4" /> Đồng bộ</span>
+                <span className="inline-flex items-center gap-2">
+                  <RotateCcw className="h-4 w-4" /> Đồng bộ
+                </span>
               </button>
             </div>
 
             {cameraOn || cameraMessage ? (
               <div className="mt-3 overflow-hidden rounded-3xl border border-stone-200 bg-black text-white">
-                <video ref={videoRef} className="aspect-[4/3] w-full object-cover" muted playsInline />
+                <video
+                  ref={videoRef}
+                  className="aspect-[4/3] w-full object-cover"
+                  muted
+                  playsInline
+                />
                 <div className="flex items-center justify-between gap-3 px-4 py-3 text-xs font-bold text-white/75">
                   <span>{cameraMessage || "Đang quét..."}</span>
-                  <button type="button" onClick={stopCamera} className="rounded-full bg-white/10 p-2"><X className="h-4 w-4" /></button>
+                  <button
+                    type="button"
+                    onClick={stopCamera}
+                    className="rounded-full bg-white/10 p-2"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
             ) : null}
 
             {lastScan ? (
               <div className="mt-3 rounded-3xl bg-emerald-50 p-4 text-sm font-bold text-emerald-900">
-                Vừa ghi: {lastScan.variant?.sku || lastScan.sku || code || "SKU"}
-                {lastScan.variant?.productName ? ` · ${lastScan.variant.productName}` : ""}
+                Vừa ghi:{" "}
+                {lastScan.variant?.sku || lastScan.sku || code || "SKU"}
+                {lastScan.variant?.productName
+                  ? ` · ${lastScan.variant.productName}`
+                  : ""}
               </div>
             ) : null}
           </section>
@@ -911,34 +1260,78 @@ export default function MobileStocktakePage() {
             </div>
 
             <div className="mt-4 space-y-3">
-              {visibleRows.length ? visibleRows.map((row) => {
-                const counted = countedOf(row);
-                const system = systemOf(row);
-                const diff = diffOf(row);
-                return (
-                  <div key={`${row.variantId || row.sku}`} className="rounded-3xl border border-stone-200 bg-stone-50 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-stone-950">{row.sku}</p>
-                        <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-stone-500">{row.productName || row.variant?.productName || "—"}</p>
+              {visibleRows.length ? (
+                visibleRows.map((row) => {
+                  const counted = countedOf(row);
+                  const system = systemOf(row);
+                  const diff = diffOf(row);
+                  return (
+                    <div
+                      key={`${row.variantId || row.sku}`}
+                      className="rounded-3xl border border-stone-200 bg-stone-50 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-stone-950">
+                            {row.sku}
+                          </p>
+                          <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-stone-500">
+                            {row.productName || row.variant?.productName || "—"}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-black ${diff === 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}
+                        >
+                          {diff > 0 ? "+" : ""}
+                          {numberText(diff)}
+                        </span>
                       </div>
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${diff === 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                        {diff > 0 ? "+" : ""}{numberText(diff)}
-                      </span>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="rounded-2xl bg-white p-2">
+                          <p className="text-stone-400">HT</p>
+                          <p className="font-black">{numberText(system)}</p>
+                        </div>
+                        <div className="rounded-2xl bg-white p-2">
+                          <p className="text-stone-400">Đếm</p>
+                          <p className="font-black">{numberText(counted)}</p>
+                        </div>
+                        <div className="rounded-2xl bg-white p-2">
+                          <p className="text-stone-400">Lượt</p>
+                          <p className="font-black">
+                            {numberText(row.events || row.eventCount || 0)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void adjustRow(row, -1)}
+                          disabled={!canScan}
+                          className="rounded-2xl border border-stone-200 bg-white py-2 text-sm font-black disabled:opacity-40"
+                        >
+                          <Minus className="mx-auto h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void setRowCount(row)}
+                          disabled={!canScan}
+                          className="rounded-2xl border border-stone-200 bg-white py-2 text-sm font-black disabled:opacity-40"
+                        >
+                          Nhập SL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void adjustRow(row, 1)}
+                          disabled={!canScan}
+                          className="rounded-2xl border border-stone-200 bg-white py-2 text-sm font-black disabled:opacity-40"
+                        >
+                          <Plus className="mx-auto h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                      <div className="rounded-2xl bg-white p-2"><p className="text-stone-400">HT</p><p className="font-black">{numberText(system)}</p></div>
-                      <div className="rounded-2xl bg-white p-2"><p className="text-stone-400">Đếm</p><p className="font-black">{numberText(counted)}</p></div>
-                      <div className="rounded-2xl bg-white p-2"><p className="text-stone-400">Lượt</p><p className="font-black">{numberText(row.events || row.eventCount || 0)}</p></div>
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2">
-                      <button type="button" onClick={() => void adjustRow(row, -1)} disabled={!canScan} className="rounded-2xl border border-stone-200 bg-white py-2 text-sm font-black disabled:opacity-40"><Minus className="mx-auto h-4 w-4" /></button>
-                      <button type="button" onClick={() => void setRowCount(row)} disabled={!canScan} className="rounded-2xl border border-stone-200 bg-white py-2 text-sm font-black disabled:opacity-40">Nhập SL</button>
-                      <button type="button" onClick={() => void adjustRow(row, 1)} disabled={!canScan} className="rounded-2xl border border-stone-200 bg-white py-2 text-sm font-black disabled:opacity-40"><Plus className="mx-auto h-4 w-4" /></button>
-                    </div>
-                  </div>
-                );
-              }) : (
+                  );
+                })
+              ) : (
                 <div className="rounded-3xl border border-dashed border-stone-300 p-6 text-center text-sm font-bold text-stone-500">
                   Chưa có dòng kiểm. Scan mã đầu tiên để bắt đầu.
                 </div>
