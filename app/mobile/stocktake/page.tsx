@@ -878,14 +878,79 @@ export default function MobileStocktakePage() {
     setCameraOn(false);
   }
 
+  async function scanWithNativeCamera() {
+    try {
+      setCameraMessage("Đang mở camera iPhone...");
+
+      const module = await import("@capacitor-mlkit/barcode-scanning");
+      const BarcodeScanner = (module as any).BarcodeScanner;
+      const BarcodeFormat = (module as any).BarcodeFormat || {};
+
+      if (!BarcodeScanner?.scan) return false;
+
+      const currentPermission = await BarcodeScanner.checkPermissions?.();
+      const cameraPermission = String(currentPermission?.camera || "").toLowerCase();
+
+      if (cameraPermission !== "granted") {
+        const requested = await BarcodeScanner.requestPermissions?.();
+        const requestedCamera = String(requested?.camera || "").toLowerCase();
+        if (requestedCamera !== "granted") {
+          setCameraMessage("Chưa cấp quyền camera cho app. Vào Cài đặt iPhone > The 1970 > bật Camera.");
+          return true;
+        }
+      }
+
+      const formats = [
+        BarcodeFormat.Code128,
+        BarcodeFormat.Code39,
+        BarcodeFormat.Ean13,
+        BarcodeFormat.Ean8,
+        BarcodeFormat.QrCode,
+        BarcodeFormat.UpcA,
+        BarcodeFormat.UpcE,
+      ].filter(Boolean);
+
+      const result = await BarcodeScanner.scan({
+        ...(formats.length ? { formats } : {}),
+      });
+
+      const barcode = Array.isArray(result?.barcodes) ? result.barcodes[0] : null;
+      const value = String(
+        barcode?.rawValue ||
+          barcode?.displayValue ||
+          barcode?.value ||
+          "",
+      ).trim();
+
+      if (!value) {
+        setCameraMessage("Chưa nhận được mã vạch. Bấm Mở camera để quét lại.");
+        return true;
+      }
+
+      setCameraMessage(`Đã nhận mã ${value}, đang ghi...`);
+      await scanCode(value, qtyDelta || 1);
+      setCameraMessage(`Đã ghi ${value}. Có thể bấm Mở camera để quét mã tiếp theo.`);
+      return true;
+    } catch (error) {
+      console.warn("[MobileStocktake] native barcode scanner failed", error);
+      return false;
+    }
+  }
+
   async function startCamera() {
     if (!canScan) {
       setMessage("Cần vào phiên kiểm đang chạy trước khi bật camera.");
       return;
     }
+
+    stopCamera();
+
+    const nativeHandled = await scanWithNativeCamera();
+    if (nativeHandled) return;
+
     if (!window.BarcodeDetector) {
       setCameraMessage(
-        "Máy này chưa hỗ trợ quét barcode trực tiếp trong WebView. Dùng ô nhập mã/SKU hoặc cài plugin native ở bước sau.",
+        "Máy này chưa hỗ trợ quét barcode trực tiếp trong WebView. Cần build app có plugin native @capacitor-mlkit/barcode-scanning.",
       );
       return;
     }
@@ -895,7 +960,7 @@ export default function MobileStocktakePage() {
     }
 
     try {
-      setCameraMessage("Đang mở camera...");
+      setCameraMessage("Đang mở camera WebView...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
@@ -1214,7 +1279,7 @@ export default function MobileStocktakePage() {
               </button>
             </div>
 
-            {cameraOn || cameraMessage ? (
+            {cameraOn ? (
               <div className="mt-3 overflow-hidden rounded-3xl border border-stone-200 bg-black text-white">
                 <video
                   ref={videoRef}
@@ -1232,6 +1297,17 @@ export default function MobileStocktakePage() {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
+              </div>
+            ) : cameraMessage ? (
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-3xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-bold text-stone-600">
+                <span>{cameraMessage}</span>
+                <button
+                  type="button"
+                  onClick={() => setCameraMessage("")}
+                  className="rounded-full bg-white p-2 text-stone-500 shadow-sm"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             ) : null}
 
