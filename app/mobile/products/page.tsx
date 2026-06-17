@@ -1,5 +1,6 @@
 "use client";
 
+import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
@@ -12,7 +13,12 @@ type Variant = { id?: string; sku?: string; color?: string | null; size?: string
 type Product = { id: string; name: string; slug?: string; category?: string | null; productType?: string | null; brand?: string | null; imageUrl?: string | null; status?: string; variantCount?: number; totalAvailable?: number; totalReserved?: number; totalIncoming?: number; minPrice?: number; maxPrice?: number; variants?: Variant[] };
 
 function getToken(){return typeof window==="undefined"?"":localStorage.getItem("token")||""}
-async function api<T>(path:string):Promise<T>{const token=getToken();if(!token){window.location.href="/mobile/login";throw new Error("Thiếu token")}const res=await fetch(`${API_BASE}${path}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});if(res.status===401){localStorage.removeItem("token");window.location.href="/mobile/login";throw new Error("Phiên hết hạn")}if(!res.ok)throw new Error((await res.text())||"Không tải được sản phẩm");return res.json()}
+async function api<T>(path: string): Promise<T> {
+  return apiJson<T>(path, {
+    redirectOnUnauthorized: true,
+    timeoutMs: 30000,
+  } as any);
+}
 async function optional<T>(path:string,fallback:T){try{return await api<T>(path)}catch{return fallback}}
 function money(v?:number|null){return new Intl.NumberFormat("vi-VN").format(Number(v||0))+"đ"}
 function norm(v:unknown){return String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim()}
