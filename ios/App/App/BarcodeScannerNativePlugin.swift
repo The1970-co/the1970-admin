@@ -4,9 +4,15 @@ import AVFoundation
 import UIKit
 
 @objc(BarcodeScannerNativePlugin)
-public class BarcodeScannerNativePlugin: CAPPlugin {
+public class BarcodeScannerNativePlugin: CAPPlugin, CAPBridgedPlugin {
     private var activeCall: CAPPluginCall?
     private var scannerViewController: BarcodeScannerNativeViewController?
+
+    public let identifier = "BarcodeScannerNativePlugin"
+    public let jsName = "BarcodeScannerNative"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise)
+    ]
 
     @objc func scan(_ call: CAPPluginCall) {
         DispatchQueue.main.async { [weak self] in
