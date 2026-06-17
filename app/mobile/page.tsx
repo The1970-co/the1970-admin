@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
-import MobilePushBootstrap from "@/components/mobile/MobilePushBootstrap";
 import { BarChart3, Boxes, ChevronRight, WalletCards, AlertTriangle } from "lucide-react";
 
 function EntryCard({ href, eyebrow, title, description, icon, accent = "white" }: { href: string; eyebrow: string; title: string; description: string; icon: React.ReactNode; accent?: "white" | "gold" | "red" }) {
@@ -28,7 +27,6 @@ function EntryCard({ href, eyebrow, title, description, icon, accent = "white" }
 export default function MobileEntryPage() {
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-950">
-      <MobilePushBootstrap />
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-5 pb-28 pt-14">
         <div className="mb-8">
           <div className="text-xs font-semibold uppercase tracking-[0.28em] text-neutral-500">The 1970 Operations</div>
