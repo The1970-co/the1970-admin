@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
-import { BarChart3, Boxes, ChevronRight, WalletCards, AlertTriangle } from "lucide-react";
+import { BarChart3, Boxes, ChevronRight, ClipboardList, WalletCards, AlertTriangle } from "lucide-react";
 
 function EntryCard({ href, eyebrow, title, description, icon, accent = "white" }: { href: string; eyebrow: string; title: string; description: string; icon: React.ReactNode; accent?: "white" | "gold" | "red" }) {
   return (
@@ -31,9 +31,10 @@ export default function MobileEntryPage() {
         <div className="mb-8">
           <div className="text-xs font-semibold uppercase tracking-[0.28em] text-neutral-500">The 1970 Operations</div>
           <h1 className="mt-4 text-3xl font-bold leading-tight text-neutral-950">Bạn muốn xem gì hôm nay?</h1>
-          <p className="mt-3 text-sm leading-6 text-neutral-500">Chọn một khu vực để xem nhanh tình hình vận hành, doanh thu và nguồn tiền trong ngày.</p>
+          <p className="mt-3 text-sm leading-6 text-neutral-500">Chọn một khu vực để xem nhanh tình hình vận hành, đơn hàng, doanh thu và nguồn tiền trong ngày.</p>
         </div>
         <div className="flex flex-1 flex-col justify-center gap-5">
+          <EntryCard href="/mobile/orders" eyebrow="Đơn hàng mobile" title="Danh sách đơn" description="Tra nhanh mã đơn, SĐT, khách hàng, trạng thái giao vận và chi tiết sản phẩm." icon={<ClipboardList className="h-6 w-6" />} />
           <EntryCard href="/mobile/reports/overview" eyebrow="Báo cáo vận hành" title="Tổng quan báo cáo" description="Đơn hàng đã tạo, doanh thu, sản phẩm bán chạy và cảnh báo tồn kho." icon={<BarChart3 className="h-6 w-6" />} />
           <EntryCard href="/mobile/finance/daily" eyebrow="Dòng tiền hôm nay" title="Tổng quan nguồn tiền" description="Tiền mặt, chuyển khoản, COD pending, phiếu thu chi và số dư cuối ngày." icon={<WalletCards className="h-6 w-6" />} accent="gold" />
           <div className="grid grid-cols-2 gap-4">
@@ -41,7 +42,7 @@ export default function MobileEntryPage() {
             <Link href="/mobile/reports/overview#alerts" className="rounded-[1.75rem] bg-white p-5 shadow-sm active:scale-[0.985] transition"><AlertTriangle className="h-6 w-6 text-amber-600" /><div className="mt-4 text-base font-bold">Cảnh báo</div><div className="mt-1 text-xs leading-5 text-neutral-500">SKU thiếu, đơn cần xử lý.</div></Link>
           </div>
         </div>
-        <div className="mt-8 rounded-3xl border border-neutral-200 bg-white p-4 text-center text-xs leading-5 text-neutral-500 shadow-sm">Gợi ý: mở app mỗi sáng để kiểm tra báo cáo nhanh, cuối ngày xem lại nguồn tiền.</div>
+        <div className="mt-8 rounded-3xl border border-neutral-200 bg-white p-4 text-center text-xs leading-5 text-neutral-500 shadow-sm">Gợi ý: khi có push đơn mới, bấm thông báo sẽ mở thẳng chi tiết đơn trong app.</div>
         <MobileBottomNav />
       </div>
     </div>
