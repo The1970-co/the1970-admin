@@ -23,6 +23,7 @@ import {
   setActiveBranchIdToStorage,
 } from "@/lib/current-user";
 import { uniquePermissions } from "@/lib/permissions";
+import { clearMobileSession, getMobileToken, restoreMobileUser } from "@/lib/mobile-auth-token";
 
 type AuthContextValue = {
   user: any;
@@ -41,8 +42,24 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const AUTH_RELOAD_TTL_MS = 2 * 60 * 1000;
 const AUTH_EVENT_DEBOUNCE_MS = 1500;
 
+function isMobilePath(pathname: string) {
+  return pathname === "/mobile" || pathname.startsWith("/mobile/");
+}
+
+function isMobileLoginPath(pathname: string) {
+  return pathname === "/mobile/login" || pathname.startsWith("/mobile/login/");
+}
+
 function isPublicPath(pathname: string) {
-  return pathname === "/login" || pathname.startsWith("/login/");
+  return (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    isMobileLoginPath(pathname)
+  );
+}
+
+function loginPathFor(pathname: string) {
+  return isMobilePath(pathname) ? "/mobile/login" : "/login";
 }
 
 function extractToken(data: any) {
@@ -103,10 +120,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ignore logout API errors
     } finally {
       clearCurrentUserFromStorage();
+      await clearMobileSession();
       setUser(null);
       setChecked(true);
       setLoading(false);
-      router.replace("/login");
+      router.replace(loginPathFor(pathnameRef.current));
     }
   }, [router]);
 
@@ -123,14 +141,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return cachedUser;
     }
 
-    const token = getTokenFromStorage();
+    let token = getTokenFromStorage();
+
+    // Trong app iOS/Capacitor, localStorage có thể rỗng sau khi WebView reload.
+    // Khôi phục lại token/user từ native Preferences trước khi quyết định đá về login.
+    if (!token && isMobilePath(currentPath)) {
+      token = await getMobileToken();
+      if (token) {
+        await restoreMobileUser();
+      }
+    }
 
     if (!token) {
       setUser(null);
       setChecked(true);
       setLoading(false);
       setError("");
-      router.replace("/login");
+      router.replace(loginPathFor(currentPath));
       return null;
     }
 
@@ -201,7 +228,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setError(errorMessage);
 
         clearCurrentUserFromStorage();
-        router.replace("/login");
+        if (isMobilePath(currentPath)) {
+          await clearMobileSession();
+        }
+        router.replace(loginPathFor(currentPath));
         return null;
       } finally {
         reloadPromiseRef.current = null;
@@ -221,6 +251,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const token = getTokenFromStorage();
     if (!token) {
+      if (isMobilePath(pathname)) {
+        void (async () => {
+          const nativeToken = await getMobileToken();
+
+          if (nativeToken) {
+            await restoreMobileUser();
+            syncCachedUser();
+            void reloadAuth();
+            return;
+          }
+
+          router.replace("/mobile/login");
+        })();
+        return;
+      }
+
       router.replace("/login");
       return;
     }

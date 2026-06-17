@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/admin/auth/AuthProvider";
+import MobileNativeRedirectGuard from "@/components/mobile/MobileNativeRedirectGuard";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="vi" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="h-screen overflow-hidden">
+        <MobileNativeRedirectGuard />
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
