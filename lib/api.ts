@@ -80,7 +80,6 @@ async function refreshMobileAccessToken() {
             cache: "no-store",
             headers: {
               "Content-Type": "application/json",
-              "x-mobile-app": "1",
             },
             body: JSON.stringify({ refreshToken }),
           },
@@ -186,8 +185,6 @@ export async function apiFetch(path: string, options: RequestOptions = {}) {
     };
 
     if (auth && token) finalHeaders.Authorization = `Bearer ${token}`;
-    if (mobile) finalHeaders["x-mobile-app"] = "1";
-
     const activeBranchId = getWorkingBranchId();
     if (auth && activeBranchId && !finalHeaders["x-active-branch-id"]) {
       finalHeaders["x-active-branch-id"] = activeBranchId;

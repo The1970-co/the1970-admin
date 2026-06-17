@@ -192,14 +192,15 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
 
     try {
       const detailData = await apiJson<any>(`/stocktake-sessions/${sessionId}`, {
-        timeoutMs: 20000,
+        redirectOnUnauthorized: true,
+        timeoutMs: 60000,
       } as any);
       const nextDetail = normalizeDetail(detailData);
 
       let summaryItems = normalizeItems(detailData, nextDetail);
       if (!summaryItems.length) {
         const summaryData = await apiJson<any>(`/stocktake-sessions/${sessionId}/summary`, {
-          timeoutMs: 20000,
+          timeoutMs: 60000,
         } as any).catch(() => null);
         summaryItems = normalizeItems(summaryData, nextDetail);
       }
@@ -207,7 +208,7 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
       let logItems = normalizeLogs(detailData, nextDetail);
       if (!logItems.length) {
         const logData = await apiJson<any>(`/stocktake-sessions/${sessionId}/logs`, {
-          timeoutMs: 20000,
+          timeoutMs: 60000,
         } as any).catch(() => null);
         logItems = normalizeLogs(logData, nextDetail);
       }

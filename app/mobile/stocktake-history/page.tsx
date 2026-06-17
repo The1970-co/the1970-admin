@@ -2,7 +2,6 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
-import { getBranches, type BranchItem } from "@/lib/products-api";
 import {
   getActiveBranchIdFromStorage,
   getCurrentUserFromStorage,
@@ -18,6 +17,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "black";
+
+type BranchItem = {
+  id: string;
+  name: string;
+  code?: string | null;
+  [key: string]: any;
+};
 
 type StocktakeSession = {
   id: string;
@@ -221,6 +227,33 @@ function scanCount(item: StocktakeSession) {
   return Number(item._count?.scanEvents || item.scanEventCount || item.scanCount || 0);
 }
 
+
+async function loadBranchesForMobileHistory(user: any): Promise<BranchItem[]> {
+  const fromUser = branchRowsFromUser(user);
+  const endpoints = [
+    "/products/branches",
+    "/branches",
+    "/inventory/branches",
+    "/settings/branches",
+    "/warehouses",
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const data = await apiJson<any>(endpoint, {
+        redirectOnUnauthorized: true,
+        timeoutMs: 60000,
+      } as any);
+      const rows = normalizeBranchRows(data);
+      if (rows.length) return rows;
+    } catch {
+      // thử endpoint khác
+    }
+  }
+
+  return fromUser;
+}
+
 export default function MobileStocktakeHistoryPage() {
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -244,9 +277,8 @@ export default function MobileStocktakeHistoryPage() {
     if (activeBranch) setBranchId(activeBranch);
     else if (fromUser.length === 1) setBranchId(fromUser[0].id);
 
-    void getBranches()
-      .then((data) => {
-        const rows = normalizeBranchRows(data);
+    void loadBranchesForMobileHistory(user)
+      .then((rows) => {
         if (!rows.length) return;
         setBranches((prev) => {
           const map = new Map<string, BranchItem>();
@@ -275,7 +307,8 @@ export default function MobileStocktakeHistoryPage() {
 
     try {
       const data = await apiJson<StocktakeListResponse>(`/stocktake-sessions?${params.toString()}`, {
-        timeoutMs: 20000,
+        redirectOnUnauthorized: true,
+        timeoutMs: 60000,
       } as any);
       const items = Array.isArray(data?.items)
         ? data.items

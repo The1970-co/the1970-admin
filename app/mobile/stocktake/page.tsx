@@ -3,12 +3,6 @@
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import {
-  getBranches,
-  getProducts,
-  type BranchItem,
-  type ProductItem,
-} from "@/lib/products-api";
-import {
   getActiveBranchIdFromStorage,
   getCurrentUserFromStorage,
   getCurrentUserBranchLabel,
@@ -26,6 +20,15 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type BranchItem = {
+  id: string;
+  name: string;
+  code?: string | null;
+  [key: string]: any;
+};
+
+type ProductItem = Record<string, any>;
 
 type RealtimeWorker = {
   id: string;
@@ -269,28 +272,22 @@ function branchesFromUser(user: any): BranchItem[] {
 async function loadBranchesForMobile(user: any): Promise<BranchItem[]> {
   const fromUser = branchesFromUser(user);
 
-  // Bản web kiểm kho lấy kho/chi nhánh qua getBranches() trong products-api.
-  // Mobile phải đi cùng đường này để không bị kẹt "All" hoặc thiếu kho khi tạo phiên.
-  try {
-    const rows = normalizeBranchRows(await getBranches());
-    if (rows.length) return rows;
-  } catch {
-    // fallback dưới
-  }
-
+  // Không dùng getBranches() của products-api ở mobile vì helper đó có thể tự fetch bằng token cũ.
+  // Tất cả endpoint mobile phải đi qua apiJson để tự refresh token khi access token hết 15 phút.
   const endpoints = [
+    "/products/branches",
     "/branches",
+    "/inventory/branches",
     "/settings/branches",
     "/warehouses",
-    "/inventory/branches",
-    "/products/branches",
   ];
 
   for (const endpoint of endpoints) {
     try {
       const data = await apiJson<any>(endpoint, {
-        redirectOnUnauthorized: false,
-      });
+        redirectOnUnauthorized: true,
+        timeoutMs: 60000,
+      } as any);
       const rows = normalizeBranchRows(data);
       if (rows.length) return rows;
     } catch {
@@ -545,7 +542,10 @@ export default function MobileStocktakePage() {
     (async () => {
       try {
         setLoadingProducts(true);
-        const result = await getProducts({ page: 1, limit: 1000 } as any);
+        const result = await apiJson<any>("/products?page=1&limit=1000", {
+          redirectOnUnauthorized: true,
+          timeoutMs: 60000,
+        } as any);
         if (!alive) return;
         setProducts(normalizeProductsResult(result));
       } catch (error) {
