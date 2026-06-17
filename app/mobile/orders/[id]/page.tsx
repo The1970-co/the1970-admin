@@ -1,7 +1,6 @@
 "use client";
 
-import { API_BASE } from "@/lib/api-base";
-import { clearMobileSession, getMobileToken } from "@/lib/mobile-auth-token";
+import { apiJson } from "@/lib/api";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -60,30 +59,10 @@ type OrderDetail = {
 };
 
 async function getJson<T>(path: string): Promise<T> {
-  const accessToken = await getMobileToken();
-
-  if (!accessToken) {
-    window.location.href = "/mobile/login";
-    throw new Error("Thiếu token đăng nhập.");
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    cache: "no-store",
-  });
-
-  if (res.status === 401) {
-    await clearMobileSession();
-    window.location.href = "/mobile/login";
-    throw new Error("Phiên đăng nhập hết hạn.");
-  }
-
-  if (!res.ok) throw new Error((await res.text()) || "Không tải được chi tiết đơn hàng.");
-  return res.json();
+  return apiJson<T>(path, {
+    redirectOnUnauthorized: true,
+    timeoutMs: 20000,
+  } as any);
 }
 
 function num(value: unknown) {
