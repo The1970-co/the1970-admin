@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
-import { getBranches, type BranchItem } from "@/lib/products-api";
+import type { BranchItem } from "@/lib/products-api";
 import {
   getActiveBranchIdFromStorage,
   getCurrentUserFromStorage,
@@ -170,6 +170,77 @@ function branchIdsFromUser(user: any) {
   return Array.from(ids);
 }
 
+
+function normalizeBranchRows(input: any): BranchItem[] {
+  const raw = Array.isArray(input)
+    ? input
+    : Array.isArray(input?.items)
+      ? input.items
+      : Array.isArray(input?.data)
+        ? input.data
+        : Array.isArray(input?.branches)
+          ? input.branches
+          : [];
+
+  const seen = new Set<string>();
+  return raw
+    .map((row: any) => {
+      const id = cleanBranchId(row?.id || row?.branchId || row?.code || row?.value);
+      const name = String(row?.name || row?.branchName || row?.label || row?.title || id || "").trim();
+      return id ? ({ ...row, id, name: name || id } as BranchItem) : null;
+    })
+    .filter((row: BranchItem | null): row is BranchItem => {
+      if (!row?.id || seen.has(String(row.id))) return false;
+      seen.add(String(row.id));
+      return true;
+    });
+}
+
+function branchesFromUser(user: any): BranchItem[] {
+  const rows: any[] = [];
+
+  if (Array.isArray(user?.branchOptions)) rows.push(...user.branchOptions);
+  if (Array.isArray(user?.branchRoles)) {
+    rows.push(...user.branchRoles.map((row: any) => ({
+      id: row?.branchId || row?.branch?.id,
+      name: row?.branchName || row?.branch?.name,
+    })));
+  }
+  if (Array.isArray(user?.branchPermissions)) {
+    rows.push(...user.branchPermissions.map((row: any) => ({
+      id: row?.branchId || row?.branch?.id,
+      name: row?.branchName || row?.branch?.name,
+    })));
+  }
+  if (Array.isArray(user?.branchIds)) {
+    rows.push(...user.branchIds.map((id: any) => ({ id, name: getCurrentUserBranchLabel(user, String(id || "")) || String(id || "") })));
+  }
+  if (user?.branchId) rows.push({ id: user.branchId, name: user.branchName || user.branch || user.branchId });
+
+  return normalizeBranchRows(rows);
+}
+
+async function loadBranchesForMobile(user: any): Promise<BranchItem[]> {
+  const fromUser = branchesFromUser(user);
+  const endpoints = [
+    "/products/branches",
+    "/branches",
+    "/inventory/branches",
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const data = await apiJson<any>(endpoint, { redirectOnUnauthorized: false });
+      const rows = normalizeBranchRows(data);
+      if (rows.length) return rows;
+    } catch {
+      // Thử endpoint khác. Mobile kiểm kho không được chết chỉ vì route branch khác nhau giữa bản deploy.
+    }
+  }
+
+  return fromUser;
+}
+
 function pickDefaultBranchId(user: any, savedBranchId?: string | null) {
   const saved = cleanBranchId(savedBranchId);
   if (saved) return saved;
@@ -217,6 +288,14 @@ export default function MobileStocktakePage() {
   const closed = isClosed(session?.status);
   const paused = String(session?.status || "").toUpperCase() === "PAUSED";
   const canScan = Boolean(session?.id && worker?.id && !closed && !paused);
+  const branchOptions = useMemo(() => {
+    const allowed = branchIdsFromUser(currentUser);
+    const rows = branches.filter((branch) => {
+      const id = String(branch.id || "");
+      return !allowed.length || allowed.includes(id);
+    });
+    return rows.length ? rows : branches;
+  }, [branches, currentUser]);
 
   const kpi = useMemo(() => {
     const total = summary.length;
@@ -277,28 +356,32 @@ export default function MobileStocktakePage() {
     setCurrentUser(user);
 
     const savedBranchId = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_BRANCH_ID) : "";
+    const userBranches = branchesFromUser(user);
+    if (userBranches.length) setBranches(userBranches);
+
     const initialBranchId = pickDefaultBranchId(user, savedBranchId);
     if (initialBranchId) setBranchId(initialBranchId);
 
     let alive = true;
     (async () => {
-      try {
-        const list = await getBranches();
-        if (!alive) return;
-        const safeList = Array.isArray(list) ? list : [];
-        setBranches(safeList);
+      const safeList = await loadBranchesForMobile(user);
+      if (!alive) return;
 
-        setBranchId((current) => {
-          const cleanCurrent = cleanBranchId(current);
-          if (cleanCurrent) return cleanCurrent;
+      setBranches(safeList);
 
-          const allowed = branchIdsFromUser(user);
-          const firstAllowed = allowed.find((id) => safeList.some((branch) => String(branch.id) === String(id)));
-          return firstAllowed || cleanBranchId(safeList[0]?.id) || "";
-        });
-      } catch {
-        // Không chặn màn kiểm kho nếu API danh sách chi nhánh lỗi.
-      }
+      setBranchId((current) => {
+        const cleanCurrent = cleanBranchId(current);
+        if (cleanCurrent && safeList.some((branch) => String(branch.id) === String(cleanCurrent))) {
+          return cleanCurrent;
+        }
+
+        const saved = cleanBranchId(savedBranchId);
+        if (saved && safeList.some((branch) => String(branch.id) === String(saved))) return saved;
+
+        const allowed = branchIdsFromUser(user);
+        const firstAllowed = allowed.find((id) => safeList.some((branch) => String(branch.id) === String(id)));
+        return firstAllowed || cleanBranchId(safeList[0]?.id) || "";
+      });
     })();
 
     return () => {
@@ -638,7 +721,7 @@ export default function MobileStocktakePage() {
       {!session?.id ? (
         <section className="mt-4 rounded-[2rem] border border-stone-200 bg-white p-4 shadow-sm">
           <div className="space-y-3">
-            {branches.length ? (
+            {branchOptions.length ? (
               <>
                 <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Chi nhánh kiểm</label>
                 <select
@@ -651,11 +734,7 @@ export default function MobileStocktakePage() {
                   className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-neutral-950"
                 >
                   <option value="">Chọn chi nhánh</option>
-                  {branches
-                    .filter((branch) => {
-                      const allowed = branchIdsFromUser(currentUser);
-                      return !allowed.length || allowed.includes(String(branch.id));
-                    })
+                  {branchOptions
                     .map((branch) => (
                       <option key={branch.id} value={String(branch.id)}>
                         {branch.name || branch.id}
@@ -663,7 +742,11 @@ export default function MobileStocktakePage() {
                     ))}
                 </select>
               </>
-            ) : null}
+            ) : (
+              <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-900">
+                Chưa tải được danh sách chi nhánh. Kiểm tra lại token mobile hoặc quyền xem chi nhánh rồi mở lại app.
+              </div>
+            )}
 
             <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">Tên phiên</label>
             <input
