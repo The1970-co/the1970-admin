@@ -110,6 +110,152 @@ function paymentStatusLabel(status: string) {
   return labels[s] || status || "—";
 }
 
+function normalizeSourceText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function branchAliasTokens(branch: any, row?: any) {
+  const rawValues = [
+    branch?.id,
+    branch?.code,
+    branch?.name,
+    branch?.shortName,
+    branch?.slug,
+    row?.branchId,
+    row?.branchCode,
+    row?.branchName,
+  ];
+
+  const tokens = new Set<string>();
+
+  rawValues.forEach((value) => {
+    const normalized = normalizeSourceText(value);
+    if (!normalized) return;
+
+    tokens.add(normalized);
+
+    normalized
+      .split(/[^a-z0-9]+/g)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((part) => tokens.add(part));
+
+    const words = normalized
+      .split(/[^a-z0-9]+/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (words.length > 1) {
+      tokens.add(words.map((word) => word[0]).join(""));
+    }
+  });
+
+  [
+    ["quoc oai", "qo"],
+    ["quoc-oai", "qo"],
+    ["thai ha", "th"],
+    ["thai-ha", "th"],
+    ["chua lang", "cl"],
+    ["chua-lang", "cl"],
+    ["xa dan", "xd"],
+    ["xa-dan", "xd"],
+  ].forEach(([name, code]) => {
+    const joinedText = rawValues.map((value) => normalizeSourceText(value)).filter(Boolean).join(" ");
+    if (joinedText.includes(name) || joinedText.includes(code)) {
+      tokens.add(name.replace("-", " "));
+      tokens.add(code);
+    }
+  });
+
+  return Array.from(tokens).filter((token) => token.length >= 2);
+}
+
+function sourceMatchesOrderBranch(source: any, branch: any, row?: any) {
+  if (!source) return false;
+
+  const rowBranchId = String(row?.branchId || "").trim();
+  const branchId = String(branch?.id || rowBranchId || "").trim();
+  const sourceBranchId = String(source?.branchId || "").trim();
+
+  // Nếu nguồn tiền đã gắn branchId thì bắt buộc phải đúng branchId của đơn.
+  // Không cho admin/owner lấy nguồn tiền chi nhánh khác.
+  if (sourceBranchId) {
+    return Boolean(branchId) && sourceBranchId === branchId;
+  }
+
+  const sourceText = normalizeSourceText(
+    [
+      source?.name,
+      source?.code,
+      source?.description,
+      source?.branchCode,
+      source?.branchName,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  const sourceParts = new Set(
+    sourceText
+      .split(/[^a-z0-9]+/g)
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
+
+  const branchName = normalizeSourceText(branch?.name || row?.branchName || "");
+  const branchCode = normalizeSourceText(branch?.code || row?.branchCode || "");
+  const branchShortName = normalizeSourceText(branch?.shortName || row?.branchShortName || "");
+  const explicitTokens = [branchCode, branchShortName]
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  // Match tên chi nhánh dạng đầy đủ: "tien mat thai ha" chứa "thai ha".
+  if (branchName && sourceText.includes(branchName)) return true;
+
+  // Match code chi nhánh bằng token rời, không dùng includes cho TH/CL/QO/XD
+  // vì "th" có thể dính vào "other", "cl" có thể dính vào "local".
+  if (explicitTokens.some((token) => sourceParts.has(token))) return true;
+
+  const normalizedRowText = normalizeSourceText(
+    [row?.branchName, row?.branchCode, row?.branchShortName].filter(Boolean).join(" "),
+  );
+
+  const branchAliases: Record<string, string[]> = {
+    qo: ["qo", "quoc oai"],
+    th: ["th", "thai ha"],
+    cl: ["cl", "chua lang"],
+    xd: ["xd", "xa dan"],
+  };
+
+  for (const [code, names] of Object.entries(branchAliases)) {
+    const rowLooksLikeBranch = names.some((name) => normalizedRowText.includes(name));
+    if (!rowLooksLikeBranch) continue;
+
+    // Tên đầy đủ được phép includes, code 2 ký tự phải là token rời.
+    if (names.some((name) => name.includes(" ") && sourceText.includes(name))) return true;
+    if (sourceParts.has(code)) return true;
+  }
+
+  return false;
+}
+
+function paymentSourcesForOrderBranch(sources: any[], branches: any[], row?: any) {
+  if (!row) return [];
+
+  const branch =
+    branches.find((item) => String(item?.id) === String(row?.branchId)) ||
+    branches.find((item) => normalizeSourceText(item?.name) === normalizeSourceText(row?.branchName)) ||
+    null;
+
+  // Tuyệt đối không fallback sang tất cả nguồn tiền, kể cả admin/owner.
+  // Popup thanh toán đối soát chỉ được dùng nguồn tiền thuộc chi nhánh tạo đơn.
+  return sources.filter((source) => sourceMatchesOrderBranch(source, branch, row));
+}
+
 function isProblemRow(row: any) {
   const deliveryStatus = String(row.localStatus || "").toUpperCase();
   const orderStatus = String(row.orderStatus || "").toUpperCase();
@@ -286,6 +432,10 @@ export default function LocalDeliveryReconciliationPage() {
 
   const summary = data?.summary || {};
   const clientProblemCount = visibleRows.filter(isProblemRow).length;
+  const payingPaymentSources = useMemo(
+    () => paymentSourcesForOrderBranch(paymentSources, branches, payingRow),
+    [paymentSources, branches, payingRow],
+  );
 
   function openOrder(row: any) {
     if (!row?.orderId) return;
@@ -474,8 +624,18 @@ export default function LocalDeliveryReconciliationPage() {
 
     const amount = Number(row.reconciliationCodAmount || row.needCollectAmount || 0);
     const fee = Number(row.reconciliationShippingFee || row.shippingFee || 0);
+    const branchSources = paymentSourcesForOrderBranch(paymentSources, branches, row);
+    const defaultSourceId = branchSources.some((source) => String(source.id) === String(paymentSourceId))
+      ? paymentSourceId
+      : String(branchSources[0]?.id || "");
+
+    if (!branchSources.length) {
+      alert("Chi nhánh tạo đơn chưa có nguồn tiền phù hợp. Cần cấu hình nguồn tiền theo chi nhánh trước khi thanh toán đối soát.");
+      return;
+    }
+
     setPayingRow(row);
-    setPaymentRows([{ paymentSourceId, amount: amount ? String(amount) : "" }]);
+    setPaymentRows([{ paymentSourceId: defaultSourceId, amount: amount ? String(amount) : "" }]);
     setShippingFeePayer("SHOP");
     setShippingFeeAmount(fee ? String(fee) : "");
   };
@@ -1076,6 +1236,15 @@ export default function LocalDeliveryReconciliationPage() {
               </div>
 
               <div className="mt-5 space-y-3">
+                {payingPaymentSources.length ? (
+                  <p className="text-xs text-neutral-500">
+                    Chỉ hiển thị nguồn tiền thuộc chi nhánh tạo đơn: <b>{payingRow.branchName || payingRow.branchId || "—"}</b>.
+                  </p>
+                ) : (
+                  <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+                    Chưa tìm thấy nguồn tiền theo chi nhánh tạo đơn. Kiểm tra tên/code nguồn tiền hoặc branchId của nguồn tiền.
+                  </p>
+                )}
                 {paymentRows.map((row, index) => (
                   <div key={index} className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
                     <select
@@ -1090,8 +1259,10 @@ export default function LocalDeliveryReconciliationPage() {
                       className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
                     >
                       <option value="">Chọn nguồn tiền</option>
-                      {paymentSources.map((source) => (
-                        <option key={source.id} value={source.id}>{source.name}</option>
+                      {payingPaymentSources.map((source) => (
+                        <option key={source.id} value={source.id}>
+                          {[source.name, source.code].filter(Boolean).join(" · ")}
+                        </option>
                       ))}
                     </select>
                     <input
