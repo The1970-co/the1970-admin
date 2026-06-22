@@ -635,7 +635,7 @@ export default function LocalDeliveryReconciliationPage() {
     }
 
     setPayingRow(row);
-    setPaymentRows([{ paymentSourceId: defaultSourceId, amount: amount ? String(amount) : "" }]);
+    setPaymentRows([{ paymentSourceId: defaultSourceId, amount: String(Math.max(0, amount)) }]);
     setShippingFeePayer("SHOP");
     setShippingFeeAmount(fee ? String(fee) : "");
   };
@@ -648,10 +648,10 @@ export default function LocalDeliveryReconciliationPage() {
         paymentSourceId: row.paymentSourceId,
         amount: Number(row.amount || 0),
       }))
-      .filter((row) => row.paymentSourceId && row.amount > 0);
+      .filter((row) => row.paymentSourceId && row.amount >= 0);
 
     if (!cleanRows.length) {
-      alert("Nhập ít nhất 1 dòng thanh toán.");
+      alert("Chọn nguồn tiền thanh toán. Có thể nhập 0 nếu khách đã chuyển khoản trước.");
       return;
     }
 
@@ -660,7 +660,7 @@ export default function LocalDeliveryReconciliationPage() {
     const shippingFeeValue = Number(String(shippingFeeAmount || "0").replace(/[^\d]/g, "") || 0);
 
     if (target > 0 && total > target) {
-      alert("Tổng tiền thanh toán không được lớn hơn COD cần thu.");
+      alert("Tổng tiền hàng thu của khách không được lớn hơn COD cần thu.");
       return;
     }
 
@@ -1274,7 +1274,7 @@ export default function LocalDeliveryReconciliationPage() {
                           ),
                         )
                       }
-                      placeholder="Số tiền"
+                      placeholder="Số tiền, có thể nhập 0"
                       className="h-11 rounded-xl border border-neutral-200 px-3 text-sm"
                     />
                     <button
