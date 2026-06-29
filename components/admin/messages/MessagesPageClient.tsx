@@ -362,7 +362,28 @@ function getConnectionFields(connection?: MetaConnectionStatus | null) {
   return fields.join(", ");
 }
 
-export default function MessagesPageClient() {
+
+function isFacebookCommentConversation(conversation?: OmniConversation | null) {
+  const providerThreadId = normalizeName(conversation?.providerThreadId);
+  const lastMessageText = normalizeName(conversation?.lastMessageText);
+  return (
+    providerThreadId.startsWith("FACEBOOK_COMMENT:") ||
+    lastMessageText.startsWith("[Bình luận]") ||
+    Boolean(
+      conversation?.tags?.some((tag) =>
+        ["bình luận", "facebook_comment", "comment"].includes(
+          normalizeName(tag.tag).toLowerCase(),
+        ),
+      ),
+    )
+  );
+}
+
+export default function MessagesPageClient({
+  initialWorkspace = "inbox",
+}: {
+  initialWorkspace?: WorkspaceKey;
+} = {}) {
   const { user, activeBranchId } = useAuth();
   const currentUserName = getUserDisplayName(user);
   const currentUserRole = getUserRoleLabel(user);
@@ -436,7 +457,7 @@ export default function MessagesPageClient() {
   const [sseStatus, setSseStatus] = useState<
     "connecting" | "online" | "offline"
   >("connecting");
-  const [workspace, setWorkspace] = useState<WorkspaceKey>("inbox");
+  const [workspace, setWorkspace] = useState<WorkspaceKey>(initialWorkspace);
   const listRequestId = useRef(0);
 
   useEffect(() => {
@@ -669,24 +690,52 @@ export default function MessagesPageClient() {
     };
   }, [activeId, loadList]);
 
+  const visibleConversations = useMemo(() => {
+    if (workspace === "comments") {
+      return conversations.filter(isFacebookCommentConversation);
+    }
+    return conversations;
+  }, [conversations, workspace]);
+
+  useEffect(() => {
+    if (workspace !== "comments") return;
+
+    if (!visibleConversations.length) {
+      if (activeId) setActiveId("");
+      setActiveConversation(null);
+      return;
+    }
+
+    if (!visibleConversations.some((item) => item.id === activeId)) {
+      setActiveId(visibleConversations[0].id);
+    }
+  }, [activeId, visibleConversations, workspace]);
+
   const selectedSummary = useMemo(() => {
-    const unread = conversations.reduce(
+    const unread = visibleConversations.reduce(
       (sum, item) => sum + Number(item.unreadCount || 0),
       0,
     );
-    const open = conversations.filter((item) => item.status === "OPEN").length;
-    const processing = conversations.filter(
+    const open = visibleConversations.filter((item) => item.status === "OPEN").length;
+    const processing = visibleConversations.filter(
       (item) => item.status === "PROCESSING",
     ).length;
-    const closed = conversations.filter(
+    const closed = visibleConversations.filter(
       (item) => item.status === "CLOSED",
     ).length;
     return { unread, open, processing, closed };
-  }, [conversations]);
+  }, [visibleConversations]);
 
   async function handleSend() {
     const text = draft.trim();
     if (!activeConversation?.id || !text || sending) return;
+
+    if (isFacebookCommentConversation(activeConversation)) {
+      setError(
+        "Hội thoại bình luận hiện chỉ dùng để đọc và phân công. Trả lời bình luận sẽ bật sau khi backend có API reply comment.",
+      );
+      return;
+    }
 
     setSending(true);
     setError("");
@@ -842,6 +891,12 @@ export default function MessagesPageClient() {
       return;
     }
 
+    if (key === "comments") {
+      setChannel("FACEBOOK");
+      setStatus("ALL");
+      return;
+    }
+
     if (key === "inbox") {
       setChannel("ALL");
       setStatus("ALL");
@@ -851,7 +906,8 @@ export default function MessagesPageClient() {
   const isInboxWorkspace =
     workspace === "inbox" ||
     workspace === "facebook" ||
-    workspace === "instagram";
+    workspace === "instagram" ||
+    workspace === "comments";
 
   return (
     <div className="min-h-screen bg-[#f6f6f4] text-neutral-950">
@@ -1069,7 +1125,7 @@ export default function MessagesPageClient() {
                     <div>
                       <h3 className="text-lg font-bold">Hội thoại</h3>
                       <p className="text-sm text-neutral-500">
-                        The 1970 · Facebook Messenger
+                        The 1970 · {workspace === "comments" ? "Facebook Comments" : "Facebook Messenger"}
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -1180,10 +1236,10 @@ export default function MessagesPageClient() {
                 )}
 
                 <div className="h-[calc(100%-220px)] overflow-y-auto">
-                  {loadingList && !conversations.length ? (
+                  {loadingList && !visibleConversations.length ? (
                     <ListSkeleton />
-                  ) : conversations.length ? (
-                    conversations.map((item) => (
+                  ) : visibleConversations.length ? (
+                    visibleConversations.map((item) => (
                       <ConversationRow
                         key={item.id}
                         item={item}
@@ -1198,7 +1254,7 @@ export default function MessagesPageClient() {
                       </div>
                       <p className="mt-4 font-bold">Chưa có hội thoại</p>
                       <p className="mt-1 text-sm text-neutral-500">
-                        Khi Facebook Messenger gửi sự kiện mới, hội thoại sẽ
+                        Khi Facebook gửi sự kiện mới, hội thoại sẽ
                         xuất hiện tại đây.
                       </p>
                     </div>
@@ -1344,7 +1400,11 @@ export default function MessagesPageClient() {
                           }}
                           rows={3}
                           className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-neutral-400"
-                          placeholder="Nhập tin nhắn... Enter để gửi, Shift + Enter để xuống dòng"
+                          placeholder={
+                            isFacebookCommentConversation(activeConversation)
+                              ? "Đây là bình luận Facebook. Hiện chỉ đọc/gán xử lý, chưa bật trả lời comment."
+                              : "Nhập tin nhắn... Enter để gửi, Shift + Enter để xuống dòng"
+                          }
                         />
 
                         <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
@@ -1362,7 +1422,7 @@ export default function MessagesPageClient() {
 
                           <button
                             onClick={() => void handleSend()}
-                            disabled={!draft.trim() || sending}
+                            disabled={!draft.trim() || sending || isFacebookCommentConversation(activeConversation)}
                             className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {sending ? (
@@ -1594,7 +1654,7 @@ export default function MessagesPageClient() {
           ) : (
             <WorkspacePanel
               workspace={workspace}
-              conversations={conversations}
+              conversations={visibleConversations}
               quickReplies={QUICK_REPLIES}
               assignees={assigneeOptions}
               selectedSummary={selectedSummary}
@@ -1887,7 +1947,7 @@ function WorkspacePanel({
                   .length
               }
             />
-            <ChannelHealth label="Bình luận/Livestream" value={0} />
+            <ChannelHealth label="Bình luận/Livestream" value={conversations.filter(isFacebookCommentConversation).length} />
           </div>
         </div>
       </WorkspaceShell>
