@@ -306,6 +306,7 @@ export default function LocalDeliveryReconciliationPage() {
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [syncingAhamove, setSyncingAhamove] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
@@ -386,6 +387,30 @@ export default function LocalDeliveryReconciliationPage() {
       setBulkMessage("");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const syncAhamoveNow = async () => {
+    if (!canViewLocalDelivery || syncingAhamove) return;
+
+    setSyncingAhamove(true);
+    try {
+      const result = await apiJson<any>("/shipments/ahamove/tracking/cron/run-now", {
+        method: "POST",
+      });
+
+      const checked = Number(result?.checked || 0);
+      const delivered = Number(result?.delivered || 0);
+      const statusChanged = Number(result?.statusChanged || 0);
+      const failed = Number(result?.failed || 0);
+      setBulkMessage(
+        `Đã đồng bộ AhaMove: kiểm tra ${checked} vận đơn, ${statusChanged} đổi trạng thái, ${delivered} đã giao${failed ? `, ${failed} lỗi` : ""}.`,
+      );
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Đồng bộ AhaMove thất bại.");
+    } finally {
+      setSyncingAhamove(false);
     }
   };
 
@@ -831,12 +856,21 @@ export default function LocalDeliveryReconciliationPage() {
             </select>
           </Field>
 
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <button
               onClick={() => void loadData()}
               className="h-11 rounded-xl bg-black px-5 text-sm font-medium text-white"
             >
               {loading ? "Đang lọc..." : "Lọc"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void syncAhamoveNow()}
+              disabled={syncingAhamove}
+              className="h-11 rounded-xl border border-neutral-300 bg-white px-4 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Gọi AhaMove live để cập nhật nhanh các vận đơn nội thành đang giao"
+            >
+              {syncingAhamove ? "Đang sync Aha..." : "Đồng bộ AhaMove"}
             </button>
           </div>
         </div>

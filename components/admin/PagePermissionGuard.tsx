@@ -41,7 +41,7 @@ const LEGACY_BRANCH_PERMISSION_MAP: Record<string, string[]> = {
   canApproveOrder: ["orders.approve"],
   canCancelOrder: ["orders.cancel"],
   canHandleReturn: ["returns.view", "returns.create", "menu.returns"],
-  canViewStock: ["inventory.view", "menu.inventory"],
+  canViewStock: ["inventory.view", "inventory.logs.view", "menu.inventory"],
   canManageStock: ["inventory.adjust", "inventory.transfer"],
   canStocktake: ["stocktake.view", "stocktake.scan", "menu.stocktake"],
   canTransferStock: ["stock_transfer.view", "stock_transfer.create", "menu.stock_transfer"],

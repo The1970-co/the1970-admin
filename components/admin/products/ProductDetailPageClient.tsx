@@ -367,6 +367,7 @@ function hasLegacyProductInventoryPermission(
   return getScopedBranchPermissionRows(user).some((row) => {
     if (permission === "products.view") return Boolean(row.canView);
     if (permission === "inventory.view") return Boolean(row.canViewStock);
+    if (permission === "inventory.logs.view") return Boolean(row.canViewStock);
     if (permission === "inventory.manage") return Boolean(row.canManageStock);
     if (permission === "inventory.value.view") return Boolean(row.canViewMoney);
     if (permission === "products.excel.export")
@@ -1011,6 +1012,11 @@ export default function ProductDetailPageClient({
     currentUser,
     role,
     "inventory.view",
+  );
+  const canViewInventoryLogs = hasProductInventoryPermission(
+    currentUser,
+    role,
+    "inventory.logs.view",
   );
   const canViewCost = hasProductInventoryPermission(
     currentUser,
@@ -1723,7 +1729,7 @@ export default function ProductDetailPageClient({
           ) : null}
         </Panel>
 
-        {canViewInventory ? (
+        {canViewInventoryLogs ? (
           <ProductInventoryHistoryPanel
             rows={scopedInventoryMovementRows}
             branches={inventoryHistoryBranches}
@@ -2167,7 +2173,7 @@ export default function ProductDetailPageClient({
                 </Panel>
               </div>
 
-              {canViewInventory ? (
+              {canViewInventoryLogs ? (
                 <ProductInventoryHistoryPanel
                   rows={scopedInventoryMovementRows}
                   branches={inventoryHistoryBranches}
