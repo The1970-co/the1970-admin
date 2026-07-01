@@ -1864,20 +1864,29 @@ function ShipmentRealtimeTimeline({
   refreshing,
   message,
   onRefresh,
+  carrier,
 }: {
   timeline: ShipmentTimelineEntry[];
   refreshing: boolean;
   message?: string;
   onRefresh: () => void;
+  carrier?: string | null;
 }) {
+  const carrierUpper = String(carrier || "").toUpperCase();
+  const refreshLabel = carrierUpper.includes("VIETTEL")
+    ? "Đồng bộ ViettelPost"
+    : carrierUpper.includes("AHAMOVE")
+      ? "Đồng bộ AhaMove"
+      : "Refresh";
+
   return (
     <Panel>
       <SectionHeader
         title="Tracking realtime"
-        subtitle="Hiển thị tài xế/ETA khi hãng trả dữ liệu. Bấm Refresh để đồng bộ thủ công."
+        subtitle="Hiển thị tài xế/ETA khi hãng trả dữ liệu. Bấm nút đồng bộ để gọi live trạng thái từ hãng."
         action={
           <ActionButton disabled={refreshing} onClick={onRefresh}>
-            {refreshing ? "Đang refresh..." : "Refresh"}
+            {refreshing ? "Đang đồng bộ..." : refreshLabel}
           </ActionButton>
         }
       />
@@ -3991,6 +4000,7 @@ export default function OrderDetailPageClient({
               refreshing={trackingRefreshing}
               message={trackingMessage}
               onRefresh={() => void refreshShipmentTracking(true)}
+              carrier={viewOrder.shipment?.carrier || meta.shippingPartner}
             />
           </div>
         ) : null}

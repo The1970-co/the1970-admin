@@ -307,6 +307,7 @@ export default function LocalDeliveryReconciliationPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [syncingAhamove, setSyncingAhamove] = useState(false);
+  const [syncingViettelPost, setSyncingViettelPost] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
@@ -411,6 +412,30 @@ export default function LocalDeliveryReconciliationPage() {
       alert(err instanceof Error ? err.message : "Đồng bộ AhaMove thất bại.");
     } finally {
       setSyncingAhamove(false);
+    }
+  };
+
+  const syncViettelPostNow = async () => {
+    if (!canViewLocalDelivery || syncingViettelPost) return;
+
+    setSyncingViettelPost(true);
+    try {
+      const result = await apiJson<any>("/shipments/viettelpost/tracking/cron/run-now", {
+        method: "POST",
+      });
+
+      const checked = Number(result?.checked || 0);
+      const delivered = Number(result?.delivered || 0);
+      const statusChanged = Number(result?.statusChanged || 0);
+      const failed = Number(result?.failed || 0);
+      setBulkMessage(
+        `Đã đồng bộ ViettelPost: kiểm tra ${checked} vận đơn, ${statusChanged} đổi trạng thái, ${delivered} đã giao${failed ? `, ${failed} lỗi` : ""}.`,
+      );
+      await loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Đồng bộ ViettelPost thất bại.");
+    } finally {
+      setSyncingViettelPost(false);
     }
   };
 
@@ -851,6 +876,7 @@ export default function LocalDeliveryReconciliationPage() {
             >
               <option value="ALL">Tất cả nội thành</option>
               <option value="AHAMOVE">Ahamove</option>
+              <option value="VIETTELPOST">ViettelPost</option>
               <option value="SHIPPER">Shipper nội bộ</option>
               <option value="GRAB">Grab</option>
             </select>
@@ -871,6 +897,15 @@ export default function LocalDeliveryReconciliationPage() {
               title="Gọi AhaMove live để cập nhật nhanh các vận đơn nội thành đang giao"
             >
               {syncingAhamove ? "Đang sync Aha..." : "Đồng bộ AhaMove"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void syncViettelPostNow()}
+              disabled={syncingViettelPost}
+              className="h-11 rounded-xl border border-neutral-300 bg-white px-4 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Gọi ViettelPost live để cập nhật nhanh các vận đơn nội thành đang giao"
+            >
+              {syncingViettelPost ? "Đang sync Viettel..." : "Đồng bộ Viettel"}
             </button>
           </div>
         </div>
