@@ -2,6 +2,8 @@ import { API_BASE } from "@/lib/api-base";
 import {
   getTokenFromStorage,
   clearCurrentUserFromStorage,
+  getCurrentUserFromStorage,
+  getWorkingBranchId,
 } from "@/lib/current-user";
 
 export type InventoryMovement = {
@@ -47,10 +49,12 @@ export type InventoryMovementActor = {
 
 function getAuthHeaders(initHeaders?: HeadersInit): HeadersInit {
   const token = getTokenFromStorage();
+  const activeBranchId = getWorkingBranchId(getCurrentUserFromStorage());
 
   return {
     Accept: "application/json",
     Authorization: `Bearer ${token || ""}`,
+    ...(activeBranchId ? { "x-active-branch-id": activeBranchId } : {}),
     ...(initHeaders || {}),
   };
 }
