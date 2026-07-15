@@ -62,7 +62,7 @@ const MENU: MenuItem[] = [
       { href: "/finance/cash-payments", label: "Phiếu chi", permission: PERMISSIONS.MENU_CASH_VOUCHER },
       { href: "/finance/ghn-reconciliation", label: "Đối soát COD GHN", permission: PERMISSIONS.MENU_FINANCE_GHN_RECONCILIATION },
       { href: "/finance/local-delivery", label: "Đối soát nội thành", permission: PERMISSIONS.MENU_FINANCE_LOCAL_DELIVERY },
-      { href: "/finance/revenue", label: "Báo cáo doanh thu", permission: PERMISSIONS.MENU_REPORTS },
+      { href: "/finance/revenue", label: "Báo cáo tài chính", permission: PERMISSIONS.MENU_REPORTS },
       { href: "/finance/supplier-payments", label: "Thanh toán nhà cung cấp", permission: PERMISSIONS.MENU_SUPPLIER_PAYMENTS },
     ],
   },

@@ -2,6 +2,9 @@ export type PayrollStatus = "DRAFT" | "CALCULATED" | "LOCKED" | "PARTIALLY_PAID"
 export type SalaryType = "MONTHLY" | "DAILY" | "SHIFT" | "NONE" | string;
 export type AdjustmentType = "BONUS" | "ALLOWANCE" | "ADVANCE" | "DEDUCTION";
 
+export type PayrollOvertimeConfig = { key: string; label: string; enabled: boolean; baseHourlyRate: number | string; multiplier: number | string; };
+export type PayrollOvertimeBreakdown = PayrollOvertimeConfig & { hours: number | string; amount: number | string; };
+
 export type PayrollPeriod = {
   id: string; code: string; name: string; fromDate: string; toDate: string;
   branchId?: string | null; branchName?: string | null; status: PayrollStatus;
@@ -21,7 +24,7 @@ export type PayrollLine = {
   attendanceCode?: string | null; attendanceMatchedBy?: string | null; attendanceRawName?: string | null; attendanceSourceFile?: string | null; attendanceImportedAt?: string | null;
   lateCount?: number | string | null; lateMinutes?: number | string | null; earlyCount?: number | string | null; earlyMinutes?: number | string | null; attendanceWarningLevel?: string | null; attendanceWarningNote?: string | null;
   normalHours?: number | string | null; overtimeHours?: number | string | null; overtimeRate?: number | string | null; holidayHours?: number | string | null; holidayRate?: number | string | null;
-  convertedWorkingHours?: number | string | null; hourlyRate?: number | string | null; hourlyAmount?: number | string | null;
+  convertedWorkingHours?: number | string | null; hourlyRate?: number | string | null; hourlyAmount?: number | string | null; overtimeAmount?: number | string | null; overtimeBreakdown?: PayrollOvertimeBreakdown[] | null; overtime3Hours?: number | string | null; overtime4Hours?: number | string | null;
   paidLeaveDays?: number | string | null; paidLeaveHoursPerDay?: number | string | null; paidLeaveAmount?: number | string | null;
   mealAllowanceAmount?: number | string | null; insuranceDeduction?: number | string | null;
   taggedProductQty?: number | string | null; taggedProductRate?: number | string | null; taggedProductAmount?: number | string | null;
@@ -41,10 +44,10 @@ export type PayrollOrderLink = {
 export type PayrollAdjustment = { id: string; payrollLineId: string; type: AdjustmentType | string; amount: number | string; reason?: string | null; createdByName?: string | null; createdAt?: string; };
 
 export type PayrollConfig = {
-  id: string; staffId: string; staffCode?: string | null; staffName?: string | null; branchId?: string | null; branchName?: string | null; attendanceCode?: string | null;
+  id: string; staffId: string; sourceTemplateId?: string | null; staffCode?: string | null; staffName?: string | null; branchId?: string | null; branchName?: string | null; attendanceCode?: string | null;
   salaryType?: SalaryType; baseSalary?: number | string | null; dailyRate?: number | string | null; standardWorkingDays?: number | string | null;
   orderAttributionMode?: string | null; commissionPerOrderEnabled?: boolean; commissionPerOrderAmount?: number | string | null; commissionPerItemEnabled?: boolean; commissionPerItemAmount?: number | string | null; commissionPercentEnabled?: boolean; commissionRate?: number | string | null;
-  hourlyEnabled?: boolean; hourlyRate?: number | string | null; standardHoursPerDay?: number | string | null; overtimeRate?: number | string | null; holidayRate?: number | string | null;
+  hourlyEnabled?: boolean; hourlyRate?: number | string | null; standardHoursPerDay?: number | string | null; overtimeRate?: number | string | null; holidayRate?: number | string | null; overtimeConfigs?: PayrollOvertimeConfig[] | null;
   paidLeaveEnabled?: boolean; paidLeaveHoursPerDay?: number | string | null; mealAllowanceEnabled?: boolean; mealHoursPerUnit?: number | string | null; mealAmountPerUnit?: number | string | null; insuranceDeductionAmount?: number | string | null;
   taggedProductEnabled?: boolean; taggedProductRate?: number | string | null; ghnCodBonusEnabled?: boolean; ghnCodBonusPerOrder?: number | string | null;
   applyPos?: boolean; applyOnline?: boolean; applyFacebook?: boolean; applyCod?: boolean; allowanceDefault?: number | string | null; effectiveFrom?: string; effectiveTo?: string | null; isActive?: boolean; note?: string | null;
@@ -73,6 +76,7 @@ export type PayrollBranchConfigTemplate = {
   standardHoursPerDay?: number | string | null;
   overtimeRate?: number | string | null;
   holidayRate?: number | string | null;
+  overtimeConfigs?: PayrollOvertimeConfig[] | null;
   paidLeaveEnabled?: boolean;
   paidLeaveHoursPerDay?: number | string | null;
   mealAllowanceEnabled?: boolean;

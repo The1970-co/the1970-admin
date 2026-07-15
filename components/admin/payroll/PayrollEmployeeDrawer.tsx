@@ -60,7 +60,8 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
               <Row label="Lương cứng theo công" value={money(line.proratedSalary)} />
               <Row label="Ngày công / chuẩn" value={`${num(line.workingDays)} / ${num(line.standardDays)}`} />
               <Row label="Giờ quy đổi" value={`${num(line.convertedWorkingHours)} giờ · ${money(line.hourlyAmount)}`} />
-              <Row label="CT1 / CT2" value={`${num(line.overtimeHours)}h x ${num(line.overtimeRate)} · ${num(line.holidayHours)}h x ${num(line.holidayRate)}`} />
+              <Row label="Tổng tăng ca" value={money(line.overtimeAmount)} />
+              {(Array.isArray(line.overtimeBreakdown) ? line.overtimeBreakdown : []).map((row: any) => <Row key={row.key} label={row.label || row.key} value={`${num(row.hours)}h × ${money(row.baseHourlyRate)} × ${num(row.multiplier)} = ${money(row.amount)}`} />)}
               <Row label="Nghỉ có lương" value={`${num(line.paidLeaveDays)} ngày · ${money(line.paidLeaveAmount)}`} />
               <Row label="SP gắn tên" value={`${num(line.taggedProductQty)} sp · ${money(line.taggedProductAmount)}`} />
               <Row label="Thưởng COD GHN" value={`${num(line.ghnCodOrderCount)} đơn · ${money(line.ghnCodBonusAmount)}`} />

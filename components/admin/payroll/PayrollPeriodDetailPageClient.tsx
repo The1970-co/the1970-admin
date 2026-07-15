@@ -679,6 +679,8 @@ export default function PayrollPeriodDetailPageClient({
                       ["overtimeRate", "Hệ số CT1"],
                       ["holidayHours", "Giờ ngày lễ CT2"],
                       ["holidayRate", "Hệ số CT2 (x2)"],
+                      ["overtime3Hours", "Giờ tăng ca 3"],
+                      ["overtime4Hours", "Giờ tăng ca 4"],
                       ["hourlyRate", "Giá 1 giờ"],
                       ["paidLeaveDays", "Ngày nghỉ có lương"],
                       ["paidLeaveHoursPerDay", "Giờ / ngày nghỉ"],

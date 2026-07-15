@@ -57,6 +57,12 @@ const baseDefaults = {
   standardHoursPerDay: "9.5",
   overtimeRate: "1",
   holidayRate: "2",
+  overtimeConfigs: [
+    { key: "OT1", label: "Tăng ca 1", enabled: true, baseHourlyRate: "0", multiplier: "1" },
+    { key: "OT2", label: "Ngày lễ", enabled: true, baseHourlyRate: "0", multiplier: "2" },
+    { key: "OT3", label: "Tăng ca 3", enabled: false, baseHourlyRate: "0", multiplier: "1" },
+    { key: "OT4", label: "Tăng ca 4", enabled: false, baseHourlyRate: "0", multiplier: "1" },
+  ],
   paidLeaveEnabled: false,
   paidLeaveHoursPerDay: "9.5",
   mealAllowanceEnabled: false,
@@ -144,6 +150,16 @@ export default function PayrollConfigPageClient() {
     return map;
   }, [templates]);
 
+
+  const groupedConfigs = useMemo(() => {
+    const map = new Map<string, PayrollConfig[]>();
+    [...configs].sort((a, b) => String(a.branchName || a.branchId || "").localeCompare(String(b.branchName || b.branchId || ""), "vi") || String(a.staffName || "").localeCompare(String(b.staffName || ""), "vi")).forEach((config) => {
+      const key = config.branchName || config.branchId || "Chưa gán chi nhánh";
+      map.set(key, [...(map.get(key) || []), config]);
+    });
+    return Array.from(map.entries());
+  }, [configs]);
+
   const bulkStaff = useMemo(() => {
     if (!bulkBranchId) return [];
     return staff.filter(
@@ -177,6 +193,7 @@ export default function PayrollConfigPageClient() {
       standardHoursPerDay: Number(source.standardHoursPerDay || 9.5),
       overtimeRate: Number(source.overtimeRate || 1),
       holidayRate: Number(source.holidayRate || 2),
+      overtimeConfigs: (source.overtimeConfigs || []).map((row: any, index: number) => ({ key: row.key || `OT${index + 1}`, label: row.label || `Tăng ca ${index + 1}`, enabled: Boolean(row.enabled), baseHourlyRate: parseMoney(row.baseHourlyRate), multiplier: Number(row.multiplier || 0) })),
       paidLeaveEnabled: Boolean(source.paidLeaveEnabled),
       paidLeaveHoursPerDay: Number(
         source.paidLeaveHoursPerDay || source.standardHoursPerDay || 9.5,
@@ -217,6 +234,7 @@ export default function PayrollConfigPageClient() {
       standardHoursPerDay: String(template.standardHoursPerDay || 9.5),
       overtimeRate: String(template.overtimeRate || 1),
       holidayRate: String(template.holidayRate || 2),
+      overtimeConfigs: Array.isArray(template.overtimeConfigs) ? template.overtimeConfigs.map((row: any, index: number) => ({ key: row.key || `OT${index + 1}`, label: row.label || `Tăng ca ${index + 1}`, enabled: row.enabled !== false, baseHourlyRate: String(row.baseHourlyRate || template.hourlyRate || 0), multiplier: String(row.multiplier || 1) })) : baseDefaults.overtimeConfigs,
       paidLeaveEnabled: Boolean(template.paidLeaveEnabled),
       paidLeaveHoursPerDay: String(
         template.paidLeaveHoursPerDay || template.standardHoursPerDay || 9.5,
@@ -276,6 +294,7 @@ export default function PayrollConfigPageClient() {
         branchName: branch?.name || undefined,
         ...baseToPayload(templateForm),
         isActive: templateForm.isActive !== false,
+        syncApplied: true,
       };
       if (!payload.branchId)
         throw new Error("Chọn chi nhánh cho mẫu cấu hình.");
@@ -284,7 +303,7 @@ export default function PayrollConfigPageClient() {
       else await createPayrollBranchTemplate(payload);
       setNotice(
         templateForm.id
-          ? "Đã cập nhật mẫu lương chi nhánh."
+          ? "Đã cập nhật mẫu và đồng bộ cấu hình nhân viên trong chi nhánh."
           : "Đã lưu mẫu lương chi nhánh.",
       );
       setTemplateForm(emptyTemplateForm);
@@ -447,7 +466,9 @@ export default function PayrollConfigPageClient() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {configs.map((config) => (
+                {groupedConfigs.flatMap(([branch, rows]) => [
+                  <tr key={`branch-${branch}`} className="bg-neutral-100"><td colSpan={11} className="px-4 py-2 text-xs font-black uppercase tracking-wide text-neutral-700">{branch} · {rows.length} nhân viên</td></tr>,
+                  ...rows.map((config) => (
                   <tr key={config.id} className="hover:bg-neutral-50/70">
                     <td className="px-4 py-4">
                       <div className="font-black text-neutral-950">
@@ -504,7 +525,7 @@ export default function PayrollConfigPageClient() {
                       </span>
                     </td>
                   </tr>
-                ))}
+                ))])}
                 {!configs.length ? (
                   <tr>
                     <td
@@ -1099,56 +1120,59 @@ function BaseSalarySection({ form, setForm }: any) {
 }
 
 function HourSection({ form, setForm }: any) {
+  const rows = Array.isArray(form.overtimeConfigs) ? form.overtimeConfigs : baseDefaults.overtimeConfigs;
+  function patchRow(index: number, patch: any) {
+    setForm((current: any) => ({ ...current, overtimeConfigs: rows.map((row: any, i: number) => i === index ? { ...row, ...patch } : row) }));
+  }
   return (
-    <Section
-      title="3. Giờ công / tăng ca / ngày lễ"
-      desc="Set giá giờ và hệ số. Số giờ thực tế lấy từ Excel hoặc nhập ở kỳ lương."
-    >
+    <Section title="3. Giờ công / tăng ca" desc="Mỗi loại tăng ca có tên, giá giờ gốc và hệ số riêng. Thành tiền = số giờ × giá giờ × hệ số.">
       <div className="grid gap-3 md:grid-cols-2">
-        <ToggleBox
-          label="Bật lương theo giờ"
-          checked={form.hourlyEnabled}
-          onChange={(v) => setForm((s: any) => ({ ...s, hourlyEnabled: v }))}
-        />
-        <Field label="Giá 1 giờ">
-          <input
-            value={form.hourlyRate}
-            onChange={(e) =>
-              setForm((s: any) => ({ ...s, hourlyRate: e.target.value }))
-            }
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Giờ chuẩn / ngày">
-          <input
-            value={form.standardHoursPerDay}
-            onChange={(e) =>
-              setForm((s: any) => ({
-                ...s,
-                standardHoursPerDay: e.target.value,
-              }))
-            }
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Hệ số CT1 tăng ca">
-          <input
-            value={form.overtimeRate}
-            onChange={(e) =>
-              setForm((s: any) => ({ ...s, overtimeRate: e.target.value }))
-            }
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Hệ số CT2 ngày lễ">
-          <input
-            value={form.holidayRate}
-            onChange={(e) =>
-              setForm((s: any) => ({ ...s, holidayRate: e.target.value }))
-            }
-            className={inputClass}
-          />
-        </Field>
+        <ToggleBox label="Bật lương theo giờ" checked={form.hourlyEnabled} onChange={(v) => setForm((s: any) => ({ ...s, hourlyEnabled: v }))} />
+        <Field label="Giá 1 giờ ngày thường"><input value={form.hourlyRate} onChange={(e) => setForm((s: any) => ({ ...s, hourlyRate: e.target.value }))} className={inputClass} /></Field>
+        <Field label="Giờ chuẩn / ngày"><input value={form.standardHoursPerDay} onChange={(e) => setForm((s: any) => ({ ...s, standardHoursPerDay: e.target.value }))} className={inputClass} /></Field>
+      </div>
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {rows.map((row: any, index: number) => (
+          <div key={row.key || index} className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-black text-neutral-950">Tăng ca {index + 1}</div>
+              <input type="checkbox" checked={Boolean(row.enabled)} onChange={(e) => patchRow(index, { enabled: e.target.checked })} />
+            </div>
+            <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
+              <div className="min-w-0 sm:col-span-2">
+                <Field label="Loại / tên">
+                  <input
+                    value={row.label || ""}
+                    onChange={(e) => patchRow(index, { label: e.target.value })}
+                    placeholder="VD: Ngày lễ, cuối tuần, tăng ca đêm"
+                    className={`${inputClass} min-w-0`}
+                  />
+                </Field>
+              </div>
+              <div className="min-w-0">
+                <Field label="Giá giờ gốc">
+                  <input
+                    value={row.baseHourlyRate ?? "0"}
+                    onChange={(e) => patchRow(index, { baseHourlyRate: e.target.value })}
+                    inputMode="numeric"
+                    className={`${inputClass} min-w-0`}
+                  />
+                </Field>
+              </div>
+              <div className="min-w-0">
+                <Field label="Hệ số">
+                  <input
+                    value={row.multiplier ?? "1"}
+                    onChange={(e) => patchRow(index, { multiplier: e.target.value })}
+                    inputMode="decimal"
+                    className={`${inputClass} min-w-0`}
+                  />
+                </Field>
+              </div>
+            </div>
+            <div className="mt-2 text-xs text-neutral-500">Ví dụ 10.000đ × {row.multiplier || 1} = {money(10000 * Number(row.multiplier || 0))}/giờ</div>
+          </div>
+        ))}
       </div>
     </Section>
   );
