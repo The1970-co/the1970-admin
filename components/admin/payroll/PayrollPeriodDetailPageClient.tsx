@@ -60,6 +60,56 @@ function statusClass(status?: string) {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+
+function statusLabel(status?: string) {
+  const s = String(status || "DRAFT").toUpperCase();
+  if (s === "CALCULATED") return "Đã tính";
+  if (s === "LOCKED") return "Đã khóa";
+  if (s === "PARTIALLY_PAID") return "Đã trả một phần";
+  if (s === "PAID") return "Đã trả";
+  if (s === "CANCELLED") return "Đã hủy";
+  return "Nháp";
+}
+
+type PayrollColumnKey =
+  | "branch"
+  | "attendance"
+  | "workingDays"
+  | "baseSalary"
+  | "convertedHours"
+  | "hourlyPay"
+  | "orders"
+  | "items"
+  | "commissionRate"
+  | "commissionTotal"
+  | "bonus"
+  | "deduction"
+  | "netPay"
+  | "status";
+
+const payrollColumnOptions: Array<{ key: PayrollColumnKey; label: string }> = [
+  { key: "branch", label: "Chi nhánh" },
+  { key: "attendance", label: "Chấm công" },
+  { key: "workingDays", label: "Công" },
+  { key: "baseSalary", label: "Lương cứng" },
+  { key: "convertedHours", label: "Giờ QĐ" },
+  { key: "hourlyPay", label: "Lương giờ" },
+  { key: "orders", label: "Đơn" },
+  { key: "items", label: "SP" },
+  { key: "commissionRate", label: "Mức hoa hồng" },
+  { key: "commissionTotal", label: "Tổng hoa hồng" },
+  { key: "bonus", label: "Thưởng" },
+  { key: "deduction", label: "Trừ" },
+  { key: "netPay", label: "Thực nhận" },
+  { key: "status", label: "Trạng thái" },
+];
+
+const defaultVisiblePayrollColumns: Record<PayrollColumnKey, boolean> =
+  payrollColumnOptions.reduce(
+    (acc, item) => ({ ...acc, [item.key]: true }),
+    {} as Record<PayrollColumnKey, boolean>,
+  );
+
 function calcAttendanceSummary(rows: AttendancePreviewRow[] = []) {
   const matchedRows = rows.filter((row) =>
     Boolean(row.staffId || row.matched),
@@ -111,6 +161,9 @@ export default function PayrollPeriodDetailPageClient({
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
   const [payrollConfigs, setPayrollConfigs] = useState<PayrollConfig[]>([]);
   const [saveAttendanceMapping, setSaveAttendanceMapping] = useState(true);
+  const [visibleColumns, setVisibleColumns] = useState<Record<PayrollColumnKey, boolean>>(
+    defaultVisiblePayrollColumns,
+  );
 
   async function load() {
     setLoading(true);
@@ -141,6 +194,32 @@ export default function PayrollPeriodDetailPageClient({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodId]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("payroll-period-visible-columns");
+      if (saved) {
+        setVisibleColumns({ ...defaultVisiblePayrollColumns, ...JSON.parse(saved) });
+      }
+    } catch {
+      // Bỏ qua cấu hình cột lỗi và dùng mặc định.
+    }
+  }, []);
+
+  function toggleColumn(key: PayrollColumnKey) {
+    setVisibleColumns((current) => {
+      const next = { ...current, [key]: !current[key] };
+      try {
+        window.localStorage.setItem(
+          "payroll-period-visible-columns",
+          JSON.stringify(next),
+        );
+      } catch {
+        // Trình duyệt chặn localStorage thì vẫn đổi được trong phiên hiện tại.
+      }
+      return next;
+    });
+  }
 
   const lines = Array.isArray(period?.lines) ? period!.lines! : [];
   const summary = useMemo(
@@ -179,6 +258,32 @@ export default function PayrollPeriodDetailPageClient({
     () => calcAttendanceSummary(attendancePreview?.rows || []),
     [attendancePreview],
   );
+
+  const payrollConfigByStaff = useMemo(() => {
+    const map = new Map<string, PayrollConfig>();
+    payrollConfigs.forEach((config) => {
+      const key = String(config.staffId || "");
+      if (!key || map.has(key)) return;
+      map.set(key, config);
+    });
+    return map;
+  }, [payrollConfigs]);
+
+  function commissionSetting(line: PayrollLine) {
+    const config = payrollConfigByStaff.get(String(line.staffId || ""));
+    if (!config) return "—";
+    const parts: string[] = [];
+    if (config.commissionPerItemEnabled && n(config.commissionPerItemAmount) > 0) {
+      parts.push(`${money(config.commissionPerItemAmount)}/SP`);
+    }
+    if (config.commissionPerOrderEnabled && n(config.commissionPerOrderAmount) > 0) {
+      parts.push(`${money(config.commissionPerOrderAmount)}/đơn`);
+    }
+    if (config.commissionPercentEnabled && n(config.commissionRate) > 0) {
+      parts.push(`${num(config.commissionRate)}% DT`);
+    }
+    return parts.length ? parts.join(" · ") : "0đ";
+  }
 
   function updateAttendanceRow(
     index: number,
@@ -475,25 +580,72 @@ export default function PayrollPeriodDetailPageClient({
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+      <div className="rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3">
+          <div>
+            <div className="text-sm font-semibold text-neutral-950">Bảng lương nhân viên</div>
+            <div className="mt-0.5 text-xs text-neutral-500">Bật hoặc tắt các cột để bảng gọn theo nhu cầu xem.</div>
+          </div>
+          <details className="relative">
+            <summary className="cursor-pointer list-none rounded-2xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50">
+              Tùy chọn hiển thị
+            </summary>
+            <div className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-neutral-200 bg-white p-3 shadow-xl">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Các cột đang hiện</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVisibleColumns(defaultVisiblePayrollColumns);
+                    try {
+                      window.localStorage.setItem(
+                        "payroll-period-visible-columns",
+                        JSON.stringify(defaultVisiblePayrollColumns),
+                      );
+                    } catch {}
+                  }}
+                  className="text-xs font-medium text-neutral-600 hover:text-neutral-950"
+                >
+                  Hiện tất cả
+                </button>
+              </div>
+              <div className="grid gap-1">
+                {payrollColumnOptions.map((column) => (
+                  <label
+                    key={column.key}
+                    className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns[column.key]}
+                      onChange={() => toggleColumn(column.key)}
+                    />
+                    {column.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </details>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1280px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3">Nhân viên</th>
-                <th className="px-4 py-3">Chi nhánh</th>
-                <th className="px-4 py-3">Chấm công</th>
-                <th className="px-4 py-3 text-right">Công</th>
-                <th className="px-4 py-3 text-right">Lương cứng</th>
-                <th className="px-4 py-3 text-right">Giờ QĐ</th>
-                <th className="px-4 py-3 text-right">Lương giờ</th>
-                <th className="px-4 py-3 text-right">Đơn</th>
-                <th className="px-4 py-3 text-right">SP</th>
-                <th className="px-4 py-3 text-right">Hoa hồng</th>
-                <th className="px-4 py-3 text-right">Thưởng</th>
-                <th className="px-4 py-3 text-right">Trừ</th>
-                <th className="px-4 py-3 text-right">Thực nhận</th>
-                <th className="px-4 py-3">TT</th>
+                {visibleColumns.branch ? <th className="px-4 py-3">Chi nhánh</th> : null}
+                {visibleColumns.attendance ? <th className="px-4 py-3">Chấm công</th> : null}
+                {visibleColumns.workingDays ? <th className="px-4 py-3 text-right">Công</th> : null}
+                {visibleColumns.baseSalary ? <th className="px-4 py-3 text-right">Lương cứng</th> : null}
+                {visibleColumns.convertedHours ? <th className="px-4 py-3 text-right">Giờ QĐ</th> : null}
+                {visibleColumns.hourlyPay ? <th className="px-4 py-3 text-right">Lương giờ</th> : null}
+                {visibleColumns.orders ? <th className="px-4 py-3 text-right">Đơn</th> : null}
+                {visibleColumns.items ? <th className="px-4 py-3 text-right">SP</th> : null}
+                {visibleColumns.commissionRate ? <th className="px-4 py-3 text-right">Mức HH</th> : null}
+                {visibleColumns.commissionTotal ? <th className="px-4 py-3 text-right">Tổng HH</th> : null}
+                {visibleColumns.bonus ? <th className="px-4 py-3 text-right">Thưởng</th> : null}
+                {visibleColumns.deduction ? <th className="px-4 py-3 text-right">Trừ</th> : null}
+                {visibleColumns.netPay ? <th className="px-4 py-3 text-right">Thực nhận</th> : null}
+                {visibleColumns.status ? <th className="px-4 py-3">TT</th> : null}
                 <th className="px-4 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
@@ -501,109 +653,48 @@ export default function PayrollPeriodDetailPageClient({
               {lines.map((line) => (
                 <tr key={line.id} className="hover:bg-neutral-50/70">
                   <td className="px-4 py-4">
-                    <button
-                      onClick={() => setSelectedLine(line)}
-                      className="font-semibold text-neutral-950 hover:underline"
-                    >
+                    <button onClick={() => setSelectedLine(line)} className="font-semibold text-neutral-950 hover:underline">
                       {line.staffName || "—"}
                     </button>
-                    <div className="mt-1 text-xs text-neutral-500">
-                      {line.staffCode || line.staffId}
-                    </div>
+                    <div className="mt-1 text-xs text-neutral-500">{line.staffCode || line.staffId}</div>
                   </td>
-                  <td className="px-4 py-4 text-neutral-600">
-                    {line.branchName || line.branchId || "—"}
-                  </td>
-                  <td className="px-4 py-4 text-xs">
-                    <div
-                      className={
-                        ["WARNING", "CRITICAL"].includes(
-                          String(
-                            line.attendanceWarningLevel || "",
-                          ).toUpperCase(),
-                        )
-                          ? "font-semibold text-red-600"
-                          : "text-neutral-500"
-                      }
-                    >
-                      {line.attendanceWarningLevel || "—"}
-                    </div>
-                    <div className="text-neutral-400">
-                      Muộn {num(line.lateMinutes)}' · Sớm{" "}
-                      {num(line.earlyMinutes)}'
-                    </div>
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {num(line.workingDays)}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {money(line.proratedSalary)}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {num(line.convertedWorkingHours)}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {money(line.hourlyAmount)}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {num(line.successOrderCount)}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {num(line.successItemQty)}
-                  </td>
-                  <td className="px-4 py-4 text-right font-medium text-neutral-900">
-                    {money(line.commissionTotal)}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {money(n(line.bonus) + n(line.allowance))}
-                  </td>
-                  <td className="px-4 py-4 text-right">
-                    {money(
-                      n(line.advance) +
-                        n(line.deduction) +
-                        n(line.insuranceDeduction),
-                    )}
-                  </td>
-                  <td className="px-4 py-4 text-right font-semibold text-neutral-950">
-                    {money(line.netPay)}
-                  </td>
-                  <td className="px-4 py-4">
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(line.status)}`}
-                    >
-                      {line.status || "DRAFT"}
-                    </span>
-                  </td>
+                  {visibleColumns.branch ? <td className="px-4 py-4 text-neutral-600">{line.branchName || line.branchId || "—"}</td> : null}
+                  {visibleColumns.attendance ? (
+                    <td className="px-4 py-4 text-xs">
+                      <div className={["WARNING", "CRITICAL"].includes(String(line.attendanceWarningLevel || "").toUpperCase()) ? "font-semibold text-red-600" : "text-neutral-500"}>
+                        {line.attendanceWarningLevel || "—"}
+                      </div>
+                      <div className="text-neutral-400">Muộn {num(line.lateMinutes)}' · Sớm {num(line.earlyMinutes)}'</div>
+                    </td>
+                  ) : null}
+                  {visibleColumns.workingDays ? <td className="px-4 py-4 text-right">{num(line.workingDays)}</td> : null}
+                  {visibleColumns.baseSalary ? <td className="px-4 py-4 text-right">{money(line.proratedSalary)}</td> : null}
+                  {visibleColumns.convertedHours ? <td className="px-4 py-4 text-right">{num(line.convertedWorkingHours)}</td> : null}
+                  {visibleColumns.hourlyPay ? <td className="px-4 py-4 text-right">{money(line.hourlyAmount)}</td> : null}
+                  {visibleColumns.orders ? <td className="px-4 py-4 text-right">{num(line.successOrderCount)}</td> : null}
+                  {visibleColumns.items ? <td className="px-4 py-4 text-right">{num(line.successItemQty)}</td> : null}
+                  {visibleColumns.commissionRate ? (
+                    <td className="max-w-[180px] whitespace-normal px-4 py-4 text-right text-xs font-medium text-neutral-700">{commissionSetting(line)}</td>
+                  ) : null}
+                  {visibleColumns.commissionTotal ? <td className="px-4 py-4 text-right font-medium text-neutral-900">{money(line.commissionTotal)}</td> : null}
+                  {visibleColumns.bonus ? <td className="px-4 py-4 text-right">{money(n(line.bonus) + n(line.allowance))}</td> : null}
+                  {visibleColumns.deduction ? <td className="px-4 py-4 text-right">{money(n(line.advance) + n(line.deduction) + n(line.insuranceDeduction))}</td> : null}
+                  {visibleColumns.netPay ? <td className="px-4 py-4 text-right font-semibold text-neutral-950">{money(line.netPay)}</td> : null}
+                  {visibleColumns.status ? (
+                    <td className="px-4 py-4">
+                      <span className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(line.status)}`}>
+                        {statusLabel(line.status)}
+                      </span>
+                    </td>
+                  ) : null}
                   <td className="px-4 py-4">
                     <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => setSelectedLine(line)}
-                        className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white"
-                      >
-                        Chi tiết
-                      </button>
-                      <button
-                        onClick={() => setEditLine(line)}
-                        className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white"
-                      >
-                        Nhập giờ/SP
-                      </button>
-                      <button
-                        onClick={() => setAdjustLine(line)}
-                        className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white"
-                      >
-                        Điều chỉnh
-                      </button>
+                      <button onClick={() => setSelectedLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Chi tiết</button>
+                      <button onClick={() => setEditLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Nhập giờ/SP</button>
+                      <button onClick={() => setAdjustLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Điều chỉnh</button>
                       <button
                         disabled={String(line.status).toUpperCase() === "PAID"}
-                        onClick={() =>
-                          setPayDialog({
-                            line,
-                            paymentSourceId: "",
-                            amount: String(n(line.netPay) - n(line.paidAmount)),
-                            note: "",
-                          })
-                        }
+                        onClick={() => setPayDialog({ line, paymentSourceId: "", amount: String(n(line.netPay) - n(line.paidAmount)), note: "" })}
                         className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
                       >
                         Trả
@@ -614,12 +705,8 @@ export default function PayrollPeriodDetailPageClient({
               ))}
               {!lines.length ? (
                 <tr>
-                  <td
-                    colSpan={15}
-                    className="px-4 py-12 text-center text-neutral-500"
-                  >
-                    Chưa có dòng lương. Bấm “Tính lại” sau khi cấu hình lương
-                    nhân viên.
+                  <td colSpan={2 + payrollColumnOptions.filter((column) => visibleColumns[column.key]).length} className="px-4 py-12 text-center text-neutral-500">
+                    Chưa có dòng lương. Bấm “Tính lại” sau khi cấu hình lương nhân viên.
                   </td>
                 </tr>
               ) : null}
