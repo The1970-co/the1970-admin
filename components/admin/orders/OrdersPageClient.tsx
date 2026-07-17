@@ -3224,6 +3224,30 @@ function extractPrefixedNoteValue(segment: string) {
     .trim();
 }
 
+function replaceOrderUserNote(rawNote: string | null | undefined, nextUserNote: string) {
+  const raw = String(rawNote || "").trim();
+  const next = String(nextUserNote || "").trim();
+  const parts = raw
+    .split(" | ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const keptParts = parts.filter(
+    (item) =>
+      !/^(Ghi chú nội bộ|Ghi chú đơn hàng|Ghi chú):/i.test(item),
+  );
+
+  // Ghi chú đời cũ có thể chỉ là một đoạn chữ thuần, không có prefix cấu trúc.
+  // Khi sửa thì thay đoạn đó, không giữ lại làm ghi chú trùng.
+  const hasStructuredSegment = parts.some(
+    (item) => looksLikeSystemOrderNoteSegment(item) || /^[^:]+:/i.test(item),
+  );
+  const baseParts = hasStructuredSegment ? keptParts : [];
+
+  if (next) baseParts.unshift(`Ghi chú nội bộ: ${next}`);
+  return baseParts.join(" | ");
+}
+
 function getOrderUserNoteForTable(order: any, meta?: ParsedNote) {
   const directNote = [
     order?.internalNote,
@@ -4498,6 +4522,9 @@ export default function OrdersPageClient() {
   const [savingOrderStatus, setSavingOrderStatus] = useState(false);
   const [savingPaymentStatus, setSavingPaymentStatus] = useState(false);
   const [deletingOrders, setDeletingOrders] = useState(false);
+  const [noteEditOpen, setNoteEditOpen] = useState(false);
+  const [noteEditValue, setNoteEditValue] = useState("");
+  const [savingOrderNote, setSavingOrderNote] = useState(false);
 
   const [currentUser, setCurrentUser] = useState<CurrentUserLite | null>(null);
 
@@ -6207,6 +6234,69 @@ export default function OrdersPageClient() {
     }
 
     setCheckedIds((prev) => Array.from(new Set([...prev, ...allVisibleIds])));
+  };
+
+  const openSelectedOrderNoteEditor = () => {
+    if (!singleCheckedOrder) {
+      setActionMessage("Chỉ chọn 1 đơn để sửa ghi chú.");
+      return;
+    }
+    setNoteEditValue(
+      getOrderUserNoteForTable(
+        singleCheckedOrder,
+        parseStructuredNote(singleCheckedOrder.note),
+      ),
+    );
+    setNoteEditOpen(true);
+  };
+
+  const saveSelectedOrderNote = async () => {
+    if (!singleCheckedOrder) return;
+
+    try {
+      setSavingOrderNote(true);
+      setActionMessage("");
+      const nextNote = replaceOrderUserNote(
+        singleCheckedOrder.note,
+        noteEditValue,
+      );
+      const res = await apiFetch(
+        `/orders/${encodeURIComponent(singleCheckedOrder.id)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ note: nextNote }),
+        },
+      );
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.message || "Không lưu được ghi chú đơn hàng.");
+      }
+
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === singleCheckedOrder.id
+            ? ({ ...order, ...(json || {}), note: json?.note ?? nextNote } as AdminOrder)
+            : order,
+        ),
+      );
+      setQuickViewOrder((prev) =>
+        prev?.id === singleCheckedOrder.id
+          ? ({ ...prev, ...(json || {}), note: json?.note ?? nextNote } as AdminOrder)
+          : prev,
+      );
+      setNoteEditOpen(false);
+      setActionMessage(`Đã cập nhật ghi chú đơn ${singleCheckedOrder.orderCode}.`);
+    } catch (err) {
+      setActionMessage(
+        err instanceof Error ? err.message : "Không lưu được ghi chú đơn hàng.",
+      );
+    } finally {
+      setSavingOrderNote(false);
+    }
   };
 
   const updateOneStatus = async (id: string, status: OrderStatus) => {
@@ -8625,6 +8715,17 @@ export default function OrdersPageClient() {
                     Gán NV
                   </button>
 
+                  {singleCheckedOrder ? (
+                    <button
+                      type="button"
+                      onClick={openSelectedOrderNoteEditor}
+                      disabled={savingOrderNote}
+                      className="h-9 min-w-[128px] rounded-2xl border border-neutral-300 bg-white px-4 text-xs font-semibold text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Sửa ghi chú
+                    </button>
+                  ) : null}
+
                   <div className="relative" ref={printMenuRef}>
                     <button
                       type="button"
@@ -9705,6 +9806,64 @@ export default function OrdersPageClient() {
                       </div>
                     </div>
                   </Panel>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {noteEditOpen && singleCheckedOrder ? (
+            <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-xl rounded-[24px] border border-neutral-200 bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-neutral-200 px-5 py-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">
+                      Sửa ghi chú đơn hàng
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold text-neutral-950">
+                      {singleCheckedOrder.orderCode}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNoteEditOpen(false)}
+                    disabled={savingOrderNote}
+                    className="rounded-full border border-neutral-200 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Đóng
+                  </button>
+                </div>
+
+                <div className="px-5 py-4">
+                  <textarea
+                    autoFocus
+                    value={noteEditValue}
+                    onChange={(event) => setNoteEditValue(event.target.value)}
+                    rows={6}
+                    placeholder="Nhập ghi chú đơn hàng..."
+                    className="w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm outline-none focus:border-neutral-900"
+                  />
+                  <p className="mt-2 text-xs text-neutral-500">
+                    Chỉ thay ghi chú nội bộ; địa chỉ, cách giao và ghi chú giao hàng vẫn được giữ nguyên.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-3 border-t border-neutral-200 px-5 py-4">
+                  <button
+                    type="button"
+                    onClick={() => setNoteEditOpen(false)}
+                    disabled={savingOrderNote}
+                    className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveSelectedOrderNote()}
+                    disabled={savingOrderNote}
+                    className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                  >
+                    {savingOrderNote ? "Đang lưu..." : "Lưu ghi chú"}
+                  </button>
                 </div>
               </div>
             </div>

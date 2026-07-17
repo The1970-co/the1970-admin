@@ -1991,6 +1991,9 @@ export default function OrderDetailPageClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
@@ -3306,6 +3309,47 @@ export default function OrderDetailPageClient({
       setMessage(err instanceof Error ? err.message : "Lưu thay đổi thất bại.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!order || !canEditOrderPermission) return;
+
+    try {
+      setNoteSaving(true);
+      setMessage("");
+
+      const nextNote = upsertStructuredNotePart(
+        order.note,
+        "Ghi chú:",
+        noteDraft,
+      );
+
+      const res = await apiFetch(`/orders/${order.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ note: nextNote }),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.message || "Lưu ghi chú thất bại.");
+      }
+
+      const nextOrder = json || { ...order, note: nextNote };
+      setOrder(nextOrder);
+      setDraftOrder((current) =>
+        current ? { ...current, note: nextOrder.note ?? nextNote } : current,
+      );
+      setIsEditingNote(false);
+      setMessage("Đã cập nhật ghi chú đơn hàng.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Lưu ghi chú thất bại.");
+    } finally {
+      setNoteSaving(false);
     }
   };
 
@@ -5037,7 +5081,23 @@ export default function OrderDetailPageClient({
             </Panel>
 
             <Panel>
-              <SectionHeader title="Ghi chú" subtitle="Thông tin bổ sung." />
+              <SectionHeader
+                title="Ghi chú"
+                subtitle="Có thể cập nhật bất cứ lúc nào, kể cả khi đơn đã hoàn thành hoặc đã huỷ."
+                action={
+                  !isEditing && !isEditingNote && canEditOrderPermission ? (
+                    <ActionButton
+                      onClick={() => {
+                        setNoteDraft(meta.noteText || "");
+                        setIsEditingNote(true);
+                        setMessage("");
+                      }}
+                    >
+                      Sửa ghi chú
+                    </ActionButton>
+                  ) : undefined
+                }
+              />
               <div className="space-y-3 px-4 py-3">
                 {isEditing ? (
                   <EditTextarea
@@ -5045,6 +5105,32 @@ export default function OrderDetailPageClient({
                     onChange={(v) => updateDraft("note", v)}
                     placeholder="Nhập ghi chú đơn hàng"
                   />
+                ) : isEditingNote ? (
+                  <>
+                    <EditTextarea
+                      value={noteDraft}
+                      onChange={setNoteDraft}
+                      placeholder="Nhập ghi chú đơn hàng"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <ActionButton
+                        disabled={noteSaving}
+                        onClick={() => {
+                          setIsEditingNote(false);
+                          setNoteDraft(meta.noteText || "");
+                        }}
+                      >
+                        Huỷ
+                      </ActionButton>
+                      <ActionButton
+                        tone="dark"
+                        disabled={noteSaving}
+                        onClick={() => void handleSaveNote()}
+                      >
+                        {noteSaving ? "Đang lưu..." : "Lưu ghi chú"}
+                      </ActionButton>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <DataRow label="Ghi chú đơn" value={meta.noteText || "—"} />
