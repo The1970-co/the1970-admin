@@ -11,6 +11,7 @@ import {
   listPayrollConfigs,
   listStaffOptions,
   updatePayrollBranchTemplate,
+  updatePayrollConfig,
 } from "@/lib/payroll-api";
 import type {
   BranchOption,
@@ -104,6 +105,7 @@ export default function PayrollConfigPageClient() {
   const [bulkTemplateId, setBulkTemplateId] = useState("");
   const [bulkOverwrite, setBulkOverwrite] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<string[]>([]);
+  const [savingConfigBranchId, setSavingConfigBranchId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -173,6 +175,37 @@ export default function PayrollConfigPageClient() {
       (item) => item.branchId === bulkBranchId && item.isActive !== false,
     );
   }, [templates, bulkBranchId]);
+
+
+  async function changeConfigBranch(config: PayrollConfig, branchId: string) {
+    const branch = branches.find((item) => item.id === branchId);
+    if (!branch) return;
+    setSavingConfigBranchId(config.id);
+    setError(null);
+    setNotice(null);
+    try {
+      await updatePayrollConfig(config.id, {
+        branchId: branch.id,
+        branchName: branch.name || branch.code || branch.id,
+      });
+      setConfigs((current) =>
+        current.map((item) =>
+          item.id === config.id
+            ? {
+                ...item,
+                branchId: branch.id,
+                branchName: branch.name || branch.code || branch.id,
+              }
+            : item,
+        ),
+      );
+      setNotice(`Đã chuyển cấu hình của ${config.staffName || config.staffId} sang ${branch.name || branch.code || branch.id}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không đổi được chi nhánh nhân viên.");
+    } finally {
+      setSavingConfigBranchId(null);
+    }
+  }
 
   function baseToPayload(source: any) {
     return {
@@ -480,7 +513,23 @@ export default function PayrollConfigPageClient() {
                       </div>
                     </td>
                     <td className="px-4 py-4 text-neutral-600">
-                      {config.branchName || config.branchId || "Theo nhân viên"}
+                      <select
+                        value={config.branchId || ""}
+                        disabled={savingConfigBranchId === config.id}
+                        onChange={(e) => void changeConfigBranch(config, e.target.value)}
+                        className="min-w-[150px] rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700 outline-none focus:border-neutral-900 disabled:opacity-60"
+                        title="Đổi chi nhánh áp dụng cho cấu hình lương của nhân viên"
+                      >
+                        <option value="" disabled>Chọn chi nhánh</option>
+                        {branches.map((branch) => (
+                          <option key={branch.id} value={branch.id}>
+                            {branch.name || branch.code || branch.id}
+                          </option>
+                        ))}
+                      </select>
+                      {savingConfigBranchId === config.id ? (
+                        <div className="mt-1 text-xs text-neutral-400">Đang lưu...</div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-4 text-xs text-neutral-600">
                       {attributionLabel(config.orderAttributionMode)}
