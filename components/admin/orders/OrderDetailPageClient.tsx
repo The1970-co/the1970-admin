@@ -126,6 +126,7 @@ type OrderDetail = {
   paymentStatus?: string | null;
   fulfillmentStatus?: string | null;
   finalAmount?: number;
+  shopActualReceived?: number;
   totalAmount?: number;
   discountAmount?: number;
   shippingFee?: number;
@@ -2742,6 +2743,13 @@ export default function OrderDetailPageClient({
     ? shipmentCodAmount
     : Math.max(shownFinalAmount - customerPaid, 0);
 
+  const carrierShippingFee = getShipmentCarrierShippingFee(viewOrder?.shipment);
+  const shopActualReceived = Number.isFinite(Number(viewOrder?.shopActualReceived))
+    ? Math.max(0, Number(viewOrder?.shopActualReceived || 0))
+    : Math.max(0, shownFinalAmount - carrierShippingFee);
+
+  const reconciledShopAmount = Number(viewOrder?.shipment?.codReconciliationAmount || 0) || shopActualReceived;
+
   const partialDelivery = useMemo(
     () => hasRealPartialDelivery(viewOrder),
     [viewOrder],
@@ -4269,8 +4277,16 @@ export default function OrderDetailPageClient({
                     value={currency(viewOrder.discountAmount)}
                   />
                   <MiniStat
-                    label="Phí ship"
+                    label="Phí khách trả"
                     value={currency(viewOrder.shippingFee)}
+                  />
+                  <MiniStat
+                    label="Phí ship thực tế"
+                    value={carrierShippingFee ? currency(carrierShippingFee) : "—"}
+                  />
+                  <MiniStat
+                    label="Shop thực thu"
+                    value={currency(shopActualReceived)}
                   />
                   <MiniStat
                     label="Tổng cần thu"
@@ -4294,6 +4310,11 @@ export default function OrderDetailPageClient({
                   {viewOrder.shipment?.codAmount ? (
                     <span className="text-[12px] text-neutral-600">
                       COD {currency(viewOrder.shipment.codAmount)}
+                    </span>
+                  ) : null}
+                  {isCodReconciled(viewOrder.shipment?.codReconciliationStatus) ? (
+                    <span className="text-[12px] font-semibold text-emerald-700">
+                      Đối soát shop nhận {currency(reconciledShopAmount)}
                     </span>
                   ) : null}
                 </div>
@@ -4829,9 +4850,12 @@ export default function OrderDetailPageClient({
                 </div>
 
                 <div className="text-right">
-                  <p className="text-[10px] text-neutral-500">Còn phải thu / COD</p>
-                  <p className="mt-1 text-[20px] font-semibold tracking-tight text-red-600">
-                    {currency(amountDue)}
+                  <p className="text-[10px] text-neutral-500">Shop thực thu sau phí VC</p>
+                  <p className="mt-1 text-[20px] font-semibold tracking-tight text-emerald-700">
+                    {currency(shopActualReceived)}
+                  </p>
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Khách còn phải trả {currency(amountDue)}
                   </p>
                 </div>
               </div>

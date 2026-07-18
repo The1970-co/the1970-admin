@@ -403,6 +403,7 @@ type ColumnKey =
   | "goodsAfterDiscount"
   | "codAmount"
   | "amountDue"
+  | "shopActualReceived"
   | "finalAmount";
 
 type ColumnDef = {
@@ -471,6 +472,7 @@ type NormalizedOrder = AdminOrder & {
   _goodsAfterDiscount: number;
   _codAmount: number;
   _amountDue: number;
+  _shopActualReceived: number;
   _createdAtDate: Date | null;
 };
 
@@ -641,6 +643,7 @@ const COLUMN_DEFS: ColumnDef[] = [
     money: true,
     defaultVisible: true,
   },
+  { key: "shopActualReceived", label: "Shop thực thu", money: true, defaultVisible: true },
   { key: "finalAmount", label: "Tổng tiền", money: true, defaultVisible: true },
 ];
 
@@ -688,6 +691,16 @@ function getShipmentCarrierShippingFee(shipment?: any) {
   }
 
   return 0;
+}
+
+function getShopActualReceived(order: AdminOrder) {
+  const anyOrder: any = order || {};
+  const backendValue = Number(anyOrder.shopActualReceived);
+  if (Number.isFinite(backendValue) && backendValue >= 0) return backendValue;
+
+  const customerTotal = Number(anyOrder.finalAmount || 0);
+  const carrierShippingFee = getShipmentCarrierShippingFee(anyOrder.shipment);
+  return Math.max(0, customerTotal - carrierShippingFee);
 }
 
 
@@ -1331,13 +1344,21 @@ function CodReconciliationDot({ order }: { order: AdminOrder }) {
   const label = codReconciliationListLabel(order);
 
   if (done) {
+    const anyOrder: any = order || {};
+    const reconciledAmount = Number(
+      anyOrder.shipment?.codReconciliationAmount ??
+      anyOrder.shipmentCodReconciliationAmount ??
+      getShopActualReceived(order),
+    );
+
     return (
       <span
-        title={label}
-        className="mx-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-neutral-950 text-[12px] font-bold leading-none text-white"
+        title={`${label}: ${currency(reconciledAmount)}`}
+        className="mx-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-neutral-950 px-2 py-1 text-[11px] font-semibold leading-none text-white"
         aria-label={label}
       >
-        ✓
+        <span>✓</span>
+        <span>{currency(reconciledAmount)}</span>
       </span>
     );
   }
@@ -3956,6 +3977,7 @@ type OrderExportColumnKey =
   | "goodsAfterDiscount"
   | "codAmount"
   | "amountDue"
+  | "shopActualReceived"
   | "finalAmount";
 
 type OrderExportColumnState = Record<OrderExportColumnKey, boolean>;
@@ -3991,6 +4013,7 @@ const defaultOrderExportColumns: OrderExportColumnState = {
   goodsAfterDiscount: true,
   codAmount: true,
   amountDue: true,
+  shopActualReceived: true,
   finalAmount: true,
 };
 
@@ -4025,6 +4048,7 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   goodsAfterDiscount: "Tiền hàng sau chiết khấu",
   codAmount: "Tiền COD",
   amountDue: "Khách còn phải trả",
+  shopActualReceived: "Shop thực thu",
   finalAmount: "Tổng tiền",
 };
 
@@ -4178,6 +4202,7 @@ function getOrderExportRows(
       row["NV phụ trách"] = order._assignedStaffName || "";
     if (columns.codAmount) row["Thu hộ COD"] = order._codAmount;
     if (columns.amountDue) row["Khách còn phải trả"] = order._amountDue;
+    if (columns.shopActualReceived) row["Shop thực thu"] = order._shopActualReceived;
     if (columns.finalAmount) row["Tổng tiền"] = Number(order.finalAmount || 0);
 
     return row;
@@ -5271,6 +5296,7 @@ export default function OrdersPageClient() {
         _goodsAfterDiscount: getOrderGoodsAfterDiscount(order),
         _codAmount: Number(order.shipment?.codAmount || 0),
         _amountDue: amountCustomerStillOwes(order),
+        _shopActualReceived: getShopActualReceived(order),
         _createdAtDate: parseOrderDate(order.createdAt),
       };
     });
@@ -5472,6 +5498,7 @@ export default function OrdersPageClient() {
         _goodsAfterDiscount: getOrderGoodsAfterDiscount(order),
         _codAmount: Number(order.shipment?.codAmount || 0),
         _amountDue: amountCustomerStillOwes(order),
+        _shopActualReceived: getShopActualReceived(order),
         _createdAtDate: parseOrderDate(order.createdAt),
       };
     });
@@ -7080,6 +7107,7 @@ export default function OrdersPageClient() {
     goodsAfterDiscount: "w-[210px]",
     codAmount: "w-[125px]",
     amountDue: "w-[150px]",
+    shopActualReceived: "w-[145px]",
     finalAmount: "w-[130px]",
   };
 
@@ -7548,6 +7576,16 @@ export default function OrdersPageClient() {
             className="border-b border-neutral-100 px-3 py-3 text-right font-medium whitespace-nowrap"
           >
             {currency(order._amountDue)}
+          </td>
+        );
+      case "shopActualReceived":
+        return (
+          <td
+            key={key}
+            className="border-b border-neutral-100 px-3 py-3 text-right font-semibold whitespace-nowrap text-emerald-700"
+            title="Tổng tiền khách trả trừ phí thực tế hãng vận chuyển"
+          >
+            {currency(order._shopActualReceived)}
           </td>
         );
       case "finalAmount":
