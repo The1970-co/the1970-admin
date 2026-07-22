@@ -20,6 +20,29 @@ export type OmniTag = {
   tag: string;
 };
 
+export type OmniNoteTemplate = {
+  id: string;
+  name: string;
+  normalizedName: string;
+  color?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  targetStatus?: Exclude<OmniConversationStatus, "ALL"> | null;
+};
+
+export type OmniQuickOrder = {
+  id: string;
+  orderCode: string;
+  status: string;
+  source?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  shippingAddressLine1?: string | null;
+  finalAmount?: number;
+  createdAt?: string;
+  items?: Array<{ id?: string; sku?: string; productName?: string; color?: string | null; size?: string | null; qty: number; unitPrice?: number; lineTotal?: number }>;
+};
+
 export type OmniNote = {
   id: string;
   note: string;
@@ -62,6 +85,7 @@ export type OmniConversation = {
   tags?: OmniTag[];
   notes?: OmniNote[];
   messages?: OmniMessage[];
+  orders?: OmniQuickOrder[];
   _count?: { messages?: number; notes?: number };
 };
 
@@ -123,7 +147,7 @@ export function updateOmniConversationTags(id: string, body: { tags: string[] })
   });
 }
 
-export function createOmniConversationNote(id: string, body: { note: string }) {
+export function createOmniConversationNote(id: string, body: { note: string; templateId?: string }) {
   return apiJson<OmniNote>(`/omni-inbox/conversations/${id}/notes`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -134,6 +158,35 @@ export function markOmniConversationRead(id: string) {
   return apiJson<OmniConversation>(`/omni-inbox/conversations/${id}/read`, {
     method: "PATCH",
   });
+}
+
+
+export function listOmniNoteTemplates(includeInactive = false) {
+  return apiJson<OmniNoteTemplate[]>(`/omni-inbox/note-templates${includeInactive ? "?includeInactive=true" : ""}`);
+}
+
+export function createOmniNoteTemplate(body: { name: string; color?: string; sortOrder?: number; targetStatus?: string }) {
+  return apiJson<OmniNoteTemplate>("/omni-inbox/note-templates", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateOmniNoteTemplate(id: string, body: Partial<{ name: string; color: string; sortOrder: number; targetStatus: string | null; isActive: boolean }>) {
+  return apiJson<OmniNoteTemplate>(`/omni-inbox/note-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteOmniNoteTemplate(id: string) {
+  return apiJson<OmniNoteTemplate>(`/omni-inbox/note-templates/${id}`, { method: "DELETE" });
+}
+
+export function createOmniQuickOrder(id: string, body: { customerName?: string; phone: string; address: string; branchId: string; note?: string; requestId?: string; items: Array<{ variantId: string; qty: number }> }) {
+  return apiJson<OmniQuickOrder>(`/omni-inbox/conversations/${id}/quick-orders`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function cancelOmniQuickOrder(conversationId: string, orderId: string) {
+  return apiJson<OmniQuickOrder>(`/omni-inbox/conversations/${conversationId}/quick-orders/${orderId}/cancel`, { method: "POST" });
+}
+
+export function deleteOmniQuickOrder(conversationId: string, orderId: string) {
+  return apiJson<{ ok?: boolean }>(`/omni-inbox/conversations/${conversationId}/quick-orders/${orderId}`, { method: "DELETE" });
 }
 
 export function getApiBaseUrl() {
@@ -157,6 +210,10 @@ export function openOmniInboxEventSource(onEvent: (event: MessageEvent) => void)
     "conversation.assigned",
     "conversation.tagged",
     "conversation.note_created",
+    "conversation.quick_order_created",
+    "conversation.quick_order_updated",
+    "conversation.quick_order_cancelled",
+    "conversation.quick_order_deleted",
   ];
 
   names.forEach((name) => {

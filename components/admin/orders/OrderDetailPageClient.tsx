@@ -610,7 +610,7 @@ function paymentStatusText(status?: string | null) {
 function orderStatusText(status?: string | null) {
   switch (status) {
     case "NEW":
-      return "Mới tạo";
+      return "Đơn nháp";
     case "APPROVED":
       return "Đã duyệt";
     case "PACKING":

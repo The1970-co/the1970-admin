@@ -41,6 +41,13 @@ import { useAuth } from "@/components/admin/auth/AuthProvider";
 import {
   assignOmniConversation,
   createOmniConversationNote,
+  listOmniNoteTemplates,
+  createOmniNoteTemplate,
+  updateOmniNoteTemplate,
+  deleteOmniNoteTemplate,
+  createOmniQuickOrder,
+  cancelOmniQuickOrder,
+  deleteOmniQuickOrder,
   getOmniConversation,
   listOmniConversations,
   markOmniConversationRead,
@@ -52,7 +59,10 @@ import {
   type OmniConversation,
   type OmniConversationStatus,
   type OmniMessage,
+  type OmniNoteTemplate,
+  type OmniQuickOrder,
 } from "@/lib/omni-inbox-api";
+import { getProductsForOrder, type OrderProduct } from "@/lib/create-order-api";
 
 type StatusTab = OmniConversationStatus;
 type WorkspaceKey =
@@ -452,6 +462,12 @@ export default function MessagesPageClient({
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
+  const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
+  const [noteTemplateSettingsOpen, setNoteTemplateSettingsOpen] = useState(false);
+  const [newNoteTemplateName, setNewNoteTemplateName] = useState("");
+  const [orderProducts, setOrderProducts] = useState<OrderProduct[]>([]);
+  const [quickOrderOpen, setQuickOrderOpen] = useState(false);
+  const [quickOrderSaving, setQuickOrderSaving] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [error, setError] = useState("");
   const [sseStatus, setSseStatus] = useState<
@@ -507,6 +523,18 @@ export default function MessagesPageClient({
   useEffect(() => {
     void loadMetaConnection();
   }, [loadMetaConnection]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listOmniNoteTemplates(), getProductsForOrder()])
+      .then(([templates, products]) => {
+        if (cancelled) return;
+        setNoteTemplates(templates || []);
+        setOrderProducts(products || []);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const assigneeOptions = useMemo(() => {
     const map = new Map<string, AssigneeOption>();
@@ -821,6 +849,81 @@ export default function MessagesPageClient({
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được ghi chú.");
+    }
+  }
+
+  async function handleCreateNoteTemplate() {
+    const name = newNoteTemplateName.trim();
+    if (!name) return;
+    try {
+      const created = await createOmniNoteTemplate({ name });
+      setNoteTemplates((prev) => [...prev, created].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "vi")));
+      setNewNoteTemplateName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được mẫu ghi chú.");
+    }
+  }
+
+  async function handleRenameNoteTemplate(template: OmniNoteTemplate) {
+    const nextName = window.prompt("Tên ghi chú mới", template.name)?.trim();
+    if (!nextName || nextName === template.name) return;
+    try {
+      const updated = await updateOmniNoteTemplate(template.id, { name: nextName });
+      setNoteTemplates((prev) => prev.map((item) => item.id === template.id ? updated : item));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không sửa được mẫu ghi chú.");
+    }
+  }
+
+  async function handleDeleteNoteTemplate(template: OmniNoteTemplate) {
+    try {
+      await deleteOmniNoteTemplate(template.id);
+      setNoteTemplates((prev) => prev.filter((item) => item.id !== template.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không ẩn được mẫu ghi chú.");
+    }
+  }
+
+  async function handleApplyNoteTemplate(template: OmniNoteTemplate) {
+    if (!activeConversation?.id) return;
+    try {
+      const created = await createOmniConversationNote(activeConversation.id, {
+        note: template.name,
+        templateId: template.id,
+      });
+      setActiveConversation((prev) =>
+        prev ? { ...prev, notes: [created, ...(prev.notes || [])], status: template.targetStatus || prev.status } : prev,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không áp dụng được ghi chú.");
+    }
+  }
+
+  async function handleQuickOrderCreated(order: OmniQuickOrder) {
+    setQuickOrderOpen(false);
+    setActiveConversation((prev) =>
+      prev ? { ...prev, orders: [order, ...(prev.orders || []).filter((item) => item.id !== order.id)] } : prev,
+    );
+    await loadList();
+  }
+
+  async function handleCancelQuickOrder(orderId: string) {
+    if (!activeConversation?.id) return;
+    try {
+      const updated = await cancelOmniQuickOrder(activeConversation.id, orderId);
+      setActiveConversation((prev) => prev ? { ...prev, orders: (prev.orders || []).map((item) => item.id === orderId ? { ...item, ...updated } : item) } : prev);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không huỷ được đơn nháp.");
+    }
+  }
+
+  async function handleDeleteQuickOrder(orderId: string) {
+    if (!activeConversation?.id) return;
+    try {
+      await deleteOmniQuickOrder(activeConversation.id, orderId);
+      setActiveConversation((prev) => prev ? { ...prev, orders: (prev.orders || []).filter((item) => item.id !== orderId) } : prev);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xoá được đơn nháp.");
     }
   }
 
@@ -1581,6 +1684,43 @@ export default function MessagesPageClient({
                       </Panel>
 
                       <Panel title="Ghi chú nội bộ">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-neutral-500">Mẫu ghi chú dùng chung</span>
+                          <button type="button" onClick={() => setNoteTemplateSettingsOpen((value) => !value)} className="rounded-xl border border-neutral-200 px-2.5 py-1.5 text-xs font-bold">
+                            {noteTemplateSettingsOpen ? "Đóng cài đặt" : "Cài đặt note"}
+                          </button>
+                        </div>
+                        {noteTemplateSettingsOpen ? (
+                          <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                            <div className="flex gap-2">
+                              <input value={newNoteTemplateName} onChange={(event) => setNewNoteTemplateName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void handleCreateNoteTemplate(); }} placeholder="Tên note tiếng Việt có dấu" className="min-w-0 flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs" />
+                              <button type="button" onClick={() => void handleCreateNoteTemplate()} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-bold text-white">Thêm</button>
+                            </div>
+                            <div className="mt-2 space-y-1">
+                              {noteTemplates.map((template) => (
+                                <div key={`setting-${template.id}`} className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-2 text-xs">
+                                  <span className="min-w-0 flex-1 truncate font-semibold">{template.name}</span>
+                                  <button type="button" onClick={() => void handleRenameNoteTemplate(template)} className="font-bold text-blue-600">Sửa</button>
+                                  <button type="button" onClick={() => void handleDeleteNoteTemplate(template)} className="font-bold text-red-600">Ẩn</button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        {noteTemplates.length ? (
+                          <div className="mb-3 flex flex-wrap gap-2">
+                            {noteTemplates.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onClick={() => void handleApplyNoteTemplate(template)}
+                                className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+                              >
+                                {template.name}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                         <textarea
                           value={noteDraft}
                           onChange={(event) => setNoteDraft(event.target.value)}
@@ -1617,23 +1757,52 @@ export default function MessagesPageClient({
                         </div>
                       </Panel>
 
-                      <Panel title="Tổng đơn hàng">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-neutral-500">Số đơn</span>
-                          <span className="font-bold">0 đơn</span>
-                        </div>
-                        <div className="mt-2 flex items-center justify-between text-sm">
-                          <span className="text-neutral-500">
-                            Tổng chi tiêu
-                          </span>
-                          <span className="font-bold">{formatCurrency(0)}</span>
-                        </div>
+                      <Panel title="Đơn hàng từ hội thoại">
+                        {(activeConversation.orders || []).length ? (
+                          <div className="space-y-3">
+                            {(activeConversation.orders || []).map((order) => (
+                              <div key={order.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-bold text-neutral-900">{order.orderCode}</span>
+                                  <span className={cx("rounded-full px-2 py-1 text-[11px] font-bold", order.status === "NEW" ? "bg-amber-100 text-amber-700" : order.status === "CANCELLED" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
+                                    {order.status === "NEW" ? "Đơn nháp" : order.status === "CANCELLED" ? "Đã huỷ" : order.status}
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-xs text-neutral-600">{order.customerName || customerName(activeConversation)} · {order.customerPhone || "-"}</p>
+                                <p className="mt-1 line-clamp-2 text-xs text-neutral-500">{order.shippingAddressLine1 || "Chưa có địa chỉ"}</p>
+                                <div className="mt-2 text-sm font-bold">{formatCurrency(Number(order.finalAmount || 0))}</div>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <a href={`/orders/${order.id}`} className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold">Mở đơn</a>
+                                  {order.status === "NEW" ? (<>
+                                    <button onClick={() => void handleCancelQuickOrder(order.id)} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">Huỷ</button>
+                                    <button onClick={() => void handleDeleteQuickOrder(order.id)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700">Xoá</button>
+                                  </>) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-neutral-500">Chưa có đơn nào được tạo từ hội thoại này.</p>
+                        )}
                       </Panel>
 
-                      <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
-                        <ShoppingBag className="h-4 w-4" />
-                        Tạo đơn hàng
-                      </button>
+                      {quickOrderOpen ? (
+                        <QuickOrderForm
+                          conversation={activeConversation}
+                          products={orderProducts}
+                          branchId={activeConversation.branchId || activeBranchId || ""}
+                          saving={quickOrderSaving}
+                          onCancel={() => setQuickOrderOpen(false)}
+                          onSaving={setQuickOrderSaving}
+                          onCreated={handleQuickOrderCreated}
+                          onError={setError}
+                        />
+                      ) : (
+                        <button onClick={() => setQuickOrderOpen(true)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
+                          <ShoppingBag className="h-4 w-4" />
+                          Chốt đơn nhanh
+                        </button>
+                      )}
 
                       <button
                         onClick={handleCloseConversation}
@@ -1667,6 +1836,82 @@ export default function MessagesPageClient({
           )}
         </main>
       </div>
+    </div>
+  );
+}
+
+function QuickOrderForm({
+  conversation, products, branchId, saving, onCancel, onSaving, onCreated, onError,
+}: {
+  conversation: OmniConversation;
+  products: OrderProduct[];
+  branchId: string;
+  saving: boolean;
+  onCancel: () => void;
+  onSaving: (value: boolean) => void;
+  onCreated: (order: OmniQuickOrder) => void | Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [customerNameValue, setCustomerNameValue] = useState(customerName(conversation));
+  const [phone, setPhone] = useState(conversation.customer?.phone || "");
+  const [address, setAddress] = useState(conversation.customer?.address || "");
+  const [note, setNote] = useState("");
+  const [searchValue, setSearchValue] = useState("");
+  const [items, setItems] = useState<Array<{ variantId: string; qty: number; label: string }>>([]);
+
+  const variants = useMemo(() => products.flatMap((product) => product.variants.map((variant) => ({
+    ...variant,
+    label: `${variant.sku} · ${product.name}${variant.color || variant.size ? ` · ${[variant.color, variant.size].filter(Boolean).join(" / ")}` : ""}`,
+  }))), [products]);
+  const filtered = useMemo(() => {
+    const q = searchValue.trim().toLocaleLowerCase("vi-VN");
+    if (!q) return variants.slice(0, 12);
+    return variants.filter((item) => item.label.toLocaleLowerCase("vi-VN").includes(q)).slice(0, 12);
+  }, [searchValue, variants]);
+
+  const addItem = (variantId: string, label: string) => {
+    setItems((prev) => {
+      const existed = prev.find((item) => item.variantId === variantId);
+      if (existed) return prev.map((item) => item.variantId === variantId ? { ...item, qty: item.qty + 1 } : item);
+      return [...prev, { variantId, qty: 1, label }];
+    });
+    setSearchValue("");
+  };
+
+  const submit = async () => {
+    if (!branchId) return onError("Chưa xác định chi nhánh tạo đơn.");
+    if (!phone.trim() || !address.trim() || !items.length) return onError("Cần nhập SĐT, địa chỉ và ít nhất một sản phẩm.");
+    onSaving(true);
+    onError("");
+    try {
+      const order = await createOmniQuickOrder(conversation.id, {
+        customerName: customerNameValue.trim(), phone, address, branchId, note,
+        requestId: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        items: items.map(({ variantId, qty }) => ({ variantId, qty })),
+      });
+      await onCreated(order);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Không tạo được đơn nháp.");
+    } finally {
+      onSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-3xl border border-blue-200 bg-blue-50/50 p-4">
+      <div className="flex items-center justify-between"><h4 className="font-black">Chốt đơn nhanh</h4><button onClick={onCancel}><X className="h-4 w-4" /></button></div>
+      <div className="mt-3 space-y-2">
+        <input value={customerNameValue} onChange={(e) => setCustomerNameValue(e.target.value)} placeholder="Tên khách" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Số điện thoại *" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+        <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Địa chỉ nhận hàng *" rows={3} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+        <div className="relative">
+          <input value={searchValue} onChange={(e) => setSearchValue(e.target.value)} placeholder="Tìm SKU hoặc sản phẩm" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+          {searchValue ? <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-1 shadow-xl">{filtered.map((item) => <button key={item.id} type="button" onClick={() => addItem(item.id, item.label)} className="block w-full rounded-xl px-3 py-2 text-left text-xs hover:bg-neutral-50">{item.label}</button>)}</div> : null}
+        </div>
+        {items.map((item) => <div key={item.variantId} className="flex items-center gap-2 rounded-2xl bg-white p-2 text-xs"><span className="min-w-0 flex-1 truncate">{item.label}</span><input type="number" min={1} value={item.qty} onChange={(e) => setItems((prev) => prev.map((row) => row.variantId === item.variantId ? { ...row, qty: Math.max(1, Number(e.target.value || 1)) } : row))} className="w-14 rounded-lg border px-2 py-1" /><button onClick={() => setItems((prev) => prev.filter((row) => row.variantId !== item.variantId))}><X className="h-4 w-4" /></button></div>)}
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú đơn" rows={2} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+      </div>
+      <div className="mt-3 flex gap-2"><button onClick={onCancel} className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-bold">Đóng</button><button disabled={saving} onClick={() => void submit()} className="flex-1 rounded-2xl bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? "Đang tạo..." : "Tạo đơn nháp"}</button></div>
     </div>
   );
 }

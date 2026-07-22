@@ -1631,7 +1631,7 @@ function SummaryCard({
 function orderStatusLabel(status?: string) {
   switch (status) {
     case "NEW":
-      return "Mới tạo";
+      return "Đơn nháp";
     case "APPROVED":
       return "Đã duyệt";
     case "PACKING":
@@ -2076,7 +2076,7 @@ function fulfillmentStatusTone(status?: string | null) {
 
 const ORDER_STATUS_FILTER_OPTIONS: Array<{ value: "ALL" | OrderStatus; label: string }> = [
   { value: "ALL", label: "Tất cả trạng thái đơn" },
-  { value: "NEW", label: "Mới tạo" },
+  { value: "NEW", label: "Đơn nháp" },
   { value: "APPROVED", label: "Đã duyệt" },
   { value: "PACKING", label: "Đang xử lý / đóng gói" },
   { value: "SHIPPED", label: "Đã xuất kho / đang giao" },
