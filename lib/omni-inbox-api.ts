@@ -27,7 +27,6 @@ export type OmniNoteTemplate = {
   color?: string | null;
   sortOrder: number;
   isActive: boolean;
-  targetStatus?: Exclude<OmniConversationStatus, "ALL"> | null;
 };
 
 export type OmniQuickOrder = {
@@ -165,11 +164,11 @@ export function listOmniNoteTemplates(includeInactive = false) {
   return apiJson<OmniNoteTemplate[]>(`/omni-inbox/note-templates${includeInactive ? "?includeInactive=true" : ""}`);
 }
 
-export function createOmniNoteTemplate(body: { name: string; color?: string; sortOrder?: number; targetStatus?: string }) {
+export function createOmniNoteTemplate(body: { name: string; color?: string; sortOrder?: number }) {
   return apiJson<OmniNoteTemplate>("/omni-inbox/note-templates", { method: "POST", body: JSON.stringify(body) });
 }
 
-export function updateOmniNoteTemplate(id: string, body: Partial<{ name: string; color: string; sortOrder: number; targetStatus: string | null; isActive: boolean }>) {
+export function updateOmniNoteTemplate(id: string, body: Partial<{ name: string; color: string; sortOrder: number; isActive: boolean }>) {
   return apiJson<OmniNoteTemplate>(`/omni-inbox/note-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
@@ -222,4 +221,97 @@ export function openOmniInboxEventSource(onEvent: (event: MessageEvent) => void)
 
   source.onmessage = onEvent;
   return source;
+}
+
+
+export type OmniQuickReplyTemplate = {
+  id: string;
+  title?: string | null;
+  content: string;
+  category?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+export type OmniAssignmentMember = {
+  id?: string;
+  staffId: string;
+  staffName: string;
+  branchId?: string | null;
+  branchName?: string | null;
+  isActive: boolean;
+  receiveMessages: boolean;
+  receiveComments: boolean;
+  sortOrder: number;
+  weight: number;
+  maxActiveConversations?: number | null;
+  maxUnreadConversations?: number | null;
+  isOnline?: boolean;
+  presence?: { status?: string; manualAway?: boolean; lastHeartbeatAt?: string; activeBranchId?: string | null } | null;
+};
+
+export type OmniAssignmentSettings = {
+  id: string;
+  isActive: boolean;
+  mode: "OFF" | "SELF_ASSIGN" | "AUTO" | "GROUP";
+  priorityOrder: Array<"ONLINE" | "BRANCH" | "LOWEST_LOAD" | "DRAFT_OWNER">;
+  requireOnline: boolean;
+  branchPriorityEnabled: boolean;
+  lowestLoadEnabled: boolean;
+  draftOwnerPriorityEnabled: boolean;
+  keepPreviousAssignee: boolean;
+  keepPreviousDays: number;
+  reassignIfAssigneeOffline: boolean;
+  workingHoursOnly: boolean;
+  workStartMinute: number;
+  workEndMinute: number;
+  workDays: number[];
+  outsideHoursMode: string;
+  onlineWindowSeconds: number;
+  maxActiveEnabled: boolean;
+  maxActiveConversations: number;
+  maxUnreadEnabled: boolean;
+  maxUnreadConversations: number;
+  branchRoutingEnabled: boolean;
+  fallbackBranchId?: string | null;
+  noCandidateMode: string;
+  onlyAssignedCanView: boolean;
+  managerCanViewBranch: boolean;
+  onlyAssignedCanReply: boolean;
+  shuffleEachRound: boolean;
+  reassignUnreadEnabled: boolean;
+  reassignAfterMinutes: number;
+  members: OmniAssignmentMember[];
+};
+
+export function sendOmniHeartbeat(body: { activeBranchId?: string; manualAway?: boolean }) {
+  return apiJson("/omni-inbox/presence/heartbeat", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getOmniAssignmentSettings() {
+  return apiJson<OmniAssignmentSettings>("/omni-inbox/assignment/settings");
+}
+
+export function updateOmniAssignmentSettings(body: Partial<OmniAssignmentSettings>) {
+  return apiJson<OmniAssignmentSettings>("/omni-inbox/assignment/settings", { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function listOmniAssignmentHistory(limit = 100) {
+  return apiJson<any[]>(`/omni-inbox/assignment/history?limit=${limit}`);
+}
+
+export function listOmniQuickReplies(includeInactive = false) {
+  return apiJson<OmniQuickReplyTemplate[]>(`/omni-inbox/quick-replies${includeInactive ? "?includeInactive=true" : ""}`);
+}
+
+export function createOmniQuickReply(body: { title?: string; content: string; category?: string; sortOrder?: number }) {
+  return apiJson<OmniQuickReplyTemplate>("/omni-inbox/quick-replies", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateOmniQuickReply(id: string, body: Partial<{ title: string; content: string; category: string; sortOrder: number; isActive: boolean }>) {
+  return apiJson<OmniQuickReplyTemplate>(`/omni-inbox/quick-replies/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteOmniQuickReply(id: string) {
+  return apiJson<OmniQuickReplyTemplate>(`/omni-inbox/quick-replies/${id}`, { method: "DELETE" });
 }

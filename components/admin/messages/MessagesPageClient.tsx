@@ -61,6 +61,16 @@ import {
   type OmniMessage,
   type OmniNoteTemplate,
   type OmniQuickOrder,
+  type OmniQuickReplyTemplate,
+  type OmniAssignmentSettings,
+  getOmniAssignmentSettings,
+  updateOmniAssignmentSettings,
+  listOmniAssignmentHistory,
+  sendOmniHeartbeat,
+  listOmniQuickReplies,
+  createOmniQuickReply,
+  updateOmniQuickReply,
+  deleteOmniQuickReply,
 } from "@/lib/omni-inbox-api";
 import { getProductsForOrder, type OrderProduct } from "@/lib/create-order-api";
 
@@ -77,7 +87,9 @@ type WorkspaceKey =
   | "orders"
   | "quickReplies"
   | "reports"
-  | "settings";
+  | "settings"
+  | "noteSettings"
+  | "assignmentSettings";
 
 const WORKSPACE_TITLES: Record<WorkspaceKey, string> = {
   inbox: "Hộp thư đến",
@@ -88,10 +100,12 @@ const WORKSPACE_TITLES: Record<WorkspaceKey, string> = {
   customers: "Khách hàng",
   tags: "Nhãn hội thoại",
   assignments: "Phân công nhân viên",
-  orders: "Tạo đơn từ hội thoại",
+  orders: "Đơn nháp từ hội thoại",
   quickReplies: "Mẫu trả lời nhanh",
   reports: "Báo cáo inbox",
   settings: "Cài đặt kết nối",
+  noteSettings: "Cài đặt ghi chú",
+  assignmentSettings: "Cài đặt chia tin nhắn",
 };
 
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
@@ -260,6 +274,19 @@ function getUserRoleLabel(user: any) {
   return raw;
 }
 
+function isAdminUser(user: any) {
+  const roles = [
+    user?.role,
+    user?.roleName,
+    user?.activeRole,
+    ...(Array.isArray(user?.roles) ? user.roles : []),
+  ]
+    .map((value) => String(value || "").trim().toUpperCase())
+    .filter(Boolean);
+
+  return roles.includes("OWNER") || roles.includes("ADMIN");
+}
+
 function normalizeBranchCode(value?: string | null) {
   const raw = String(value || "")
     .trim()
@@ -395,9 +422,19 @@ export default function MessagesPageClient({
   initialWorkspace?: WorkspaceKey;
 } = {}) {
   const { user, activeBranchId } = useAuth();
+  const [clientReady, setClientReady] = useState(false);
   const currentUserName = getUserDisplayName(user);
   const currentUserRole = getUserRoleLabel(user);
   const currentBranchName = getActiveBranchName(user, activeBranchId);
+
+  // AuthProvider may restore the user from browser storage before hydration.
+  // Keep the server render and the first client render identical, then reveal
+  // admin-only navigation after React has mounted.
+  const canManageOmniSettings = clientReady && isAdminUser(user);
+
+  useEffect(() => {
+    setClientReady(true);
+  }, []);
 
   const handleLogout = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -463,8 +500,13 @@ export default function MessagesPageClient({
   const [draft, setDraft] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
   const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
-  const [noteTemplateSettingsOpen, setNoteTemplateSettingsOpen] = useState(false);
   const [newNoteTemplateName, setNewNoteTemplateName] = useState("");
+  const [quickReplyTemplates, setQuickReplyTemplates] = useState<OmniQuickReplyTemplate[]>([]);
+  const [newQuickReply, setNewQuickReply] = useState("");
+  const [assignmentSettings, setAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
+  const [assignmentHistory, setAssignmentHistory] = useState<any[]>([]);
+  const [savingAssignment, setSavingAssignment] = useState(false);
+
   const [orderProducts, setOrderProducts] = useState<OrderProduct[]>([]);
   const [quickOrderOpen, setQuickOrderOpen] = useState(false);
   const [quickOrderSaving, setQuickOrderSaving] = useState(false);
@@ -475,6 +517,18 @@ export default function MessagesPageClient({
   >("connecting");
   const [workspace, setWorkspace] = useState<WorkspaceKey>(initialWorkspace);
   const listRequestId = useRef(0);
+
+  useEffect(() => {
+    if (!clientReady) return;
+    if (
+      !canManageOmniSettings &&
+      (workspace === "settings" ||
+        workspace === "noteSettings" ||
+        workspace === "assignmentSettings")
+    ) {
+      setWorkspace("inbox");
+    }
+  }, [clientReady, canManageOmniSettings, workspace]);
 
   useEffect(() => {
     let cancelled = false;
@@ -526,15 +580,75 @@ export default function MessagesPageClient({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listOmniNoteTemplates(), getProductsForOrder()])
-      .then(([templates, products]) => {
+    const ping = () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      void sendOmniHeartbeat({ activeBranchId: activeBranchId || undefined }).catch(() => undefined);
+    };
+    ping();
+    const timer = window.setInterval(ping, 30000);
+    const onVisibility = () => ping();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([
+      listOmniNoteTemplates(),
+      getProductsForOrder(),
+      listOmniQuickReplies(),
+    ])
+      .then(([templates, products, replies]) => {
         if (cancelled) return;
-        setNoteTemplates(templates || []);
-        setOrderProducts(products || []);
+        setNoteTemplates(Array.isArray(templates) ? templates : []);
+        setOrderProducts(Array.isArray(products) ? products : []);
+        setQuickReplyTemplates(Array.isArray(replies) ? replies : []);
       })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Không tải được dữ liệu Omni Inbox.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!clientReady || !canManageOmniSettings) return;
+
+    let cancelled = false;
+    setError("");
+
+    Promise.all([
+      getOmniAssignmentSettings(),
+      listOmniAssignmentHistory(100),
+    ])
+      .then(([assignment, history]) => {
+        if (cancelled) return;
+        setAssignmentSettings(assignment || null);
+        setAssignmentHistory(Array.isArray(history) ? history : []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setAssignmentSettings(null);
+        setAssignmentHistory([]);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Không tải được cài đặt chia tin nhắn.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientReady, canManageOmniSettings]);
 
   const assigneeOptions = useMemo(() => {
     const map = new Map<string, AssigneeOption>();
@@ -892,7 +1006,7 @@ export default function MessagesPageClient({
         templateId: template.id,
       });
       setActiveConversation((prev) =>
-        prev ? { ...prev, notes: [created, ...(prev.notes || [])], status: template.targetStatus || prev.status } : prev,
+        prev ? { ...prev, notes: [created, ...(prev.notes || [])] } : prev,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không áp dụng được ghi chú.");
@@ -976,6 +1090,55 @@ export default function MessagesPageClient({
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không xoá được nhãn.");
+    }
+  }
+
+
+  async function handleCreateQuickReply() {
+    const content = newQuickReply.trim();
+    if (!content) return;
+    try {
+      const created = await createOmniQuickReply({ content, sortOrder: quickReplyTemplates.length });
+      setQuickReplyTemplates((prev) => [...prev, created]);
+      setNewQuickReply("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được mẫu trả lời.");
+    }
+  }
+
+  async function handleEditQuickReply(template: OmniQuickReplyTemplate) {
+    const content = window.prompt("Sửa nội dung mẫu trả lời", template.content)?.trim();
+    if (!content || content === template.content) return;
+    try {
+      const updated = await updateOmniQuickReply(template.id, { content });
+      setQuickReplyTemplates((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không sửa được mẫu trả lời.");
+    }
+  }
+
+  async function handleHideQuickReply(template: OmniQuickReplyTemplate) {
+    if (!window.confirm(`Ẩn mẫu trả lời “${template.content}”?`)) return;
+    try {
+      await deleteOmniQuickReply(template.id);
+      setQuickReplyTemplates((prev) => prev.filter((item) => item.id !== template.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không ẩn được mẫu trả lời.");
+    }
+  }
+
+  async function handleSaveAssignmentSettings(next?: OmniAssignmentSettings) {
+    const payload = next || assignmentSettings;
+    if (!payload || savingAssignment) return;
+    setSavingAssignment(true);
+    try {
+      const saved = await updateOmniAssignmentSettings(payload);
+      setAssignmentSettings(saved);
+      setAssignmentHistory(await listOmniAssignmentHistory(100));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không lưu được cài đặt chia tin nhắn.");
+    } finally {
+      setSavingAssignment(false);
     }
   }
 
@@ -1107,7 +1270,7 @@ export default function MessagesPageClient({
               items={[
                 {
                   key: "orders",
-                  label: "Tạo đơn từ hội thoại",
+                  label: "Đơn nháp từ hội thoại",
                   icon: <ShoppingBag className="h-4 w-4" />,
                 },
                 {
@@ -1120,11 +1283,25 @@ export default function MessagesPageClient({
                   label: "Báo cáo inbox",
                   icon: <CheckCircle2 className="h-4 w-4" />,
                 },
-                {
-                  key: "settings",
-                  label: "Cài đặt kết nối",
-                  icon: <Settings className="h-4 w-4" />,
-                },
+                ...(canManageOmniSettings
+                  ? [
+                      {
+                        key: "assignmentSettings" as WorkspaceKey,
+                        label: "Cài đặt chia tin nhắn",
+                        icon: <Users className="h-4 w-4" />,
+                      },
+                      {
+                        key: "noteSettings" as WorkspaceKey,
+                        label: "Cài đặt ghi chú",
+                        icon: <Tag className="h-4 w-4" />,
+                      },
+                      {
+                        key: "settings" as WorkspaceKey,
+                        label: "Cài đặt kết nối",
+                        icon: <Settings className="h-4 w-4" />,
+                      },
+                    ]
+                  : []),
               ]}
             />
           </nav>
@@ -1132,7 +1309,17 @@ export default function MessagesPageClient({
 
         <main className="min-w-0 flex-1">
           <header className="sticky top-0 z-20 flex h-20 items-center gap-4 border-b border-neutral-200 bg-white/95 px-6 backdrop-blur">
-            <button className="rounded-full p-2 text-neutral-500 hover:bg-neutral-100">
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("the1970:toggle-admin-sidebar"),
+                )
+              }
+              className="rounded-full p-2 text-neutral-500 hover:bg-neutral-100"
+              title="Bật/tắt menu chính"
+              aria-label="Bật/tắt menu chính"
+            >
               <Menu className="h-5 w-5" />
             </button>
 
@@ -1685,28 +1872,19 @@ export default function MessagesPageClient({
 
                       <Panel title="Ghi chú nội bộ">
                         <div className="mb-3 flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-neutral-500">Mẫu ghi chú dùng chung</span>
-                          <button type="button" onClick={() => setNoteTemplateSettingsOpen((value) => !value)} className="rounded-xl border border-neutral-200 px-2.5 py-1.5 text-xs font-bold">
-                            {noteTemplateSettingsOpen ? "Đóng cài đặt" : "Cài đặt note"}
-                          </button>
+                          <span className="text-xs font-semibold text-neutral-500">
+                            Mẫu ghi chú dùng chung
+                          </span>
+                          {canManageOmniSettings ? (
+                            <button
+                              type="button"
+                              onClick={() => openWorkspace("noteSettings")}
+                              className="rounded-xl border border-neutral-200 px-2.5 py-1.5 text-xs font-bold"
+                            >
+                              Cài đặt ghi chú
+                            </button>
+                          ) : null}
                         </div>
-                        {noteTemplateSettingsOpen ? (
-                          <div className="mb-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-                            <div className="flex gap-2">
-                              <input value={newNoteTemplateName} onChange={(event) => setNewNoteTemplateName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void handleCreateNoteTemplate(); }} placeholder="Tên note tiếng Việt có dấu" className="min-w-0 flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs" />
-                              <button type="button" onClick={() => void handleCreateNoteTemplate()} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-bold text-white">Thêm</button>
-                            </div>
-                            <div className="mt-2 space-y-1">
-                              {noteTemplates.map((template) => (
-                                <div key={`setting-${template.id}`} className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-2 text-xs">
-                                  <span className="min-w-0 flex-1 truncate font-semibold">{template.name}</span>
-                                  <button type="button" onClick={() => void handleRenameNoteTemplate(template)} className="font-bold text-blue-600">Sửa</button>
-                                  <button type="button" onClick={() => void handleDeleteNoteTemplate(template)} className="font-bold text-red-600">Ẩn</button>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
                         {noteTemplates.length ? (
                           <div className="mb-3 flex flex-wrap gap-2">
                             {noteTemplates.map((template) => (
@@ -1824,7 +2002,7 @@ export default function MessagesPageClient({
             <WorkspacePanel
               workspace={workspace}
               conversations={visibleConversations}
-              quickReplies={QUICK_REPLIES}
+              quickReplies={quickReplyTemplates.length ? quickReplyTemplates.map((item) => item.content) : QUICK_REPLIES}
               assignees={assigneeOptions}
               selectedSummary={selectedSummary}
               connectionStatus={metaConnection}
@@ -1832,6 +2010,29 @@ export default function MessagesPageClient({
               onSyncConnection={() => void handleSyncMetaConnection()}
               onReloadConnection={() => void loadMetaConnection()}
               onOpenInbox={() => openWorkspace("inbox")}
+              noteTemplates={noteTemplates}
+              quickReplyTemplates={quickReplyTemplates}
+              newQuickReply={newQuickReply}
+              onNewQuickReplyChange={setNewQuickReply}
+              onCreateQuickReply={handleCreateQuickReply}
+              onEditQuickReply={handleEditQuickReply}
+              onHideQuickReply={handleHideQuickReply}
+              assignmentSettings={assignmentSettings}
+              assignmentHistory={assignmentHistory}
+              staffOptions={staffOptions}
+              savingAssignment={savingAssignment}
+              canManageOmniSettings={canManageOmniSettings}
+              onAssignmentChange={setAssignmentSettings}
+              onSaveAssignment={() => void handleSaveAssignmentSettings()}
+              newNoteTemplateName={newNoteTemplateName}
+              onNewNoteTemplateNameChange={setNewNoteTemplateName}
+              onCreateNoteTemplate={() => void handleCreateNoteTemplate()}
+              onRenameNoteTemplate={(template) =>
+                void handleRenameNoteTemplate(template)
+              }
+              onDeleteNoteTemplate={(template) =>
+                void handleDeleteNoteTemplate(template)
+              }
             />
           )}
         </main>
@@ -1992,6 +2193,25 @@ function WorkspacePanel({
   onSyncConnection,
   onReloadConnection,
   onOpenInbox,
+  noteTemplates,
+  newNoteTemplateName,
+  onNewNoteTemplateNameChange,
+  onCreateNoteTemplate,
+  onRenameNoteTemplate,
+  onDeleteNoteTemplate,
+  quickReplyTemplates,
+  newQuickReply,
+  onNewQuickReplyChange,
+  onCreateQuickReply,
+  onEditQuickReply,
+  onHideQuickReply,
+  assignmentSettings,
+  assignmentHistory,
+  staffOptions,
+  savingAssignment,
+  canManageOmniSettings,
+  onAssignmentChange,
+  onSaveAssignment,
 }: {
   workspace: WorkspaceKey;
   conversations: OmniConversation[];
@@ -2008,6 +2228,25 @@ function WorkspacePanel({
   onSyncConnection: () => void;
   onReloadConnection: () => void;
   onOpenInbox: () => void;
+  noteTemplates: OmniNoteTemplate[];
+  quickReplyTemplates: OmniQuickReplyTemplate[];
+  newQuickReply: string;
+  onNewQuickReplyChange: (value: string) => void;
+  onCreateQuickReply: () => void;
+  onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
+  onHideQuickReply: (template: OmniQuickReplyTemplate) => void;
+  assignmentSettings: OmniAssignmentSettings | null;
+  assignmentHistory: any[];
+  staffOptions: AssigneeOption[];
+  savingAssignment: boolean;
+  canManageOmniSettings: boolean;
+  onAssignmentChange: (value: OmniAssignmentSettings) => void;
+  onSaveAssignment: () => void;
+  newNoteTemplateName: string;
+  onNewNoteTemplateNameChange: (value: string) => void;
+  onCreateNoteTemplate: () => void;
+  onRenameNoteTemplate: (template: OmniNoteTemplate) => void;
+  onDeleteNoteTemplate: (template: OmniNoteTemplate) => void;
 }) {
   const title = WORKSPACE_TITLES[workspace];
   const total = conversations.length;
@@ -2141,20 +2380,22 @@ function WorkspacePanel({
 
   if (workspace === "quickReplies") {
     return (
-      <WorkspaceShell
-        title={title}
-        description="Các mẫu phản hồi nhanh dùng trong ô chat để nhân viên trả lời thống nhất."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {quickReplies.map((reply, index) => (
-            <div
-              key={reply}
-              className="rounded-3xl border border-neutral-200 bg-white p-5"
-            >
-              <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
-                Mẫu #{index + 1}
-              </p>
-              <p className="mt-3 text-base font-bold leading-7">{reply}</p>
+      <WorkspaceShell title={title} description="Tạo và quản lý mẫu phản hồi nhanh dùng chung trong ô chat.">
+        <div className="rounded-3xl border border-neutral-200 bg-white p-5">
+          {canManageOmniSettings ? <div className="flex gap-2">
+            <textarea value={newQuickReply} onChange={(e) => onNewQuickReplyChange(e.target.value)} placeholder="Nhập mẫu trả lời mới..." className="min-h-[92px] flex-1 rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none" />
+            <button type="button" onClick={onCreateQuickReply} className="self-end rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white">Thêm mẫu</button>
+          </div> : <p className="text-sm text-neutral-500">Nhân viên được dùng các mẫu bên dưới; chỉ Admin/Owner được thêm và sửa.</p>}
+        </div>
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          {quickReplyTemplates.map((template, index) => (
+            <div key={template.id} className="rounded-3xl border border-neutral-200 bg-white p-5">
+              <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Mẫu #{index + 1}</p>
+              <p className="mt-3 text-base font-bold leading-7">{template.content}</p>
+              {canManageOmniSettings ? <div className="mt-4 flex gap-2">
+                <button onClick={() => onEditQuickReply(template)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-black">Sửa</button>
+                <button onClick={() => onHideQuickReply(template)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700">Ẩn</button>
+              </div> : null}
             </div>
           ))}
         </div>
@@ -2193,6 +2434,145 @@ function WorkspacePanel({
               }
             />
             <ChannelHealth label="Bình luận/Livestream" value={conversations.filter(isFacebookCommentConversation).length} />
+          </div>
+        </div>
+      </WorkspaceShell>
+    );
+  }
+
+  if (workspace === "assignmentSettings") {
+    if (!assignmentSettings) {
+      return <WorkspaceShell title={title} description="Đang tải cấu hình phân công..."><div className="rounded-3xl border border-neutral-200 bg-white p-8 text-sm text-neutral-500">Đang tải...</div></WorkspaceShell>;
+    }
+    const priorities = assignmentSettings.priorityOrder || ["ONLINE", "BRANCH", "LOWEST_LOAD", "DRAFT_OWNER"];
+    const labels: Record<string, string> = { ONLINE: "Đang online", BRANCH: "Đúng chi nhánh", LOWEST_LOAD: "Tải thấp nhất", DRAFT_OWNER: "Người phụ trách đơn nháp" };
+    const enabledFor = (key: string) => key === "ONLINE" ? assignmentSettings.requireOnline : key === "BRANCH" ? assignmentSettings.branchPriorityEnabled : key === "LOWEST_LOAD" ? assignmentSettings.lowestLoadEnabled : assignmentSettings.draftOwnerPriorityEnabled;
+    const toggleFor = (key: string, value: boolean) => {
+      const next: any = { ...assignmentSettings };
+      if (key === "ONLINE") next.requireOnline = value;
+      if (key === "BRANCH") next.branchPriorityEnabled = value;
+      if (key === "LOWEST_LOAD") next.lowestLoadEnabled = value;
+      if (key === "DRAFT_OWNER") next.draftOwnerPriorityEnabled = value;
+      onAssignmentChange(next);
+    };
+    const movePriority = (index: number, delta: number) => {
+      const target = index + delta;
+      if (target < 0 || target >= priorities.length) return;
+      const nextOrder = [...priorities];
+      [nextOrder[index], nextOrder[target]] = [nextOrder[target], nextOrder[index]];
+      onAssignmentChange({ ...assignmentSettings, priorityOrder: nextOrder });
+    };
+    const updateMember = (staff: AssigneeOption, checked: boolean) => {
+      const current = assignmentSettings.members || [];
+      const existed = current.find((item) => item.staffId === staff.id);
+      const nextMembers = checked
+        ? existed ? current.map((item) => item.staffId === staff.id ? { ...item, isActive: true } : item) : [...current, { staffId: staff.id, staffName: staff.name, isActive: true, receiveMessages: true, receiveComments: false, sortOrder: current.length, weight: 1 } as any]
+        : current.filter((item) => item.staffId !== staff.id);
+      onAssignmentChange({ ...assignmentSettings, members: nextMembers });
+    };
+    return (
+      <WorkspaceShell title={title} description="Chỉ Admin/Owner được xem và thay đổi. Online được xét đầu tiên, sau đó hệ thống áp dụng các ưu tiên theo đúng thứ tự bên dưới.">
+        <div className="flex justify-end"><button disabled={savingAssignment} onClick={onSaveAssignment} className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-black text-white disabled:opacity-50">{savingAssignment ? "Đang lưu..." : "Lưu cài đặt"}</button></div>
+        <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-5">
+          <div className="grid gap-3 md:grid-cols-4">
+            {[['OFF','Tắt phân công'],['SELF_ASSIGN','Nhân viên tự nhận'],['GROUP','Theo nhóm'],['AUTO','Tự động thông minh']].map(([value,label]) => <button key={value} onClick={() => onAssignmentChange({ ...assignmentSettings, mode: value as any, isActive: value !== 'OFF' })} className={cx('rounded-2xl border p-4 text-left text-sm font-black', assignmentSettings.mode === value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-neutral-200')}>{label}</button>)}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-3xl border border-neutral-200 bg-white p-5">
+            <h4 className="text-lg font-black">Thứ tự ưu tiên chia tin</h4>
+            <p className="mt-1 text-sm text-neutral-500">Bật/tắt và di chuyển lên xuống. Khi Online bật, nhân viên offline bị loại trước khi xét các điều kiện khác.</p>
+            <div className="mt-4 space-y-3">{priorities.map((key,index) => <div key={key} className="flex items-center gap-3 rounded-2xl border border-neutral-200 p-4"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-950 text-xs font-black text-white">{index+1}</div><div className="min-w-0 flex-1"><p className="font-black">{labels[key]}</p><p className="text-xs text-neutral-500">{key === 'ONLINE' ? 'Chỉ xét người có heartbeat hợp lệ và không tạm vắng.' : key === 'BRANCH' ? 'Ưu tiên nhân viên cùng chi nhánh hội thoại/đơn nháp.' : key === 'LOWEST_LOAD' ? 'Chọn người có ít hội thoại đang xử lý nhất.' : 'Giữ người đang phụ trách đơn nháp nếu còn đủ điều kiện.'}</p></div><button onClick={() => movePriority(index,-1)} disabled={index===0} className="rounded-lg border px-2 py-1 disabled:opacity-30">↑</button><button onClick={() => movePriority(index,1)} disabled={index===priorities.length-1} className="rounded-lg border px-2 py-1 disabled:opacity-30">↓</button><input type="checkbox" checked={enabledFor(key)} onChange={(e)=>toggleFor(key,e.target.checked)} className="h-5 w-5" /></div>)}</div>
+          </div>
+          <div className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="text-lg font-black">Nhân viên tham gia</h4><div className="mt-4 max-h-[460px] space-y-2 overflow-y-auto">{staffOptions.filter(s=>s.id).map(staff => { const member=assignmentSettings.members?.find(m=>m.staffId===staff.id); return <label key={staff.id} className="flex items-center gap-3 rounded-2xl border border-neutral-200 p-3"><input type="checkbox" checked={Boolean(member)} onChange={(e)=>updateMember(staff,e.target.checked)} /><div className="min-w-0 flex-1"><p className="truncate font-bold">{staff.name}</p><p className={cx('text-xs font-bold',member?.isOnline?'text-emerald-600':'text-neutral-400')}>{member?.isOnline?'● Đang online':'○ Offline / chưa mở Inbox'}</p></div>{member ? <><label className="text-xs"><input type="checkbox" checked={member.receiveMessages} onChange={(e)=>onAssignmentChange({...assignmentSettings,members:assignmentSettings.members.map(m=>m.staffId===staff.id?{...m,receiveMessages:e.target.checked}:m)})}/> Tin nhắn</label><label className="text-xs"><input type="checkbox" checked={member.receiveComments} onChange={(e)=>onAssignmentChange({...assignmentSettings,members:assignmentSettings.members.map(m=>m.staffId===staff.id?{...m,receiveComments:e.target.checked}:m)})}/> Bình luận</label></>:null}</label>})}</div></div>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <AssignmentSettingCard title="Điều kiện nhận tin" rows={[["Chỉ chia người online","requireOnline"],["Chia lại nếu người cũ offline","reassignIfAssigneeOffline"],["Chỉ trong giờ làm việc","workingHoursOnly"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
+          <AssignmentSettingCard title="Giới hạn tải" rows={[["Giới hạn hội thoại đang xử lý","maxActiveEnabled"],["Giới hạn hội thoại chưa đọc","maxUnreadEnabled"],["Chia lại khi quá hạn chưa đọc","reassignUnreadEnabled"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
+          <AssignmentSettingCard title="Quyền xem" rows={[["Nhân viên chỉ xem hội thoại của mình","onlyAssignedCanView"],["Quản lý xem hội thoại chi nhánh","managerCanViewBranch"],["Chỉ assignee được trả lời","onlyAssignedCanReply"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
+          <AssignmentSettingCard title="Hội thoại cũ" rows={[["Giữ nhân viên cũ","keepPreviousAssignee"],["Ưu tiên người phụ trách đơn nháp","draftOwnerPriorityEnabled"],["Chia lại nếu người cũ offline","reassignIfAssigneeOffline"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
+          <AssignmentSettingCard title="Chi nhánh" rows={[["Bật định tuyến theo chi nhánh","branchRoutingEnabled"],["Ưu tiên đúng chi nhánh","branchPriorityEnabled"],["Xáo trộn khi hết vòng","shuffleEachRound"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
+          <div className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="font-black">Thông số</h4><label className="mt-4 block text-xs font-bold text-neutral-500">Tối đa hội thoại đang xử lý<input type="number" value={assignmentSettings.maxActiveConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxActiveConversations:Number(e.target.value||1)})} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><label className="mt-3 block text-xs font-bold text-neutral-500">Tối đa chưa đọc<input type="number" value={assignmentSettings.maxUnreadConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxUnreadConversations:Number(e.target.value||1)})} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><label className="mt-3 block text-xs font-bold text-neutral-500">Heartbeat online (giây)<input type="number" value={assignmentSettings.onlineWindowSeconds} onChange={(e)=>onAssignmentChange({...assignmentSettings,onlineWindowSeconds:Number(e.target.value||90)})} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="text-xs font-bold text-neutral-500">Bắt đầu ca<input type="time" value={`${String(Math.floor((assignmentSettings.workStartMinute||480)/60)).padStart(2,'0')}:${String((assignmentSettings.workStartMinute||480)%60).padStart(2,'0')}`} onChange={(e)=>{const [h,m]=e.target.value.split(':').map(Number);onAssignmentChange({...assignmentSettings,workStartMinute:h*60+m})}} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><label className="text-xs font-bold text-neutral-500">Kết thúc ca<input type="time" value={`${String(Math.floor((assignmentSettings.workEndMinute||1320)/60)).padStart(2,'0')}:${String((assignmentSettings.workEndMinute||1320)%60).padStart(2,'0')}`} onChange={(e)=>{const [h,m]=e.target.value.split(':').map(Number);onAssignmentChange({...assignmentSettings,workEndMinute:h*60+m})}} className="mt-1 w-full rounded-xl border px-3 py-2"/></label></div></div>
+        </div>
+        <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="text-lg font-black">Lịch sử phân công</h4><div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-neutral-400"><th className="py-3">Thời gian</th><th>Khách</th><th>Nhân viên</th><th>Lý do</th></tr></thead><tbody>{assignmentHistory.slice(0,50).map((row:any)=><tr key={row.id} className="border-b border-neutral-100"><td className="py-3">{formatDateTime(row.createdAt)}</td><td>{row.customerName||'—'}</td><td>{row.assignedStaffName||'Chưa gán'}</td><td className="max-w-[480px] truncate">{row.reason||row.action}</td></tr>)}</tbody></table></div></div>
+      </WorkspaceShell>
+    );
+  }
+
+  if (workspace === "noteSettings") {
+    return (
+      <WorkspaceShell
+        title={title}
+        description="Quản lý các mẫu ghi chú dùng chung. Nhân viên chỉ được sử dụng; chỉ Admin hoặc Owner được thêm, sửa và ẩn mẫu."
+      >
+        <div className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="max-w-2xl">
+            <p className="text-xs font-black uppercase tracking-widest text-neutral-400">
+              Mẫu ghi chú dùng chung
+            </p>
+            <h4 className="mt-2 text-xl font-black">Cài đặt ghi chú</h4>
+            <p className="mt-2 text-sm leading-6 text-neutral-500">
+              Tên ghi chú được lưu nguyên tiếng Việt có dấu. Khi ẩn, mẫu sẽ
+              không còn hiện cho nhân viên nhưng lịch sử ghi chú cũ vẫn được giữ.
+            </p>
+
+            <div className="mt-5 flex gap-2">
+              <input
+                value={newNoteTemplateName}
+                onChange={(event) =>
+                  onNewNoteTemplateNameChange(event.target.value)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") onCreateNoteTemplate();
+                }}
+                placeholder="Ví dụ: Đợi hàng, Chờ chuyển khoản..."
+                className="min-w-0 flex-1 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+              />
+              <button
+                type="button"
+                onClick={onCreateNoteTemplate}
+                className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white"
+              >
+                Thêm ghi chú
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-3xl border border-neutral-200">
+            {noteTemplates.length ? (
+              noteTemplates.map((template, index) => (
+                <div
+                  key={template.id}
+                  className={cx(
+                    "flex items-center gap-3 bg-white px-5 py-4",
+                    index < noteTemplates.length - 1 &&
+                      "border-b border-neutral-100",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate font-bold">
+                    {template.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRenameNoteTemplate(template)}
+                    className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-50"
+                  >
+                    Sửa tên
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteNoteTemplate(template)}
+                    className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100"
+                  >
+                    Ẩn ghi chú
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="px-5 py-10 text-center text-sm text-neutral-500">
+                Chưa có mẫu ghi chú dùng chung.
+              </div>
+            )}
           </div>
         </div>
       </WorkspaceShell>
@@ -2367,6 +2747,11 @@ function WorkspaceShell({
       <div className="mt-4">{children}</div>
     </section>
   );
+}
+
+
+function AssignmentSettingCard({ title, rows, settings, onChange }: { title: string; rows: Array<[string, keyof OmniAssignmentSettings]>; settings: OmniAssignmentSettings; onChange: (value: OmniAssignmentSettings) => void }) {
+  return <div className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="font-black">{title}</h4><div className="mt-4 space-y-3">{rows.map(([label,key])=><label key={String(key)} className="flex items-center justify-between gap-3 text-sm"><span>{label}</span><input type="checkbox" checked={Boolean(settings[key])} onChange={(e)=>onChange({...settings,[key]:e.target.checked})} className="h-5 w-5"/></label>)}</div></div>;
 }
 
 function StatCard({ label, value }: { label: string; value: number }) {

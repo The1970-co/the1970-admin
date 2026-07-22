@@ -268,10 +268,48 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    try {
+      const stored = window.localStorage.getItem(
+        "the1970.adminSidebarOpen",
+      );
+      if (stored === "0") setDesktopSidebarOpen(false);
+    } catch {
+      // Ignore storage errors.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      window.localStorage.setItem(
+        "the1970.adminSidebarOpen",
+        desktopSidebarOpen ? "1" : "0",
+      );
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [desktopSidebarOpen, mounted]);
+
+  useEffect(() => {
+    const toggleSidebar = () =>
+      setDesktopSidebarOpen((current) => !current);
+
+    window.addEventListener(
+      "the1970:toggle-admin-sidebar",
+      toggleSidebar as EventListener,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "the1970:toggle-admin-sidebar",
+        toggleSidebar as EventListener,
+      );
+    };
   }, []);
 
   const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
@@ -314,8 +352,17 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   return (
     <div className="h-screen overflow-hidden bg-neutral-50">
       <div className="flex h-screen">
-        <aside className="hidden h-screen w-[250px] shrink-0 overflow-y-auto border-r border-neutral-200 bg-white px-5 py-6 lg:block">
-          <SidebarContent visibleMenu={visibleMenu} pathname={pathname} />
+        <aside
+          className={`hidden h-screen shrink-0 overflow-y-auto border-r border-neutral-200 bg-white transition-[width,padding,opacity] duration-200 lg:block ${
+            desktopSidebarOpen
+              ? "w-[250px] px-5 py-6 opacity-100"
+              : "w-0 overflow-hidden border-r-0 px-0 py-6 opacity-0"
+          }`}
+          aria-hidden={!desktopSidebarOpen}
+        >
+          <div className="w-[210px]">
+            <SidebarContent visibleMenu={visibleMenu} pathname={pathname} />
+          </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -323,6 +370,25 @@ export default function AdminShell({ children, title }: { children: React.ReactN
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex min-w-0 items-start gap-3">
                 <button type="button" onClick={() => setMobileMenuOpen(true)} className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-white text-lg text-neutral-900 lg:hidden" aria-label="Mở menu">
+                  ☰
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDesktopSidebarOpen((current) => !current)
+                  }
+                  className="mt-0.5 hidden h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-white text-lg text-neutral-900 transition hover:bg-neutral-50 lg:inline-flex"
+                  aria-label={
+                    desktopSidebarOpen
+                      ? "Ẩn menu chính"
+                      : "Hiện menu chính"
+                  }
+                  title={
+                    desktopSidebarOpen
+                      ? "Ẩn menu chính"
+                      : "Hiện menu chính"
+                  }
+                >
                   ☰
                 </button>
                 <div className="min-w-0">
