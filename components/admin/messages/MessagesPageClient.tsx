@@ -672,6 +672,14 @@ export default function MessagesPageClient({
   const [orderProducts, setOrderProducts] = useState<OrderProduct[]>([]);
   const [quickOrderOpen, setQuickOrderOpen] = useState(false);
   const [quickOrderSaving, setQuickOrderSaving] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<
+    "info" | "orders" | "notes"
+  >("info");
+  const [quickOrderSuccess, setQuickOrderSuccess] = useState("");
+  const [customerOrderHistory, setCustomerOrderHistory] = useState<
+    OmniQuickOrder[]
+  >([]);
+  const [loadingCustomerOrders, setLoadingCustomerOrders] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [error, setError] = useState("");
   const [sseStatus, setSseStatus] = useState<
@@ -1059,6 +1067,83 @@ export default function MessagesPageClient({
   }, [activeId, loadDetail]);
 
   useEffect(() => {
+    setRightPanelTab("info");
+    setQuickOrderSuccess("");
+    setCustomerOrderHistory([]);
+  }, [activeId]);
+
+  const loadCustomerOrderHistory = useCallback(async () => {
+    if (!activeConversation) return;
+
+    const phone = String(
+      activeConversation.customer?.phone || "",
+    ).trim();
+
+    if (!phone) {
+      setCustomerOrderHistory(activeConversation.orders || []);
+      return;
+    }
+
+    setLoadingCustomerOrders(true);
+    try {
+      const response: any = await apiJson(
+        `/orders?page=1&pageSize=50&q=${encodeURIComponent(phone)}`,
+        {
+          redirectOnUnauthorized: false,
+          timeoutMs: 15000,
+        } as any,
+      );
+
+      const rows = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.items)
+          ? response.items
+          : Array.isArray(response?.data)
+            ? response.data
+            : [];
+
+      const normalized = rows.map((order: any) => ({
+        id: String(order.id || ""),
+        orderCode: String(order.orderCode || ""),
+        status: String(order.status || ""),
+        source: order.source || order.salesChannel || null,
+        customerName: order.customerName || null,
+        customerPhone: order.customerPhone || order.shippingPhone || null,
+        shippingAddressLine1: order.shippingAddressLine1 || null,
+        shippingAddressLine2: order.shippingAddressLine2 || null,
+        shippingProvince: order.shippingProvince || null,
+        shippingDistrict: order.shippingDistrict || null,
+        shippingWard: order.shippingWard || null,
+        finalAmount: Number(order.finalAmount || 0),
+        createdAt: order.createdAt || null,
+        items: Array.isArray(order.items) ? order.items : [],
+      })) as OmniQuickOrder[];
+
+      const map = new Map<string, OmniQuickOrder>();
+      [...normalized, ...(activeConversation.orders || [])].forEach((order) => {
+        if (order?.id) map.set(order.id, order);
+      });
+
+      setCustomerOrderHistory(
+        Array.from(map.values()).sort((a, b) => {
+          const aa = new Date(a.createdAt || 0).getTime();
+          const bb = new Date(b.createdAt || 0).getTime();
+          return bb - aa;
+        }),
+      );
+    } catch {
+      setCustomerOrderHistory(activeConversation.orders || []);
+    } finally {
+      setLoadingCustomerOrders(false);
+    }
+  }, [activeConversation]);
+
+  useEffect(() => {
+    if (rightPanelTab !== "orders" || !activeConversation) return;
+    void loadCustomerOrderHistory();
+  }, [activeConversation, loadCustomerOrderHistory, rightPanelTab]);
+
+  useEffect(() => {
     let source: EventSource | null = null;
 
     try {
@@ -1304,9 +1389,18 @@ export default function MessagesPageClient({
 
   async function handleQuickOrderCreated(order: OmniQuickOrder) {
     setQuickOrderOpen(false);
+    setQuickOrderSuccess(
+      `Đã tạo đơn nháp ${order.orderCode || ""} thành công.`,
+    );
+    setRightPanelTab("orders");
     setActiveConversation((prev) =>
       prev ? { ...prev, orders: [order, ...(prev.orders || []).filter((item) => item.id !== order.id)] } : prev,
     );
+    setCustomerOrderHistory((prev) => [
+      order,
+      ...prev.filter((item) => item.id !== order.id),
+    ]);
+    window.setTimeout(() => setQuickOrderSuccess(""), 5000);
     await loadList();
   }
 
@@ -2406,24 +2500,58 @@ export default function MessagesPageClient({
                 {activeConversation ? (
                   <>
                     <div className="flex border-b border-neutral-200 px-5">
-                      {["Thông tin", "Đơn hàng", "Ghi chú"].map(
-                        (item, index) => (
-                          <button
-                            key={item}
-                            className={cx(
-                              "border-b-2 px-3 py-5 text-sm font-bold",
-                              index === 0
-                                ? "border-blue-600 text-blue-600"
-                                : "border-transparent text-neutral-500",
-                            )}
-                          >
-                            {item}
-                          </button>
-                        ),
-                      )}
+                      {[
+                        { key: "info", label: "Thông tin" },
+                        {
+                          key: "orders",
+                          label: `Đơn hàng${
+                            (activeConversation.orders || []).length
+                              ? ` (${(activeConversation.orders || []).length})`
+                              : ""
+                          }`,
+                        },
+                        { key: "notes", label: "Ghi chú" },
+                      ].map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() =>
+                            setRightPanelTab(
+                              item.key as "info" | "orders" | "notes",
+                            )
+                          }
+                          className={cx(
+                            "border-b-2 px-3 py-5 text-sm font-bold",
+                            rightPanelTab === item.key
+                              ? "border-blue-600 text-blue-600"
+                              : "border-transparent text-neutral-500 hover:text-neutral-800",
+                          )}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
                     </div>
 
                     <div className="h-[calc(100%-64px)] overflow-y-auto p-5">
+                      {quickOrderSuccess ? (
+                        <div className="mb-4 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
+                          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-black">Tạo đơn nháp thành công</p>
+                            <p className="mt-1 text-sm">{quickOrderSuccess}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setQuickOrderSuccess("")}
+                            className="rounded-lg p-1 hover:bg-emerald-100"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {rightPanelTab === "info" ? (
+                        <>
                       <div className="flex items-center gap-3">
                         <Avatar
                           src={customerAvatar(activeConversation)}
@@ -2531,101 +2659,202 @@ export default function MessagesPageClient({
                         </select>
                       </Panel>
 
-                      <Panel title="Ghi chú nội bộ">
-                        <div className="mb-3 flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-neutral-500">
-                            Mẫu ghi chú dùng chung
-                          </span>
-                          {canManageOmniSettings ? (
+                      </>
+                      ) : rightPanelTab === "orders" ? (
+                        <>
+                          <div className="mb-4 flex items-center justify-between gap-3">
+                            <div>
+                              <h3 className="text-lg font-black">
+                                Lịch sử đơn hàng
+                              </h3>
+                              <p className="mt-1 text-xs text-neutral-500">
+                                Các đơn của khách theo số điện thoại, mới nhất trước.
+                              </p>
+                            </div>
                             <button
                               type="button"
-                              onClick={() => openWorkspace("noteSettings")}
-                              className="rounded-xl border border-neutral-200 px-2.5 py-1.5 text-xs font-bold"
+                              onClick={() => void loadCustomerOrderHistory()}
+                              className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-bold hover:bg-neutral-50"
                             >
-                              Cài đặt ghi chú
+                              Làm mới
                             </button>
-                          ) : null}
-                        </div>
-                        {noteTemplates.length ? (
-                          <div className="mb-3 flex flex-wrap gap-2">
-                            {noteTemplates.map((template) => (
+                          </div>
+
+                          {loadingCustomerOrders ? (
+                            <div className="flex items-center justify-center gap-2 rounded-2xl bg-neutral-50 p-5 text-sm font-bold text-neutral-500">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Đang tải lịch sử đơn...
+                            </div>
+                          ) : customerOrderHistory.length ? (
+                            <div className="space-y-3">
+                              {customerOrderHistory.map((order) => (
+                                <div
+                                  key={order.id}
+                                  className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="truncate font-black text-neutral-900">
+                                        {order.orderCode}
+                                      </p>
+                                      <p className="mt-1 text-xs text-neutral-500">
+                                        {formatDateTime(order.createdAt)}
+                                      </p>
+                                    </div>
+                                    <span
+                                      className={cx(
+                                        "shrink-0 rounded-full px-2 py-1 text-[11px] font-bold",
+                                        order.status === "NEW"
+                                          ? "bg-amber-100 text-amber-700"
+                                          : order.status === "CANCELLED"
+                                            ? "bg-red-100 text-red-700"
+                                            : "bg-emerald-100 text-emerald-700",
+                                      )}
+                                    >
+                                      {order.status === "NEW"
+                                        ? "Đơn nháp"
+                                        : order.status === "CANCELLED"
+                                          ? "Đã huỷ"
+                                          : order.status || "—"}
+                                    </span>
+                                  </div>
+
+                                  <p className="mt-2 line-clamp-2 text-xs text-neutral-500">
+                                    {[
+                                      order.shippingAddressLine1,
+                                      order.shippingWard,
+                                      order.shippingDistrict,
+                                      order.shippingProvince,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(", ") || "Chưa có địa chỉ"}
+                                  </p>
+
+                                  <div className="mt-2 flex items-center justify-between gap-3">
+                                    <span className="text-sm font-black">
+                                      {formatCurrency(
+                                        Number(order.finalAmount || 0),
+                                      )}
+                                    </span>
+                                    <span className="text-xs font-semibold text-neutral-500">
+                                      {Array.isArray(order.items)
+                                        ? `${order.items.reduce(
+                                            (sum, item) =>
+                                              sum + Number(item.qty || 0),
+                                            0,
+                                          )} sản phẩm`
+                                        : ""}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <a
+                                      href={`/orders/${order.id}`}
+                                      className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold"
+                                    >
+                                      Mở đơn
+                                    </a>
+                                    {order.status === "NEW" ? (
+                                      <>
+                                        <button
+                                          onClick={() =>
+                                            void handleCancelQuickOrder(order.id)
+                                          }
+                                          className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700"
+                                        >
+                                          Huỷ
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            void handleDeleteQuickOrder(order.id)
+                                          }
+                                          className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700"
+                                        >
+                                          Xoá
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl bg-neutral-50 p-5 text-center text-sm text-neutral-500">
+                              Chưa tìm thấy đơn hàng nào của khách này.
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <Panel title="Ghi chú nội bộ">
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-neutral-500">
+                                Mẫu ghi chú dùng chung
+                              </span>
+                              {canManageOmniSettings ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openWorkspace("noteSettings")}
+                                  className="rounded-xl border border-neutral-200 px-2.5 py-1.5 text-xs font-bold"
+                                >
+                                  Cài đặt ghi chú
+                                </button>
+                              ) : null}
+                            </div>
+                            {noteTemplates.length ? (
+                              <div className="mb-3 flex flex-wrap gap-2">
+                                {noteTemplates.map((template) => (
+                                  <button
+                                    key={template.id}
+                                    type="button"
+                                    onClick={() =>
+                                      void handleApplyNoteTemplate(template)
+                                    }
+                                    className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+                                  >
+                                    {template.name}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                            <textarea
+                              value={noteDraft}
+                              onChange={(event) =>
+                                setNoteDraft(event.target.value)
+                              }
+                              rows={4}
+                              className="w-full resize-none rounded-2xl border border-neutral-200 p-3 text-sm outline-none placeholder:text-neutral-400"
+                              placeholder="Nhập ghi chú nội bộ..."
+                            />
+                            <div className="mt-2 text-right">
                               <button
-                                key={template.id}
-                                type="button"
-                                onClick={() => void handleApplyNoteTemplate(template)}
-                                className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50"
+                                onClick={() => void handleAddNote()}
+                                className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white"
                               >
-                                {template.name}
+                                Lưu
                               </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        <textarea
-                          value={noteDraft}
-                          onChange={(event) => setNoteDraft(event.target.value)}
-                          rows={4}
-                          className="w-full resize-none rounded-2xl border border-neutral-200 p-3 text-sm outline-none placeholder:text-neutral-400"
-                          placeholder="Nhập ghi chú nội bộ..."
-                        />
-                        <div className="mt-2 text-right">
-                          <button
-                            onClick={() => void handleAddNote()}
-                            className="rounded-2xl bg-neutral-950 px-4 py-2 text-sm font-bold text-white"
-                          >
-                            Lưu
-                          </button>
-                        </div>
-
-                        <div className="mt-4 space-y-2">
-                          {(activeConversation.notes || [])
-                            .slice(0, 5)
-                            .map((note) => (
-                              <div
-                                key={note.id}
-                                className="rounded-2xl bg-neutral-50 p-3"
-                              >
-                                <p className="text-sm text-neutral-700">
-                                  {note.note}
-                                </p>
-                                <p className="mt-1 text-xs text-neutral-400">
-                                  {note.staffName || "-"} ·{" "}
-                                  {formatDateTime(note.createdAt)}
-                                </p>
-                              </div>
-                            ))}
-                        </div>
-                      </Panel>
-
-                      <Panel title="Đơn hàng từ hội thoại">
-                        {(activeConversation.orders || []).length ? (
-                          <div className="space-y-3">
-                            {(activeConversation.orders || []).map((order) => (
-                              <div key={order.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-bold text-neutral-900">{order.orderCode}</span>
-                                  <span className={cx("rounded-full px-2 py-1 text-[11px] font-bold", order.status === "NEW" ? "bg-amber-100 text-amber-700" : order.status === "CANCELLED" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
-                                    {order.status === "NEW" ? "Đơn nháp" : order.status === "CANCELLED" ? "Đã huỷ" : order.status}
-                                  </span>
+                            </div>
+                            <div className="mt-4 space-y-2">
+                              {(activeConversation.notes || []).map((note) => (
+                                <div
+                                  key={note.id}
+                                  className="rounded-2xl bg-neutral-50 p-3"
+                                >
+                                  <p className="text-sm text-neutral-700">
+                                    {note.note}
+                                  </p>
+                                  <p className="mt-1 text-xs text-neutral-400">
+                                    {note.staffName || "-"} ·{" "}
+                                    {formatDateTime(note.createdAt)}
+                                  </p>
                                 </div>
-                                <p className="mt-2 text-xs text-neutral-600">{order.customerName || customerName(activeConversation)} · {order.customerPhone || "-"}</p>
-                                <p className="mt-1 line-clamp-2 text-xs text-neutral-500">{order.shippingAddressLine1 || "Chưa có địa chỉ"}</p>
-                                <div className="mt-2 text-sm font-bold">{formatCurrency(Number(order.finalAmount || 0))}</div>
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  <a href={`/orders/${order.id}`} className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold">Mở đơn</a>
-                                  {order.status === "NEW" ? (<>
-                                    <button onClick={() => void handleCancelQuickOrder(order.id)} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">Huỷ</button>
-                                    <button onClick={() => void handleDeleteQuickOrder(order.id)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700">Xoá</button>
-                                  </>) : null}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-neutral-500">Chưa có đơn nào được tạo từ hội thoại này.</p>
-                        )}
-                      </Panel>
+                              ))}
+                            </div>
+                          </Panel>
+                        </>
+                      )}
 
-                      {quickOrderOpen ? (
+                      {rightPanelTab === "info" && quickOrderOpen ? (
                         <QuickOrderForm
                           conversation={activeConversation}
                           products={orderProducts}
@@ -2637,12 +2866,12 @@ export default function MessagesPageClient({
                           onCreated={handleQuickOrderCreated}
                           onError={setError}
                         />
-                      ) : (
+                      ) : rightPanelTab === "info" ? (
                         <button onClick={() => setQuickOrderOpen(true)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
                           <ShoppingBag className="h-4 w-4" />
                           Chốt đơn nhanh
                         </button>
-                      )}
+                      ) : null}
 
                       <button
                         onClick={handleCloseConversation}
@@ -3312,6 +3541,21 @@ function QuickOrderForm({
           {searchValue ? <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-1 shadow-xl">{filtered.map((item) => <button key={item.id} type="button" onClick={() => addItem(item.id, item.label)} className="block w-full rounded-xl px-3 py-2 text-left text-xs hover:bg-neutral-50">{item.label}</button>)}</div> : null}
         </div>
         {items.map((item) => <div key={item.variantId} className="flex items-center gap-2 rounded-2xl bg-white p-2 text-xs"><span className="min-w-0 flex-1 truncate">{item.label}</span><input type="number" min={1} value={item.qty} onChange={(e) => setItems((prev) => prev.map((row) => row.variantId === item.variantId ? { ...row, qty: Math.max(1, Number(e.target.value || 1)) } : row))} className="w-14 rounded-lg border px-2 py-1" /><button onClick={() => setItems((prev) => prev.filter((row) => row.variantId !== item.variantId))}><X className="h-4 w-4" /></button></div>)}
+
+        <div className="flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-3 py-3">
+          <div>
+            <p className="text-sm font-bold text-neutral-700">
+              Phí ship mặc định
+            </p>
+            <p className="text-xs text-neutral-400">
+              Có thể sửa lại trong danh sách đơn hàng
+            </p>
+          </div>
+          <span className="text-base font-black text-neutral-900">
+            30.000đ
+          </span>
+        </div>
+
         <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú đơn" rows={2} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
       </div>
       <div className="mt-3 flex gap-2"><button onClick={onCancel} className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-bold">Đóng</button><button disabled={saving} onClick={() => void submit()} className="flex-1 rounded-2xl bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? "Đang tạo..." : "Tạo đơn nháp"}</button></div>

@@ -2089,6 +2089,110 @@ export default function OrderDetailPageClient({
 
     return "";
   };
+  const hydrateAddressSelectors = async (
+    source?: OrderDetail | null,
+  ) => {
+    const shippingProvince = String(source?.shippingProvince || "").trim();
+    const shippingDistrict = String(source?.shippingDistrict || "").trim();
+    const shippingWard = String(source?.shippingWard || "").trim();
+    const storedDistrictId = source?.shippingGhnDistrictId
+      ? String(source.shippingGhnDistrictId)
+      : "";
+    const storedWardCode = String(
+      source?.shippingGhnWardCode || "",
+    ).trim();
+
+    const provinceRes = await apiFetch(
+      "/shipping-addresses/provinces",
+      { headers: { Accept: "application/json" } },
+    );
+    const provinces = await provinceRes.json().catch(() => []);
+    const provinceList: ProvinceOption[] = Array.isArray(provinces)
+      ? provinces
+      : [];
+    setProvinceOptions(provinceList);
+
+    const normalize = (value?: string | null) =>
+      String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/Đ/g, "D")
+        .replace(/^(tinh|thanh pho|tp\.?|quan|huyen|thi xa|xa|phuong|thi tran)\s+/i, "")
+        .replace(/[^a-zA-Z0-9]+/g, " ")
+        .trim()
+        .toLowerCase();
+
+    let provinceId = "";
+    let districtId = storedDistrictId;
+    let wardCode = storedWardCode;
+    let districts: DistrictOption[] = [];
+    let wards: WardOption[] = [];
+
+    if (districtId) {
+      for (const province of provinceList) {
+        const districtRes = await apiFetch(
+          `/shipping-addresses/districts?provinceId=${province.id}`,
+          { headers: { Accept: "application/json" } },
+        );
+        const rows = await districtRes.json().catch(() => []);
+        const list: DistrictOption[] = Array.isArray(rows) ? rows : [];
+        if (list.some((item) => String(item.id) === districtId)) {
+          provinceId = String(province.id);
+          districts = list;
+          break;
+        }
+      }
+    }
+
+    if (!provinceId && shippingProvince) {
+      const matchedProvince = provinceList.find(
+        (item) => normalize(item.name) === normalize(shippingProvince),
+      );
+      provinceId = matchedProvince ? String(matchedProvince.id) : "";
+    }
+
+    if (provinceId && !districts.length) {
+      const districtRes = await apiFetch(
+        `/shipping-addresses/districts?provinceId=${provinceId}`,
+        { headers: { Accept: "application/json" } },
+      );
+      const rows = await districtRes.json().catch(() => []);
+      districts = Array.isArray(rows) ? rows : [];
+    }
+    setDistrictOptions(districts);
+
+    if (!districtId && shippingDistrict) {
+      const matchedDistrict = districts.find(
+        (item) => normalize(item.name) === normalize(shippingDistrict),
+      );
+      districtId = matchedDistrict ? String(matchedDistrict.id) : "";
+    }
+
+    if (districtId) {
+      const wardRes = await apiFetch(
+        `/shipping-addresses/wards?districtId=${districtId}`,
+        { headers: { Accept: "application/json" } },
+      );
+      const rows = await wardRes.json().catch(() => []);
+      wards = Array.isArray(rows) ? rows : [];
+    }
+    setWardOptions(wards);
+
+    if (!wardCode && shippingWard) {
+      const matchedWard = wards.find(
+        (item) => normalize(item.name) === normalize(shippingWard),
+      );
+      wardCode = matchedWard?.code || "";
+    }
+
+    setSelectedProvinceId(provinceId);
+    setSelectedDistrictId(districtId);
+    setSelectedWardCode(wardCode);
+
+    return { provinceId, districtId, wardCode };
+  };
+
   const handleProvinceChange = async (provinceId: string) => {
     setSelectedProvinceId(provinceId);
     setSelectedDistrictId("");
@@ -2898,27 +3002,7 @@ export default function OrderDetailPageClient({
     setAuthCode("");
     setShowAuthConfirmModal(false);
 
-    const nextDistrictId = draft.ghnDistrictId || "";
-    const nextWardCode = draft.ghnWardCode || "";
-
-    let nextProvinceId = "";
-    if (nextDistrictId) {
-      nextProvinceId = await resolveProvinceIdByDistrictId(nextDistrictId);
-    } else {
-      await loadProvinces();
-    }
-
-    setSelectedProvinceId(nextProvinceId);
-    setSelectedDistrictId(nextDistrictId);
-    setSelectedWardCode(nextWardCode);
-
-    if (nextProvinceId) {
-      await loadDistricts(nextProvinceId);
-    }
-
-    if (nextDistrictId) {
-      await loadWards(nextDistrictId);
-    }
+    await hydrateAddressSelectors(order);
 
     setShowShipmentEditModal(true);
   };
@@ -3889,10 +3973,7 @@ export default function OrderDetailPageClient({
                       note: metaNote.noteText || metaNote.shippingNote || "",
                     });
 
-                    setSelectedProvinceId("");
-                    setSelectedDistrictId("");
-                    setSelectedWardCode("");
-                    void loadProvinces();
+                    void hydrateAddressSelectors(order);
 
                     setIsEditing(true);
                     setMessage("");
