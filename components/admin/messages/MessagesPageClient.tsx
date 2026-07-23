@@ -37,6 +37,7 @@ import {
   X,
 } from "lucide-react";
 import { apiJson } from "@/lib/api";
+import { PERMISSIONS } from "@/lib/permissions";
 import { useAuth } from "@/components/admin/auth/AuthProvider";
 import {
   assignOmniConversation,
@@ -293,6 +294,32 @@ function isAdminUser(user: any) {
   return roles.includes("OWNER") || roles.includes("ADMIN");
 }
 
+function hasUserPermission(
+  user: any,
+  permission: string,
+  fallbackPermissions: string[] = [],
+) {
+  if (isAdminUser(user)) return true;
+
+  const keys = new Set(
+    [
+      ...(Array.isArray(user?.permissions) ? user.permissions : []),
+      ...(Array.isArray(user?.permissionKeys) ? user.permissionKeys : []),
+      ...(Array.isArray(user?.extraPermissionKeys)
+        ? user.extraPermissionKeys
+        : []),
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+
+  return (
+    keys.has("*") ||
+    keys.has(permission) ||
+    fallbackPermissions.some((key) => keys.has(key))
+  );
+}
+
 function normalizeBranchCode(value?: string | null) {
   const raw = String(value || "")
     .trim()
@@ -490,7 +517,55 @@ export default function MessagesPageClient({
   // AuthProvider may restore the user from browser storage before hydration.
   // Keep the server render and the first client render identical, then reveal
   // admin-only navigation after React has mounted.
-  const canManageOmniSettings = clientReady && isAdminUser(user);
+  const canManageOmniSettings =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_INBOX_SETTINGS);
+
+  const canViewQuickReplies =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_VIEW, [
+      PERMISSIONS.OMNI_INBOX_VIEW,
+    ]);
+  const canCreateQuickReplies =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_CREATE, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canEditQuickReplies =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_EDIT, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canDeleteQuickReplies =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_DELETE, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canDeleteAllQuickReplies =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_DELETE_ALL, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canImportQuickReplies =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_IMPORT, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canViewAssignmentSettings =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_ASSIGNMENT_VIEW, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canManageAssignmentSettings =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_ASSIGNMENT_MANAGE, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
+  const canViewOmniReports =
+    clientReady &&
+    hasUserPermission(user, PERMISSIONS.OMNI_REPORTS_VIEW, [
+      PERMISSIONS.OMNI_INBOX_SETTINGS,
+    ]);
 
   useEffect(() => {
     setClientReady(true);
@@ -592,14 +667,25 @@ export default function MessagesPageClient({
   useEffect(() => {
     if (!clientReady) return;
     if (
-      !canManageOmniSettings &&
-      (workspace === "settings" ||
-        workspace === "noteSettings" ||
-        workspace === "assignmentSettings")
+      ((workspace === "settings" || workspace === "noteSettings") &&
+        !canManageOmniSettings) ||
+      (workspace === "assignmentSettings" &&
+        !canViewAssignmentSettings &&
+        !canManageAssignmentSettings) ||
+      (workspace === "reports" && !canViewOmniReports) ||
+      (workspace === "quickReplies" && !canViewQuickReplies)
     ) {
       setWorkspace("inbox");
     }
-  }, [clientReady, canManageOmniSettings, workspace]);
+  }, [
+    clientReady,
+    canManageOmniSettings,
+    canViewAssignmentSettings,
+    canManageAssignmentSettings,
+    canViewOmniReports,
+    canViewQuickReplies,
+    workspace,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -691,7 +777,13 @@ export default function MessagesPageClient({
   }, []);
 
   useEffect(() => {
-    if (!clientReady || !canManageOmniSettings) return;
+    if (
+      !clientReady ||
+      (!canViewAssignmentSettings &&
+        !canManageAssignmentSettings &&
+        !canViewOmniReports)
+    )
+      return;
 
     let cancelled = false;
     setError("");
@@ -731,7 +823,12 @@ export default function MessagesPageClient({
     return () => {
       cancelled = true;
     };
-  }, [clientReady, canManageOmniSettings]);
+  }, [
+    clientReady,
+    canViewAssignmentSettings,
+    canManageAssignmentSettings,
+    canViewOmniReports,
+  ]);
 
   const loadAssignmentReport = useCallback(async (days: 1 | 7 | 30) => {
     setAssignmentReportLoading(true);
@@ -1513,6 +1610,10 @@ export default function MessagesPageClient({
   }
 
   async function handleSaveAssignmentSettings(next?: OmniAssignmentSettings) {
+    if (!canManageAssignmentSettings) {
+      setError("Bạn chỉ có quyền xem cấu hình chia tin nhắn.");
+      return;
+    }
     const payload = next || assignmentSettings;
     if (!payload || savingAssignment) return;
     setSavingAssignment(true);
@@ -1663,23 +1764,35 @@ export default function MessagesPageClient({
                   label: "Đơn nháp từ hội thoại",
                   icon: <ShoppingBag className="h-4 w-4" />,
                 },
-                {
-                  key: "quickReplies",
-                  label: "Mẫu trả lời nhanh",
-                  icon: <Sparkles className="h-4 w-4" />,
-                },
-                {
-                  key: "reports",
-                  label: "Báo cáo inbox",
-                  icon: <CheckCircle2 className="h-4 w-4" />,
-                },
-                ...(canManageOmniSettings
+                ...(canViewQuickReplies
+                  ? [
+                      {
+                        key: "quickReplies" as WorkspaceKey,
+                        label: "Mẫu trả lời nhanh",
+                        icon: <Sparkles className="h-4 w-4" />,
+                      },
+                    ]
+                  : []),
+                ...(canViewOmniReports
+                  ? [
+                      {
+                        key: "reports" as WorkspaceKey,
+                        label: "Báo cáo inbox",
+                        icon: <CheckCircle2 className="h-4 w-4" />,
+                      },
+                    ]
+                  : []),
+                ...(canViewAssignmentSettings || canManageAssignmentSettings
                   ? [
                       {
                         key: "assignmentSettings" as WorkspaceKey,
                         label: "Cài đặt chia tin nhắn",
                         icon: <Users className="h-4 w-4" />,
                       },
+                    ]
+                  : []),
+                ...(canManageOmniSettings
+                  ? [
                       {
                         key: "noteSettings" as WorkspaceKey,
                         label: "Cài đặt ghi chú",
@@ -2463,6 +2576,12 @@ export default function MessagesPageClient({
               assignmentSaveState={assignmentSaveState}
               assignmentSavedAt={assignmentSavedAt}
               canManageOmniSettings={canManageOmniSettings}
+              canCreateQuickReplies={canCreateQuickReplies}
+              canEditQuickReplies={canEditQuickReplies}
+              canDeleteQuickReplies={canDeleteQuickReplies}
+              canDeleteAllQuickReplies={canDeleteAllQuickReplies}
+              canImportQuickReplies={canImportQuickReplies}
+              canManageAssignmentSettings={canManageAssignmentSettings}
               onAssignmentChange={setAssignmentSettings}
               onSaveAssignment={() => void handleSaveAssignmentSettings()}
               newNoteTemplateName={newNoteTemplateName}
@@ -2722,6 +2841,12 @@ function WorkspacePanel({
   assignmentSaveState,
   assignmentSavedAt,
   canManageOmniSettings,
+  canCreateQuickReplies,
+  canEditQuickReplies,
+  canDeleteQuickReplies,
+  canDeleteAllQuickReplies,
+  canImportQuickReplies,
+  canManageAssignmentSettings,
   onAssignmentChange,
   onSaveAssignment,
 }: {
@@ -2770,6 +2895,12 @@ function WorkspacePanel({
   assignmentSaveState: "idle" | "saved" | "error";
   assignmentSavedAt: string | null;
   canManageOmniSettings: boolean;
+  canCreateQuickReplies: boolean;
+  canEditQuickReplies: boolean;
+  canDeleteQuickReplies: boolean;
+  canDeleteAllQuickReplies: boolean;
+  canImportQuickReplies: boolean;
+  canManageAssignmentSettings: boolean;
   onAssignmentChange: (value: OmniAssignmentSettings) => void;
   onSaveAssignment: () => void;
   newNoteTemplateName: string;
@@ -2926,8 +3057,9 @@ function WorkspacePanel({
         description="Tạo và quản lý mã gõ tắt dùng chung trong ô chat."
       >
         <div className="rounded-3xl border border-neutral-200 bg-white p-5">
-          {canManageOmniSettings ? (
+          {canCreateQuickReplies || canImportQuickReplies || canDeleteAllQuickReplies ? (
             <>
+              {canCreateQuickReplies ? (
               <div className="grid gap-2 lg:grid-cols-[220px_minmax(0,1fr)_110px]">
                 <input
                   value={newQuickReplyShortcut}
@@ -2951,8 +3083,10 @@ function WorkspacePanel({
                   Thêm mẫu
                 </button>
               </div>
+              ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
+                {canImportQuickReplies ? (
                 <label
                   className={cx(
                     "cursor-pointer rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white",
@@ -2972,6 +3106,8 @@ function WorkspacePanel({
                     }}
                   />
                 </label>
+                ) : null}
+                {canImportQuickReplies ? (
                 <button
                   type="button"
                   onClick={onDownloadQuickReplyTemplate}
@@ -2979,6 +3115,8 @@ function WorkspacePanel({
                 >
                   Tải file mẫu
                 </button>
+                ) : null}
+                {canDeleteAllQuickReplies ? (
                 <button
                   type="button"
                   disabled={
@@ -2991,6 +3129,7 @@ function WorkspacePanel({
                     ? "Đang xóa..."
                     : `Xóa toàn bộ (${quickReplyTemplates.length})`}
                 </button>
+                ) : null}
                 <p className="text-xs text-neutral-500">
                   Excel gồm 2 cột: <b>Từ viết tắt</b> và <b>Nội dung</b>.
                 </p>
@@ -3063,8 +3202,9 @@ function WorkspacePanel({
                       </p>
                     </td>
                     <td className="px-4 py-3">
-                      {canManageOmniSettings ? (
+                      {canEditQuickReplies || canDeleteQuickReplies ? (
                         <div className="flex justify-end gap-2">
+                          {canEditQuickReplies ? (
                           <button
                             type="button"
                             onClick={() => onEditQuickReply(template)}
@@ -3072,6 +3212,8 @@ function WorkspacePanel({
                           >
                             Sửa
                           </button>
+                          ) : null}
+                          {canDeleteQuickReplies ? (
                           <button
                             type="button"
                             onClick={() => onDeleteQuickReply(template)}
@@ -3079,6 +3221,7 @@ function WorkspacePanel({
                           >
                             Xóa
                           </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </td>
@@ -3271,7 +3414,7 @@ function WorkspacePanel({
       if (target < 0 || target >= priorities.length) return;
       const nextOrder = [...priorities];
       [nextOrder[index], nextOrder[target]] = [nextOrder[target], nextOrder[index]];
-      onAssignmentChange({ ...assignmentSettings, priorityOrder: nextOrder });
+      canManageAssignmentSettings && onAssignmentChange({ ...assignmentSettings, priorityOrder: nextOrder });
     };
     const updateMember = (staff: AssigneeOption, checked: boolean) => {
       const current = assignmentSettings.members || [];
@@ -3279,7 +3422,7 @@ function WorkspacePanel({
       const nextMembers = checked
         ? existed ? current.map((item) => item.staffId === staff.id ? { ...item, isActive: true } : item) : [...current, { staffId: staff.id, staffName: staff.name, isActive: true, receiveMessages: true, receiveComments: false, sortOrder: current.length, weight: 1 } as any]
         : current.filter((item) => item.staffId !== staff.id);
-      onAssignmentChange({ ...assignmentSettings, members: nextMembers });
+      canManageAssignmentSettings && onAssignmentChange({ ...assignmentSettings, members: nextMembers });
     };
     const dirty = JSON.stringify(assignmentSettings) !== JSON.stringify(savedAssignmentSettings);
     const onlineMembers = (assignmentSettings.members || []).filter((m) => m.isActive && m.receiveMessages && (!assignmentSettings.requireOnline || m.isOnline));
@@ -3328,7 +3471,7 @@ function WorkspacePanel({
             </div>
             <div className="flex gap-2">
               <button disabled={!dirty || savingAssignment || !savedAssignmentSettings} onClick={() => savedAssignmentSettings && onAssignmentChange(JSON.parse(JSON.stringify(savedAssignmentSettings)))} className="rounded-2xl border border-neutral-200 px-4 py-2.5 text-sm font-black disabled:opacity-40">Khôi phục</button>
-              <button disabled={!dirty || savingAssignment} onClick={onSaveAssignment} className={cx("rounded-2xl px-5 py-2.5 text-sm font-black text-white disabled:opacity-50", assignmentSaveState === "error" ? "bg-red-600" : "bg-blue-600")}>{saveLabel}</button>
+              <button disabled={!canManageAssignmentSettings || !dirty || savingAssignment} onClick={canManageAssignmentSettings ? onSaveAssignment : undefined} className={cx("rounded-2xl px-5 py-2.5 text-sm font-black text-white disabled:opacity-50", assignmentSaveState === "error" ? "bg-red-600" : "bg-blue-600")}>{saveLabel}</button>
             </div>
           </div>
         </div>
@@ -3350,7 +3493,7 @@ function WorkspacePanel({
                 key={value}
                 type="button"
                 onClick={() =>
-                  onAssignmentChange({
+                  canManageAssignmentSettings && onAssignmentChange({
                     ...assignmentSettings,
                     mode: value as any,
                     isActive: value !== "OFF",
@@ -3425,16 +3568,16 @@ function WorkspacePanel({
           <h4 className="mt-2 text-xl font-black">Cách thức chia hội thoại</h4>
           <p className="mt-1 text-sm text-neutral-500">Các mô tả bên dưới giải thích chính xác hệ thống sẽ làm gì khi bật từng tùy chọn.</p>
           <div className="mt-5 divide-y divide-neutral-100">
-            <DetailedSettingRow title="Cách thức chia hội thoại" description="Chỉ phân công khi nhân viên đủ điều kiện nhận tin. Nếu không còn nhân viên phù hợp, hệ thống xử lý theo quy tắc dự phòng." control={<select value={assignmentSettings.requireOnline ? "ONLINE" : "ALL"} onChange={(e)=>onAssignmentChange({...assignmentSettings,requireOnline:e.target.value === "ONLINE"})} className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-bold"><option value="ONLINE">Chỉ trực tuyến</option><option value="ALL">Tất cả nhân viên</option></select>} />
-            <DetailedSettingRow title="Giữ người phụ trách cũ" description="Khách quay lại trong thời gian cấu hình sẽ được ưu tiên giao cho nhân viên từng chăm sóc, nếu người đó còn đủ điều kiện." control={<Toggle checked={assignmentSettings.keepPreviousAssignee} onChange={(checked)=>onAssignmentChange({...assignmentSettings,keepPreviousAssignee:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Giữ trong</span><input type="number" min={1} value={assignmentSettings.keepPreviousDays} onChange={(e)=>onAssignmentChange({...assignmentSettings,keepPreviousDays:Number(e.target.value||1)})} className="w-20 rounded-xl border px-3 py-2"/><span>ngày</span></div>} />
-            <DetailedSettingRow title="Xáo trộn danh sách nhân viên" description="Khi bắt đầu vòng chia mới, hệ thống xáo trộn danh sách để tránh nhân viên đầu danh sách luôn được ưu tiên." control={<Toggle checked={assignmentSettings.shuffleEachRound} onChange={(checked)=>onAssignmentChange({...assignmentSettings,shuffleEachRound:checked})}/>} />
+            <DetailedSettingRow title="Cách thức chia hội thoại" description="Chỉ phân công khi nhân viên đủ điều kiện nhận tin. Nếu không còn nhân viên phù hợp, hệ thống xử lý theo quy tắc dự phòng." control={<select value={assignmentSettings.requireOnline ? "ONLINE" : "ALL"} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,requireOnline:e.target.value === "ONLINE"})} className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-bold"><option value="ONLINE">Chỉ trực tuyến</option><option value="ALL">Tất cả nhân viên</option></select>} />
+            <DetailedSettingRow title="Giữ người phụ trách cũ" description="Khách quay lại trong thời gian cấu hình sẽ được ưu tiên giao cho nhân viên từng chăm sóc, nếu người đó còn đủ điều kiện." control={<Toggle checked={assignmentSettings.keepPreviousAssignee} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,keepPreviousAssignee:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Giữ trong</span><input type="number" min={1} value={assignmentSettings.keepPreviousDays} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,keepPreviousDays:Number(e.target.value||1)})} className="w-20 rounded-xl border px-3 py-2"/><span>ngày</span></div>} />
+            <DetailedSettingRow title="Xáo trộn danh sách nhân viên" description="Khi bắt đầu vòng chia mới, hệ thống xáo trộn danh sách để tránh nhân viên đầu danh sách luôn được ưu tiên." control={<Toggle checked={assignmentSettings.shuffleEachRound} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,shuffleEachRound:checked})}/>} />
             <DetailedSettingRow title="Số lượng tài khoản chính mỗi hội thoại" description="Hiện tại hệ thống giữ một người phụ trách chính cho mỗi hội thoại. Người khác có thể phối hợp qua phân công lại hoặc quy tắc quá hạn." control={<div className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-black">1 tài khoản</div>} />
-            <DetailedSettingRow title="Phân công thêm khi chưa đọc" description="Nếu hội thoại chưa được đọc sau khoảng thời gian này, hệ thống chia lại cho một nhân viên đủ điều kiện khác." control={<Toggle checked={assignmentSettings.reassignUnreadEnabled} onChange={(checked)=>onAssignmentChange({...assignmentSettings,reassignUnreadEnabled:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Sau</span><input type="number" min={1} value={assignmentSettings.reassignAfterMinutes} onChange={(e)=>onAssignmentChange({...assignmentSettings,reassignAfterMinutes:Number(e.target.value||1)})} className="w-24 rounded-xl border px-3 py-2"/><span>phút</span></div>} />
-            <DetailedSettingRow title="Chia lại nếu người phụ trách offline" description="Khi nhân viên đang phụ trách mất trạng thái trực tuyến, hội thoại chưa xử lý có thể được đưa sang người khác." control={<Toggle checked={assignmentSettings.reassignIfAssigneeOffline} onChange={(checked)=>onAssignmentChange({...assignmentSettings,reassignIfAssigneeOffline:checked})}/>} />
-            <DetailedSettingRow title="Giới hạn hội thoại đang xử lý" description="Ngừng chia thêm khi nhân viên đạt số hội thoại đang xử lý tối đa." control={<Toggle checked={assignmentSettings.maxActiveEnabled} onChange={(checked)=>onAssignmentChange({...assignmentSettings,maxActiveEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxActiveConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxActiveConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
-            <DetailedSettingRow title="Giới hạn hội thoại chưa đọc" description="Ngừng chia thêm khi nhân viên đã có quá nhiều hội thoại chưa đọc." control={<Toggle checked={assignmentSettings.maxUnreadEnabled} onChange={(checked)=>onAssignmentChange({...assignmentSettings,maxUnreadEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxUnreadConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxUnreadConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
-            <DetailedSettingRow title="Thời gian phân công hội thoại" description="Trong giờ làm việc hệ thống chia theo ca. Ngoài giờ sẽ áp dụng chế độ dự phòng được chọn." control={<select value={assignmentSettings.workingHoursOnly ? "WORK" : "FULL"} onChange={(e)=>onAssignmentChange({...assignmentSettings,workingHoursOnly:e.target.value === "WORK"})} className="rounded-xl border px-3 py-2 text-sm font-bold"><option value="WORK">Trong giờ làm việc</option><option value="FULL">Toàn thời gian</option></select>} extra={<div className="mt-3 grid max-w-md grid-cols-2 gap-2"><input type="time" value={`${String(Math.floor((assignmentSettings.workStartMinute||480)/60)).padStart(2,"0")}:${String((assignmentSettings.workStartMinute||480)%60).padStart(2,"0")}`} onChange={(e)=>{const [h,m]=e.target.value.split(":").map(Number);onAssignmentChange({...assignmentSettings,workStartMinute:h*60+m})}} className="rounded-xl border px-3 py-2"/><input type="time" value={`${String(Math.floor((assignmentSettings.workEndMinute||1320)/60)).padStart(2,"0")}:${String((assignmentSettings.workEndMinute||1320)%60).padStart(2,"0")}`} onChange={(e)=>{const [h,m]=e.target.value.split(":").map(Number);onAssignmentChange({...assignmentSettings,workEndMinute:h*60+m})}} className="rounded-xl border px-3 py-2"/></div>} />
-            <DetailedSettingRow title="Quyền xem hội thoại" description="Nhân viên chỉ nhìn thấy hội thoại theo phạm vi được cấp. Quản lý có thể xem thêm hội thoại thuộc chi nhánh." control={<select value={assignmentSettings.onlyAssignedCanView ? "SELF" : assignmentSettings.managerCanViewBranch ? "BRANCH" : "PAGE"} onChange={(e)=>onAssignmentChange({...assignmentSettings,onlyAssignedCanView:e.target.value === "SELF",managerCanViewBranch:e.target.value === "BRANCH"})} className="rounded-xl border px-3 py-2 text-sm font-bold"><option value="SELF">Được chia cho mình</option><option value="BRANCH">Theo chi nhánh</option><option value="PAGE">Toàn Page</option></select>} extra={<label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={assignmentSettings.onlyAssignedCanReply} onChange={(e)=>onAssignmentChange({...assignmentSettings,onlyAssignedCanReply:e.target.checked})}/> Chỉ người phụ trách được trả lời</label>} />
+            <DetailedSettingRow title="Phân công thêm khi chưa đọc" description="Nếu hội thoại chưa được đọc sau khoảng thời gian này, hệ thống chia lại cho một nhân viên đủ điều kiện khác." control={<Toggle checked={assignmentSettings.reassignUnreadEnabled} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,reassignUnreadEnabled:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Sau</span><input type="number" min={1} value={assignmentSettings.reassignAfterMinutes} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,reassignAfterMinutes:Number(e.target.value||1)})} className="w-24 rounded-xl border px-3 py-2"/><span>phút</span></div>} />
+            <DetailedSettingRow title="Chia lại nếu người phụ trách offline" description="Khi nhân viên đang phụ trách mất trạng thái trực tuyến, hội thoại chưa xử lý có thể được đưa sang người khác." control={<Toggle checked={assignmentSettings.reassignIfAssigneeOffline} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,reassignIfAssigneeOffline:checked})}/>} />
+            <DetailedSettingRow title="Giới hạn hội thoại đang xử lý" description="Ngừng chia thêm khi nhân viên đạt số hội thoại đang xử lý tối đa." control={<Toggle checked={assignmentSettings.maxActiveEnabled} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxActiveEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxActiveConversations} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxActiveConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
+            <DetailedSettingRow title="Giới hạn hội thoại chưa đọc" description="Ngừng chia thêm khi nhân viên đã có quá nhiều hội thoại chưa đọc." control={<Toggle checked={assignmentSettings.maxUnreadEnabled} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxUnreadEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxUnreadConversations} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxUnreadConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
+            <DetailedSettingRow title="Thời gian phân công hội thoại" description="Trong giờ làm việc hệ thống chia theo ca. Ngoài giờ sẽ áp dụng chế độ dự phòng được chọn." control={<select value={assignmentSettings.workingHoursOnly ? "WORK" : "FULL"} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,workingHoursOnly:e.target.value === "WORK"})} className="rounded-xl border px-3 py-2 text-sm font-bold"><option value="WORK">Trong giờ làm việc</option><option value="FULL">Toàn thời gian</option></select>} extra={<div className="mt-3 grid max-w-md grid-cols-2 gap-2"><input type="time" value={`${String(Math.floor((assignmentSettings.workStartMinute||480)/60)).padStart(2,"0")}:${String((assignmentSettings.workStartMinute||480)%60).padStart(2,"0")}`} onChange={(e)=>{const [h,m]=e.target.value.split(":").map(Number);canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,workStartMinute:h*60+m})}} className="rounded-xl border px-3 py-2"/><input type="time" value={`${String(Math.floor((assignmentSettings.workEndMinute||1320)/60)).padStart(2,"0")}:${String((assignmentSettings.workEndMinute||1320)%60).padStart(2,"0")}`} onChange={(e)=>{const [h,m]=e.target.value.split(":").map(Number);canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,workEndMinute:h*60+m})}} className="rounded-xl border px-3 py-2"/></div>} />
+            <DetailedSettingRow title="Quyền xem hội thoại" description="Nhân viên chỉ nhìn thấy hội thoại theo phạm vi được cấp. Quản lý có thể xem thêm hội thoại thuộc chi nhánh." control={<select value={assignmentSettings.onlyAssignedCanView ? "SELF" : assignmentSettings.managerCanViewBranch ? "BRANCH" : "PAGE"} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,onlyAssignedCanView:e.target.value === "SELF",managerCanViewBranch:e.target.value === "BRANCH"})} className="rounded-xl border px-3 py-2 text-sm font-bold"><option value="SELF">Được chia cho mình</option><option value="BRANCH">Theo chi nhánh</option><option value="PAGE">Toàn Page</option></select>} extra={<label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={assignmentSettings.onlyAssignedCanReply} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,onlyAssignedCanReply:e.target.checked})}/> Chỉ người phụ trách được trả lời</label>} />
           </div>
         </section>
 
@@ -3460,7 +3603,7 @@ function WorkspacePanel({
                         type="checkbox"
                         checked={member.receiveMessages}
                         onChange={(e) =>
-                          onAssignmentChange({
+                          canManageAssignmentSettings && onAssignmentChange({
                             ...assignmentSettings,
                             members: assignmentSettings.members.map((m) =>
                               m.staffId === staff.id
@@ -3477,7 +3620,7 @@ function WorkspacePanel({
                         type="checkbox"
                         checked={member.receiveComments}
                         onChange={(e) =>
-                          onAssignmentChange({
+                          canManageAssignmentSettings && onAssignmentChange({
                             ...assignmentSettings,
                             members: assignmentSettings.members.map((m) =>
                               m.staffId === staff.id
@@ -3497,7 +3640,7 @@ function WorkspacePanel({
                         max={100}
                         value={Math.max(1, Number(member.weight || 1))}
                         onChange={(e) =>
-                          onAssignmentChange({
+                          canManageAssignmentSettings && onAssignmentChange({
                             ...assignmentSettings,
                             members: assignmentSettings.members.map((m) =>
                               m.staffId === staff.id
