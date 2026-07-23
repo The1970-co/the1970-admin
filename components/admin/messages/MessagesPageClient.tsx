@@ -75,6 +75,7 @@ import {
   deleteOmniQuickReply,
 } from "@/lib/omni-inbox-api";
 import { getProductsForOrder, type OrderProduct } from "@/lib/create-order-api";
+import * as XLSX from "xlsx";
 
 type StatusTab = OmniConversationStatus;
 type WorkspaceKey =
@@ -506,6 +507,8 @@ export default function MessagesPageClient({
   const [newNoteTemplateName, setNewNoteTemplateName] = useState("");
   const [quickReplyTemplates, setQuickReplyTemplates] = useState<OmniQuickReplyTemplate[]>([]);
   const [newQuickReply, setNewQuickReply] = useState("");
+  const [importingQuickReplies, setImportingQuickReplies] = useState(false);
+  const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
   const [assignmentSettings, setAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
   const [savedAssignmentSettings, setSavedAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
   const [assignmentHistory, setAssignmentHistory] = useState<any[]>([]);
@@ -1138,6 +1141,182 @@ export default function MessagesPageClient({
   }
 
 
+  function normalizeQuickReplyText(value: unknown) {
+    return String(value ?? "")
+      .replace(/\r\n/g, "\n")
+      .replace(/[ \t]+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
+  function handleDownloadQuickReplyTemplate() {
+    const rows = [
+      {
+        "Nội dung": "Dạ shop chào mình ạ, em hỗ trợ mình ngay nhé.",
+        "Tiêu đề": "Chào khách",
+        "Danh mục": "Tư vấn chung",
+      },
+      {
+        "Nội dung": "Dạ mình cho em xin chiều cao, cân nặng để em tư vấn size phù hợp ạ.",
+        "Tiêu đề": "Hỏi size",
+        "Danh mục": "Tư vấn size",
+      },
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 72 },
+      { wch: 24 },
+      { wch: 24 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "MauTraLoiNhanh");
+    XLSX.writeFile(workbook, "mau-tra-loi-nhanh.xlsx");
+  }
+
+  async function handleImportQuickReplyExcel(file?: File | null) {
+    if (!file || importingQuickReplies) return;
+
+    setImportingQuickReplies(true);
+    setQuickReplyImportResult("");
+    setError("");
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        throw new Error("File Excel không có sheet dữ liệu.");
+      }
+
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+        workbook.Sheets[firstSheetName],
+        { defval: "" },
+      );
+
+      const existingTexts = new Set(
+        quickReplyTemplates.map((item) =>
+          normalizeQuickReplyText(item.content),
+        ),
+      );
+      const fileTexts = new Set<string>();
+      const validRows: Array<{
+        content: string;
+        title?: string;
+        category?: string;
+        sourceRow: number;
+      }> = [];
+      let emptyCount = 0;
+      let duplicateCount = 0;
+
+      rows.forEach((row, index) => {
+        const entries = Object.entries(row);
+        const findValue = (...aliases: string[]) => {
+          const normalizedAliases = aliases.map((alias) =>
+            normalizeQuickReplyText(alias),
+          );
+          const matched = entries.find(([key]) =>
+            normalizedAliases.includes(normalizeQuickReplyText(key)),
+          );
+          return String(matched?.[1] ?? "").trim();
+        };
+
+        const content =
+          findValue(
+            "Nội dung",
+            "Noi dung",
+            "Content",
+            "Mẫu trả lời",
+            "Mau tra loi",
+            "Câu trả lời",
+            "Cau tra loi",
+          ) ||
+          String(entries[0]?.[1] ?? "").trim();
+
+        const title = findValue("Tiêu đề", "Tieu de", "Title");
+        const category = findValue(
+          "Danh mục",
+          "Danh muc",
+          "Category",
+          "Nhóm",
+          "Nhom",
+        );
+
+        if (!content) {
+          emptyCount += 1;
+          return;
+        }
+
+        const normalized = normalizeQuickReplyText(content);
+        if (
+          !normalized ||
+          existingTexts.has(normalized) ||
+          fileTexts.has(normalized)
+        ) {
+          duplicateCount += 1;
+          return;
+        }
+
+        fileTexts.add(normalized);
+        validRows.push({
+          content,
+          title: title || undefined,
+          category: category || undefined,
+          sourceRow: index + 2,
+        });
+      });
+
+      if (!validRows.length) {
+        setQuickReplyImportResult(
+          `Không có mẫu mới để nhập. Bỏ qua ${emptyCount} dòng trống và ${duplicateCount} dòng trùng.`,
+        );
+        return;
+      }
+
+      const createdTemplates: OmniQuickReplyTemplate[] = [];
+      const failedRows: number[] = [];
+
+      for (let index = 0; index < validRows.length; index += 1) {
+        const row = validRows[index];
+        try {
+          const created = await createOmniQuickReply({
+            content: row.content,
+            title: row.title,
+            category: row.category,
+            sortOrder: quickReplyTemplates.length + createdTemplates.length,
+          });
+          createdTemplates.push(created);
+        } catch {
+          failedRows.push(row.sourceRow);
+        }
+      }
+
+      if (createdTemplates.length) {
+        setQuickReplyTemplates((prev) => [...prev, ...createdTemplates]);
+      }
+
+      const parts = [
+        `Đã nhập ${createdTemplates.length}/${validRows.length} mẫu`,
+      ];
+      if (duplicateCount) parts.push(`bỏ qua ${duplicateCount} mẫu trùng`);
+      if (emptyCount) parts.push(`bỏ qua ${emptyCount} dòng trống`);
+      if (failedRows.length) {
+        parts.push(`lỗi tại dòng ${failedRows.join(", ")}`);
+      }
+      setQuickReplyImportResult(parts.join(" · "));
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Không đọc được file Excel.";
+      setError(message);
+      setQuickReplyImportResult(`Nhập Excel thất bại: ${message}`);
+    } finally {
+      setImportingQuickReplies(false);
+    }
+  }
+
   async function handleCreateQuickReply() {
     const content = newQuickReply.trim();
     if (!content) return;
@@ -1411,7 +1590,7 @@ export default function MessagesPageClient({
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="w-full bg-transparent text-sm outline-none placeholder:text-neutral-400"
-                placeholder="Tìm kiếm hội thoại, khách hàng, SĐT..."
+                placeholder="Tìm tên, SĐT, địa chỉ, nội dung tin, ghi chú, nhãn, nhân viên..."
               />
               {search ? (
                 <button
@@ -2066,6 +2245,10 @@ export default function MessagesPageClient({
               onCreateQuickReply={handleCreateQuickReply}
               onEditQuickReply={handleEditQuickReply}
               onHideQuickReply={handleHideQuickReply}
+              onImportQuickReplyExcel={(file) => void handleImportQuickReplyExcel(file)}
+              onDownloadQuickReplyTemplate={handleDownloadQuickReplyTemplate}
+              importingQuickReplies={importingQuickReplies}
+              quickReplyImportResult={quickReplyImportResult}
               assignmentSettings={assignmentSettings}
               savedAssignmentSettings={savedAssignmentSettings}
               activeBranchId={activeBranchId}
@@ -2262,6 +2445,10 @@ function WorkspacePanel({
   onCreateQuickReply,
   onEditQuickReply,
   onHideQuickReply,
+  onImportQuickReplyExcel,
+  onDownloadQuickReplyTemplate,
+  importingQuickReplies,
+  quickReplyImportResult,
   assignmentSettings,
   savedAssignmentSettings,
   activeBranchId,
@@ -2300,6 +2487,10 @@ function WorkspacePanel({
   onCreateQuickReply: () => void;
   onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
   onHideQuickReply: (template: OmniQuickReplyTemplate) => void;
+  onImportQuickReplyExcel: (file?: File | null) => void;
+  onDownloadQuickReplyTemplate: () => void;
+  importingQuickReplies: boolean;
+  quickReplyImportResult: string;
   assignmentSettings: OmniAssignmentSettings | null;
   savedAssignmentSettings: OmniAssignmentSettings | null;
   activeBranchId?: string;
@@ -2455,10 +2646,71 @@ function WorkspacePanel({
     return (
       <WorkspaceShell title={title} description="Tạo và quản lý mẫu phản hồi nhanh dùng chung trong ô chat.">
         <div className="rounded-3xl border border-neutral-200 bg-white p-5">
-          {canManageOmniSettings ? <div className="flex gap-2">
-            <textarea value={newQuickReply} onChange={(e) => onNewQuickReplyChange(e.target.value)} placeholder="Nhập mẫu trả lời mới..." className="min-h-[92px] flex-1 rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none" />
-            <button type="button" onClick={onCreateQuickReply} className="self-end rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white">Thêm mẫu</button>
-          </div> : <p className="text-sm text-neutral-500">Nhân viên được dùng các mẫu bên dưới; chỉ Admin/Owner được thêm và sửa.</p>}
+          {canManageOmniSettings ? (
+            <>
+              <div className="flex flex-col gap-2 xl:flex-row">
+                <textarea
+                  value={newQuickReply}
+                  onChange={(e) => onNewQuickReplyChange(e.target.value)}
+                  placeholder="Nhập mẫu trả lời mới..."
+                  className="min-h-[92px] flex-1 rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={onCreateQuickReply}
+                  className="self-stretch rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white xl:self-end"
+                >
+                  Thêm mẫu
+                </button>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-4">
+                <label
+                  className={cx(
+                    "cursor-pointer rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white",
+                    importingQuickReplies && "pointer-events-none opacity-60",
+                  )}
+                >
+                  {importingQuickReplies
+                    ? "Đang nhập Excel..."
+                    : "Upload Excel"}
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    disabled={importingQuickReplies}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      onImportQuickReplyExcel(file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={onDownloadQuickReplyTemplate}
+                  className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-black"
+                >
+                  Tải file Excel mẫu
+                </button>
+                <p className="text-xs leading-5 text-neutral-500">
+                  Cột bắt buộc: <b>Nội dung</b>. Có thể thêm
+                  <b> Tiêu đề</b> và <b>Danh mục</b>. Mẫu trùng sẽ tự bỏ qua.
+                </p>
+              </div>
+
+              {quickReplyImportResult ? (
+                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                  {quickReplyImportResult}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-neutral-500">
+              Nhân viên được dùng các mẫu bên dưới; chỉ Admin/Owner được thêm,
+              sửa hoặc nhập Excel.
+            </p>
+          )}
         </div>
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           {quickReplyTemplates.map((template, index) => (
