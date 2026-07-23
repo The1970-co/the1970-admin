@@ -506,6 +506,7 @@ export default function MessagesPageClient({
   const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
   const [newNoteTemplateName, setNewNoteTemplateName] = useState("");
   const [quickReplyTemplates, setQuickReplyTemplates] = useState<OmniQuickReplyTemplate[]>([]);
+  const [newQuickReplyShortcut, setNewQuickReplyShortcut] = useState("");
   const [newQuickReply, setNewQuickReply] = useState("");
   const [importingQuickReplies, setImportingQuickReplies] = useState(false);
   const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
@@ -1152,22 +1153,23 @@ export default function MessagesPageClient({
   function handleDownloadQuickReplyTemplate() {
     const rows = [
       {
-        "Nội dung": "Dạ shop chào mình ạ, em hỗ trợ mình ngay nhé.",
-        "Tiêu đề": "Chào khách",
-        "Danh mục": "Tư vấn chung",
+        "Từ viết tắt": "tl",
+        "Nội dung": "Dạ em gửi anh các mẫu thắt lưng bên em giá 400k-450k/c ạ",
       },
       {
-        "Nội dung": "Dạ mình cho em xin chiều cao, cân nặng để em tư vấn size phù hợp ạ.",
-        "Tiêu đề": "Hỏi size",
-        "Danh mục": "Tư vấn size",
+        "Từ viết tắt": "838",
+        "Nội dung": "Quần Kaki QKK838 THE1970 giá 540k/1c ạ",
+      },
+      {
+        "Từ viết tắt": "qddh",
+        "Nội dung": "Em gửi anh/chị quy định đổi hàng bên em. Khách mua hàng được đổi 1 lần trong vòng 7 ngày kể từ ngày đơn hàng thành công.",
       },
     ];
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
     worksheet["!cols"] = [
-      { wch: 72 },
-      { wch: 24 },
-      { wch: 24 },
+      { wch: 22 },
+      { wch: 95 },
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -1200,11 +1202,16 @@ export default function MessagesPageClient({
           normalizeQuickReplyText(item.content),
         ),
       );
+      const existingShortcuts = new Set(
+        quickReplyTemplates
+          .map((item) => normalizeQuickReplyText(item.title))
+          .filter(Boolean),
+      );
       const fileTexts = new Set<string>();
+      const fileShortcuts = new Set<string>();
       const validRows: Array<{
         content: string;
-        title?: string;
-        category?: string;
+        shortcut: string;
         sourceRow: number;
       }> = [];
       let emptyCount = 0;
@@ -1234,13 +1241,17 @@ export default function MessagesPageClient({
           ) ||
           String(entries[0]?.[1] ?? "").trim();
 
-        const title = findValue("Tiêu đề", "Tieu de", "Title");
-        const category = findValue(
-          "Danh mục",
-          "Danh muc",
-          "Category",
-          "Nhóm",
-          "Nhom",
+        const shortcut = findValue(
+          "Từ viết tắt",
+          "Tu viet tat",
+          "Viết tắt",
+          "Viet tat",
+          "Shortcut",
+          "Mã",
+          "Ma",
+          "Tiêu đề",
+          "Tieu de",
+          "Title",
         );
 
         if (!content) {
@@ -1249,20 +1260,29 @@ export default function MessagesPageClient({
         }
 
         const normalized = normalizeQuickReplyText(content);
+        const normalizedShortcut = normalizeQuickReplyText(shortcut);
+
+        if (!normalizedShortcut) {
+          emptyCount += 1;
+          return;
+        }
+
         if (
           !normalized ||
           existingTexts.has(normalized) ||
-          fileTexts.has(normalized)
+          fileTexts.has(normalized) ||
+          existingShortcuts.has(normalizedShortcut) ||
+          fileShortcuts.has(normalizedShortcut)
         ) {
           duplicateCount += 1;
           return;
         }
 
         fileTexts.add(normalized);
+        fileShortcuts.add(normalizedShortcut);
         validRows.push({
           content,
-          title: title || undefined,
-          category: category || undefined,
+          shortcut: shortcut.trim(),
           sourceRow: index + 2,
         });
       });
@@ -1282,8 +1302,7 @@ export default function MessagesPageClient({
         try {
           const created = await createOmniQuickReply({
             content: row.content,
-            title: row.title,
-            category: row.category,
+            title: row.shortcut,
             sortOrder: quickReplyTemplates.length + createdTemplates.length,
           });
           createdTemplates.push(created);
@@ -1318,11 +1337,29 @@ export default function MessagesPageClient({
   }
 
   async function handleCreateQuickReply() {
+    const shortcut = newQuickReplyShortcut.trim();
     const content = newQuickReply.trim();
-    if (!content) return;
+    if (!shortcut || !content) {
+      setError("Phải nhập đủ từ viết tắt và nội dung mẫu.");
+      return;
+    }
+    const duplicateShortcut = quickReplyTemplates.some(
+      (item) =>
+        normalizeQuickReplyText(item.title) ===
+        normalizeQuickReplyText(shortcut),
+    );
+    if (duplicateShortcut) {
+      setError(`Từ viết tắt "${shortcut}" đã tồn tại.`);
+      return;
+    }
     try {
-      const created = await createOmniQuickReply({ content, sortOrder: quickReplyTemplates.length });
+      const created = await createOmniQuickReply({
+        title: shortcut,
+        content,
+        sortOrder: quickReplyTemplates.length,
+      });
       setQuickReplyTemplates((prev) => [...prev, created]);
+      setNewQuickReplyShortcut("");
       setNewQuickReply("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tạo được mẫu trả lời.");
@@ -1330,10 +1367,33 @@ export default function MessagesPageClient({
   }
 
   async function handleEditQuickReply(template: OmniQuickReplyTemplate) {
-    const content = window.prompt("Sửa nội dung mẫu trả lời", template.content)?.trim();
-    if (!content || content === template.content) return;
+    const shortcut = window
+      .prompt("Sửa từ viết tắt", template.title || "")
+      ?.trim();
+    if (shortcut === undefined || !shortcut) return;
+
+    const content = window
+      .prompt("Sửa nội dung mẫu trả lời", template.content)
+      ?.trim();
+    if (!content) return;
+
+    const duplicateShortcut = quickReplyTemplates.some(
+      (item) =>
+        item.id !== template.id &&
+        normalizeQuickReplyText(item.title) ===
+          normalizeQuickReplyText(shortcut),
+    );
+    if (duplicateShortcut) {
+      setError(`Từ viết tắt "${shortcut}" đã tồn tại.`);
+      return;
+    }
+
+    if (shortcut === template.title && content === template.content) return;
     try {
-      const updated = await updateOmniQuickReply(template.id, { content });
+      const updated = await updateOmniQuickReply(template.id, {
+        title: shortcut,
+        content,
+      });
       setQuickReplyTemplates((prev) => prev.map((item) => item.id === updated.id ? updated : item));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không sửa được mẫu trả lời.");
@@ -1893,15 +1953,25 @@ export default function MessagesPageClient({
 
                     <div className="border-t border-neutral-200 bg-white p-5">
                       <div className="mb-3 flex gap-2 overflow-x-auto">
-                        {QUICK_REPLIES.map((reply) => (
+                        {(quickReplyTemplates.length
+                          ? quickReplyTemplates
+                          : QUICK_REPLIES.map((content, index) => ({
+                              id: `default-${index}`,
+                              title: "",
+                              content,
+                            } as OmniQuickReplyTemplate))
+                        ).map((reply) => (
                           <button
-                            key={reply}
-                            onClick={() => setDraft(reply)}
+                            key={reply.id}
+                            onClick={() => setDraft(reply.content)}
                             className="whitespace-nowrap rounded-full border border-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+                            title={reply.content}
                           >
-                            {reply.length > 30
-                              ? `${reply.slice(0, 30)}...`
-                              : reply}
+                            {reply.title
+                              ? `${reply.title} · ${reply.content.slice(0, 24)}${reply.content.length > 24 ? "..." : ""}`
+                              : reply.content.length > 30
+                                ? `${reply.content.slice(0, 30)}...`
+                                : reply.content}
                           </button>
                         ))}
                       </div>
@@ -1911,6 +1981,28 @@ export default function MessagesPageClient({
                           value={draft}
                           onChange={(event) => setDraft(event.target.value)}
                           onKeyDown={(event) => {
+                            const keyTriggersExpansion =
+                              event.key === " " ||
+                              event.key === "Tab" ||
+                              (event.key === "Enter" && !event.shiftKey);
+
+                            if (keyTriggersExpansion) {
+                              const typedShortcut = draft.trim().toLowerCase();
+                              const matchedTemplate =
+                                quickReplyTemplates.find(
+                                  (item) =>
+                                    String(item.title || "")
+                                      .trim()
+                                      .toLowerCase() === typedShortcut,
+                                );
+
+                              if (matchedTemplate) {
+                                event.preventDefault();
+                                setDraft(matchedTemplate.content);
+                                return;
+                              }
+                            }
+
                             if (event.key === "Enter" && !event.shiftKey) {
                               event.preventDefault();
                               void handleSend();
@@ -2240,6 +2332,8 @@ export default function MessagesPageClient({
               onOpenInbox={() => openWorkspace("inbox")}
               noteTemplates={noteTemplates}
               quickReplyTemplates={quickReplyTemplates}
+              newQuickReplyShortcut={newQuickReplyShortcut}
+              onNewQuickReplyShortcutChange={setNewQuickReplyShortcut}
               newQuickReply={newQuickReply}
               onNewQuickReplyChange={setNewQuickReply}
               onCreateQuickReply={handleCreateQuickReply}
@@ -2440,6 +2534,8 @@ function WorkspacePanel({
   onRenameNoteTemplate,
   onDeleteNoteTemplate,
   quickReplyTemplates,
+  newQuickReplyShortcut,
+  onNewQuickReplyShortcutChange,
   newQuickReply,
   onNewQuickReplyChange,
   onCreateQuickReply,
@@ -2482,6 +2578,8 @@ function WorkspacePanel({
   onOpenInbox: () => void;
   noteTemplates: OmniNoteTemplate[];
   quickReplyTemplates: OmniQuickReplyTemplate[];
+  newQuickReplyShortcut: string;
+  onNewQuickReplyShortcutChange: (value: string) => void;
   newQuickReply: string;
   onNewQuickReplyChange: (value: string) => void;
   onCreateQuickReply: () => void;
@@ -2649,10 +2747,18 @@ function WorkspacePanel({
           {canManageOmniSettings ? (
             <>
               <div className="flex flex-col gap-2 xl:flex-row">
+                <input
+                  value={newQuickReplyShortcut}
+                  onChange={(e) =>
+                    onNewQuickReplyShortcutChange(e.target.value)
+                  }
+                  placeholder="Từ viết tắt, ví dụ: qddh"
+                  className="h-[52px] rounded-2xl border border-neutral-200 px-4 text-sm font-black outline-none xl:w-56"
+                />
                 <textarea
                   value={newQuickReply}
                   onChange={(e) => onNewQuickReplyChange(e.target.value)}
-                  placeholder="Nhập mẫu trả lời mới..."
+                  placeholder="Nhập nội dung đầy đủ của mẫu trả lời..."
                   className="min-h-[92px] flex-1 rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none"
                 />
                 <button
@@ -2694,8 +2800,8 @@ function WorkspacePanel({
                   Tải file Excel mẫu
                 </button>
                 <p className="text-xs leading-5 text-neutral-500">
-                  Cột bắt buộc: <b>Nội dung</b>. Có thể thêm
-                  <b> Tiêu đề</b> và <b>Danh mục</b>. Mẫu trùng sẽ tự bỏ qua.
+                  Hai cột bắt buộc: <b>Từ viết tắt</b> và <b>Nội dung</b>.
+                  Từ viết tắt hoặc nội dung bị trùng sẽ tự bỏ qua.
                 </p>
               </div>
 
@@ -2716,7 +2822,12 @@ function WorkspacePanel({
           {quickReplyTemplates.map((template, index) => (
             <div key={template.id} className="rounded-3xl border border-neutral-200 bg-white p-5">
               <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Mẫu #{index + 1}</p>
-              <p className="mt-3 text-base font-bold leading-7">{template.content}</p>
+              <div className="mt-3 flex items-start gap-3">
+                <span className="shrink-0 rounded-lg bg-neutral-950 px-2.5 py-1 text-xs font-black text-white">
+                  {template.title || "—"}
+                </span>
+                <p className="text-base font-bold leading-7">{template.content}</p>
+              </div>
               {canManageOmniSettings ? <div className="mt-4 flex gap-2">
                 <button onClick={() => onEditQuickReply(template)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-black">Sửa</button>
                 <button onClick={() => onHideQuickReply(template)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700">Ẩn</button>
