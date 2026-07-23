@@ -71,6 +71,23 @@ export type OmniMessage = {
   conversationId: string;
 };
 
+export type OmniAdReferral = {
+  source?: string | null;
+  type?: string | null;
+  ref?: string | null;
+  identifier?: string | null;
+  adId?: string | null;
+  postId?: string | null;
+  productId?: string | null;
+  title?: string | null;
+  body?: string | null;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  url?: string | null;
+  firstSeenAt?: string | null;
+  raw?: Record<string, unknown> | null;
+};
+
 export type OmniConversation = {
   id: string;
   channel: OmniChannel;
@@ -82,6 +99,20 @@ export type OmniConversation = {
   lastMessageText?: string | null;
   lastMessageAt?: string | null;
   unreadCount: number;
+  referralSource?: string | null;
+  referralType?: string | null;
+  referralRef?: string | null;
+  referralIdentifier?: string | null;
+  adId?: string | null;
+  adPostId?: string | null;
+  adProductId?: string | null;
+  adTitle?: string | null;
+  adBody?: string | null;
+  adImageUrl?: string | null;
+  adVideoUrl?: string | null;
+  adUrl?: string | null;
+  adReferral?: Record<string, unknown> | null;
+  adFirstSeenAt?: string | null;
   lockedById?: string | null;
   lockedAt?: string | null;
   closedAt?: string | null;

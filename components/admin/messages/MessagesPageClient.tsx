@@ -2153,6 +2153,16 @@ export default function MessagesPageClient({
                           <div className="text-center text-xs font-bold text-neutral-400">
                             Hôm nay
                           </div>
+                          {(activeConversation.adId ||
+                            activeConversation.adPostId ||
+                            activeConversation.adTitle ||
+                            activeConversation.adBody ||
+                            activeConversation.adImageUrl ||
+                            activeConversation.referralSource) ? (
+                            <MetaAdReferralCard
+                              conversation={activeConversation}
+                            />
+                          ) : null}
                           {activeConversation.messages.map((message) => (
                             <MessageBubble
                               key={message.id}
@@ -4649,6 +4659,90 @@ function ConversationRow({
         )}
       </div>
     </button>
+  );
+}
+
+function MetaAdReferralCard({
+  conversation,
+}: {
+  conversation: OmniConversation;
+}) {
+  const adLabel =
+    conversation.adId ||
+    conversation.adPostId ||
+    conversation.referralIdentifier ||
+    "";
+
+  return (
+    <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-widest text-blue-600">
+            Nguồn quảng cáo Facebook
+          </p>
+          <p className="mt-1 text-sm font-bold text-neutral-700">
+            Người dùng đến từ quảng cáo
+            {adLabel ? ` ${adLabel}` : ""}
+          </p>
+        </div>
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">
+          f
+        </div>
+      </div>
+
+      <div className="flex gap-4 p-4">
+        {conversation.adImageUrl ? (
+          <img
+            src={conversation.adImageUrl}
+            alt=""
+            className="h-24 w-24 shrink-0 rounded-xl object-cover"
+            loading="lazy"
+          />
+        ) : null}
+
+        <div className="min-w-0 flex-1">
+          {conversation.adTitle ? (
+            <p className="font-black leading-6 text-neutral-900">
+              {conversation.adTitle}
+            </p>
+          ) : null}
+
+          {conversation.adBody ? (
+            <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-neutral-600">
+              {conversation.adBody}
+            </p>
+          ) : (
+            <p className="text-sm text-neutral-500">
+              Hội thoại được bắt đầu từ quảng cáo Click-to-Messenger.
+            </p>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-neutral-500">
+            {conversation.referralSource ? (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1">
+                {conversation.referralSource}
+              </span>
+            ) : null}
+            {conversation.referralRef ? (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1">
+                Ref: {conversation.referralRef}
+              </span>
+            ) : null}
+          </div>
+
+          {conversation.adUrl ? (
+            <a
+              href={conversation.adUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex rounded-xl bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700"
+            >
+              Xem quảng cáo trên Facebook
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
