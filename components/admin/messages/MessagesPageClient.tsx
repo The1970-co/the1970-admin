@@ -2148,42 +2148,48 @@ export default function MessagesPageClient({
                     <div className="flex-1 overflow-y-auto bg-[#fbfbfa] p-6">
                       {loadingDetail ? (
                         <ChatSkeleton />
-                      ) : activeConversation.messages?.length ? (
+                      ) : (
                         <div className="space-y-5">
                           <div className="text-center text-xs font-bold text-neutral-400">
                             Hôm nay
                           </div>
-                          {(activeConversation.adId ||
-                            activeConversation.adPostId ||
-                            activeConversation.adTitle ||
-                            activeConversation.adBody ||
-                            activeConversation.adImageUrl ||
-                            activeConversation.referralSource) ? (
+
+                          {Boolean(
+                            activeConversation.adId ||
+                              activeConversation.adPostId ||
+                              activeConversation.adTitle ||
+                              activeConversation.adBody ||
+                              activeConversation.adImageUrl ||
+                              activeConversation.referralSource,
+                          ) ? (
                             <MetaAdReferralCard
                               conversation={activeConversation}
                             />
                           ) : null}
-                          {activeConversation.messages.map((message) => (
-                            <MessageBubble
-                              key={message.id}
-                              message={message}
-                              avatar={customerAvatar(activeConversation)}
-                              name={customerName(activeConversation)}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-center">
-                          <div>
-                            <MessageCircle className="mx-auto h-10 w-10 text-neutral-300" />
-                            <p className="mt-3 font-bold text-neutral-700">
-                              Chưa có tin nhắn
-                            </p>
-                            <p className="text-sm text-neutral-500">
-                              Hội thoại đã được tạo nhưng chưa có lịch sử
-                              message.
-                            </p>
-                          </div>
+
+                          {activeConversation.messages?.length ? (
+                            activeConversation.messages.map((message) => (
+                              <MessageBubble
+                                key={message.id}
+                                message={message}
+                                avatar={customerAvatar(activeConversation)}
+                                name={customerName(activeConversation)}
+                              />
+                            ))
+                          ) : (
+                            <div className="flex min-h-56 items-center justify-center text-center">
+                              <div>
+                                <MessageCircle className="mx-auto h-10 w-10 text-neutral-300" />
+                                <p className="mt-3 font-bold text-neutral-700">
+                                  Chưa có tin nhắn
+                                </p>
+                                <p className="text-sm text-neutral-500">
+                                  Hội thoại đã được tạo nhưng chưa có lịch sử
+                                  message.
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -3208,6 +3214,13 @@ function QuickOrderForm({
           {searchValue ? <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-1 shadow-xl">{filtered.map((item) => <button key={item.id} type="button" onClick={() => addItem(item.id, item.label)} className="block w-full rounded-xl px-3 py-2 text-left text-xs hover:bg-neutral-50">{item.label}</button>)}</div> : null}
         </div>
         {items.map((item) => <div key={item.variantId} className="flex items-center gap-2 rounded-2xl bg-white p-2 text-xs"><span className="min-w-0 flex-1 truncate">{item.label}</span><input type="number" min={1} value={item.qty} onChange={(e) => setItems((prev) => prev.map((row) => row.variantId === item.variantId ? { ...row, qty: Math.max(1, Number(e.target.value || 1)) } : row))} className="w-14 rounded-lg border px-2 py-1" /><button onClick={() => setItems((prev) => prev.filter((row) => row.variantId !== item.variantId))}><X className="h-4 w-4" /></button></div>)}
+        <div className="flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-3 py-2">
+          <div>
+            <p className="text-xs font-bold text-neutral-500">Phí ship mặc định</p>
+            <p className="text-[11px] text-neutral-400">Có thể sửa lại trong danh sách đơn hàng</p>
+          </div>
+          <span className="text-sm font-black text-neutral-900">30.000đ</span>
+        </div>
         <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú đơn" rows={2} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
       </div>
       <div className="mt-3 flex gap-2"><button onClick={onCancel} className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-bold">Đóng</button><button disabled={saving} onClick={() => void submit()} className="flex-1 rounded-2xl bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? "Đang tạo..." : "Tạo đơn nháp"}</button></div>
@@ -4667,22 +4680,15 @@ function MetaAdReferralCard({
 }: {
   conversation: OmniConversation;
 }) {
-  const adLabel =
-    conversation.adId ||
-    conversation.adPostId ||
-    conversation.referralIdentifier ||
-    "";
-
   return (
     <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3">
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-blue-600">
-            Nguồn quảng cáo Facebook
+            Nguồn bài viết Facebook
           </p>
           <p className="mt-1 text-sm font-bold text-neutral-700">
-            Người dùng đến từ quảng cáo
-            {adLabel ? ` ${adLabel}` : ""}
+            Khách nhắn tin từ bài viết quảng cáo
           </p>
         </div>
         <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">
@@ -4701,34 +4707,15 @@ function MetaAdReferralCard({
         ) : null}
 
         <div className="min-w-0 flex-1">
-          {conversation.adTitle ? (
-            <p className="font-black leading-6 text-neutral-900">
-              {conversation.adTitle}
-            </p>
-          ) : null}
-
           {conversation.adBody ? (
-            <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-neutral-600">
+            <p className="line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-neutral-600">
               {conversation.adBody}
             </p>
           ) : (
             <p className="text-sm text-neutral-500">
-              Hội thoại được bắt đầu từ quảng cáo Click-to-Messenger.
+              Mở bài viết để xem nội dung quảng cáo khách đã nhắn từ đó.
             </p>
           )}
-
-          <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-neutral-500">
-            {conversation.referralSource ? (
-              <span className="rounded-full bg-neutral-100 px-2.5 py-1">
-                {conversation.referralSource}
-              </span>
-            ) : null}
-            {conversation.referralRef ? (
-              <span className="rounded-full bg-neutral-100 px-2.5 py-1">
-                Ref: {conversation.referralRef}
-              </span>
-            ) : null}
-          </div>
 
           {conversation.adUrl ? (
             <a
@@ -4737,7 +4724,7 @@ function MetaAdReferralCard({
               rel="noreferrer"
               className="mt-3 inline-flex rounded-xl bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-700"
             >
-              Xem quảng cáo trên Facebook
+              Xem bài viết trên Facebook
             </a>
           ) : null}
         </div>
