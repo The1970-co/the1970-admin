@@ -37,6 +37,13 @@ export type OmniQuickOrder = {
   customerName?: string | null;
   customerPhone?: string | null;
   shippingAddressLine1?: string | null;
+  shippingAddressLine2?: string | null;
+  shippingProvince?: string | null;
+  shippingDistrict?: string | null;
+  shippingWard?: string | null;
+  shippingPostalCode?: string | null;
+  shippingGhnDistrictId?: number | null;
+  shippingGhnWardCode?: string | null;
   finalAmount?: number;
   createdAt?: string;
   items?: Array<{ id?: string; sku?: string; productName?: string; color?: string | null; size?: string | null; qty: number; unitPrice?: number; lineTotal?: number }>;
@@ -176,8 +183,32 @@ export function deleteOmniNoteTemplate(id: string) {
   return apiJson<OmniNoteTemplate>(`/omni-inbox/note-templates/${id}`, { method: "DELETE" });
 }
 
-export function createOmniQuickOrder(id: string, body: { customerName?: string; phone: string; address: string; branchId: string; note?: string; requestId?: string; items: Array<{ variantId: string; qty: number }> }) {
-  return apiJson<OmniQuickOrder>(`/omni-inbox/conversations/${id}/quick-orders`, { method: "POST", body: JSON.stringify(body) });
+export type CreateOmniQuickOrderPayload = {
+  customerName?: string;
+  phone: string;
+  address: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  province?: string;
+  district?: string;
+  ward?: string;
+  postalCode?: string;
+  ghnDistrictId?: number;
+  ghnWardCode?: string;
+  branchId: string;
+  note?: string;
+  requestId?: string;
+  items: Array<{ variantId: string; qty: number }>;
+};
+
+export function createOmniQuickOrder(
+  id: string,
+  body: CreateOmniQuickOrderPayload,
+) {
+  return apiJson<OmniQuickOrder>(
+    `/omni-inbox/conversations/${id}/quick-orders`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export function cancelOmniQuickOrder(conversationId: string, orderId: string) {

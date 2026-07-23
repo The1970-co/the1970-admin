@@ -76,7 +76,19 @@ import {
   deleteOmniQuickReply,
   deleteAllOmniQuickReplies,
 } from "@/lib/omni-inbox-api";
-import { getProductsForOrder, type OrderProduct } from "@/lib/create-order-api";
+import {
+  getProductsForOrder,
+  resolveGhnAddress,
+  type OrderProduct,
+} from "@/lib/create-order-api";
+import {
+  getProvinces,
+  getDistricts,
+  getWards,
+  type ProvinceItem,
+  type DistrictItem,
+  type WardItem,
+} from "@/lib/address-api";
 import * as XLSX from "xlsx";
 
 type StatusTab = OmniConversationStatus;
@@ -2601,6 +2613,174 @@ export default function MessagesPageClient({
   );
 }
 
+
+function quickOrderNormalizeSpaces(value?: string | null) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function quickOrderRemoveVietnameseTones(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D");
+}
+
+function quickOrderNormalizeAddressToken(value?: string | null) {
+  return quickOrderRemoveVietnameseTones(String(value || ""))
+    .toLowerCase()
+    .replace(/[,.;|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function quickOrderStripProvincePrefix(value?: string | null) {
+  return quickOrderNormalizeAddressToken(value)
+    .replace(/^(tinh|thanh pho|tp)\s+/, "")
+    .trim();
+}
+
+function quickOrderStripDistrictPrefix(value?: string | null) {
+  return quickOrderNormalizeAddressToken(value)
+    .replace(/^(quan|huyen|thi xa|thanh pho|tp)\s+/, "")
+    .trim();
+}
+
+function quickOrderStripWardPrefix(value?: string | null) {
+  return quickOrderNormalizeAddressToken(value)
+    .replace(/^(xa|phuong|thi tran)\s+/, "")
+    .trim();
+}
+
+function quickOrderExtractPhone(raw: string) {
+  const match = String(raw || "").match(/(?:\+?84|0)[\d.\s-]{8,14}\d/);
+  if (!match) return { phone: "", cleaned: raw };
+  const digits = match[0].replace(/\D/g, "").replace(/^84/, "0");
+  return {
+    phone: digits,
+    cleaned: raw.replace(match[0], " ").replace(/\s+/g, " ").trim(),
+  };
+}
+
+function quickOrderExtractRecipientName(raw: string) {
+  const normalized = String(raw || "").trim();
+  if (!normalized) return { recipientName: "", cleaned: raw };
+
+  for (const splitter of [" - ", " – ", "\n", ",", ";", "|"]) {
+    if (!normalized.includes(splitter)) continue;
+    const [first, ...rest] = normalized.split(splitter);
+    const firstPart = first.trim();
+    if (
+      firstPart &&
+      !/\d/.test(firstPart) &&
+      firstPart.length <= 50 &&
+      firstPart.split(/\s+/).length <= 7
+    ) {
+      return {
+        recipientName: firstPart,
+        cleaned: rest.join(splitter).trim(),
+      };
+    }
+  }
+
+  return { recipientName: "", cleaned: raw };
+}
+
+function quickOrderParseSmartAddress(raw: string) {
+  let working = String(raw || "").trim();
+  const phoneResult = quickOrderExtractPhone(working);
+  working = phoneResult.cleaned;
+  const nameResult = quickOrderExtractRecipientName(working);
+  working = nameResult.cleaned;
+
+  return {
+    recipientName: nameResult.recipientName,
+    phone: phoneResult.phone,
+    addressText: quickOrderNormalizeSpaces(
+      working
+        .replace(
+          /\b(sdt|số điện thoại|so dien thoai|điện thoại|dien thoai|phone)\b[:\-]?\s*/gi,
+          " ",
+        )
+        .replace(
+          /\b(người nhận|nguoi nhan|tên|ten|khách hàng|khach hang)\b[:\-]?\s*/gi,
+          " ",
+        ),
+    ),
+  };
+}
+
+function quickOrderFindProvince(
+  raw: string,
+  options: ProvinceItem[],
+): ProvinceItem | null {
+  const token = quickOrderNormalizeAddressToken(raw);
+  return (
+    options
+      .map((item) => ({
+        item,
+        keys: [
+          quickOrderNormalizeAddressToken(item.name),
+          quickOrderStripProvincePrefix(item.name),
+        ].filter(Boolean),
+      }))
+      .sort((a, b) => Math.max(...b.keys.map((k) => k.length)) - Math.max(...a.keys.map((k) => k.length)))
+      .find((row) => row.keys.some((key) => token.includes(key)))?.item || null
+  );
+}
+
+function quickOrderFindDistrict(
+  raw: string,
+  options: DistrictItem[],
+): DistrictItem | null {
+  const token = quickOrderNormalizeAddressToken(raw);
+  return (
+    options
+      .map((item) => ({
+        item,
+        keys: [
+          quickOrderNormalizeAddressToken(item.name),
+          quickOrderStripDistrictPrefix(item.name),
+        ].filter(Boolean),
+      }))
+      .sort((a, b) => Math.max(...b.keys.map((k) => k.length)) - Math.max(...a.keys.map((k) => k.length)))
+      .find((row) => row.keys.some((key) => token.includes(key)))?.item || null
+  );
+}
+
+function quickOrderFindWard(
+  raw: string,
+  options: WardItem[],
+): WardItem | null {
+  const token = quickOrderNormalizeAddressToken(raw);
+  return (
+    options
+      .map((item) => ({
+        item,
+        keys: [
+          quickOrderNormalizeAddressToken(item.name),
+          quickOrderStripWardPrefix(item.name),
+        ].filter(Boolean),
+      }))
+      .sort((a, b) => Math.max(...b.keys.map((k) => k.length)) - Math.max(...a.keys.map((k) => k.length)))
+      .find((row) => row.keys.some((key) => token.includes(key)))?.item || null
+  );
+}
+
+function quickOrderRemoveAddressParts(raw: string, parts: string[]) {
+  let result = String(raw || "");
+  for (const part of parts.filter(Boolean)) {
+    const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(escaped, "ig"), " ");
+  }
+  return result
+    .replace(/\b(tỉnh|thành phố|tp|quận|huyện|thị xã|xã|phường|thị trấn)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/^,\s*|,\s*$/g, "")
+    .trim();
+}
+
 function QuickOrderForm({
   conversation,
   products,
@@ -2628,6 +2808,19 @@ function QuickOrderForm({
   const [customerNameValue, setCustomerNameValue] = useState(customerName(conversation));
   const [phone, setPhone] = useState(conversation.customer?.phone || "");
   const [address, setAddress] = useState(conversation.customer?.address || "");
+  const [smartAddressInput, setSmartAddressInput] = useState("");
+  const [smartAddressHint, setSmartAddressHint] = useState("");
+  const [smartAddressLoading, setSmartAddressLoading] = useState(false);
+  const [provinceOptions, setProvinceOptions] = useState<ProvinceItem[]>([]);
+  const [districtOptions, setDistrictOptions] = useState<DistrictItem[]>([]);
+  const [wardOptions, setWardOptions] = useState<WardItem[]>([]);
+  const [province, setProvince] = useState("");
+  const [district, setDistrict] = useState("");
+  const [ward, setWard] = useState("");
+  const [addressLine2, setAddressLine2] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [ghnDistrictId, setGhnDistrictId] = useState<number | undefined>();
+  const [ghnWardCode, setGhnWardCode] = useState<string | undefined>();
   const [note, setNote] = useState("");
   const [searchValue, setSearchValue] = useState("");
   const [items, setItems] = useState<Array<{ variantId: string; qty: number; label: string }>>([]);
@@ -2641,6 +2834,174 @@ function QuickOrderForm({
       setSelectedBranchId(branchOptions[0].id);
     }
   }, [branchId, branchOptions, selectedBranchId]);
+
+  useEffect(() => {
+    void getProvinces()
+      .then((rows) => setProvinceOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setProvinceOptions([]));
+  }, []);
+
+  const applySmartAddress = async (rawValue: string) => {
+    const raw = String(rawValue || "").trim();
+    setSmartAddressInput(raw);
+    if (!raw) {
+      setSmartAddressHint("");
+      return;
+    }
+
+    setSmartAddressLoading(true);
+    setSmartAddressHint("");
+    onError("");
+
+    try {
+      const parsed = quickOrderParseSmartAddress(raw);
+      if (parsed.recipientName) setCustomerNameValue(parsed.recipientName);
+      if (parsed.phone) setPhone(parsed.phone);
+
+      const addressText = parsed.addressText || raw;
+      const matchedProvince = quickOrderFindProvince(
+        addressText,
+        provinceOptions,
+      );
+
+      if (!matchedProvince?.id) {
+        setAddress(addressText);
+        setProvince("");
+        setDistrict("");
+        setWard("");
+        setGhnDistrictId(undefined);
+        setGhnWardCode(undefined);
+        setSmartAddressHint(
+          "Đã lấy tên/SĐT nhưng chưa nhận ra tỉnh thành. Hãy chọn lại bên dưới.",
+        );
+        return;
+      }
+
+      setProvince(matchedProvince.name);
+      const districts = await getDistricts(matchedProvince.id);
+      setDistrictOptions(Array.isArray(districts) ? districts : []);
+
+      const matchedDistrict = quickOrderFindDistrict(addressText, districts);
+      if (!matchedDistrict?.id) {
+        setAddress(addressText);
+        setDistrict("");
+        setWard("");
+        setGhnDistrictId(undefined);
+        setGhnWardCode(undefined);
+        setSmartAddressHint(
+          "Đã nhận ra tỉnh thành nhưng chưa chắc quận huyện. Hãy chọn lại bên dưới.",
+        );
+        return;
+      }
+
+      setDistrict(matchedDistrict.name);
+      const wards = await getWards(matchedDistrict.id);
+      setWardOptions(Array.isArray(wards) ? wards : []);
+
+      const matchedWard = quickOrderFindWard(addressText, wards);
+      setWard(matchedWard?.name || "");
+
+      const detailAddress =
+        quickOrderRemoveAddressParts(addressText, [
+          matchedProvince.name,
+          matchedDistrict.name,
+          matchedWard?.name || "",
+        ]) || addressText;
+      setAddress(detailAddress);
+
+      let resolved: any = null;
+      if (matchedWard?.name) {
+        resolved = await resolveGhnAddress({
+          province: matchedProvince.name,
+          district: matchedDistrict.name,
+          ward: matchedWard.name,
+        });
+      }
+
+      setGhnDistrictId(
+        Number(resolved?.districtId || 0) || undefined,
+      );
+      setGhnWardCode(
+        String(resolved?.wardCode || "").trim() || undefined,
+      );
+
+      setSmartAddressHint(
+        matchedWard?.name && resolved?.districtId && resolved?.wardCode
+          ? "Đã tách tên, SĐT, địa chỉ và map đủ mã GHN."
+          : matchedWard?.name
+            ? "Đã tách tỉnh/huyện/xã nhưng chưa map được mã GHN. Hãy kiểm tra lại."
+            : "Đã nhận ra tỉnh/huyện nhưng chưa chắc phường/xã.",
+      );
+    } catch (error) {
+      setSmartAddressHint(
+        error instanceof Error
+          ? error.message
+          : "Không phân tích được địa chỉ.",
+      );
+    } finally {
+      setSmartAddressLoading(false);
+    }
+  };
+
+  const handleProvinceChange = async (value: string) => {
+    setProvince(value);
+    setDistrict("");
+    setWard("");
+    setGhnDistrictId(undefined);
+    setGhnWardCode(undefined);
+    const item = provinceOptions.find((row) => row.name === value);
+    if (!item?.id) {
+      setDistrictOptions([]);
+      setWardOptions([]);
+      return;
+    }
+    const rows = await getDistricts(item.id);
+    setDistrictOptions(Array.isArray(rows) ? rows : []);
+    setWardOptions([]);
+  };
+
+  const handleDistrictChange = async (value: string) => {
+    setDistrict(value);
+    setWard("");
+    setGhnDistrictId(undefined);
+    setGhnWardCode(undefined);
+    const item = districtOptions.find((row) => row.name === value);
+    if (!item?.id) {
+      setWardOptions([]);
+      return;
+    }
+    const rows = await getWards(item.id);
+    setWardOptions(Array.isArray(rows) ? rows : []);
+  };
+
+  const handleWardChange = async (value: string) => {
+    setWard(value);
+    setGhnDistrictId(undefined);
+    setGhnWardCode(undefined);
+    if (!province || !district || !value) return;
+    try {
+      const resolved = await resolveGhnAddress({
+        province,
+        district,
+        ward: value,
+      });
+      setGhnDistrictId(
+        Number(resolved?.districtId || 0) || undefined,
+      );
+      setGhnWardCode(
+        String(resolved?.wardCode || "").trim() || undefined,
+      );
+      setSmartAddressHint(
+        resolved?.districtId && resolved?.wardCode
+          ? "Địa chỉ đã có đủ mã GHN."
+          : "Chưa map được mã GHN, hãy kiểm tra lại địa chỉ.",
+      );
+    } catch {
+      setSmartAddressHint(
+        "Chưa map được mã GHN, hãy kiểm tra lại địa chỉ.",
+      );
+    }
+  };
 
   const variants = useMemo(() => products.flatMap((product) => product.variants.map((variant) => ({
     ...variant,
@@ -2664,14 +3025,33 @@ function QuickOrderForm({
   const submit = async () => {
     if (!selectedBranchId)
       return onError("Hãy chọn chi nhánh tạo đơn.");
-    if (!phone.trim() || !address.trim() || !items.length) return onError("Cần nhập SĐT, địa chỉ và ít nhất một sản phẩm.");
+    if (!phone.trim() || !address.trim() || !items.length)
+      return onError("Cần nhập SĐT, địa chỉ và ít nhất một sản phẩm.");
+    if (!province || !district || !ward)
+      return onError(
+        "Địa chỉ chưa đủ Tỉnh/Thành, Quận/Huyện và Phường/Xã.",
+      );
+    if (!ghnDistrictId || !ghnWardCode)
+      return onError(
+        "Địa chỉ chưa map được mã GHN. Hãy chọn lại Quận/Huyện và Phường/Xã.",
+      );
     onSaving(true);
     onError("");
     try {
       const order = await createOmniQuickOrder(conversation.id, {
         customerName: customerNameValue.trim(),
         phone,
-        address,
+        address: [address, addressLine2, ward, district, province]
+          .filter(Boolean)
+          .join(", "),
+        addressLine1: address,
+        addressLine2,
+        province,
+        district,
+        ward,
+        postalCode,
+        ghnDistrictId,
+        ghnWardCode,
         branchId: selectedBranchId,
         note,
         requestId: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
@@ -2715,9 +3095,104 @@ function QuickOrderForm({
             Tài khoản đang ở chế độ Tất cả chi nhánh, cần chọn chi nhánh cho đơn này.
           </p>
         ) : null}
+        <div className="rounded-2xl border border-blue-200 bg-white p-3">
+          <p className="mb-2 text-xs font-black uppercase tracking-wide text-blue-700">
+            Địa chỉ thông minh
+          </p>
+          <textarea
+            value={smartAddressInput}
+            onChange={(event) => setSmartAddressInput(event.target.value)}
+            onBlur={(event) => void applySmartAddress(event.target.value)}
+            placeholder={"Paste nguyên thông tin khách:\nTrần Thành 0948123496\n222 ấp Đồng Thành, xã Thạnh Đông A, huyện Tân Hiệp, Kiên Giang"}
+            rows={4}
+            className="w-full resize-none rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none"
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className="text-xs text-neutral-500">
+              {smartAddressLoading
+                ? "Đang phân tích địa chỉ..."
+                : smartAddressHint ||
+                  "Dán nguyên tên, SĐT và địa chỉ; hệ thống sẽ tự tách."}
+            </p>
+            <button
+              type="button"
+              disabled={smartAddressLoading || !smartAddressInput.trim()}
+              onClick={() => void applySmartAddress(smartAddressInput)}
+              className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-black text-white disabled:opacity-40"
+            >
+              Phân tích
+            </button>
+          </div>
+        </div>
+
         <input value={customerNameValue} onChange={(e) => setCustomerNameValue(e.target.value)} placeholder="Tên khách" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
         <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Số điện thoại *" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
-        <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Địa chỉ nhận hàng *" rows={3} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+        <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Địa chỉ dòng 1 *" rows={2} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+        <input value={addressLine2} onChange={(e) => setAddressLine2(e.target.value)} placeholder="Địa chỉ dòng 2" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
+
+        <div className="grid gap-2">
+          <select
+            value={province}
+            onChange={(event) => void handleProvinceChange(event.target.value)}
+            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Chọn tỉnh / thành *</option>
+            {provinceOptions.map((item) => (
+              <option key={item.id} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={district}
+            onChange={(event) => void handleDistrictChange(event.target.value)}
+            disabled={!province}
+            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">Chọn quận / huyện *</option>
+            {districtOptions.map((item) => (
+              <option key={item.id} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={ward}
+            onChange={(event) => void handleWardChange(event.target.value)}
+            disabled={!district}
+            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">Chọn phường / xã *</option>
+            {wardOptions.map((item) => (
+              <option key={item.code} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            value={postalCode}
+            onChange={(event) => setPostalCode(event.target.value)}
+            placeholder="Mã bưu chính"
+            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm"
+          />
+          <div
+            className={cx(
+              "rounded-2xl border px-3 py-2 text-xs font-bold",
+              ghnDistrictId && ghnWardCode
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-amber-200 bg-amber-50 text-amber-700",
+            )}
+          >
+            {ghnDistrictId && ghnWardCode
+              ? `GHN: ${ghnDistrictId} · ${ghnWardCode}`
+              : "Chưa có mã GHN"}
+          </div>
+        </div>
         <div className="relative">
           <input value={searchValue} onChange={(e) => setSearchValue(e.target.value)} placeholder="Tìm SKU hoặc sản phẩm" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
           {searchValue ? <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-1 shadow-xl">{filtered.map((item) => <button key={item.id} type="button" onClick={() => addItem(item.id, item.label)} className="block w-full rounded-xl px-3 py-2 text-left text-xs hover:bg-neutral-50">{item.label}</button>)}</div> : null}
