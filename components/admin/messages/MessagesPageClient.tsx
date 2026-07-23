@@ -73,6 +73,7 @@ import {
   createOmniQuickReply,
   updateOmniQuickReply,
   deleteOmniQuickReply,
+  deleteAllOmniQuickReplies,
 } from "@/lib/omni-inbox-api";
 import { getProductsForOrder, type OrderProduct } from "@/lib/create-order-api";
 import * as XLSX from "xlsx";
@@ -134,6 +135,7 @@ const QUICK_REPLIES = [
 ];
 
 type AssigneeOption = { id: string; name: string };
+type BranchOption = { id: string; name: string; code?: string };
 
 type MetaConnectionStatus = {
   pageId?: string;
@@ -331,6 +333,56 @@ function getActiveBranchName(user: any, activeBranchId?: string) {
   );
 }
 
+function getUserBranchOptions(user: any): BranchOption[] {
+  const sources = [
+    ...(Array.isArray(user?.branchRoles) ? user.branchRoles : []),
+    ...(Array.isArray(user?.branches) ? user.branches : []),
+    ...(Array.isArray(user?.branchPermissions) ? user.branchPermissions : []),
+  ];
+
+  const map = new Map<string, BranchOption>();
+
+  for (const item of sources) {
+    const id = normalizeName(item?.branchId || item?.branch?.id || item?.id);
+    if (!id) continue;
+
+    const name =
+      normalizeName(item?.branchName) ||
+      normalizeName(item?.branch?.name) ||
+      normalizeName(item?.name) ||
+      normalizeName(item?.branchCode) ||
+      normalizeName(item?.branch?.code) ||
+      id;
+
+    const code =
+      normalizeName(item?.branchCode) ||
+      normalizeName(item?.branch?.code) ||
+      undefined;
+
+    map.set(id, { id, name, code });
+  }
+
+  const directBranchId = normalizeName(user?.branchId || user?.branch?.id);
+  if (directBranchId && !map.has(directBranchId)) {
+    map.set(directBranchId, {
+      id: directBranchId,
+      name:
+        normalizeName(user?.branchName) ||
+        normalizeName(user?.branch?.name) ||
+        normalizeName(user?.branchCode) ||
+        directBranchId,
+      code:
+        normalizeName(user?.branchCode) ||
+        normalizeName(user?.branch?.code) ||
+        undefined,
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, "vi"),
+  );
+}
+
 function getInitials(name: string) {
   return (
     name
@@ -430,6 +482,10 @@ export default function MessagesPageClient({
   const currentUserName = getUserDisplayName(user);
   const currentUserRole = getUserRoleLabel(user);
   const currentBranchName = getActiveBranchName(user, activeBranchId);
+  const quickOrderBranchOptions = useMemo(
+    () => getUserBranchOptions(user),
+    [user],
+  );
 
   // AuthProvider may restore the user from browser storage before hydration.
   // Keep the server render and the first client render identical, then reveal
@@ -510,6 +566,8 @@ export default function MessagesPageClient({
   const [newQuickReply, setNewQuickReply] = useState("");
   const [importingQuickReplies, setImportingQuickReplies] = useState(false);
   const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
+  const [quickReplySearch, setQuickReplySearch] = useState("");
+  const [deletingAllQuickReplies, setDeletingAllQuickReplies] = useState(false);
   const [assignmentSettings, setAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
   const [savedAssignmentSettings, setSavedAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
   const [assignmentHistory, setAssignmentHistory] = useState<any[]>([]);
@@ -1400,13 +1458,57 @@ export default function MessagesPageClient({
     }
   }
 
-  async function handleHideQuickReply(template: OmniQuickReplyTemplate) {
-    if (!window.confirm(`Ẩn mẫu trả lời “${template.content}”?`)) return;
+  async function handleDeleteQuickReply(template: OmniQuickReplyTemplate) {
+    const shortcut = String(template.title || "").trim();
+    if (
+      !window.confirm(
+        `Xóa vĩnh viễn mẫu${shortcut ? ` “${shortcut}”` : ""}? Thao tác này không thể hoàn tác.`,
+      )
+    ) {
+      return;
+    }
+
     try {
       await deleteOmniQuickReply(template.id);
-      setQuickReplyTemplates((prev) => prev.filter((item) => item.id !== template.id));
+      setQuickReplyTemplates((prev) =>
+        prev.filter((item) => item.id !== template.id),
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không ẩn được mẫu trả lời.");
+      setError(
+        err instanceof Error ? err.message : "Không xóa được mẫu trả lời.",
+      );
+    }
+  }
+
+  async function handleDeleteAllQuickReplies() {
+    if (!quickReplyTemplates.length || deletingAllQuickReplies) return;
+
+    const confirmed = window.confirm(
+      `Xóa vĩnh viễn toàn bộ ${quickReplyTemplates.length} mẫu trả lời nhanh? Thao tác này không thể hoàn tác.`,
+    );
+    if (!confirmed) return;
+
+    const typed = window.prompt(
+      'Nhập chính xác chữ "XOA HET" để xác nhận xóa toàn bộ mẫu cũ.',
+    );
+    if (String(typed || "").trim().toUpperCase() !== "XOA HET") return;
+
+    setDeletingAllQuickReplies(true);
+    setError("");
+    try {
+      const result = await deleteAllOmniQuickReplies();
+      setQuickReplyTemplates([]);
+      setQuickReplyImportResult(
+        `Đã xóa toàn bộ ${Number(result?.deletedCount || 0)} mẫu trả lời.`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không xóa được toàn bộ mẫu trả lời.",
+      );
+    } finally {
+      setDeletingAllQuickReplies(false);
     }
   }
 
@@ -2289,6 +2391,7 @@ export default function MessagesPageClient({
                           conversation={activeConversation}
                           products={orderProducts}
                           branchId={activeConversation.branchId || activeBranchId || ""}
+                          branchOptions={quickOrderBranchOptions}
                           saving={quickOrderSaving}
                           onCancel={() => setQuickOrderOpen(false)}
                           onSaving={setQuickOrderSaving}
@@ -2338,7 +2441,11 @@ export default function MessagesPageClient({
               onNewQuickReplyChange={setNewQuickReply}
               onCreateQuickReply={handleCreateQuickReply}
               onEditQuickReply={handleEditQuickReply}
-              onHideQuickReply={handleHideQuickReply}
+              onDeleteQuickReply={handleDeleteQuickReply}
+              onDeleteAllQuickReplies={() => void handleDeleteAllQuickReplies()}
+              deletingAllQuickReplies={deletingAllQuickReplies}
+              quickReplySearch={quickReplySearch}
+              onQuickReplySearchChange={setQuickReplySearch}
               onImportQuickReplyExcel={(file) => void handleImportQuickReplyExcel(file)}
               onDownloadQuickReplyTemplate={handleDownloadQuickReplyTemplate}
               importingQuickReplies={importingQuickReplies}
@@ -2376,23 +2483,45 @@ export default function MessagesPageClient({
 }
 
 function QuickOrderForm({
-  conversation, products, branchId, saving, onCancel, onSaving, onCreated, onError,
+  conversation,
+  products,
+  branchId,
+  branchOptions,
+  saving,
+  onCancel,
+  onSaving,
+  onCreated,
+  onError,
 }: {
   conversation: OmniConversation;
   products: OrderProduct[];
   branchId: string;
+  branchOptions: BranchOption[];
   saving: boolean;
   onCancel: () => void;
   onSaving: (value: boolean) => void;
   onCreated: (order: OmniQuickOrder) => void | Promise<void>;
   onError: (message: string) => void;
 }) {
+  const defaultBranchId =
+    branchId || (branchOptions.length === 1 ? branchOptions[0].id : "");
+  const [selectedBranchId, setSelectedBranchId] = useState(defaultBranchId);
   const [customerNameValue, setCustomerNameValue] = useState(customerName(conversation));
   const [phone, setPhone] = useState(conversation.customer?.phone || "");
   const [address, setAddress] = useState(conversation.customer?.address || "");
   const [note, setNote] = useState("");
   const [searchValue, setSearchValue] = useState("");
   const [items, setItems] = useState<Array<{ variantId: string; qty: number; label: string }>>([]);
+
+  useEffect(() => {
+    if (branchId) {
+      setSelectedBranchId(branchId);
+      return;
+    }
+    if (!selectedBranchId && branchOptions.length === 1) {
+      setSelectedBranchId(branchOptions[0].id);
+    }
+  }, [branchId, branchOptions, selectedBranchId]);
 
   const variants = useMemo(() => products.flatMap((product) => product.variants.map((variant) => ({
     ...variant,
@@ -2414,13 +2543,18 @@ function QuickOrderForm({
   };
 
   const submit = async () => {
-    if (!branchId) return onError("Chưa xác định chi nhánh tạo đơn.");
+    if (!selectedBranchId)
+      return onError("Hãy chọn chi nhánh tạo đơn.");
     if (!phone.trim() || !address.trim() || !items.length) return onError("Cần nhập SĐT, địa chỉ và ít nhất một sản phẩm.");
     onSaving(true);
     onError("");
     try {
       const order = await createOmniQuickOrder(conversation.id, {
-        customerName: customerNameValue.trim(), phone, address, branchId, note,
+        customerName: customerNameValue.trim(),
+        phone,
+        address,
+        branchId: selectedBranchId,
+        note,
         requestId: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         items: items.map(({ variantId, qty }) => ({ variantId, qty })),
       });
@@ -2436,6 +2570,32 @@ function QuickOrderForm({
     <div className="mt-4 rounded-3xl border border-blue-200 bg-blue-50/50 p-4">
       <div className="flex items-center justify-between"><h4 className="font-black">Chốt đơn nhanh</h4><button onClick={onCancel}><X className="h-4 w-4" /></button></div>
       <div className="mt-3 space-y-2">
+        <select
+          value={selectedBranchId}
+          onChange={(event) => {
+            setSelectedBranchId(event.target.value);
+            onError("");
+          }}
+          className={cx(
+            "w-full rounded-2xl border bg-white px-3 py-2 text-sm font-bold",
+            selectedBranchId
+              ? "border-neutral-200 text-neutral-900"
+              : "border-red-300 text-red-600",
+          )}
+        >
+          <option value="">Chọn chi nhánh tạo đơn *</option>
+          {branchOptions.map((branch) => (
+            <option key={branch.id} value={branch.id}>
+              {branch.code ? `${branch.code} · ` : ""}
+              {branch.name}
+            </option>
+          ))}
+        </select>
+        {!selectedBranchId ? (
+          <p className="px-1 text-xs font-semibold text-red-600">
+            Tài khoản đang ở chế độ Tất cả chi nhánh, cần chọn chi nhánh cho đơn này.
+          </p>
+        ) : null}
         <input value={customerNameValue} onChange={(e) => setCustomerNameValue(e.target.value)} placeholder="Tên khách" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
         <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Số điện thoại *" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
         <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Địa chỉ nhận hàng *" rows={3} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
@@ -2540,7 +2700,11 @@ function WorkspacePanel({
   onNewQuickReplyChange,
   onCreateQuickReply,
   onEditQuickReply,
-  onHideQuickReply,
+  onDeleteQuickReply,
+  onDeleteAllQuickReplies,
+  deletingAllQuickReplies,
+  quickReplySearch,
+  onQuickReplySearchChange,
   onImportQuickReplyExcel,
   onDownloadQuickReplyTemplate,
   importingQuickReplies,
@@ -2584,7 +2748,11 @@ function WorkspacePanel({
   onNewQuickReplyChange: (value: string) => void;
   onCreateQuickReply: () => void;
   onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
-  onHideQuickReply: (template: OmniQuickReplyTemplate) => void;
+  onDeleteQuickReply: (template: OmniQuickReplyTemplate) => void;
+  onDeleteAllQuickReplies: () => void;
+  deletingAllQuickReplies: boolean;
+  quickReplySearch: string;
+  onQuickReplySearchChange: (value: string) => void;
   onImportQuickReplyExcel: (file?: File | null) => void;
   onDownloadQuickReplyTemplate: () => void;
   importingQuickReplies: boolean;
@@ -2741,45 +2909,57 @@ function WorkspacePanel({
   }
 
   if (workspace === "quickReplies") {
+    const normalizedQuickReplySearch = quickReplySearch.trim().toLowerCase();
+    const visibleQuickReplyTemplates = normalizedQuickReplySearch
+      ? quickReplyTemplates.filter((template) =>
+          [template.title, template.content, template.category].some((value) =>
+            String(value || "")
+              .toLowerCase()
+              .includes(normalizedQuickReplySearch),
+          ),
+        )
+      : quickReplyTemplates;
+
     return (
-      <WorkspaceShell title={title} description="Tạo và quản lý mẫu phản hồi nhanh dùng chung trong ô chat.">
+      <WorkspaceShell
+        title={title}
+        description="Tạo và quản lý mã gõ tắt dùng chung trong ô chat."
+      >
         <div className="rounded-3xl border border-neutral-200 bg-white p-5">
           {canManageOmniSettings ? (
             <>
-              <div className="flex flex-col gap-2 xl:flex-row">
+              <div className="grid gap-2 lg:grid-cols-[220px_minmax(0,1fr)_110px]">
                 <input
                   value={newQuickReplyShortcut}
                   onChange={(e) =>
                     onNewQuickReplyShortcutChange(e.target.value)
                   }
-                  placeholder="Từ viết tắt, ví dụ: qddh"
-                  className="h-[52px] rounded-2xl border border-neutral-200 px-4 text-sm font-black outline-none xl:w-56"
+                  placeholder="Từ viết tắt, ví dụ qddh"
+                  className="h-12 rounded-xl border border-neutral-200 px-4 text-sm font-black outline-none"
                 />
                 <textarea
                   value={newQuickReply}
                   onChange={(e) => onNewQuickReplyChange(e.target.value)}
-                  placeholder="Nhập nội dung đầy đủ của mẫu trả lời..."
-                  className="min-h-[92px] flex-1 rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none"
+                  placeholder="Nội dung đầy đủ..."
+                  className="min-h-12 resize-y rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none"
                 />
                 <button
                   type="button"
                   onClick={onCreateQuickReply}
-                  className="self-stretch rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white xl:self-end"
+                  className="h-12 rounded-xl bg-neutral-950 px-4 text-sm font-black text-white"
                 >
                   Thêm mẫu
                 </button>
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-4">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label
                   className={cx(
                     "cursor-pointer rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white",
                     importingQuickReplies && "pointer-events-none opacity-60",
                   )}
                 >
-                  {importingQuickReplies
-                    ? "Đang nhập Excel..."
-                    : "Upload Excel"}
+                  {importingQuickReplies ? "Đang nhập..." : "Upload Excel"}
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
@@ -2797,43 +2977,128 @@ function WorkspacePanel({
                   onClick={onDownloadQuickReplyTemplate}
                   className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-black"
                 >
-                  Tải file Excel mẫu
+                  Tải file mẫu
                 </button>
-                <p className="text-xs leading-5 text-neutral-500">
-                  Hai cột bắt buộc: <b>Từ viết tắt</b> và <b>Nội dung</b>.
-                  Từ viết tắt hoặc nội dung bị trùng sẽ tự bỏ qua.
+                <button
+                  type="button"
+                  disabled={
+                    !quickReplyTemplates.length || deletingAllQuickReplies
+                  }
+                  onClick={onDeleteAllQuickReplies}
+                  className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-black text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {deletingAllQuickReplies
+                    ? "Đang xóa..."
+                    : `Xóa toàn bộ (${quickReplyTemplates.length})`}
+                </button>
+                <p className="text-xs text-neutral-500">
+                  Excel gồm 2 cột: <b>Từ viết tắt</b> và <b>Nội dung</b>.
                 </p>
               </div>
 
               {quickReplyImportResult ? (
-                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
                   {quickReplyImportResult}
                 </div>
               ) : null}
             </>
           ) : (
             <p className="text-sm text-neutral-500">
-              Nhân viên được dùng các mẫu bên dưới; chỉ Admin/Owner được thêm,
-              sửa hoặc nhập Excel.
+              Nhân viên được dùng mẫu; chỉ Admin/Owner được thêm, sửa và xóa.
             </p>
           )}
         </div>
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          {quickReplyTemplates.map((template, index) => (
-            <div key={template.id} className="rounded-3xl border border-neutral-200 bg-white p-5">
-              <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Mẫu #{index + 1}</p>
-              <div className="mt-3 flex items-start gap-3">
-                <span className="shrink-0 rounded-lg bg-neutral-950 px-2.5 py-1 text-xs font-black text-white">
-                  {template.title || "—"}
-                </span>
-                <p className="text-base font-bold leading-7">{template.content}</p>
-              </div>
-              {canManageOmniSettings ? <div className="mt-4 flex gap-2">
-                <button onClick={() => onEditQuickReply(template)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-black">Sửa</button>
-                <button onClick={() => onHideQuickReply(template)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700">Ẩn</button>
-              </div> : null}
+
+        <div className="mt-4 overflow-hidden rounded-3xl border border-neutral-200 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3">
+            <div>
+              <p className="font-black">Danh sách mẫu trả lời</p>
+              <p className="text-xs text-neutral-500">
+                Hiển thị {visibleQuickReplyTemplates.length}/
+                {quickReplyTemplates.length} mẫu
+              </p>
             </div>
-          ))}
+            <input
+              value={quickReplySearch}
+              onChange={(event) =>
+                onQuickReplySearchChange(event.target.value)
+              }
+              placeholder="Tìm mã hoặc nội dung..."
+              className="h-10 w-full rounded-xl border border-neutral-200 px-4 text-sm outline-none sm:w-80"
+            />
+          </div>
+
+          <div className="max-h-[620px] overflow-auto">
+            <table className="w-full min-w-[760px] table-fixed text-left text-sm">
+              <thead className="sticky top-0 z-10 bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400">
+                <tr>
+                  <th className="w-14 px-4 py-3 text-center">STT</th>
+                  <th className="w-40 px-3 py-3">Từ viết tắt</th>
+                  <th className="px-3 py-3">Nội dung</th>
+                  <th className="w-36 px-4 py-3 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleQuickReplyTemplates.map((template, index) => (
+                  <tr
+                    key={template.id}
+                    className="border-t border-neutral-100 align-top hover:bg-neutral-50"
+                  >
+                    <td className="px-4 py-3 text-center text-xs font-bold text-neutral-400">
+                      {index + 1}
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className="inline-flex max-w-full rounded-lg bg-neutral-950 px-2.5 py-1 text-xs font-black text-white">
+                        <span className="truncate">
+                          {template.title || "—"}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <p
+                        className="line-clamp-2 whitespace-pre-wrap font-semibold leading-5 text-neutral-800"
+                        title={template.content}
+                      >
+                        {template.content}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      {canManageOmniSettings ? (
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onEditQuickReply(template)}
+                            className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-black hover:bg-neutral-100"
+                          >
+                            Sửa
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteQuickReply(template)}
+                            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-black text-red-700 hover:bg-red-100"
+                          >
+                            Xóa
+                          </button>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+                {!visibleQuickReplyTemplates.length ? (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-5 py-12 text-center text-neutral-400"
+                    >
+                      {quickReplySearch
+                        ? "Không tìm thấy mẫu phù hợp."
+                        : "Chưa có mẫu trả lời nhanh."}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </div>
       </WorkspaceShell>
     );

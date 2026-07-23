@@ -352,5 +352,15 @@ export function updateOmniQuickReply(id: string, body: Partial<{ title: string; 
 }
 
 export function deleteOmniQuickReply(id: string) {
-  return apiJson<OmniQuickReplyTemplate>(`/omni-inbox/quick-replies/${id}`, { method: "DELETE" });
+  return apiJson<{ success: boolean; id: string }>(
+    `/omni-inbox/quick-replies/${id}`,
+    { method: "DELETE" },
+  );
+}
+
+export function deleteAllOmniQuickReplies() {
+  return apiJson<{ success: boolean; deletedCount: number }>(
+    "/omni-inbox/quick-replies",
+    { method: "DELETE" },
+  );
 }
