@@ -63,7 +63,9 @@ import {
   type OmniQuickOrder,
   type OmniQuickReplyTemplate,
   type OmniAssignmentSettings,
+  type OmniAssignmentReport,
   getOmniAssignmentSettings,
+  getOmniAssignmentReport,
   updateOmniAssignmentSettings,
   listOmniAssignmentHistory,
   sendOmniHeartbeat,
@@ -505,8 +507,14 @@ export default function MessagesPageClient({
   const [quickReplyTemplates, setQuickReplyTemplates] = useState<OmniQuickReplyTemplate[]>([]);
   const [newQuickReply, setNewQuickReply] = useState("");
   const [assignmentSettings, setAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
+  const [savedAssignmentSettings, setSavedAssignmentSettings] = useState<OmniAssignmentSettings | null>(null);
   const [assignmentHistory, setAssignmentHistory] = useState<any[]>([]);
+  const [assignmentReport, setAssignmentReport] = useState<OmniAssignmentReport | null>(null);
+  const [assignmentReportLoading, setAssignmentReportLoading] = useState(false);
+  const [assignmentReportDays, setAssignmentReportDays] = useState<1 | 7 | 30>(7);
   const [savingAssignment, setSavingAssignment] = useState(false);
+  const [assignmentSaveState, setAssignmentSaveState] = useState<"idle" | "saved" | "error">("idle");
+  const [assignmentSavedAt, setAssignmentSavedAt] = useState<string | null>(null);
 
   const [orderProducts, setOrderProducts] = useState<OrderProduct[]>([]);
   const [quickOrderOpen, setQuickOrderOpen] = useState(false);
@@ -626,19 +634,31 @@ export default function MessagesPageClient({
     let cancelled = false;
     setError("");
 
+    const initialFrom = new Date();
+    initialFrom.setDate(initialFrom.getDate() - 6);
+    initialFrom.setHours(0, 0, 0, 0);
+
     Promise.all([
       getOmniAssignmentSettings(),
       listOmniAssignmentHistory(100),
+      getOmniAssignmentReport({
+        from: initialFrom.toISOString(),
+        to: new Date().toISOString(),
+      }),
     ])
-      .then(([assignment, history]) => {
+      .then(([assignment, history, report]) => {
         if (cancelled) return;
         setAssignmentSettings(assignment || null);
+        setSavedAssignmentSettings(assignment || null);
+        setAssignmentSaveState("idle");
         setAssignmentHistory(Array.isArray(history) ? history : []);
+        setAssignmentReport(report || null);
       })
       .catch((err) => {
         if (cancelled) return;
         setAssignmentSettings(null);
         setAssignmentHistory([]);
+        setAssignmentReport(null);
         setError(
           err instanceof Error
             ? err.message
@@ -650,6 +670,29 @@ export default function MessagesPageClient({
       cancelled = true;
     };
   }, [clientReady, canManageOmniSettings]);
+
+  const loadAssignmentReport = useCallback(async (days: 1 | 7 | 30) => {
+    setAssignmentReportLoading(true);
+    try {
+      const from = new Date();
+      from.setDate(from.getDate() - (days - 1));
+      from.setHours(0, 0, 0, 0);
+      const report = await getOmniAssignmentReport({
+        from: from.toISOString(),
+        to: new Date().toISOString(),
+      });
+      setAssignmentReport(report || null);
+      setAssignmentReportDays(days);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không tải được báo cáo phân công.",
+      );
+    } finally {
+      setAssignmentReportLoading(false);
+    }
+  }, []);
 
   const assigneeOptions = useMemo(() => {
     const map = new Map<string, AssigneeOption>();
@@ -1132,11 +1175,16 @@ export default function MessagesPageClient({
     const payload = next || assignmentSettings;
     if (!payload || savingAssignment) return;
     setSavingAssignment(true);
+    setAssignmentSaveState("idle");
     try {
       const saved = await updateOmniAssignmentSettings(payload);
       setAssignmentSettings(saved);
+      setSavedAssignmentSettings(saved);
+      setAssignmentSavedAt(new Date().toISOString());
+      setAssignmentSaveState("saved");
       setAssignmentHistory(await listOmniAssignmentHistory(100));
     } catch (err) {
+      setAssignmentSaveState("error");
       setError(err instanceof Error ? err.message : "Không lưu được cài đặt chia tin nhắn.");
     } finally {
       setSavingAssignment(false);
@@ -2019,9 +2067,17 @@ export default function MessagesPageClient({
               onEditQuickReply={handleEditQuickReply}
               onHideQuickReply={handleHideQuickReply}
               assignmentSettings={assignmentSettings}
+              savedAssignmentSettings={savedAssignmentSettings}
+              activeBranchId={activeBranchId}
               assignmentHistory={assignmentHistory}
+              assignmentReport={assignmentReport}
+              assignmentReportLoading={assignmentReportLoading}
+              assignmentReportDays={assignmentReportDays}
+              onLoadAssignmentReport={(days) => void loadAssignmentReport(days)}
               staffOptions={staffOptions}
               savingAssignment={savingAssignment}
+              assignmentSaveState={assignmentSaveState}
+              assignmentSavedAt={assignmentSavedAt}
               canManageOmniSettings={canManageOmniSettings}
               onAssignmentChange={setAssignmentSettings}
               onSaveAssignment={() => void handleSaveAssignmentSettings()}
@@ -2207,9 +2263,17 @@ function WorkspacePanel({
   onEditQuickReply,
   onHideQuickReply,
   assignmentSettings,
+  savedAssignmentSettings,
+  activeBranchId,
   assignmentHistory,
+  assignmentReport,
+  assignmentReportLoading,
+  assignmentReportDays,
+  onLoadAssignmentReport,
   staffOptions,
   savingAssignment,
+  assignmentSaveState,
+  assignmentSavedAt,
   canManageOmniSettings,
   onAssignmentChange,
   onSaveAssignment,
@@ -2237,9 +2301,17 @@ function WorkspacePanel({
   onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
   onHideQuickReply: (template: OmniQuickReplyTemplate) => void;
   assignmentSettings: OmniAssignmentSettings | null;
+  savedAssignmentSettings: OmniAssignmentSettings | null;
+  activeBranchId?: string;
   assignmentHistory: any[];
+  assignmentReport: OmniAssignmentReport | null;
+  assignmentReportLoading: boolean;
+  assignmentReportDays: 1 | 7 | 30;
+  onLoadAssignmentReport: (days: 1 | 7 | 30) => void;
   staffOptions: AssigneeOption[];
   savingAssignment: boolean;
+  assignmentSaveState: "idle" | "saved" | "error";
+  assignmentSavedAt: string | null;
   canManageOmniSettings: boolean;
   onAssignmentChange: (value: OmniAssignmentSettings) => void;
   onSaveAssignment: () => void;
@@ -2405,17 +2477,117 @@ function WorkspacePanel({
   }
 
   if (workspace === "reports") {
+    const reportRows = assignmentReport?.rows || [];
     return (
       <WorkspaceShell
         title={title}
-        description="Tổng quan hiệu suất inbox Messenger phục vụ chăm sóc khách và chốt đơn."
+        description="Theo dõi số hội thoại được chia, tỷ lệ mục tiêu theo trọng số và tỷ lệ thực tế của từng nhân viên."
       >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Tổng hội thoại" value={total} />
-          <StatCard label="Chưa trả lời" value={selectedSummary.open} />
-          <StatCard label="Đang xử lý" value={selectedSummary.processing} />
-          <StatCard label="Đã chốt" value={selectedSummary.closed} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex rounded-2xl border border-neutral-200 bg-white p-1">
+            {([1, 7, 30] as const).map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => onLoadAssignmentReport(days)}
+                className={cx(
+                  "rounded-xl px-4 py-2 text-sm font-black",
+                  assignmentReportDays === days
+                    ? "bg-neutral-950 text-white"
+                    : "text-neutral-500 hover:bg-neutral-100",
+                )}
+              >
+                {days === 1 ? "Hôm nay" : `${days} ngày`}
+              </button>
+            ))}
+          </div>
+          <p className="text-sm font-semibold text-neutral-500">
+            {assignmentReportLoading
+              ? "Đang tải báo cáo..."
+              : assignmentReport
+                ? `${formatDateTime(assignmentReport.from)} – ${formatDateTime(assignmentReport.to)}`
+                : "Chưa có dữ liệu"}
+          </p>
         </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Tổng lượt phân công" value={assignmentReport?.totalAssigned || 0} />
+          <StatCard label="Tự động" value={assignmentReport?.totalAutoAssigned || 0} />
+          <StatCard label="Gán thủ công" value={assignmentReport?.totalManualAssigned || 0} />
+          <StatCard label="Phân công lại" value={assignmentReport?.totalReassigned || 0} />
+        </div>
+
+        <section className="mt-5 overflow-hidden rounded-3xl border border-neutral-200 bg-white">
+          <div className="border-b border-neutral-200 p-5">
+            <h4 className="text-lg font-black">Phân bổ theo nhân viên</h4>
+            <p className="mt-1 text-sm text-neutral-500">
+              Tỷ lệ mục tiêu được tính từ trọng số. Ví dụ A=1, B=2, C=3 tương ứng khoảng 16,7% · 33,3% · 50%.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-[1050px] w-full text-left text-sm">
+              <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400">
+                <tr>
+                  <th className="px-5 py-4">Nhân viên</th>
+                  <th className="px-4 py-4 text-right">Trọng số</th>
+                  <th className="px-4 py-4 text-right">Mục tiêu</th>
+                  <th className="px-4 py-4 text-right">Đã chia</th>
+                  <th className="px-4 py-4 text-right">Thực tế</th>
+                  <th className="px-4 py-4 text-right">Chênh lệch</th>
+                  <th className="px-4 py-4 text-right">Tự động</th>
+                  <th className="px-4 py-4 text-right">Gán tay</th>
+                  <th className="px-5 py-4 text-right">Gán lại</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportRows.map((row) => (
+                  <tr key={row.staffId} className="border-t border-neutral-100">
+                    <td className="px-5 py-4">
+                      <p className="font-black">{row.staffName}</p>
+                      <p className="mt-0.5 text-xs text-neutral-400">
+                        {row.branchName || "Chưa gán chi nhánh"}
+                      </p>
+                    </td>
+                    <td className="px-4 py-4 text-right font-black">{row.weight}</td>
+                    <td className="px-4 py-4 text-right font-bold">
+                      {row.targetPercent.toFixed(1)}%
+                    </td>
+                    <td className="px-4 py-4 text-right text-base font-black">
+                      {row.assignedCount}
+                    </td>
+                    <td className="px-4 py-4 text-right font-bold">
+                      {row.actualPercent.toFixed(1)}%
+                    </td>
+                    <td
+                      className={cx(
+                        "px-4 py-4 text-right font-black",
+                        Math.abs(row.differencePercent) < 1
+                          ? "text-emerald-600"
+                          : row.differencePercent > 0
+                            ? "text-amber-600"
+                            : "text-blue-600",
+                      )}
+                    >
+                      {row.differencePercent > 0 ? "+" : ""}
+                      {row.differencePercent.toFixed(1)}%
+                    </td>
+                    <td className="px-4 py-4 text-right">{row.autoAssignedCount}</td>
+                    <td className="px-4 py-4 text-right">{row.manualAssignedCount}</td>
+                    <td className="px-5 py-4 text-right">{row.reassignedCount}</td>
+                  </tr>
+                ))}
+                {!reportRows.length ? (
+                  <tr>
+                    <td colSpan={9} className="px-5 py-12 text-center text-neutral-400">
+                      Chưa có lượt phân công trong khoảng thời gian này.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <div className="mt-5 rounded-3xl border border-neutral-200 bg-white p-6">
           <p className="font-black">Kênh đang kết nối</p>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -2434,7 +2606,10 @@ function WorkspacePanel({
                   .length
               }
             />
-            <ChannelHealth label="Bình luận/Livestream" value={conversations.filter(isFacebookCommentConversation).length} />
+            <ChannelHealth
+              label="Bình luận/Livestream"
+              value={conversations.filter(isFacebookCommentConversation).length}
+            />
           </div>
         </div>
       </WorkspaceShell>
@@ -2443,17 +2618,24 @@ function WorkspacePanel({
 
   if (workspace === "assignmentSettings") {
     if (!assignmentSettings) {
-      return <WorkspaceShell title={title} description="Đang tải cấu hình phân công..."><div className="rounded-3xl border border-neutral-200 bg-white p-8 text-sm text-neutral-500">Đang tải...</div></WorkspaceShell>;
+      return <WorkspaceShell title={title} description="Đang tải cấu hình phân công..."><div className="rounded-3xl border border-neutral-200 bg-white p-6 text-sm text-neutral-500">Đang tải...</div></WorkspaceShell>;
     }
+
     const priorities = assignmentSettings.priorityOrder || ["ONLINE", "BRANCH", "LOWEST_LOAD", "DRAFT_OWNER"];
-    const labels: Record<string, string> = { ONLINE: "Đang online", BRANCH: "Đúng chi nhánh", LOWEST_LOAD: "Tải thấp nhất", DRAFT_OWNER: "Người phụ trách đơn nháp" };
+    const labels: Record<string, string> = { ONLINE: "Nhân viên trực tuyến", BRANCH: "Đúng chi nhánh", LOWEST_LOAD: "Tải thấp nhất", DRAFT_OWNER: "Người phụ trách đơn nháp" };
+    const descriptions: Record<string, string> = {
+      ONLINE: "Loại nhân viên offline, tạm vắng hoặc không còn heartbeat hợp lệ trước khi xét các điều kiện khác.",
+      BRANCH: "Ưu tiên nhân viên cùng chi nhánh với hội thoại hoặc đơn nháp.",
+      LOWEST_LOAD: "Chọn người đang có ít hội thoại cần xử lý nhất để cân bằng tải.",
+      DRAFT_OWNER: "Giữ người đã tạo hoặc đang phụ trách đơn nháp của khách nếu vẫn đủ điều kiện nhận tin.",
+    };
     const enabledFor = (key: string) => key === "ONLINE" ? assignmentSettings.requireOnline : key === "BRANCH" ? assignmentSettings.branchPriorityEnabled : key === "LOWEST_LOAD" ? assignmentSettings.lowestLoadEnabled : assignmentSettings.draftOwnerPriorityEnabled;
-    const toggleFor = (key: string, value: boolean) => {
+    const toggleFor = (key: string, checked: boolean) => {
       const next: any = { ...assignmentSettings };
-      if (key === "ONLINE") next.requireOnline = value;
-      if (key === "BRANCH") next.branchPriorityEnabled = value;
-      if (key === "LOWEST_LOAD") next.lowestLoadEnabled = value;
-      if (key === "DRAFT_OWNER") next.draftOwnerPriorityEnabled = value;
+      if (key === "ONLINE") next.requireOnline = checked;
+      if (key === "BRANCH") next.branchPriorityEnabled = checked;
+      if (key === "LOWEST_LOAD") next.lowestLoadEnabled = checked;
+      if (key === "DRAFT_OWNER") next.draftOwnerPriorityEnabled = checked;
       onAssignmentChange(next);
     };
     const movePriority = (index: number, delta: number) => {
@@ -2471,31 +2653,245 @@ function WorkspacePanel({
         : current.filter((item) => item.staffId !== staff.id);
       onAssignmentChange({ ...assignmentSettings, members: nextMembers });
     };
+    const dirty = JSON.stringify(assignmentSettings) !== JSON.stringify(savedAssignmentSettings);
+    const onlineMembers = (assignmentSettings.members || []).filter((m) => m.isActive && m.receiveMessages && (!assignmentSettings.requireOnline || m.isOnline));
+    const simulated = onlineMembers.slice().sort((a, b) => {
+      if (assignmentSettings.branchPriorityEnabled) {
+        const aBranch = a.branchId && a.branchId === activeBranchId ? 0 : 1;
+        const bBranch = b.branchId && b.branchId === activeBranchId ? 0 : 1;
+        if (aBranch !== bBranch) return aBranch - bBranch;
+      }
+      return (a.sortOrder || 0) - (b.sortOrder || 0);
+    })[0];
+    const saveLabel = savingAssignment ? "Đang lưu..." : assignmentSaveState === "error" ? "Lưu thất bại" : dirty ? "Lưu thay đổi" : "Đã lưu";
+    const assignmentModeInfo = {
+      OFF: {
+        label: "Tắt phân công",
+        summary: "Hệ thống không tự gán hội thoại. Toàn bộ cấu hình phân chia bên dưới tạm ngừng áp dụng.",
+        detail: "Không dùng cấu hình bên dưới",
+      },
+      SELF_ASSIGN: {
+        label: "Nhân viên tự nhận",
+        summary: "Nhân viên chủ động nhận hội thoại. Hệ thống không tự chọn người theo trọng số, tải hoặc rule.",
+        detail: "Không chạy chia tự động",
+      },
+      GROUP: {
+        label: "Theo nhóm",
+        summary: "Hệ thống chia trong nhóm nhân viên đã chọn, có áp dụng online, giới hạn tải, thời gian và trọng số.",
+        detail: "Dùng cấu hình cơ bản + tỷ lệ",
+      },
+      AUTO: {
+        label: "Tự động thông minh",
+        summary: "Hệ thống áp dụng toàn bộ cấu hình: online, chi nhánh, tải, trọng số, lịch sử, SLA và phân công lại.",
+        detail: "Dùng toàn bộ cấu hình bên dưới",
+      },
+    }[assignmentSettings.mode || "AUTO"];
+    const assignmentDetailsDisabled =
+      assignmentSettings.mode === "OFF" ||
+      assignmentSettings.mode === "SELF_ASSIGN";
+
     return (
-      <WorkspaceShell title={title} description="Chỉ Admin/Owner được xem và thay đổi. Online được xét đầu tiên, sau đó hệ thống áp dụng các ưu tiên theo đúng thứ tự bên dưới.">
-        <div className="flex justify-end"><button disabled={savingAssignment} onClick={onSaveAssignment} className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-black text-white disabled:opacity-50">{savingAssignment ? "Đang lưu..." : "Lưu cài đặt"}</button></div>
-        <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-5">
-          <div className="grid gap-3 md:grid-cols-4">
-            {[['OFF','Tắt phân công'],['SELF_ASSIGN','Nhân viên tự nhận'],['GROUP','Theo nhóm'],['AUTO','Tự động thông minh']].map(([value,label]) => <button key={value} onClick={() => onAssignmentChange({ ...assignmentSettings, mode: value as any, isActive: value !== 'OFF' })} className={cx('rounded-2xl border p-4 text-left text-sm font-black', assignmentSettings.mode === value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-neutral-200')}>{label}</button>)}
+      <WorkspaceShell title={title} description="Cấu hình cách hệ thống tự động chia hội thoại, giới hạn tải, phạm vi xem và quy tắc ưu tiên nhân viên.">
+        <div className="sticky top-3 z-20 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-sm backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className={cx("text-sm font-black", dirty ? "text-amber-600" : assignmentSaveState === "error" ? "text-red-600" : "text-emerald-600")}>{dirty ? "Có thay đổi chưa lưu" : assignmentSaveState === "error" ? "Lưu thất bại" : "Cấu hình đã được lưu"}</p>
+              <p className="mt-1 text-xs text-neutral-500">{assignmentSavedAt ? `Đã lưu lúc ${formatDateTime(assignmentSavedAt)}` : "Thay đổi chỉ có hiệu lực sau khi bấm Lưu."}</p>
+            </div>
+            <div className="flex gap-2">
+              <button disabled={!dirty || savingAssignment || !savedAssignmentSettings} onClick={() => savedAssignmentSettings && onAssignmentChange(JSON.parse(JSON.stringify(savedAssignmentSettings)))} className="rounded-2xl border border-neutral-200 px-4 py-2.5 text-sm font-black disabled:opacity-40">Khôi phục</button>
+              <button disabled={!dirty || savingAssignment} onClick={onSaveAssignment} className={cx("rounded-2xl px-5 py-2.5 text-sm font-black text-white disabled:opacity-50", assignmentSaveState === "error" ? "bg-red-600" : "bg-blue-600")}>{saveLabel}</button>
+            </div>
           </div>
         </div>
-        <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-3xl border border-neutral-200 bg-white p-5">
-            <h4 className="text-lg font-black">Thứ tự ưu tiên chia tin</h4>
-            <p className="mt-1 text-sm text-neutral-500">Bật/tắt và di chuyển lên xuống. Khi Online bật, nhân viên offline bị loại trước khi xét các điều kiện khác.</p>
-            <div className="mt-4 space-y-3">{priorities.map((key,index) => <div key={key} className="flex items-center gap-3 rounded-2xl border border-neutral-200 p-4"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-950 text-xs font-black text-white">{index+1}</div><div className="min-w-0 flex-1"><p className="font-black">{labels[key]}</p><p className="text-xs text-neutral-500">{key === 'ONLINE' ? 'Chỉ xét người có heartbeat hợp lệ và không tạm vắng.' : key === 'BRANCH' ? 'Ưu tiên nhân viên cùng chi nhánh hội thoại/đơn nháp.' : key === 'LOWEST_LOAD' ? 'Chọn người có ít hội thoại đang xử lý nhất.' : 'Giữ người đang phụ trách đơn nháp nếu còn đủ điều kiện.'}</p></div><button onClick={() => movePriority(index,-1)} disabled={index===0} className="rounded-lg border px-2 py-1 disabled:opacity-30">↑</button><button onClick={() => movePriority(index,1)} disabled={index===priorities.length-1} className="rounded-lg border px-2 py-1 disabled:opacity-30">↓</button><input type="checkbox" checked={enabledFor(key)} onChange={(e)=>toggleFor(key,e.target.checked)} className="h-5 w-5" /></div>)}</div>
+
+        <section className="mt-4 rounded-3xl border border-neutral-200 bg-white p-5">
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Cài đặt tổng quát</p>
+          <h4 className="mt-2 text-xl font-black">Chế độ phân công</h4>
+          <p className="mt-1 text-sm text-neutral-500">
+            Mỗi chế độ dùng một phạm vi cấu hình khác nhau. Phần bên dưới sẽ tự khóa hoặc mở theo chế độ đang chọn.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            {[
+              ["OFF", "Tắt phân công", "Không tự gán hội thoại.", "Không dùng cấu hình"],
+              ["SELF_ASSIGN", "Nhân viên tự nhận", "Nhân viên tự bấm nhận; không chia theo tỷ lệ hoặc rule.", "Không chạy tự động"],
+              ["GROUP", "Theo nhóm", "Tự chia trong nhóm theo online, tải và trọng số.", "Dùng cấu hình cơ bản"],
+              ["AUTO", "Tự động thông minh", "Áp dụng chi nhánh, tải, trọng số, lịch sử và SLA.", "Dùng toàn bộ cấu hình"],
+            ].map(([value, label, desc, badge]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() =>
+                  onAssignmentChange({
+                    ...assignmentSettings,
+                    mode: value as any,
+                    isActive: value !== "OFF",
+                  })
+                }
+                className={cx(
+                  "relative rounded-2xl border p-4 text-left transition",
+                  assignmentSettings.mode === value
+                    ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                    : "border-neutral-200 hover:border-neutral-300",
+                )}
+              >
+                {assignmentSettings.mode === value ? (
+                  <span className="absolute right-3 top-3 rounded-full bg-blue-600 px-2 py-1 text-[10px] font-black uppercase text-white">
+                    Đang dùng
+                  </span>
+                ) : null}
+                <p className="pr-20 text-sm font-black">{label}</p>
+                <p className="mt-1 text-xs leading-5 text-neutral-500">{desc}</p>
+                <p className="mt-3 text-[11px] font-black text-blue-700">{badge}</p>
+              </button>
+            ))}
           </div>
-          <div className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="text-lg font-black">Nhân viên tham gia</h4><div className="mt-4 max-h-[460px] space-y-2 overflow-y-auto">{staffOptions.filter(s=>s.id).map(staff => { const member=assignmentSettings.members?.find(m=>m.staffId===staff.id); return <label key={staff.id} className="flex items-center gap-3 rounded-2xl border border-neutral-200 p-3"><input type="checkbox" checked={Boolean(member)} onChange={(e)=>updateMember(staff,e.target.checked)} /><div className="min-w-0 flex-1"><p className="truncate font-bold">{staff.name}</p><p className={cx('text-xs font-bold',member?.isOnline?'text-emerald-600':'text-neutral-400')}>{member?.isOnline?'● Đang online':'○ Offline / chưa mở Inbox'}</p></div>{member ? <><label className="text-xs"><input type="checkbox" checked={member.receiveMessages} onChange={(e)=>onAssignmentChange({...assignmentSettings,members:assignmentSettings.members.map(m=>m.staffId===staff.id?{...m,receiveMessages:e.target.checked}:m)})}/> Tin nhắn</label><label className="text-xs"><input type="checkbox" checked={member.receiveComments} onChange={(e)=>onAssignmentChange({...assignmentSettings,members:assignmentSettings.members.map(m=>m.staffId===staff.id?{...m,receiveComments:e.target.checked}:m)})}/> Bình luận</label></>:null}</label>})}</div></div>
+
+          <div
+            className={cx(
+              "mt-4 rounded-2xl border p-4",
+              assignmentSettings.mode === "AUTO"
+                ? "border-emerald-200 bg-emerald-50"
+                : assignmentSettings.mode === "GROUP"
+                  ? "border-blue-200 bg-blue-50"
+                  : assignmentSettings.mode === "SELF_ASSIGN"
+                    ? "border-amber-200 bg-amber-50"
+                    : "border-neutral-200 bg-neutral-50",
+            )}
+          >
+            <p className="text-xs font-black uppercase tracking-widest text-neutral-500">
+              Chế độ đang áp dụng
+            </p>
+            <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-lg font-black">{assignmentModeInfo.label}</p>
+                <p className="mt-1 max-w-4xl text-sm leading-6 text-neutral-600">
+                  {assignmentModeInfo.summary}
+                </p>
+              </div>
+              <span className="rounded-full border border-neutral-200 bg-white px-3 py-2 text-xs font-black">
+                {assignmentModeInfo.detail}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <div
+          className={cx(
+            "relative mt-4",
+            assignmentDetailsDisabled && "select-none opacity-50",
+          )}
+        >
+          {assignmentDetailsDisabled ? (
+            <div className="absolute inset-0 z-20 flex items-start justify-center rounded-3xl bg-white/35 pt-6 backdrop-blur-[1px]">
+              <div className="rounded-2xl border border-neutral-200 bg-white px-5 py-3 text-center shadow-sm">
+                <p className="font-black">{assignmentModeInfo.label}</p>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Cấu hình tự động bên dưới không được áp dụng ở chế độ này.
+                </p>
+              </div>
+            </div>
+          ) : null}
+        <section className="rounded-3xl border border-neutral-200 bg-white p-5">
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Cấu hình chi tiết</p>
+          <h4 className="mt-2 text-xl font-black">Cách thức chia hội thoại</h4>
+          <p className="mt-1 text-sm text-neutral-500">Các mô tả bên dưới giải thích chính xác hệ thống sẽ làm gì khi bật từng tùy chọn.</p>
+          <div className="mt-5 divide-y divide-neutral-100">
+            <DetailedSettingRow title="Cách thức chia hội thoại" description="Chỉ phân công khi nhân viên đủ điều kiện nhận tin. Nếu không còn nhân viên phù hợp, hệ thống xử lý theo quy tắc dự phòng." control={<select value={assignmentSettings.requireOnline ? "ONLINE" : "ALL"} onChange={(e)=>onAssignmentChange({...assignmentSettings,requireOnline:e.target.value === "ONLINE"})} className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-bold"><option value="ONLINE">Chỉ trực tuyến</option><option value="ALL">Tất cả nhân viên</option></select>} />
+            <DetailedSettingRow title="Giữ người phụ trách cũ" description="Khách quay lại trong thời gian cấu hình sẽ được ưu tiên giao cho nhân viên từng chăm sóc, nếu người đó còn đủ điều kiện." control={<Toggle checked={assignmentSettings.keepPreviousAssignee} onChange={(checked)=>onAssignmentChange({...assignmentSettings,keepPreviousAssignee:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Giữ trong</span><input type="number" min={1} value={assignmentSettings.keepPreviousDays} onChange={(e)=>onAssignmentChange({...assignmentSettings,keepPreviousDays:Number(e.target.value||1)})} className="w-20 rounded-xl border px-3 py-2"/><span>ngày</span></div>} />
+            <DetailedSettingRow title="Xáo trộn danh sách nhân viên" description="Khi bắt đầu vòng chia mới, hệ thống xáo trộn danh sách để tránh nhân viên đầu danh sách luôn được ưu tiên." control={<Toggle checked={assignmentSettings.shuffleEachRound} onChange={(checked)=>onAssignmentChange({...assignmentSettings,shuffleEachRound:checked})}/>} />
+            <DetailedSettingRow title="Số lượng tài khoản chính mỗi hội thoại" description="Hiện tại hệ thống giữ một người phụ trách chính cho mỗi hội thoại. Người khác có thể phối hợp qua phân công lại hoặc quy tắc quá hạn." control={<div className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-black">1 tài khoản</div>} />
+            <DetailedSettingRow title="Phân công thêm khi chưa đọc" description="Nếu hội thoại chưa được đọc sau khoảng thời gian này, hệ thống chia lại cho một nhân viên đủ điều kiện khác." control={<Toggle checked={assignmentSettings.reassignUnreadEnabled} onChange={(checked)=>onAssignmentChange({...assignmentSettings,reassignUnreadEnabled:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Sau</span><input type="number" min={1} value={assignmentSettings.reassignAfterMinutes} onChange={(e)=>onAssignmentChange({...assignmentSettings,reassignAfterMinutes:Number(e.target.value||1)})} className="w-24 rounded-xl border px-3 py-2"/><span>phút</span></div>} />
+            <DetailedSettingRow title="Chia lại nếu người phụ trách offline" description="Khi nhân viên đang phụ trách mất trạng thái trực tuyến, hội thoại chưa xử lý có thể được đưa sang người khác." control={<Toggle checked={assignmentSettings.reassignIfAssigneeOffline} onChange={(checked)=>onAssignmentChange({...assignmentSettings,reassignIfAssigneeOffline:checked})}/>} />
+            <DetailedSettingRow title="Giới hạn hội thoại đang xử lý" description="Ngừng chia thêm khi nhân viên đạt số hội thoại đang xử lý tối đa." control={<Toggle checked={assignmentSettings.maxActiveEnabled} onChange={(checked)=>onAssignmentChange({...assignmentSettings,maxActiveEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxActiveConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxActiveConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
+            <DetailedSettingRow title="Giới hạn hội thoại chưa đọc" description="Ngừng chia thêm khi nhân viên đã có quá nhiều hội thoại chưa đọc." control={<Toggle checked={assignmentSettings.maxUnreadEnabled} onChange={(checked)=>onAssignmentChange({...assignmentSettings,maxUnreadEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxUnreadConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxUnreadConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
+            <DetailedSettingRow title="Thời gian phân công hội thoại" description="Trong giờ làm việc hệ thống chia theo ca. Ngoài giờ sẽ áp dụng chế độ dự phòng được chọn." control={<select value={assignmentSettings.workingHoursOnly ? "WORK" : "FULL"} onChange={(e)=>onAssignmentChange({...assignmentSettings,workingHoursOnly:e.target.value === "WORK"})} className="rounded-xl border px-3 py-2 text-sm font-bold"><option value="WORK">Trong giờ làm việc</option><option value="FULL">Toàn thời gian</option></select>} extra={<div className="mt-3 grid max-w-md grid-cols-2 gap-2"><input type="time" value={`${String(Math.floor((assignmentSettings.workStartMinute||480)/60)).padStart(2,"0")}:${String((assignmentSettings.workStartMinute||480)%60).padStart(2,"0")}`} onChange={(e)=>{const [h,m]=e.target.value.split(":").map(Number);onAssignmentChange({...assignmentSettings,workStartMinute:h*60+m})}} className="rounded-xl border px-3 py-2"/><input type="time" value={`${String(Math.floor((assignmentSettings.workEndMinute||1320)/60)).padStart(2,"0")}:${String((assignmentSettings.workEndMinute||1320)%60).padStart(2,"0")}`} onChange={(e)=>{const [h,m]=e.target.value.split(":").map(Number);onAssignmentChange({...assignmentSettings,workEndMinute:h*60+m})}} className="rounded-xl border px-3 py-2"/></div>} />
+            <DetailedSettingRow title="Quyền xem hội thoại" description="Nhân viên chỉ nhìn thấy hội thoại theo phạm vi được cấp. Quản lý có thể xem thêm hội thoại thuộc chi nhánh." control={<select value={assignmentSettings.onlyAssignedCanView ? "SELF" : assignmentSettings.managerCanViewBranch ? "BRANCH" : "PAGE"} onChange={(e)=>onAssignmentChange({...assignmentSettings,onlyAssignedCanView:e.target.value === "SELF",managerCanViewBranch:e.target.value === "BRANCH"})} className="rounded-xl border px-3 py-2 text-sm font-bold"><option value="SELF">Được chia cho mình</option><option value="BRANCH">Theo chi nhánh</option><option value="PAGE">Toàn Page</option></select>} extra={<label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={assignmentSettings.onlyAssignedCanReply} onChange={(e)=>onAssignmentChange({...assignmentSettings,onlyAssignedCanReply:e.target.checked})}/> Chỉ người phụ trách được trả lời</label>} />
+          </div>
+        </section>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <section className="rounded-3xl border border-neutral-200 bg-white p-5">
+            <h4 className="text-lg font-black">Quy tắc phân chia</h4>
+            <p className="mt-1 text-sm text-neutral-500">Thứ tự càng cao được xét càng sớm. Tắt một quy tắc sẽ bỏ qua điều kiện đó nhưng vẫn giữ nguyên vị trí.</p>
+            <div className="mt-4 space-y-3">{priorities.map((key,index)=><div key={key} className="flex items-center gap-3 rounded-2xl border border-neutral-200 p-4"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-950 text-sm font-black text-white">{index+1}</div><div className="min-w-0 flex-1"><p className="font-black">{labels[key]}</p><p className="mt-1 text-xs leading-5 text-neutral-500">{descriptions[key]}</p></div><button onClick={()=>movePriority(index,-1)} disabled={index===0} className="rounded-lg border px-2 py-1 disabled:opacity-30">↑</button><button onClick={()=>movePriority(index,1)} disabled={index===priorities.length-1} className="rounded-lg border px-2 py-1 disabled:opacity-30">↓</button><Toggle checked={enabledFor(key)} onChange={(checked)=>toggleFor(key,checked)}/></div>)}</div>
+            {assignmentSettings.branchPriorityEnabled && assignmentSettings.draftOwnerPriorityEnabled ? <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><b>Kiểm tra xung đột:</b> Đúng chi nhánh và người phụ trách đơn nháp có thể cùng áp dụng. Hệ thống ưu tiên quy tắc đứng cao hơn trong danh sách.</div> : null}
+          </section>
+          <section className="rounded-3xl border border-neutral-200 bg-white p-5">
+            <h4 className="text-lg font-black">Mô phỏng thời gian thực</h4>
+            <p className="mt-1 text-sm text-neutral-500">Kết quả cập nhật ngay khi thay đổi cấu hình, chưa cần bấm Lưu.</p>
+            <div className="mt-5 rounded-3xl bg-neutral-950 p-5 text-white"><p className="text-xs font-bold uppercase tracking-widest text-neutral-400">Khách mới Facebook</p><div className="my-4 h-px bg-white/10"/><p className="text-sm text-neutral-400">Nhân viên sẽ nhận</p><p className="mt-1 text-2xl font-black">{simulated?.staffName || "Chưa có ứng viên phù hợp"}</p>{simulated?.branchName ? <p className="mt-1 text-sm text-neutral-400">Chi nhánh {simulated.branchName}</p> : null}<div className="mt-5 space-y-2 text-sm">{assignmentSettings.requireOnline && <p>✓ Có heartbeat và đang online</p>}{assignmentSettings.branchPriorityEnabled && <p>✓ Ưu tiên đúng chi nhánh</p>}{assignmentSettings.lowestLoadEnabled && <p>✓ Ưu tiên tải thấp</p>}{assignmentSettings.draftOwnerPriorityEnabled && <p>✓ Giữ người phụ trách đơn nháp</p>}</div></div>
+          </section>
         </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <AssignmentSettingCard title="Điều kiện nhận tin" rows={[["Chỉ chia người online","requireOnline"],["Chia lại nếu người cũ offline","reassignIfAssigneeOffline"],["Chỉ trong giờ làm việc","workingHoursOnly"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
-          <AssignmentSettingCard title="Giới hạn tải" rows={[["Giới hạn hội thoại đang xử lý","maxActiveEnabled"],["Giới hạn hội thoại chưa đọc","maxUnreadEnabled"],["Chia lại khi quá hạn chưa đọc","reassignUnreadEnabled"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
-          <AssignmentSettingCard title="Quyền xem" rows={[["Nhân viên chỉ xem hội thoại của mình","onlyAssignedCanView"],["Quản lý xem hội thoại chi nhánh","managerCanViewBranch"],["Chỉ assignee được trả lời","onlyAssignedCanReply"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
-          <AssignmentSettingCard title="Hội thoại cũ" rows={[["Giữ nhân viên cũ","keepPreviousAssignee"],["Ưu tiên người phụ trách đơn nháp","draftOwnerPriorityEnabled"],["Chia lại nếu người cũ offline","reassignIfAssigneeOffline"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
-          <AssignmentSettingCard title="Chi nhánh" rows={[["Bật định tuyến theo chi nhánh","branchRoutingEnabled"],["Ưu tiên đúng chi nhánh","branchPriorityEnabled"],["Xáo trộn khi hết vòng","shuffleEachRound"]]} settings={assignmentSettings} onChange={onAssignmentChange}/>
-          <div className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="font-black">Thông số</h4><label className="mt-4 block text-xs font-bold text-neutral-500">Tối đa hội thoại đang xử lý<input type="number" value={assignmentSettings.maxActiveConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxActiveConversations:Number(e.target.value||1)})} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><label className="mt-3 block text-xs font-bold text-neutral-500">Tối đa chưa đọc<input type="number" value={assignmentSettings.maxUnreadConversations} onChange={(e)=>onAssignmentChange({...assignmentSettings,maxUnreadConversations:Number(e.target.value||1)})} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><label className="mt-3 block text-xs font-bold text-neutral-500">Heartbeat online (giây)<input type="number" value={assignmentSettings.onlineWindowSeconds} onChange={(e)=>onAssignmentChange({...assignmentSettings,onlineWindowSeconds:Number(e.target.value||90)})} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="text-xs font-bold text-neutral-500">Bắt đầu ca<input type="time" value={`${String(Math.floor((assignmentSettings.workStartMinute||480)/60)).padStart(2,'0')}:${String((assignmentSettings.workStartMinute||480)%60).padStart(2,'0')}`} onChange={(e)=>{const [h,m]=e.target.value.split(':').map(Number);onAssignmentChange({...assignmentSettings,workStartMinute:h*60+m})}} className="mt-1 w-full rounded-xl border px-3 py-2"/></label><label className="text-xs font-bold text-neutral-500">Kết thúc ca<input type="time" value={`${String(Math.floor((assignmentSettings.workEndMinute||1320)/60)).padStart(2,'0')}:${String((assignmentSettings.workEndMinute||1320)%60).padStart(2,'0')}`} onChange={(e)=>{const [h,m]=e.target.value.split(':').map(Number);onAssignmentChange({...assignmentSettings,workEndMinute:h*60+m})}} className="mt-1 w-full rounded-xl border px-3 py-2"/></label></div></div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <section className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="text-lg font-black">Nhân viên tham gia và tỷ lệ chia</h4><p className="mt-1 text-sm text-neutral-500">Nhập trọng số cho từng người. Ví dụ A=1, B=2, C=3 thì mục tiêu phân bổ là 1:2:3. Hệ thống vẫn loại nhân viên offline hoặc vượt tải trước khi tính tỷ lệ.</p><div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto">{staffOptions.filter(s=>s.id).map(staff=>{const member=assignmentSettings.members?.find(m=>m.staffId===staff.id);return <div key={staff.id} className="flex items-center gap-3 rounded-2xl border border-neutral-200 p-3"><input type="checkbox" checked={Boolean(member)} onChange={(e)=>updateMember(staff,e.target.checked)}/><div className="min-w-0 flex-1"><p className="truncate font-bold">{staff.name}</p><p className={cx("text-xs font-bold",member?.isOnline?"text-emerald-600":"text-neutral-400")}>{member?.isOnline?"● Đang online":"○ Offline / chưa mở Inbox"}</p></div>{member ? (
+                  <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
+                    <label className="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={member.receiveMessages}
+                        onChange={(e) =>
+                          onAssignmentChange({
+                            ...assignmentSettings,
+                            members: assignmentSettings.members.map((m) =>
+                              m.staffId === staff.id
+                                ? { ...m, receiveMessages: e.target.checked }
+                                : m,
+                            ),
+                          })
+                        }
+                      />
+                      Tin nhắn
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={member.receiveComments}
+                        onChange={(e) =>
+                          onAssignmentChange({
+                            ...assignmentSettings,
+                            members: assignmentSettings.members.map((m) =>
+                              m.staffId === staff.id
+                                ? { ...m, receiveComments: e.target.checked }
+                                : m,
+                            ),
+                          })
+                        }
+                      />
+                      Bình luận
+                    </label>
+                    <label className="flex items-center gap-2 rounded-xl bg-neutral-100 px-2.5 py-1.5 font-black">
+                      Tỷ lệ
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={Math.max(1, Number(member.weight || 1))}
+                        onChange={(e) =>
+                          onAssignmentChange({
+                            ...assignmentSettings,
+                            members: assignmentSettings.members.map((m) =>
+                              m.staffId === staff.id
+                                ? {
+                                    ...m,
+                                    weight: Math.max(
+                                      1,
+                                      Math.min(100, Number(e.target.value || 1)),
+                                    ),
+                                  }
+                                : m,
+                            ),
+                          })
+                        }
+                        className="w-14 rounded-lg border border-neutral-200 bg-white px-2 py-1 text-center font-black"
+                      />
+                    </label>
+                  </div>
+                ) : null}</div>})}</div></section>
+          <section className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="text-lg font-black">Nhật ký thay đổi và phân công</h4><p className="mt-1 text-sm text-neutral-500">Theo dõi người được gán, lý do và thời gian hệ thống thực hiện.</p><div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-neutral-400"><th className="py-3">Thời gian</th><th>Khách</th><th>Nhân viên</th><th>Lý do</th></tr></thead><tbody>{assignmentHistory.slice(0,50).map((row:any)=><tr key={row.id} className="border-b border-neutral-100"><td className="py-3 whitespace-nowrap">{formatDateTime(row.createdAt)}</td><td>{row.customerName||"—"}</td><td>{row.assignedStaffName||"Chưa gán"}</td><td className="max-w-[440px] truncate">{row.reason||row.action}</td></tr>)}</tbody></table></div></section>
         </div>
-        <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="text-lg font-black">Lịch sử phân công</h4><div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-neutral-400"><th className="py-3">Thời gian</th><th>Khách</th><th>Nhân viên</th><th>Lý do</th></tr></thead><tbody>{assignmentHistory.slice(0,50).map((row:any)=><tr key={row.id} className="border-b border-neutral-100"><td className="py-3">{formatDateTime(row.createdAt)}</td><td>{row.customerName||'—'}</td><td>{row.assignedStaffName||'Chưa gán'}</td><td className="max-w-[480px] truncate">{row.reason||row.action}</td></tr>)}</tbody></table></div></div>
+        </div>
       </WorkspaceShell>
     );
   }
@@ -2750,6 +3146,15 @@ function WorkspaceShell({
   );
 }
 
+
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+  return <button type="button" onClick={() => onChange(!checked)} className={cx("relative h-7 w-12 rounded-full transition", checked ? "bg-blue-600" : "bg-neutral-300")}><span className={cx("absolute top-1 h-5 w-5 rounded-full bg-white shadow transition", checked ? "left-6" : "left-1")}/></button>;
+}
+
+function DetailedSettingRow({ title, description, control, extra }: { title: string; description: string; control: React.ReactNode; extra?: React.ReactNode }) {
+  return <div className="grid gap-4 py-5 md:grid-cols-[1fr_auto]"><div><p className="font-black">{title}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">{description}</p>{extra}</div><div className="flex items-start justify-start md:justify-end">{control}</div></div>;
+}
 
 function AssignmentSettingCard({ title, rows, settings, onChange }: { title: string; rows: Array<[string, keyof OmniAssignmentSettings]>; settings: OmniAssignmentSettings; onChange: (value: OmniAssignmentSettings) => void }) {
   return <div className="rounded-3xl border border-neutral-200 bg-white p-5"><h4 className="font-black">{title}</h4><div className="mt-4 space-y-3">{rows.map(([label,key])=><label key={String(key)} className="flex items-center justify-between gap-3 text-sm"><span>{label}</span><input type="checkbox" checked={Boolean(settings[key])} onChange={(e)=>onChange({...settings,[key]:e.target.checked})} className="h-5 w-5"/></label>)}</div></div>;

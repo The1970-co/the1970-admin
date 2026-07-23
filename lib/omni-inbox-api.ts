@@ -250,6 +250,32 @@ export type OmniAssignmentMember = {
   presence?: { status?: string; manualAway?: boolean; lastHeartbeatAt?: string; activeBranchId?: string | null } | null;
 };
 
+export type OmniAssignmentReportRow = {
+  staffId: string;
+  staffName: string;
+  branchId?: string | null;
+  branchName?: string | null;
+  weight: number;
+  assignedCount: number;
+  uniqueConversationCount: number;
+  autoAssignedCount: number;
+  manualAssignedCount: number;
+  reassignedCount: number;
+  targetPercent: number;
+  actualPercent: number;
+  differencePercent: number;
+};
+
+export type OmniAssignmentReport = {
+  from: string;
+  to: string;
+  totalAssigned: number;
+  totalAutoAssigned: number;
+  totalManualAssigned: number;
+  totalReassigned: number;
+  rows: OmniAssignmentReportRow[];
+};
+
 export type OmniAssignmentSettings = {
   id: string;
   isActive: boolean;
@@ -298,6 +324,19 @@ export function updateOmniAssignmentSettings(body: Partial<OmniAssignmentSetting
 
 export function listOmniAssignmentHistory(limit = 100) {
   return apiJson<any[]>(`/omni-inbox/assignment/history?limit=${limit}`);
+}
+
+export function getOmniAssignmentReport(params: {
+  from?: string;
+  to?: string;
+  branchId?: string;
+  staffId?: string;
+  channel?: OmniChannel | "ALL";
+  assignmentType?: "ALL" | "AUTO" | "MANUAL" | "REASSIGNED";
+} = {}) {
+  return apiJson<OmniAssignmentReport>(
+    `/omni-inbox/assignment/report${qs(params)}`,
+  );
 }
 
 export function listOmniQuickReplies(includeInactive = false) {
