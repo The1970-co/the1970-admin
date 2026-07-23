@@ -15,6 +15,7 @@ import {
   Clock3,
   Filter,
   ImageIcon,
+  Loader2,
   LogOut,
   Mail,
   Menu,
@@ -642,6 +643,9 @@ export default function MessagesPageClient({
   const [loadingConnection, setLoadingConnection] = useState(false);
   const [loadingStaff, setLoadingStaff] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
+  const [conversationPage, setConversationPage] = useState(1);
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
@@ -933,6 +937,8 @@ export default function MessagesPageClient({
 
       const items = data?.items || [];
       setConversations(items);
+      setConversationPage(data?.page || 1);
+      setHasMoreConversations(Boolean(data?.hasNext));
 
       if (!activeId && items[0]?.id) {
         setActiveId(items[0].id);
@@ -951,6 +957,74 @@ export default function MessagesPageClient({
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  const loadMoreConversations = useCallback(async () => {
+    if (
+      loadingList ||
+      loadingMoreConversations ||
+      !hasMoreConversations
+    ) {
+      return;
+    }
+
+    setLoadingMoreConversations(true);
+    setError("");
+
+    try {
+      const nextPage = conversationPage + 1;
+      const data = await listOmniConversations({
+        q: debouncedSearch,
+        status,
+        channel,
+        assigneeId: assigneeFilter,
+        page: nextPage,
+        limit: 40,
+      });
+
+      const items = data?.items || [];
+
+      setConversations((prev) => {
+        const seen = new Set(prev.map((item) => item.id));
+        return [
+          ...prev,
+          ...items.filter((item) => !seen.has(item.id)),
+        ];
+      });
+
+      setConversationPage(data?.page || nextPage);
+      setHasMoreConversations(Boolean(data?.hasNext));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không tải thêm được hội thoại.",
+      );
+    } finally {
+      setLoadingMoreConversations(false);
+    }
+  }, [
+    assigneeFilter,
+    channel,
+    conversationPage,
+    debouncedSearch,
+    hasMoreConversations,
+    loadingList,
+    loadingMoreConversations,
+    status,
+  ]);
+
+  const handleConversationListScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const remaining =
+        element.scrollHeight - element.scrollTop - element.clientHeight;
+
+      if (remaining <= 240) {
+        void loadMoreConversations();
+      }
+    },
+    [loadMoreConversations],
+  );
 
   const loadDetail = useCallback(async (id: string) => {
     if (!id) {
@@ -2040,18 +2114,42 @@ export default function MessagesPageClient({
                   </div>
                 )}
 
-                <div className="h-[calc(100%-220px)] overflow-y-auto">
+                <div
+                  className="h-[calc(100%-220px)] overflow-y-auto"
+                  onScroll={handleConversationListScroll}
+                >
                   {loadingList && !visibleConversations.length ? (
                     <ListSkeleton />
                   ) : visibleConversations.length ? (
-                    visibleConversations.map((item) => (
-                      <ConversationRow
-                        key={item.id}
-                        item={item}
-                        active={activeId === item.id}
-                        onClick={() => setActiveId(item.id)}
-                      />
-                    ))
+                    <>
+                      {visibleConversations.map((item) => (
+                        <ConversationRow
+                          key={item.id}
+                          item={item}
+                          active={activeId === item.id}
+                          onClick={() => setActiveId(item.id)}
+                        />
+                      ))}
+
+                      {loadingMoreConversations ? (
+                        <div className="flex items-center justify-center gap-2 border-t border-neutral-100 px-4 py-4 text-xs font-bold text-neutral-500">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Đang tải thêm hội thoại...
+                        </div>
+                      ) : hasMoreConversations ? (
+                        <button
+                          type="button"
+                          onClick={() => void loadMoreConversations()}
+                          className="w-full border-t border-neutral-100 px-4 py-4 text-xs font-bold text-blue-600 hover:bg-blue-50"
+                        >
+                          Tải thêm hội thoại
+                        </button>
+                      ) : (
+                        <div className="border-t border-neutral-100 px-4 py-4 text-center text-xs font-semibold text-neutral-400">
+                          Đã tải hết hội thoại
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="p-8 text-center">
                       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-neutral-100">
@@ -3214,13 +3312,6 @@ function QuickOrderForm({
           {searchValue ? <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-1 shadow-xl">{filtered.map((item) => <button key={item.id} type="button" onClick={() => addItem(item.id, item.label)} className="block w-full rounded-xl px-3 py-2 text-left text-xs hover:bg-neutral-50">{item.label}</button>)}</div> : null}
         </div>
         {items.map((item) => <div key={item.variantId} className="flex items-center gap-2 rounded-2xl bg-white p-2 text-xs"><span className="min-w-0 flex-1 truncate">{item.label}</span><input type="number" min={1} value={item.qty} onChange={(e) => setItems((prev) => prev.map((row) => row.variantId === item.variantId ? { ...row, qty: Math.max(1, Number(e.target.value || 1)) } : row))} className="w-14 rounded-lg border px-2 py-1" /><button onClick={() => setItems((prev) => prev.filter((row) => row.variantId !== item.variantId))}><X className="h-4 w-4" /></button></div>)}
-        <div className="flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-3 py-2">
-          <div>
-            <p className="text-xs font-bold text-neutral-500">Phí ship mặc định</p>
-            <p className="text-[11px] text-neutral-400">Có thể sửa lại trong danh sách đơn hàng</p>
-          </div>
-          <span className="text-sm font-black text-neutral-900">30.000đ</span>
-        </div>
         <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú đơn" rows={2} className="w-full resize-none rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm" />
       </div>
       <div className="mt-3 flex gap-2"><button onClick={onCancel} className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-bold">Đóng</button><button disabled={saving} onClick={() => void submit()} className="flex-1 rounded-2xl bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? "Đang tạo..." : "Tạo đơn nháp"}</button></div>
