@@ -2089,65 +2089,67 @@ export default function OrderDetailPageClient({
 
     return "";
   };
-  const hydrateAddressSelectors = async (
-    source?: OrderDetail | null,
+  const hydrateEditAddressSelectors = async (
+    source: OrderDetail,
   ) => {
-    const shippingProvince = String(source?.shippingProvince || "").trim();
-    const shippingDistrict = String(source?.shippingDistrict || "").trim();
-    const shippingWard = String(source?.shippingWard || "").trim();
-    const storedDistrictId = source?.shippingGhnDistrictId
-      ? String(source.shippingGhnDistrictId)
-      : "";
-    const storedWardCode = String(
-      source?.shippingGhnWardCode || "",
-    ).trim();
-
-    const provinceRes = await apiFetch(
-      "/shipping-addresses/provinces",
-      { headers: { Accept: "application/json" } },
-    );
-    const provinces = await provinceRes.json().catch(() => []);
-    const provinceList: ProvinceOption[] = Array.isArray(provinces)
-      ? provinces
-      : [];
-    setProvinceOptions(provinceList);
-
-    const normalize = (value?: string | null) =>
+    const normalizeAddressName = (value?: string | null) =>
       String(value || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/đ/g, "d")
         .replace(/Đ/g, "D")
-        .replace(/^(tinh|thanh pho|tp\.?|quan|huyen|thi xa|xa|phuong|thi tran)\s+/i, "")
+        .replace(
+          /^(tinh|thanh pho|tp\.?|quan|huyen|thi xa|xa|phuong|thi tran)\s+/i,
+          "",
+        )
         .replace(/[^a-zA-Z0-9]+/g, " ")
         .trim()
         .toLowerCase();
 
+    const provinceRes = await apiFetch(
+      "/shipping-addresses/provinces",
+      { headers: { Accept: "application/json" } },
+    );
+    const provinceJson = await provinceRes.json().catch(() => []);
+    const provinces: ProvinceOption[] = Array.isArray(provinceJson)
+      ? provinceJson
+      : [];
+    setProvinceOptions(provinces);
+
     let provinceId = "";
-    let districtId = storedDistrictId;
-    let wardCode = storedWardCode;
+    let districtId = source.shippingGhnDistrictId
+      ? String(source.shippingGhnDistrictId)
+      : "";
+    let wardCode = String(source.shippingGhnWardCode || "");
     let districts: DistrictOption[] = [];
     let wards: WardOption[] = [];
 
+    // Ưu tiên tìm tỉnh theo GHN district ID đã lưu.
     if (districtId) {
-      for (const province of provinceList) {
+      for (const province of provinces) {
         const districtRes = await apiFetch(
           `/shipping-addresses/districts?provinceId=${province.id}`,
           { headers: { Accept: "application/json" } },
         );
-        const rows = await districtRes.json().catch(() => []);
-        const list: DistrictOption[] = Array.isArray(rows) ? rows : [];
-        if (list.some((item) => String(item.id) === districtId)) {
+        const districtJson = await districtRes.json().catch(() => []);
+        const rows: DistrictOption[] = Array.isArray(districtJson)
+          ? districtJson
+          : [];
+
+        if (rows.some((item) => String(item.id) === districtId)) {
           provinceId = String(province.id);
-          districts = list;
+          districts = rows;
           break;
         }
       }
     }
 
-    if (!provinceId && shippingProvince) {
-      const matchedProvince = provinceList.find(
-        (item) => normalize(item.name) === normalize(shippingProvince),
+    // Đơn cũ thiếu mã GHN: fallback theo tên tỉnh.
+    if (!provinceId && source.shippingProvince) {
+      const matchedProvince = provinces.find(
+        (item) =>
+          normalizeAddressName(item.name) ===
+          normalizeAddressName(source.shippingProvince),
       );
       provinceId = matchedProvince ? String(matchedProvince.id) : "";
     }
@@ -2157,14 +2159,16 @@ export default function OrderDetailPageClient({
         `/shipping-addresses/districts?provinceId=${provinceId}`,
         { headers: { Accept: "application/json" } },
       );
-      const rows = await districtRes.json().catch(() => []);
-      districts = Array.isArray(rows) ? rows : [];
+      const districtJson = await districtRes.json().catch(() => []);
+      districts = Array.isArray(districtJson) ? districtJson : [];
     }
     setDistrictOptions(districts);
 
-    if (!districtId && shippingDistrict) {
+    if (!districtId && source.shippingDistrict) {
       const matchedDistrict = districts.find(
-        (item) => normalize(item.name) === normalize(shippingDistrict),
+        (item) =>
+          normalizeAddressName(item.name) ===
+          normalizeAddressName(source.shippingDistrict),
       );
       districtId = matchedDistrict ? String(matchedDistrict.id) : "";
     }
@@ -2174,14 +2178,16 @@ export default function OrderDetailPageClient({
         `/shipping-addresses/wards?districtId=${districtId}`,
         { headers: { Accept: "application/json" } },
       );
-      const rows = await wardRes.json().catch(() => []);
-      wards = Array.isArray(rows) ? rows : [];
+      const wardJson = await wardRes.json().catch(() => []);
+      wards = Array.isArray(wardJson) ? wardJson : [];
     }
     setWardOptions(wards);
 
-    if (!wardCode && shippingWard) {
+    if (!wardCode && source.shippingWard) {
       const matchedWard = wards.find(
-        (item) => normalize(item.name) === normalize(shippingWard),
+        (item) =>
+          normalizeAddressName(item.name) ===
+          normalizeAddressName(source.shippingWard),
       );
       wardCode = matchedWard?.code || "";
     }
@@ -2189,8 +2195,6 @@ export default function OrderDetailPageClient({
     setSelectedProvinceId(provinceId);
     setSelectedDistrictId(districtId);
     setSelectedWardCode(wardCode);
-
-    return { provinceId, districtId, wardCode };
   };
 
   const handleProvinceChange = async (provinceId: string) => {
@@ -3002,7 +3006,27 @@ export default function OrderDetailPageClient({
     setAuthCode("");
     setShowAuthConfirmModal(false);
 
-    await hydrateAddressSelectors(order);
+    const nextDistrictId = draft.ghnDistrictId || "";
+    const nextWardCode = draft.ghnWardCode || "";
+
+    let nextProvinceId = "";
+    if (nextDistrictId) {
+      nextProvinceId = await resolveProvinceIdByDistrictId(nextDistrictId);
+    } else {
+      await loadProvinces();
+    }
+
+    setSelectedProvinceId(nextProvinceId);
+    setSelectedDistrictId(nextDistrictId);
+    setSelectedWardCode(nextWardCode);
+
+    if (nextProvinceId) {
+      await loadDistricts(nextProvinceId);
+    }
+
+    if (nextDistrictId) {
+      await loadWards(nextDistrictId);
+    }
 
     setShowShipmentEditModal(true);
   };
@@ -3960,8 +3984,7 @@ export default function OrderDetailPageClient({
                     if (!order) return;
 
                     const metaNote = parseStructuredNote(order.note);
-
-                    setDraftOrder({
+                    const nextDraft: OrderDetail = {
                       ...order,
                       shippingRecipientName:
                         order.shippingRecipientName || order.customerName || "",
@@ -3969,14 +3992,33 @@ export default function OrderDetailPageClient({
                         order.shippingPhone || order.customerPhone || "",
                       shippingAddressLine1:
                         order.shippingAddressLine1 || metaNote.address || "",
-                      shippingProvince: order.shippingProvince || "",
+                      shippingAddressLine2:
+                        order.shippingAddressLine2 || "",
+                      shippingProvince:
+                        order.shippingProvince || "",
+                      shippingDistrict:
+                        order.shippingDistrict || "",
+                      shippingWard:
+                        order.shippingWard || "",
+                      shippingPostalCode:
+                        order.shippingPostalCode || "",
                       note: metaNote.noteText || metaNote.shippingNote || "",
-                    });
+                    };
 
-                    void hydrateAddressSelectors(order);
-
+                    setDraftOrder(nextDraft);
+                    setSelectedProvinceId("");
+                    setSelectedDistrictId("");
+                    setSelectedWardCode("");
+                    setDistrictOptions([]);
+                    setWardOptions([]);
                     setIsEditing(true);
                     setMessage("");
+
+                    void hydrateEditAddressSelectors(nextDraft).catch(() => {
+                      setMessage(
+                        "Không tải được danh sách tỉnh/quận/xã đã lưu. Hãy chọn lại địa chỉ.",
+                      );
+                    });
                   }}
                 >
                   Sửa đơn hàng
