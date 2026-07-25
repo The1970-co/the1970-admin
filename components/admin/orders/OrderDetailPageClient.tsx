@@ -918,6 +918,7 @@ function EditInput({
   type = "text",
   inputMode,
   maxLength,
+  emphasized = false,
 }: {
   value?: string | number | null;
   onChange: (value: string) => void;
@@ -925,6 +926,7 @@ function EditInput({
   type?: string;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   maxLength?: number;
+  emphasized?: boolean;
 }) {
   return (
     <input
@@ -934,7 +936,9 @@ function EditInput({
       placeholder={placeholder}
       inputMode={inputMode}
       maxLength={maxLength}
-      className="h-9 w-full rounded-xl border border-neutral-300 px-3 text-[12px] outline-none focus:border-neutral-500"
+      className={`h-9 w-full rounded-xl border border-neutral-300 px-3 text-[12px] outline-none focus:border-neutral-500 ${
+        emphasized ? "font-semibold text-neutral-950" : ""
+      }`}
     />
   );
 }
@@ -1004,6 +1008,7 @@ function SearchableEditSelect({
   placeholder,
   searchPlaceholder,
   fallbackLabel,
+  emphasized = false,
   disabled = false,
 }: {
   value?: string | null;
@@ -1012,6 +1017,7 @@ function SearchableEditSelect({
   placeholder?: string;
   searchPlaceholder?: string;
   fallbackLabel?: string | null;
+  emphasized?: boolean;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -1072,7 +1078,13 @@ function SearchableEditSelect({
         }}
         className={`flex h-9 w-full items-center justify-between gap-2 rounded-xl border border-neutral-300 bg-white px-3 text-left text-[12px] outline-none transition focus:border-neutral-500 ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-neutral-400"}`}
       >
-        <span className={selected ? "truncate text-neutral-900" : "truncate text-neutral-400"}>
+        <span
+          className={
+            selectedLabel
+              ? `truncate text-neutral-950 ${emphasized ? "font-semibold" : ""}`
+              : "truncate text-neutral-400"
+          }
+        >
           {selectedLabel || placeholder || "Chọn"}
         </span>
         <span className="text-[10px] text-neutral-400">⌄</span>
@@ -2100,34 +2112,20 @@ export default function OrderDetailPageClient({
   ) => {
     if (!source) return;
 
-    const districtId = source.shippingGhnDistrictId
-      ? String(source.shippingGhnDistrictId)
-      : "";
-    const wardCode = String(source.shippingGhnWardCode || "").trim();
+    const normalize = (value?: string | null) =>
+      String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/Đ/g, "D")
+        .replace(
+          /^(tinh|thanh pho|tp\.?|quan|huyen|thi xa|xa|phuong|thi tran)\s+/i,
+          "",
+        )
+        .replace(/[^a-zA-Z0-9]+/g, " ")
+        .trim()
+        .toLowerCase();
 
-    let provinceId = "";
-
-    if (districtId) {
-      provinceId = await resolveProvinceIdByDistrictId(districtId);
-    } else {
-      await loadProvinces();
-    }
-
-    if (provinceId) {
-      setSelectedProvinceId(provinceId);
-
-      // resolveProvinceIdByDistrictId đã set đúng districtOptions.
-      setSelectedDistrictId(districtId);
-
-      if (districtId) {
-        await loadWards(districtId);
-      }
-
-      setSelectedWardCode(wardCode);
-      return;
-    }
-
-    // Fallback cho dữ liệu cũ chỉ có tên tỉnh/huyện/xã.
     const provinceRes = await apiFetch(
       "/shipping-addresses/provinces",
       { headers: { Accept: "application/json" } },
@@ -2138,37 +2136,28 @@ export default function OrderDetailPageClient({
       : [];
     setProvinceOptions(provinces);
 
-    const normalize = (value?: string | null) =>
-      String(value || "")
-        .normalize("NFD")
-        .replace(/[\\u0300-\\u036f]/g, "")
-        .replace(/đ/g, "d")
-        .replace(/Đ/g, "D")
-        .replace(/^(tinh|thanh pho|tp\\.?|quan|huyen|thi xa|xa|phuong|thi tran)\\s+/i, "")
-        .replace(/[^a-zA-Z0-9]+/g, " ")
-        .trim()
-        .toLowerCase();
-
+    // API chi tiết đơn đã trả sẵn tên tỉnh, nên map theo tên trước.
+    // Không quét toàn bộ 60+ tỉnh để dò district ID nữa.
     const matchedProvince = provinces.find(
       (item) =>
         normalize(item.name) === normalize(source.shippingProvince),
     );
-    const fallbackProvinceId = matchedProvince
+    const provinceId = matchedProvince
       ? String(matchedProvince.id)
       : "";
 
-    setSelectedProvinceId(fallbackProvinceId);
+    setSelectedProvinceId(provinceId);
 
-    if (!fallbackProvinceId) {
-      setSelectedDistrictId("");
-      setSelectedWardCode("");
+    if (!provinceId) {
       setDistrictOptions([]);
       setWardOptions([]);
+      setSelectedDistrictId("");
+      setSelectedWardCode("");
       return;
     }
 
     const districtRes = await apiFetch(
-      `/shipping-addresses/districts?provinceId=${fallbackProvinceId}`,
+      `/shipping-addresses/districts?provinceId=${provinceId}`,
       { headers: { Accept: "application/json" } },
     );
     const districtJson = await districtRes.json().catch(() => []);
@@ -2177,24 +2166,33 @@ export default function OrderDetailPageClient({
       : [];
     setDistrictOptions(districts);
 
-    const matchedDistrict = districts.find(
-      (item) =>
-        normalize(item.name) === normalize(source.shippingDistrict),
-    );
-    const fallbackDistrictId = matchedDistrict
+    const storedDistrictId = source.shippingGhnDistrictId
+      ? String(source.shippingGhnDistrictId)
+      : "";
+
+    const matchedDistrict =
+      districts.find(
+        (item) => String(item.id) === storedDistrictId,
+      ) ||
+      districts.find(
+        (item) =>
+          normalize(item.name) === normalize(source.shippingDistrict),
+      );
+
+    const districtId = matchedDistrict
       ? String(matchedDistrict.id)
       : "";
 
-    setSelectedDistrictId(fallbackDistrictId);
+    setSelectedDistrictId(districtId);
 
-    if (!fallbackDistrictId) {
-      setSelectedWardCode("");
+    if (!districtId) {
       setWardOptions([]);
+      setSelectedWardCode("");
       return;
     }
 
     const wardRes = await apiFetch(
-      `/shipping-addresses/wards?districtId=${fallbackDistrictId}`,
+      `/shipping-addresses/wards?districtId=${districtId}`,
       { headers: { Accept: "application/json" } },
     );
     const wardJson = await wardRes.json().catch(() => []);
@@ -2203,9 +2201,17 @@ export default function OrderDetailPageClient({
       : [];
     setWardOptions(wards);
 
-    const matchedWard = wards.find(
-      (item) => normalize(item.name) === normalize(source.shippingWard),
-    );
+    const storedWardCode = String(
+      source.shippingGhnWardCode || "",
+    ).trim();
+
+    const matchedWard =
+      wards.find((item) => String(item.code) === storedWardCode) ||
+      wards.find(
+        (item) =>
+          normalize(item.name) === normalize(source.shippingWard),
+      );
+
     setSelectedWardCode(matchedWard?.code || "");
   };
 
@@ -2334,6 +2340,9 @@ export default function OrderDetailPageClient({
   const [codEditFlow, setCodEditFlow] = useState<"normal" | "partial">("normal");
   const [authCode, setAuthCode] = useState("");
   const [authVerifying, setAuthVerifying] = useState(false);
+  const [codSessionToken, setCodSessionToken] = useState("");
+  const [codSessionExpiresAt, setCodSessionExpiresAt] = useState(0);
+  const [codSessionSecondsLeft, setCodSessionSecondsLeft] = useState(0);
   const [showPartialDeliveryModal, setShowPartialDeliveryModal] =
     useState(false);
   const [partialSaving, setPartialSaving] = useState(false);
@@ -2351,6 +2360,34 @@ export default function OrderDetailPageClient({
   const [trackingRefreshing, setTrackingRefreshing] = useState(false);
   const [trackingMessage, setTrackingMessage] = useState("");
   const [returnConfirming, setReturnConfirming] = useState(false);
+
+  useEffect(() => {
+    const refreshCodSessionCountdown = () => {
+      const secondsLeft = Math.max(
+        0,
+        Math.ceil((codSessionExpiresAt - Date.now()) / 1000),
+      );
+      setCodSessionSecondsLeft(secondsLeft);
+
+      if (codSessionExpiresAt > 0 && secondsLeft <= 0) {
+        setCodSessionToken("");
+        setCodSessionExpiresAt(0);
+      }
+    };
+
+    refreshCodSessionCountdown();
+    if (!codSessionExpiresAt) return;
+
+    const timer = window.setInterval(refreshCodSessionCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [codSessionExpiresAt]);
+
+  const codSessionActive =
+    Boolean(codSessionToken) && codSessionSecondsLeft > 0;
+  const codSessionTimeText = `${Math.floor(codSessionSecondsLeft / 60)}:${String(
+    codSessionSecondsLeft % 60,
+  ).padStart(2, "0")}`;
+
   const forcedTrackingRefreshRef = useRef<Record<string, boolean>>({});
   const trackingRequestInFlightRef = useRef(false);
 
@@ -3156,9 +3193,116 @@ export default function OrderDetailPageClient({
     }
   };
 
-  const handleOpenAuthConfirm = () => {
+  const applyCodUpdateToUi = (oldCod: number, nextCod: number) => {
+    if (!order) return;
+
+    const shouldOpenPartialDelivery = codEditFlow === "partial";
+    const nextNote = shouldOpenPartialDelivery
+      ? upsertStructuredNotePart(
+          order.note,
+          "Tình trạng giao:",
+          nextCod < computedFinalAmount ? "Giao hàng 1 phần" : "",
+        )
+      : order.note;
+
+    const nextOrder: OrderDetail = {
+      ...order,
+      finalAmount: order.finalAmount,
+      note: nextNote,
+      shipment: {
+        ...order.shipment,
+        codAmount: nextCod,
+      },
+    };
+
+    setOrder(nextOrder);
+
+    if (draftOrder) {
+      setDraftOrder({
+        ...draftOrder,
+        finalAmount: draftOrder.finalAmount,
+        note: nextNote,
+        shipment: {
+          ...draftOrder.shipment,
+          codAmount: nextCod,
+        },
+      });
+    }
+
+    setCodSuccessText(
+      `Đã cập nhật COD từ ${currency(oldCod)} → ${currency(nextCod)}`,
+    );
+    setShowCodSuccessToast(true);
+    window.setTimeout(() => setShowCodSuccessToast(false), 3500);
+
+    if (shouldOpenPartialDelivery) {
+      const nextPartialDraft = buildPartialDeliveryDraft(order, nextCod);
+      setPartialDraft({
+        ...nextPartialDraft,
+        adjustedCod: nextCod,
+        approvedBy: currentUser?.name || currentUser?.code || "Admin / Owner",
+      });
+    }
+
+    setShowAuthConfirmModal(false);
+    setShowShipmentEditModal(false);
+    setShowPartialDeliveryModal(shouldOpenPartialDelivery);
+    setMessage(
+      shouldOpenPartialDelivery
+        ? ""
+        : `Đã sửa COD thường từ ${currency(oldCod)} → ${currency(nextCod)}. Phiên xác thực còn hiệu lực 5 phút.`,
+    );
+    setEditMode("full");
+    setCodEditFlow("normal");
+    setAuthCode("");
+  };
+
+  const saveCodWithSession = async (sessionToken: string) => {
+    if (!order) return;
+
+    const oldCod = Number(order.shipment?.codAmount || 0);
+    const nextCod = parseVndInput(shipmentDraft.codAmountInput);
+
+    const res = await apiFetch(`/shipments/${order.id}/cod/update`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        codAmount: nextCod,
+        sessionToken,
+      }),
+    });
+
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      if (String(json?.message || "").toLowerCase().includes("hết hạn")) {
+        setCodSessionToken("");
+        setCodSessionExpiresAt(0);
+      }
+      throw new Error(json?.message || "Không cập nhật được COD.");
+    }
+
+    applyCodUpdateToUi(oldCod, nextCod);
+  };
+
+  const handleOpenAuthConfirm = async () => {
     if (!codChanged) {
       setMessage("COD chưa thay đổi.");
+      return;
+    }
+
+    if (codSessionActive) {
+      try {
+        setAuthVerifying(true);
+        setMessage("");
+        await saveCodWithSession(codSessionToken);
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : "Không cập nhật được COD.");
+      } finally {
+        setAuthVerifying(false);
+      }
       return;
     }
 
@@ -3173,101 +3317,34 @@ export default function OrderDetailPageClient({
       setAuthVerifying(true);
       setMessage("");
 
-      const oldCod = Number(order?.shipment?.codAmount || 0);
-      const nextCod = parseVndInput(shipmentDraft.codAmountInput);
-
-      const res = await apiFetch(
-        `/shipments/${order.id}/cod/verify-and-update`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            codAmount: nextCod,
-            code: authCode.trim(),
-          }),
+      const verifyRes = await apiFetch(`/shipments/${order.id}/cod/verify`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
         },
-      );
+        body: JSON.stringify({ code: authCode.trim() }),
+      });
 
-      const json = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        throw new Error(
-          json?.message || "Xác thực hoặc cập nhật COD thất bại.",
-        );
+      const verifyJson = await verifyRes.json().catch(() => null);
+      if (!verifyRes.ok) {
+        throw new Error(verifyJson?.message || "Mã authen không đúng hoặc đã hết hạn.");
       }
 
-      const shouldOpenPartialDelivery = codEditFlow === "partial";
-
-      const nextNote = shouldOpenPartialDelivery
-        ? upsertStructuredNotePart(
-          order.note,
-          "Tình trạng giao:",
-          nextCod < computedFinalAmount ? "Giao hàng 1 phần" : "",
-        )
-        : order.note;
-
-      const nextOrder: OrderDetail = {
-        ...order,
-        // Sửa COD chỉ thay đổi số tiền GHN thu hộ, không đổi tổng giá trị đơn.
-        finalAmount: order.finalAmount,
-        note: nextNote,
-        shipment: {
-          ...order.shipment,
-          codAmount: nextCod,
-        },
-      };
-
-      setOrder(nextOrder);
-
-      if (draftOrder) {
-        setDraftOrder({
-          ...draftOrder,
-          // Không được biến finalAmount thành COD.
-          finalAmount: draftOrder.finalAmount,
-          note: nextNote,
-          shipment: {
-            ...draftOrder.shipment,
-            codAmount: nextCod,
-          },
-        });
+      const sessionToken = String(verifyJson?.sessionToken || "");
+      const expiresAt = new Date(verifyJson?.expiresAt || 0).getTime();
+      if (!sessionToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        throw new Error("Backend không trả về phiên sửa COD hợp lệ.");
       }
 
-      setCodSuccessText(
-        `Đã cập nhật COD từ ${currency(oldCod)} → ${currency(nextCod)}`,
-      );
-      setShowCodSuccessToast(true);
+      setCodSessionToken(sessionToken);
+      setCodSessionExpiresAt(expiresAt);
+      setCodSessionSecondsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
+      setMessage("Xác thực thành công. Bạn có 5 phút để sửa COD.");
 
-      window.setTimeout(() => {
-        setShowCodSuccessToast(false);
-      }, 3500);
-
-      if (shouldOpenPartialDelivery) {
-        const nextPartialDraft = buildPartialDeliveryDraft(order, nextCod);
-        setPartialDraft({
-          ...nextPartialDraft,
-          adjustedCod: nextCod,
-          approvedBy: currentUser?.name || currentUser?.code || "Admin / Owner",
-        });
-      }
-
-      setShowAuthConfirmModal(false);
-      setShowShipmentEditModal(false);
-      setShowPartialDeliveryModal(shouldOpenPartialDelivery);
-      setMessage(
-        shouldOpenPartialDelivery
-          ? ""
-          : `Đã sửa COD thường từ ${currency(oldCod)} → ${currency(nextCod)}.`,
-      );
-      setEditMode("full");
-      setCodEditFlow("normal");
-      setAuthCode("");
+      await saveCodWithSession(sessionToken);
     } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Không cập nhật được COD.",
-      );
+      setMessage(err instanceof Error ? err.message : "Không cập nhật được COD.");
     } finally {
       setAuthVerifying(false);
     }
@@ -4215,10 +4292,11 @@ export default function OrderDetailPageClient({
                   {isEditing ? (
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Người nhận
                         </p>
                         <EditInput
+                          emphasized
                           value={draftOrder?.shippingRecipientName}
                           onChange={(v) =>
                             updateDraft("shippingRecipientName", v)
@@ -4226,19 +4304,21 @@ export default function OrderDetailPageClient({
                         />
                       </div>
                       <div>
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           SĐT nhận
                         </p>
                         <EditInput
+                          emphasized
                           value={draftOrder?.shippingPhone}
                           onChange={(v) => updateDraft("shippingPhone", v)}
                         />
                       </div>
                       <div className="md:col-span-2">
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Địa chỉ dòng 1
                         </p>
                         <EditInput
+                          emphasized
                           value={draftOrder?.shippingAddressLine1}
                           onChange={(v) =>
                             updateDraft("shippingAddressLine1", v)
@@ -4246,10 +4326,11 @@ export default function OrderDetailPageClient({
                         />
                       </div>
                       <div className="md:col-span-2">
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Địa chỉ dòng 2
                         </p>
                         <EditInput
+                          emphasized
                           value={draftOrder?.shippingAddressLine2}
                           onChange={(v) =>
                             updateDraft("shippingAddressLine2", v)
@@ -4257,10 +4338,11 @@ export default function OrderDetailPageClient({
                         />
                       </div>
                       <div>
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Tỉnh / thành
                         </p>
                         <SearchableEditSelect
+                          emphasized
                           value={selectedProvinceId}
                           fallbackLabel={draftOrder?.shippingProvince}
                           onChange={handleEditProvinceChange}
@@ -4274,10 +4356,11 @@ export default function OrderDetailPageClient({
                       </div>
 
                       <div>
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Quận / huyện
                         </p>
                         <SearchableEditSelect
+                          emphasized
                           value={selectedDistrictId}
                           fallbackLabel={draftOrder?.shippingDistrict}
                           onChange={handleEditDistrictChange}
@@ -4291,10 +4374,11 @@ export default function OrderDetailPageClient({
                       </div>
 
                       <div>
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Phường / xã
                         </p>
                         <SearchableEditSelect
+                          emphasized
                           value={selectedWardCode}
                           fallbackLabel={draftOrder?.shippingWard}
                           onChange={handleEditWardChange}
@@ -4307,7 +4391,7 @@ export default function OrderDetailPageClient({
                         />
                       </div>
                       <div>
-                        <p className="mb-1 text-[11px] text-neutral-500">
+                        <p className="mb-1 text-[10px] font-normal uppercase tracking-[0.08em] text-neutral-400">
                           Mã bưu chính
                         </p>
                         <EditInput
@@ -5637,6 +5721,17 @@ export default function OrderDetailPageClient({
                   </p>
                 </div>
 
+                {codSessionActive ? (
+                  <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <p className="text-[11px] font-medium text-emerald-800">
+                      Đã xác thực Google Authenticator
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-emerald-700">
+                      Có thể sửa COD trong {codSessionTimeText}. Hết thời gian sẽ phải nhập mã mới.
+                    </p>
+                  </div>
+                ) : null}
+
                 {codChanged ? (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
                     <p className="text-[11px] font-medium text-amber-800">
@@ -5784,10 +5879,14 @@ export default function OrderDetailPageClient({
               {editMode === "cod" ? (
                 <ActionButton
                   tone="dark"
-                  disabled={!codChanged}
+                  disabled={!codChanged || authVerifying}
                   onClick={handleOpenAuthConfirm}
                 >
-                  Tiếp tục xác thực
+                  {authVerifying
+                    ? "Đang lưu..."
+                    : codSessionActive
+                      ? `Lưu COD · còn ${codSessionTimeText}`
+                      : "Tiếp tục xác thực"}
                 </ActionButton>
               ) : (
                 <ActionButton
@@ -5811,9 +5910,10 @@ export default function OrderDetailPageClient({
                 Xác nhận bằng Google Authenticator
               </p>
               <p className="mt-1 text-[12px] text-neutral-500">
-                {codEditFlow === "partial"
-                  ? "Nhập mã 6 số để xác nhận thay đổi COD và mở phiếu giao hàng 1 phần."
-                  : "Nhập mã 6 số để xác nhận sửa COD thường. Không tạo phiếu giao hàng 1 phần."}
+                Mã trên điện thoại đổi mỗi 30 giây. Sau khi xác thực đúng, quyền sửa COD trên chi tiết đơn sẽ có hiệu lực trong 5 phút.
+              </p>
+              <p className="mt-1 text-[11px] text-neutral-400">
+                Thời gian 5 phút chỉ bắt đầu sau khi mã được xác thực thành công.
               </p>
             </div>
 

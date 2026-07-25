@@ -714,6 +714,7 @@ export default function MessagesPageClient({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
+  const [draftImageUrls, setDraftImageUrls] = useState<string[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
   const [newNoteTemplateName, setNewNoteTemplateName] = useState("");
@@ -1135,6 +1136,8 @@ export default function MessagesPageClient({
     setRightPanelTab("info");
     setQuickOrderSuccess("");
     setCustomerOrderHistory([]);
+    setDraft("");
+    setDraftImageUrls([]);
   }, [activeId]);
 
   const loadCustomerOrderHistory = useCallback(async () => {
@@ -1307,9 +1310,87 @@ export default function MessagesPageClient({
     return { unread, open, processing, closed };
   }, [visibleConversations]);
 
+  const GENDER_TAGS = ["__GENDER_MALE", "__GENDER_FEMALE", "__GENDER_NEUTRAL"] as const;
+
+  function getCustomerPronoun(conversation?: OmniConversation | null) {
+    const tags = conversation?.tags?.map((item) => String(item.tag || "")) || [];
+    if (tags.includes("__GENDER_FEMALE")) return "Chị";
+    if (tags.includes("__GENDER_NEUTRAL")) return "Bạn";
+    if (tags.includes("__GENDER_MALE")) return "Anh";
+
+    // Chỉ nhận diện khi khách tự xưng rất rõ trong tin nhắn đến.
+    const incomingText = (conversation?.messages || [])
+      .filter((message) => message.direction === "IN")
+      .slice(-20)
+      .map((message) => String(message.text || "").toLocaleLowerCase("vi-VN"))
+      .join(" ");
+
+    if (/\b(chị|em gái|mình là nữ|nữ mặc|chị mặc|chị cao|chị nặng)\b/i.test(incomingText)) {
+      return "Chị";
+    }
+    if (/\b(anh|em trai|mình là nam|nam mặc|anh mặc|anh cao|anh nặng)\b/i.test(incomingText)) {
+      return "Anh";
+    }
+
+    // Tệp khách của shop chủ yếu là nam nên mặc định là Anh.
+    return "Anh";
+  }
+
+  function replaceQuickReplyVariables(content: string) {
+    const pronoun = getCustomerPronoun(activeConversation);
+    return String(content || "")
+      .replace(/\{\{\s*Gender-Anh\|Chị\|Bạn\s*\}\}/gi, pronoun)
+      .replace(/\{\{\s*Gender\s*\}\}/gi, pronoun);
+  }
+
+  function applyQuickReplyTemplate(template: OmniQuickReplyTemplate) {
+    const meta = parseQuickReplyImportMeta(template.category);
+    setDraft(replaceQuickReplyVariables(template.content || ""));
+    setDraftImageUrls(meta.imageUrls);
+  }
+
+  async function handleSetCustomerPronoun(pronoun: "Anh" | "Chị" | "Bạn") {
+    if (!activeConversation?.id) return;
+
+    const tagByPronoun = {
+      Anh: "__GENDER_MALE",
+      Chị: "__GENDER_FEMALE",
+      Bạn: "__GENDER_NEUTRAL",
+    } as const;
+
+    const visibleTags = (activeConversation.tags || [])
+      .map((item) => String(item.tag || ""))
+      .filter((tag) => !GENDER_TAGS.includes(tag as any));
+
+    try {
+      const updated = await updateOmniConversationTags(activeConversation.id, {
+        tags: [...visibleTags, tagByPronoun[pronoun]],
+      });
+      setActiveConversation((prev) =>
+        prev ? { ...prev, ...updated, messages: prev.messages } : updated,
+      );
+      setConversations((prev) =>
+        prev.map((item) =>
+          item.id === updated.id ? { ...item, ...updated } : item,
+        ),
+      );
+
+      // Nếu mẫu đang nằm trong ô soạn thì đổi xưng hô ngay, không cần chọn lại mẫu.
+      setDraft((current) =>
+        current
+          .replace(/\bAnh\b/g, pronoun)
+          .replace(/\bChị\b/g, pronoun)
+          .replace(/\bBạn\b/g, pronoun),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không lưu được cách xưng hô.");
+    }
+  }
+
   async function handleSend() {
     const text = draft.trim();
-    if (!activeConversation?.id || !text || sending) return;
+    const imageUrls = draftImageUrls.filter(Boolean);
+    if (!activeConversation?.id || (!text && !imageUrls.length) || sending) return;
 
     if (isFacebookCommentConversation(activeConversation)) {
       setError(
@@ -1322,15 +1403,33 @@ export default function MessagesPageClient({
     setError("");
 
     try {
-      const message = await sendOmniMessage(activeConversation.id, { text });
+      const sentMessages: OmniMessage[] = [];
+
+      if (text) {
+        sentMessages.push(
+          await sendOmniMessage(activeConversation.id, { text }),
+        );
+      }
+
+      for (const attachmentUrl of imageUrls) {
+        sentMessages.push(
+          await sendOmniMessage(activeConversation.id, {
+            text: "",
+            attachmentUrl,
+          }),
+        );
+      }
+
       setDraft("");
+      setDraftImageUrls([]);
       setActiveConversation((prev) => {
         if (!prev) return prev;
+        const lastMessage = sentMessages[sentMessages.length - 1];
         return {
           ...prev,
-          messages: [...(prev.messages || []), message],
-          lastMessageText: text,
-          lastMessageAt: message.sentAt,
+          messages: [...(prev.messages || []), ...sentMessages],
+          lastMessageText: lastMessage?.attachmentUrl ? "[Ảnh]" : text,
+          lastMessageAt: lastMessage?.sentAt || prev.lastMessageAt,
         };
       });
       await loadList();
@@ -2452,6 +2551,27 @@ export default function MessagesPageClient({
                                 {statusLabel(activeConversation.status)}
                               </span>
                             </div>
+                            <div className="mt-2 flex items-center gap-1.5">
+                              <span className="mr-1 text-[11px] font-semibold text-neutral-400">Xưng hô:</span>
+                              {(["Anh", "Chị", "Bạn"] as const).map((pronoun) => {
+                                const selected = getCustomerPronoun(activeConversation) === pronoun;
+                                return (
+                                  <button
+                                    key={pronoun}
+                                    type="button"
+                                    onClick={() => void handleSetCustomerPronoun(pronoun)}
+                                    className={cx(
+                                      "rounded-full border px-2.5 py-1 text-[11px] font-bold transition",
+                                      selected
+                                        ? "border-blue-600 bg-blue-600 text-white"
+                                        : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50",
+                                    )}
+                                  >
+                                    {pronoun}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
 
@@ -2568,7 +2688,7 @@ export default function MessagesPageClient({
                         ).map((reply) => (
                           <button
                             key={reply.id}
-                            onClick={() => setDraft(reply.content)}
+                            onClick={() => applyQuickReplyTemplate(reply)}
                             className="whitespace-nowrap rounded-full border border-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
                             title={reply.content}
                           >
@@ -2584,7 +2704,10 @@ export default function MessagesPageClient({
                       <div className="rounded-3xl border border-neutral-200 bg-white p-4">
                         <textarea
                           value={draft}
-                          onChange={(event) => setDraft(event.target.value)}
+                          onChange={(event) => {
+                            setDraft(event.target.value);
+                            if (!event.target.value.trim()) setDraftImageUrls([]);
+                          }}
                           onKeyDown={(event) => {
                             const keyTriggersExpansion =
                               event.key === " " ||
@@ -2603,7 +2726,7 @@ export default function MessagesPageClient({
 
                               if (matchedTemplate) {
                                 event.preventDefault();
-                                setDraft(matchedTemplate.content);
+                                applyQuickReplyTemplate(matchedTemplate);
                                 return;
                               }
                             }
@@ -2622,6 +2745,35 @@ export default function MessagesPageClient({
                           }
                         />
 
+                        {draftImageUrls.length ? (
+                          <div className="mb-3 flex flex-wrap gap-2 border-t border-neutral-100 pt-3">
+                            {draftImageUrls.map((url, index) => (
+                              <div
+                                key={`${url}-${index}`}
+                                className="group relative h-24 w-24 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50"
+                              >
+                                <img
+                                  src={url}
+                                  alt={`Ảnh đính kèm ${index + 1}`}
+                                  className="h-full w-full object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDraftImageUrls((prev) =>
+                                      prev.filter((_, itemIndex) => itemIndex !== index),
+                                    )
+                                  }
+                                  className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white opacity-0 transition group-hover:opacity-100"
+                                  title="Bỏ ảnh"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
                         <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
                           <div className="flex items-center gap-1 text-neutral-500">
                             <button className="rounded-full p-2 hover:bg-neutral-100">
@@ -2637,7 +2789,7 @@ export default function MessagesPageClient({
 
                           <button
                             onClick={() => void handleSend()}
-                            disabled={!draft.trim() || sending || isFacebookCommentConversation(activeConversation)}
+                            disabled={(!draft.trim() && !draftImageUrls.length) || sending || isFacebookCommentConversation(activeConversation)}
                             className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {sending ? (
@@ -2778,7 +2930,9 @@ export default function MessagesPageClient({
 
                       <Panel title="Nhãn">
                         <div className="flex flex-wrap gap-2">
-                          {(activeConversation.tags || []).map((tag) => (
+                          {(activeConversation.tags || [])
+                            .filter((tag) => !String(tag.tag || "").startsWith("__GENDER_"))
+                            .map((tag) => (
                             <button
                               key={tag.id || tag.tag}
                               onClick={() => void handleRemoveTag(tag.tag)}
