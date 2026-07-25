@@ -753,6 +753,7 @@ export default function MessagesPageClient({
   >("connecting");
   const [workspace, setWorkspace] = useState<WorkspaceKey>(initialWorkspace);
   const listRequestId = useRef(0);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!clientReady) return;
@@ -1132,6 +1133,33 @@ export default function MessagesPageClient({
     void loadDetail(activeId);
   }, [activeId, loadDetail]);
 
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const element = chatScrollRef.current;
+    if (!element) return;
+    element.scrollTo({ top: element.scrollHeight, behavior });
+  }, []);
+
+  // Khi mở một hội thoại hoặc lịch sử tin nhắn vừa tải xong, luôn đưa người dùng
+  // tới tin mới nhất. Chạy thêm vài nhịp để ảnh đính kèm tải xong không làm lệch vị trí.
+  useEffect(() => {
+    if (!activeId || loadingDetail) return;
+
+    const frame = window.requestAnimationFrame(() => scrollChatToBottom("auto"));
+    const timer1 = window.setTimeout(() => scrollChatToBottom("auto"), 120);
+    const timer2 = window.setTimeout(() => scrollChatToBottom("auto"), 500);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer1);
+      window.clearTimeout(timer2);
+    };
+  }, [
+    activeId,
+    loadingDetail,
+    activeConversation?.messages?.length,
+    scrollChatToBottom,
+  ]);
+
   useEffect(() => {
     setRightPanelTab("info");
     setQuickOrderSuccess("");
@@ -1399,41 +1427,103 @@ export default function MessagesPageClient({
       return;
     }
 
+    const conversationId = activeConversation.id;
+    const optimisticPrefix = `optimistic-${Date.now()}`;
+    const optimisticMessages: OmniMessage[] = [
+      ...(text
+        ? ([{
+            id: `${optimisticPrefix}-text`,
+            conversationId,
+            direction: "OUT",
+            type: "TEXT",
+            text,
+            attachmentUrl: null,
+            senderName: currentUserName,
+            sentAt: new Date().toISOString(),
+          }] as any[])
+        : []),
+      ...imageUrls.map((attachmentUrl, index) => ({
+        id: `${optimisticPrefix}-image-${index}`,
+        conversationId,
+        direction: "OUT",
+        type: "IMAGE",
+        text: "",
+        attachmentUrl,
+        senderName: currentUserName,
+        sentAt: new Date().toISOString(),
+      } as any)),
+    ];
+
+    // Phản hồi giao diện ngay, không bắt nhân viên chờ Meta và database xong mới thấy tin.
     setSending(true);
     setError("");
+    setDraft("");
+    setDraftImageUrls([]);
+    setActiveConversation((prev) =>
+      prev
+        ? {
+            ...prev,
+            messages: [...(prev.messages || []), ...optimisticMessages],
+            lastMessageText: imageUrls.length ? "[Ảnh]" : text,
+            lastMessageAt: new Date().toISOString(),
+          }
+        : prev,
+    );
+    setConversations((prev) =>
+      prev.map((item) =>
+        item.id === conversationId
+          ? {
+              ...item,
+              lastMessageText: imageUrls.length ? "[Ảnh]" : text,
+              lastMessageAt: new Date().toISOString(),
+              status: item.status === "OPEN" ? "PROCESSING" : item.status,
+            }
+          : item,
+      ),
+    );
 
     try {
       const sentMessages: OmniMessage[] = [];
 
+      // Giữ text đi trước; các ảnh gửi đồng thời để mẫu nhiều ảnh không bị chậm nối tiếp.
       if (text) {
-        sentMessages.push(
-          await sendOmniMessage(activeConversation.id, { text }),
+        sentMessages.push(await sendOmniMessage(conversationId, { text }));
+      }
+      if (imageUrls.length) {
+        const imageMessages = await Promise.all(
+          imageUrls.map((attachmentUrl) =>
+            sendOmniMessage(conversationId, { text: "", attachmentUrl }),
+          ),
         );
+        sentMessages.push(...imageMessages);
       }
 
-      for (const attachmentUrl of imageUrls) {
-        sentMessages.push(
-          await sendOmniMessage(activeConversation.id, {
-            text: "",
-            attachmentUrl,
-          }),
-        );
-      }
-
-      setDraft("");
-      setDraftImageUrls([]);
       setActiveConversation((prev) => {
-        if (!prev) return prev;
+        if (!prev || prev.id !== conversationId) return prev;
+        const withoutOptimistic = (prev.messages || []).filter(
+          (message: any) => !String(message?.id || "").startsWith(optimisticPrefix),
+        );
         const lastMessage = sentMessages[sentMessages.length - 1];
         return {
           ...prev,
-          messages: [...(prev.messages || []), ...sentMessages],
+          messages: [...withoutOptimistic, ...sentMessages],
           lastMessageText: lastMessage?.attachmentUrl ? "[Ảnh]" : text,
           lastMessageAt: lastMessage?.sentAt || prev.lastMessageAt,
         };
       });
-      await loadList();
+      // Không gọi lại toàn bộ danh sách sau mỗi lần gửi; SSE và state cục bộ đã đồng bộ.
     } catch (err) {
+      setActiveConversation((prev) => {
+        if (!prev || prev.id !== conversationId) return prev;
+        return {
+          ...prev,
+          messages: (prev.messages || []).filter(
+            (message: any) => !String(message?.id || "").startsWith(optimisticPrefix),
+          ),
+        };
+      });
+      setDraft((current) => current || text);
+      setDraftImageUrls((current) => (current.length ? current : imageUrls));
       setError(err instanceof Error ? err.message : "Không gửi được tin nhắn.");
     } finally {
       setSending(false);
@@ -2627,7 +2717,7 @@ export default function MessagesPageClient({
                       </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto bg-[#fbfbfa] p-6">
+                    <div ref={chatScrollRef} className="flex-1 overflow-y-auto bg-[#fbfbfa] p-6">
                       {loadingDetail ? (
                         <ChatSkeleton />
                       ) : (
@@ -4765,6 +4855,44 @@ function WorkspacePanel({
             <DetailedSettingRow title="Xáo trộn danh sách nhân viên" description="Khi bắt đầu vòng chia mới, hệ thống xáo trộn danh sách để tránh nhân viên đầu danh sách luôn được ưu tiên." control={<Toggle checked={assignmentSettings.shuffleEachRound} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,shuffleEachRound:checked})}/>} />
             <DetailedSettingRow title="Số lượng tài khoản chính mỗi hội thoại" description="Hiện tại hệ thống giữ một người phụ trách chính cho mỗi hội thoại. Người khác có thể phối hợp qua phân công lại hoặc quy tắc quá hạn." control={<div className="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-black">1 tài khoản</div>} />
             <DetailedSettingRow title="Phân công thêm khi chưa đọc" description="Nếu hội thoại chưa được đọc sau khoảng thời gian này, hệ thống chia lại cho một nhân viên đủ điều kiện khác." control={<Toggle checked={assignmentSettings.reassignUnreadEnabled} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,reassignUnreadEnabled:checked})}/>} extra={<div className="mt-3 flex items-center gap-2 text-sm"><span>Sau</span><input type="number" min={1} value={assignmentSettings.reassignAfterMinutes} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,reassignAfterMinutes:Number(e.target.value||1)})} className="w-24 rounded-xl border px-3 py-2"/><span>phút</span></div>} />
+            <DetailedSettingRow
+              title="Chia hàng chờ đầu ca"
+              description="Tin nhắn đến ngoài giờ được giữ chưa gán. Khi có nhân viên online trong giờ làm việc, hệ thống chia lô đầu; sau đó chia tiếp theo từng đợt. Nếu có thêm người online, hệ thống chạy ngay một đợt nhỏ và ưu tiên người có tải hôm nay thấp hơn."
+              control={
+                <Toggle
+                  checked={(assignmentSettings as any).morningQueueEnabled !== false}
+                  onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...(assignmentSettings as any),morningQueueEnabled:checked} as any)}
+                />
+              }
+              extra={
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <label className="space-y-1 text-sm">
+                    <span className="font-bold text-neutral-700">Lô đầu tiên</span>
+                    <div className="flex items-center gap-2">
+                      <input type="number" min={1} value={(assignmentSettings as any).morningQueueInitialBatchSize ?? 20} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...(assignmentSettings as any),morningQueueInitialBatchSize:Math.max(1,Number(e.target.value||20))} as any)} className="w-24 rounded-xl border px-3 py-2"/>
+                      <span>tin</span>
+                    </div>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="font-bold text-neutral-700">Chu kỳ chia tiếp</span>
+                    <div className="flex items-center gap-2">
+                      <input type="number" min={1} value={(assignmentSettings as any).morningQueueRepeatIntervalMinutes ?? 2} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...(assignmentSettings as any),morningQueueRepeatIntervalMinutes:Math.max(1,Number(e.target.value||2))} as any)} className="w-24 rounded-xl border px-3 py-2"/>
+                      <span>phút</span>
+                    </div>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="font-bold text-neutral-700">Mỗi đợt tiếp theo</span>
+                    <div className="flex items-center gap-2">
+                      <input type="number" min={1} value={(assignmentSettings as any).morningQueueRepeatBatchSize ?? 3} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...(assignmentSettings as any),morningQueueRepeatBatchSize:Math.max(1,Number(e.target.value||3))} as any)} className="w-24 rounded-xl border px-3 py-2"/>
+                      <span>tin</span>
+                    </div>
+                  </label>
+                  <div className="md:col-span-3 rounded-2xl border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-800">
+                    <b>Mặc định:</b> người/nhóm online đầu tiên nhận tổng cộng tối đa 20 tin cũ nhất. Nếu chưa có thêm người online, cứ 2 phút chia tiếp 3 tin. Khi có người mới online, đợt nhỏ chạy ngay và người mới được ưu tiên vì tải hôm nay thấp hơn. Tin đã đọc hoặc đã xử lý không bị thu hồi.
+                  </div>
+                </div>
+              }
+            />
             <DetailedSettingRow title="Chia lại nếu người phụ trách offline" description="Khi nhân viên đang phụ trách mất trạng thái trực tuyến, hội thoại chưa xử lý có thể được đưa sang người khác." control={<Toggle checked={assignmentSettings.reassignIfAssigneeOffline} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,reassignIfAssigneeOffline:checked})}/>} />
             <DetailedSettingRow title="Giới hạn hội thoại đang xử lý" description="Ngừng chia thêm khi nhân viên đạt số hội thoại đang xử lý tối đa." control={<Toggle checked={assignmentSettings.maxActiveEnabled} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxActiveEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxActiveConversations} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxActiveConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
             <DetailedSettingRow title="Giới hạn hội thoại chưa đọc" description="Ngừng chia thêm khi nhân viên đã có quá nhiều hội thoại chưa đọc." control={<Toggle checked={assignmentSettings.maxUnreadEnabled} onChange={(checked)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxUnreadEnabled:checked})}/>} extra={<input type="number" min={1} value={assignmentSettings.maxUnreadConversations} onChange={(e)=>canManageAssignmentSettings && onAssignmentChange({...assignmentSettings,maxUnreadConversations:Number(e.target.value||1)})} className="mt-3 w-28 rounded-xl border px-3 py-2"/>} />
