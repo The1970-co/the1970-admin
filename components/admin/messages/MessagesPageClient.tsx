@@ -1375,14 +1375,30 @@ export default function MessagesPageClient({
   }, [activeId, loadList]);
 
   const visibleConversations = useMemo(() => {
+    // Bình luận Facebook dùng chung channel FACEBOOK ở backend, nên phải
+    // tách bằng providerThreadId/tag thay vì chỉ lọc theo channel.
     if (workspace === "comments") {
       return conversations.filter(isFacebookCommentConversation);
     }
+
+    // Bình luận đã có màn riêng, không để lẫn vào Hộp thư đến hoặc
+    // Facebook Messenger nữa.
+    if (workspace === "inbox" || workspace === "facebook") {
+      return conversations.filter(
+        (item) => !isFacebookCommentConversation(item),
+      );
+    }
+
     return conversations;
   }, [conversations, workspace]);
 
   useEffect(() => {
-    if (workspace !== "comments") return;
+    const isConversationWorkspace =
+      workspace === "inbox" ||
+      workspace === "facebook" ||
+      workspace === "instagram" ||
+      workspace === "comments";
+    if (!isConversationWorkspace) return;
 
     if (!visibleConversations.length) {
       if (activeId) setActiveId("");
@@ -1390,6 +1406,8 @@ export default function MessagesPageClient({
       return;
     }
 
+    // Khi chuyển giữa Messenger và Bình luận, không giữ lại hội thoại
+    // thuộc màn trước ở khung chi tiết.
     if (!visibleConversations.some((item) => item.id === activeId)) {
       setActiveId(visibleConversations[0].id);
     }
