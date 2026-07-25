@@ -1003,6 +1003,7 @@ function SearchableEditSelect({
   options,
   placeholder,
   searchPlaceholder,
+  fallbackLabel,
   disabled = false,
 }: {
   value?: string | null;
@@ -1010,13 +1011,18 @@ function SearchableEditSelect({
   options: Array<{ value: string; label: string }>;
   placeholder?: string;
   searchPlaceholder?: string;
+  fallbackLabel?: string | null;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState("");
   const boxRef = useRef<HTMLDivElement | null>(null);
 
-  const selected = options.find((item) => String(item.value) === String(value || ""));
+  const selected = options.find(
+    (item) => String(item.value) === String(value || ""),
+  );
+  const selectedLabel =
+    selected?.label || String(fallbackLabel || "").trim();
   const normalizedKeyword = normalizeOptionSearch(keyword);
 
   const filteredOptions = useMemo(() => {
@@ -1067,7 +1073,7 @@ function SearchableEditSelect({
         className={`flex h-9 w-full items-center justify-between gap-2 rounded-xl border border-neutral-300 bg-white px-3 text-left text-[12px] outline-none transition focus:border-neutral-500 ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-neutral-400"}`}
       >
         <span className={selected ? "truncate text-neutral-900" : "truncate text-neutral-400"}>
-          {selected?.label || placeholder || "Chọn"}
+          {selectedLabel || placeholder || "Chọn"}
         </span>
         <span className="text-[10px] text-neutral-400">⌄</span>
       </button>
@@ -2089,23 +2095,39 @@ export default function OrderDetailPageClient({
 
     return "";
   };
-  const hydrateEditAddressSelectors = async (
-    source: OrderDetail,
+  const hydrateOrderAddressDropdowns = async (
+    source?: OrderDetail | null,
   ) => {
-    const normalizeAddressName = (value?: string | null) =>
-      String(value || "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/đ/g, "d")
-        .replace(/Đ/g, "D")
-        .replace(
-          /^(tinh|thanh pho|tp\.?|quan|huyen|thi xa|xa|phuong|thi tran)\s+/i,
-          "",
-        )
-        .replace(/[^a-zA-Z0-9]+/g, " ")
-        .trim()
-        .toLowerCase();
+    if (!source) return;
 
+    const districtId = source.shippingGhnDistrictId
+      ? String(source.shippingGhnDistrictId)
+      : "";
+    const wardCode = String(source.shippingGhnWardCode || "").trim();
+
+    let provinceId = "";
+
+    if (districtId) {
+      provinceId = await resolveProvinceIdByDistrictId(districtId);
+    } else {
+      await loadProvinces();
+    }
+
+    if (provinceId) {
+      setSelectedProvinceId(provinceId);
+
+      // resolveProvinceIdByDistrictId đã set đúng districtOptions.
+      setSelectedDistrictId(districtId);
+
+      if (districtId) {
+        await loadWards(districtId);
+      }
+
+      setSelectedWardCode(wardCode);
+      return;
+    }
+
+    // Fallback cho dữ liệu cũ chỉ có tên tỉnh/huyện/xã.
     const provinceRes = await apiFetch(
       "/shipping-addresses/provinces",
       { headers: { Accept: "application/json" } },
@@ -2116,170 +2138,75 @@ export default function OrderDetailPageClient({
       : [];
     setProvinceOptions(provinces);
 
-    let provinceId = "";
-    let districtId = source.shippingGhnDistrictId
-      ? String(source.shippingGhnDistrictId)
+    const normalize = (value?: string | null) =>
+      String(value || "")
+        .normalize("NFD")
+        .replace(/[\\u0300-\\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/Đ/g, "D")
+        .replace(/^(tinh|thanh pho|tp\\.?|quan|huyen|thi xa|xa|phuong|thi tran)\\s+/i, "")
+        .replace(/[^a-zA-Z0-9]+/g, " ")
+        .trim()
+        .toLowerCase();
+
+    const matchedProvince = provinces.find(
+      (item) =>
+        normalize(item.name) === normalize(source.shippingProvince),
+    );
+    const fallbackProvinceId = matchedProvince
+      ? String(matchedProvince.id)
       : "";
-    let wardCode = String(source.shippingGhnWardCode || "");
-    let districts: DistrictOption[] = [];
-    let wards: WardOption[] = [];
 
-    // Ưu tiên tìm tỉnh theo GHN district ID đã lưu.
-    if (districtId) {
-      for (const province of provinces) {
-        const districtRes = await apiFetch(
-          `/shipping-addresses/districts?provinceId=${province.id}`,
-          { headers: { Accept: "application/json" } },
-        );
-        const districtJson = await districtRes.json().catch(() => []);
-        const rows: DistrictOption[] = Array.isArray(districtJson)
-          ? districtJson
-          : [];
+    setSelectedProvinceId(fallbackProvinceId);
 
-        if (rows.some((item) => String(item.id) === districtId)) {
-          provinceId = String(province.id);
-          districts = rows;
-          break;
-        }
-      }
+    if (!fallbackProvinceId) {
+      setSelectedDistrictId("");
+      setSelectedWardCode("");
+      setDistrictOptions([]);
+      setWardOptions([]);
+      return;
     }
 
-    const fullAddressText = [
-      source.shippingAddressLine1,
-      source.shippingAddressLine2,
-      source.shippingWard,
-      source.shippingDistrict,
-      source.shippingProvince,
-    ]
-      .filter(Boolean)
-      .join(", ");
-    const normalizedFullAddress = normalizeAddressName(fullAddressText);
-
-    // Đơn cũ thiếu mã GHN: fallback theo tên tỉnh đã lưu,
-    // sau đó dò trực tiếp trong chuỗi địa chỉ đầy đủ.
-    if (!provinceId) {
-      const expectedProvince = normalizeAddressName(
-        source.shippingProvince,
-      );
-
-      const matchedProvince = provinces
-        .filter((item) => {
-          const normalizedName = normalizeAddressName(item.name);
-          return Boolean(
-            normalizedName &&
-              (
-                normalizedName === expectedProvince ||
-                normalizedFullAddress.includes(normalizedName)
-              ),
-          );
-        })
-        .sort(
-          (a, b) =>
-            normalizeAddressName(b.name).length -
-            normalizeAddressName(a.name).length,
-        )[0];
-
-      provinceId = matchedProvince ? String(matchedProvince.id) : "";
-    }
-
-    if (provinceId && !districts.length) {
-      const districtRes = await apiFetch(
-        `/shipping-addresses/districts?provinceId=${provinceId}`,
-        { headers: { Accept: "application/json" } },
-      );
-      const districtJson = await districtRes.json().catch(() => []);
-      districts = Array.isArray(districtJson) ? districtJson : [];
-    }
+    const districtRes = await apiFetch(
+      `/shipping-addresses/districts?provinceId=${fallbackProvinceId}`,
+      { headers: { Accept: "application/json" } },
+    );
+    const districtJson = await districtRes.json().catch(() => []);
+    const districts: DistrictOption[] = Array.isArray(districtJson)
+      ? districtJson
+      : [];
     setDistrictOptions(districts);
 
-    if (!districtId) {
-      const expectedDistrict = normalizeAddressName(
-        source.shippingDistrict,
-      );
+    const matchedDistrict = districts.find(
+      (item) =>
+        normalize(item.name) === normalize(source.shippingDistrict),
+    );
+    const fallbackDistrictId = matchedDistrict
+      ? String(matchedDistrict.id)
+      : "";
 
-      const matchedDistrict = districts
-        .filter((item) => {
-          const normalizedName = normalizeAddressName(item.name);
-          return Boolean(
-            normalizedName &&
-              (
-                normalizedName === expectedDistrict ||
-                normalizedFullAddress.includes(normalizedName)
-              ),
-          );
-        })
-        .sort(
-          (a, b) =>
-            normalizeAddressName(b.name).length -
-            normalizeAddressName(a.name).length,
-        )[0];
+    setSelectedDistrictId(fallbackDistrictId);
 
-      districtId = matchedDistrict ? String(matchedDistrict.id) : "";
+    if (!fallbackDistrictId) {
+      setSelectedWardCode("");
+      setWardOptions([]);
+      return;
     }
 
-    if (districtId) {
-      const wardRes = await apiFetch(
-        `/shipping-addresses/wards?districtId=${districtId}`,
-        { headers: { Accept: "application/json" } },
-      );
-      const wardJson = await wardRes.json().catch(() => []);
-      wards = Array.isArray(wardJson) ? wardJson : [];
-    }
+    const wardRes = await apiFetch(
+      `/shipping-addresses/wards?districtId=${fallbackDistrictId}`,
+      { headers: { Accept: "application/json" } },
+    );
+    const wardJson = await wardRes.json().catch(() => []);
+    const wards: WardOption[] = Array.isArray(wardJson)
+      ? wardJson
+      : [];
     setWardOptions(wards);
 
-    if (!wardCode) {
-      const expectedWard = normalizeAddressName(source.shippingWard);
-
-      const matchedWard = wards
-        .filter((item) => {
-          const normalizedName = normalizeAddressName(item.name);
-          return Boolean(
-            normalizedName &&
-              (
-                normalizedName === expectedWard ||
-                normalizedFullAddress.includes(normalizedName)
-              ),
-          );
-        })
-        .sort(
-          (a, b) =>
-            normalizeAddressName(b.name).length -
-            normalizeAddressName(a.name).length,
-        )[0];
-
-      wardCode = matchedWard?.code || "";
-    }
-
-    const selectedProvince = provinces.find(
-      (item) => String(item.id) === provinceId,
+    const matchedWard = wards.find(
+      (item) => normalize(item.name) === normalize(source.shippingWard),
     );
-    const selectedDistrict = districts.find(
-      (item) => String(item.id) === districtId,
-    );
-    const selectedWard = wards.find(
-      (item) => item.code === wardCode,
-    );
-
-    setDraftOrder((prev) =>
-      prev
-        ? {
-            ...prev,
-            shippingProvince:
-              selectedProvince?.name || prev.shippingProvince || "",
-            shippingDistrict:
-              selectedDistrict?.name || prev.shippingDistrict || "",
-            shippingWard:
-              selectedWard?.name || prev.shippingWard || "",
-            shippingGhnDistrictId:
-              districtId ? Number(districtId) : null,
-            shippingGhnWardCode: wardCode || null,
-          }
-        : prev,
-    );
-
-    setSelectedProvinceId(provinceId);
-    setSelectedDistrictId(districtId);
-    setSelectedWardCode(wardCode);
+    setSelectedWardCode(matchedWard?.code || "");
   };
 
   const handleProvinceChange = async (provinceId: string) => {
@@ -2448,7 +2375,16 @@ export default function OrderDetailPageClient({
 
           if (res.ok && json) {
             setOrder(json);
-            setDraftOrder(json);
+            setDraftOrder({
+              ...json,
+              shippingProvince: json.shippingProvince || "",
+              shippingDistrict: json.shippingDistrict || "",
+              shippingWard: json.shippingWard || "",
+              shippingGhnDistrictId:
+                json.shippingGhnDistrictId ?? null,
+              shippingGhnWardCode:
+                json.shippingGhnWardCode || null,
+            });
             success = true;
             break;
           }
@@ -2479,6 +2415,23 @@ export default function OrderDetailPageClient({
 
     void run();
   }, [orderId, created]);
+
+  useEffect(() => {
+    if (!order?.id) return;
+
+    void hydrateOrderAddressDropdowns(order).catch(() => {
+      setSelectedProvinceId("");
+      setSelectedDistrictId("");
+      setSelectedWardCode("");
+    });
+  }, [
+    order?.id,
+    order?.shippingProvince,
+    order?.shippingDistrict,
+    order?.shippingWard,
+    order?.shippingGhnDistrictId,
+    order?.shippingGhnWardCode,
+  ]);
 
   useEffect(() => {
     const run = async () => {
@@ -4069,7 +4022,8 @@ export default function OrderDetailPageClient({
                     if (!order) return;
 
                     const metaNote = parseStructuredNote(order.note);
-                    const nextDraft: OrderDetail = {
+
+                    setDraftOrder({
                       ...order,
                       shippingRecipientName:
                         order.shippingRecipientName || order.customerName || "",
@@ -4077,33 +4031,17 @@ export default function OrderDetailPageClient({
                         order.shippingPhone || order.customerPhone || "",
                       shippingAddressLine1:
                         order.shippingAddressLine1 || metaNote.address || "",
-                      shippingAddressLine2:
-                        order.shippingAddressLine2 || "",
-                      shippingProvince:
-                        order.shippingProvince || "",
-                      shippingDistrict:
-                        order.shippingDistrict || "",
-                      shippingWard:
-                        order.shippingWard || "",
-                      shippingPostalCode:
-                        order.shippingPostalCode || "",
+                      shippingProvince: order.shippingProvince || "",
                       note: metaNote.noteText || metaNote.shippingNote || "",
-                    };
+                    });
 
-                    setDraftOrder(nextDraft);
                     setSelectedProvinceId("");
                     setSelectedDistrictId("");
                     setSelectedWardCode("");
-                    setDistrictOptions([]);
-                    setWardOptions([]);
+                    void loadProvinces();
+
                     setIsEditing(true);
                     setMessage("");
-
-                    void hydrateEditAddressSelectors(nextDraft).catch(() => {
-                      setMessage(
-                        "Không tải được danh sách tỉnh/quận/xã đã lưu. Hãy chọn lại địa chỉ.",
-                      );
-                    });
                   }}
                 >
                   Sửa đơn hàng
@@ -4324,6 +4262,7 @@ export default function OrderDetailPageClient({
                         </p>
                         <SearchableEditSelect
                           value={selectedProvinceId}
+                          fallbackLabel={draftOrder?.shippingProvince}
                           onChange={handleEditProvinceChange}
                           options={provinceOptions.map((item) => ({
                             value: String(item.id),
@@ -4340,6 +4279,7 @@ export default function OrderDetailPageClient({
                         </p>
                         <SearchableEditSelect
                           value={selectedDistrictId}
+                          fallbackLabel={draftOrder?.shippingDistrict}
                           onChange={handleEditDistrictChange}
                           options={districtOptions.map((item) => ({
                             value: String(item.id),
@@ -4356,6 +4296,7 @@ export default function OrderDetailPageClient({
                         </p>
                         <SearchableEditSelect
                           value={selectedWardCode}
+                          fallbackLabel={draftOrder?.shippingWard}
                           onChange={handleEditWardChange}
                           options={wardOptions.map((item) => ({
                             value: item.code,
@@ -5764,6 +5705,7 @@ export default function OrderDetailPageClient({
                   </p>
                   <SearchableEditSelect
                     value={selectedProvinceId}
+                    fallbackLabel={shipmentDraft.province}
                     onChange={handleProvinceChange}
                     options={provinceOptions.map((item) => ({
                       value: String(item.id),
@@ -5780,6 +5722,7 @@ export default function OrderDetailPageClient({
                   </p>
                   <SearchableEditSelect
                     value={selectedDistrictId}
+                    fallbackLabel={shipmentDraft.district}
                     onChange={handleDistrictChange}
                     options={districtOptions.map((item) => ({
                       value: String(item.id),
@@ -5796,6 +5739,7 @@ export default function OrderDetailPageClient({
                   </p>
                   <SearchableEditSelect
                     value={selectedWardCode}
+                    fallbackLabel={shipmentDraft.ward}
                     onChange={handleWardChange}
                     options={wardOptions.map((item) => ({
                       value: item.code,

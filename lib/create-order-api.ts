@@ -99,10 +99,15 @@ export type CreateOrderShippingSnapshot = {
   shippingAddressLine2?: string;
   shippingWard?: string;
   shippingDistrict?: string;
+  shippingCity?: string;
   shippingProvince?: string;
+  shippingCountry?: string;
   shippingPostalCode?: string;
   shippingGhnDistrictId?: number;
   shippingGhnWardCode?: string;
+  /** Alias backend OrderService đang đọc. */
+  ghnDistrictId?: number;
+  ghnWardCode?: string;
   shippingPartner?: string;
   shippingPayer?: string;
   skipAutoShipment?: boolean;
@@ -664,41 +669,52 @@ export async function createOrder(
         ? toNumber(payload.finalAmount)
         : undefined,
     shippingSnapshot: payload.shippingSnapshot
-      ? {
-          skipAutoShipment: payload.shippingSnapshot.skipAutoShipment,
-          note: payload.shippingSnapshot.note,
-          shippingNote: payload.shippingSnapshot.shippingNote,
-          deliveryRequirement: payload.shippingSnapshot.deliveryRequirement,
-          requiredNote: payload.shippingSnapshot.requiredNote,
-          required_note: payload.shippingSnapshot.required_note,
-          requiredNoteLabel: payload.shippingSnapshot.requiredNoteLabel,
-          failedDeliveryFee30k: payload.shippingSnapshot.failedDeliveryFee30k,
-          failedDeliveryCodAmount: payload.shippingSnapshot.failedDeliveryCodAmount,
-          codFailedAmount: payload.shippingSnapshot.codFailedAmount,
-          cod_failed_amount: payload.shippingSnapshot.cod_failed_amount,
-          shippingAddressId: payload.shippingSnapshot.shippingAddressId,
-          shippingFee: customerShippingFee,
-          customerShippingFee,
-          ghnActualFee: toNumber(payload.shippingSnapshot.ghnActualFee || 0),
-          shippingRecipientName: payload.shippingSnapshot.shippingRecipientName,
-          shippingPhone: payload.shippingSnapshot.shippingPhone,
-          shippingAddressLine1: payload.shippingSnapshot.shippingAddressLine1,
-          shippingAddressLine2: payload.shippingSnapshot.shippingAddressLine2,
-          shippingWard: payload.shippingSnapshot.shippingWard,
-          shippingDistrict: payload.shippingSnapshot.shippingDistrict,
-          shippingProvince: payload.shippingSnapshot.shippingProvince,
-          shippingPostalCode: payload.shippingSnapshot.shippingPostalCode,
-          ghnDistrictId: payload.shippingSnapshot.shippingGhnDistrictId,
-          ghnWardCode: payload.shippingSnapshot.shippingGhnWardCode,
-          shippingPartner: payload.shippingSnapshot.shippingPartner,
-          shippingPayer: payload.shippingSnapshot.shippingPayer,
-          selectedServiceId: payload.shippingSnapshot.selectedServiceId,
-          selectedServiceTypeId: payload.shippingSnapshot.selectedServiceTypeId,
-          weight: payload.shippingSnapshot.weight,
-          length: payload.shippingSnapshot.length,
-          width: payload.shippingSnapshot.width,
-          height: payload.shippingSnapshot.height,
-        }
+      ? (() => {
+          const snapshot = payload.shippingSnapshot;
+          const districtId =
+            snapshot.shippingGhnDistrictId ??
+            snapshot.ghnDistrictId;
+          const wardCode =
+            snapshot.shippingGhnWardCode ??
+            snapshot.ghnWardCode;
+
+          // Giữ nguyên toàn bộ dữ liệu địa chỉ từ CreateOrderPageClient.
+          // Sau đó bổ sung cả hai bộ alias để mọi phiên bản backend đều đọc được.
+          return {
+            ...snapshot,
+
+            shippingFee: customerShippingFee,
+            customerShippingFee,
+            ghnActualFee: toNumber(snapshot.ghnActualFee || 0),
+
+            shippingRecipientName:
+              snapshot.shippingRecipientName || undefined,
+            shippingPhone: snapshot.shippingPhone || undefined,
+            shippingAddressLine1:
+              snapshot.shippingAddressLine1 || undefined,
+            shippingAddressLine2:
+              snapshot.shippingAddressLine2 || undefined,
+            shippingWard: snapshot.shippingWard || undefined,
+            shippingDistrict: snapshot.shippingDistrict || undefined,
+            shippingCity:
+              snapshot.shippingCity ||
+              snapshot.shippingProvince ||
+              undefined,
+            shippingProvince:
+              snapshot.shippingProvince ||
+              snapshot.shippingCity ||
+              undefined,
+            shippingCountry:
+              snapshot.shippingCountry || "VN",
+            shippingPostalCode:
+              snapshot.shippingPostalCode || undefined,
+
+            shippingGhnDistrictId: districtId,
+            shippingGhnWardCode: wardCode,
+            ghnDistrictId: districtId,
+            ghnWardCode: wardCode,
+          };
+        })()
       : undefined,
     items: payload.items.map((item) => ({
       variantId: item.variantId,

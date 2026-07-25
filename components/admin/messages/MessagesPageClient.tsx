@@ -512,6 +512,71 @@ function isFacebookCommentConversation(conversation?: OmniConversation | null) {
   );
 }
 
+
+type QuickReplyImportMetaView = {
+  imageUrls: string[];
+  sourceUpdatedAt: string | null;
+};
+
+function normalizeQuickReplyImportDateValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) {
+      return new Date(
+        Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, parsed.S),
+      ).toISOString();
+    }
+  }
+
+  const text = String(value).trim();
+  const vietnameseDate = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (vietnameseDate) {
+    const [, day, month, year] = vietnameseDate;
+    return new Date(
+      Date.UTC(Number(year), Number(month) - 1, Number(day)),
+    ).toISOString();
+  }
+
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function parseQuickReplyImportMeta(
+  category?: string | null,
+): QuickReplyImportMetaView {
+  const empty: QuickReplyImportMetaView = {
+    imageUrls: [],
+    sourceUpdatedAt: null,
+  };
+  if (!category) return empty;
+
+  try {
+    const parsed = JSON.parse(category);
+    if (parsed?.type !== "QUICK_REPLY_IMPORT") return empty;
+    return {
+      imageUrls: Array.isArray(parsed.imageUrls)
+        ? parsed.imageUrls
+            .map((item: unknown) => String(item).trim())
+            .filter(Boolean)
+        : [],
+      sourceUpdatedAt: normalizeQuickReplyImportDateValue(
+        parsed.sourceUpdatedAt,
+      ),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function formatQuickReplyImportDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("vi-VN");
+}
+
 export default function MessagesPageClient({
   initialWorkspace = "inbox",
 }: {
@@ -1485,26 +1550,99 @@ export default function MessagesPageClient({
       .toLowerCase();
   }
 
+  type QuickReplyImportMeta = {
+    imageUrls: string[];
+    sourceUpdatedAt: string | null;
+  };
+
+  function splitQuickReplyImageUrls(value: unknown) {
+    return String(value ?? "")
+      .split(/[\n,;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item, index, array) => array.indexOf(item) === index);
+  }
+
+  function normalizeQuickReplyImportDate(value: unknown) {
+    if (value === null || value === undefined || value === "") return null;
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const parsed = XLSX.SSF.parse_date_code(value);
+      if (parsed) {
+        return new Date(
+          Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, parsed.S),
+        ).toISOString();
+      }
+    }
+
+    const text = String(value).trim();
+    const vietnameseDate = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+    if (vietnameseDate) {
+      const [, day, month, year] = vietnameseDate;
+      return new Date(
+        Date.UTC(Number(year), Number(month) - 1, Number(day)),
+      ).toISOString();
+    }
+
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  function parseQuickReplyImportMeta(category?: string | null): QuickReplyImportMeta {
+    const empty: QuickReplyImportMeta = { imageUrls: [], sourceUpdatedAt: null };
+    if (!category) return empty;
+
+    try {
+      const parsed = JSON.parse(category);
+      if (parsed?.type !== "QUICK_REPLY_IMPORT") return empty;
+      return {
+        imageUrls: Array.isArray(parsed.imageUrls)
+          ? parsed.imageUrls.map((item: unknown) => String(item).trim()).filter(Boolean)
+          : [],
+        sourceUpdatedAt: normalizeQuickReplyImportDate(parsed.sourceUpdatedAt),
+      };
+    } catch {
+      return empty;
+    }
+  }
+
+  function stringifyQuickReplyImportMeta(meta: QuickReplyImportMeta) {
+    return JSON.stringify({
+      type: "QUICK_REPLY_IMPORT",
+      imageUrls: meta.imageUrls,
+      sourceUpdatedAt: meta.sourceUpdatedAt,
+    });
+  }
+
+  function formatQuickReplyImportDate(value?: string | null) {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return date.toLocaleDateString("vi-VN");
+  }
+
   function handleDownloadQuickReplyTemplate() {
     const rows = [
       {
         "Từ viết tắt": "tl",
         "Nội dung": "Dạ em gửi anh các mẫu thắt lưng bên em giá 400k-450k/c ạ",
+        "Ảnh đính kèm": "https://social.dktcdn.net/facebook/quick_reply/the1970/anh-1.jpg,\nhttps://social.dktcdn.net/facebook/quick_reply/the1970/anh-2.jpg",
+        "Ngày cập nhật": "22/07/2026",
       },
       {
         "Từ viết tắt": "838",
         "Nội dung": "Quần Kaki QKK838 THE1970 giá 540k/1c ạ",
-      },
-      {
-        "Từ viết tắt": "qddh",
-        "Nội dung": "Em gửi anh/chị quy định đổi hàng bên em. Khách mua hàng được đổi 1 lần trong vòng 7 ngày kể từ ngày đơn hàng thành công.",
+        "Ảnh đính kèm": "",
+        "Ngày cập nhật": "20/07/2026",
       },
     ];
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
     worksheet["!cols"] = [
       { wch: 22 },
-      { wch: 95 },
+      { wch: 80 },
+      { wch: 80 },
+      { wch: 18 },
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -1521,151 +1659,183 @@ export default function MessagesPageClient({
 
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
       const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        throw new Error("File Excel không có sheet dữ liệu.");
-      }
+      if (!firstSheetName) throw new Error("File Excel không có sheet dữ liệu.");
 
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
         workbook.Sheets[firstSheetName],
-        { defval: "" },
+        { defval: "", raw: true },
       );
 
-      const existingTexts = new Set(
-        quickReplyTemplates.map((item) =>
-          normalizeQuickReplyText(item.content),
-        ),
-      );
-      const existingShortcuts = new Set(
+      const existingByShortcut = new Map(
         quickReplyTemplates
-          .map((item) => normalizeQuickReplyText(item.title))
-          .filter(Boolean),
+          .filter((item) => normalizeQuickReplyText(item.title))
+          .map((item) => [normalizeQuickReplyText(item.title), item]),
       );
-      const fileTexts = new Set<string>();
+      const existingByContent = new Map(
+        quickReplyTemplates.map((item) => [normalizeQuickReplyText(item.content), item]),
+      );
       const fileShortcuts = new Set<string>();
-      const validRows: Array<{
+      const importRows: Array<{
         content: string;
         shortcut: string;
+        imageUrls: string[];
+        sourceUpdatedAt: string | null;
         sourceRow: number;
+        existing?: OmniQuickReplyTemplate;
       }> = [];
       let emptyCount = 0;
       let duplicateCount = 0;
+      let unchangedCount = 0;
 
       rows.forEach((row, index) => {
         const entries = Object.entries(row);
-        const findValue = (...aliases: string[]) => {
-          const normalizedAliases = aliases.map((alias) =>
-            normalizeQuickReplyText(alias),
-          );
-          const matched = entries.find(([key]) =>
+        const findRawValue = (...aliases: string[]) => {
+          const normalizedAliases = aliases.map(normalizeQuickReplyText);
+          return entries.find(([key]) =>
             normalizedAliases.includes(normalizeQuickReplyText(key)),
-          );
-          return String(matched?.[1] ?? "").trim();
+          )?.[1];
         };
+        const findValue = (...aliases: string[]) =>
+          String(findRawValue(...aliases) ?? "").trim();
 
         const content =
-          findValue(
-            "Nội dung",
-            "Noi dung",
-            "Content",
-            "Mẫu trả lời",
-            "Mau tra loi",
-            "Câu trả lời",
-            "Cau tra loi",
-          ) ||
+          findValue("Nội dung", "Noi dung", "Content", "Mẫu trả lời", "Mau tra loi", "Câu trả lời", "Cau tra loi") ||
           String(entries[0]?.[1] ?? "").trim();
-
-        const shortcut = findValue(
-          "Từ viết tắt",
-          "Tu viet tat",
-          "Viết tắt",
-          "Viet tat",
-          "Shortcut",
-          "Mã",
-          "Ma",
-          "Tiêu đề",
-          "Tieu de",
-          "Title",
+        const shortcut = findValue("Từ viết tắt", "Tu viet tat", "Viết tắt", "Viet tat", "Shortcut", "Mã", "Ma", "Tiêu đề", "Tieu de", "Title");
+        const imageUrls = splitQuickReplyImageUrls(
+          findRawValue("Ảnh đính kèm", "Anh dinh kem", "Ảnh", "Anh", "Image", "Images", "Image URLs", "Image URL"),
+        );
+        const sourceUpdatedAt = normalizeQuickReplyImportDate(
+          findRawValue("Ngày cập nhật", "Ngay cap nhat", "Updated at", "UpdatedAt", "Update date"),
         );
 
-        if (!content) {
+        if (!content || !shortcut) {
           emptyCount += 1;
           return;
         }
 
-        const normalized = normalizeQuickReplyText(content);
         const normalizedShortcut = normalizeQuickReplyText(shortcut);
-
-        if (!normalizedShortcut) {
-          emptyCount += 1;
+        const normalizedContent = normalizeQuickReplyText(content);
+        if (fileShortcuts.has(normalizedShortcut)) {
+          duplicateCount += 1;
           return;
         }
+        fileShortcuts.add(normalizedShortcut);
 
-        if (
-          !normalized ||
-          existingTexts.has(normalized) ||
-          fileTexts.has(normalized) ||
-          existingShortcuts.has(normalizedShortcut) ||
-          fileShortcuts.has(normalizedShortcut)
-        ) {
+        const existing = existingByShortcut.get(normalizedShortcut);
+        const sameContentTemplate = existingByContent.get(normalizedContent);
+        if (!existing && sameContentTemplate) {
           duplicateCount += 1;
           return;
         }
 
-        fileTexts.add(normalized);
-        fileShortcuts.add(normalizedShortcut);
-        validRows.push({
+        if (existing) {
+          const currentMeta = parseQuickReplyImportMeta(existing.category);
+          const incomingMeta = stringifyQuickReplyImportMeta({ imageUrls, sourceUpdatedAt });
+          const currentMetaText = stringifyQuickReplyImportMeta(currentMeta);
+          const incomingTime = sourceUpdatedAt ? new Date(sourceUpdatedAt).getTime() : 0;
+          const currentTime = currentMeta.sourceUpdatedAt
+            ? new Date(currentMeta.sourceUpdatedAt).getTime()
+            : 0;
+          const changed =
+            normalizeQuickReplyText(existing.content) !== normalizedContent ||
+            incomingMeta !== currentMetaText;
+
+          if (!changed || (incomingTime > 0 && currentTime > incomingTime)) {
+            unchangedCount += 1;
+            return;
+          }
+        }
+
+        importRows.push({
           content,
           shortcut: shortcut.trim(),
+          imageUrls,
+          sourceUpdatedAt,
           sourceRow: index + 2,
+          existing,
         });
       });
 
-      if (!validRows.length) {
+      if (!importRows.length) {
         setQuickReplyImportResult(
-          `Không có mẫu mới để nhập. Bỏ qua ${emptyCount} dòng trống và ${duplicateCount} dòng trùng.`,
+          `Không có dữ liệu mới để cập nhật. Bỏ qua ${unchangedCount} dòng không đổi, ${duplicateCount} dòng trùng và ${emptyCount} dòng thiếu dữ liệu.`,
         );
         return;
       }
 
-      const createdTemplates: OmniQuickReplyTemplate[] = [];
-      const failedRows: number[] = [];
+      const results: Array<{
+        row: (typeof importRows)[number];
+        template?: OmniQuickReplyTemplate;
+        mode?: "created" | "updated";
+      }> = new Array(importRows.length);
+      let cursor = 0;
+      const workerCount = Math.min(8, importRows.length);
 
-      for (let index = 0; index < validRows.length; index += 1) {
-        const row = validRows[index];
-        try {
-          const created = await createOmniQuickReply({
-            content: row.content,
-            title: row.shortcut,
-            sortOrder: quickReplyTemplates.length + createdTemplates.length,
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const index = cursor++;
+            if (index >= importRows.length) return;
+            const row = importRows[index];
+            const category = stringifyQuickReplyImportMeta({
+              imageUrls: row.imageUrls,
+              sourceUpdatedAt: row.sourceUpdatedAt,
+            });
+            try {
+              const template = row.existing
+                ? await updateOmniQuickReply(row.existing.id, {
+                    content: row.content,
+                    title: row.shortcut,
+                    category,
+                  })
+                : await createOmniQuickReply({
+                    content: row.content,
+                    title: row.shortcut,
+                    category,
+                    sortOrder: quickReplyTemplates.length + index,
+                  });
+              results[index] = {
+                row,
+                template,
+                mode: row.existing ? "updated" : "created",
+              };
+            } catch {
+              results[index] = { row };
+            }
+          }
+        }),
+      );
+
+      const successful = results.filter((item) => item?.template);
+      const failedRows = results.filter((item) => !item?.template).map((item) => item.row.sourceRow);
+      const createdCount = successful.filter((item) => item.mode === "created").length;
+      const updatedCount = successful.filter((item) => item.mode === "updated").length;
+
+      if (successful.length) {
+        setQuickReplyTemplates((prev) => {
+          const map = new Map(prev.map((item) => [item.id, item]));
+          successful.forEach((item) => {
+            if (item.template) map.set(item.template.id, item.template);
           });
-          createdTemplates.push(created);
-        } catch {
-          failedRows.push(row.sourceRow);
-        }
+          return Array.from(map.values()).sort(
+            (a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0),
+          );
+        });
       }
 
-      if (createdTemplates.length) {
-        setQuickReplyTemplates((prev) => [...prev, ...createdTemplates]);
-      }
-
-      const parts = [
-        `Đã nhập ${createdTemplates.length}/${validRows.length} mẫu`,
-      ];
-      if (duplicateCount) parts.push(`bỏ qua ${duplicateCount} mẫu trùng`);
-      if (emptyCount) parts.push(`bỏ qua ${emptyCount} dòng trống`);
-      if (failedRows.length) {
-        parts.push(`lỗi tại dòng ${failedRows.join(", ")}`);
-      }
+      const parts = [`Đã thêm ${createdCount} mẫu`, `cập nhật ${updatedCount} mẫu`];
+      if (unchangedCount) parts.push(`bỏ qua ${unchangedCount} dòng không đổi`);
+      if (duplicateCount) parts.push(`bỏ qua ${duplicateCount} dòng trùng`);
+      if (emptyCount) parts.push(`bỏ qua ${emptyCount} dòng thiếu dữ liệu`);
+      if (failedRows.length) parts.push(`lỗi tại dòng ${failedRows.join(", ")}`);
       setQuickReplyImportResult(parts.join(" · "));
     } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Không đọc được file Excel.";
+      const message = err instanceof Error ? err.message : "Không đọc được file Excel.";
       setError(message);
-      setQuickReplyImportResult(`Nhập Excel thất bại: ${message}`);
+      setQuickReplyImportResult("");
     } finally {
       setImportingQuickReplies(false);
     }
@@ -3964,7 +4134,7 @@ function WorkspacePanel({
                 </button>
                 ) : null}
                 <p className="text-xs text-neutral-500">
-                  Excel gồm 2 cột: <b>Từ viết tắt</b> và <b>Nội dung</b>.
+                  Excel gồm 4 cột: <b>Từ viết tắt</b>, <b>Nội dung</b>, <b>Ảnh đính kèm</b> và <b>Ngày cập nhật</b>. Mã đã có sẽ được cập nhật thay vì tạo trùng.
                 </p>
               </div>
 
@@ -4001,12 +4171,14 @@ function WorkspacePanel({
           </div>
 
           <div className="max-h-[620px] overflow-auto">
-            <table className="w-full min-w-[760px] table-fixed text-left text-sm">
+            <table className="w-full min-w-[1180px] table-fixed text-left text-sm">
               <thead className="sticky top-0 z-10 bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400">
                 <tr>
                   <th className="w-14 px-4 py-3 text-center">STT</th>
                   <th className="w-40 px-3 py-3">Từ viết tắt</th>
                   <th className="px-3 py-3">Nội dung</th>
+                  <th className="w-72 px-3 py-3">Ảnh đính kèm</th>
+                  <th className="w-36 px-3 py-3">Ngày cập nhật</th>
                   <th className="w-36 px-4 py-3 text-right">Thao tác</th>
                 </tr>
               </thead>
@@ -4033,6 +4205,39 @@ function WorkspacePanel({
                       >
                         {template.content}
                       </p>
+                    </td>
+                    <td className="px-3 py-3">
+                      {parseQuickReplyImportMeta(template.category).imageUrls.length ? (
+                        <div className="space-y-1">
+                          {parseQuickReplyImportMeta(template.category).imageUrls
+                            .slice(0, 2)
+                            .map((url) => (
+                              <a
+                                key={url}
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block truncate text-xs font-semibold text-blue-600 hover:underline"
+                                title={url}
+                              >
+                                {url}
+                              </a>
+                            ))}
+                          {parseQuickReplyImportMeta(template.category).imageUrls.length > 2 ? (
+                            <p className="text-xs font-bold text-neutral-400">
+                              +{parseQuickReplyImportMeta(template.category).imageUrls.length - 2} ảnh
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-neutral-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-xs font-semibold text-neutral-600">
+                      {formatQuickReplyImportDate(
+                        parseQuickReplyImportMeta(template.category).sourceUpdatedAt ||
+                          (template as any).updatedAt,
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {canEditQuickReplies || canDeleteQuickReplies ? (
@@ -4063,7 +4268,7 @@ function WorkspacePanel({
                 {!visibleQuickReplyTemplates.length ? (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={6}
                       className="px-5 py-12 text-center text-neutral-400"
                     >
                       {quickReplySearch
