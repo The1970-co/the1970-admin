@@ -2144,13 +2144,41 @@ export default function OrderDetailPageClient({
       }
     }
 
-    // Đơn cũ thiếu mã GHN: fallback theo tên tỉnh.
-    if (!provinceId && source.shippingProvince) {
-      const matchedProvince = provinces.find(
-        (item) =>
-          normalizeAddressName(item.name) ===
-          normalizeAddressName(source.shippingProvince),
+    const fullAddressText = [
+      source.shippingAddressLine1,
+      source.shippingAddressLine2,
+      source.shippingWard,
+      source.shippingDistrict,
+      source.shippingProvince,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const normalizedFullAddress = normalizeAddressName(fullAddressText);
+
+    // Đơn cũ thiếu mã GHN: fallback theo tên tỉnh đã lưu,
+    // sau đó dò trực tiếp trong chuỗi địa chỉ đầy đủ.
+    if (!provinceId) {
+      const expectedProvince = normalizeAddressName(
+        source.shippingProvince,
       );
+
+      const matchedProvince = provinces
+        .filter((item) => {
+          const normalizedName = normalizeAddressName(item.name);
+          return Boolean(
+            normalizedName &&
+              (
+                normalizedName === expectedProvince ||
+                normalizedFullAddress.includes(normalizedName)
+              ),
+          );
+        })
+        .sort(
+          (a, b) =>
+            normalizeAddressName(b.name).length -
+            normalizeAddressName(a.name).length,
+        )[0];
+
       provinceId = matchedProvince ? String(matchedProvince.id) : "";
     }
 
@@ -2164,12 +2192,28 @@ export default function OrderDetailPageClient({
     }
     setDistrictOptions(districts);
 
-    if (!districtId && source.shippingDistrict) {
-      const matchedDistrict = districts.find(
-        (item) =>
-          normalizeAddressName(item.name) ===
-          normalizeAddressName(source.shippingDistrict),
+    if (!districtId) {
+      const expectedDistrict = normalizeAddressName(
+        source.shippingDistrict,
       );
+
+      const matchedDistrict = districts
+        .filter((item) => {
+          const normalizedName = normalizeAddressName(item.name);
+          return Boolean(
+            normalizedName &&
+              (
+                normalizedName === expectedDistrict ||
+                normalizedFullAddress.includes(normalizedName)
+              ),
+          );
+        })
+        .sort(
+          (a, b) =>
+            normalizeAddressName(b.name).length -
+            normalizeAddressName(a.name).length,
+        )[0];
+
       districtId = matchedDistrict ? String(matchedDistrict.id) : "";
     }
 
@@ -2183,14 +2227,55 @@ export default function OrderDetailPageClient({
     }
     setWardOptions(wards);
 
-    if (!wardCode && source.shippingWard) {
-      const matchedWard = wards.find(
-        (item) =>
-          normalizeAddressName(item.name) ===
-          normalizeAddressName(source.shippingWard),
-      );
+    if (!wardCode) {
+      const expectedWard = normalizeAddressName(source.shippingWard);
+
+      const matchedWard = wards
+        .filter((item) => {
+          const normalizedName = normalizeAddressName(item.name);
+          return Boolean(
+            normalizedName &&
+              (
+                normalizedName === expectedWard ||
+                normalizedFullAddress.includes(normalizedName)
+              ),
+          );
+        })
+        .sort(
+          (a, b) =>
+            normalizeAddressName(b.name).length -
+            normalizeAddressName(a.name).length,
+        )[0];
+
       wardCode = matchedWard?.code || "";
     }
+
+    const selectedProvince = provinces.find(
+      (item) => String(item.id) === provinceId,
+    );
+    const selectedDistrict = districts.find(
+      (item) => String(item.id) === districtId,
+    );
+    const selectedWard = wards.find(
+      (item) => item.code === wardCode,
+    );
+
+    setDraftOrder((prev) =>
+      prev
+        ? {
+            ...prev,
+            shippingProvince:
+              selectedProvince?.name || prev.shippingProvince || "",
+            shippingDistrict:
+              selectedDistrict?.name || prev.shippingDistrict || "",
+            shippingWard:
+              selectedWard?.name || prev.shippingWard || "",
+            shippingGhnDistrictId:
+              districtId ? Number(districtId) : null,
+            shippingGhnWardCode: wardCode || null,
+          }
+        : prev,
+    );
 
     setSelectedProvinceId(provinceId);
     setSelectedDistrictId(districtId);
