@@ -577,6 +577,77 @@ function formatQuickReplyImportDate(value?: string | null) {
   return date.toLocaleDateString("vi-VN");
 }
 
+function FacebookCommentSourceCard({ conversation }: { conversation: OmniConversation }) {
+  const source = (conversation as any)?.commentSource;
+  if (!source) return null;
+
+  const hasDetails = Boolean(
+    source.message || source.imageUrl || source.permalinkUrl || source.createdTime,
+  );
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50 px-4 py-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
+            Nguồn bình luận
+          </p>
+          <p className="mt-0.5 text-sm font-bold text-neutral-900">
+            {source.pageName || "The 1970"} · Bài viết Facebook
+          </p>
+        </div>
+        {source.permalinkUrl ? (
+          <a
+            href={source.permalinkUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50"
+          >
+            Xem bài viết
+          </a>
+        ) : null}
+      </div>
+
+      <div className="flex gap-4 p-4">
+        {source.imageUrl ? (
+          <a
+            href={source.permalinkUrl || source.imageUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100"
+          >
+            <img
+              src={source.imageUrl}
+              alt="Ảnh bài viết Facebook"
+              className="h-full w-full object-cover"
+            />
+          </a>
+        ) : null}
+
+        <div className="min-w-0 flex-1">
+          {source.message ? (
+            <p className="line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-neutral-700">
+              {source.message}
+            </p>
+          ) : (
+            <p className="text-sm text-neutral-500">
+              {hasDetails
+                ? "Bài viết không có nội dung chữ."
+                : "Không tải được chi tiết bài viết; vẫn có thể trả lời bình luận bên dưới."}
+            </p>
+          )}
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-400">
+            {source.createdTime ? (
+              <span>Đăng {formatDateTime(source.createdTime)}</span>
+            ) : null}
+            {source.postId ? <span>ID bài: {String(source.postId).slice(-12)}</span> : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MessagesPageClient({
   initialWorkspace = "inbox",
 }: {
@@ -2757,6 +2828,10 @@ export default function MessagesPageClient({
                           <div className="text-center text-xs font-bold text-neutral-400">
                             Hôm nay
                           </div>
+
+                          {isFacebookCommentConversation(activeConversation) ? (
+                            <FacebookCommentSourceCard conversation={activeConversation} />
+                          ) : null}
 
                           {Boolean(
                             activeConversation.adId ||
