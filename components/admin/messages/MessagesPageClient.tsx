@@ -1005,7 +1005,7 @@ export default function MessagesPageClient({
         channel,
         assigneeId: assigneeFilter,
         page: 1,
-        limit: 40,
+        limit: workspace === "comments" ? 100 : 40,
       });
 
       if (requestId !== listRequestId.current) return;
@@ -1027,7 +1027,7 @@ export default function MessagesPageClient({
     } finally {
       if (requestId === listRequestId.current) setLoadingList(false);
     }
-  }, [activeId, assigneeFilter, channel, debouncedSearch, status]);
+  }, [activeId, assigneeFilter, channel, debouncedSearch, status, workspace]);
 
   useEffect(() => {
     void loadList();
@@ -1053,7 +1053,7 @@ export default function MessagesPageClient({
         channel,
         assigneeId: assigneeFilter,
         page: nextPage,
-        limit: 40,
+        limit: workspace === "comments" ? 100 : 40,
       });
 
       const items = data?.items || [];
@@ -1086,6 +1086,7 @@ export default function MessagesPageClient({
     loadingList,
     loadingMoreConversations,
     status,
+    workspace,
   ]);
 
   const handleConversationListScroll = useCallback(
@@ -1371,10 +1372,21 @@ export default function MessagesPageClient({
       .replace(/\{\{\s*Gender\s*\}\}/gi, pronoun);
   }
 
+  function preloadQuickReplyImages(urls: string[]) {
+    if (typeof window === "undefined") return;
+    urls.filter(Boolean).forEach((url) => {
+      const image = new window.Image();
+      image.decoding = "async";
+      image.src = url;
+    });
+  }
+
   function applyQuickReplyTemplate(template: OmniQuickReplyTemplate) {
     const meta = parseQuickReplyImportMeta(template.category);
     setDraft(replaceQuickReplyVariables(template.content || ""));
     setDraftImageUrls(meta.imageUrls);
+    // Nạp ảnh ngay lúc chọn mẫu để khi bấm Gửi không phải chờ trình duyệt tải từng ảnh.
+    preloadQuickReplyImages(meta.imageUrls);
   }
 
   async function handleSetCustomerPronoun(pronoun: "Anh" | "Chị" | "Bạn") {
@@ -1420,10 +1432,9 @@ export default function MessagesPageClient({
     const imageUrls = draftImageUrls.filter(Boolean);
     if (!activeConversation?.id || (!text && !imageUrls.length) || sending) return;
 
-    if (isFacebookCommentConversation(activeConversation)) {
-      setError(
-        "Hội thoại bình luận hiện chỉ dùng để đọc và phân công. Trả lời bình luận sẽ bật sau khi backend có API reply comment.",
-      );
+    const isCommentReply = isFacebookCommentConversation(activeConversation);
+    if (isCommentReply && imageUrls.length) {
+      setError("Trả lời bình luận công khai hiện chỉ hỗ trợ nội dung chữ. Hãy bỏ ảnh hoặc chuyển sang nhắn riêng.");
       return;
     }
 
@@ -1464,7 +1475,7 @@ export default function MessagesPageClient({
         ? {
             ...prev,
             messages: [...(prev.messages || []), ...optimisticMessages],
-            lastMessageText: imageUrls.length ? "[Ảnh]" : text,
+            lastMessageText: isCommentReply ? `[Trả lời bình luận] ${text}` : imageUrls.length ? "[Ảnh]" : text,
             lastMessageAt: new Date().toISOString(),
           }
         : prev,
@@ -1474,7 +1485,7 @@ export default function MessagesPageClient({
         item.id === conversationId
           ? {
               ...item,
-              lastMessageText: imageUrls.length ? "[Ảnh]" : text,
+              lastMessageText: isCommentReply ? `[Trả lời bình luận] ${text}` : imageUrls.length ? "[Ảnh]" : text,
               lastMessageAt: new Date().toISOString(),
               status: item.status === "OPEN" ? "PROCESSING" : item.status,
             }
@@ -1483,19 +1494,40 @@ export default function MessagesPageClient({
     );
 
     try {
+      // Không bắn tất cả ảnh đồng thời vào cùng một PSID vì Meta có thể bỏ/rate-limit
+      // một số request. Gửi tối đa 2 ảnh song song theo từng đợt: vẫn nhanh hơn gửi
+      // tuần tự nhưng ổn định và giữ đủ toàn bộ ảnh.
       const sentMessages: OmniMessage[] = [];
+      const failedImageUrls: string[] = [];
 
-      // Giữ text đi trước; các ảnh gửi đồng thời để mẫu nhiều ảnh không bị chậm nối tiếp.
       if (text) {
         sentMessages.push(await sendOmniMessage(conversationId, { text }));
       }
-      if (imageUrls.length) {
-        const imageMessages = await Promise.all(
-          imageUrls.map((attachmentUrl) =>
+
+      const IMAGE_CONCURRENCY = 2;
+      for (let index = 0; index < imageUrls.length; index += IMAGE_CONCURRENCY) {
+        const batch = imageUrls.slice(index, index + IMAGE_CONCURRENCY);
+        const batchResults = await Promise.allSettled(
+          batch.map((attachmentUrl) =>
             sendOmniMessage(conversationId, { text: "", attachmentUrl }),
           ),
         );
-        sentMessages.push(...imageMessages);
+
+        batchResults.forEach((result, batchIndex) => {
+          if (result.status === "fulfilled") {
+            sentMessages.push(result.value);
+          } else {
+            failedImageUrls.push(batch[batchIndex]);
+          }
+        });
+      }
+
+      if (failedImageUrls.length) {
+        // Giữ lại đúng những ảnh lỗi để nhân viên bấm gửi lại, không gửi trùng ảnh đã thành công.
+        setDraftImageUrls(failedImageUrls);
+        setError(
+          `Đã gửi ${imageUrls.length - failedImageUrls.length}/${imageUrls.length} ảnh. ${failedImageUrls.length} ảnh lỗi đã được giữ lại để gửi lại.`,
+        );
       }
 
       setActiveConversation((prev) => {
@@ -2767,6 +2799,7 @@ export default function MessagesPageClient({
                     </div>
 
                     <div className="border-t border-neutral-200 bg-white p-5">
+                      {!isFacebookCommentConversation(activeConversation) ? (
                       <div className="mb-3 flex gap-2 overflow-x-auto">
                         {(quickReplyTemplates.length
                           ? quickReplyTemplates
@@ -2790,6 +2823,16 @@ export default function MessagesPageClient({
                           </button>
                         ))}
                       </div>
+                      ) : null}
+
+                      {isFacebookCommentConversation(activeConversation) ? (
+                        <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3">
+                          <p className="text-sm font-bold text-blue-900">Trả lời bình luận công khai</p>
+                          <p className="mt-1 text-xs leading-5 text-blue-700">
+                            Nội dung gửi ở đây sẽ xuất hiện ngay dưới bình luận của khách trên Facebook, không gửi vào Messenger.
+                          </p>
+                        </div>
+                      ) : null}
 
                       <div className="rounded-3xl border border-neutral-200 bg-white p-4">
                         <textarea
@@ -2830,7 +2873,7 @@ export default function MessagesPageClient({
                           className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-neutral-400"
                           placeholder={
                             isFacebookCommentConversation(activeConversation)
-                              ? "Đây là bình luận Facebook. Hiện chỉ đọc/gán xử lý, chưa bật trả lời comment."
+                              ? "Nhập nội dung trả lời công khai... Enter để trả lời"
                               : "Nhập tin nhắn... Enter để gửi, Shift + Enter để xuống dòng"
                           }
                         />
@@ -2865,21 +2908,25 @@ export default function MessagesPageClient({
                         ) : null}
 
                         <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
-                          <div className="flex items-center gap-1 text-neutral-500">
-                            <button className="rounded-full p-2 hover:bg-neutral-100">
-                              <Sparkles className="h-4 w-4" />
-                            </button>
-                            <button className="rounded-full p-2 hover:bg-neutral-100">
-                              <ImageIcon className="h-4 w-4" />
-                            </button>
-                            <button className="rounded-full p-2 hover:bg-neutral-100">
-                              <Paperclip className="h-4 w-4" />
-                            </button>
-                          </div>
+                          {isFacebookCommentConversation(activeConversation) ? (
+                            <span className="text-xs font-semibold text-neutral-500">Chế độ bình luận công khai · chỉ hỗ trợ chữ</span>
+                          ) : (
+                            <div className="flex items-center gap-1 text-neutral-500">
+                              <button className="rounded-full p-2 hover:bg-neutral-100">
+                                <Sparkles className="h-4 w-4" />
+                              </button>
+                              <button className="rounded-full p-2 hover:bg-neutral-100">
+                                <ImageIcon className="h-4 w-4" />
+                              </button>
+                              <button className="rounded-full p-2 hover:bg-neutral-100">
+                                <Paperclip className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
 
                           <button
                             onClick={() => void handleSend()}
-                            disabled={(!draft.trim() && !draftImageUrls.length) || sending || isFacebookCommentConversation(activeConversation)}
+                            disabled={(!draft.trim() && !draftImageUrls.length) || sending}
                             className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {sending ? (
@@ -2887,7 +2934,9 @@ export default function MessagesPageClient({
                             ) : (
                               <Send className="h-4 w-4" />
                             )}
-                            Gửi
+                            {isFacebookCommentConversation(activeConversation)
+                              ? "Trả lời bình luận"
+                              : "Gửi"}
                           </button>
                         </div>
                       </div>
