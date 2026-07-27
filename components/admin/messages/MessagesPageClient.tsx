@@ -697,6 +697,12 @@ export default function MessagesPageClient({
     clientReady &&
     hasUserPermission(user, PERMISSIONS.OMNI_INBOX_SETTINGS);
 
+  const canViewConversationTags =
+    clientReady &&
+    hasUserPermission(user, "menu.omni_tags", [
+      "omni_inbox.tags.manage",
+    ]);
+
   const canViewQuickReplies =
     clientReady &&
     hasUserPermission(user, PERMISSIONS.OMNI_QUICK_REPLIES_VIEW, [
@@ -890,6 +896,7 @@ export default function MessagesPageClient({
     if (
       ((workspace === "settings" || workspace === "noteSettings") &&
         !canManageOmniSettings) ||
+      (workspace === "tags" && !canViewConversationTags) ||
       (workspace === "assignmentSettings" &&
         !canViewAssignmentSettings &&
         !canManageAssignmentSettings) ||
@@ -901,6 +908,7 @@ export default function MessagesPageClient({
   }, [
     clientReady,
     canManageOmniSettings,
+    canViewConversationTags,
     canViewAssignmentSettings,
     canManageAssignmentSettings,
     canViewOmniReports,
@@ -2570,11 +2578,15 @@ export default function MessagesPageClient({
                   label: "Khách hàng",
                   icon: <Users className="h-4 w-4" />,
                 },
-                {
-                  key: "tags",
-                  label: "Nhãn hội thoại",
-                  icon: <Tag className="h-4 w-4" />,
-                },
+                ...(canViewConversationTags
+                  ? [
+                      {
+                        key: "tags" as WorkspaceKey,
+                        label: "Nhãn hội thoại",
+                        icon: <Tag className="h-4 w-4" />,
+                      },
+                    ]
+                  : []),
                 {
                   key: "assignments",
                   label: "Phân công nhân viên",
