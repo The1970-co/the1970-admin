@@ -1100,8 +1100,13 @@ export default function MessagesPageClient({
       setConversationPage(data?.page || 1);
       setHasMoreConversations(Boolean(data?.hasNext));
 
-      if (!activeId && items[0]?.id) {
-        setActiveId(items[0].id);
+      setActiveId((currentId) => {
+        if (items.some((item) => item.id === currentId)) return currentId;
+        return items[0]?.id || "";
+      });
+
+      if (!items.length) {
+        setActiveConversation(null);
       }
     } catch (err) {
       setError(
@@ -1112,7 +1117,7 @@ export default function MessagesPageClient({
     } finally {
       if (requestId === listRequestId.current) setLoadingList(false);
     }
-  }, [activeId, assigneeFilter, channel, debouncedSearch, status, workspace]);
+  }, [assigneeFilter, channel, debouncedSearch, status, workspace]);
 
   useEffect(() => {
     void loadList();
@@ -2811,8 +2816,13 @@ export default function MessagesPageClient({
                   className="h-[calc(100%-220px)] overflow-y-auto"
                   onScroll={handleConversationListScroll}
                 >
-                  {loadingList && !visibleConversations.length ? (
+                  {loadingList && !visibleConversations.length && !debouncedSearch ? (
                     <ListSkeleton />
+                  ) : loadingList && debouncedSearch ? (
+                    <div className="flex min-h-40 items-center justify-center gap-2 px-6 text-sm font-bold text-neutral-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Đang tìm hội thoại theo “{debouncedSearch}”...
+                    </div>
                   ) : visibleConversations.length ? (
                     <>
                       {visibleConversations.map((item) => (
