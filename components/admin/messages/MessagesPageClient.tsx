@@ -151,6 +151,16 @@ const QUICK_REPLIES = [
 type AssigneeOption = { id: string; name: string };
 type BranchOption = { id: string; name: string; code?: string };
 
+type SendQueueJob = {
+  id: string;
+  conversationId: string;
+  text: string;
+  imageUrls: string[];
+  optimisticPrefix: string;
+  isCommentReply: boolean;
+  imageOffset?: number;
+};
+
 type MetaConnectionStatus = {
   pageId?: string;
   pageName?: string;
@@ -784,6 +794,9 @@ export default function MessagesPageClient({
   const [hasMoreConversations, setHasMoreConversations] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [sending, setSending] = useState(false);
+  const [pendingSendCount, setPendingSendCount] = useState(0);
+  const sendQueueRef = useRef<SendQueueJob[]>([]);
+  const sendQueueProcessingRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [draftImageUrls, setDraftImageUrls] = useState<string[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
@@ -792,6 +805,7 @@ export default function MessagesPageClient({
   const [quickReplyTemplates, setQuickReplyTemplates] = useState<OmniQuickReplyTemplate[]>([]);
   const [newQuickReplyShortcut, setNewQuickReplyShortcut] = useState("");
   const [newQuickReply, setNewQuickReply] = useState("");
+  const [newQuickReplyImageUrls, setNewQuickReplyImageUrls] = useState("");
   const [importingQuickReplies, setImportingQuickReplies] = useState(false);
   const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
   const [quickReplySearch, setQuickReplySearch] = useState("");
@@ -1243,14 +1257,29 @@ export default function MessagesPageClient({
   const loadCustomerOrderHistory = useCallback(async () => {
     if (!activeConversation) return;
 
+    const conversationOrders = activeConversation.orders || [];
+
+    // Luôn giữ đơn vừa tạo trong state trước khi gọi API lịch sử.
+    // Tránh request chậm/response rỗng ghi đè làm giao diện báo không có đơn.
+    if (conversationOrders.length) {
+      setCustomerOrderHistory((prev) => {
+        const map = new Map<string, OmniQuickOrder>();
+        [...conversationOrders, ...prev].forEach((order) => {
+          if (order?.id) map.set(order.id, order);
+        });
+        return Array.from(map.values()).sort((a, b) => {
+          const aa = new Date(a.createdAt || 0).getTime();
+          const bb = new Date(b.createdAt || 0).getTime();
+          return bb - aa;
+        });
+      });
+    }
+
     const phone = String(
       activeConversation.customer?.phone || "",
     ).trim();
 
-    if (!phone) {
-      setCustomerOrderHistory(activeConversation.orders || []);
-      return;
-    }
+    if (!phone) return;
 
     setLoadingCustomerOrders(true);
     try {
@@ -1287,20 +1316,25 @@ export default function MessagesPageClient({
         items: Array.isArray(order.items) ? order.items : [],
       })) as OmniQuickOrder[];
 
-      const map = new Map<string, OmniQuickOrder>();
-      [...normalized, ...(activeConversation.orders || [])].forEach((order) => {
-        if (order?.id) map.set(order.id, order);
-      });
+      setCustomerOrderHistory((prev) => {
+        const map = new Map<string, OmniQuickOrder>();
+        [
+          ...normalized,
+          ...(activeConversation.orders || []),
+          ...prev,
+        ].forEach((order) => {
+          if (order?.id) map.set(order.id, order);
+        });
 
-      setCustomerOrderHistory(
-        Array.from(map.values()).sort((a, b) => {
+        return Array.from(map.values()).sort((a, b) => {
           const aa = new Date(a.createdAt || 0).getTime();
           const bb = new Date(b.createdAt || 0).getTime();
           return bb - aa;
-        }),
-      );
+        });
+      });
     } catch {
-      setCustomerOrderHistory(activeConversation.orders || []);
+      // Giữ nguyên đơn đã có trong state; không để lỗi tìm kiếm/xử lý chậm
+      // làm giao diện quay về trạng thái "không có đơn hàng".
     } finally {
       setLoadingCustomerOrders(false);
     }
@@ -1516,46 +1550,161 @@ export default function MessagesPageClient({
     }
   }
 
-  async function handleSend() {
+  const processSendQueue = useCallback(async () => {
+    if (sendQueueProcessingRef.current) return;
+    sendQueueProcessingRef.current = true;
+    setSending(true);
+
+    try {
+      while (sendQueueRef.current.length) {
+        const job = sendQueueRef.current.shift()!;
+        setPendingSendCount(sendQueueRef.current.length + 1);
+
+        try {
+          // Ưu tiên gửi text trước để nhân viên có thể tư vấn liên tục,
+          // ảnh còn lại được đưa về cuối hàng đợi và gửi nền từng đợt.
+          if (job.text) {
+            const sentText = await sendOmniMessage(job.conversationId, {
+              text: job.text,
+            });
+            setActiveConversation((prev) => {
+              if (!prev || prev.id !== job.conversationId) return prev;
+              const messages = (prev.messages || []).map((message: any) =>
+                message.id === `${job.optimisticPrefix}-text`
+                  ? sentText
+                  : message,
+              );
+              return {
+                ...prev,
+                messages,
+                lastMessageText: job.isCommentReply
+                  ? `[Trả lời bình luận] ${job.text}`
+                  : job.text,
+                lastMessageAt: sentText.sentAt || prev.lastMessageAt,
+              };
+            });
+          }
+
+          if (job.imageUrls.length) {
+            const IMAGE_CONCURRENCY = 2;
+            const batch = job.imageUrls.slice(0, IMAGE_CONCURRENCY);
+            const remaining = job.imageUrls.slice(IMAGE_CONCURRENCY);
+            const results = await Promise.allSettled(
+              batch.map((attachmentUrl) =>
+                sendOmniMessage(job.conversationId, {
+                  text: "",
+                  attachmentUrl,
+                }),
+              ),
+            );
+
+            const failedImageUrls: string[] = [];
+            results.forEach((result, batchIndex) => {
+              const optimisticId = `${job.optimisticPrefix}-image-${Number(job.imageOffset || 0) + batchIndex}`;
+              if (result.status === "fulfilled") {
+                setActiveConversation((prev) => {
+                  if (!prev || prev.id !== job.conversationId) return prev;
+                  return {
+                    ...prev,
+                    messages: (prev.messages || []).map((message: any) =>
+                      message.id === optimisticId ? result.value : message,
+                    ),
+                    lastMessageText: "[Ảnh]",
+                    lastMessageAt: result.value.sentAt || prev.lastMessageAt,
+                  };
+                });
+              } else {
+                failedImageUrls.push(batch[batchIndex]);
+              }
+            });
+
+            // Đưa phần ảnh còn lại xuống cuối queue. Tin text mới được bấm sau đó
+            // sẽ chen lên trước và không phải chờ toàn bộ ảnh tải xong.
+            if (remaining.length) {
+              sendQueueRef.current.push({
+                ...job,
+                id: `${job.id}-more-${remaining.length}`,
+                text: "",
+                imageUrls: remaining,
+                optimisticPrefix: job.optimisticPrefix,
+                imageOffset: Number(job.imageOffset || 0) + batch.length,
+              });
+            }
+
+            if (failedImageUrls.length) {
+              setError(`Có ${failedImageUrls.length} ảnh gửi lỗi, đã giữ lại để gửi lại.`);
+              setDraftImageUrls((current) => [
+                ...current,
+                ...failedImageUrls.filter((url) => !current.includes(url)),
+              ]);
+            }
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Không gửi được tin nhắn.");
+        } finally {
+          setPendingSendCount(sendQueueRef.current.length);
+          // Nhường một nhịp cho UI để ô nhập và thao tác tiếp theo luôn phản hồi ngay.
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        }
+      }
+    } finally {
+      sendQueueProcessingRef.current = false;
+      setSending(false);
+      setPendingSendCount(0);
+    }
+  }, []);
+
+  function handleSend() {
     const text = draft.trim();
     const imageUrls = draftImageUrls.filter(Boolean);
-    if (!activeConversation?.id || (!text && !imageUrls.length) || sending) return;
+    if (!activeConversation?.id || (!text && !imageUrls.length)) return;
 
     const isCommentReply = isFacebookCommentConversation(activeConversation);
     if (isCommentReply && imageUrls.length) {
-      setError("Trả lời bình luận công khai hiện chỉ hỗ trợ nội dung chữ. Hãy bỏ ảnh hoặc chuyển sang nhắn riêng.");
+      setError(
+        "Trả lời bình luận công khai hiện chỉ hỗ trợ nội dung chữ. Hãy bỏ ảnh hoặc chuyển sang nhắn riêng.",
+      );
       return;
     }
 
     const conversationId = activeConversation.id;
-    const optimisticPrefix = `optimistic-${Date.now()}`;
+    const optimisticPrefix = `optimistic-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const nowIso = new Date().toISOString();
     const optimisticMessages: OmniMessage[] = [
       ...(text
-        ? ([{
-            id: `${optimisticPrefix}-text`,
+        ? ([
+            {
+              id: `${optimisticPrefix}-text`,
+              conversationId,
+              direction: "OUT",
+              type: "TEXT",
+              text,
+              attachmentUrl: null,
+              senderName: currentUserName,
+              sentAt: nowIso,
+              sendStatus: "QUEUED",
+            },
+          ] as any[])
+        : []),
+      ...imageUrls.map(
+        (attachmentUrl, index) =>
+          ({
+            id: `${optimisticPrefix}-image-${index}`,
             conversationId,
             direction: "OUT",
-            type: "TEXT",
-            text,
-            attachmentUrl: null,
+            type: "IMAGE",
+            text: "",
+            attachmentUrl,
             senderName: currentUserName,
-            sentAt: new Date().toISOString(),
-          }] as any[])
-        : []),
-      ...imageUrls.map((attachmentUrl, index) => ({
-        id: `${optimisticPrefix}-image-${index}`,
-        conversationId,
-        direction: "OUT",
-        type: "IMAGE",
-        text: "",
-        attachmentUrl,
-        senderName: currentUserName,
-        sentAt: new Date().toISOString(),
-      } as any)),
+            sentAt: nowIso,
+            sendStatus: "QUEUED",
+          }) as any,
+      ),
     ];
 
-    // Phản hồi giao diện ngay, không bắt nhân viên chờ Meta và database xong mới thấy tin.
-    setSending(true);
+    // Giao diện phản hồi ngay và mở ô soạn cho tin tiếp theo.
     setError("");
     setDraft("");
     setDraftImageUrls([]);
@@ -1564,8 +1713,12 @@ export default function MessagesPageClient({
         ? {
             ...prev,
             messages: [...(prev.messages || []), ...optimisticMessages],
-            lastMessageText: isCommentReply ? `[Trả lời bình luận] ${text}` : imageUrls.length ? "[Ảnh]" : text,
-            lastMessageAt: new Date().toISOString(),
+            lastMessageText: isCommentReply
+              ? `[Trả lời bình luận] ${text}`
+              : imageUrls.length
+                ? "[Ảnh]"
+                : text,
+            lastMessageAt: nowIso,
           }
         : prev,
     );
@@ -1574,81 +1727,29 @@ export default function MessagesPageClient({
         item.id === conversationId
           ? {
               ...item,
-              lastMessageText: isCommentReply ? `[Trả lời bình luận] ${text}` : imageUrls.length ? "[Ảnh]" : text,
-              lastMessageAt: new Date().toISOString(),
+              lastMessageText: isCommentReply
+                ? `[Trả lời bình luận] ${text}`
+                : imageUrls.length
+                  ? "[Ảnh]"
+                  : text,
+              lastMessageAt: nowIso,
               status: item.status === "OPEN" ? "PROCESSING" : item.status,
             }
           : item,
       ),
     );
 
-    try {
-      // Không bắn tất cả ảnh đồng thời vào cùng một PSID vì Meta có thể bỏ/rate-limit
-      // một số request. Gửi tối đa 2 ảnh song song theo từng đợt: vẫn nhanh hơn gửi
-      // tuần tự nhưng ổn định và giữ đủ toàn bộ ảnh.
-      const sentMessages: OmniMessage[] = [];
-      const failedImageUrls: string[] = [];
-
-      if (text) {
-        sentMessages.push(await sendOmniMessage(conversationId, { text }));
-      }
-
-      const IMAGE_CONCURRENCY = 2;
-      for (let index = 0; index < imageUrls.length; index += IMAGE_CONCURRENCY) {
-        const batch = imageUrls.slice(index, index + IMAGE_CONCURRENCY);
-        const batchResults = await Promise.allSettled(
-          batch.map((attachmentUrl) =>
-            sendOmniMessage(conversationId, { text: "", attachmentUrl }),
-          ),
-        );
-
-        batchResults.forEach((result, batchIndex) => {
-          if (result.status === "fulfilled") {
-            sentMessages.push(result.value);
-          } else {
-            failedImageUrls.push(batch[batchIndex]);
-          }
-        });
-      }
-
-      if (failedImageUrls.length) {
-        // Giữ lại đúng những ảnh lỗi để nhân viên bấm gửi lại, không gửi trùng ảnh đã thành công.
-        setDraftImageUrls(failedImageUrls);
-        setError(
-          `Đã gửi ${imageUrls.length - failedImageUrls.length}/${imageUrls.length} ảnh. ${failedImageUrls.length} ảnh lỗi đã được giữ lại để gửi lại.`,
-        );
-      }
-
-      setActiveConversation((prev) => {
-        if (!prev || prev.id !== conversationId) return prev;
-        const withoutOptimistic = (prev.messages || []).filter(
-          (message: any) => !String(message?.id || "").startsWith(optimisticPrefix),
-        );
-        const lastMessage = sentMessages[sentMessages.length - 1];
-        return {
-          ...prev,
-          messages: [...withoutOptimistic, ...sentMessages],
-          lastMessageText: lastMessage?.attachmentUrl ? "[Ảnh]" : text,
-          lastMessageAt: lastMessage?.sentAt || prev.lastMessageAt,
-        };
-      });
-      // Không gọi lại toàn bộ danh sách sau mỗi lần gửi; SSE và state cục bộ đã đồng bộ.
-    } catch (err) {
-      setActiveConversation((prev) => {
-        if (!prev || prev.id !== conversationId) return prev;
-        return {
-          ...prev,
-          messages: (prev.messages || []).filter(
-            (message: any) => !String(message?.id || "").startsWith(optimisticPrefix),
-          ),
-        };
-      });
-      setDraft((current) => current || text);
-      setDraftImageUrls((current) => (current.length ? current : imageUrls));
-      setError(err instanceof Error ? err.message : "Không gửi được tin nhắn.");
-    } finally {
-      setSending(false);
-    }
+    sendQueueRef.current.push({
+      id: optimisticPrefix,
+      conversationId,
+      text,
+      imageUrls,
+      optimisticPrefix,
+      isCommentReply,
+      imageOffset: 0,
+    });
+    setPendingSendCount(sendQueueRef.current.length);
+    void processSendQueue();
   }
 
   async function handleAssign(assigneeId: string) {
@@ -2154,6 +2255,7 @@ export default function MessagesPageClient({
   async function handleCreateQuickReply() {
     const shortcut = newQuickReplyShortcut.trim();
     const content = newQuickReply.trim();
+    const imageUrls = splitQuickReplyImageUrls(newQuickReplyImageUrls);
     if (!shortcut || !content) {
       setError("Phải nhập đủ từ viết tắt và nội dung mẫu.");
       return;
@@ -2168,14 +2270,31 @@ export default function MessagesPageClient({
       return;
     }
     try {
+      const firstSortOrder = quickReplyTemplates.reduce(
+        (minimum, item) => Math.min(minimum, Number(item.sortOrder || 0)),
+        0,
+      );
       const created = await createOmniQuickReply({
         title: shortcut,
         content,
-        sortOrder: quickReplyTemplates.length,
+        category: stringifyQuickReplyImportMeta({
+          imageUrls,
+          sourceUpdatedAt: new Date().toISOString(),
+        }),
+        sortOrder: firstSortOrder - 1,
       });
-      setQuickReplyTemplates((prev) => [...prev, created]);
+      setQuickReplyTemplates((prev) => [
+        created,
+        ...prev.filter((item) => item.id !== created.id),
+      ]);
       setNewQuickReplyShortcut("");
       setNewQuickReply("");
+      setNewQuickReplyImageUrls("");
+      setQuickReplySearch("");
+      setQuickReplyImportResult(
+        `Đã tạo mẫu "${shortcut}"${imageUrls.length ? ` kèm ${imageUrls.length} ảnh` : ""}. Mẫu mới đã được đưa lên đầu danh sách.`,
+      );
+      setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tạo được mẫu trả lời.");
     }
@@ -3019,17 +3138,15 @@ export default function MessagesPageClient({
 
                           <button
                             onClick={() => void handleSend()}
-                            disabled={(!draft.trim() && !draftImageUrls.length) || sending}
+                            disabled={!draft.trim() && !draftImageUrls.length}
                             className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {sending ? (
-                              <RefreshCw className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Send className="h-4 w-4" />
-                            )}
+                            <Send className="h-4 w-4" />
                             {isFacebookCommentConversation(activeConversation)
                               ? "Trả lời bình luận"
-                              : "Gửi"}
+                              : pendingSendCount > 0
+                                ? `Gửi (${pendingSendCount} chờ)`
+                                : "Gửi"}
                           </button>
                         </div>
                       </div>
@@ -3463,6 +3580,8 @@ export default function MessagesPageClient({
               onNewQuickReplyShortcutChange={setNewQuickReplyShortcut}
               newQuickReply={newQuickReply}
               onNewQuickReplyChange={setNewQuickReply}
+              newQuickReplyImageUrls={newQuickReplyImageUrls}
+              onNewQuickReplyImageUrlsChange={setNewQuickReplyImageUrls}
               onCreateQuickReply={handleCreateQuickReply}
               onEditQuickReply={handleEditQuickReply}
               onDeleteQuickReply={handleDeleteQuickReply}
@@ -4206,6 +4325,8 @@ function WorkspacePanel({
   onNewQuickReplyShortcutChange,
   newQuickReply,
   onNewQuickReplyChange,
+  newQuickReplyImageUrls,
+  onNewQuickReplyImageUrlsChange,
   onCreateQuickReply,
   onEditQuickReply,
   onDeleteQuickReply,
@@ -4260,6 +4381,8 @@ function WorkspacePanel({
   onNewQuickReplyShortcutChange: (value: string) => void;
   newQuickReply: string;
   onNewQuickReplyChange: (value: string) => void;
+  newQuickReplyImageUrls: string;
+  onNewQuickReplyImageUrlsChange: (value: string) => void;
   onCreateQuickReply: () => void;
   onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
   onDeleteQuickReply: (template: OmniQuickReplyTemplate) => void;
@@ -4471,6 +4594,29 @@ function WorkspacePanel({
                 >
                   Thêm mẫu
                 </button>
+                <div className="lg:col-span-3">
+                  <textarea
+                    value={newQuickReplyImageUrls}
+                    onChange={(e) => onNewQuickReplyImageUrlsChange(e.target.value)}
+                    placeholder="Đường link ảnh đính kèm — mỗi link một dòng hoặc ngăn cách bằng dấu phẩy"
+                    className="min-h-20 w-full resize-y rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none"
+                  />
+                  {newQuickReplyImageUrls.trim() ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {String(newQuickReplyImageUrls)
+                        .split(/[\n,;]+/)
+                        .map((item) => item.trim())
+                        .filter(Boolean)
+                        .slice(0, 8)
+                        .map((url, index) => (
+                          <div key={`${url}-${index}`} className="h-16 w-16 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
+                            <img src={url} alt={`Ảnh mẫu ${index + 1}`} className="h-full w-full object-cover" />
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-1 text-xs text-neutral-500">Ảnh phải là link công khai để Facebook có thể tải và gửi cho khách.</p>
+                </div>
               </div>
               ) : null}
 
@@ -5727,11 +5873,9 @@ function MessageBubble({
             </p>
           )}
           {message.attachmentUrl && (
-            <img
+            <MessageImage
               src={message.attachmentUrl}
-              alt=""
-              className="mt-2 max-h-64 rounded-2xl object-cover"
-              loading="lazy"
+              isOut={isOut}
             />
           )}
         </div>
@@ -5740,6 +5884,48 @@ function MessageBubble({
         </p>
       </div>
     </div>
+  );
+}
+
+
+function MessageImage({ src, isOut }: { src: string; isOut: boolean }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <a
+        href={src}
+        target="_blank"
+        rel="noreferrer"
+        className={cx(
+          "mt-2 block rounded-xl border px-3 py-2 text-left text-xs font-semibold underline",
+          isOut
+            ? "border-white/30 text-white"
+            : "border-neutral-200 text-blue-600",
+        )}
+      >
+        Không tải được ảnh — bấm để mở ảnh gốc
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-2 block overflow-hidden rounded-2xl"
+      title="Bấm để xem ảnh đầy đủ"
+    >
+      <img
+        src={src}
+        alt="Ảnh trong hội thoại"
+        className="max-h-80 max-w-full rounded-2xl object-contain"
+        loading="eager"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    </a>
   );
 }
 
