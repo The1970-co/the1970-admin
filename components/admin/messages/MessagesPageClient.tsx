@@ -192,6 +192,18 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+const OMNI_IMAGE_PREVIEW_EVENT = "omni-image-preview";
+
+function openOmniImagePreview(src?: string | null, alt = "Ảnh trong hội thoại") {
+  const url = String(src || "").trim();
+  if (!url || typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(OMNI_IMAGE_PREVIEW_EVENT, {
+      detail: { src: url, alt },
+    }),
+  );
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value || 0) + "đ";
 }
@@ -620,18 +632,23 @@ function FacebookCommentSourceCard({ conversation }: { conversation: OmniConvers
 
       <div className="flex gap-4 p-4">
         {source.imageUrl ? (
-          <a
-            href={source.permalinkUrl || source.imageUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100"
+          <button
+            type="button"
+            onClick={() =>
+              openOmniImagePreview(
+                source.imageUrl,
+                "Ảnh bài viết Facebook",
+              )
+            }
+            className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100 text-left"
+            title="Bấm để xem nhanh ảnh"
           >
             <img
               src={source.imageUrl}
               alt="Ảnh bài viết Facebook"
               className="h-full w-full object-cover"
             />
-          </a>
+          </button>
         ) : null}
 
         <div className="min-w-0 flex-1">
@@ -728,6 +745,30 @@ export default function MessagesPageClient({
 
   useEffect(() => {
     setClientReady(true);
+  }, []);
+
+  useEffect(() => {
+    const handlePreview = (event: Event) => {
+      const detail = (event as CustomEvent<{ src?: string; alt?: string }>).detail;
+      const src = String(detail?.src || "").trim();
+      if (!src) return;
+      setImagePreview({
+        src,
+        alt: String(detail?.alt || "Ảnh trong hội thoại"),
+      });
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setImagePreview(null);
+    };
+
+    window.addEventListener(OMNI_IMAGE_PREVIEW_EVENT, handlePreview);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener(OMNI_IMAGE_PREVIEW_EVENT, handlePreview);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -839,6 +880,10 @@ export default function MessagesPageClient({
   const [workspace, setWorkspace] = useState<WorkspaceKey>(initialWorkspace);
   const listRequestId = useRef(0);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const [imagePreview, setImagePreview] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!clientReady) return;
@@ -3637,6 +3682,36 @@ export default function MessagesPageClient({
           )}
         </main>
       </div>
+
+      {imagePreview ? (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Xem ảnh"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setImagePreview(null);
+          }}
+        >
+          <div className="relative flex max-h-[94vh] max-w-[96vw] items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setImagePreview(null)}
+              className="absolute right-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white shadow-lg hover:bg-black"
+              aria-label="Đóng ảnh"
+              title="Đóng"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={imagePreview.src}
+              alt={imagePreview.alt}
+              className="max-h-[94vh] max-w-[96vw] rounded-2xl bg-black object-contain shadow-2xl"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -5903,29 +5978,27 @@ function MessageImage({ src, isOut }: { src: string; isOut: boolean }) {
 
   if (failed) {
     return (
-      <a
-        href={src}
-        target="_blank"
-        rel="noreferrer"
+      <button
+        type="button"
+        onClick={() => openOmniImagePreview(src)}
         className={cx(
-          "mt-2 block rounded-xl border px-3 py-2 text-left text-xs font-semibold underline",
+          "mt-2 block w-full rounded-xl border px-3 py-2 text-left text-xs font-semibold underline",
           isOut
             ? "border-white/30 text-white"
             : "border-neutral-200 text-blue-600",
         )}
       >
-        Không tải được ảnh — bấm để mở ảnh gốc
-      </a>
+        Không tải được ảnh — bấm để thử xem nhanh
+      </button>
     );
   }
 
   return (
-    <a
-      href={src}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-2 block overflow-hidden rounded-2xl"
-      title="Bấm để xem ảnh đầy đủ"
+    <button
+      type="button"
+      onClick={() => openOmniImagePreview(src)}
+      className="mt-2 block max-w-full overflow-hidden rounded-2xl text-left"
+      title="Bấm để xem nhanh ảnh"
     >
       <img
         src={src}
@@ -5935,9 +6008,10 @@ function MessageImage({ src, isOut }: { src: string; isOut: boolean }) {
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
       />
-    </a>
+    </button>
   );
 }
+
 
 function Avatar({
   src,
