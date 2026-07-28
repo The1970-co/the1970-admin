@@ -3557,25 +3557,28 @@ export default function MessagesPageClient({
                             </button>
                           ))}
                         </div>
-                        <div className="mt-3 flex gap-2">
-                          <input
-                            value={tagDraft}
-                            onChange={(event) =>
-                              setTagDraft(event.target.value)
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") void handleAddTag();
-                            }}
-                            className="min-w-0 flex-1 rounded-2xl border border-neutral-200 px-3 py-2 text-sm outline-none"
-                            placeholder="Thêm nhãn..."
-                          />
-                          <button
-                            onClick={() => void handleAddTag()}
-                            className="rounded-2xl bg-neutral-950 px-3 py-2 text-sm font-bold text-white"
-                          >
-                            Thêm
-                          </button>
-                        </div>
+                        {canViewConversationTags ? (
+                          <div className="mt-3 flex gap-2">
+                            <input
+                              value={tagDraft}
+                              onChange={(event) =>
+                                setTagDraft(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") void handleAddTag();
+                              }}
+                              className="min-w-0 flex-1 rounded-2xl border border-neutral-200 px-3 py-2 text-sm outline-none"
+                              placeholder="Thêm nhãn..."
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void handleAddTag()}
+                              className="rounded-2xl bg-neutral-950 px-3 py-2 text-sm font-bold text-white"
+                            >
+                              Thêm
+                            </button>
+                          </div>
+                        ) : null}
                       </Panel>
 
                       <Panel title="Người phụ trách">
@@ -3887,6 +3890,7 @@ export default function MessagesPageClient({
               canDeleteAllQuickReplies={canDeleteAllQuickReplies}
               canImportQuickReplies={canImportQuickReplies}
               canManageAssignmentSettings={canManageAssignmentSettings}
+              canManageConversationTags={canViewConversationTags}
               onAssignmentChange={setAssignmentSettings}
               onSaveAssignment={() => void handleSaveAssignmentSettings()}
               newNoteTemplateName={newNoteTemplateName}
@@ -4670,6 +4674,7 @@ function WorkspacePanel({
   canDeleteAllQuickReplies,
   canImportQuickReplies,
   canManageAssignmentSettings,
+  canManageConversationTags,
   onAssignmentChange,
   onSaveAssignment,
 }: {
@@ -4734,6 +4739,7 @@ function WorkspacePanel({
   canDeleteAllQuickReplies: boolean;
   canImportQuickReplies: boolean;
   canManageAssignmentSettings: boolean;
+  canManageConversationTags: boolean;
   onAssignmentChange: (value: OmniAssignmentSettings) => void;
   onSaveAssignment: () => void;
   newNoteTemplateName: string;
@@ -4800,27 +4806,29 @@ function WorkspacePanel({
         title={title}
         description="Tạo và quản lý danh mục nhãn dùng chung. Đổi tên sẽ cập nhật toàn bộ hội thoại; xoá sẽ gỡ nhãn khỏi các hội thoại đang dùng."
       >
-        <div className="mb-5 flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-white p-5 md:flex-row">
-          <input
-            value={newTagTemplateName}
-            onChange={(event) =>
-              onNewTagTemplateNameChange(event.target.value)
-            }
-            onKeyDown={(event) => {
-              if (event.key === "Enter") onCreateTagTemplate();
-            }}
-            placeholder="Nhập tên nhãn mới..."
-            className="min-h-12 flex-1 rounded-2xl border border-neutral-200 px-4 text-sm outline-none focus:border-neutral-400"
-          />
-          <button
-            type="button"
-            onClick={onCreateTagTemplate}
-            disabled={!newTagTemplateName.trim()}
-            className="min-h-12 rounded-2xl bg-neutral-950 px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Thêm nhãn
-          </button>
-        </div>
+        {canManageConversationTags ? (
+          <div className="mb-5 flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-white p-5 md:flex-row">
+            <input
+              value={newTagTemplateName}
+              onChange={(event) =>
+                onNewTagTemplateNameChange(event.target.value)
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onCreateTagTemplate();
+              }}
+              placeholder="Nhập tên nhãn mới..."
+              className="min-h-12 flex-1 rounded-2xl border border-neutral-200 px-4 text-sm outline-none focus:border-neutral-400"
+            />
+            <button
+              type="button"
+              onClick={onCreateTagTemplate}
+              disabled={!newTagTemplateName.trim()}
+              className="min-h-12 rounded-2xl bg-neutral-950 px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Thêm nhãn
+            </button>
+          </div>
+        ) : null}
 
         {tagTemplates.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -4841,22 +4849,24 @@ function WorkspacePanel({
                 </p>
                 <p className="text-sm text-neutral-500">hội thoại đang dùng</p>
 
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onRenameTagTemplate(template)}
-                    className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-bold hover:bg-neutral-50"
-                  >
-                    Sửa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteTagTemplate(template)}
-                    className="rounded-xl border border-red-200 px-3 py-2 text-sm font-bold text-red-600 hover:bg-red-50"
-                  >
-                    Xoá
-                  </button>
-                </div>
+                {canManageConversationTags ? (
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onRenameTagTemplate(template)}
+                      className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-bold hover:bg-neutral-50"
+                    >
+                      Sửa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteTagTemplate(template)}
+                      className="rounded-xl border border-red-200 px-3 py-2 text-sm font-bold text-red-600 hover:bg-red-50"
+                    >
+                      Xoá
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
