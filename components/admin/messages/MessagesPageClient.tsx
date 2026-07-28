@@ -62,6 +62,7 @@ import {
   type OmniConversationStatus,
   type OmniMessage,
   type OmniNoteTemplate,
+  type OmniTagTemplate,
   type OmniQuickOrder,
   type OmniQuickReplyTemplate,
   type OmniAssignmentSettings,
@@ -76,6 +77,10 @@ import {
   updateOmniQuickReply,
   deleteOmniQuickReply,
   deleteAllOmniQuickReplies,
+  listOmniTagTemplates,
+  createOmniTagTemplate,
+  updateOmniTagTemplate,
+  deleteOmniTagTemplate,
 } from "@/lib/omni-inbox-api";
 import {
   getProductsForOrder,
@@ -699,9 +704,7 @@ export default function MessagesPageClient({
 
   const canViewConversationTags =
     clientReady &&
-    hasUserPermission(user, "menu.omni_tags", [
-      "omni_inbox.tags.manage",
-    ]);
+    hasUserPermission(user, "omni_inbox.tags.manage");
 
   const canViewQuickReplies =
     clientReady &&
@@ -848,6 +851,8 @@ export default function MessagesPageClient({
   const [draftImageUrls, setDraftImageUrls] = useState<string[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
+  const [tagTemplates, setTagTemplates] = useState<OmniTagTemplate[]>([]);
+  const [newTagTemplateName, setNewTagTemplateName] = useState("");
   const [newNoteTemplateName, setNewNoteTemplateName] = useState("");
   const [quickReplyTemplates, setQuickReplyTemplates] = useState<OmniQuickReplyTemplate[]>([]);
   const [newQuickReplyShortcut, setNewQuickReplyShortcut] = useState("");
@@ -896,7 +901,6 @@ export default function MessagesPageClient({
     if (
       ((workspace === "settings" || workspace === "noteSettings") &&
         !canManageOmniSettings) ||
-      (workspace === "tags" && !canViewConversationTags) ||
       (workspace === "assignmentSettings" &&
         !canViewAssignmentSettings &&
         !canManageAssignmentSettings) ||
@@ -908,7 +912,6 @@ export default function MessagesPageClient({
   }, [
     clientReady,
     canManageOmniSettings,
-    canViewConversationTags,
     canViewAssignmentSettings,
     canManageAssignmentSettings,
     canViewOmniReports,
@@ -988,12 +991,16 @@ export default function MessagesPageClient({
       listOmniNoteTemplates(),
       getProductsForOrder(),
       listOmniQuickReplies(),
+      listOmniTagTemplates(),
     ])
-      .then(([templates, products, replies]) => {
+      .then(([templates, products, replies, tagTemplateRows]) => {
         if (cancelled) return;
         setNoteTemplates(Array.isArray(templates) ? templates : []);
         setOrderProducts(Array.isArray(products) ? products : []);
         setQuickReplyTemplates(Array.isArray(replies) ? replies : []);
+        setTagTemplates(
+          Array.isArray(tagTemplateRows) ? tagTemplateRows : [],
+        );
       })
       .catch((err) => {
         if (cancelled) return;
@@ -1958,6 +1965,66 @@ export default function MessagesPageClient({
     }
   }
 
+  async function handleCreateTagTemplate() {
+    const name = newTagTemplateName.trim();
+    if (!name) return;
+    try {
+      const created = await createOmniTagTemplate({ name });
+      setTagTemplates((prev) =>
+        [created, ...prev.filter((item) => item.id !== created.id)].sort(
+          (a, b) =>
+            Number(a.sortOrder || 0) - Number(b.sortOrder || 0) ||
+            a.name.localeCompare(b.name, "vi"),
+        ),
+      );
+      setNewTagTemplateName("");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Không tạo được nhãn hội thoại.",
+      );
+    }
+  }
+
+  async function handleRenameTagTemplate(template: OmniTagTemplate) {
+    const nextName = window.prompt("Tên nhãn mới", template.name)?.trim();
+    if (!nextName || nextName === template.name) return;
+    try {
+      const updated = await updateOmniTagTemplate(template.id, {
+        name: nextName,
+      });
+      setTagTemplates((prev) =>
+        prev.map((item) => (item.id === template.id ? updated : item)),
+      );
+      await loadList();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Không sửa được nhãn hội thoại.",
+      );
+    }
+  }
+
+  async function handleDeleteTagTemplate(template: OmniTagTemplate) {
+    const count = Number(template.conversationCount || 0);
+    const confirmed = window.confirm(
+      count > 0
+        ? `Nhãn "${template.name}" đang gắn cho ${count} hội thoại. Xoá nhãn sẽ gỡ khỏi toàn bộ hội thoại. Tiếp tục?`
+        : `Xoá nhãn "${template.name}"?`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteOmniTagTemplate(template.id);
+      setTagTemplates((prev) =>
+        prev.filter((item) => item.id !== template.id),
+      );
+      await loadList();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Không xoá được nhãn hội thoại.",
+      );
+    }
+  }
+
   async function handleAddTag() {
     const tag = tagDraft.trim();
     if (!activeConversation?.id || !tag) return;
@@ -2578,15 +2645,11 @@ export default function MessagesPageClient({
                   label: "Khách hàng",
                   icon: <Users className="h-4 w-4" />,
                 },
-                ...(canViewConversationTags
-                  ? [
-                      {
-                        key: "tags" as WorkspaceKey,
-                        label: "Nhãn hội thoại",
-                        icon: <Tag className="h-4 w-4" />,
-                      },
-                    ]
-                  : []),
+                {
+                  key: "tags",
+                  label: "Nhãn hội thoại",
+                  icon: <Tag className="h-4 w-4" />,
+                },
                 {
                   key: "assignments",
                   label: "Phân công nhân viên",
@@ -3642,6 +3705,12 @@ export default function MessagesPageClient({
               onReloadConnection={() => void loadMetaConnection()}
               onOpenInbox={() => openWorkspace("inbox")}
               noteTemplates={noteTemplates}
+          tagTemplates={tagTemplates}
+          newTagTemplateName={newTagTemplateName}
+          onNewTagTemplateNameChange={setNewTagTemplateName}
+          onCreateTagTemplate={handleCreateTagTemplate}
+          onRenameTagTemplate={handleRenameTagTemplate}
+          onDeleteTagTemplate={handleDeleteTagTemplate}
               quickReplyTemplates={quickReplyTemplates}
               newQuickReplyShortcut={newQuickReplyShortcut}
               onNewQuickReplyShortcutChange={setNewQuickReplyShortcut}
@@ -4412,6 +4481,12 @@ function WorkspacePanel({
   onReloadConnection,
   onOpenInbox,
   noteTemplates,
+  tagTemplates,
+  newTagTemplateName,
+  onNewTagTemplateNameChange,
+  onCreateTagTemplate,
+  onRenameTagTemplate,
+  onDeleteTagTemplate,
   newNoteTemplateName,
   onNewNoteTemplateNameChange,
   onCreateNoteTemplate,
@@ -4473,6 +4548,12 @@ function WorkspacePanel({
   onReloadConnection: () => void;
   onOpenInbox: () => void;
   noteTemplates: OmniNoteTemplate[];
+  tagTemplates: OmniTagTemplate[];
+  newTagTemplateName: string;
+  onNewTagTemplateNameChange: (value: string) => void;
+  onCreateTagTemplate: () => void;
+  onRenameTagTemplate: (template: OmniTagTemplate) => void;
+  onDeleteTagTemplate: (template: OmniTagTemplate) => void;
   quickReplyTemplates: OmniQuickReplyTemplate[];
   newQuickReplyShortcut: string;
   onNewQuickReplyShortcutChange: (value: string) => void;
@@ -4571,42 +4652,80 @@ function WorkspacePanel({
   }
 
   if (workspace === "tags") {
-    const tags = Array.from(
-      new Set(
-        conversations.flatMap((item) => item.tags?.map((tag) => tag.tag) || []),
-      ),
-    );
     return (
       <WorkspaceShell
         title={title}
-        description="Quản lý nhãn phân loại hội thoại để lọc khách, ưu tiên xử lý và chăm sóc lại."
+        description="Tạo và quản lý danh mục nhãn dùng chung. Đổi tên sẽ cập nhật toàn bộ hội thoại; xoá sẽ gỡ nhãn khỏi các hội thoại đang dùng."
       >
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {(tags.length
-            ? tags
-            : ["Khách mới", "Cần tư vấn size", "Chờ chốt đơn", "Đã mua hàng"]
-          ).map((tag) => (
-            <div
-              key={tag}
-              className="rounded-3xl border border-neutral-200 bg-white p-5"
-            >
-              <div className="flex items-center justify-between">
-                <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">
-                  {tag}
-                </span>
-                <Tag className="h-4 w-4 text-neutral-400" />
-              </div>
-              <p className="mt-4 text-2xl font-black">
-                {
-                  conversations.filter((item) =>
-                    item.tags?.some((t) => t.tag === tag),
-                  ).length
-                }
-              </p>
-              <p className="text-sm text-neutral-500">hội thoại</p>
-            </div>
-          ))}
+        <div className="mb-5 flex flex-col gap-3 rounded-3xl border border-neutral-200 bg-white p-5 md:flex-row">
+          <input
+            value={newTagTemplateName}
+            onChange={(event) =>
+              onNewTagTemplateNameChange(event.target.value)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onCreateTagTemplate();
+            }}
+            placeholder="Nhập tên nhãn mới..."
+            className="min-h-12 flex-1 rounded-2xl border border-neutral-200 px-4 text-sm outline-none focus:border-neutral-400"
+          />
+          <button
+            type="button"
+            onClick={onCreateTagTemplate}
+            disabled={!newTagTemplateName.trim()}
+            className="min-h-12 rounded-2xl bg-neutral-950 px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Thêm nhãn
+          </button>
         </div>
+
+        {tagTemplates.length ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {tagTemplates.map((template) => (
+              <div
+                key={template.id}
+                className="rounded-3xl border border-neutral-200 bg-white p-5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">
+                    {template.name}
+                  </span>
+                  <Tag className="h-4 w-4 shrink-0 text-neutral-400" />
+                </div>
+
+                <p className="mt-4 text-2xl font-black">
+                  {Number(template.conversationCount || 0)}
+                </p>
+                <p className="text-sm text-neutral-500">hội thoại đang dùng</p>
+
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onRenameTagTemplate(template)}
+                    className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-bold hover:bg-neutral-50"
+                  >
+                    Sửa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteTagTemplate(template)}
+                    className="rounded-xl border border-red-200 px-3 py-2 text-sm font-bold text-red-600 hover:bg-red-50"
+                  >
+                    Xoá
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-3xl border border-dashed border-neutral-300 bg-white p-10 text-center">
+            <Tag className="mx-auto h-8 w-8 text-neutral-300" />
+            <p className="mt-3 font-black">Chưa có nhãn hội thoại</p>
+            <p className="mt-1 text-sm text-neutral-500">
+              Nhập tên phía trên và bấm Thêm nhãn.
+            </p>
+          </div>
+        )}
       </WorkspaceShell>
     );
   }

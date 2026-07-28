@@ -20,6 +20,18 @@ export type OmniTag = {
   tag: string;
 };
 
+export type OmniTagTemplate = {
+  id: string;
+  name: string;
+  normalizedName: string;
+  color?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  conversationCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type OmniNoteTemplate = {
   id: string;
   name: string;
@@ -197,6 +209,48 @@ export function markOmniConversationRead(id: string) {
   });
 }
 
+
+export function listOmniTagTemplates(includeInactive = false) {
+  return apiJson<OmniTagTemplate[]>(
+    `/omni-inbox/tag-templates${includeInactive ? "?includeInactive=true" : ""}`,
+  );
+}
+
+export function createOmniTagTemplate(body: {
+  name: string;
+  color?: string;
+  sortOrder?: number;
+}) {
+  return apiJson<OmniTagTemplate>("/omni-inbox/tag-templates", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateOmniTagTemplate(
+  id: string,
+  body: Partial<{
+    name: string;
+    color: string;
+    sortOrder: number;
+    isActive: boolean;
+  }>,
+) {
+  return apiJson<OmniTagTemplate>(`/omni-inbox/tag-templates/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteOmniTagTemplate(id: string) {
+  return apiJson<{
+    success: boolean;
+    id: string;
+    removedConversationTags: number;
+  }>(`/omni-inbox/tag-templates/${id}`, {
+    method: "DELETE",
+  });
+}
 
 export function listOmniNoteTemplates(includeInactive = false) {
   return apiJson<OmniNoteTemplate[]>(`/omni-inbox/note-templates${includeInactive ? "?includeInactive=true" : ""}`);

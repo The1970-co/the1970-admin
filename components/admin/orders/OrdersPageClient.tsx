@@ -1057,18 +1057,31 @@ function shippingModeLabel(value?: string | null) {
   }
 }
 
-function carrierLabel(value?: string | null) {
+function canonicalCarrierValue(value?: string | null) {
   const raw = String(value || "").trim();
-  const upper = raw.toUpperCase();
+  const upper = raw.toUpperCase().replace(/[._-]+/g, " ");
 
-  if (upper.includes("AHAMOVE")) return "AhaMove";
-  if (upper.includes("GHN")) return "GHN";
-  if (upper.includes("GHTK")) return "GHTK";
-  if (upper.includes("VIETTEL")) return "Viettel Post";
-  if (upper.includes("GRAB")) return "Grab Express";
-  if (upper.includes("SHIPPER")) return "Shipper riêng";
+  if (upper.includes("AHAMOVE") || upper.includes("AHA MOVE")) return "AHAMOVE";
+  if (upper.includes("VIETTEL") || upper.includes("VTP")) return "VIETTEL_POST";
+  if (upper.includes("GHN") || upper.includes("GIAO HANG NHANH")) return "GHN";
+  if (upper.includes("GHTK") || upper.includes("GIAO HANG TIET KIEM")) return "GHTK";
+  if (upper.includes("GRAB")) return "GRAB";
+  if (upper.includes("SHIPPER") || upper.includes("INTERNAL")) return "INTERNAL_SHIPPER";
 
-  return raw || "—";
+  return raw;
+}
+
+function carrierLabel(value?: string | null) {
+  const canonical = canonicalCarrierValue(value);
+
+  if (canonical === "AHAMOVE") return "AhaMove";
+  if (canonical === "VIETTEL_POST") return "Viettel Post";
+  if (canonical === "GHN") return "GHN";
+  if (canonical === "GHTK") return "GHTK";
+  if (canonical === "GRAB") return "Grab Express";
+  if (canonical === "INTERNAL_SHIPPER") return "Shipper riêng";
+
+  return canonical || "—";
 }
 
 function isLocalDeliveryCarrier(value?: string | null) {
@@ -2336,8 +2349,18 @@ function saveCurrentUserLite(user: any) {
 }
 
 function isOwnerOrAdminUser(user?: CurrentUserLite | null) {
-  const role = String(user?.role || "").toLowerCase();
-  return role === "owner" || role === "admin";
+  const anyUser = user as any;
+  const roles = [
+    user?.role,
+    anyUser?.userRole,
+    anyUser?.primaryRole,
+    anyUser?.appRole,
+    ...(Array.isArray(anyUser?.roles) ? anyUser.roles : []),
+  ]
+    .map((role) => String(role || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  return roles.some((role) => role === "owner" || role === "admin" || role.includes("owner") || role.includes("admin"));
 }
 
 function normalizeId(value: any) {
@@ -5572,8 +5595,8 @@ export default function OrdersPageClient() {
   const shippingPartnerOptions = useMemo(
     () =>
       uniqueOptions(
-        normalizedOrders.map(
-          (o) => o.shipment?.carrier || o._meta.shippingPartner,
+        normalizedOrders.map((o) =>
+          canonicalCarrierValue(o.shipment?.carrier || o._meta.shippingPartner),
         ),
       ),
     [normalizedOrders],
@@ -6075,7 +6098,10 @@ export default function OrdersPageClient() {
 
     if (!isAllMultiFilter(appliedShippingPartnerFilter)) {
       result = result.filter((o) =>
-        multiFilterIncludes(appliedShippingPartnerFilter, o.shipment?.carrier || o._meta.shippingPartner || ""),
+        multiFilterIncludes(
+          appliedShippingPartnerFilter,
+          canonicalCarrierValue(o.shipment?.carrier || o._meta.shippingPartner),
+        ),
       );
     }
 
@@ -6538,7 +6564,8 @@ export default function OrdersPageClient() {
           const order = normalizedOrders.find((o) => o.id === id);
           if (!order) continue;
 
-          if (order.status === "COMPLETED") {
+          const isPosOrder = String(order.salesChannel || "").toUpperCase() === "POS";
+          if (order.status === "COMPLETED" && !(isOwnerOrAdminUser(currentUser) && isPosOrder)) {
             failed.push(`${order.orderCode}: đơn đã hoàn thành`);
             continue;
           }
@@ -8566,7 +8593,7 @@ export default function OrdersPageClient() {
                     value={shippingPartnerFilter}
                     onChange={setShippingPartnerFilter}
                     allLabel="Tất cả đơn vị vận chuyển"
-                    options={shippingPartnerOptions.map((partner) => ({ value: partner, label: partner }))}
+                    options={shippingPartnerOptions.map((partner) => ({ value: partner, label: carrierLabel(partner) }))}
                   />
 
                   <MultiFilterSelect

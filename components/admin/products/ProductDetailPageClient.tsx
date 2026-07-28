@@ -794,7 +794,13 @@ function ProductInventoryHistoryPanel({
       .filter((row) => Number(row.qty || 0) < 0)
       .reduce((sum, row) => sum + Number(row.qty || 0), 0),
   );
-  const visibleRows = rows.slice(0, compact ? 8 : 15);
+  const historyCutoff = Date.now() - 40 * 24 * 60 * 60 * 1000;
+  const visibleRows = rows.filter((row) => {
+    const raw = row.createdAtIso || row.createdAt;
+    if (!raw) return true;
+    const createdAt = new Date(raw).getTime();
+    return Number.isNaN(createdAt) || createdAt >= historyCutoff;
+  });
 
   return (
     <Panel className="overflow-hidden">
@@ -804,7 +810,7 @@ function ProductInventoryHistoryPanel({
             Lịch sử kho của sản phẩm
           </h2>
           <p className="mt-1 text-xs text-neutral-500">
-            Chỉ hiển thị biến động của sản phẩm này trong {scopeLabel}.
+            Hiển thị lịch sử 40 ngày gần nhất của sản phẩm này trong {scopeLabel}.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1088,7 +1094,7 @@ export default function ProductDetailPageClient({
           getCategories().catch(() => []),
           fetchProductById(productId),
           fetchInventoryByProduct(productId),
-          getInventoryMovementsByProduct(productId, 120).catch(() => []),
+          getInventoryMovementsByProduct(productId, 1000).catch(() => []),
         ]);
 
       const nextBranches = Array.isArray(branchData) ? branchData : [];

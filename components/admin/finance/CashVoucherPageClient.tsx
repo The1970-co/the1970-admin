@@ -679,6 +679,18 @@ export default function CashVoucherPageClient({ type }: Props) {
           method: "POST",
           body: JSON.stringify(payload),
         });
+
+        // Tạo phiếu là ghi nhận ngay, không bắt người dùng bấm thêm nút "Xác nhận".
+        if (saved?.id) {
+          saved = await apiJson(`/finance/cash-vouchers/${saved.id}/confirm`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              confirmedById: currentUser?.id,
+              confirmedByName: currentUser?.name || currentUser?.username,
+            }),
+          });
+        }
+
         setRows((prev) => [saved, ...prev]);
         setActionMessage(`Đã tạo ${title.toLowerCase()} ${saved?.voucherCode || saved?.code || ""}.`);
       }
@@ -1209,9 +1221,6 @@ export default function CashVoucherPageClient({ type }: Props) {
                       <div className="flex justify-end gap-2">
                         <button disabled={row.status !== "DRAFT" || !canEdit} onClick={() => openEdit(row)} className="rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-40">
                           Sửa
-                        </button>
-                        <button disabled={row.status !== "DRAFT" || !canConfirm} onClick={() => confirmVoucher(row)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-40">
-                          Xác nhận
                         </button>
                         <button disabled={row.status === "CANCELLED" || !canCancel} onClick={() => cancelVoucher(row)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40">
                           Huỷ

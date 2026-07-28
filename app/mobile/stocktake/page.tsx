@@ -341,6 +341,7 @@ export default function MobileStocktakePage() {
     const [qtyDelta, setQtyDelta] = useState(1);
     const [zone, setZone] = useState("Khu chính");
     const [sessionName, setSessionName] = useState("Kiểm kho mobile");
+    const [sessionNote, setSessionNote] = useState("");
     const [message, setMessage] = useState("");
     const [loading, setLoading] = useState(false);
     const [scanning, setScanning] = useState(false);
@@ -713,7 +714,7 @@ export default function MobileStocktakePage() {
                 body: JSON.stringify({
                     branchId,
                     name: sessionName || "Kiểm kho mobile",
-                    note: "Tạo từ app mobile",
+                    note: sessionNote.trim() || "Tạo từ app mobile",
                 }),
             });
             const joined = await joinSession(created);
@@ -1029,6 +1030,17 @@ export default function MobileStocktakePage() {
                         </p>
                     </div>
                 </div>
+
+                {session?.note ? (
+                    <div className="mt-3 rounded-2xl border border-white/10 bg-white/10 p-3">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-white/45">
+                            Ghi chú phiên kiểm
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm font-semibold leading-6 text-white">
+                            {session.note}
+                        </p>
+                    </div>
+                ) : null}
             </section>
 
             {message ? (
@@ -1085,6 +1097,15 @@ export default function MobileStocktakePage() {
                             onChange={(e) => setSessionName(e.target.value)}
                             className="w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm font-bold outline-none focus:border-neutral-950"
                             placeholder="Kiểm kho mobile"
+                        />
+                        <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">
+                            Ghi chú phiên kiểm
+                        </label>
+                        <textarea
+                            value={sessionNote}
+                            onChange={(e) => setSessionNote(e.target.value)}
+                            className="min-h-[92px] w-full resize-y rounded-2xl border border-stone-200 px-4 py-3 text-sm font-semibold leading-6 outline-none focus:border-neutral-950"
+                            placeholder="Ví dụ: Kiểm lại khu áo khoác, thiếu hàng chờ xác minh..."
                         />
                         <label className="block text-xs font-bold uppercase tracking-wide text-stone-500">
                             Khu vực
