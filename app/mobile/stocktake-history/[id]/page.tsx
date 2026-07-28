@@ -180,6 +180,8 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [items, setItems] = useState<DetailItem[]>([]);
   const [logs, setLogs] = useState<LogItem[]>([]);
+  const [logsLoaded, setLogsLoaded] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
@@ -189,33 +191,38 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
     if (!sessionId) return;
     setLoading(true);
     setMessage("");
+    setLogs([]);
+    setLogsLoaded(false);
 
     try {
-      const detailData = await apiJson<any>(`/stocktake-sessions/${sessionId}`, {
-        redirectOnUnauthorized: true,
-        timeoutMs: 60000,
-      } as any);
+      const [detailResult, summaryResult] = await Promise.allSettled([
+        apiJson<any>(`/stocktake-sessions/${sessionId}`, {
+          redirectOnUnauthorized: true,
+          timeoutMs: 30000,
+        } as any),
+        apiJson<any>(`/stocktake-sessions/${sessionId}/summary`, {
+          redirectOnUnauthorized: true,
+          timeoutMs: 30000,
+        } as any),
+      ]);
+
+      if (detailResult.status === "rejected" && summaryResult.status === "rejected") {
+        throw detailResult.reason || summaryResult.reason;
+      }
+
+      const detailData =
+        detailResult.status === "fulfilled" ? detailResult.value : {};
       const nextDetail = normalizeDetail(detailData);
 
-      let summaryItems = normalizeItems(detailData, nextDetail);
-      if (!summaryItems.length) {
-        const summaryData = await apiJson<any>(`/stocktake-sessions/${sessionId}/summary`, {
-          timeoutMs: 60000,
-        } as any).catch(() => null);
-        summaryItems = normalizeItems(summaryData, nextDetail);
-      }
-
-      let logItems = normalizeLogs(detailData, nextDetail);
-      if (!logItems.length) {
-        const logData = await apiJson<any>(`/stocktake-sessions/${sessionId}/logs`, {
-          timeoutMs: 60000,
-        } as any).catch(() => null);
-        logItems = normalizeLogs(logData, nextDetail);
-      }
+      const summaryData =
+        summaryResult.status === "fulfilled" ? summaryResult.value : null;
+      const summaryFromEndpoint = normalizeItems(summaryData, nextDetail);
+      const summaryItems = summaryFromEndpoint.length
+        ? summaryFromEndpoint
+        : normalizeItems(detailData, nextDetail);
 
       setDetail(nextDetail);
       setItems(summaryItems);
-      setLogs(logItems.slice(0, 80));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không tải được chi tiết kiểm kho.");
       setDetail(null);
@@ -223,6 +230,25 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
       setLogs([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadLogs = async () => {
+    if (!sessionId || logsLoading || logsLoaded) return;
+
+    try {
+      setLogsLoading(true);
+      const logData = await apiJson<any>(`/stocktake-sessions/${sessionId}/logs`, {
+        redirectOnUnauthorized: true,
+        timeoutMs: 30000,
+      } as any);
+      const nextLogs = normalizeLogs(logData, detail || {});
+      setLogs(nextLogs.slice(0, 80));
+      setLogsLoaded(true);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không tải được log scan.");
+    } finally {
+      setLogsLoading(false);
     }
   };
 
@@ -241,7 +267,7 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
         if (q && !text.includes(q)) return false;
         return true;
       })
-      .slice(0, 120);
+      .slice(0, 80);
   }, [items, query, showOnlyDiff]);
 
   const kpi = useMemo(() => {
@@ -290,6 +316,17 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
             {formatDateTime(detail?.createdAt)}
           </span>
         </div>
+
+        {String(detail?.note || "").trim() ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/45">
+              Ghi chú
+            </p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm font-bold leading-6 text-white">
+              {detail?.note}
+            </p>
+          </div>
+        ) : null}
       </section>
 
       {message ? (
@@ -383,26 +420,52 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
         )}
       </section>
 
-      {logs.length ? (
-        <section className="mt-4 rounded-[1.75rem] border border-neutral-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-black uppercase tracking-[0.2em] text-neutral-400">Log scan gần nhất</p>
-          <div className="mt-3 space-y-2">
-            {logs.slice(0, 12).map((log, index) => (
-              <div key={log.id || index} className="flex items-center justify-between gap-3 rounded-2xl bg-neutral-100 p-3 text-sm">
-                <div className="min-w-0">
-                  <p className="truncate font-black">{log.sku || log.barcode || "SKU"}</p>
-                  <p className="mt-0.5 truncate text-xs font-bold text-neutral-500">
-                    {log.workerName || "Nhân viên"} · {formatDateTime(log.createdAt)}
-                  </p>
-                </div>
-                <span className="shrink-0 rounded-full bg-neutral-950 px-3 py-1 text-xs font-black text-white">
-                  {diffText(log.qtyDelta || 0)}
-                </span>
-              </div>
-            ))}
+      <section className="mt-4 rounded-[1.75rem] border border-neutral-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-black uppercase tracking-[0.2em] text-neutral-400">
+              Log scan gần nhất
+            </p>
+            <p className="mt-1 text-xs font-semibold text-neutral-500">
+              Chỉ tải khi cần để trang chi tiết mở nhanh hơn.
+            </p>
           </div>
-        </section>
-      ) : null}
+          {!logsLoaded ? (
+            <button
+              type="button"
+              onClick={() => void loadLogs()}
+              disabled={logsLoading}
+              className="shrink-0 rounded-2xl bg-neutral-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50"
+            >
+              {logsLoading ? "Đang tải..." : "Xem log"}
+            </button>
+          ) : null}
+        </div>
+
+        {logsLoaded ? (
+          logs.length ? (
+            <div className="mt-3 space-y-2">
+              {logs.slice(0, 12).map((log, index) => (
+                <div key={log.id || index} className="flex items-center justify-between gap-3 rounded-2xl bg-neutral-100 p-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-black">{log.sku || log.barcode || "SKU"}</p>
+                    <p className="mt-0.5 truncate text-xs font-bold text-neutral-500">
+                      {log.workerName || "Nhân viên"} · {formatDateTime(log.createdAt)}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-neutral-950 px-3 py-1 text-xs font-black text-white">
+                    {diffText(log.qtyDelta || 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 rounded-2xl bg-neutral-100 p-3 text-sm font-bold text-neutral-500">
+              Phiên này chưa có log scan.
+            </p>
+          )
+        ) : null}
+      </section>
 
       <MobileBottomNav />
     </main>

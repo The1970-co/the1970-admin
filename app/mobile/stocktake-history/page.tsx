@@ -535,6 +535,17 @@ export default function MobileStocktakeHistoryPage() {
                   </div>
                 </div>
 
+                {String(item.note || "").trim() ? (
+                  <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2.5">
+                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-700/70">
+                      Ghi chú
+                    </p>
+                    <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-sm font-bold leading-5 text-amber-950">
+                      {item.note}
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="mt-4 flex items-center justify-between gap-3 text-sm font-bold text-neutral-500">
                   <span className="min-w-0 truncate">
                     {formatDateTime(item.createdAt)} · {workerText(item)}

@@ -87,6 +87,7 @@ import {
   resolveGhnAddress,
   type OrderProduct,
 } from "@/lib/create-order-api";
+import { uploadProductImage } from "@/lib/products-api";
 import {
   getProvinces,
   getDistricts,
@@ -212,6 +213,86 @@ function openOmniImagePreview(src?: string | null, alt = "Ảnh trong hội tho�
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value || 0) + "đ";
 }
+
+function getUploadedQuickReplyImageUrl(result: any) {
+  if (typeof result === "string") return result;
+  return String(
+    result?.url ||
+      result?.imageUrl ||
+      result?.secure_url ||
+      result?.secureUrl ||
+      result?.data?.url ||
+      result?.data?.imageUrl ||
+      result?.file?.url ||
+      "",
+  ).trim();
+}
+
+function loadQuickReplyImageForResize(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Không đọc được ảnh để nén."));
+    };
+
+    image.src = objectUrl;
+  });
+}
+
+async function resizeQuickReplyImageBeforeUpload(file: File) {
+  if (!file.type.startsWith("image/")) return file;
+
+  const maxBytes = 2.8 * 1024 * 1024;
+  const maxSide = 1600;
+
+  if (file.size <= maxBytes && !file.type.includes("png")) {
+    return file;
+  }
+
+  const image = await loadQuickReplyImageForResize(file);
+  const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * ratio));
+  const height = Math.max(1, Math.round(image.height * ratio));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
+
+  const toBlob = (quality: number) =>
+    new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", quality),
+    );
+
+  let quality = 0.82;
+  let blob = await toBlob(quality);
+  while (blob && blob.size > maxBytes && quality > 0.5) {
+    quality -= 0.08;
+    blob = await toBlob(quality);
+  }
+
+  if (!blob) return file;
+  const baseName = file.name.replace(/\.[^.]+$/, "");
+  return new File([blob], `${baseName}.jpg`, {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
 
 function formatTime(value?: string | null) {
   if (!value) return "";
@@ -858,6 +939,7 @@ export default function MessagesPageClient({
   const [newQuickReplyShortcut, setNewQuickReplyShortcut] = useState("");
   const [newQuickReply, setNewQuickReply] = useState("");
   const [newQuickReplyImageUrls, setNewQuickReplyImageUrls] = useState("");
+  const [uploadingQuickReplyImages, setUploadingQuickReplyImages] = useState(false);
   const [importingQuickReplies, setImportingQuickReplies] = useState(false);
   const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
   const [quickReplySearch, setQuickReplySearch] = useState("");
@@ -2377,6 +2459,59 @@ export default function MessagesPageClient({
     }
   }
 
+  async function handleUploadQuickReplyImages(files?: FileList | File[] | null) {
+    const selectedFiles = Array.from(files || []).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (!selectedFiles.length) return;
+
+    const existingUrls = splitQuickReplyImageUrls(newQuickReplyImageUrls);
+    const remainingSlots = Math.max(0, 8 - existingUrls.length);
+    if (!remainingSlots) {
+      setError("Mỗi mẫu chỉ nên đính kèm tối đa 8 ảnh.");
+      return;
+    }
+
+    const filesToUpload = selectedFiles.slice(0, remainingSlots);
+    setUploadingQuickReplyImages(true);
+    setError("");
+    setQuickReplyImportResult(
+      `Đang upload 0/${filesToUpload.length} ảnh lên cloud...`,
+    );
+
+    try {
+      const uploadedUrls: string[] = [];
+      for (let index = 0; index < filesToUpload.length; index += 1) {
+        const uploadFile = await resizeQuickReplyImageBeforeUpload(
+          filesToUpload[index],
+        );
+        const result = await uploadProductImage(uploadFile);
+        const uploadedUrl = getUploadedQuickReplyImageUrl(result);
+        if (!uploadedUrl) {
+          throw new Error(
+            `Ảnh ${index + 1} upload xong nhưng backend không trả về link.`,
+          );
+        }
+        uploadedUrls.push(uploadedUrl);
+        setQuickReplyImportResult(
+          `Đang upload ${index + 1}/${filesToUpload.length} ảnh lên cloud...`,
+        );
+      }
+
+      const nextUrls = [...existingUrls, ...uploadedUrls];
+      setNewQuickReplyImageUrls(nextUrls.join("\n"));
+      setQuickReplyImportResult(
+        `Đã upload ${uploadedUrls.length} ảnh lên cloud của hệ thống.`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Upload ảnh gõ tắt thất bại.",
+      );
+    } finally {
+      setUploadingQuickReplyImages(false);
+    }
+  }
+
   async function handleCreateQuickReply() {
     const shortcut = newQuickReplyShortcut.trim();
     const content = newQuickReply.trim();
@@ -3718,6 +3853,10 @@ export default function MessagesPageClient({
               onNewQuickReplyChange={setNewQuickReply}
               newQuickReplyImageUrls={newQuickReplyImageUrls}
               onNewQuickReplyImageUrlsChange={setNewQuickReplyImageUrls}
+              uploadingQuickReplyImages={uploadingQuickReplyImages}
+              onUploadQuickReplyImages={(files) =>
+                void handleUploadQuickReplyImages(files)
+              }
               onCreateQuickReply={handleCreateQuickReply}
               onEditQuickReply={handleEditQuickReply}
               onDeleteQuickReply={handleDeleteQuickReply}
@@ -4499,6 +4638,8 @@ function WorkspacePanel({
   onNewQuickReplyChange,
   newQuickReplyImageUrls,
   onNewQuickReplyImageUrlsChange,
+  uploadingQuickReplyImages,
+  onUploadQuickReplyImages,
   onCreateQuickReply,
   onEditQuickReply,
   onDeleteQuickReply,
@@ -4561,6 +4702,8 @@ function WorkspacePanel({
   onNewQuickReplyChange: (value: string) => void;
   newQuickReplyImageUrls: string;
   onNewQuickReplyImageUrlsChange: (value: string) => void;
+  uploadingQuickReplyImages: boolean;
+  onUploadQuickReplyImages: (files?: FileList | File[] | null) => void;
   onCreateQuickReply: () => void;
   onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
   onDeleteQuickReply: (template: OmniQuickReplyTemplate) => void;
@@ -4811,27 +4954,88 @@ function WorkspacePanel({
                   Thêm mẫu
                 </button>
                 <div className="lg:col-span-3">
-                  <textarea
-                    value={newQuickReplyImageUrls}
-                    onChange={(e) => onNewQuickReplyImageUrlsChange(e.target.value)}
-                    placeholder="Đường link ảnh đính kèm — mỗi link một dòng hoặc ngăn cách bằng dấu phẩy"
-                    className="min-h-20 w-full resize-y rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none"
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label
+                      className={cx(
+                        "cursor-pointer rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white",
+                        uploadingQuickReplyImages &&
+                          "pointer-events-none opacity-60",
+                      )}
+                    >
+                      {uploadingQuickReplyImages
+                        ? "Đang upload ảnh..."
+                        : "Chọn ảnh từ máy"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        disabled={uploadingQuickReplyImages}
+                        onChange={(event) => {
+                          onUploadQuickReplyImages(event.target.files);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <span className="text-xs text-neutral-500">
+                      Chọn nhiều ảnh, hệ thống tự nén và upload lên cloud. Tối đa 8 ảnh/mẫu.
+                    </span>
+                  </div>
+
                   {newQuickReplyImageUrls.trim() ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
                       {String(newQuickReplyImageUrls)
                         .split(/[\n,;]+/)
                         .map((item) => item.trim())
                         .filter(Boolean)
                         .slice(0, 8)
                         .map((url, index) => (
-                          <div key={`${url}-${index}`} className="h-16 w-16 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
-                            <img src={url} alt={`Ảnh mẫu ${index + 1}`} className="h-full w-full object-cover" />
+                          <div
+                            key={`${url}-${index}`}
+                            className="group relative h-20 w-20 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50"
+                          >
+                            <img
+                              src={url}
+                              alt={`Ảnh mẫu ${index + 1}`}
+                              className="h-full w-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextUrls = String(
+                                  newQuickReplyImageUrls,
+                                )
+                                  .split(/[\n,;]+/)
+                                  .map((item) => item.trim())
+                                  .filter(Boolean)
+                                  .filter((_, itemIndex) => itemIndex !== index);
+                                onNewQuickReplyImageUrlsChange(
+                                  nextUrls.join("\n"),
+                                );
+                              }}
+                              className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
+                              aria-label={`Xoá ảnh ${index + 1}`}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                         ))}
                     </div>
                   ) : null}
-                  <p className="mt-1 text-xs text-neutral-500">Ảnh phải là link công khai để Facebook có thể tải và gửi cho khách.</p>
+
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-xs font-bold text-neutral-500">
+                      Nhập link ảnh thủ công
+                    </summary>
+                    <textarea
+                      value={newQuickReplyImageUrls}
+                      onChange={(e) =>
+                        onNewQuickReplyImageUrlsChange(e.target.value)
+                      }
+                      placeholder="Mỗi link một dòng hoặc ngăn cách bằng dấu phẩy"
+                      className="mt-2 min-h-20 w-full resize-y rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none"
+                    />
+                  </details>
                 </div>
               </div>
               ) : null}
