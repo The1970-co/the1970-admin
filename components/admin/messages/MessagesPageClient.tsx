@@ -940,6 +940,7 @@ export default function MessagesPageClient({
   const [newQuickReply, setNewQuickReply] = useState("");
   const [newQuickReplyImageUrls, setNewQuickReplyImageUrls] = useState("");
   const [uploadingQuickReplyImages, setUploadingQuickReplyImages] = useState(false);
+  const [uploadingQuickReplyTemplateId, setUploadingQuickReplyTemplateId] = useState("");
   const [importingQuickReplies, setImportingQuickReplies] = useState(false);
   const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
   const [quickReplySearch, setQuickReplySearch] = useState("");
@@ -2560,6 +2561,81 @@ export default function MessagesPageClient({
     }
   }
 
+  async function handleAddImagesToQuickReply(
+    template: OmniQuickReplyTemplate,
+    files?: FileList | File[] | null,
+  ) {
+    const selectedFiles = Array.from(files || []).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (!selectedFiles.length) return;
+
+    const currentMeta = parseQuickReplyImportMeta(template.category);
+    const currentUrls = currentMeta.imageUrls;
+    const remainingSlots = Math.max(0, 8 - currentUrls.length);
+
+    if (!remainingSlots) {
+      setError("Mẫu này đã đủ 8 ảnh.");
+      return;
+    }
+
+    const filesToUpload = selectedFiles.slice(0, remainingSlots);
+    setUploadingQuickReplyTemplateId(template.id);
+    setError("");
+    setQuickReplyImportResult(
+      `Đang thêm 0/${filesToUpload.length} ảnh vào mẫu "${template.title || ""}"...`,
+    );
+
+    try {
+      const uploadedUrls: string[] = [];
+
+      for (let index = 0; index < filesToUpload.length; index += 1) {
+        const uploadFile = await resizeQuickReplyImageBeforeUpload(
+          filesToUpload[index],
+        );
+        const result = await uploadProductImage(uploadFile);
+        const uploadedUrl = getUploadedQuickReplyImageUrl(result);
+
+        if (!uploadedUrl) {
+          throw new Error(
+            `Ảnh ${index + 1} upload xong nhưng backend không trả về link.`,
+          );
+        }
+
+        uploadedUrls.push(uploadedUrl);
+        setQuickReplyImportResult(
+          `Đang thêm ${index + 1}/${filesToUpload.length} ảnh vào mẫu "${template.title || ""}"...`,
+        );
+      }
+
+      const mergedUrls = Array.from(
+        new Set([...currentUrls, ...uploadedUrls]),
+      ).slice(0, 8);
+
+      const updated = await updateOmniQuickReply(template.id, {
+        category: stringifyQuickReplyImportMeta({
+          imageUrls: mergedUrls,
+          sourceUpdatedAt: new Date().toISOString(),
+        }),
+      });
+
+      setQuickReplyTemplates((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setQuickReplyImportResult(
+        `Đã thêm ${uploadedUrls.length} ảnh vào mẫu "${template.title || ""}". Hiện có ${mergedUrls.length} ảnh.`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không thêm được ảnh vào mẫu trả lời.",
+      );
+    } finally {
+      setUploadingQuickReplyTemplateId("");
+    }
+  }
+
   async function handleEditQuickReply(template: OmniQuickReplyTemplate) {
     const shortcut = window
       .prompt("Sửa từ viết tắt", template.title || "")
@@ -3862,6 +3938,10 @@ export default function MessagesPageClient({
               }
               onCreateQuickReply={handleCreateQuickReply}
               onEditQuickReply={handleEditQuickReply}
+              onAddImagesToQuickReply={(template, files) =>
+                void handleAddImagesToQuickReply(template, files)
+              }
+              uploadingQuickReplyTemplateId={uploadingQuickReplyTemplateId}
               onDeleteQuickReply={handleDeleteQuickReply}
               onDeleteAllQuickReplies={() => void handleDeleteAllQuickReplies()}
               deletingAllQuickReplies={deletingAllQuickReplies}
@@ -4646,6 +4726,8 @@ function WorkspacePanel({
   onUploadQuickReplyImages,
   onCreateQuickReply,
   onEditQuickReply,
+  onAddImagesToQuickReply,
+  uploadingQuickReplyTemplateId,
   onDeleteQuickReply,
   onDeleteAllQuickReplies,
   deletingAllQuickReplies,
@@ -4711,6 +4793,11 @@ function WorkspacePanel({
   onUploadQuickReplyImages: (files?: FileList | File[] | null) => void;
   onCreateQuickReply: () => void;
   onEditQuickReply: (template: OmniQuickReplyTemplate) => void;
+  onAddImagesToQuickReply: (
+    template: OmniQuickReplyTemplate,
+    files?: FileList | File[] | null,
+  ) => void;
+  uploadingQuickReplyTemplateId: string;
   onDeleteQuickReply: (template: OmniQuickReplyTemplate) => void;
   onDeleteAllQuickReplies: () => void;
   deletingAllQuickReplies: boolean;
@@ -5203,15 +5290,44 @@ function WorkspacePanel({
                     </td>
                     <td className="px-4 py-3">
                       {canEditQuickReplies || canDeleteQuickReplies ? (
-                        <div className="flex justify-end gap-2">
+                        <div className="flex flex-wrap justify-end gap-2">
                           {canEditQuickReplies ? (
-                          <button
-                            type="button"
-                            onClick={() => onEditQuickReply(template)}
-                            className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-black hover:bg-neutral-100"
-                          >
-                            Sửa
-                          </button>
+                            <>
+                              <label
+                                className={cx(
+                                  "cursor-pointer rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-100",
+                                  uploadingQuickReplyTemplateId === template.id &&
+                                    "pointer-events-none opacity-60",
+                                )}
+                              >
+                                {uploadingQuickReplyTemplateId === template.id
+                                  ? "Đang thêm ảnh..."
+                                  : "Thêm ảnh"}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  multiple
+                                  className="hidden"
+                                  disabled={
+                                    uploadingQuickReplyTemplateId === template.id
+                                  }
+                                  onChange={(event) => {
+                                    onAddImagesToQuickReply(
+                                      template,
+                                      event.target.files,
+                                    );
+                                    event.currentTarget.value = "";
+                                  }}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => onEditQuickReply(template)}
+                                className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-black hover:bg-neutral-100"
+                              >
+                                Sửa
+                              </button>
+                            </>
                           ) : null}
                           {canDeleteQuickReplies ? (
                           <button
