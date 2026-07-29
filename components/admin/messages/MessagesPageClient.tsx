@@ -930,6 +930,7 @@ export default function MessagesPageClient({
   const sendQueueProcessingRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [draftImageUrls, setDraftImageUrls] = useState<string[]>([]);
+  const [quickReplySuggestionIndex, setQuickReplySuggestionIndex] = useState(0);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
   const [tagTemplates, setTagTemplates] = useState<OmniTagTemplate[]>([]);
@@ -1373,6 +1374,7 @@ export default function MessagesPageClient({
     void loadDetail(activeId);
   }, [activeId, loadDetail]);
 
+
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const element = chatScrollRef.current;
     if (!element) return;
@@ -1664,6 +1666,47 @@ export default function MessagesPageClient({
     setDraftImageUrls(meta.imageUrls);
     // Nạp ảnh ngay lúc chọn mẫu để khi bấm Gửi không phải chờ trình duyệt tải từng ảnh.
     preloadQuickReplyImages(meta.imageUrls);
+  }
+
+
+  const quickReplySuggestionQuery = useMemo(() => {
+    const currentLine = String(draft || "").split("\n").pop() || "";
+    const trimmed = currentLine.trim();
+    if (!trimmed.startsWith("/")) return "";
+    return trimmed.slice(1).trim().toLocaleLowerCase("vi-VN");
+  }, [draft]);
+
+  useEffect(() => {
+    setQuickReplySuggestionIndex(0);
+  }, [quickReplySuggestionQuery]);
+
+  const quickReplySuggestions = useMemo(() => {
+    if (!String(draft || "").trim().startsWith("/")) return [];
+
+    const query = quickReplySuggestionQuery;
+    return quickReplyTemplates
+      .filter((template) => {
+        const shortcut = String(template.title || "")
+          .trim()
+          .toLocaleLowerCase("vi-VN");
+        const content = String(template.content || "")
+          .trim()
+          .toLocaleLowerCase("vi-VN");
+
+        if (!query) return true;
+        return shortcut.includes(query) || content.includes(query);
+      })
+      .slice(0, 8);
+  }, [draft, quickReplySuggestionQuery, quickReplyTemplates]);
+
+  const quickReplySuggestionsOpen =
+    !isFacebookCommentConversation(activeConversation) &&
+    quickReplySuggestions.length > 0 &&
+    String(draft || "").trim().startsWith("/");
+
+  function chooseQuickReplySuggestion(template: OmniQuickReplyTemplate) {
+    applyQuickReplyTemplate(template);
+    setQuickReplySuggestionIndex(0);
   }
 
   async function handleSetCustomerPronoun(pronoun: "Anh" | "Chị" | "Bạn") {
@@ -3477,14 +3520,141 @@ export default function MessagesPageClient({
                         </div>
                       ) : null}
 
-                      <div className="rounded-3xl border border-neutral-200 bg-white p-4">
+                      <div className="relative rounded-3xl border border-neutral-200 bg-white p-4">
+                        {quickReplySuggestionsOpen ? (
+                          <div className="absolute bottom-[calc(100%+10px)] left-0 right-0 z-40 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl">
+                            <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
+                              <div>
+                                <p className="text-xs font-black uppercase tracking-[0.14em] text-neutral-400">
+                                  Gợi ý gõ tắt
+                                </p>
+                                <p className="mt-0.5 text-xs text-neutral-500">
+                                  ↑ ↓ để chọn · Enter để dùng · Esc để đóng
+                                </p>
+                              </div>
+                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-blue-700">
+                                {quickReplySuggestions.length} mẫu
+                              </span>
+                            </div>
+
+                            <div className="max-h-80 overflow-y-auto p-2">
+                              {quickReplySuggestions.map((template, index) => {
+                                const meta = parseQuickReplyImportMeta(
+                                  template.category,
+                                );
+                                const selected =
+                                  index === quickReplySuggestionIndex;
+
+                                return (
+                                  <button
+                                    key={template.id}
+                                    type="button"
+                                    onMouseEnter={() =>
+                                      setQuickReplySuggestionIndex(index)
+                                    }
+                                    onMouseDown={(event) =>
+                                      event.preventDefault()
+                                    }
+                                    onClick={() =>
+                                      chooseQuickReplySuggestion(template)
+                                    }
+                                    className={cx(
+                                      "flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition",
+                                      selected
+                                        ? "bg-blue-50"
+                                        : "hover:bg-neutral-50",
+                                    )}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className={cx(
+                                            "rounded-lg px-2 py-1 text-sm font-black",
+                                            selected
+                                              ? "bg-blue-600 text-white"
+                                              : "bg-neutral-100 text-neutral-700",
+                                          )}
+                                        >
+                                          /{template.title || "mẫu"}
+                                        </span>
+                                      </div>
+                                      <p className="mt-2 line-clamp-2 text-sm leading-5 text-neutral-700">
+                                        {template.content}
+                                      </p>
+                                    </div>
+
+                                    {meta.imageUrls.length ? (
+                                      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-100">
+                                        <img
+                                          src={meta.imageUrls[0]}
+                                          alt="Ảnh mẫu trả lời"
+                                          className="h-full w-full object-cover"
+                                        />
+                                        {meta.imageUrls.length > 1 ? (
+                                          <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-black text-white">
+                                            +{meta.imageUrls.length - 1}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+
                         <textarea
                           value={draft}
                           onChange={(event) => {
-                            setDraft(event.target.value);
-                            if (!event.target.value.trim()) setDraftImageUrls([]);
+                            const nextValue = event.target.value;
+                            setDraft(nextValue);
+                            if (!nextValue.trim()) setDraftImageUrls([]);
                           }}
                           onKeyDown={(event) => {
+                            if (quickReplySuggestionsOpen) {
+                              if (event.key === "ArrowDown") {
+                                event.preventDefault();
+                                setQuickReplySuggestionIndex((current) =>
+                                  Math.min(
+                                    current + 1,
+                                    quickReplySuggestions.length - 1,
+                                  ),
+                                );
+                                return;
+                              }
+
+                              if (event.key === "ArrowUp") {
+                                event.preventDefault();
+                                setQuickReplySuggestionIndex((current) =>
+                                  Math.max(current - 1, 0),
+                                );
+                                return;
+                              }
+
+                              if (
+                                event.key === "Enter" &&
+                                !event.shiftKey
+                              ) {
+                                event.preventDefault();
+                                const selected =
+                                  quickReplySuggestions[
+                                    quickReplySuggestionIndex
+                                  ];
+                                if (selected) {
+                                  chooseQuickReplySuggestion(selected);
+                                }
+                                return;
+                              }
+
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                setDraft("");
+                                setQuickReplySuggestionIndex(0);
+                                return;
+                              }
+                            }
+
                             const keyTriggersExpansion =
                               event.key === " " ||
                               event.key === "Tab" ||
@@ -3517,7 +3687,7 @@ export default function MessagesPageClient({
                           placeholder={
                             isFacebookCommentConversation(activeConversation)
                               ? "Nhập nội dung trả lời công khai... Enter để trả lời"
-                              : "Nhập tin nhắn... Enter để gửi, Shift + Enter để xuống dòng"
+                              : "Nhập tin nhắn hoặc gõ / để tìm mẫu trả lời... Enter để gửi"
                           }
                         />
 

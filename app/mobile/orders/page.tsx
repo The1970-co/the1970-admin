@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Clock3,
   Filter,
+  LayoutGrid,
+  List,
   PackageCheck,
   RefreshCw,
   Search,
@@ -69,8 +71,10 @@ type OrdersResponse = {
 
 type QuickDate = "today" | "yesterday" | "7d" | "30d";
 type QuickStatus = "ALL" | "WAITING_APPROVE" | "WAITING_PAYMENT" | "WAITING_PACKING" | "WAITING_SHIP" | "DELIVERING" | "FAIL" | "LOCAL_DELIVERY";
+type OrderViewMode = "compact" | "card";
 
 const PAGE_SIZE = 20;
+const ORDER_VIEW_MODE_STORAGE_KEY = "the1970.mobile.orders.viewMode";
 
 const DATE_FILTERS: Array<{ key: QuickDate; label: string }> = [
   { key: "today", label: "Hôm nay" },
@@ -102,17 +106,23 @@ function dateInput(date: Date) {
 }
 
 function rangeDates(range: QuickDate) {
-  const toDate = new Date();
-  const fromDate = new Date();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const fromDate = new Date(today);
+  const toDateExclusive = new Date(today);
+  toDateExclusive.setDate(toDateExclusive.getDate() + 1);
 
   if (range === "yesterday") {
-    toDate.setDate(toDate.getDate() - 1);
     fromDate.setDate(fromDate.getDate() - 1);
+    toDateExclusive.setDate(toDateExclusive.getDate() - 1);
   }
   if (range === "7d") fromDate.setDate(fromDate.getDate() - 6);
   if (range === "30d") fromDate.setDate(fromDate.getDate() - 29);
 
-  return { from: dateInput(fromDate), to: dateInput(toDate) };
+  // Backend lọc theo mốc < dateTo nên dateTo phải là đầu ngày kế tiếp.
+  // Trước đây Hôm nay gửi cùng một ngày cho from/to nên có thể trả về 0 đơn.
+  return { from: dateInput(fromDate), to: dateInput(toDateExclusive) };
 }
 
 function num(value: unknown) {
@@ -232,6 +242,48 @@ function getPagination(raw: OrdersResponse | OrderRow[], page: number) {
   };
 }
 
+function creatorName(order: OrderRow) {
+  return (
+    order.createdByStaffName ||
+    order._createdByName ||
+    order.assignedStaffName ||
+    order._assignedStaffName ||
+    String((order as any).createdBy?.name || (order as any).createdByName || "").trim() ||
+    "Chưa rõ NV"
+  );
+}
+
+function productNames(order: OrderRow) {
+  const rows = Array.isArray(order.items) ? order.items : [];
+  const names = rows
+    .map((item: any) =>
+      String(
+        item?.productName ||
+          item?.name ||
+          item?.product?.name ||
+          item?.variant?.productName ||
+          item?.variant?.product?.name ||
+          item?.sku ||
+          "",
+      ).trim(),
+    )
+    .filter(Boolean);
+
+  const unique = Array.from(new Set(names));
+  if (!unique.length) {
+    const fallback = String(
+      (order as any).productNames ||
+        (order as any).itemNames ||
+        (order as any).firstProductName ||
+        "",
+    ).trim();
+    return fallback || "Chưa có tên sản phẩm";
+  }
+
+  const firstTwo = unique.slice(0, 2).join(", ");
+  return unique.length > 2 ? `${firstTwo} +${unique.length - 2} SP` : firstTwo;
+}
+
 function OrderCard({ order }: { order: OrderRow }) {
   const id = orderId(order);
   const status = order.status || order.orderStatus;
@@ -270,6 +322,15 @@ function OrderCard({ order }: { order: OrderRow }) {
         </div>
       </div>
 
+      <div className="mt-3 rounded-2xl bg-neutral-50 px-3 py-2">
+        <p className="line-clamp-2 text-xs font-semibold leading-5 text-neutral-800">
+          {productNames(order)}
+        </p>
+        <p className="mt-1 truncate text-[11px] font-medium text-neutral-500">
+          NV tạo: {creatorName(order)}
+        </p>
+      </div>
+
       <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-neutral-600">
         <span className="rounded-full bg-neutral-100 px-3 py-1">{dt(order.createdAt || order.soldAt)}</span>
         <span className="rounded-full bg-neutral-100 px-3 py-1">{fulfillmentLabel(order.fulfillmentStatus)}</span>
@@ -278,6 +339,60 @@ function OrderCard({ order }: { order: OrderRow }) {
 
       <div className="mt-3 truncate rounded-2xl bg-stone-100 px-3 py-2 text-xs font-medium text-neutral-600">
         {shipmentLabel(order)}
+      </div>
+    </Link>
+  );
+}
+
+function OrderCompactRow({ order }: { order: OrderRow }) {
+  const id = orderId(order);
+  const status = order.status || order.orderStatus;
+  const amount = order.finalAmount ?? order.totalAmount;
+  const itemCount = Array.isArray(order.items)
+    ? order.items.length
+    : Number((order as any).itemCount || 0);
+
+  return (
+    <Link
+      href={`/mobile/orders/${encodeURIComponent(id)}`}
+      className="block rounded-2xl border border-neutral-200 bg-white px-3 py-3 shadow-sm active:scale-[0.99]"
+    >
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="max-w-[58%] truncate rounded-full bg-neutral-950 px-2.5 py-1 text-[10px] font-bold text-white">
+              {orderCode(order)}
+            </span>
+            <span className="truncate rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-700">
+              {statusLabel(status)}
+            </span>
+          </div>
+
+          <div className="mt-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-neutral-950">
+                {customerName(order)} · {customerPhone(order)}
+              </p>
+              <p className="mt-1 line-clamp-1 text-xs font-semibold text-neutral-700">
+                {productNames(order)}
+              </p>
+              <p className="mt-1 truncate text-[11px] font-medium text-neutral-500">
+                {dt(order.createdAt || order.soldAt)} · NV: {creatorName(order)}
+              </p>
+              <p className="mt-1 truncate text-[11px] font-medium text-neutral-500">
+                {shipmentLabel(order)} · {itemCount || 0} món
+              </p>
+            </div>
+
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-black text-neutral-950">{compact(amount)}</p>
+              <p className="mt-1 text-[10px] font-semibold text-neutral-500">
+                {paymentLabel(order.paymentStatus)}
+              </p>
+            </div>
+          </div>
+        </div>
+        <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-neutral-400" />
       </div>
     </Link>
   );
@@ -294,6 +409,22 @@ export default function MobileOrdersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [viewMode, setViewMode] = useState<OrderViewMode>("compact");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem(ORDER_VIEW_MODE_STORAGE_KEY);
+    if (saved === "compact" || saved === "card") {
+      setViewMode(saved);
+    }
+  }, []);
+
+  const changeViewMode = (nextMode: OrderViewMode) => {
+    setViewMode(nextMode);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ORDER_VIEW_MODE_STORAGE_KEY, nextMode);
+    }
+  };
 
   const summary = useMemo(() => {
     return rows.reduce(
@@ -459,9 +590,41 @@ export default function MobileOrdersPage() {
             </button>
           ))}
         </div>
+
+        <div className="mt-3 flex items-center justify-between border-t border-neutral-100 pt-3">
+          <span className="text-[11px] font-semibold text-neutral-500">
+            Kiểu hiển thị
+          </span>
+          <div className="inline-flex rounded-xl bg-neutral-100 p-1">
+            <button
+              type="button"
+              onClick={() => changeViewMode("compact")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold ${
+                viewMode === "compact"
+                  ? "bg-white text-neutral-950 shadow-sm"
+                  : "text-neutral-500"
+              }`}
+            >
+              <List className="h-3.5 w-3.5" />
+              Danh sách
+            </button>
+            <button
+              type="button"
+              onClick={() => changeViewMode("card")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold ${
+                viewMode === "card"
+                  ? "bg-white text-neutral-950 shadow-sm"
+                  : "text-neutral-500"
+              }`}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Thẻ
+            </button>
+          </div>
+        </div>
       </section>
 
-      <section className="mt-4 space-y-3">
+      <section className={`mt-4 ${viewMode === "compact" ? "space-y-2" : "space-y-3"}`}>
         {loading ? (
           <div className="rounded-[1.75rem] bg-white p-6 text-center text-sm font-semibold text-neutral-500 shadow-sm">
             Đang tải đơn hàng...
@@ -471,7 +634,13 @@ export default function MobileOrdersPage() {
             {error}
           </div>
         ) : rows.length ? (
-          rows.map((order) => <OrderCard key={orderId(order)} order={order} />)
+          rows.map((order) =>
+            viewMode === "compact" ? (
+              <OrderCompactRow key={orderId(order)} order={order} />
+            ) : (
+              <OrderCard key={orderId(order)} order={order} />
+            ),
+          )
         ) : (
           <div className="rounded-[1.75rem] bg-white p-6 text-center shadow-sm">
             <PackageCheck className="mx-auto h-8 w-8 text-neutral-300" />
