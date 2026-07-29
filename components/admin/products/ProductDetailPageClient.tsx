@@ -781,6 +781,8 @@ function ProductInventoryHistoryPanel({
   compact?: boolean;
   scopeLabel?: string;
 }) {
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
   const branchName = (branchId?: string | null) =>
     branches.find((branch) => String(branch.id) === String(branchId))?.name ||
     branchId ||
@@ -813,14 +815,22 @@ function ProductInventoryHistoryPanel({
             Hiển thị lịch sử 40 ngày gần nhất của sản phẩm này trong {scopeLabel}.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge tone="gray">{rows.length} dòng</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="gray">{visibleRows.length} dòng</Badge>
           <Badge tone="green">+{totalIn}</Badge>
           <Badge tone="red">-{totalOut}</Badge>
+          <button
+            type="button"
+            onClick={() => setHistoryExpanded((value) => !value)}
+            className="inline-flex items-center justify-center rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+            aria-expanded={historyExpanded}
+          >
+            {historyExpanded ? "Thu gọn" : "Xem lịch sử kho"}
+          </button>
         </div>
       </div>
 
-      {!visibleRows.length ? (
+      {!historyExpanded ? null : !visibleRows.length ? (
         <div className="p-4 text-sm text-neutral-500">
           Chưa có lịch sử kho cho sản phẩm này.
         </div>
@@ -1276,6 +1286,69 @@ export default function ProductDetailPageClient({
       (row) => normalizeId(row.branchId) === workingBranchId,
     );
   }, [inventoryMovementRows, isOwner, workingBranchId]);
+
+  const groupedVariantsByColor = useMemo(() => {
+    const variants = Array.isArray(product?.variants) ? [...(product?.variants || [])] : [];
+    const configuredSizes = parseCommaTokens(sizes)
+      .map((item) => String(item || '').trim().toUpperCase())
+      .filter(Boolean);
+    const sizeOrder = new Map(configuredSizes.map((item, index) => [item, index]));
+
+    const groups = new Map();
+
+    variants.forEach((variant: any) => {
+      const colorLabel = String(variant?.color || '').trim() || 'Chưa phân màu';
+      const colorKey = normalizeColorKey(colorLabel) || '__NO_COLOR__';
+      const colorImage =
+        colorImages[colorKey] ||
+        colorImages[colorLabel] ||
+        String(variant?.imageUrl || variant?.image || imageUrl || '').trim();
+
+      if (!groups.has(colorKey)) {
+        groups.set(colorKey, {
+          colorKey,
+          colorLabel,
+          imageUrl: colorImage,
+          variants: [],
+        });
+      }
+
+      const entry = groups.get(colorKey);
+      if (entry && !entry.imageUrl && colorImage) entry.imageUrl = colorImage;
+      entry?.variants.push(variant);
+    });
+
+    const result = Array.from(groups.values()).map((group: any) => {
+      const nextVariants = [...group.variants].sort((a: any, b: any) => {
+        const sizeA = String(a?.size || '').trim().toUpperCase();
+        const sizeB = String(b?.size || '').trim().toUpperCase();
+        const orderA = sizeOrder.has(sizeA) ? Number(sizeOrder.get(sizeA)) : Number.MAX_SAFE_INTEGER;
+        const orderB = sizeOrder.has(sizeB) ? Number(sizeOrder.get(sizeB)) : Number.MAX_SAFE_INTEGER;
+        if (orderA !== orderB) return orderA - orderB;
+        return String(a?.sku || '').localeCompare(String(b?.sku || ''), 'vi', {
+          sensitivity: 'base',
+          numeric: true,
+        });
+      });
+
+      const totalQty = nextVariants.reduce((sum: number, variant: any) => {
+        return sum + branches.reduce((branchSum, branch) => branchSum + getAvailableQty(variant.id, branch.id), 0);
+      }, 0);
+
+      return {
+        ...group,
+        variants: nextVariants,
+        totalQty,
+      };
+    });
+
+    return result.sort((a: any, b: any) =>
+      String(a.colorLabel || '').localeCompare(String(b.colorLabel || ''), 'vi', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+  }, [branches, colorImages, getAvailableQty, imageUrl, product?.variants, sizes]);
 
   const initialSnapshot = useMemo(() => {
     if (!product) return "";
@@ -2201,9 +2274,10 @@ export default function ProductDetailPageClient({
                 </div>
 
                 <div className="overflow-auto">
-                  <table className="min-w-[1120px] w-full border-collapse text-sm">
+                  <table className="min-w-[1260px] w-full border-collapse text-sm">
                     <thead className="bg-neutral-50 text-left text-[11px] uppercase text-neutral-500">
                       <tr>
+                        <th className="border-b px-4 py-3">Nhóm màu</th>
                         <th className="border-b px-4 py-3">SKU</th>
                         <th className="border-b px-4 py-3">Tên phiên bản</th>
                         <th className="border-b px-4 py-3">Màu</th>
@@ -2220,82 +2294,146 @@ export default function ProductDetailPageClient({
                     </thead>
 
                     <tbody>
-                      {(product.variants || []).map((variant) => (
-                        <tr
-                          key={variant.id || variant.sku}
-                          className="hover:bg-neutral-50"
-                        >
-                          <td className="border-b px-4 py-3 font-medium">
-                            {variant.sku || "—"}
-                          </td>
-                          <td className="min-w-[240px] border-b px-4 py-3">
-                            {(variant as any).variantName || `${product.name || ""}${variant.color ? ` - ${variant.color}` : ""}${variant.size ? ` - ${variant.size}` : ""}` || "—"}
-                          </td>
-                          <td className="border-b px-4 py-3">
-                            {variant.color || "—"}
-                          </td>
-                          <td className="border-b px-4 py-3">
-                            {variant.size || "—"}
-                          </td>
-                          <td className="border-b px-4 py-3">
-                            {currency(Number(variant.price || 0))}
-                          </td>
-                          {canViewCost ? (
-                            <td className="border-b px-4 py-3">
-                              {currency(Number(variant.costPrice || 0))}
-                            </td>
-                          ) : null}
-                          <td className="border-b px-4 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              {branches.map((branch) => {
-                                const qty = getAvailableQty(
-                                  variant.id,
-                                  branch.id,
-                                );
-                                return (
-                                  <Badge
-                                    key={branch.id}
-                                    tone={
-                                      qty <= 0
-                                        ? "red"
-                                        : qty <= 3
-                                          ? "amber"
-                                          : "green"
-                                    }
-                                  >
-                                    {branch.name}: {qty}
-                                  </Badge>
-                                );
-                              })}
-                            </div>
-                          </td>
-                          <td className="border-b px-4 py-3 text-right">
-                            <div className="inline-flex gap-2">
-                              {isOwner ? (
-                                <Link
-                                  href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
-                                  className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                      {groupedVariantsByColor.map((group: any) =>
+                        group.variants.map((variant: any, index: number) => {
+                          const groupSize = Number(group.variants?.length || 0);
+                          const groupImageUrl = String(group.imageUrl || '').trim();
+                          return (
+                            <tr
+                              key={variant.id || variant.sku}
+                              className="hover:bg-neutral-50"
+                            >
+                              {index === 0 ? (
+                                <td
+                                  rowSpan={groupSize}
+                                  className="border-b px-4 py-4 align-top"
                                 >
-                                  Kho
-                                </Link>
+                                  <div className="min-w-[190px]">
+                                    <div className="flex items-start gap-3">
+                                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-neutral-200 bg-neutral-100">
+                                        {groupImageUrl ? (
+                                          <img
+                                            src={toAbsoluteFileUrl(groupImageUrl)}
+                                            alt={`${product.name || 'Sản phẩm'} ${group.colorLabel}`}
+                                            className="h-full w-full object-cover"
+                                          />
+                                        ) : (
+                                          <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
+                                            No image
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      <div className="min-w-0 flex-1">
+                                        <Badge tone="blue">{group.colorLabel}</Badge>
+                                        <p className="mt-2 text-xs font-medium text-neutral-500">
+                                          {groupSize} size · Tổng tồn {group.totalQty}
+                                        </p>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                          {group.variants.map((item: any) => (
+                                            <span
+                                              key={item.id || item.sku || item.size}
+                                              className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-600"
+                                            >
+                                              {item.size || '—'}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
                               ) : null}
-                              {canEditProduct ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setMessage(
-                                      "Sửa nhanh variant sẽ làm ở bước tiếp theo.",
-                                    )
-                                  }
-                                  className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                                >
-                                  Sửa
-                                </button>
+                              <td className="border-b px-4 py-3 font-medium">
+                                {variant.sku || "—"}
+                              </td>
+                              <td className="min-w-[240px] border-b px-4 py-3">
+                                {(variant as any).variantName || `${product.name || ""}${variant.color ? ` - ${variant.color}` : ""}${variant.size ? ` - ${variant.size}` : ""}` || "—"}
+                              </td>
+                              <td className="border-b px-4 py-3">
+                                {variant.color || "—"}
+                              </td>
+                              <td className="border-b px-4 py-3">
+                                <div className="relative pl-5">
+                                  {groupSize > 1 ? (
+                                    <>
+                                      <span
+                                        className="absolute left-1.5 w-px bg-neutral-200"
+                                        style={{
+                                          top: index === 0 ? '50%' : '0.35rem',
+                                          bottom:
+                                            index === groupSize - 1 ? '50%' : '0.35rem',
+                                        }}
+                                      />
+                                      <span className="absolute left-1.5 top-1/2 h-px w-3 -translate-y-1/2 bg-neutral-200" />
+                                    </>
+                                  ) : null}
+                                  <span className="inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-semibold text-neutral-700">
+                                    {variant.size || "—"}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="border-b px-4 py-3">
+                                {currency(Number(variant.price || 0))}
+                              </td>
+                              {canViewCost ? (
+                                <td className="border-b px-4 py-3">
+                                  {currency(Number(variant.costPrice || 0))}
+                                </td>
                               ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                              <td className="border-b px-4 py-3">
+                                <div className="flex flex-wrap gap-2">
+                                  {branches.map((branch) => {
+                                    const qty = getAvailableQty(
+                                      variant.id,
+                                      branch.id,
+                                    );
+                                    return (
+                                      <Badge
+                                        key={branch.id}
+                                        tone={
+                                          qty <= 0
+                                            ? "red"
+                                            : qty <= 3
+                                              ? "amber"
+                                              : "green"
+                                        }
+                                      >
+                                        {branch.name}: {qty}
+                                      </Badge>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                              <td className="border-b px-4 py-3 text-right">
+                                <div className="inline-flex gap-2">
+                                  {isOwner ? (
+                                    <Link
+                                      href={`/inventory?variantId=${encodeURIComponent(variant.id || "")}`}
+                                      className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                                    >
+                                      Kho
+                                    </Link>
+                                  ) : null}
+                                  {canEditProduct ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setMessage(
+                                          "Sửa nhanh variant sẽ làm ở bước tiếp theo.",
+                                        )
+                                      }
+                                      className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                                    >
+                                      Sửa
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }),
+                      )}
                     </tbody>
                   </table>
                 </div>

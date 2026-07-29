@@ -4,6 +4,7 @@ import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { ArrowLeft, ClipboardList, RefreshCcw } from "lucide-react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "black";
@@ -175,8 +176,12 @@ function normalizeLogs(input: any, detail: SessionDetail): LogItem[] {
   return raw;
 }
 
-export default function MobileStocktakeHistoryDetailPage({ params }: { params: { id: string } }) {
-  const sessionId = String(params?.id || "");
+export default function MobileStocktakeHistoryDetailPage() {
+  const routeParams = useParams<{ id?: string | string[] }>();
+  const rawSessionId = routeParams?.id;
+  const sessionId = String(
+    Array.isArray(rawSessionId) ? rawSessionId[0] || "" : rawSessionId || "",
+  ).trim();
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [items, setItems] = useState<DetailItem[]>([]);
   const [logs, setLogs] = useState<LogItem[]>([]);
@@ -188,7 +193,11 @@ export default function MobileStocktakeHistoryDetailPage({ params }: { params: {
   const [showOnlyDiff, setShowOnlyDiff] = useState(true);
 
   const loadDetail = async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      setLoading(false);
+      setMessage("Không lấy được mã phiên kiểm kho từ đường dẫn.");
+      return;
+    }
     setLoading(true);
     setMessage("");
     setLogs([]);
