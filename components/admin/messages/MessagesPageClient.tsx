@@ -941,6 +941,12 @@ export default function MessagesPageClient({
   const [newQuickReplyImageUrls, setNewQuickReplyImageUrls] = useState("");
   const [uploadingQuickReplyImages, setUploadingQuickReplyImages] = useState(false);
   const [uploadingQuickReplyTemplateId, setUploadingQuickReplyTemplateId] = useState("");
+  const [editingQuickReply, setEditingQuickReply] = useState<OmniQuickReplyTemplate | null>(null);
+  const [editingQuickReplyShortcut, setEditingQuickReplyShortcut] = useState("");
+  const [editingQuickReplyContent, setEditingQuickReplyContent] = useState("");
+  const [savingQuickReplyEdit, setSavingQuickReplyEdit] = useState(false);
+  const [editingQuickReplyImageUrls, setEditingQuickReplyImageUrls] = useState<string[]>([]);
+  const [uploadingQuickReplyEditImages, setUploadingQuickReplyEditImages] = useState(false);
   const [importingQuickReplies, setImportingQuickReplies] = useState(false);
   const [quickReplyImportResult, setQuickReplyImportResult] = useState("");
   const [quickReplySearch, setQuickReplySearch] = useState("");
@@ -2636,20 +2642,80 @@ export default function MessagesPageClient({
     }
   }
 
-  async function handleEditQuickReply(template: OmniQuickReplyTemplate) {
-    const shortcut = window
-      .prompt("Sửa từ viết tắt", template.title || "")
-      ?.trim();
-    if (shortcut === undefined || !shortcut) return;
+  function handleEditQuickReply(template: OmniQuickReplyTemplate) {
+    const meta = parseQuickReplyImportMeta(template.category);
+    setEditingQuickReply(template);
+    setEditingQuickReplyShortcut(String(template.title || ""));
+    setEditingQuickReplyContent(String(template.content || ""));
+    setEditingQuickReplyImageUrls(meta.imageUrls);
+    setError("");
+  }
 
-    const content = window
-      .prompt("Sửa nội dung mẫu trả lời", template.content)
-      ?.trim();
-    if (!content) return;
+  async function handleUploadQuickReplyEditImages(
+    files?: FileList | File[] | null,
+  ) {
+    const selectedFiles = Array.from(files || []).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (!selectedFiles.length) return;
+
+    const remainingSlots = Math.max(0, 8 - editingQuickReplyImageUrls.length);
+    if (!remainingSlots) {
+      setError("Mẫu này đã đủ 8 ảnh.");
+      return;
+    }
+
+    const filesToUpload = selectedFiles.slice(0, remainingSlots);
+    setUploadingQuickReplyEditImages(true);
+    setError("");
+
+    try {
+      const uploadedUrls: string[] = [];
+      for (let index = 0; index < filesToUpload.length; index += 1) {
+        const uploadFile = await resizeQuickReplyImageBeforeUpload(
+          filesToUpload[index],
+        );
+        const result = await uploadProductImage(uploadFile);
+        const uploadedUrl = getUploadedQuickReplyImageUrl(result);
+
+        if (!uploadedUrl) {
+          throw new Error(
+            `Ảnh ${index + 1} upload xong nhưng backend không trả về link.`,
+          );
+        }
+        uploadedUrls.push(uploadedUrl);
+      }
+
+      setEditingQuickReplyImageUrls((prev) =>
+        Array.from(new Set([...prev, ...uploadedUrls])).slice(0, 8),
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Không upload được ảnh.",
+      );
+    } finally {
+      setUploadingQuickReplyEditImages(false);
+    }
+  }
+
+  async function handleSaveQuickReplyEdit() {
+    if (!editingQuickReply) return;
+
+    const shortcut = editingQuickReplyShortcut.trim();
+    const content = editingQuickReplyContent.trim();
+
+    if (!shortcut) {
+      setError("Từ viết tắt không được để trống.");
+      return;
+    }
+    if (!content) {
+      setError("Cụm từ thay thế không được để trống.");
+      return;
+    }
 
     const duplicateShortcut = quickReplyTemplates.some(
       (item) =>
-        item.id !== template.id &&
+        item.id !== editingQuickReply.id &&
         normalizeQuickReplyText(item.title) ===
           normalizeQuickReplyText(shortcut),
     );
@@ -2658,15 +2724,39 @@ export default function MessagesPageClient({
       return;
     }
 
-    if (shortcut === template.title && content === template.content) return;
+    if (
+      shortcut === String(editingQuickReply.title || "") &&
+      content === String(editingQuickReply.content || "")
+    ) {
+      setEditingQuickReply(null);
+      return;
+    }
+
+    setSavingQuickReplyEdit(true);
+    setError("");
     try {
-      const updated = await updateOmniQuickReply(template.id, {
+      const currentMeta = parseQuickReplyImportMeta(
+        editingQuickReply.category,
+      );
+      const updated = await updateOmniQuickReply(editingQuickReply.id, {
         title: shortcut,
         content,
+        category: stringifyQuickReplyImportMeta({
+          imageUrls: editingQuickReplyImageUrls,
+          sourceUpdatedAt:
+            currentMeta.sourceUpdatedAt || new Date().toISOString(),
+        }),
       });
-      setQuickReplyTemplates((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+      setQuickReplyTemplates((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setEditingQuickReply(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không sửa được mẫu trả lời.");
+      setError(
+        err instanceof Error ? err.message : "Không sửa được mẫu trả lời.",
+      );
+    } finally {
+      setSavingQuickReplyEdit(false);
     }
   }
 
@@ -3986,6 +4076,188 @@ export default function MessagesPageClient({
           )}
         </main>
       </div>
+
+      {editingQuickReply ? (
+        <div
+          className="fixed inset-0 z-[210] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Sửa mẫu trả lời nhanh"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !savingQuickReplyEdit
+            ) {
+              if (!uploadingQuickReplyEditImages) {
+                setEditingQuickReply(null);
+              }
+            }
+          }}
+        >
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-neutral-200 px-6 py-5">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-neutral-400">
+                  Mẫu trả lời nhanh
+                </p>
+                <h3 className="mt-1 text-xl font-black text-neutral-950">
+                  Sửa từ viết tắt
+                </h3>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Cập nhật từ gõ tắt và cụm từ sẽ tự động thay thế trong khung chat.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingQuickReply(null)}
+                disabled={savingQuickReplyEdit}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:bg-neutral-50 disabled:opacity-50"
+                aria-label="Đóng"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <label className="block">
+                <span className="mb-2 block text-sm font-black text-neutral-800">
+                  Từ viết tắt hiện tại
+                </span>
+                <input
+                  autoFocus
+                  value={editingQuickReplyShortcut}
+                  onChange={(event) =>
+                    setEditingQuickReplyShortcut(event.target.value)
+                  }
+                  placeholder="Ví dụ: qddh"
+                  className="h-12 w-full rounded-2xl border border-neutral-200 px-4 text-sm font-bold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
+                />
+                <span className="mt-2 block text-xs text-neutral-500">
+                  Nhân viên gõ cụm này trong ô chat để gọi mẫu.
+                </span>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-black text-neutral-800">
+                  Cụm từ thay thế khi gõ tắt
+                </span>
+                <textarea
+                  value={editingQuickReplyContent}
+                  onChange={(event) =>
+                    setEditingQuickReplyContent(event.target.value)
+                  }
+                  placeholder="Nhập nội dung đầy đủ sẽ thay thế từ gõ tắt..."
+                  className="min-h-40 w-full resize-y rounded-2xl border border-neutral-200 px-4 py-3 text-sm leading-6 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
+                />
+                <span className="mt-2 block text-xs text-neutral-500">
+                  Nội dung này sẽ được đưa vào khung soạn khi chọn hoặc gõ đúng từ viết tắt.
+                </span>
+              </label>
+
+              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-neutral-800">
+                      Ảnh đính kèm
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {editingQuickReplyImageUrls.length}/8 ảnh
+                    </p>
+                  </div>
+
+                  <label
+                    className={cx(
+                      "cursor-pointer rounded-xl bg-blue-600 px-4 py-2 text-xs font-black text-white hover:bg-blue-500",
+                      (uploadingQuickReplyEditImages ||
+                        editingQuickReplyImageUrls.length >= 8) &&
+                        "pointer-events-none opacity-50",
+                    )}
+                  >
+                    {uploadingQuickReplyEditImages
+                      ? "Đang upload..."
+                      : "Thêm ảnh"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      disabled={
+                        uploadingQuickReplyEditImages ||
+                        editingQuickReplyImageUrls.length >= 8
+                      }
+                      onChange={(event) => {
+                        void handleUploadQuickReplyEditImages(
+                          event.target.files,
+                        );
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {editingQuickReplyImageUrls.length ? (
+                  <div className="mt-4 grid grid-cols-4 gap-3 sm:grid-cols-6">
+                    {editingQuickReplyImageUrls.map((url, index) => (
+                      <div
+                        key={`${url}-${index}`}
+                        className="group relative aspect-square overflow-hidden rounded-xl border border-neutral-200 bg-white"
+                      >
+                        <img
+                          src={url}
+                          alt={`Ảnh đính kèm ${index + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingQuickReplyImageUrls((prev) =>
+                              prev.filter(
+                                (_, itemIndex) => itemIndex !== index,
+                              ),
+                            )
+                          }
+                          className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
+                          aria-label={`Xoá ảnh ${index + 1}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-xl border border-dashed border-neutral-300 bg-white px-4 py-5 text-center text-xs text-neutral-500">
+                    Mẫu này chưa có ảnh. Bấm Thêm ảnh để chọn ảnh từ máy.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setEditingQuickReply(null)}
+                disabled={savingQuickReplyEdit}
+                className="rounded-2xl border border-neutral-200 bg-white px-5 py-2.5 text-sm font-black text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+              >
+                Huỷ
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveQuickReplyEdit()}
+                disabled={
+                  savingQuickReplyEdit ||
+                  uploadingQuickReplyEditImages ||
+                  !editingQuickReplyShortcut.trim() ||
+                  !editingQuickReplyContent.trim()
+                }
+                className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-black text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {savingQuickReplyEdit ? "Đang lưu..." : "Lưu thay đổi"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {imagePreview ? (
         <div

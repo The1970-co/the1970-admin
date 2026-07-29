@@ -4,7 +4,7 @@ import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { ArrowLeft, ClipboardList, RefreshCcw } from "lucide-react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "black";
@@ -145,27 +145,45 @@ function sessionCode(detail: SessionDetail, id: string) {
 }
 
 function normalizeDetail(input: any): SessionDetail {
-  return input?.session || input?.detail || input?.data || input || {};
+  const payload = input?.data || input?.detail || input || {};
+  const session = payload?.session || payload;
+
+  return {
+    ...session,
+    kpi: payload?.kpi || session?.kpi || null,
+    items: Array.isArray(payload?.rows)
+      ? payload.rows
+      : Array.isArray(payload?.items)
+        ? payload.items
+        : session?.items,
+    summary: Array.isArray(payload?.summary)
+      ? payload.summary
+      : session?.summary,
+    logs: Array.isArray(payload?.logs)
+      ? payload.logs
+      : Array.isArray(payload?.recentLogs)
+        ? payload.recentLogs
+        : session?.logs,
+  };
 }
 
 function normalizeItems(input: any, detail: SessionDetail): DetailItem[] {
-  const raw = Array.isArray(input)
-    ? input
-    : Array.isArray(input?.items)
-      ? input.items
-      : Array.isArray(input?.summary)
-        ? input.summary
-        : Array.isArray(input?.data)
-          ? input.data
-          : Array.isArray(input?.rows)
-            ? input.rows
-            : Array.isArray(input?.results)
-              ? input.results
-              : Array.isArray(detail.items)
-                ? detail.items
-                : Array.isArray(detail.summary)
-                  ? detail.summary
-                  : [];
+  const payload = input?.data || input?.detail || input;
+  const raw = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.rows)
+      ? payload.rows
+      : Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload?.summary)
+          ? payload.summary
+          : Array.isArray(payload?.results)
+            ? payload.results
+            : Array.isArray(detail.items)
+              ? detail.items
+              : Array.isArray(detail.summary)
+                ? detail.summary
+                : [];
   return raw;
 }
 
@@ -190,18 +208,10 @@ function normalizeLogs(input: any, detail: SessionDetail): LogItem[] {
 
 export default function MobileStocktakeHistoryDetailPage() {
   const routeParams = useParams<{ id?: string | string[] }>();
-  const searchParams = useSearchParams();
   const rawSessionId = routeParams?.id;
   const sessionId = String(
     Array.isArray(rawSessionId) ? rawSessionId[0] || "" : rawSessionId || "",
   ).trim();
-  const routeBranchId = String(searchParams.get("branchId") || "").trim();
-
-  const withBranchQuery = (path: string) => {
-    if (!routeBranchId) return path;
-    const separator = path.includes("?") ? "&" : "?";
-    return `${path}${separator}branchId=${encodeURIComponent(routeBranchId)}`;
-  };
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [items, setItems] = useState<DetailItem[]>([]);
   const [logs, setLogs] = useState<LogItem[]>([]);
@@ -218,42 +228,32 @@ export default function MobileStocktakeHistoryDetailPage() {
       setMessage("Không lấy được mã phiên kiểm kho từ đường dẫn.");
       return;
     }
+
     setLoading(true);
     setMessage("");
     setLogs([]);
     setLogsLoaded(false);
 
     try {
-      const [detailResult, summaryResult] = await Promise.allSettled([
-        apiJson<any>(withBranchQuery(`/stocktake-sessions/${sessionId}`), {
+      // Endpoint detail của backend đã tối ưu riêng cho màn lịch sử:
+      // trả metadata phiên, KPI và các SKU đã kiểm trong một request.
+      const detailData = await apiJson<any>(
+        `/stocktake-sessions/${sessionId}/detail`,
+        {
           redirectOnUnauthorized: true,
           timeoutMs: 30000,
-        } as any),
-        apiJson<any>(withBranchQuery(`/stocktake-sessions/${sessionId}/summary`), {
-          redirectOnUnauthorized: true,
-          timeoutMs: 30000,
-        } as any),
-      ]);
+        } as any,
+      );
 
-      if (detailResult.status === "rejected" && summaryResult.status === "rejected") {
-        throw detailResult.reason || summaryResult.reason;
-      }
-
-      const detailData =
-        detailResult.status === "fulfilled" ? detailResult.value : {};
       const nextDetail = normalizeDetail(detailData);
-
-      const summaryData =
-        summaryResult.status === "fulfilled" ? summaryResult.value : null;
-      const summaryFromEndpoint = normalizeItems(summaryData, nextDetail);
-      const summaryItems = summaryFromEndpoint.length
-        ? summaryFromEndpoint
-        : normalizeItems(detailData, nextDetail);
+      const detailItems = normalizeItems(detailData, nextDetail);
 
       setDetail(nextDetail);
-      setItems(summaryItems);
+      setItems(detailItems);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Không tải được chi tiết kiểm kho.");
+      setMessage(
+        err instanceof Error ? err.message : "Không tải được chi tiết kiểm kho.",
+      );
       setDetail(null);
       setItems([]);
       setLogs([]);
@@ -267,7 +267,7 @@ export default function MobileStocktakeHistoryDetailPage() {
 
     try {
       setLogsLoading(true);
-      const logData = await apiJson<any>(withBranchQuery(`/stocktake-sessions/${sessionId}/logs`), {
+      const logData = await apiJson<any>(`/stocktake-sessions/${sessionId}/logs`, {
         redirectOnUnauthorized: true,
         timeoutMs: 30000,
       } as any);
@@ -284,7 +284,7 @@ export default function MobileStocktakeHistoryDetailPage() {
   useEffect(() => {
     void loadDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, routeBranchId]);
+  }, [sessionId]);
 
   const scopedItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -344,11 +344,6 @@ export default function MobileStocktakeHistoryDetailPage() {
           <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/80">
             {formatDateTime(detail?.createdAt)}
           </span>
-          {routeBranchId ? (
-            <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/80">
-              CN: {routeBranchId}
-            </span>
-          ) : null}
         </div>
 
         {String(detail?.note || "").trim() ? (
