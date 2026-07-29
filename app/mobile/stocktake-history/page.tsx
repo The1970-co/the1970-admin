@@ -503,7 +503,7 @@ export default function MobileStocktakeHistoryPage() {
             return (
               <Link
                 key={item.id}
-                href={`/mobile/stocktake-history/${item.id}`}
+                href={`/mobile/stocktake-history/${item.id}?branchId=${encodeURIComponent(String(item.branchId || ""))}`}
                 className="block rounded-[1.75rem] border border-neutral-200 bg-white p-5 shadow-sm active:scale-[0.99]"
               >
                 <div className="flex items-start justify-between gap-3">

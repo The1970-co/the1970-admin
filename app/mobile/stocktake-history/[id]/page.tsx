@@ -4,7 +4,7 @@ import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { ArrowLeft, ClipboardList, RefreshCcw } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type Tone = "gray" | "green" | "amber" | "red" | "blue" | "black";
@@ -190,10 +190,18 @@ function normalizeLogs(input: any, detail: SessionDetail): LogItem[] {
 
 export default function MobileStocktakeHistoryDetailPage() {
   const routeParams = useParams<{ id?: string | string[] }>();
+  const searchParams = useSearchParams();
   const rawSessionId = routeParams?.id;
   const sessionId = String(
     Array.isArray(rawSessionId) ? rawSessionId[0] || "" : rawSessionId || "",
   ).trim();
+  const routeBranchId = String(searchParams.get("branchId") || "").trim();
+
+  const withBranchQuery = (path: string) => {
+    if (!routeBranchId) return path;
+    const separator = path.includes("?") ? "&" : "?";
+    return `${path}${separator}branchId=${encodeURIComponent(routeBranchId)}`;
+  };
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [items, setItems] = useState<DetailItem[]>([]);
   const [logs, setLogs] = useState<LogItem[]>([]);
@@ -217,11 +225,11 @@ export default function MobileStocktakeHistoryDetailPage() {
 
     try {
       const [detailResult, summaryResult] = await Promise.allSettled([
-        apiJson<any>(`/stocktake-sessions/${sessionId}`, {
+        apiJson<any>(withBranchQuery(`/stocktake-sessions/${sessionId}`), {
           redirectOnUnauthorized: true,
           timeoutMs: 30000,
         } as any),
-        apiJson<any>(`/stocktake-sessions/${sessionId}/summary`, {
+        apiJson<any>(withBranchQuery(`/stocktake-sessions/${sessionId}/summary`), {
           redirectOnUnauthorized: true,
           timeoutMs: 30000,
         } as any),
@@ -259,7 +267,7 @@ export default function MobileStocktakeHistoryDetailPage() {
 
     try {
       setLogsLoading(true);
-      const logData = await apiJson<any>(`/stocktake-sessions/${sessionId}/logs`, {
+      const logData = await apiJson<any>(withBranchQuery(`/stocktake-sessions/${sessionId}/logs`), {
         redirectOnUnauthorized: true,
         timeoutMs: 30000,
       } as any);
@@ -276,7 +284,7 @@ export default function MobileStocktakeHistoryDetailPage() {
   useEffect(() => {
     void loadDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, routeBranchId]);
 
   const scopedItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -336,6 +344,11 @@ export default function MobileStocktakeHistoryDetailPage() {
           <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/80">
             {formatDateTime(detail?.createdAt)}
           </span>
+          {routeBranchId ? (
+            <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/80">
+              CN: {routeBranchId}
+            </span>
+          ) : null}
         </div>
 
         {String(detail?.note || "").trim() ? (
