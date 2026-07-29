@@ -149,30 +149,42 @@ function normalizeDetail(input: any): SessionDetail {
 }
 
 function normalizeItems(input: any, detail: SessionDetail): DetailItem[] {
-  const raw = Array.isArray(input?.items)
-    ? input.items
-    : Array.isArray(input?.summary)
-      ? input.summary
-      : Array.isArray(input?.data)
-        ? input.data
-        : Array.isArray(detail.items)
-          ? detail.items
-          : Array.isArray(detail.summary)
-            ? detail.summary
-            : [];
+  const raw = Array.isArray(input)
+    ? input
+    : Array.isArray(input?.items)
+      ? input.items
+      : Array.isArray(input?.summary)
+        ? input.summary
+        : Array.isArray(input?.data)
+          ? input.data
+          : Array.isArray(input?.rows)
+            ? input.rows
+            : Array.isArray(input?.results)
+              ? input.results
+              : Array.isArray(detail.items)
+                ? detail.items
+                : Array.isArray(detail.summary)
+                  ? detail.summary
+                  : [];
   return raw;
 }
 
 function normalizeLogs(input: any, detail: SessionDetail): LogItem[] {
-  const raw = Array.isArray(input?.logs)
-    ? input.logs
-    : Array.isArray(input?.items)
-      ? input.items
-      : Array.isArray(input?.data)
-        ? input.data
-        : Array.isArray(detail.logs)
-          ? detail.logs
-          : [];
+  const raw = Array.isArray(input)
+    ? input
+    : Array.isArray(input?.logs)
+      ? input.logs
+      : Array.isArray(input?.items)
+        ? input.items
+        : Array.isArray(input?.data)
+          ? input.data
+          : Array.isArray(input?.rows)
+            ? input.rows
+            : Array.isArray(input?.results)
+              ? input.results
+              : Array.isArray(detail.logs)
+                ? detail.logs
+                : [];
   return raw;
 }
 
