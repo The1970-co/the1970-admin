@@ -157,6 +157,36 @@ function dt(value?: string | null) {
   }).format(d);
 }
 
+function vietnamDateKey(value?: string | null) {
+  if (!value) return "";
+  const raw = String(value).trim();
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10);
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(parsed);
+
+  const year = parts.find((part) => part.type === "year")?.value || "";
+  const month = parts.find((part) => part.type === "month")?.value || "";
+  const day = parts.find((part) => part.type === "day")?.value || "";
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function orderDateValue(order: OrderRow) {
+  return order.soldAt || order.createdAt || order.updatedAt || "";
+}
+
+function targetDateKey(range: "today" | "yesterday") {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  if (range === "yesterday") date.setDate(date.getDate() - 1);
+  return dateInput(date);
+}
+
 function normalize(value: unknown) {
   return String(value || "").trim().toUpperCase();
 }
@@ -443,6 +473,48 @@ export default function MobileOrdersPage() {
     try {
       setLoading(true);
       setError("");
+      const q = appliedQuery.trim();
+      const isSingleDay = quickDate === "today" || quickDate === "yesterday";
+
+      if (isSingleDay) {
+        // Backend hiện đang hiểu mốc ngày không đồng nhất giữa DB UTC và giờ Việt Nam.
+        // Với Hôm nay/Hôm qua, tải một khoảng đệm rồi lọc chính xác ở frontend theo Asia/Ho_Chi_Minh.
+        const wantedDate = targetDateKey(quickDate);
+        const bufferFrom = new Date(`${wantedDate}T00:00:00`);
+        bufferFrom.setDate(bufferFrom.getDate() - 1);
+        const bufferTo = new Date(`${wantedDate}T00:00:00`);
+        bufferTo.setDate(bufferTo.getDate() + 2);
+
+        const params = new URLSearchParams({
+          page: "1",
+          pageSize: "1000",
+          dateFrom: dateInput(bufferFrom),
+          dateTo: dateInput(bufferTo),
+        });
+        if (q) params.set("q", q);
+        if (quickStatus !== "ALL") params.set("quickStatus", quickStatus);
+
+        const raw = await getJson<OrdersResponse | OrderRow[]>(`/orders?${params.toString()}`);
+        const matchedRows = getRows(raw)
+          .filter((order) => vietnamDateKey(orderDateValue(order)) === wantedDate)
+          .sort((a, b) => {
+            const timeA = new Date(orderDateValue(a) || 0).getTime();
+            const timeB = new Date(orderDateValue(b) || 0).getTime();
+            return timeB - timeA;
+          });
+
+        const localTotal = matchedRows.length;
+        const localTotalPages = Math.max(1, Math.ceil(localTotal / PAGE_SIZE));
+        const safePage = Math.min(page, localTotalPages);
+        const start = (safePage - 1) * PAGE_SIZE;
+
+        setRows(matchedRows.slice(start, start + PAGE_SIZE));
+        setTotal(localTotal);
+        setTotalPages(localTotalPages);
+        if (safePage !== page) setPage(safePage);
+        return;
+      }
+
       const { from, to } = rangeDates(quickDate);
       const params = new URLSearchParams({
         page: String(page),
@@ -451,7 +523,6 @@ export default function MobileOrdersPage() {
         dateTo: to,
       });
 
-      const q = appliedQuery.trim();
       if (q) params.set("q", q);
       if (quickStatus !== "ALL") params.set("quickStatus", quickStatus);
 
