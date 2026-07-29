@@ -3192,14 +3192,28 @@ export default function ProductsPageClient() {
   };
 
   const openProductDetail = (product: ProductItem) => {
-    const href = `/products/${encodeURIComponent(product.id)}`;
+    const productId = String(product?.id || "").trim();
+
+    if (!productId) {
+      setActionMessage("Sản phẩm không có ID hợp lệ.");
+      return;
+    }
+
+    const href = `/products/${encodeURIComponent(productId)}`;
 
     addWorkspaceTab({
-      id: product.id,
+      id: productId,
       title: product.name || product.slug || "Sản phẩm",
       href,
       type: "product",
     });
+
+    // Mobile/PWA mở trong cùng cửa sổ để giữ nguyên phiên đăng nhập
+    // và tránh WebView/tab mới làm mất trạng thái xác thực.
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      window.location.assign(href);
+      return;
+    }
 
     window.open(href, "_blank", "noopener,noreferrer");
   };
