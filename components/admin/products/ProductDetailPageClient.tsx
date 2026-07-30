@@ -536,11 +536,21 @@ function TokenPreview({ value }: { value: string }) {
 }
 
 async function fetchProductById(productId: string): Promise<ProductItem> {
+  const lookupKey = String(productId || "").trim();
+  if (!lookupKey) {
+    throw new Error("Thiếu mã sản phẩm.");
+  }
+
   const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("the1970_token") ||
+        ""
+      : "";
 
   const res = await fetch(
-    `${API_BASE}/products/${encodeURIComponent(productId)}`,
+    `${API_BASE}/products/${encodeURIComponent(lookupKey)}`,
     {
       headers: {
         Accept: "application/json",
@@ -550,21 +560,71 @@ async function fetchProductById(productId: string): Promise<ProductItem> {
     },
   );
 
-  if (res.ok) return await res.json();
+  const directJson = res.ok ? await res.json().catch(() => null) : null;
+  if (directJson && typeof directJson === "object") {
+    const directProduct = directJson?.data || directJson?.product || directJson;
+    if (directProduct?.id) return directProduct as ProductItem;
+  }
 
   const fallback = await (getProducts as any)({
     page: 1,
     limit: 100,
-    q: productId,
+    q: lookupKey,
   });
   const rows = Array.isArray(fallback) ? fallback : fallback?.data || [];
-  const found = rows.find(
-    (item: ProductItem) => item.id === productId || item.slug === productId,
-  );
+  const normalizedKey = lookupKey.toLowerCase();
+  const found = rows.find((item: ProductItem) => {
+    if (String(item?.id || "").toLowerCase() === normalizedKey) return true;
+    if (String(item?.slug || "").toLowerCase() === normalizedKey) return true;
+
+    return (item?.variants || []).some((variant: any) =>
+      [variant?.id, variant?.sku, variant?.productId]
+        .map((value) => String(value || "").toLowerCase())
+        .includes(normalizedKey),
+    );
+  });
   if (found) return found;
 
+  const errorJson = res.ok ? directJson : await res.json().catch(() => null);
+  throw new Error(errorJson?.message || "Không tải được chi tiết sản phẩm.");
+}
+
+
+async function updateVariantSkuRequest(
+  productId: string,
+  variantId: string,
+  sku: string,
+) {
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("the1970_token") ||
+        ""
+      : "";
+
+  const res = await fetch(
+    `${API_BASE}/products/${encodeURIComponent(productId)}/variants/${encodeURIComponent(variantId)}/sku`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ sku: String(sku || "").trim() }),
+    },
+  );
+
   const json = await res.json().catch(() => null);
-  throw new Error(json?.message || "Không tải được chi tiết sản phẩm.");
+  if (!res.ok) {
+    const message = Array.isArray(json?.message)
+      ? json.message.join(", ")
+      : json?.message;
+    throw new Error(message || "Không sửa được SKU.");
+  }
+
+  return json?.data || json;
 }
 
 type InventoryProductStockRow = {
@@ -997,6 +1057,9 @@ export default function ProductDetailPageClient({
   const [uploading, setUploading] = useState(false);
   const [uploadingColor, setUploadingColor] = useState("");
   const [statusSaving, setStatusSaving] = useState(false);
+  const [editingVariantId, setEditingVariantId] = useState("");
+  const [editingVariantSku, setEditingVariantSku] = useState("");
+  const [skuSaving, setSkuSaving] = useState(false);
 
   const isOwner = isOwnerOrAdminUser(currentUser);
   const canViewProduct = hasProductInventoryPermission(
@@ -1605,6 +1668,58 @@ export default function ProductDetailPageClient({
       );
     } finally {
       setVariantSaving(false);
+    }
+  };
+
+  const startEditVariantSku = (variant: any) => {
+    if (!isOwner) return;
+    setEditingVariantId(String(variant?.id || ""));
+    setEditingVariantSku(String(variant?.sku || ""));
+    setMessage("");
+  };
+
+  const cancelEditVariantSku = () => {
+    if (skuSaving) return;
+    setEditingVariantId("");
+    setEditingVariantSku("");
+  };
+
+  const handleSaveVariantSku = async (variant: any) => {
+    if (!product || !isOwner || skuSaving) return;
+
+    const nextSku = String(editingVariantSku || "").trim();
+    if (!nextSku) {
+      setMessage("SKU không được để trống.");
+      return;
+    }
+
+    if (nextSku === String(variant?.sku || "").trim()) {
+      cancelEditVariantSku();
+      return;
+    }
+
+    try {
+      setSkuSaving(true);
+      setMessage("");
+      await updateVariantSkuRequest(product.id, variant.id, nextSku);
+
+      const next = await fetchProductById(product.id);
+      const nextInventoryRows = await fetchInventoryByProduct(product.id);
+      const normalizedInventoryRows = getProductInventoryRows(
+        next,
+        nextInventoryRows,
+      );
+
+      setProduct(next);
+      setInventoryRows(normalizedInventoryRows);
+      hydrateForm(next, branches, categories, normalizedInventoryRows);
+      setEditingVariantId("");
+      setEditingVariantSku("");
+      setMessage(`Đã đổi SKU thành ${nextSku}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không sửa được SKU.");
+    } finally {
+      setSkuSaving(false);
     }
   };
 
@@ -2345,7 +2460,58 @@ export default function ProductDetailPageClient({
                                 </td>
                               ) : null}
                               <td className="border-b px-4 py-3 font-medium">
-                                {variant.sku || "—"}
+                                {editingVariantId === String(variant.id || "") ? (
+                                  <div className="flex min-w-[220px] items-center gap-2">
+                                    <input
+                                      value={editingVariantSku}
+                                      onChange={(event) =>
+                                        setEditingVariantSku(event.target.value)
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          void handleSaveVariantSku(variant);
+                                        }
+                                        if (event.key === "Escape") {
+                                          event.preventDefault();
+                                          cancelEditVariantSku();
+                                        }
+                                      }}
+                                      autoFocus
+                                      disabled={skuSaving}
+                                      className="min-w-0 flex-1 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-neutral-900"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleSaveVariantSku(variant)}
+                                      disabled={skuSaving}
+                                      className="rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                                    >
+                                      {skuSaving ? "Lưu..." : "Lưu"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={cancelEditVariantSku}
+                                      disabled={skuSaving}
+                                      className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold text-neutral-700 disabled:opacity-50"
+                                    >
+                                      Hủy
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <span>{variant.sku || "—"}</span>
+                                    {isOwner ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => startEditVariantSku(variant)}
+                                        className="rounded-lg border border-neutral-300 px-2 py-1 text-[11px] font-semibold text-neutral-600 hover:bg-neutral-50"
+                                      >
+                                        Sửa SKU
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                )}
                               </td>
                               <td className="min-w-[240px] border-b px-4 py-3">
                                 {(variant as any).variantName || `${product.name || ""}${variant.color ? ` - ${variant.color}` : ""}${variant.size ? ` - ${variant.size}` : ""}` || "—"}
