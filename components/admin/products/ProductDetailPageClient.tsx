@@ -627,6 +627,42 @@ async function updateVariantSkuRequest(
   return json?.data || json;
 }
 
+async function updateVariantSkusBulkRequest(
+  productId: string,
+  items: Array<{ variantId: string; sku: string }>,
+) {
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("the1970_token") ||
+        ""
+      : "";
+
+  const res = await fetch(
+    `${API_BASE}/products/${encodeURIComponent(productId)}/variants/sku/bulk`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ items }),
+    },
+  );
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const errorMessage = Array.isArray(json?.message)
+      ? json.message.join(", ")
+      : json?.message;
+    throw new Error(errorMessage || "Không sửa được danh sách SKU.");
+  }
+
+  return json?.data || json;
+}
+
 type InventoryProductStockRow = {
   variantId: string;
   branchId: string;
@@ -811,7 +847,31 @@ function formatMovementTime(row: InventoryMovement) {
 }
 
 function getMovementActor(row: InventoryMovement) {
-  return row.actorName || row.createdByName || row.actorEmail || row.createdByEmail || "Chưa ghi nhận";
+  const source = row as any;
+  return (
+    source.actorName ||
+    source.createdByName ||
+    source.employeeName ||
+    source.staffName ||
+    source.userName ||
+    source.performedByName ||
+    source.operatorName ||
+    source.assigneeName ||
+    source.actor?.name ||
+    source.createdBy?.name ||
+    source.employee?.name ||
+    source.user?.name ||
+    source.actorEmail ||
+    source.createdByEmail ||
+    source.employeeEmail ||
+    source.userEmail ||
+    source.performedByEmail ||
+    source.actor?.email ||
+    source.createdBy?.email ||
+    source.employee?.email ||
+    source.user?.email ||
+    "Chưa ghi nhận"
+  );
 }
 
 function getMovementRefLabel(row: InventoryMovement) {
@@ -1059,6 +1119,8 @@ export default function ProductDetailPageClient({
   const [statusSaving, setStatusSaving] = useState(false);
   const [editingVariantId, setEditingVariantId] = useState("");
   const [editingVariantSku, setEditingVariantSku] = useState("");
+  const [editingColorKey, setEditingColorKey] = useState("");
+  const [editingColorSkus, setEditingColorSkus] = useState<Record<string, string>>({});
   const [skuSaving, setSkuSaving] = useState(false);
 
   const isOwner = isOwnerOrAdminUser(currentUser);
@@ -1718,6 +1780,82 @@ export default function ProductDetailPageClient({
       setMessage(`Đã đổi SKU thành ${nextSku}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Không sửa được SKU.");
+    } finally {
+      setSkuSaving(false);
+    }
+  };
+
+  const startEditColorSkus = (group: any) => {
+    if (!isOwner || skuSaving) return;
+    const variants = Array.isArray(group?.variants) ? group.variants : [];
+    const colorKey = String(group?.colorKey || group?.colorLabel || "").trim();
+
+    setEditingVariantId("");
+    setEditingVariantSku("");
+    setEditingColorKey(colorKey);
+    setEditingColorSkus(
+      Object.fromEntries(
+        variants
+          .filter((item: any) => String(item?.id || "").trim())
+          .map((item: any) => [
+            String(item.id),
+            String(item.sku || ""),
+          ]),
+      ),
+    );
+    setMessage("");
+  };
+
+  const cancelEditColorSkus = () => {
+    if (skuSaving) return;
+    setEditingColorKey("");
+    setEditingColorSkus({});
+  };
+
+  const handleSaveColorSkus = async (group: any) => {
+    if (!product || !isOwner || skuSaving) return;
+
+    const variants = Array.isArray(group?.variants) ? group.variants : [];
+    const items = variants.map((variant: any) => ({
+      variantId: String(variant?.id || "").trim(),
+      sku: String(editingColorSkus[String(variant?.id || "")] || "")
+        .trim()
+        .toUpperCase(),
+    }));
+
+    if (items.some((item: any) => !item.variantId || !item.sku)) {
+      setMessage("Không được để trống SKU trong nhóm màu.");
+      return;
+    }
+
+    const normalizedSkus = items.map((item: any) => item.sku.toLowerCase());
+    if (new Set(normalizedSkus).size !== normalizedSkus.length) {
+      setMessage("Trong nhóm màu đang có SKU bị trùng nhau.");
+      return;
+    }
+
+    try {
+      setSkuSaving(true);
+      setMessage("");
+      await updateVariantSkusBulkRequest(product.id, items);
+
+      const next = await fetchProductById(product.id);
+      const nextInventoryRows = await fetchInventoryByProduct(product.id);
+      const normalizedInventoryRows = getProductInventoryRows(
+        next,
+        nextInventoryRows,
+      );
+
+      setProduct(next);
+      setInventoryRows(normalizedInventoryRows);
+      hydrateForm(next, branches, categories, normalizedInventoryRows);
+      setEditingColorKey("");
+      setEditingColorSkus({});
+      setMessage(`Đã cập nhật ${items.length} SKU của màu ${group?.colorLabel || ""}.`);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Không sửa được danh sách SKU.",
+      );
     } finally {
       setSkuSaving(false);
     }
@@ -2454,13 +2592,65 @@ export default function ProductDetailPageClient({
                                             </span>
                                           ))}
                                         </div>
+                                        {isOwner ? (
+                                          editingColorKey === String(group.colorKey || group.colorLabel || "").trim() ? (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={() => void handleSaveColorSkus(group)}
+                                                disabled={skuSaving}
+                                                className="rounded-lg bg-neutral-900 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                                              >
+                                                {skuSaving ? "Đang lưu..." : `Lưu ${groupSize} SKU`}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={cancelEditColorSkus}
+                                                disabled={skuSaving}
+                                                className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 disabled:opacity-50"
+                                              >
+                                                Hủy
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => startEditColorSkus(group)}
+                                              className="mt-3 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                                            >
+                                              Sửa SKU cả màu
+                                            </button>
+                                          )
+                                        ) : null}
                                       </div>
                                     </div>
                                   </div>
                                 </td>
                               ) : null}
                               <td className="border-b px-4 py-3 font-medium">
-                                {editingVariantId === String(variant.id || "") ? (
+                                {editingColorKey === String(group.colorKey || group.colorLabel || "").trim() ? (
+                                  <input
+                                    value={editingColorSkus[String(variant.id || "")] || ""}
+                                    onChange={(event) =>
+                                      setEditingColorSkus((current) => ({
+                                        ...current,
+                                        [String(variant.id || "")]: event.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void handleSaveColorSkus(group);
+                                      }
+                                      if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelEditColorSkus();
+                                      }
+                                    }}
+                                    disabled={skuSaving}
+                                    className="min-w-[190px] rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold uppercase outline-none focus:border-neutral-900"
+                                  />
+                                ) : editingVariantId === String(variant.id || "") ? (
                                   <div className="flex min-w-[220px] items-center gap-2">
                                     <input
                                       value={editingVariantSku}
