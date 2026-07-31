@@ -240,6 +240,7 @@ export default function MobileProductDetailPage() {
   const [product, setProduct] = useState<Product | null>(null);
   const [selected, setSelected] = useState("");
   const [history, setHistory] = useState<InventoryMovement[]>([]);
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(40);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -285,6 +286,7 @@ export default function MobileProductDetailPage() {
         setError("");
         const result = await fetchProduct(id);
         setProduct(result);
+        setHistoryVisibleCount(40);
         setSelected((current) => {
           if (
             current &&
@@ -555,7 +557,7 @@ export default function MobileProductDetailPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {historyRows.slice(0, 40).map((row: any) => {
+                  {historyRows.slice(0, historyVisibleCount).map((row: any) => {
                     const qty = Number(row.qty || 0);
                     return (
                       <div
@@ -600,6 +602,24 @@ export default function MobileProductDetailPage() {
                       </div>
                     );
                   })}
+                  <div className="pt-1 text-center">
+                    <div className="mb-2 text-xs text-neutral-500">
+                      Đang hiển thị {Math.min(historyVisibleCount, historyRows.length)} / {historyRows.length} biến động gần nhất.
+                    </div>
+                    {historyVisibleCount < historyRows.length ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHistoryVisibleCount((current) =>
+                            Math.min(current + 40, historyRows.length),
+                          )
+                        }
+                        className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-black text-neutral-900"
+                      >
+                        Xem thêm 40 bản ghi
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               )}
             </Section>

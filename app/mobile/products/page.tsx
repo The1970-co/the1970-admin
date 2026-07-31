@@ -33,6 +33,8 @@ type MobileProduct = {
   productType: string | null;
   brand: string | null;
   imageUrl: string | null;
+  colorImages?: Record<string, string>;
+  imagesByColor?: Record<string, string>;
   status: string;
   variantCount: number;
   totalAvailable: number;
@@ -45,6 +47,49 @@ type MobileProduct = {
 
 function money(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value || 0);
+}
+
+function absoluteImageUrl(value?: string | null) {
+  const src = String(value || "").trim();
+  if (!src) return "";
+  return src.startsWith("http") ? src : `${API_BASE}${src}`;
+}
+
+function normalizeColorKey(value?: string | null) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function getProductColorRepresentatives(product: MobileProduct) {
+  const seen = new Set<string>();
+  const colorMap = product.colorImages || product.imagesByColor || {};
+  const output: Array<{ key: string; label: string; image: string }> = [];
+
+  for (const variant of product.variants || []) {
+    const label = String(variant.color || "Khác").trim() || "Khác";
+    const key = normalizeColorKey(label) || "KHAC";
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const image = absoluteImageUrl(
+      variant.imageUrl ||
+        colorMap[key] ||
+        colorMap[label] ||
+        product.imageUrl ||
+        "",
+    );
+
+    output.push({ key, label, image });
+  }
+
+  if (!output.length && product.imageUrl) {
+    output.push({
+      key: "DEFAULT",
+      label: "Ảnh chính",
+      image: absoluteImageUrl(product.imageUrl),
+    });
+  }
+
+  return output.slice(0, 8);
 }
 
 function statusLabel(status: string) {
@@ -307,19 +352,60 @@ export default function MobileProductsPage() {
                     }}
                     className="block w-full text-left"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-base font-bold text-neutral-950">
-                          {product.name}
-                        </div>
-                        <div className="mt-1 text-sm text-neutral-500">
-                          {product.category ||
-                            product.productType ||
-                            "Chưa phân loại"}
-                        </div>
+                    <div className="flex items-start gap-3">
+                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
+                        {absoluteImageUrl(product.imageUrl) ? (
+                          <img
+                            src={absoluteImageUrl(product.imageUrl)}
+                            alt={product.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : null}
                       </div>
-                      <div className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-700">
-                        {statusLabel(product.status)}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="line-clamp-2 text-base font-bold leading-5 text-neutral-950">
+                              {product.name}
+                            </div>
+                            <div className="mt-1 text-sm text-neutral-500">
+                              {product.category ||
+                                product.productType ||
+                                "Chưa phân loại"}
+                            </div>
+                          </div>
+                          <div className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-700">
+                            {statusLabel(product.status)}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 flex items-center gap-1.5 overflow-hidden">
+                          {getProductColorRepresentatives(product).map((color) => (
+                            <div
+                              key={color.key}
+                              title={color.label}
+                              className="h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-200"
+                            >
+                              {color.image ? (
+                                <img
+                                  src={color.image}
+                                  alt={color.label}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-[9px] font-black text-neutral-500">
+                                  {color.label.slice(0, 2).toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {getProductColorRepresentatives(product).length > 0 ? (
+                            <span className="ml-1 truncate text-xs text-neutral-500">
+                              {getProductColorRepresentatives(product).length} màu
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
