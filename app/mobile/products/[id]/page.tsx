@@ -27,10 +27,19 @@ type Variant = {
   price?: number;
   costPrice?: number;
   imageUrl?: string | null;
+  stock?: number;
   availableQty?: number;
   reservedQty?: number;
   incomingQty?: number;
+  inventoryByBranch?: Record<string, number>;
   branches?: BranchStock[];
+  inventoryItems?: Array<{
+    branchId?: string;
+    branch?: { id?: string; name?: string };
+    availableQty?: number;
+    reservedQty?: number;
+    incomingQty?: number;
+  }>;
 };
 
 type Product = {
@@ -153,10 +162,47 @@ function totalStock(product: Product) {
   );
 }
 
+function getVariantBranches(variant?: Variant): BranchStock[] {
+  if (!variant) return [];
+
+  if (Array.isArray(variant.branches) && variant.branches.length) {
+    return variant.branches.map((branch) => ({
+      branchId: branch.branchId,
+      branchName: branch.branchName || branch.branchId,
+      availableQty: Number(branch.availableQty || 0),
+      reservedQty: Number(branch.reservedQty || 0),
+      incomingQty: Number(branch.incomingQty || 0),
+    }));
+  }
+
+  if (Array.isArray(variant.inventoryItems) && variant.inventoryItems.length) {
+    return variant.inventoryItems.map((item) => ({
+      branchId: item.branchId || item.branch?.id,
+      branchName: item.branch?.name || item.branchId || item.branch?.id,
+      availableQty: Number(item.availableQty || 0),
+      reservedQty: Number(item.reservedQty || 0),
+      incomingQty: Number(item.incomingQty || 0),
+    }));
+  }
+
+  if (variant.inventoryByBranch && typeof variant.inventoryByBranch === "object") {
+    return Object.entries(variant.inventoryByBranch).map(([branchId, qty]) => ({
+      branchId,
+      branchName: branchId,
+      availableQty: Number(qty || 0),
+      reservedQty: 0,
+      incomingQty: 0,
+    }));
+  }
+
+  return [];
+}
+
 function variantStock(variant?: Variant) {
   if (!variant) return 0;
+  if (typeof variant.stock === "number") return variant.stock;
   if (typeof variant.availableQty === "number") return variant.availableQty;
-  return (variant.branches || []).reduce(
+  return getVariantBranches(variant).reduce(
     (sum, branch) => sum + Number(branch.availableQty || 0),
     0,
   );
@@ -336,7 +382,7 @@ export default function MobileProductDetailPage() {
     }));
   }, [product]);
 
-  const branches = variant?.branches || [];
+  const branches = getVariantBranches(variant);
   const variantCount = product?.variantCount || product?.variants?.length || 0;
   const selectedVariantHistory = history.filter(
     (row: any) => !variant?.id || !row.variantId || String(row.variantId) === String(variant.id),
@@ -483,7 +529,7 @@ export default function MobileProductDetailPage() {
             <Section title="Tồn theo chi nhánh" icon={<Store className="h-5 w-5" />}>
               {branches.length === 0 ? (
                 <div className="rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-500">
-                  Chưa có dữ liệu tồn theo chi nhánh cho biến thể này.
+                  Biến thể này chưa có bản ghi tồn kho theo chi nhánh.
                 </div>
               ) : (
                 <div className="space-y-3">
