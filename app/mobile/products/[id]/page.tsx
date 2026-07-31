@@ -3,11 +3,34 @@
 import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
-import { getInventoryMovementsByProduct, type InventoryMovement } from "@/lib/inventory-api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Boxes, History, RefreshCw, Shirt, Store } from "lucide-react";
+
+type InventoryMovement = {
+  id: string;
+  type: string;
+  qty: number;
+  note?: string;
+  refType?: string;
+  refId?: string;
+  refCode?: string | null;
+  branchId?: string;
+  branchName?: string;
+  createdAt?: string | null;
+  createdAtIso?: string | null;
+  createdAtText?: string | null;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  actorName?: string | null;
+  actorEmail?: string | null;
+  sku?: string;
+  productId?: string | null;
+  variantId?: string | null;
+  color?: string;
+  size?: string;
+};
 
 type BranchStock = {
   branchId?: string;
@@ -65,7 +88,7 @@ type Product = {
 
 async function api<T>(path: string): Promise<T> {
   return apiJson<T>(path, {
-    redirectOnUnauthorized: true,
+    redirectOnUnauthorized: false,
     timeoutMs: 30000,
   } as any);
 }
@@ -208,6 +231,93 @@ function variantStock(variant?: Variant) {
   );
 }
 
+function getMobileAuthToken() {
+  if (typeof window === "undefined") return "";
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken") ||
+    localStorage.getItem("the1970_token") ||
+    ""
+  );
+}
+
+function normalizeMovement(raw: any): InventoryMovement {
+  return {
+    id: String(raw?.id || ""),
+    type: String(raw?.type || ""),
+    qty: Number(raw?.qty || 0),
+    note: raw?.note || "",
+    refType: raw?.refType || "",
+    refId: raw?.refId || "",
+    refCode: raw?.refCode || raw?.orderCode || null,
+    branchId: raw?.branchId || "",
+    branchName: raw?.branchName || raw?.branch?.name || "",
+    createdAt: raw?.createdAtIso || raw?.createdAt || null,
+    createdAtIso: raw?.createdAtIso || raw?.createdAt || null,
+    createdAtText: raw?.createdAtText || null,
+    createdByName:
+      raw?.createdByName ||
+      raw?.actorName ||
+      raw?.createdBy?.fullName ||
+      raw?.createdBy?.name ||
+      null,
+    createdByEmail: raw?.createdByEmail || raw?.actorEmail || null,
+    actorName:
+      raw?.actorName ||
+      raw?.createdByName ||
+      raw?.createdBy?.fullName ||
+      raw?.createdBy?.name ||
+      null,
+    actorEmail: raw?.actorEmail || raw?.createdByEmail || null,
+    sku: raw?.sku || "",
+    productId: raw?.productId || null,
+    variantId: raw?.variantId || raw?.productVariantId || null,
+    color: raw?.color || "",
+    size: raw?.size || "",
+  };
+}
+
+async function fetchInventoryHistorySafely(
+  productId: string,
+  limit = 200,
+): Promise<InventoryMovement[]> {
+  const token = getMobileAuthToken();
+  if (!token) return [];
+
+  const response = await fetch(
+    `${API_BASE}/inventory/movements/product/${encodeURIComponent(productId)}?limit=${limit}`,
+    {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  // Trang chi tiết không được tự xóa token hoặc đẩy người dùng ra ngoài.
+  // 401/403 chỉ làm ẩn lịch sử và giữ nguyên phiên đăng nhập hiện tại.
+  if (response.status === 401 || response.status === 403) {
+    return [];
+  }
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message || `Không tải được lịch sử kho (${response.status}).`);
+  }
+
+  const payload = await response.json().catch(() => []);
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.items)
+        ? payload.items
+        : [];
+
+  return rows.map(normalizeMovement);
+}
+
 function movementLabel(type?: string) {
   const labels: Record<string, string> = {
     IMPORT: "Nhập kho",
@@ -307,7 +417,7 @@ export default function MobileProductDetailPage() {
     try {
       setHistoryLoading(true);
       setHistoryError("");
-      const rows = await getInventoryMovementsByProduct(productId, 200);
+      const rows = await fetchInventoryHistorySafely(productId, 200);
       setHistory(Array.isArray(rows) ? rows : []);
     } catch (err) {
       setHistory([]);
