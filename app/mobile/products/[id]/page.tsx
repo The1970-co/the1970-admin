@@ -12,14 +12,72 @@ type BranchStock = { branchId?: string; branchName?: string; availableQty?: numb
 type Variant = { id?: string; sku?: string; color?: string | null; size?: string | null; status?: string; price?: number; costPrice?: number; availableQty?: number; reservedQty?: number; incomingQty?: number; branches?: BranchStock[] };
 type Product = { id: string; name: string; slug?: string; category?: string | null; productType?: string | null; brand?: string | null; imageUrl?: string | null; status?: string; description?: string | null; variantCount?: number; totalAvailable?: number; totalReserved?: number; totalIncoming?: number; minPrice?: number; maxPrice?: number; variants?: Variant[] };
 
-function getToken(){return typeof window==="undefined"?"":localStorage.getItem("token")||""}
 async function api<T>(path: string): Promise<T> {
   return apiJson<T>(path, {
     redirectOnUnauthorized: true,
     timeoutMs: 30000,
   } as any);
 }
-async function fetchProduct(id:string){try{return await api<Product>(`/mobile/products/${encodeURIComponent(id)}`)}catch{const rows=await api<Product[]>("/mobile/products?take=200");const found=rows.find(item=>item.id===id||item.slug===id);if(!found)throw new Error("Không tìm thấy sản phẩm");return found}}
+function unwrapProducts(payload: any): Product[] {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  return [];
+}
+
+function productMatchesRouteValue(product: Product, value: string) {
+  const target = String(value || "").trim().toLowerCase();
+  if (!target) return false;
+
+  if (String(product.id || "").trim().toLowerCase() === target) return true;
+  if (String(product.slug || "").trim().toLowerCase() === target) return true;
+
+  return (product.variants || []).some((variant) =>
+    [variant.id, variant.sku].some(
+      (candidate) => String(candidate || "").trim().toLowerCase() === target,
+    ),
+  );
+}
+
+async function fetchProduct(rawId: string) {
+  const id = decodeURIComponent(String(rawId || "").trim());
+  if (!id) throw new Error("Thiếu mã sản phẩm");
+
+  const directPaths = [
+    `/mobile/products/${encodeURIComponent(id)}`,
+    `/products/${encodeURIComponent(id)}`,
+  ];
+
+  for (const path of directPaths) {
+    try {
+      const product = await api<Product | null>(path);
+      if (product?.id) return product;
+    } catch {
+      // Thử tiếp bằng API danh sách để xử lý trường hợp route truyền variantId/SKU/slug.
+    }
+  }
+
+  const listPaths = [
+    `/mobile/products?q=${encodeURIComponent(id)}&take=1000`,
+    `/mobile/products?take=1000`,
+    `/products?q=${encodeURIComponent(id)}&limit=1000`,
+  ];
+
+  for (const path of listPaths) {
+    try {
+      const payload = await api<any>(path);
+      const found = unwrapProducts(payload).find((item) =>
+        productMatchesRouteValue(item, id),
+      );
+      if (found) return found;
+    } catch {
+      // Tiếp tục thử endpoint còn lại.
+    }
+  }
+
+  throw new Error("Không tìm thấy sản phẩm");
+}
 function money(v?:number|null){return new Intl.NumberFormat("vi-VN").format(Number(v||0))+"đ"}
 function img(src?:string|null){if(!src)return"";return src.startsWith("http")?src:`${API_BASE}${src}`}
 function totalStock(p:Product){if(typeof p.totalAvailable==="number")return p.totalAvailable;return(p.variants||[]).reduce((sum,v)=>sum+(typeof v.availableQty==="number"?v.availableQty:(v.branches||[]).reduce((s,b)=>s+Number(b.availableQty||0),0)),0)}
@@ -27,10 +85,12 @@ function variantStock(v?:Variant){if(!v)return 0;if(typeof v.availableQty==="num
 function Section({title,icon,children}:{title:string;icon:React.ReactNode;children:React.ReactNode}){return <section className="rounded-[1.75rem] bg-white p-5 shadow-sm"><div className="mb-4 flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-neutral-100">{icon}</div><h2 className="text-lg font-black">{title}</h2></div>{children}</section>}
 
 export default function MobileProductDetailPage(){
- const params=useParams();const id=String(params.id||"");
+ const params=useParams();
+ const rawParam=Array.isArray(params?.id)?params.id[0]:params?.id;
+ const id=decodeURIComponent(String(rawParam||"").trim());
  const [product,setProduct]=useState<Product|null>(null),[selected,setSelected]=useState("");
  const [loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[error,setError]=useState("");
- const load=useCallback(async(silent=false)=>{if(!id)return;try{silent?setRefreshing(true):setLoading(true);setError("");const res=await fetchProduct(id);setProduct(res);setSelected(cur=>cur||res.variants?.[0]?.id||res.variants?.[0]?.sku||"")}catch(e){setError(e instanceof Error?e.message:"Có lỗi xảy ra")}finally{setLoading(false);setRefreshing(false)}},[id]);
+ const load=useCallback(async(silent=false)=>{if(!id){setLoading(false);setError("Thiếu mã sản phẩm");return}try{silent?setRefreshing(true):setLoading(true);setError("");const res=await fetchProduct(id);setProduct(res);setSelected(cur=>cur||res.variants?.[0]?.id||res.variants?.[0]?.sku||"")}catch(e){setError(e instanceof Error?e.message:"Có lỗi xảy ra")}finally{setLoading(false);setRefreshing(false)}},[id]);
  useEffect(()=>{void load()},[load]);
  const variant=useMemo(()=>product?.variants?.find(v=>(v.id||v.sku)===selected)||product?.variants?.[0],[product,selected]);
  const branches=variant?.branches||[];const variantCount=product?.variantCount||product?.variants?.length||0;

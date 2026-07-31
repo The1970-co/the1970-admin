@@ -1309,6 +1309,27 @@ export default function StockTransfersPageClient() {
       transfer.toBranchId ||
       "—";
 
+    const senderName =
+      (transfer as any).confirmedByName ||
+      (transfer as any).sentByName ||
+      (transfer as any).senderName ||
+      (transfer as any).createdByName ||
+      "—";
+    const sentAt =
+      (transfer as any).confirmedAt ||
+      (transfer as any).sentAt ||
+      (transfer as any).createdAt;
+    const receiverName =
+      (transfer as any).completedByName ||
+      (transfer as any).receivedByName ||
+      (transfer as any).receiverName ||
+      (transfer as any).receivedBy?.name ||
+      "—";
+    const receivedAt =
+      (transfer as any).completedAt ||
+      (transfer as any).receivedAt ||
+      null;
+
     const mappedItems = getTransferItems(transfer).map((item: any) => ({
       productName: getTransferItemProductName(item) || "Sản phẩm",
       sku: getTransferItemSku(item),
@@ -1333,11 +1354,19 @@ export default function StockTransfersPageClient() {
       warehouseName: "THE 1970",
       warehousePhone: "",
       warehouseAddress: "",
-      customerName: toName,
-      shippingRecipientName: toName,
+      customerName: `${toName} - ${receiverName}`,
+      shippingRecipientName: receiverName,
       customerPhone: "",
       shippingPhone: "",
-      note: transfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
+      note: [
+        `Kho gửi: ${fromName}`,
+        `Người gửi: ${senderName}`,
+        `Thời gian gửi: ${formatTransferPrintDate(sentAt)}`,
+        `Kho nhận: ${toName}`,
+        `Người nhận: ${receiverName}`,
+        `Thời gian nhận: ${receivedAt ? formatTransferPrintDate(receivedAt) : "—"}`,
+        transfer.note ? `Ghi chú: ${transfer.note}` : "",
+      ].filter(Boolean).join(" | "),
 
       items: mappedItems,
 
@@ -3620,7 +3649,7 @@ export default function StockTransfersPageClient() {
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
               <Panel className="p-3">
                 <p className="text-xs text-neutral-500">Mã phiếu</p>
                 <p className="mt-1 text-sm font-semibold">
@@ -3628,7 +3657,7 @@ export default function StockTransfersPageClient() {
                 </p>
               </Panel>
               <Panel className="p-3">
-                <p className="text-xs text-neutral-500">Xuất</p>
+                <p className="text-xs text-neutral-500">Kho gửi</p>
                 <p className="mt-1 text-sm font-semibold">
                   {selectedTransfer.fromBranchName ||
                     selectedTransfer.fromBranch?.name ||
@@ -3636,11 +3665,44 @@ export default function StockTransfersPageClient() {
                 </p>
               </Panel>
               <Panel className="p-3">
-                <p className="text-xs text-neutral-500">Nhận</p>
+                <p className="text-xs text-neutral-500">Người gửi</p>
+                <p className="mt-1 text-sm font-semibold">
+                  {(selectedTransfer as any).confirmedByName ||
+                    (selectedTransfer as any).sentByName ||
+                    (selectedTransfer as any).senderName ||
+                    (selectedTransfer as any).createdByName ||
+                    "—"}
+                </p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  {formatShortDateTime(
+                    (selectedTransfer as any).confirmedAt ||
+                      (selectedTransfer as any).sentAt ||
+                      (selectedTransfer as any).createdAt,
+                  )}
+                </p>
+              </Panel>
+              <Panel className="p-3">
+                <p className="text-xs text-neutral-500">Kho nhận</p>
                 <p className="mt-1 text-sm font-semibold">
                   {selectedTransfer.toBranchName ||
                     selectedTransfer.toBranch?.name ||
                     selectedTransfer.toBranchId}
+                </p>
+              </Panel>
+              <Panel className="p-3">
+                <p className="text-xs text-neutral-500">Người nhận</p>
+                <p className="mt-1 text-sm font-semibold">
+                  {(selectedTransfer as any).completedByName ||
+                    (selectedTransfer as any).receivedByName ||
+                    (selectedTransfer as any).receiverName ||
+                    (selectedTransfer as any).receivedBy?.name ||
+                    "—"}
+                </p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  {formatShortDateTime(
+                    (selectedTransfer as any).completedAt ||
+                      (selectedTransfer as any).receivedAt,
+                  )}
                 </p>
               </Panel>
             </div>

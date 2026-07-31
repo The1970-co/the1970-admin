@@ -153,6 +153,27 @@ export default function StockTransferDetailPageClient({
     transfer?.toBranchId ||
     "—";
 
+  const senderName =
+    (transfer as any)?.confirmedByName ||
+    (transfer as any)?.sentByName ||
+    (transfer as any)?.senderName ||
+    (transfer as any)?.createdByName ||
+    "—";
+  const sentAt =
+    (transfer as any)?.confirmedAt ||
+    (transfer as any)?.sentAt ||
+    (transfer as any)?.createdAt;
+  const receiverName =
+    (transfer as any)?.completedByName ||
+    (transfer as any)?.receivedByName ||
+    (transfer as any)?.receiverName ||
+    (transfer as any)?.receivedBy?.name ||
+    "—";
+  const receivedAt =
+    (transfer as any)?.completedAt ||
+    (transfer as any)?.receivedAt ||
+    null;
+
   const canEditDraft = transfer?.status === "DRAFT" || transfer?.status === "PENDING";
   const canConfirm = transfer?.status === "DRAFT" || transfer?.status === "PENDING";
   const canReceive = transfer?.status === "CONFIRMED" || transfer?.status === "IN_TRANSIT";
@@ -182,11 +203,19 @@ export default function StockTransferDetailPageClient({
       warehouseName: "THE 1970",
       warehousePhone: "",
       warehouseAddress: "",
-      customerName: toName,
-      shippingRecipientName: toName,
+      customerName: `${toName} - ${receiverName}`,
+      shippingRecipientName: receiverName,
       customerPhone: "",
       shippingPhone: "",
-      note: currentTransfer.note || `Xuất: ${fromName} | Nhận: ${toName}`,
+      note: [
+        `Kho gửi: ${fromName}`,
+        `Người gửi: ${senderName}`,
+        `Thời gian gửi: ${formatDateTime(sentAt)}`,
+        `Kho nhận: ${toName}`,
+        `Người nhận: ${receiverName}`,
+        `Thời gian nhận: ${formatDateTime(receivedAt)}`,
+        currentTransfer.note ? `Ghi chú: ${currentTransfer.note}` : "",
+      ].filter(Boolean).join(" | "),
       items: mappedItems,
       totalQty: printTotalQty,
     };
@@ -570,16 +599,20 @@ export default function StockTransferDetailPageClient({
             <p className="mt-1 text-sm font-semibold text-neutral-900">{(transfer as any).sourceRefId || "—"}</p>
           </div>
           <div>
-            <p className="text-xs text-neutral-500">Người xác nhận</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-900">{(transfer as any).confirmedByName || "—"}</p>
+            <p className="text-xs text-neutral-500">Người gửi</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{senderName}</p>
           </div>
           <div>
-            <p className="text-xs text-neutral-500">Thời gian xác nhận</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-900">{formatDateTime((transfer as any).confirmedAt)}</p>
+            <p className="text-xs text-neutral-500">Thời gian gửi</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{formatDateTime(sentAt)}</p>
           </div>
           <div>
-            <p className="text-xs text-neutral-500">Thời gian hoàn tất</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-900">{formatDateTime((transfer as any).completedAt)}</p>
+            <p className="text-xs text-neutral-500">Người nhận</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{receiverName}</p>
+          </div>
+          <div>
+            <p className="text-xs text-neutral-500">Thời gian nhận</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{formatDateTime(receivedAt)}</p>
           </div>
           <div>
             <p className="text-xs text-neutral-500">Ghi chú</p>
