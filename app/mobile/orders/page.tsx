@@ -102,32 +102,55 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 function rangeDates(range: QuickDate) {
-  const now = new Date();
-  const fromDate = new Date(now);
-  const toDate = new Date(now);
+  const toDate = new Date();
+  const fromDate = new Date();
 
   if (range === "yesterday") {
-    fromDate.setDate(fromDate.getDate() - 1);
     toDate.setDate(toDate.getDate() - 1);
+    fromDate.setDate(fromDate.getDate() - 1);
   }
+  if (range === "7d") fromDate.setDate(fromDate.getDate() - 6);
+  if (range === "30d") fromDate.setDate(fromDate.getDate() - 29);
 
-  if (range === "7d") {
-    fromDate.setDate(fromDate.getDate() - 6);
-  }
-
-  if (range === "30d") {
-    fromDate.setDate(fromDate.getDate() - 29);
-  }
-
-  // Chốt đúng ngày theo giờ local của thiết bị rồi mới đổi sang ISO.
-  // Ví dụ Việt Nam: 00:00 ngày 04/08 = 17:00 UTC ngày 03/08.
   fromDate.setHours(0, 0, 0, 0);
   toDate.setHours(23, 59, 59, 999);
 
-  return {
-    from: fromDate.toISOString(),
-    to: toDate.toISOString(),
-  };
+  return { fromDate, toDate };
+}
+
+function parseOrderCreatedAt(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const nativeDate = new Date(raw);
+  if (!Number.isNaN(nativeDate.getTime())) return nativeDate;
+
+  // Backend cũ có thể trả "04/08/2026, 09:30:15".
+  const match = raw.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:,)?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/,
+  );
+
+  if (!match) return null;
+
+  const [, day, month, year, hour, minute, second = "0"] = match;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    0,
+  );
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isOrderCreatedInRange(order: OrderRow, fromDate: Date, toDate: Date) {
+  const created = parseOrderCreatedAt(order.createdAt);
+  if (!created) return false;
+  const time = created.getTime();
+  return time >= fromDate.getTime() && time <= toDate.getTime();
 }
 
 function num(value: unknown) {
@@ -448,12 +471,13 @@ export default function MobileOrdersPage() {
     try {
       setLoading(true);
       setError("");
-      const { from, to } = rangeDates(quickDate);
+      const { fromDate, toDate } = rangeDates(quickDate);
+
+      // Chỉ tải 100 đơn mới nhất một lần. Backend đã sort createdAt giảm dần,
+      // nên đủ cho Hôm nay/Hôm qua và không phát sinh 5 request chậm như bản cũ.
       const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(PAGE_SIZE),
-        dateFrom: from,
-        dateTo: to,
+        page: "1",
+        pageSize: "100",
       });
 
       const q = appliedQuery.trim();
@@ -461,12 +485,26 @@ export default function MobileOrdersPage() {
       if (quickStatus !== "ALL") params.set("quickStatus", quickStatus);
 
       const raw = await getJson<OrdersResponse | OrderRow[]>(`/orders?${params.toString()}`);
-      const nextRows = getRows(raw);
-      const p = getPagination(raw, page);
+      const fetchedRows = getRows(raw);
 
+      const filteredRows = fetchedRows
+        .filter((order) => isOrderCreatedInRange(order, fromDate, toDate))
+        .sort((a, b) => {
+          const aTime = parseOrderCreatedAt(a.createdAt)?.getTime() || 0;
+          const bTime = parseOrderCreatedAt(b.createdAt)?.getTime() || 0;
+          return bTime - aTime;
+        });
+
+      const totalFiltered = filteredRows.length;
+      const totalFilteredPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
+      const safePage = Math.min(page, totalFilteredPages);
+      const start = (safePage - 1) * PAGE_SIZE;
+      const nextRows = filteredRows.slice(start, start + PAGE_SIZE);
+
+      if (safePage !== page) setPage(safePage);
       setRows(nextRows);
-      setTotal(p.total || nextRows.length);
-      setTotalPages(Math.max(1, p.totalPages || 1));
+      setTotal(totalFiltered);
+      setTotalPages(totalFilteredPages);
     } catch (err) {
       setRows([]);
       setTotal(0);
