@@ -105,8 +105,10 @@ async function fetchProduct(rawId: string): Promise<Product> {
   const id = decodeURIComponent(String(rawId || "").trim());
   if (!id) throw new Error("Thiếu mã sản phẩm");
 
+  // Backend hiện có endpoint chi tiết chuẩn là /products/:id.
+  // Không gọi thử /mobile/products/:id trước nữa vì endpoint đó không tồn tại
+  // và tạo request 404 mỗi lần mở trang chi tiết.
   const detailPaths = [
-    `/mobile/products/${encodeURIComponent(id)}`,
     `/products/${encodeURIComponent(id)}`,
   ];
 
@@ -171,18 +173,15 @@ function colorImage(product: Product, variant: Variant) {
 }
 
 function totalStock(product: Product) {
-  if (typeof product.totalAvailable === "number") return product.totalAvailable;
-  return (product.variants || []).reduce(
-    (sum, variant) =>
-      sum +
-      (typeof variant.availableQty === "number"
-        ? variant.availableQty
-        : (variant.branches || []).reduce(
-            (branchSum, branch) => branchSum + Number(branch.availableQty || 0),
-            0,
-          )),
+  const variantTotal = (product.variants || []).reduce(
+    (sum, variant) => sum + variantStock(variant),
     0,
   );
+
+  // API chi tiết có thể không trả totalAvailable hoặc trả 0 mặc định,
+  // trong khi tồn thật nằm trong stock / inventoryByBranch / inventoryItems.
+  if (variantTotal > 0) return variantTotal;
+  return Number(product.totalAvailable || 0);
 }
 
 function getVariantBranches(variant?: Variant): BranchStock[] {
@@ -488,6 +487,7 @@ export default function MobileProductDetailPage() {
       key,
       label: rows[0]?.color || "Khác",
       image: product ? colorImage(product, rows[0]) : "",
+      totalStock: rows.reduce((sum, row) => sum + variantStock(row), 0),
       rows,
     }));
   }, [product]);
@@ -602,9 +602,14 @@ export default function MobileProductDetailPage() {
                           />
                         ) : null}
                       </div>
-                      <span className="truncate text-sm font-black">
-                        {group.label}
-                      </span>
+                      <div className="min-w-0">
+                        <span className="block truncate text-sm font-black">
+                          {group.label}
+                        </span>
+                        <span className="block text-[11px] font-semibold text-neutral-500">
+                          Tồn {group.totalStock}
+                        </span>
+                      </div>
                     </div>
                     <div className="space-y-2">
                       {group.rows.map((item) => {
@@ -621,8 +626,21 @@ export default function MobileProductDetailPage() {
                                 : "border-neutral-200 bg-neutral-50 text-neutral-700"
                             }`}
                           >
-                            <div className="truncate text-sm font-black">
-                              {item.size || "Size"}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="truncate text-sm font-black">
+                                {item.size || "Size"}
+                              </div>
+                              <div
+                                className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-black ${
+                                  active
+                                    ? "bg-white/15 text-white"
+                                    : variantStock(item) > 0
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : "bg-neutral-200 text-neutral-500"
+                                }`}
+                              >
+                                Tồn {variantStock(item)}
+                              </div>
                             </div>
                             <div className="mt-1 truncate text-[11px] opacity-70">
                               {item.sku || "—"}
@@ -637,6 +655,20 @@ export default function MobileProductDetailPage() {
             </Section>
 
             <Section title="Tồn theo chi nhánh" icon={<Store className="h-5 w-5" />}>
+              <div className="mb-3 flex items-center justify-between rounded-2xl bg-neutral-950 px-4 py-3 text-white">
+                <div className="min-w-0">
+                  <div className="truncate text-xs text-white/55">
+                    {variant?.sku || "Biến thể đang chọn"}
+                  </div>
+                  <div className="mt-0.5 text-sm font-black">
+                    {variant?.color || "—"} / {variant?.size || "—"}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-xs text-white/55">Tổng tồn</div>
+                  <div className="text-2xl font-black">{variantStock(variant)}</div>
+                </div>
+              </div>
               {branches.length === 0 ? (
                 <div className="rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-500">
                   Biến thể này chưa có bản ghi tồn kho theo chi nhánh.
