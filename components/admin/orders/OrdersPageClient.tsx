@@ -3497,6 +3497,43 @@ function toInputDateValue(date: Date | null) {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Gửi mốc thời gian ISO thật thay vì chỉ YYYY-MM-DD.
+ * Ví dụ ngày 04/08 tại Việt Nam:
+ * - đầu ngày local -> 2026-08-03T17:00:00.000Z
+ * - cuối ngày local -> 2026-08-04T16:59:59.999Z
+ *
+ * Nhờ vậy backend không hiểu nhầm 00:00 UTC thành 07:00 giờ Việt Nam.
+ */
+function toApiDateBoundary(value: string, boundary: "start" | "end") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  // Nếu đã là ISO đầy đủ thì giữ nguyên.
+  if (raw.includes("T")) {
+    const existing = new Date(raw);
+    return Number.isNaN(existing.getTime()) ? raw : existing.toISOString();
+  }
+
+  const [year, month, day] = raw.split("-").map(Number);
+  if (!year || !month || !day) return raw;
+
+  const date =
+    boundary === "start"
+      ? new Date(year, month - 1, day, 0, 0, 0, 0)
+      : new Date(year, month - 1, day, 23, 59, 59, 999);
+
+  return date.toISOString();
+}
+
+function quickDateRangeToApi(key: QuickDateKey) {
+  const range = getQuickDateRange(key);
+  return {
+    from: range.from ? range.from.toISOString() : "",
+    to: range.to ? range.to.toISOString() : "",
+  };
+}
+
 type SmartOrderSearch = {
   raw: string;
   terms: string[];
@@ -5101,11 +5138,11 @@ export default function OrdersPageClient() {
         ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE)
         : pageSize;
       const requestPage = shouldLoadWideForClientFilters ? 1 : page;
-      const quickStatusDateRange = hasQuickStatusFilter
-        ? getQuickDateRange(cardDateFilter)
-        : { from: null, to: null };
-      const quickStatusDateFrom = toInputDateValue(quickStatusDateRange.from);
-      const quickStatusDateTo = toInputDateValue(quickStatusDateRange.to);
+      const quickStatusApiRange = hasQuickStatusFilter
+        ? quickDateRangeToApi(cardDateFilter)
+        : { from: "", to: "" };
+      const quickStatusDateFrom = quickStatusApiRange.from;
+      const quickStatusDateTo = quickStatusApiRange.to;
 
       const buildParams = (
         targetPage: number,
@@ -5143,8 +5180,12 @@ export default function OrdersPageClient() {
           params.set("codReconciliationStatus", selectedCodReconciliationStatuses.join(","));
         }
 
-        const serverDateFrom = hasQuickStatusFilter ? quickStatusDateFrom : appliedDateFrom;
-        const serverDateTo = hasQuickStatusFilter ? quickStatusDateTo : appliedDateTo;
+        const serverDateFrom = hasQuickStatusFilter
+          ? quickStatusDateFrom
+          : toApiDateBoundary(appliedDateFrom, "start");
+        const serverDateTo = hasQuickStatusFilter
+          ? quickStatusDateTo
+          : toApiDateBoundary(appliedDateTo, "end");
 
         if (serverDateFrom) params.set("dateFrom", serverDateFrom);
         if (serverDateTo) params.set("dateTo", serverDateTo);
@@ -5152,10 +5193,10 @@ export default function OrdersPageClient() {
 
         const smartDateRange = getSmartSearchServerDateRange(smartSearch);
         if (!hasQuickStatusFilter && !serverDateFrom && smartDateRange.from) {
-          params.set("dateFrom", toInputDateValue(smartDateRange.from));
+          params.set("dateFrom", smartDateRange.from.toISOString());
         }
         if (!hasQuickStatusFilter && !serverDateTo && smartDateRange.to) {
-          params.set("dateTo", toInputDateValue(smartDateRange.to));
+          params.set("dateTo", smartDateRange.to.toISOString());
         }
 
         return params;
@@ -5366,9 +5407,9 @@ export default function OrdersPageClient() {
       }
 
       const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
-      const dateRange = getQuickDateRange(cardDateFilter);
-      const dateFromValue = toInputDateValue(dateRange.from);
-      const dateToValue = toInputDateValue(dateRange.to);
+      const dateRange = quickDateRangeToApi(cardDateFilter);
+      const dateFromValue = dateRange.from;
+      const dateToValue = dateRange.to;
 
       const params = new URLSearchParams();
 
