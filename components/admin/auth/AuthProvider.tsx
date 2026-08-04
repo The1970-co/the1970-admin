@@ -53,7 +53,16 @@ const AUTH_RELOAD_TTL_MS = 2 * 60 * 1000;
 const AUTH_EVENT_DEBOUNCE_MS = 1500;
 
 function isMobilePath(pathname: string) {
-  return pathname === "/mobile" || pathname.startsWith("/mobile/");
+  const path = String(pathname || "").split("?")[0].replace(/\/+$/, "");
+
+  // Hỗ trợ cả route mobile trực tiếp (/mobile/...) và trường hợp app/webview
+  // được mount dưới prefix khác như /control/mobile/....
+  return (
+    path === "/mobile" ||
+    path.startsWith("/mobile/") ||
+    path.includes("/mobile/") ||
+    path.endsWith("/mobile")
+  );
 }
 
 function isMobileLoginPath(pathname: string) {
@@ -102,7 +111,13 @@ async function restoreMobileSessionIfNeeded() {
   let token = getTokenFromStorage() || (await getMobileToken());
   let user = getCurrentUserFromStorage() || (await restoreMobileUser());
 
-  if (token) return { token, user };
+  // Nếu native Preferences còn phiên nhưng localStorage bị WebView làm chậm,
+  // đồng bộ ngược lại ngay để các request tiếp theo không tưởng là đã logout.
+  if (token) {
+    setTokenToStorage(token);
+    if (user) setCurrentUserToStorage(user);
+    return { token, user };
+  }
 
   const refreshToken = await getMobileRefreshToken();
   if (!refreshToken) return { token: "", user };
@@ -222,6 +237,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!token) {
+      const cachedMobileUser = isMobile
+        ? getCurrentUserFromStorage() || (await restoreMobileUser())
+        : null;
+
+      // Mobile chỉ tự về login khi thực sự không còn cả token lẫn user cache.
+      // Không xóa phiên chỉ vì WebView chưa kịp trả token trong một nhịp render.
+      if (isMobile && cachedMobileUser) {
+        keepCurrentSession(cachedMobileUser);
+        setError("");
+        return cachedMobileUser;
+      }
+
       setUser(null);
       setChecked(true);
       setLoading(false);
@@ -282,10 +309,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
          * - Native Preferences là nguồn giữ phiên chính.
          * - Chỉ về /mobile/login khi không còn cả token lẫn cached user.
          */
-        if (isMobile && latestToken && latestUser) {
-          keepCurrentSession(latestUser);
+        if (isMobile && (latestToken || latestUser)) {
+          // Mobile không tự logout vì /auth/me hoặc refresh lỗi.
+          // Chỉ nút Đăng xuất mới được phép xóa session.
+          const sessionUser = latestUser || getCurrentUserFromStorage();
+          if (latestToken) setTokenToStorage(latestToken);
+          keepCurrentSession(sessionUser);
           lastReloadAtRef.current = Date.now();
-          return latestUser;
+          return sessionUser;
         }
 
         /**
@@ -296,6 +327,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (latestToken && latestUser && !isAuthExpired) {
           keepCurrentSession(latestUser);
           return latestUser;
+        }
+
+        // Chỉ web admin được tự xóa phiên khi auth thật sự hết hạn.
+        // Mobile tuyệt đối không đi qua nhánh này vì lỗi request nền.
+        if (isMobile) {
+          const fallbackUser =
+            getCurrentUserFromStorage() || (await restoreMobileUser());
+          keepCurrentSession(fallbackUser);
+          setError(errorMessage);
+          return fallbackUser;
         }
 
         setUser(null);
@@ -335,6 +376,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!token) {
+        const mobileUser = isMobilePath(pathname)
+          ? getCurrentUserFromStorage() || (await restoreMobileUser())
+          : null;
+
+        if (isMobilePath(pathname) && mobileUser) {
+          keepCurrentSession(mobileUser);
+          setChecked(true);
+          setLoading(false);
+          setError("");
+          return;
+        }
+
         router.replace(loginPathFor(pathname));
         return;
       }
