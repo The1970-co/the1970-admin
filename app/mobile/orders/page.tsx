@@ -101,23 +101,33 @@ async function getJson<T>(path: string): Promise<T> {
   } as any);
 }
 
-function dateInput(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function rangeDates(range: QuickDate) {
-  const toDate = new Date();
-  const fromDate = new Date();
+  const now = new Date();
+  const fromDate = new Date(now);
+  const toDate = new Date(now);
 
   if (range === "yesterday") {
-    toDate.setDate(toDate.getDate() - 1);
     fromDate.setDate(fromDate.getDate() - 1);
+    toDate.setDate(toDate.getDate() - 1);
   }
-  if (range === "7d") fromDate.setDate(fromDate.getDate() - 6);
-  if (range === "30d") fromDate.setDate(fromDate.getDate() - 29);
 
-  // Backend hiểu dateFrom/dateTo theo ngày Việt Nam và dateTo là hết ngày.
-  return { from: dateInput(fromDate), to: dateInput(toDate) };
+  if (range === "7d") {
+    fromDate.setDate(fromDate.getDate() - 6);
+  }
+
+  if (range === "30d") {
+    fromDate.setDate(fromDate.getDate() - 29);
+  }
+
+  // Chốt đúng ngày theo giờ local của thiết bị rồi mới đổi sang ISO.
+  // Ví dụ Việt Nam: 00:00 ngày 04/08 = 17:00 UTC ngày 03/08.
+  fromDate.setHours(0, 0, 0, 0);
+  toDate.setHours(23, 59, 59, 999);
+
+  return {
+    from: fromDate.toISOString(),
+    to: toDate.toISOString(),
+  };
 }
 
 function num(value: unknown) {
