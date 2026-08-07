@@ -2,6 +2,7 @@
 
 import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
+import { getMobileToken } from "@/lib/mobile-auth-token";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -87,6 +88,10 @@ type Product = {
 };
 
 async function api<T>(path: string): Promise<T> {
+  // Đảm bảo token native được hydrate lại vào WebView trước khi gọi API.
+  // Tránh case app còn đăng nhập nhưng localStorage tạm thời chưa có token.
+  await getMobileToken();
+
   return apiJson<T>(path, {
     redirectOnUnauthorized: false,
     timeoutMs: 30000,
@@ -280,7 +285,7 @@ async function fetchInventoryHistorySafely(
   productId: string,
   limit = 200,
 ): Promise<InventoryMovement[]> {
-  const token = getMobileAuthToken();
+  const token = (await getMobileToken()) || getMobileAuthToken();
   if (!token) return [];
 
   const response = await fetch(
@@ -291,6 +296,7 @@ async function fetchInventoryHistorySafely(
         Authorization: `Bearer ${token}`,
       },
       cache: "no-store",
+      credentials: "include",
     },
   );
 

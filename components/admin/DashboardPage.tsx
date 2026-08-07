@@ -2300,7 +2300,7 @@ export default function DashboardPage() {
   const [productConfigOpen, setProductConfigOpen] = useState(false);
   const [productColumns, setProductColumns] = useState({
     money: true,
-    mainProduct: false,
+    mainProduct: true,
     variant: true,
     sku: true,
     fulfillment: true,

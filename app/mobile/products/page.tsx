@@ -1,6 +1,8 @@
 "use client";
 
 import { API_BASE } from "@/lib/api-base";
+import { apiJson } from "@/lib/api";
+import { getMobileToken } from "@/lib/mobile-auth-token";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -109,32 +111,16 @@ function extractRows(payload: any) {
 }
 
 async function fetchWithAuth<T>(path: string): Promise<T> {
-  const token = localStorage.getItem("token");
+  // Native app có thể giữ token trong Preferences trong khi localStorage của WebView
+  // chưa hydrate kịp. getMobileToken() sẽ phục hồi và đồng bộ token trước request.
+  await getMobileToken();
 
-  if (!token) {
-    window.location.href = "/mobile/login";
-    throw new Error("Thiếu token");
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    cache: "no-store",
-  });
-
-  if (res.status === 401) {
-    localStorage.removeItem("token");
-    window.location.href = "/mobile/login";
-    throw new Error("Phiên đăng nhập hết hạn");
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "Không tải được sản phẩm");
-  }
-
-  return res.json();
+  // Không bao giờ tự xóa token / redirect login chỉ vì một API sản phẩm trả 401.
+  // apiJson vẫn thử refresh token; nếu refresh thất bại thì chỉ throw để màn hình báo lỗi.
+  return apiJson<T>(path, {
+    redirectOnUnauthorized: false,
+    timeoutMs: 30000,
+  } as any);
 }
 
 export default function MobileProductsPage() {
