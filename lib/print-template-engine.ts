@@ -1237,10 +1237,16 @@ export function renderOrderTemplateHtml(params: {
 
   const totalQty = Number(order?.totalQty ?? itemCount ?? 0);
 
+  // Phiếu sales đã có {{totalQtyBlock}} ngay dưới bảng.
+  // Không chèn thêm một dòng Tổng SL vào <tbody>, tránh bị in trùng 2 lần.
+  // Các loại phiếu khác vẫn giữ totalQtyRow như cũ.
   const totalQtyRow =
-    template.templateType !== "product_label" && showItems && showTotalQty
+    template.templateType !== "product_label" &&
+    template.templateType !== "sales" &&
+    showItems &&
+    showTotalQty
       ? `<tr>
-  <td colspan="${template.templateType === "sales" ? (showItemQty ? 4 : 3) : (showItemQty ? 2 : 1)}" style="padding:4px 0 2px;border-top:1px dashed #999;text-align:right;font-size:10.5px;font-weight:900;">
+  <td colspan="${showItemQty ? 2 : 1}" style="padding:4px 0 2px;border-top:1px dashed #999;text-align:right;font-size:10.5px;font-weight:900;">
     Tổng SL: ${totalQty}
   </td>
 </tr>`
