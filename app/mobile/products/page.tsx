@@ -148,28 +148,44 @@ export default function MobileProductsPage() {
       if (query.trim()) params.set("q", query.trim());
       if (category !== "all") params.set("category", category);
 
-      const [branchPayload, productPayload, categoryPayload] = await Promise.all([
-        fetchWithAuth<any>("/mobile/branches"),
+      // Gọi 1 API nhẹ trước để nếu access token vừa hết hạn thì apiJson
+      // chỉ refresh đúng 1 lần trước khi các request sản phẩm chạy song song.
+      // Tránh 3 request cùng lúc đều ăn 401 và tạo race logout trên WebView.
+      let nextBranches = branches;
+      if (nextBranches.length === 0) {
+        const branchPayload = await fetchWithAuth<any>("/mobile/branches");
+        nextBranches = extractRows(branchPayload) as BranchOption[];
+        setBranches(nextBranches);
+      }
+
+      const needCategories = categoryOptions.length === 0;
+
+      const [productPayload, categoryPayload] = await Promise.all([
         fetchWithAuth<any>(`/mobile/products?${params.toString()}`),
-        fetchWithAuth<any>("/products/category-options").catch(() => []),
+        needCategories
+          ? fetchWithAuth<any>("/products/category-options").catch(() => [])
+          : Promise.resolve(null),
       ]);
 
-      const branchRows = extractRows(branchPayload) as BranchOption[];
       const productRows = extractRows(productPayload) as MobileProduct[];
-      const apiCategories = extractRows(categoryPayload).map(String);
+      const apiCategories = categoryPayload
+        ? extractRows(categoryPayload).map(String)
+        : categoryOptions;
 
-      setBranches(branchRows);
       setProducts(productRows);
-      setCategoryOptions(
-        Array.from(
-          new Set(
-            [
-              ...apiCategories,
-              ...productRows.map((product) => String(product.category || "").trim()),
-            ].filter(Boolean),
-          ),
-        ).sort((a, b) => a.localeCompare(b, "vi")),
-      );
+
+      if (needCategories) {
+        setCategoryOptions(
+          Array.from(
+            new Set(
+              [
+                ...apiCategories,
+                ...productRows.map((product) => String(product.category || "").trim()),
+              ].filter(Boolean),
+            ),
+          ).sort((a, b) => a.localeCompare(b, "vi")),
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
     } finally {

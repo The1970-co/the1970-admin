@@ -663,13 +663,52 @@ function getItemQty(item: any) {
 }
 
 function getItemUnitPrice(item: any) {
-  return Number(item?.unitPrice ?? item?.price ?? item?.salePrice ?? 0);
+  // Order item thực tế có thể không trả unitPrice/price trực tiếp mà giá nằm
+  // trong snapshot/variant. Ưu tiên giá đã lưu theo đơn trước, chỉ fallback
+  // sang giá variant hiện tại khi response không có giá ở order item.
+  const candidates = [
+    item?.unitPrice,
+    item?.price,
+    item?.salePrice,
+    item?.finalPrice,
+    item?.sellingPrice,
+    item?.unitAmount,
+    item?.priceAtOrder,
+    item?.priceAtPurchase,
+    item?.snapshotPrice,
+    item?.productPrice,
+    item?.variant?.salePrice,
+    item?.variant?.price,
+    item?.variant?.sellingPrice,
+    item?.product?.salePrice,
+    item?.product?.price,
+  ];
+
+  for (const value of candidates) {
+    if (value === undefined || value === null || value === "") continue;
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+
+  return 0;
 }
 
 function getItemLineTotal(item: any) {
-  return Number(
-    item?.lineTotal ?? item?.total ?? getItemQty(item) * getItemUnitPrice(item),
-  );
+  const explicitCandidates = [
+    item?.lineTotal,
+    item?.total,
+    item?.totalPrice,
+    item?.lineAmount,
+    item?.amount,
+  ];
+
+  for (const value of explicitCandidates) {
+    if (value === undefined || value === null || value === "") continue;
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+
+  return getItemQty(item) * getItemUnitPrice(item);
 }
 
 function shortenNote(value?: string, max = 140) {
