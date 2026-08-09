@@ -5417,12 +5417,10 @@ export default function CreateOrderPageClient() {
       setError(null);
       setSuccessMessage("");
 
-      const effectivePaymentSourceId =
-        paymentSourceId ||
-        (isPickupOrder ? String(visiblePaymentSources[0]?.id || "") : "");
-      const effectivePaidAmount = isPickupOrder
-        ? customerMustPay
-        : parseNumber(customerPaid);
+      // Nhận tại cửa hàng vẫn dùng đúng số tiền nhân viên nhập ở "Khách đã trả".
+      // Không được tự coi pickup là đã thanh toán đủ toàn bộ đơn.
+      const effectivePaymentSourceId = paymentSourceId;
+      const effectivePaidAmount = parseNumber(customerPaid);
 
       const customerFacingShippingNote = buildCustomerFacingShippingNote({
         orderNote: note,
