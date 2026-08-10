@@ -56,6 +56,23 @@ export type OmniQuickOrder = {
   shippingPostalCode?: string | null;
   shippingGhnDistrictId?: number | null;
   shippingGhnWardCode?: string | null;
+  carrier?: string | null;
+  trackingCode?: string | null;
+  shippingStatus?: string | null;
+  shipment?: {
+    id?: string | null;
+    carrier?: string | null;
+    trackingCode?: string | null;
+    shippingStatus?: string | null;
+    partnerStatus?: string | null;
+  } | null;
+  shipments?: Array<{
+    id?: string | null;
+    carrier?: string | null;
+    trackingCode?: string | null;
+    shippingStatus?: string | null;
+    partnerStatus?: string | null;
+  }>;
   finalAmount?: number;
   createdAt?: string;
   items?: Array<{ id?: string; sku?: string; productName?: string; color?: string | null; size?: string | null; qty: number; unitPrice?: number; lineTotal?: number }>;
@@ -144,6 +161,8 @@ export type OmniConversationQuery = {
   channel?: OmniChannel | "ALL";
   assigneeId?: string;
   branchId?: string;
+  tag?: string;
+  unread?: boolean;
   page?: number;
   limit?: number;
 };
@@ -205,6 +224,12 @@ export function createOmniConversationNote(id: string, body: { note: string; tem
 
 export function markOmniConversationRead(id: string) {
   return apiJson<OmniConversation>(`/omni-inbox/conversations/${id}/read`, {
+    method: "PATCH",
+  });
+}
+
+export function markOmniConversationUnread(id: string) {
+  return apiJson<OmniConversation>(`/omni-inbox/conversations/${id}/unread`, {
     method: "PATCH",
   });
 }

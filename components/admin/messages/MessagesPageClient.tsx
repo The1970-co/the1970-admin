@@ -53,6 +53,7 @@ import {
   getOmniConversation,
   listOmniConversations,
   markOmniConversationRead,
+  markOmniConversationUnread,
   openOmniInboxEventSource,
   sendOmniMessage,
   updateOmniConversationStatus,
@@ -98,7 +99,7 @@ import {
 } from "@/lib/address-api";
 import * as XLSX from "xlsx";
 
-type StatusTab = OmniConversationStatus;
+type InboxFilter = "LATEST" | "WAITING" | "UNREAD";
 type WorkspaceKey =
   | "inbox"
   | "facebook"
@@ -132,12 +133,10 @@ const WORKSPACE_TITLES: Record<WorkspaceKey, string> = {
   assignmentSettings: "Cài đặt chia tin nhắn",
 };
 
-const STATUS_TABS: { key: StatusTab; label: string }[] = [
-  { key: "ALL", label: "Tất cả" },
-  { key: "OPEN", label: "Chưa trả lời" },
-  { key: "PROCESSING", label: "Đang xử lý" },
-  { key: "PENDING", label: "Cần theo dõi" },
-  { key: "CLOSED", label: "Đã chốt" },
+const INBOX_FILTERS: { key: InboxFilter; label: string }[] = [
+  { key: "LATEST", label: "Mới nhất" },
+  { key: "WAITING", label: "Đợi phản hồi" },
+  { key: "UNREAD", label: "Chưa đọc" },
 ];
 
 const CHANNEL_OPTIONS: { key: OmniChannel | "ALL"; label: string }[] = [
@@ -978,11 +977,12 @@ export default function MessagesPageClient({
   const [activeConversation, setActiveConversation] =
     useState<OmniConversation | null>(null);
   const [activeId, setActiveId] = useState("");
-  const [status, setStatus] = useState<StatusTab>("ALL");
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>("LATEST");
   const [channel, setChannel] = useState<OmniChannel | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
   const [staffOptions, setStaffOptions] = useState<AssigneeOption[]>([]);
   const [metaConnection, setMetaConnection] =
     useState<MetaConnectionStatus | null>(null);
@@ -1306,9 +1306,11 @@ export default function MessagesPageClient({
     try {
       const data = await listOmniConversations({
         q: debouncedSearch,
-        status,
+        status: inboxFilter === "WAITING" ? "PROCESSING" : "ALL",
         channel,
         assigneeId: assigneeFilter,
+        tag: tagFilter,
+        unread: inboxFilter === "UNREAD" ? true : undefined,
         page: 1,
         limit: workspace === "comments" ? 100 : 40,
       });
@@ -1337,7 +1339,7 @@ export default function MessagesPageClient({
     } finally {
       if (requestId === listRequestId.current) setLoadingList(false);
     }
-  }, [assigneeFilter, channel, debouncedSearch, status, workspace]);
+  }, [assigneeFilter, channel, debouncedSearch, inboxFilter, tagFilter, workspace]);
 
   useEffect(() => {
     void loadList();
@@ -1359,9 +1361,11 @@ export default function MessagesPageClient({
       const nextPage = conversationPage + 1;
       const data = await listOmniConversations({
         q: debouncedSearch,
-        status,
+        status: inboxFilter === "WAITING" ? "PROCESSING" : "ALL",
         channel,
         assigneeId: assigneeFilter,
+        tag: tagFilter,
+        unread: inboxFilter === "UNREAD" ? true : undefined,
         page: nextPage,
         limit: workspace === "comments" ? 100 : 40,
       });
@@ -1395,7 +1399,8 @@ export default function MessagesPageClient({
     hasMoreConversations,
     loadingList,
     loadingMoreConversations,
-    status,
+    inboxFilter,
+    tagFilter,
     workspace,
   ]);
 
@@ -1537,6 +1542,22 @@ export default function MessagesPageClient({
         shippingProvince: order.shippingProvince || null,
         shippingDistrict: order.shippingDistrict || null,
         shippingWard: order.shippingWard || null,
+        carrier:
+          order.shipment?.carrier ||
+          (Array.isArray(order.shipments) ? order.shipments[0]?.carrier : null) ||
+          order.carrier ||
+          null,
+        trackingCode:
+          order.shipment?.trackingCode ||
+          (Array.isArray(order.shipments) ? order.shipments[0]?.trackingCode : null) ||
+          order.trackingCode ||
+          order.ghnTrackingCode ||
+          null,
+        shippingStatus:
+          order.shipment?.shippingStatus ||
+          (Array.isArray(order.shipments) ? order.shipments[0]?.shippingStatus : null) ||
+          order.shippingStatus ||
+          null,
         finalAmount: Number(order.finalAmount || 0),
         createdAt: order.createdAt || null,
         items: Array.isArray(order.items) ? order.items : [],
@@ -1636,20 +1657,24 @@ export default function MessagesPageClient({
   const visibleConversations = useMemo(() => {
     // Bình luận Facebook dùng chung channel FACEBOOK ở backend, nên phải
     // tách bằng providerThreadId/tag thay vì chỉ lọc theo channel.
+    let items = conversations;
     if (workspace === "comments") {
-      return conversations.filter(isFacebookCommentConversation);
-    }
-
-    // Bình luận đã có màn riêng, không để lẫn vào Hộp thư đến hoặc
-    // Facebook Messenger nữa.
-    if (workspace === "inbox" || workspace === "facebook") {
-      return conversations.filter(
+      items = conversations.filter(isFacebookCommentConversation);
+    } else if (workspace === "inbox" || workspace === "facebook") {
+      // Bình luận đã có màn riêng, không để lẫn vào Hộp thư đến hoặc
+      // Facebook Messenger nữa.
+      items = conversations.filter(
         (item) => !isFacebookCommentConversation(item),
       );
     }
 
-    return conversations;
-  }, [conversations, workspace]);
+    // Chưa đọc là bộ lọc theo unreadCount, không phụ thuộc status nghiệp vụ.
+    if (inboxFilter === "UNREAD") {
+      return items.filter((item) => Number(item.unreadCount || 0) > 0);
+    }
+
+    return items;
+  }, [conversations, inboxFilter, workspace]);
 
   useEffect(() => {
     const isConversationWorkspace =
@@ -2018,6 +2043,67 @@ export default function MessagesPageClient({
     });
     setPendingSendCount(sendQueueRef.current.length);
     void processSendQueue();
+  }
+
+  async function handleToggleReadState() {
+    if (!activeConversation?.id) return;
+
+    try {
+      const currentlyUnread = Number(activeConversation.unreadCount || 0) > 0;
+      const updated = currentlyUnread
+        ? await markOmniConversationRead(activeConversation.id)
+        : await markOmniConversationUnread(activeConversation.id);
+
+      setActiveConversation((prev) =>
+        prev?.id === updated.id ? { ...prev, ...updated, messages: prev.messages } : prev,
+      );
+      setConversations((prev) =>
+        prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không đổi được trạng thái đã đọc/chưa đọc.",
+      );
+    }
+  }
+
+  async function handleToggleImportantTag() {
+    if (!activeConversation?.id) return;
+    const importantTag = "LƯU Ý";
+    const currentTags = activeConversation.tags?.map((item) => item.tag) || [];
+    const exists = currentTags.includes(importantTag);
+    try {
+      const updated = await updateOmniConversationTags(activeConversation.id, {
+        tags: exists
+          ? currentTags.filter((item) => item !== importantTag)
+          : [...currentTags, importantTag],
+      });
+      setActiveConversation((prev) =>
+        prev?.id === updated.id ? { ...prev, ...updated, messages: prev.messages } : prev,
+      );
+      setConversations((prev) =>
+        prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không cập nhật được nhãn LƯU Ý.");
+    }
+  }
+
+  function focusAssigneeSelect() {
+    document.getElementById("omni-assignee-select")?.focus();
+  }
+
+  function focusTagSection() {
+    setRightPanelTab("info");
+    window.setTimeout(() => {
+      document.getElementById("omni-tag-section")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      document.getElementById("omni-tag-input")?.focus();
+    }, 0);
   }
 
   async function handleAssign(assigneeId: string) {
@@ -2988,25 +3074,25 @@ export default function MessagesPageClient({
 
     if (key === "facebook") {
       setChannel("FACEBOOK");
-      setStatus("ALL");
+      setInboxFilter("LATEST");
       return;
     }
 
     if (key === "instagram") {
       setChannel("INSTAGRAM");
-      setStatus("ALL");
+      setInboxFilter("LATEST");
       return;
     }
 
     if (key === "comments") {
       setChannel("FACEBOOK");
-      setStatus("ALL");
+      setInboxFilter("LATEST");
       return;
     }
 
     if (key === "inbox") {
       setChannel("ALL");
-      setStatus("ALL");
+      setInboxFilter("LATEST");
     }
   }, []);
 
@@ -3311,34 +3397,39 @@ export default function MessagesPageClient({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-2">
-                    <Metric label="Mới" value={selectedSummary.open} />
-                    <Metric
-                      label="Đang xử lý"
-                      value={selectedSummary.processing}
-                    />
-                    <Metric label="Đã chốt" value={selectedSummary.closed} />
-                    <Metric label="Unread" value={selectedSummary.unread} />
+                  <div className="grid grid-cols-3 gap-2">
+                    <Metric label="Mới nhất" value={visibleConversations.length} />
+                    <Metric label="Đợi phản hồi" value={selectedSummary.processing} />
+                    <Metric label="Chưa đọc" value={selectedSummary.unread} />
                   </div>
 
                   <div className="mt-4 flex gap-2 overflow-x-auto">
-                    {STATUS_TABS.map((item) => (
+                    {INBOX_FILTERS.map((item) => (
                       <button
                         key={item.key}
-                        onClick={() => setStatus(item.key)}
+                        onClick={() => setInboxFilter(item.key)}
                         className={cx(
-                          "whitespace-nowrap rounded-full px-3 py-2 text-xs font-bold transition",
-                          status === item.key
-                            ? "bg-neutral-950 text-white"
-                            : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200",
+                          "whitespace-nowrap rounded-full px-3 py-2 text-xs font-black transition",
+                          inboxFilter === item.key
+                            ? item.key === "UNREAD"
+                              ? "bg-blue-600 text-white shadow-sm"
+                              : "bg-neutral-950 text-white"
+                            : item.key === "UNREAD" && selectedSummary.unread > 0
+                              ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                              : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200",
                         )}
                       >
                         {item.label}
+                        {item.key === "UNREAD" && selectedSummary.unread > 0 ? (
+                          <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">
+                            {selectedSummary.unread}
+                          </span>
+                        ) : null}
                       </button>
                     ))}
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <select
                       value={channel}
                       onChange={(event) =>
@@ -3368,6 +3459,27 @@ export default function MessagesPageClient({
                             {item.name}
                           </option>
                         ))}
+                    </select>
+
+                    <select
+                      value={tagFilter}
+                      onChange={(event) => setTagFilter(event.target.value)}
+                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                    >
+                      <option value="">Tất cả nhãn</option>
+                      {tagTemplates
+                        .filter((template) => template.isActive !== false)
+                        .map((template) => {
+                          const tagName = String(
+                            (template as any).name || (template as any).tag || "",
+                          ).trim();
+                          if (!tagName) return null;
+                          return (
+                            <option key={template.id} value={tagName}>
+                              {tagName}
+                            </option>
+                          );
+                        })}
                     </select>
                   </div>
                 </div>
@@ -3482,26 +3594,58 @@ export default function MessagesPageClient({
                         </div>
 
                         <div className="flex items-center gap-2 text-neutral-600">
-                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                          <button
+                            type="button"
+                            onClick={focusAssigneeSelect}
+                            title="Chọn người phụ trách"
+                            className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50"
+                          >
                             <UserPlus className="h-4 w-4" />
                           </button>
-                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                          <button
+                            type="button"
+                            onClick={focusTagSection}
+                            title="Gắn hoặc gỡ nhãn"
+                            className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50"
+                          >
                             <Tag className="h-4 w-4" />
                           </button>
-                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleImportantTag()}
+                            title="Đánh dấu LƯU Ý"
+                            className={cx(
+                              "rounded-full border p-2.5 transition",
+                              activeConversation.tags?.some((item) => item.tag === "LƯU Ý")
+                                ? "border-amber-300 bg-amber-50 text-amber-600"
+                                : "border-neutral-200 hover:bg-neutral-50",
+                            )}
+                          >
                             <Star className="h-4 w-4" />
                           </button>
-                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleReadState()}
+                            title={
+                              Number(activeConversation.unreadCount || 0) > 0
+                                ? "Đánh dấu đã đọc"
+                                : "Đánh dấu chưa đọc"
+                            }
+                            className={cx(
+                              "rounded-full border p-2.5 transition",
+                              Number(activeConversation.unreadCount || 0) > 0
+                                ? "border-blue-200 bg-blue-50 text-blue-600"
+                                : "border-neutral-200 hover:bg-neutral-50",
+                            )}
+                          >
                             <Mail className="h-4 w-4" />
-                          </button>
-                          <button className="rounded-full border border-neutral-200 p-2.5 hover:bg-neutral-50">
-                            <MoreHorizontal className="h-4 w-4" />
                           </button>
                         </div>
                       </div>
 
                       <div className="flex flex-wrap gap-2 px-5 pb-4">
                         <select
+                          id="omni-assignee-select"
                           value={activeConversation.assigneeId || ""}
                           onChange={(event) =>
                             void handleAssign(event.target.value)
@@ -3523,12 +3667,18 @@ export default function MessagesPageClient({
                         </button>
 
                         <button
-                          onClick={() =>
-                            void markOmniConversationRead(activeConversation.id)
-                          }
-                          className="rounded-2xl border border-neutral-200 px-4 py-2 text-sm font-bold text-neutral-700 hover:bg-neutral-50"
+                          type="button"
+                          onClick={() => void handleToggleReadState()}
+                          className={cx(
+                            "rounded-2xl border px-4 py-2 text-sm font-bold transition",
+                            Number(activeConversation.unreadCount || 0) > 0
+                              ? "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                              : "border-neutral-200 text-neutral-700 hover:bg-neutral-50",
+                          )}
                         >
-                          Đã đọc
+                          {Number(activeConversation.unreadCount || 0) > 0
+                            ? "Đánh dấu đã đọc"
+                            : "Đánh dấu chưa đọc"}
                         </button>
                       </div>
                     </div>
@@ -3995,6 +4145,7 @@ export default function MessagesPageClient({
                         />
                       </div>
 
+                      <div id="omni-tag-section">
                       <Panel title="Nhãn">
                         <div className="flex flex-wrap gap-2">
                           {(activeConversation.tags || [])
@@ -4014,6 +4165,7 @@ export default function MessagesPageClient({
                           <>
                           <div className="mt-3 flex gap-2">
                             <input
+                              id="omni-tag-input"
                               value={tagDraft}
                               onChange={(event) =>
                                 setTagDraft(event.target.value)
@@ -4081,6 +4233,7 @@ export default function MessagesPageClient({
                           </>
                         ) : null}
                       </Panel>
+                      </div>
 
                       <Panel title="Người phụ trách">
                         <select
@@ -4188,6 +4341,42 @@ export default function MessagesPageClient({
                                         : ""}
                                     </span>
                                   </div>
+
+                                  {order.trackingCode ? (
+                                    <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <p className="text-[10px] font-black uppercase tracking-wide text-blue-600">
+                                            {String(order.carrier || "")
+                                              .toUpperCase()
+                                              .includes("GHN")
+                                              ? "Mã đơn GHN"
+                                              : "Mã vận đơn"}
+                                          </p>
+                                          <p className="mt-0.5 break-all font-mono text-xs font-black text-blue-900">
+                                            {order.trackingCode}
+                                          </p>
+                                          {order.shippingStatus ? (
+                                            <p className="mt-0.5 text-[10px] font-semibold text-blue-700">
+                                              {order.shippingStatus}
+                                            </p>
+                                          ) : null}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void navigator.clipboard
+                                              ?.writeText(String(order.trackingCode || ""))
+                                              .catch(() => undefined)
+                                          }
+                                          className="shrink-0 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-blue-700 hover:bg-blue-100"
+                                          title="Sao chép mã vận đơn"
+                                        >
+                                          Sao chép
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
 
                                   <div className="mt-3 flex flex-wrap gap-2">
                                     <a
@@ -6876,8 +7065,16 @@ function ConversationRow({
     <button
       onClick={onClick}
       className={cx(
-        "flex w-full gap-3 border-b border-neutral-100 px-5 py-4 text-left transition hover:bg-neutral-50",
-        active && "bg-blue-50/70",
+        "relative flex w-full gap-3 border-b border-neutral-100 px-5 py-4 text-left transition",
+        Number(item.unreadCount || 0) > 0
+          ? "bg-blue-100/80 hover:bg-blue-100"
+          : "bg-white hover:bg-neutral-50",
+        active &&
+          (Number(item.unreadCount || 0) > 0
+            ? "bg-blue-200/80"
+            : "bg-blue-50/70"),
+        Number(item.unreadCount || 0) > 0 &&
+          "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-blue-600",
       )}
     >
       <div className="relative shrink-0">
@@ -6893,13 +7090,25 @@ function ConversationRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-sm font-black">{customerName(item)}</p>
+          <p className={cx(
+            "truncate text-sm",
+            Number(item.unreadCount || 0) > 0 ? "font-black text-blue-950" : "font-black",
+          )}>
+            {customerName(item)}
+          </p>
           <span className="shrink-0 text-xs font-medium text-neutral-400">
             {formatTime(item.lastMessageAt)}
           </span>
         </div>
 
-        <p className="mt-1 truncate text-sm text-neutral-600">
+        <p
+          className={cx(
+            "mt-1 truncate text-sm",
+            Number(item.unreadCount || 0) > 0
+              ? "font-semibold text-blue-900"
+              : "text-neutral-600",
+          )}
+        >
           {item.lastMessageText || "Chưa có nội dung"}
         </p>
 
