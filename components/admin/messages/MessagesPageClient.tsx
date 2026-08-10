@@ -3231,8 +3231,8 @@ export default function MessagesPageClient({
 
           {isInboxWorkspace ? (
             <section className="grid h-[calc(100vh-80px)] grid-cols-1 gap-4 p-4 2xl:grid-cols-[440px_minmax(600px,1fr)_380px]">
-              <aside className="min-h-0 overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
-                <div className="border-b border-neutral-200 p-5">
+              <aside className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
+                <div className="shrink-0 border-b border-neutral-200 p-5">
                   <div className="mb-4 flex items-start justify-between">
                     <div>
                       <h3 className="text-lg font-bold">Hội thoại</h3>
@@ -3342,13 +3342,13 @@ export default function MessagesPageClient({
                 </div>
 
                 {error && (
-                  <div className="m-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                  <div className="mx-4 mt-4 shrink-0 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
                     {error}
                   </div>
                 )}
 
                 <div
-                  className="h-[calc(100%-220px)] overflow-y-auto"
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
                   onScroll={handleConversationListScroll}
                 >
                   {loadingList && !visibleConversations.length && !debouncedSearch ? (
