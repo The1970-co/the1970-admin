@@ -1107,6 +1107,8 @@ function parseAhamoveQuoteFee(rawQuote: any) {
     serviceLabel: String(serviceLabel),
     distanceKm,
     durationMinutes,
+    pickup: rawQuote?._pickup || quoteData?._pickup || null,
+    returnWarehouse: rawQuote?._return || quoteData?._return || null,
     raw: rawQuote,
   };
 }
@@ -5078,6 +5080,8 @@ export default function CreateOrderPageClient() {
                   _ahamoveServiceId: parsed.serviceLabel,
                   _durationMinutes: parsed.durationMinutes,
                   _distanceKm: parsed.distanceKm,
+                  _pickup: parsed.pickup,
+                  _return: parsed.returnWarehouse || parsed.pickup,
                   _raw: parsed.raw,
                   _disabled: Boolean((parsed.raw as any)?._disabled),
                   _disabledReason: (parsed.raw as any)?._disabledReason || "",
@@ -7068,17 +7072,67 @@ export default function CreateOrderPageClient() {
                 </div>
               </div>
 
-              {shippingUiMode === "carrier" && selectedCarrierPickup ? (
-                <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  Kho lấy hàng đã cấu hình:{" "}
-                  <span className="font-semibold text-neutral-900">
-                    {selectedCarrierPickup.name || selectedCarrierPickup.label}
-                  </span>
-                  {selectedCarrierPickup.address
-                    ? ` · ${selectedCarrierPickup.address}`
-                    : ""}
-                </div>
-              ) : null}
+              {shippingUiMode === "carrier"
+                ? (() => {
+                    const ahamoveQuote =
+                      shippingPartner === "ahamove"
+                        ? shippingQuotes.find(
+                            (quote) =>
+                              getQuoteCarrier(quote) === "ahamove" &&
+                              Boolean((quote as any)?._pickup?.address),
+                          ) || null
+                        : null;
+                    const resolvedPickup = (ahamoveQuote as any)?._pickup || null;
+                    const resolvedReturn =
+                      (ahamoveQuote as any)?._return || resolvedPickup || null;
+                    const pickup = resolvedPickup || selectedCarrierPickup;
+
+                    if (!pickup) return null;
+
+                    if (shippingPartner === "ahamove") {
+                      return (
+                        <div className="mt-4 grid gap-2 rounded-2xl border border-orange-200 bg-orange-50/60 px-4 py-3 text-sm text-neutral-700 md:grid-cols-2">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-orange-700">
+                              Kho lấy hàng AhaMove
+                            </div>
+                            <div className="mt-1 font-semibold text-neutral-950">
+                              {pickup.name || pickup.label || "Kho AhaMove"}
+                            </div>
+                            {pickup.address ? <div>{pickup.address}</div> : null}
+                            {pickup.phone ? <div className="text-xs text-neutral-500">{pickup.phone}</div> : null}
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-orange-700">
+                              Kho hoàn / trả hàng
+                            </div>
+                            <div className="mt-1 font-semibold text-neutral-950">
+                              {resolvedReturn?.name || pickup.name || pickup.label || "Kho AhaMove"}
+                            </div>
+                            {(resolvedReturn?.address || pickup.address) ? (
+                              <div>{resolvedReturn?.address || pickup.address}</div>
+                            ) : null}
+                            {(resolvedReturn?.phone || pickup.phone) ? (
+                              <div className="text-xs text-neutral-500">
+                                {resolvedReturn?.phone || pickup.phone}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+                        Kho lấy hàng đã cấu hình:{" "}
+                        <span className="font-semibold text-neutral-900">
+                          {pickup.name || pickup.label}
+                        </span>
+                        {pickup.address ? ` · ${pickup.address}` : ""}
+                      </div>
+                    );
+                  })()
+                : null}
 
               {shippingHint ? (
                 <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
