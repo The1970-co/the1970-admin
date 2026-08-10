@@ -169,9 +169,6 @@ function inferShippingPayerFromAhamovePaymentMethod(
     : "shop";
 }
 
-const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
-const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
-
 type CarrierPickupMapping = Record<
   string,
   {
@@ -182,50 +179,6 @@ type CarrierPickupMapping = Record<
   }
 >;
 
-function safeJsonParse(value: string | null) {
-  if (!value) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function readCustomAhamovePickups(): PickupLocation[] {
-  if (typeof window === "undefined") return [];
-  const raw = safeJsonParse(
-    localStorage.getItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY),
-  );
-  if (!Array.isArray(raw)) return [];
-
-  return raw
-    .map((item: any, index) => {
-      const id = String(item?.id || `ahamove-custom-${index}`);
-      const name = String(item?.name || item?.label || "").trim();
-      const phone = String(item?.phone || "").trim();
-      const address = String(item?.address || "").trim();
-
-      if (!name && !phone && !address) return null;
-
-      return {
-        id,
-        carrier: "ahamove" as const,
-        label: name || address || id,
-        name: name || address || "Điểm lấy hàng AhaMove",
-        phone,
-        address,
-      } satisfies PickupLocation;
-    })
-    .filter(Boolean) as PickupLocation[];
-}
-
-function mergeCustomAhamovePickups(rows: PickupLocation[]) {
-  const customRows = readCustomAhamovePickups();
-  return [
-    ...rows.filter((item) => !String(item.id).startsWith("ahamove-custom-")),
-    ...customRows,
-  ];
-}
 type DeliveryRequirement =
   | "CHOXEMHANG_KHONGTHU"
   | "CHOXEMHANG_CHOTHU"
@@ -2218,6 +2171,8 @@ export default function CreateOrderPageClient() {
   >();
   const [pickupLocations, setPickupLocations] = useState<PickupLocation[]>([]);
   const [pickupLocationsLoading, setPickupLocationsLoading] = useState(false);
+  const [carrierPickupMapping, setCarrierPickupMapping] =
+    useState<CarrierPickupMapping>({});
   const [selectedPickupLocationId, setSelectedPickupLocationId] =
     useState("default");
 
@@ -2659,13 +2614,34 @@ export default function CreateOrderPageClient() {
         setViettelInventoryLoading(true);
         setPickupLocationsLoading(true);
 
-        const [inventoryRows, pickupRows] = await Promise.all([
+        const apiBase = getApiBaseUrl();
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+        const [inventoryRows, pickupRows, pickupSettings] = await Promise.all([
           getViettelPostInventories().catch(() => [] as ViettelPostInventory[]),
           getPickupLocations().catch(() => [] as PickupLocation[]),
+          fetch(`${apiBase}/shipments/pickup-location-settings`, {
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            cache: "no-store",
+          })
+            .then(async (res) => (res.ok ? await res.json() : null))
+            .catch(() => null),
         ]);
 
         setViettelInventories(inventoryRows);
-        setPickupLocations(mergeCustomAhamovePickups(pickupRows));
+        // Kho AhaMove và mapping chi nhánh lấy trực tiếp từ backend/DB.
+        // Không dùng localStorage để tránh lệch cấu hình giữa các máy/trình duyệt.
+        setPickupLocations(pickupRows);
+        setCarrierPickupMapping(
+          pickupSettings?.carrierPickupMapping &&
+            typeof pickupSettings.carrierPickupMapping === "object"
+            ? pickupSettings.carrierPickupMapping
+            : {},
+        );
 
         setSelectedViettelInventoryId((current) => {
           if (
@@ -2683,7 +2659,8 @@ export default function CreateOrderPageClient() {
         });
       } catch {
         setViettelInventories([]);
-        setPickupLocations(mergeCustomAhamovePickups([]));
+        setPickupLocations([]);
+        setCarrierPickupMapping({});
       } finally {
         setViettelInventoryLoading(false);
         setPickupLocationsLoading(false);
@@ -2724,22 +2701,11 @@ export default function CreateOrderPageClient() {
       return;
     }
 
-    let configuredPickupId = "default";
-
-    try {
-      const raw =
-        typeof window !== "undefined"
-          ? localStorage.getItem(CARRIER_PICKUP_MAPPING_STORAGE_KEY)
-          : null;
-      const mapping = raw ? (JSON.parse(raw) as CarrierPickupMapping) : {};
-      const branchMapping = mapping?.[branchId] || {};
-      configuredPickupId =
-        String(
-          branchMapping?.[shippingPartner as keyof typeof branchMapping] || "",
-        ) || "default";
-    } catch {
-      configuredPickupId = "default";
-    }
+    const branchMapping = carrierPickupMapping?.[branchId] || {};
+    const configuredPickupId =
+      String(
+        branchMapping?.[shippingPartner as keyof typeof branchMapping] || "",
+      ) || "default";
 
     setSelectedPickupLocationId(() => {
       if (configuredPickupId === "default") return "default";
@@ -2749,7 +2715,13 @@ export default function CreateOrderPageClient() {
         ? configuredPickupId
         : "default";
     });
-  }, [branchId, carrierPickupLocations, shippingPartner, shippingUiMode]);
+  }, [
+    branchId,
+    carrierPickupLocations,
+    carrierPickupMapping,
+    shippingPartner,
+    shippingUiMode,
+  ]);
 
   useEffect(() => {
     if (shippingPartner !== "viettelpost" || !selectedCarrierPickup) return;
@@ -5032,9 +5004,7 @@ export default function CreateOrderPageClient() {
         if (toAddress) {
           try {
             const rawAhamoveQuote = await quoteAhamoveShipment({
-              fromName: selectedCarrierPickup?.name,
-              fromPhone: selectedCarrierPickup?.phone,
-              fromAddress: selectedCarrierPickup?.address,
+              branchId,
               toName:
                 selectedAddress?.recipientName ||
                 customerName.trim() ||
@@ -5763,9 +5733,7 @@ export default function CreateOrderPageClient() {
           shippingAddress.trim();
 
         const ahamoveCreated = await createAhamoveShipment(created.id, {
-          fromName: selectedCarrierPickup?.name,
-          fromPhone: selectedCarrierPickup?.phone,
-          fromAddress: selectedCarrierPickup?.address,
+          branchId,
           toName: selectedAddress?.recipientName || customerName.trim(),
           toPhone: selectedAddress?.phone || customerPhone.trim(),
           toAddress,

@@ -299,6 +299,7 @@ export type AhamoveQuoteItem = {
 };
 
 export type AhamoveQuotePayload = {
+  branchId?: string;
   fromName?: string;
   fromPhone?: string;
   fromAddress?: string;

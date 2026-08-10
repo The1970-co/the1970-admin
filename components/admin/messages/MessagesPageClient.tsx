@@ -192,6 +192,7 @@ const DEFAULT_SUBSCRIBED_FIELDS = [
   "message_deliveries",
   "message_reactions",
   "messaging_postbacks",
+  "feed",
 ];
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -364,6 +365,74 @@ function parseEventPayload(event: MessageEvent) {
   } catch {
     return event.data;
   }
+}
+
+function isOptimisticOmniMessage(message?: OmniMessage | null) {
+  return String(message?.id || "").startsWith("optimistic-");
+}
+
+function isMatchingOptimisticOmniMessage(
+  optimistic: OmniMessage,
+  incoming: OmniMessage,
+) {
+  if (!isOptimisticOmniMessage(optimistic)) return false;
+  if (optimistic.conversationId !== incoming.conversationId) return false;
+  if (optimistic.direction !== incoming.direction) return false;
+  if (optimistic.type !== incoming.type) return false;
+
+  const optimisticText = String(optimistic.text || "").trim();
+  const incomingText = String(incoming.text || "").trim();
+  const optimisticAttachment = String(optimistic.attachmentUrl || "").trim();
+  const incomingAttachment = String(incoming.attachmentUrl || "").trim();
+
+  if (
+    optimisticText !== incomingText ||
+    optimisticAttachment !== incomingAttachment
+  ) {
+    return false;
+  }
+
+  const optimisticAt = new Date(optimistic.sentAt || 0).getTime();
+  const incomingAt = new Date(incoming.sentAt || 0).getTime();
+  if (!Number.isFinite(optimisticAt) || !Number.isFinite(incomingAt)) {
+    return true;
+  }
+
+  // Chỉ ghép optimistic gần thời điểm response thật để không nuốt hai câu giống
+  // nhau mà nhân viên chủ động gửi ở hai thời điểm khác nhau.
+  return Math.abs(incomingAt - optimisticAt) <= 60_000;
+}
+
+function reconcileOmniMessage(
+  messages: OmniMessage[] | undefined,
+  incoming: OmniMessage,
+) {
+  const incomingProviderId = String(
+    (incoming as any)?.providerMessageId || "",
+  ).trim();
+
+  const next = (messages || []).filter((item) => {
+    if (item.id === incoming.id) return false;
+
+    const itemProviderId = String(
+      (item as any)?.providerMessageId || "",
+    ).trim();
+    if (
+      incomingProviderId &&
+      itemProviderId &&
+      incomingProviderId === itemProviderId
+    ) {
+      return false;
+    }
+
+    return !isMatchingOptimisticOmniMessage(item, incoming);
+  });
+
+  return [...next, incoming].sort((a, b) => {
+    const aa = new Date(a.sentAt || 0).getTime();
+    const bb = new Date(b.sentAt || 0).getTime();
+    return aa - bb;
+  });
 }
 
 function normalizeApiList(data: any): any[] {
@@ -928,6 +997,7 @@ export default function MessagesPageClient({
   const [pendingSendCount, setPendingSendCount] = useState(0);
   const sendQueueRef = useRef<SendQueueJob[]>([]);
   const sendQueueProcessingRef = useRef(false);
+  const draftComposingRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [draftImageUrls, setDraftImageUrls] = useState<string[]>([]);
   const [quickReplySuggestionIndex, setQuickReplySuggestionIndex] = useState(0);
@@ -1517,11 +1587,10 @@ export default function MessagesPageClient({
           if (message?.conversationId === activeId) {
             setActiveConversation((prev) => {
               if (!prev) return prev;
-              const existed = prev.messages?.some(
-                (item) => item.id === message.id,
-              );
-              if (existed) return prev;
-              return { ...prev, messages: [...(prev.messages || []), message] };
+              return {
+                ...prev,
+                messages: reconcileOmniMessage(prev.messages, message),
+              };
             });
           }
 
@@ -1766,10 +1835,9 @@ export default function MessagesPageClient({
             });
             setActiveConversation((prev) => {
               if (!prev || prev.id !== job.conversationId) return prev;
-              const messages = (prev.messages || []).map((message: any) =>
-                message.id === `${job.optimisticPrefix}-text`
-                  ? sentText
-                  : message,
+              const messages = reconcileOmniMessage(
+                prev.messages,
+                sentText,
               );
               return {
                 ...prev,
@@ -1803,8 +1871,11 @@ export default function MessagesPageClient({
                   if (!prev || prev.id !== job.conversationId) return prev;
                   return {
                     ...prev,
-                    messages: (prev.messages || []).map((message: any) =>
-                      message.id === optimisticId ? result.value : message,
+                    messages: reconcileOmniMessage(
+                      (prev.messages || []).filter(
+                        (message: any) => message.id !== optimisticId,
+                      ),
+                      result.value,
                     ),
                     lastMessageText: "[Ảnh]",
                     lastMessageAt: result.value.sentAt || prev.lastMessageAt,
@@ -3611,7 +3682,22 @@ export default function MessagesPageClient({
                             setDraft(nextValue);
                             if (!nextValue.trim()) setDraftImageUrls([]);
                           }}
+                          onCompositionStart={() => {
+                            draftComposingRef.current = true;
+                          }}
+                          onCompositionEnd={() => {
+                            draftComposingRef.current = false;
+                          }}
                           onKeyDown={(event) => {
+                            const nativeEvent = event.nativeEvent as KeyboardEvent;
+                            if (
+                              draftComposingRef.current ||
+                              nativeEvent.isComposing ||
+                              nativeEvent.keyCode === 229
+                            ) {
+                              return;
+                            }
+
                             if (quickReplySuggestionsOpen) {
                               if (event.key === "ArrowDown") {
                                 event.preventDefault();
