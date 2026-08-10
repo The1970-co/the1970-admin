@@ -2280,6 +2280,37 @@ export default function MessagesPageClient({
     }
   }
 
+  async function handleQuickTagToggle(tag: string) {
+    if (!activeConversation?.id) return;
+    const normalizedTag = tag.trim();
+    if (!normalizedTag) return;
+
+    const currentTags =
+      activeConversation.tags?.map((item) => item.tag).filter(Boolean) || [];
+    const exists = currentTags.includes(normalizedTag);
+    const nextTags = exists
+      ? currentTags.filter((item) => item !== normalizedTag)
+      : [...currentTags, normalizedTag];
+
+    try {
+      const updated = await updateOmniConversationTags(activeConversation.id, {
+        tags: nextTags,
+      });
+      setActiveConversation((prev) =>
+        prev ? { ...prev, ...updated, messages: prev.messages } : updated,
+      );
+      setConversations((prev) =>
+        prev.map((item) =>
+          item.id === updated.id ? { ...item, ...updated } : item,
+        ),
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Không cập nhật được nhãn.",
+      );
+    }
+  }
+
 
   function normalizeQuickReplyText(value: unknown) {
     return String(value ?? "")
@@ -3980,6 +4011,7 @@ export default function MessagesPageClient({
                           ))}
                         </div>
                         {canViewConversationTags ? (
+                          <>
                           <div className="mt-3 flex gap-2">
                             <input
                               value={tagDraft}
@@ -4000,6 +4032,53 @@ export default function MessagesPageClient({
                               Thêm
                             </button>
                           </div>
+                          {tagTemplates.length ? (
+                            <div className="mt-3 border-t border-neutral-100 pt-3">
+                              <p className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                                Chọn nhanh nhãn
+                              </p>
+                              <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                                {tagTemplates.map((template) => {
+                                  const tagName = String(template.name || "").trim();
+                                  if (!tagName) return null;
+                                  const selected = Boolean(
+                                    activeConversation.tags?.some(
+                                      (item) => item.tag === tagName,
+                                    ),
+                                  );
+                                  return (
+                                    <button
+                                      key={template.id || tagName}
+                                      type="button"
+                                      onClick={() =>
+                                        void handleQuickTagToggle(tagName)
+                                      }
+                                      className={cx(
+                                        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition",
+                                        selected
+                                          ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                                          : "border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700",
+                                      )}
+                                      title={
+                                        selected
+                                          ? `Bỏ nhãn ${tagName}`
+                                          : `Gắn nhãn ${tagName}`
+                                      }
+                                    >
+                                      <span
+                                        className={cx(
+                                          "h-2 w-2 rounded-full",
+                                          selected ? "bg-white" : "bg-blue-500",
+                                        )}
+                                      />
+                                      {tagName}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
+                          </>
                         ) : null}
                       </Panel>
 
