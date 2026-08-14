@@ -41,6 +41,27 @@ export type LiveAlert = {
   desc: string;
 };
 
+export type LiveAdControlRow = {
+  id: string;
+  metaAdId: string;
+  adName: string;
+  campaignName: string;
+  campaignId: string;
+  adSetName: string;
+  adSetId: string;
+  status?: string | null;
+  effectiveStatus?: string | null;
+  thumbnailUrl?: string | null;
+  spend: number;
+  revenue: number;
+  roas: number;
+  budgetDaily: number;
+  canScale: boolean;
+  scaleReasons?: string[];
+  productAttribution?: any;
+  inventory?: any;
+};
+
 export type AutopilotPageProps = {
   mappings: AdsMapping[];
   setMappings: React.Dispatch<React.SetStateAction<AdsMapping[]>>;
@@ -155,49 +176,27 @@ export default function AutopilotPage({
   const [backendStatus, setBackendStatus] = useState<any>(null);
   const [inventoryStatus, setInventoryStatus] = useState<any>(null);
   const [backendBusy, setBackendBusy] = useState(false);
+  const [liveAds, setLiveAds] = useState<LiveAdControlRow[]>([]);
+  const [adsBusy, setAdsBusy] = useState(false);
+  const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
   const [selectedMappingId, setSelectedMappingId] = useState(mappings[0]?.id || "");
   const [executionOutput, setExecutionOutput] = useState("Chưa chạy execute nào.");
-  const [decisionLogs, setDecisionLogs] = useState<DecisionLog[]>([
-    {
-      id: "d1",
-      time: "09:12",
-      sku: "QS794-GREEN-S",
-      decision: "Scale +20%",
-      reason: "ROAS 3.36, tồn còn tốt, budget còn room",
-      action: "applied",
-      rollbackBudget: 1200000,
-      nextBudget: 1440000,
-    },
-    {
-      id: "d2",
-      time: "08:46",
-      sku: "SM902-REUDEN-M",
-      decision: "Giảm -15%",
-      reason: "ROAS dưới ngưỡng 1.5 trong khi spend vẫn đang tăng.",
-      action: "suggested",
-      rollbackBudget: 800000,
-      nextBudget: 680000,
-    },
-  ]);
-  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([
-    {
-      id: "a1",
-      level: "high",
-      title: "QS794 Palm đủ điều kiện scale",
-      desc: "ROAS vượt ngưỡng scale và tồn toàn bộ size còn an toàn.",
-    },
-    {
-      id: "a2",
-      level: "critical",
-      title: "SM902 cần giảm budget",
-      desc: "ROAS dưới ngưỡng 1.5 trong khi spend vẫn đang tăng.",
-    },
-  ]);
+  const [decisionLogs, setDecisionLogs] = useState<DecisionLog[]>([]);
+  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
 
   const selectedMapping = useMemo(() => mappings.find((m) => m.id === selectedMappingId) || mappings[0], [mappings, selectedMappingId]);
-  const connectedCount = useMemo(() => mappings.filter((m) => m.status === "CONNECTED").length, [mappings]);
-  const scaleCandidates = useMemo(() => mappings.filter((m) => m.status === "CONNECTED" && m.roasToday >= scaleRoas).length, [mappings, scaleRoas]);
-  const weakCandidates = useMemo(() => mappings.filter((m) => m.status === "CONNECTED" && m.roasToday < 1.8).length, [mappings]);
+  const connectedCount = useMemo(() => liveAds.length || mappings.filter((m) => m.status === "CONNECTED").length, [liveAds, mappings]);
+  const scaleCandidates = useMemo(() => liveAds.length ? liveAds.filter((m) => m.canScale).length : mappings.filter((m) => m.status === "CONNECTED" && m.roasToday >= scaleRoas).length, [liveAds, mappings, scaleRoas]);
+  const weakCandidates = useMemo(() => liveAds.length ? liveAds.filter((m) => m.inventory?.groups?.some((g: any) => (g.criticalSizes || []).length > 0)).length : mappings.filter((m) => m.status === "CONNECTED" && m.roasToday < 1.8).length, [liveAds, mappings]);
+
+  const filteredLiveAds = useMemo(() => liveAds.filter((row) => {
+    const status = String(row.effectiveStatus || row.status || "").toUpperCase();
+    if (adFilter === "active") return status === "ACTIVE";
+    if (adFilter === "paused") return status === "PAUSED";
+    if (adFilter === "scale") return row.canScale;
+    if (adFilter === "stock") return row.inventory?.groups?.some((g: any) => (g.lowSizes || []).length > 0);
+    return true;
+  }), [liveAds, adFilter]);
 
   const selectedHistory = useMemo(() => {
     const target = selectedMapping || mappings.find((m) => m.status === "CONNECTED") || mappings[0];
@@ -229,6 +228,49 @@ export default function AutopilotPage({
     return data;
   };
 
+  const loadControlCenter = async () => {
+    setAdsBusy(true);
+    try {
+      const data = await apiJson("/meta-ads/autopilot/control-center");
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      setLiveAds(rows);
+
+      const alerts: LiveAlert[] = [];
+      for (const row of rows) {
+        const groups = row?.inventory?.groups || [];
+        const critical = groups.filter((g: any) => (g.criticalSizes || []).length > 0);
+        const low = groups.filter((g: any) => (g.lowSizes || []).length > 0 && !(g.criticalSizes || []).length);
+        if (critical.length) {
+          alerts.push({
+            id: `stock-${row.metaAdId}`,
+            level: "critical",
+            title: `${row.productAttribution?.familySku || row.adName} cần pause`,
+            desc: critical.map((g: any) => `${g.colorKey}: ${g.criticalSizes.join(", ")} dưới 5`).join(" · "),
+          });
+        } else if (row.canScale) {
+          alerts.push({
+            id: `scale-${row.metaAdId}`,
+            level: "good",
+            title: `${row.productAttribution?.familySku || row.adName} đủ điều kiện scale`,
+            desc: `ROAS ${Number(row.roas || 0).toFixed(2)} · Spend ${currency(row.spend)} · tồn size an toàn.`,
+          });
+        } else if (low.length) {
+          alerts.push({
+            id: `low-${row.metaAdId}`,
+            level: "high",
+            title: `${row.productAttribution?.familySku || row.adName} sắp thiếu size`,
+            desc: low.map((g: any) => `${g.colorKey}: ${g.lowSizes.join(", ")} dưới 10`).join(" · "),
+          });
+        }
+      }
+      setLiveAlerts(alerts.slice(0, 20));
+    } catch (error) {
+      setExecutionOutput(`Không tải được danh sách ads live: ${String(error)}`);
+    } finally {
+      setAdsBusy(false);
+    }
+  };
+
   const loadBackendStatus = async () => {
     setBackendBusy(true);
     try {
@@ -256,6 +298,7 @@ export default function AutopilotPage({
 
   useEffect(() => {
     void loadBackendStatus();
+    void loadControlCenter();
     void connectMeta();
   }, []);
 
@@ -449,6 +492,42 @@ export default function AutopilotPage({
     }
   };
 
+  const setLiveAdStatus = async (row: LiveAdControlRow, nextStatus: "ACTIVE" | "PAUSED") => {
+    setBackendBusy(true);
+    try {
+      const data = await apiJson("/meta-ads/actions/ad-status", {
+        method: "POST",
+        body: JSON.stringify({ metaAdId: row.metaAdId, status: nextStatus }),
+      });
+      setExecutionOutput(JSON.stringify(data, null, 2));
+      pushActivity(`Meta Ad ${row.adName}: ${nextStatus}.`);
+      await loadControlCenter();
+    } catch (error) {
+      setExecutionOutput(String(error));
+    } finally {
+      setBackendBusy(false);
+    }
+  };
+
+  const scaleLiveAdSet = async (row: LiveAdControlRow) => {
+    if (!row.adSetId) return;
+    setBackendBusy(true);
+    try {
+      const data = await apiJson("/meta-ads/actions/scale-adset", {
+        method: "POST",
+        body: JSON.stringify({ metaAdSetId: row.adSetId, percent: scalePercent, dryRun }),
+      });
+      setExecutionOutput(JSON.stringify(data, null, 2));
+      pushActivity(`${dryRun ? "DRY RUN" : "LIVE"}: scale ${row.adSetName || row.adSetId} +${scalePercent}%.`);
+      await loadControlCenter();
+      await loadBackendStatus();
+    } catch (error) {
+      setExecutionOutput(String(error));
+    } finally {
+      setBackendBusy(false);
+    }
+  };
+
   const productionCode = `export class MetaAdsService {
   constructor(private readonly token: string, private readonly apiVersion = "v20.0") {}
 
@@ -516,7 +595,7 @@ export class AutopilotController {
         <StatCard title="Automation level" value={automationLevel.toUpperCase()} sub={`Mức ${automationLevel === "manual" ? "1" : automationLevel === "semi" ? "2" : "3"} / 3`} />
         <StatCard title="SKU đã map" value={connectedCount} sub="Connected to Meta" />
         <StatCard title="Nên scale" value={scaleCandidates} sub={`ROAS >= ${scaleRoas}`} />
-        <StatCard title="Yếu / nên pause" value={weakCandidates} sub="Theo dõi thủ công" />
+        <StatCard title="Thiếu size critical" value={weakCandidates} sub="Có size dưới 5" />
       </div>
 
       <Panel>
@@ -575,6 +654,104 @@ export class AutopilotController {
                 <label className="flex items-center gap-2 text-[11px] text-neutral-500"><input type="checkbox" checked={dryRun} onChange={(e) => { setDryRun(e.target.checked); void saveAutomationConfig({ dryRun: e.target.checked }); }} /> Test trước khi chạy thật</label>
               </div>
             </div>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel>
+        <div className="p-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-[14px] font-semibold text-neutral-900">Ads đang chạy · Live Meta</h3>
+              <p className="mt-1 text-[12px] text-neutral-400">Scale ở cấp Ad Set · bật/tắt ở cấp Ad con · tồn kho theo đúng mã + màu.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {(["all", "active", "paused", "scale", "stock"] as const).map((item) => (
+                <button key={item} onClick={() => setAdFilter(item)} className={`rounded-full border px-3 py-1.5 text-[11px] ${adFilter === item ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-600"}`}>
+                  {item === "all" ? `Tất cả ${liveAds.length}` : item === "active" ? `ACTIVE ${liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE").length}` : item === "paused" ? `PAUSED ${liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "PAUSED").length}` : item === "scale" ? `Có thể scale ${liveAds.filter((x) => x.canScale).length}` : `Thiếu size ${liveAds.filter((x) => x.inventory?.groups?.some((g: any) => (g.lowSizes || []).length > 0)).length}`}
+                </button>
+              ))}
+              <ActionButton variant="secondary" onClick={loadControlCenter} disabled={adsBusy || backendBusy}>{adsBusy ? "Đang tải..." : "Làm mới"}</ActionButton>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-[18px] border border-neutral-200">
+            <table className="w-full min-w-[1320px] text-left">
+              <thead className="bg-neutral-50">
+                <tr className="border-b border-neutral-200 text-[11px] text-neutral-400">
+                  <th className="px-3 py-3 font-medium">Ad</th>
+                  <th className="px-3 py-3 font-medium">Mã / màu</th>
+                  <th className="px-3 py-3 font-medium">Campaign → Ad Set</th>
+                  <th className="px-3 py-3 font-medium">Tồn từng size</th>
+                  <th className="px-3 py-3 font-medium text-right">Spend</th>
+                  <th className="px-3 py-3 font-medium text-right">DT nội bộ</th>
+                  <th className="px-3 py-3 font-medium text-right">ROAS</th>
+                  <th className="px-3 py-3 font-medium text-right">Budget</th>
+                  <th className="px-3 py-3 font-medium">Đánh giá</th>
+                  <th className="px-3 py-3 font-medium">Hành động</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLiveAds.map((row) => {
+                  const status = String(row.effectiveStatus || row.status || "UNKNOWN").toUpperCase();
+                  const groups = row.inventory?.groups || [];
+                  const critical = groups.some((g: any) => (g.criticalSizes || []).length > 0);
+                  const low = groups.some((g: any) => (g.lowSizes || []).length > 0);
+                  return (
+                    <tr key={row.metaAdId} className="border-b border-neutral-100 align-top last:border-b-0">
+                      <td className="px-3 py-4">
+                        <div className="flex min-w-[230px] gap-3">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-[12px] border border-neutral-200 bg-neutral-100">
+                            {row.thumbnailUrl ? <img src={row.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-[9px] text-neutral-400">NO IMG</div>}
+                          </div>
+                          <div>
+                            <div className="max-w-[240px] text-[12px] font-medium text-neutral-800">{row.adName || row.metaAdId}</div>
+                            <div className="mt-1 font-mono text-[10px] text-neutral-400">{row.metaAdId}</div>
+                            <div className="mt-2"><Badge tone={status === "ACTIVE" ? "green" : status === "PAUSED" ? "amber" : "gray"}>{status}</Badge></div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-4">
+                        <div className="text-[12px] font-medium text-neutral-800">{groups[0]?.colorKey || row.productAttribution?.familySku || "Chưa map"}</div>
+                        <div className="mt-1 max-w-[180px] text-[11px] text-neutral-400">{row.productAttribution?.productName || row.productAttribution?.label || "—"}</div>
+                      </td>
+                      <td className="px-3 py-4">
+                        <div className="max-w-[220px] text-[11px] text-neutral-700">{row.campaignName || "—"}</div>
+                        <div className="mt-1 max-w-[220px] text-[11px] font-medium text-neutral-900">{row.adSetName || "—"}</div>
+                      </td>
+                      <td className="px-3 py-4">
+                        {groups.length ? groups.map((g: any, gi: number) => (
+                          <div key={`${row.metaAdId}-${gi}`} className={gi ? "mt-2" : ""}>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(g.sizes || []).map((sz: any) => (
+                                <span key={sz.size} className={`rounded-lg border px-2 py-1 text-[10px] font-medium ${Number(sz.qty) < 5 ? "border-rose-200 bg-rose-50 text-rose-600" : Number(sz.qty) < 10 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-white text-neutral-600"}`}>{sz.size}: {sz.qty}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )) : <span className="text-[11px] text-neutral-400">Chưa match tồn kho</span>}
+                      </td>
+                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.spend)}</td>
+                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.revenue)}</td>
+                      <td className="px-3 py-4 text-right"><span className={`text-[13px] font-semibold ${row.roas >= scaleRoas ? "text-emerald-600" : "text-neutral-800"}`}>{Number(row.roas || 0).toFixed(2)}</span></td>
+                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{row.budgetDaily ? compactMoney(row.budgetDaily) : "—"}</td>
+                      <td className="px-3 py-4">
+                        {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : row.canScale ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
+                        {!row.canScale && row.scaleReasons?.length ? <div className="mt-2 max-w-[220px] text-[10px] leading-4 text-neutral-400">{row.scaleReasons.slice(0, 2).join(" · ")}</div> : null}
+                      </td>
+                      <td className="px-3 py-4">
+                        <div className="flex min-w-[160px] flex-col gap-2">
+                          <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => scaleLiveAdSet(row)}>Scale +{scalePercent}%</ActionButton>
+                          {status === "ACTIVE" ? <ActionButton variant="danger" disabled={backendBusy} onClick={() => setLiveAdStatus(row, "PAUSED")}>Pause Ad</ActionButton> : <ActionButton variant="secondary" disabled={backendBusy || status !== "PAUSED"} onClick={() => setLiveAdStatus(row, "ACTIVE")}>Bật lại Ad</ActionButton>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!filteredLiveAds.length && (
+                  <tr><td colSpan={10} className="px-4 py-10 text-center text-[12px] text-neutral-400">{adsBusy ? "Đang tải ads từ Meta..." : "Không có ads phù hợp bộ lọc."}</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </Panel>
@@ -660,6 +837,7 @@ export class AutopilotController {
               </div>
 
               <div className="space-y-3">
+                {!decisionLogs.length && <div className="rounded-[16px] border border-dashed border-neutral-200 px-4 py-8 text-center text-[12px] text-neutral-400">Chưa có hành động mới trong phiên này.</div>}
                 {decisionLogs.map((log) => (
                   <div key={log.id} className="rounded-[16px] border border-neutral-200 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
