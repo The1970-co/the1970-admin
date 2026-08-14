@@ -76,6 +76,7 @@ export default function MobileAutopilotPage() {
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
   const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
   const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
+  const [brokenPreviewIds, setBrokenPreviewIds] = useState<Set<string>>(() => new Set());
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -168,8 +169,20 @@ export default function MobileAutopilotPage() {
           // Budget ưu tiên live structure; control-center không được ghi null đè mất.
           adSetDailyBudget: num(ctl.adSetDailyBudget) > 0 ? ctl.adSetDailyBudget : raw.adSetDailyBudget,
           campaignDailyBudget: num(ctl.campaignDailyBudget) > 0 ? ctl.campaignDailyBudget : raw.campaignDailyBudget,
-          currentBudget: num(ctl.currentBudget) > 0 ? ctl.currentBudget : raw.currentBudget,
+          // Web Control Center trả budgetDaily; mobile phải giữ field này thay vì bỏ mất.
+          budgetDaily:
+            num(ctl.budgetDaily) > 0 ? ctl.budgetDaily
+            : num(raw.budgetDaily) > 0 ? raw.budgetDaily
+            : num(ctl.currentBudget) > 0 ? ctl.currentBudget
+            : raw.currentBudget,
+          currentBudget:
+            num(ctl.currentBudget) > 0 ? ctl.currentBudget
+            : num(raw.currentBudget) > 0 ? raw.currentBudget
+            : num(ctl.budgetDaily) > 0 ? ctl.budgetDaily
+            : raw.budgetDaily,
           budgetLevel: ctl.budgetLevel || raw.budgetLevel || null,
+          budgetEntityId: ctl.budgetEntityId || raw.budgetEntityId || null,
+          liveThumbnailUrl: raw.liveThumbnailUrl || ctl.liveThumbnailUrl || null,
           // Metrics ưu tiên control-center.
           spend24h: ctl.spend24h ?? ctl.metrics?.spend ?? raw.spend24h ?? raw.spend,
           revenue24h: ctl.revenue24h ?? ctl.productAttribution?.familyOrderRevenue ?? ctl.productAttribution?.orderRevenue ?? raw.revenue24h ?? raw.revenue,
@@ -284,13 +297,19 @@ export default function MobileAutopilotPage() {
     return Array.from(m.values());
   }, [liveAds]);
 
-  const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" && Boolean(String(x.thumbnailUrl || x.thumbnail_url || "").trim()));
+  const activeAds = liveAds.filter((x) => {
+    const id = String(x.metaAdId || x.id || "");
+    const status = String(x.effectiveStatus || x.status || "").toUpperCase();
+    const preview = String(x.liveThumbnailUrl || x.thumbnailUrl || x.thumbnail_url || "").trim();
+    return status === "ACTIVE" && Boolean(preview) && !brokenPreviewIds.has(id);
+  });
   const criticalAds = liveAds.filter((x) => String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase().includes("CRITICAL"));
   const readyPosts = launchPosts.filter((x) => ["READY", "CREATED_PAUSED"].includes(String(x.state || "").toUpperCase()));
   const operationalAds = liveAds.filter((row) => {
+    const id = String(row.metaAdId || row.id || "");
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
-    const hasCreative = Boolean(String(row.thumbnailUrl || row.thumbnail_url || "").trim());
-    return status === "ACTIVE" && hasCreative;
+    const preview = String(row.liveThumbnailUrl || row.thumbnailUrl || row.thumbnail_url || "").trim();
+    return status === "ACTIVE" && Boolean(preview) && !brokenPreviewIds.has(id);
   });
   const filteredAds = operationalAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
@@ -307,6 +326,13 @@ export default function MobileAutopilotPage() {
   });
 
   function budgetOf(row: AnyRow) {
+    // Web đang dùng budgetDaily trước; mobile phải theo cùng contract.
+    const webBudget = num(row.budgetDaily);
+    if (webBudget > 0) {
+      const rawLevel = String(row.budgetLevel || "").toUpperCase();
+      return { value: webBudget, level: rawLevel === "ADSET" ? "Ad Set" : rawLevel === "CAMPAIGN" ? "Campaign" : "Budget" };
+    }
+
     const directCurrent = num(row.currentBudget);
     if (directCurrent > 0) {
       const level = String(row.budgetLevel || '').toUpperCase() === 'ADSET' ? 'Ad Set' : 'Campaign';
@@ -544,7 +570,16 @@ export default function MobileAutopilotPage() {
             const historyCount = scaleCount(row);
             return <article key={id} className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
               <div className="flex gap-3 p-4">
-                {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
+                {row.liveThumbnailUrl || row.thumbnailUrl || row.thumbnail_url ? <img
+                  src={row.liveThumbnailUrl || row.thumbnailUrl || row.thumbnail_url}
+                  alt=""
+                  className="h-20 w-20 rounded-2xl object-cover bg-neutral-100"
+                  onError={() => setBrokenPreviewIds((prev) => {
+                    const next = new Set(prev);
+                    next.add(id);
+                    return next;
+                  })}
+                /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
                   <div className="mt-1 flex flex-wrap gap-1"><Badge value={status}>{status}</Badge>{stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}{historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}</div>
