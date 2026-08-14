@@ -74,6 +74,8 @@ export default function MobileAutopilotPage() {
   const [launchAvailable, setLaunchAvailable] = useState(true);
   const [launchError, setLaunchError] = useState("");
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
+  const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
+  const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -180,6 +182,7 @@ export default function MobileAutopilotPage() {
 
       const pickedLevel = (perf?.level || inv?.level || "manual") as AutomationLevel;
       setLevel(pickedLevel);
+      setSelectedLevel(pickedLevel);
       setDryRun(Boolean(perf?.dryRun ?? inv?.dryRun ?? true));
       setPerformanceEnabled(Boolean(perf?.enabled));
       setInventoryEnabled(Boolean(inv?.enabled));
@@ -281,10 +284,15 @@ export default function MobileAutopilotPage() {
     return Array.from(m.values());
   }, [liveAds]);
 
-  const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE");
+  const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" && Boolean(String(x.thumbnailUrl || x.thumbnail_url || "").trim()));
   const criticalAds = liveAds.filter((x) => String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase().includes("CRITICAL"));
   const readyPosts = launchPosts.filter((x) => ["READY", "CREATED_PAUSED"].includes(String(x.state || "").toUpperCase()));
-  const filteredAds = liveAds.filter((row) => {
+  const operationalAds = liveAds.filter((row) => {
+    const status = String(row.effectiveStatus || row.status || "").toUpperCase();
+    const hasCreative = Boolean(String(row.thumbnailUrl || row.thumbnail_url || "").trim());
+    return status === "ACTIVE" && hasCreative;
+  });
+  const filteredAds = operationalAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
     const stock = assessments[String(row.metaAdId || row.id || "")] || {};
     if (adFilter === "active") return status === "ACTIVE";
@@ -342,7 +350,7 @@ export default function MobileAutopilotPage() {
   }
 
   async function changeLevel(next: AutomationLevel) {
-    setLevel(next); setBusy(true);
+    setLevel(next); setSelectedLevel(next); setBusy(true);
     try {
       const tasks: Promise<any>[] = [
         apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ level: next }) }),
@@ -402,6 +410,20 @@ export default function MobileAutopilotPage() {
     finally { setBusy(false); }
   }
 
+  async function scanPublishedPosts() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const r = await apiJson("/meta-ads/autopilot/launch/run", {
+        method: "POST",
+        body: JSON.stringify({ discoverOnly: true, scanLimit: 100, dryRun: true }),
+      });
+      setMessage(`Đã quét ${r?.summary?.scanned || 0} bài đã đăng · chưa chạy Ads ${r?.summary?.withoutAds || 0} · đã có Ads ${r?.summary?.withAds || 0}.`);
+      await loadAll(false);
+      setPostFilter("no_ad");
+    } catch (e: any) { setError(e?.message || "Không quét được bài đã đăng"); }
+    finally { setBusy(false); }
+  }
+
   async function runLaunch() {
     setBusy(true); setError("");
     try {
@@ -417,6 +439,32 @@ export default function MobileAutopilotPage() {
     catch (e: any) { setError(e?.message || "Không bỏ qua được bài"); }
     finally { setBusy(false); }
   }
+
+  const visiblePosts = launchPosts.filter((post) => {
+    const hasAd = Boolean(post?.hasAd || post?.metaAdId || String(post?.state || "").toUpperCase() === "ALREADY_AD");
+    if (postFilter === "has_ad") return hasAd;
+    if (postFilter === "no_ad") return !hasAd;
+    return true;
+  });
+
+  const levelInfo: Record<AutomationLevel, { title: string; desc: string; points: string[] }> = {
+    manual: {
+      title: "Mức 1 · Theo dõi",
+      desc: "Hệ thống chỉ theo dõi, cảnh báo và hiển thị đề xuất. Không tự thay đổi Meta.",
+      points: ["Không tự scale", "Không tự pause", "Bài đủ 48h chỉ chuyển READY để mày tự xử lý"],
+    },
+    semi: {
+      title: "Mức 2 · Xét duyệt",
+      desc: "Backend đánh giá và chuẩn bị hành động, nhưng các thay đổi quan trọng vẫn chờ mày duyệt.",
+      points: ["Scale chỉ đề xuất", "Pause tồn kho chỉ cảnh báo", "Bài đủ 48h có thể tạo Ad PAUSED để duyệt"],
+    },
+    auto: {
+      title: "Mức 3 · Tự động",
+      desc: "Các module đang bật sẽ tự tác động Meta theo rule đã lưu khi DRY RUN tắt.",
+      points: ["Tự scale khi đủ ROAS/spend/tồn", "Tự pause đúng Ad thiếu hàng", "Tự tạo/bật Ads bài đủ điều kiện"],
+    },
+  };
+
 
   return (
     <main className="min-h-[100dvh] bg-[#f4f4f2] pb-[calc(96px+env(safe-area-inset-bottom))] text-neutral-950">
@@ -451,11 +499,20 @@ export default function MobileAutopilotPage() {
             {([
               ["manual", "Mức 1", "Theo dõi"], ["semi", "Mức 2", "Xét duyệt"], ["auto", "Mức 3", "Tự động"],
             ] as Array<[AutomationLevel, string, string]>).map(([id, title, desc]) => (
-              <button key={id} disabled={busy} onClick={() => void changeLevel(id)} className={`rounded-2xl border px-2 py-3 text-center ${level === id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-neutral-50"}`}>
-                <div className="text-xs font-black">{title}</div><div className={`mt-1 text-[10px] ${level === id ? "text-neutral-300" : "text-neutral-400"}`}>{desc}</div>
+              <button key={id} disabled={busy} onClick={() => setSelectedLevel(id)} className={`relative rounded-2xl border px-2 py-3 text-center ${selectedLevel === id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-neutral-50"}`}>
+                {level === id ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-emerald-400" /> : null}
+                <div className="text-xs font-black">{title}</div><div className={`mt-1 text-[10px] ${selectedLevel === id ? "text-neutral-300" : "text-neutral-400"}`}>{desc}</div>
               </button>
             ))}
           </div>
+          <div className="mt-3 rounded-2xl bg-neutral-50 p-3">
+            <div className="text-sm font-black">{levelInfo[selectedLevel].title}</div>
+            <div className="mt-1 text-[11px] leading-5 text-neutral-500">{levelInfo[selectedLevel].desc}</div>
+            <div className="mt-2 space-y-1">{levelInfo[selectedLevel].points.map((p) => <div key={p} className="text-[11px] font-semibold text-neutral-600">• {p}</div>)}</div>
+          </div>
+          <button disabled={busy || selectedLevel === level} onClick={() => void changeLevel(selectedLevel)} className="mt-3 h-11 w-full rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:bg-neutral-200 disabled:text-neutral-500">
+            {selectedLevel === level ? `Đang bật ${levelInfo[level].title}` : `Bật ${levelInfo[selectedLevel].title}`}
+          </button>
         </section>
 
         <div className="grid grid-cols-3 gap-2 rounded-2xl bg-neutral-200/70 p-1">
@@ -495,7 +552,7 @@ export default function MobileAutopilotPage() {
                 </div>
               </div>
               <div className="grid grid-cols-3 border-y border-neutral-100 bg-neutral-50">
-                <div className="p-3"><div className="text-[10px] text-neutral-400">Budget</div><div className="mt-1 text-xs font-black">{budget.value ? money(budget.value) : "—"}</div><div className="text-[9px] text-neutral-400">{budget.level}</div></div>
+                <div className="p-3"><div className="text-[10px] text-neutral-400">Budget</div><div className="mt-1 text-xs font-black">{budget.value ? money(budget.value) : "Chưa lấy được"}</div><div className="text-[9px] text-neutral-400">{budget.value ? budget.level : "Meta chưa trả budget"}</div></div>
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Tồn màu</div><div className="mt-1 text-xs font-black">{stock?.totalQty ?? "—"}</div><div className="text-[9px] text-neutral-400">min size {stock?.minQty ?? "—"}</div></div>
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || row.metaAdSetId || row.adSetId || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || row.metaCampaignId || row.campaignId || "—"}</div></div>
               </div>
@@ -532,12 +589,16 @@ export default function MobileAutopilotPage() {
 
         {!loading && tab === "posts" ? <div className="space-y-3">
           {!launchAvailable ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold leading-5 text-amber-800">{launchError || "Auto Launch backend chưa sẵn sàng."}</div> : null}
-          <div className="flex gap-2"><button disabled={busy || !launchEnabled || !launchAvailable} onClick={() => void runLaunch()} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"><RefreshCw className="h-4 w-4" /> Quét bài mới</button></div>
-          {launchPosts.map((post) => {
+          <button disabled={busy || !launchAvailable} onClick={() => void scanPublishedPosts()} className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"><RefreshCw className="h-4 w-4" /> Quét 100 bài đã đăng</button>
+          <div className="rounded-2xl bg-neutral-100 p-3 text-[11px] leading-5 text-neutral-500">Quét cả bài cũ trong 100 bài published gần nhất, không chỉ bài hôm nay. Chế độ quét này chỉ phát hiện trạng thái, không tự tạo Ads.</div>
+          <div className="grid grid-cols-3 gap-2">
+            {([["no_ad","Chưa chạy Ads"],["has_ad","Đã có Ads"],["all","Tất cả"]] as Array<[typeof postFilter,string]>).map(([id,label]) => <button key={id} onClick={() => setPostFilter(id)} className={`rounded-xl border px-2 py-2 text-[10px] font-black ${postFilter === id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-500"}`}>{label}</button>)}
+          </div>
+          {visiblePosts.map((post) => {
             const state = String(post.state || "WAITING").toUpperCase();
             const a = post.assessment || {};
             return <article key={String(post.postId)} className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="line-clamp-3 text-sm font-black leading-5">{post.message || post.postId}</div><div className="mt-1 text-[10px] text-neutral-400">{post.createdTime ? new Date(post.createdTime).toLocaleString("vi-VN") : "—"}</div></div><Badge value={state}>{state}</Badge></div>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="line-clamp-3 text-sm font-black leading-5">{post.message || post.postId}</div><div className="mt-1 text-[10px] text-neutral-400">{post.createdTime ? new Date(post.createdTime).toLocaleString("vi-VN") : "—"}</div></div><div className="flex flex-col items-end gap-1"><Badge value={state}>{state}</Badge><span className={`text-[9px] font-black ${post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "text-emerald-700" : "text-amber-700"}`}>{post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "ĐÃ CÓ ADS" : "CHƯA CHẠY ADS"}</span></div></div>
               <div className="mt-3 rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Mapping</div><div className="mt-1 text-sm font-black">{a.productCode ? `${a.productCode} · ${a.color || "Chưa màu"}` : "Chưa xác định sản phẩm"}</div><div className="mt-1 text-xs text-neutral-500">{a.productCode ? `Tổng tồn ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}` : a.reason || "Hashtag mã SP hoặc xác nhận mapping trước khi chạy."}</div></div>
               {post.metaAdId ? <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-700"><BadgeCheck className="h-4 w-4" /> Ad: {post.metaAdId}</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -546,7 +607,7 @@ export default function MobileAutopilotPage() {
               </div>
             </article>;
           })}
-          {!launchPosts.length ? <div className="rounded-3xl bg-white p-8 text-center text-sm font-bold text-neutral-400">Chưa phát hiện bài Page.</div> : null}
+          {!visiblePosts.length ? <div className="rounded-3xl bg-white p-8 text-center text-sm font-bold text-neutral-400">Không có bài phù hợp bộ lọc. Bấm “Quét 100 bài đã đăng”.</div> : null}
         </div> : null}
 
         {!loading && tab === "settings" ? <div className="space-y-4">
