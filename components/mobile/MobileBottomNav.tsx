@@ -1,7 +1,7 @@
 "use client";
 
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { BarChart3, ClipboardCheck, ClipboardList, Home, ShoppingBag, User } from "lucide-react";
+import { BarChart3, Bot, ClipboardCheck, ClipboardList, Home, ShoppingBag, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
@@ -9,6 +9,7 @@ import { useMemo } from "react";
 const FULL_NAV_ITEMS = [
   { label: "Home", href: "/mobile", icon: Home, match: ["/mobile"] },
   { label: "Báo cáo", href: "/mobile/reports/overview", icon: BarChart3, match: ["/mobile/reports"] },
+  { label: "Auto", href: "/mobile/autopilot", icon: Bot, match: ["/mobile/autopilot"], autopilotOnly: true },
   { label: "Đơn", href: "/mobile/orders", icon: ShoppingBag, match: ["/mobile/orders"] },
   { label: "Kiểm", href: "/mobile/stocktake", icon: ClipboardCheck, match: ["/mobile/stocktake"] },
   { label: "Lịch sử", href: "/mobile/stocktake-history", icon: ClipboardList, match: ["/mobile/stocktake-history"] },
@@ -35,6 +36,14 @@ function roleOf(user: any) {
 function isOwnerOrAdmin(user: any) {
   const roles = roleOf(user);
   return roles.includes("owner") || roles.includes("admin");
+}
+
+function canSeeAutopilot(user: any) {
+  if (!user) return false;
+  if (isOwnerOrAdmin(user)) return true;
+
+  const keys = getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId);
+  return keys.includes("*") || keys.includes("autopilot.view");
 }
 
 function hasAny(keys: string[], candidates: string[]) {
@@ -80,8 +89,10 @@ export default function MobileBottomNav() {
   const pathname = usePathname() || "";
   const user = typeof window === "undefined" ? null : getCurrentUserFromStorage();
   const stocktakeOnly = useMemo(() => isStocktakeOnlyUser(user), [user]);
-  const items = stocktakeOnly ? STOCKTAKE_ONLY_NAV_ITEMS : FULL_NAV_ITEMS;
-  const gridCols = stocktakeOnly ? "grid-cols-3" : "grid-cols-6";
+  const items = stocktakeOnly
+    ? STOCKTAKE_ONLY_NAV_ITEMS
+    : FULL_NAV_ITEMS.filter((item) => !("autopilotOnly" in item) || !item.autopilotOnly || canSeeAutopilot(user));
+  const gridCols = stocktakeOnly ? "grid-cols-3" : items.length >= 7 ? "grid-cols-7" : "grid-cols-6";
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-neutral-200 bg-white/95 px-3 pb-[calc(10px+env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur">

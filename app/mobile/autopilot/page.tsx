@@ -1,0 +1,532 @@
+"use client";
+
+import { apiJson } from "@/lib/api";
+import {
+  Activity,
+  ArrowLeft,
+  BadgeCheck,
+  Bot,
+  ChevronDown,
+  ChevronUp,
+  CircleDollarSign,
+  Clock3,
+  PackageCheck,
+  Pause,
+  Play,
+  RefreshCw,
+  Rocket,
+  Save,
+  Settings2,
+  ShieldAlert,
+  SlidersHorizontal,
+  Sparkles,
+  Zap,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+type AutomationLevel = "manual" | "semi" | "auto";
+type TabKey = "ads" | "posts" | "settings";
+type AnyRow = Record<string, any>;
+
+const money = (v: any) => `${Math.round(Number(v || 0)).toLocaleString("vi-VN")}đ`;
+const num = (v: any) => Number(v || 0) || 0;
+const pct = (v: any) => Number(v || 0).toFixed(2);
+
+function toneClass(value: string) {
+  const s = String(value || "").toUpperCase();
+  if (s.includes("ACTIVE") || s.includes("NORMAL") || s.includes("READY")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (s.includes("CRITICAL") || s.includes("ERROR") || s.includes("BLOCKED")) return "bg-rose-50 text-rose-700 border-rose-200";
+  if (s.includes("LOW") || s.includes("WAIT") || s.includes("PAUSED") || s.includes("WARN")) return "bg-amber-50 text-amber-700 border-amber-200";
+  return "bg-sky-50 text-sky-700 border-sky-200";
+}
+
+function Badge({ children, value }: { children: React.ReactNode; value?: string }) {
+  return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black ${toneClass(value || String(children))}`}>{children}</span>;
+}
+
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative h-7 w-12 rounded-full transition ${checked ? "bg-neutral-950" : "bg-neutral-200"} ${disabled ? "opacity-50" : ""}`}
+    >
+      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${checked ? "left-6" : "left-1"}`} />
+    </button>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block"><div className="mb-1.5 text-[11px] font-bold text-neutral-500">{label}</div>{children}</label>;
+}
+
+const inputClass = "h-11 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm font-semibold outline-none focus:border-neutral-400";
+
+export default function MobileAutopilotPage() {
+  const [tab, setTab] = useState<TabKey>("ads");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [expandedId, setExpandedId] = useState("");
+  const [launchAvailable, setLaunchAvailable] = useState(true);
+  const [launchError, setLaunchError] = useState("");
+  const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
+
+  const [performance, setPerformance] = useState<AnyRow>({});
+  const [inventory, setInventory] = useState<AnyRow>({});
+  const [launch, setLaunch] = useState<AnyRow>({});
+  const [launchPosts, setLaunchPosts] = useState<AnyRow[]>([]);
+  const [liveAds, setLiveAds] = useState<AnyRow[]>([]);
+  const [assessments, setAssessments] = useState<Record<string, AnyRow>>({});
+  const [budgets, setBudgets] = useState<{ adSets: AnyRow[]; campaigns: AnyRow[] }>({ adSets: [], campaigns: [] });
+  const [scaleHistory, setScaleHistory] = useState<AnyRow[]>([]);
+
+  const [level, setLevel] = useState<AutomationLevel>("manual");
+  const [dryRun, setDryRun] = useState(true);
+  const [performanceEnabled, setPerformanceEnabled] = useState(false);
+  const [inventoryEnabled, setInventoryEnabled] = useState(false);
+  const [launchEnabled, setLaunchEnabled] = useState(false);
+
+  const [scaleRoas, setScaleRoas] = useState(3);
+  const [scalePercent, setScalePercent] = useState(20);
+  const [minSpend, setMinSpend] = useState(200000);
+
+  const [warnThreshold, setWarnThreshold] = useState(10);
+  const [pauseThreshold, setPauseThreshold] = useState(5);
+  const [criticalSizeCount, setCriticalSizeCount] = useState(2);
+  const [pauseTotalQty, setPauseTotalQty] = useState(40);
+  const [requireBoth, setRequireBoth] = useState(true);
+
+  const [waitHours, setWaitHours] = useState(48);
+  const [launchMode, setLaunchMode] = useState<"EXISTING_ADSET" | "CLONE_ADSET">("EXISTING_ADSET");
+  const [targetAdSetId, setTargetAdSetId] = useState("");
+  const [templateAdSetId, setTemplateAdSetId] = useState("");
+  const [launchDailyBudget, setLaunchDailyBudget] = useState(500000);
+  const [requireInventoryMatch, setRequireInventoryMatch] = useState(true);
+  const [blockCriticalStock, setBlockCriticalStock] = useState(true);
+  const [autoActivate, setAutoActivate] = useState(true);
+
+  async function loadAll(showSpinner = true) {
+    if (showSpinner) setLoading(true);
+    setError("");
+    setLaunchError("");
+
+    try {
+      // Core Autopilot không được phụ thuộc Auto Launch.
+      const core = await Promise.allSettled([
+        apiJson("/meta-ads/autopilot/performance/status"),
+        apiJson("/meta-ads/autopilot/inventory/status"),
+        apiJson("/meta-ads/autopilot/live-ads?limit=500"),
+        apiJson("/meta-ads/autopilot/scale-history?limit=500"),
+        apiJson("/meta-ads/autopilot/control-center"),
+      ]);
+
+      const value = (i: number) => core[i]?.status === "fulfilled" ? (core[i] as PromiseFulfilledResult<any>).value : null;
+      const perf = value(0) || {};
+      const inv = value(1) || {};
+      const rawLive = value(2);
+      const history = value(3);
+      const control = value(4);
+
+      setPerformance(perf);
+      setInventory(inv);
+
+      const rawLiveRows = Array.isArray(rawLive) ? rawLive : rawLive?.items || rawLive?.ads || rawLive?.rows || [];
+      const controlRows = Array.isArray(control?.ads) ? control.ads : Array.isArray(control?.rows) ? control.rows : [];
+      const adRows = controlRows.length ? controlRows : rawLiveRows;
+
+      setLiveAds(adRows);
+      setScaleHistory(Array.isArray(history) ? history : history?.items || history?.rows || []);
+
+      const pickedLevel = (perf?.level || inv?.level || "manual") as AutomationLevel;
+      setLevel(pickedLevel);
+      setDryRun(Boolean(perf?.dryRun ?? inv?.dryRun ?? true));
+      setPerformanceEnabled(Boolean(perf?.enabled));
+      setInventoryEnabled(Boolean(inv?.enabled));
+      setScaleRoas(num(perf?.scaleRoas) || 3);
+      setScalePercent(num(perf?.scalePercent) || 20);
+      setMinSpend(num(perf?.minSpend) || 200000);
+      setWarnThreshold(num(inv?.warnThreshold) || 10);
+      setPauseThreshold(num(inv?.pauseThreshold) || 5);
+      setCriticalSizeCount(num(inv?.criticalSizeCount) || 2);
+      setPauseTotalQty(num(inv?.pauseTotalQty) || 40);
+      setRequireBoth(inv?.requireBoth !== false);
+
+      // Enrich tồn kho + budget, nhưng lỗi enrich không được xóa Ads.
+      if (adRows.length) {
+        const enrich = await Promise.allSettled([
+          apiJson("/meta-ads/autopilot/inventory/assess", {
+            method: "POST",
+            body: JSON.stringify({ ads: adRows }),
+          }),
+          apiJson("/meta-ads/autopilot/budgets", {
+            method: "POST",
+            body: JSON.stringify({
+              metaAdSetIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
+              metaCampaignIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
+            }),
+          }),
+        ]);
+
+        if (enrich[0].status === "fulfilled") {
+          const assessmentRows: any = enrich[0].value;
+          const assessList = Array.isArray(assessmentRows) ? assessmentRows : assessmentRows?.items || assessmentRows?.rows || [];
+          const map: Record<string, AnyRow> = {};
+          assessList.forEach((x: AnyRow) => { map[String(x.metaAdId || x.id || "")] = x; });
+          setAssessments(map);
+        }
+
+        if (enrich[1].status === "fulfilled") {
+          const budgetRows: any = enrich[1].value;
+          setBudgets({ adSets: budgetRows?.adSets || [], campaigns: budgetRows?.campaigns || [] });
+        }
+      } else {
+        setAssessments({});
+        setBudgets({ adSets: [], campaigns: [] });
+      }
+
+      // Auto Launch là module optional. 404 ở đây không được làm hỏng Ads/Scale/Inventory.
+      const launchResults = await Promise.allSettled([
+        apiJson("/meta-ads/autopilot/launch/status"),
+        apiJson("/meta-ads/autopilot/launch/posts?limit=100"),
+      ]);
+
+      if (launchResults[0].status === "fulfilled") {
+        const lau: any = launchResults[0].value || {};
+        setLaunchAvailable(true);
+        setLaunch(lau);
+        setLaunchEnabled(Boolean(lau?.enabled));
+        setWaitHours(num(lau?.waitHours) || 48);
+        setLaunchMode(String(lau?.launchMode || "EXISTING_ADSET").toUpperCase() === "CLONE_ADSET" ? "CLONE_ADSET" : "EXISTING_ADSET");
+        setTargetAdSetId(String(lau?.targetAdSetId || ""));
+        setTemplateAdSetId(String(lau?.templateAdSetId || ""));
+        setLaunchDailyBudget(num(lau?.dailyBudget) || 500000);
+        setRequireInventoryMatch(lau?.requireInventoryMatch !== false);
+        setBlockCriticalStock(lau?.blockCriticalStock !== false);
+        setAutoActivate(lau?.autoActivate !== false);
+      } else {
+        setLaunchAvailable(false);
+        setLaunch({});
+        setLaunchEnabled(false);
+        setLaunchError("Auto Launch backend chưa được deploy. Ads / Scale / tồn kho vẫn hoạt động bình thường.");
+      }
+
+      if (launchResults[1].status === "fulfilled") {
+        const posts: any = launchResults[1].value;
+        setLaunchPosts(Array.isArray(posts) ? posts : posts?.items || posts?.posts || []);
+      } else {
+        setLaunchPosts([]);
+      }
+
+      const coreFailed = core.slice(0, 4).filter((x) => x.status === "rejected");
+      if (coreFailed.length >= 3) {
+        const first = coreFailed[0] as PromiseRejectedResult;
+        setError(first.reason?.message || "Không tải được dữ liệu Autopilot core.");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Không tải được Autopilot");
+    } finally {
+      if (showSpinner) setLoading(false);
+    }
+  }
+
+  useEffect(() => { void loadAll(); }, []);
+
+  const adSetOptions = useMemo(() => {
+    const m = new Map<string, AnyRow>();
+    liveAds.forEach((x) => {
+      const id = String(x.metaAdSetId || x.adSetId || "");
+      if (id && !m.has(id)) m.set(id, { id, name: x.adSetName || id, campaignName: x.campaignName || "" });
+    });
+    return Array.from(m.values());
+  }, [liveAds]);
+
+  const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE");
+  const criticalAds = liveAds.filter((x) => String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase().includes("CRITICAL"));
+  const readyPosts = launchPosts.filter((x) => ["READY", "CREATED_PAUSED"].includes(String(x.state || "").toUpperCase()));
+  const filteredAds = liveAds.filter((row) => {
+    const status = String(row.effectiveStatus || row.status || "").toUpperCase();
+    const stock = assessments[String(row.metaAdId || row.id || "")] || {};
+    if (adFilter === "active") return status === "ACTIVE";
+    if (adFilter === "paused") return status === "PAUSED";
+    if (adFilter === "stock") return ["LOW_STOCK", "CRITICAL"].includes(String(stock.level || "").toUpperCase());
+    if (adFilter === "scale") {
+      const spend = num(row.spend24h ?? row.spend);
+      const roas = num(row.roas24h ?? row.roas);
+      return status === "ACTIVE" && spend >= minSpend && roas >= scaleRoas && String(stock.level || "").toUpperCase() !== "CRITICAL";
+    }
+    return true;
+  });
+
+  function budgetOf(row: AnyRow) {
+    const adSetId = String(row.metaAdSetId || row.adSetId || "");
+    const campaignId = String(row.metaCampaignId || row.campaignId || "");
+    const adSet = budgets.adSets.find((x) => String(x.metaAdSetId) === adSetId);
+    if (num(adSet?.dailyBudget) > 0) return { value: num(adSet.dailyBudget), level: "Ad Set" };
+    const campaign = budgets.campaigns.find((x) => String(x.metaCampaignId) === campaignId);
+    if (num(campaign?.dailyBudget) > 0) return { value: num(campaign.dailyBudget), level: "Campaign" };
+    return { value: 0, level: "—" };
+  }
+
+  function scaleCount(row: AnyRow) {
+    const adSetId = String(row.metaAdSetId || row.adSetId || "");
+    return scaleHistory.filter((x) => String(x.metaAdSetId || x?.errorJson?.metaAdSetId || "") === adSetId).length;
+  }
+
+  async function saveSettings() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const tasks: Promise<any>[] = [
+        apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ enabled: performanceEnabled, dryRun, level, scaleRoas, scalePercent, minSpend }) }),
+        apiJson("/meta-ads/autopilot/inventory/config", { method: "POST", body: JSON.stringify({ enabled: inventoryEnabled, dryRun, level, warnThreshold, pauseThreshold, criticalSizeCount, pauseTotalQty, requireBoth }) }),
+      ];
+      if (launchAvailable) {
+        tasks.push(apiJson("/meta-ads/autopilot/launch/config", { method: "POST", body: JSON.stringify({ enabled: launchEnabled, dryRun, level, waitHours, launchMode, targetAdSetId, templateAdSetId, dailyBudget: launchDailyBudget, requireInventoryMatch, blockCriticalStock, autoActivate }) }));
+      }
+      await Promise.all(tasks);
+      setMessage("Đã lưu cấu hình Autopilot."); await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không lưu được cấu hình"); }
+    finally { setBusy(false); }
+  }
+
+  async function changeLevel(next: AutomationLevel) {
+    setLevel(next); setBusy(true);
+    try {
+      const tasks: Promise<any>[] = [
+        apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ level: next }) }),
+        apiJson("/meta-ads/autopilot/inventory/config", { method: "POST", body: JSON.stringify({ level: next }) }),
+      ];
+      if (launchAvailable) tasks.push(apiJson("/meta-ads/autopilot/launch/config", { method: "POST", body: JSON.stringify({ level: next }) }));
+      await Promise.all(tasks);
+      setMessage(`Đã chuyển sang ${next === "manual" ? "Mức 1 Manual" : next === "semi" ? "Mức 2 Semi" : "Mức 3 Auto"}.`);
+    } catch (e: any) { setError(e?.message || "Không đổi được chế độ"); }
+    finally { setBusy(false); }
+  }
+
+  async function setAdStatus(row: AnyRow, status: "ACTIVE" | "PAUSED") {
+    const id = String(row.metaAdId || row.id || ""); if (!id) return;
+    setBusy(true); setError("");
+    try {
+      await apiJson("/meta-ads/actions/ad-status", { method: "POST", body: JSON.stringify({ metaAdId: id, status }) });
+      setMessage(status === "ACTIVE" ? "Đã bật Ad." : "Đã pause Ad."); await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không đổi được trạng thái Ad"); }
+    finally { setBusy(false); }
+  }
+
+  async function scaleAd(row: AnyRow, percent: number) {
+    const adSetId = String(row.metaAdSetId || row.adSetId || ""); if (!adSetId) return;
+    setBusy(true); setError("");
+    try {
+      const result = await apiJson("/meta-ads/actions/scale-adset", { method: "POST", body: JSON.stringify({ metaAdSetId: adSetId, percent, dryRun, metaAdId: row.metaAdId || row.id, source: "mobile_manual" }) });
+      setMessage(dryRun ? `DRY RUN: ${money(result?.oldBudget)} → ${money(result?.newBudget)}` : `Đã scale +${percent}%: ${money(result?.oldBudget)} → ${money(result?.newBudget)}`);
+      await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không scale được"); }
+    finally { setBusy(false); }
+  }
+
+  async function runPerformanceNow() {
+    setBusy(true); setError("");
+    try {
+      const r = await apiJson("/meta-ads/autopilot/performance/run", {
+        method: "POST",
+        body: JSON.stringify({ dryRun }),
+      });
+      setMessage(`Auto Scale: quét ${r?.scannedAdSets || r?.summary?.scannedAdSets || 0} ad set · scale ${r?.scaled || r?.summary?.scaled || 0}.`);
+      await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không chạy được Auto Scale"); }
+    finally { setBusy(false); }
+  }
+
+  async function runInventoryNow() {
+    setBusy(true); setError("");
+    try {
+      const r = await apiJson("/meta-ads/autopilot/inventory/run", {
+        method: "POST",
+        body: JSON.stringify({ dryRun }),
+      });
+      setMessage(`Check tồn: ${r?.scannedColorGroups || 0} nhóm màu · critical ${r?.criticalGroups || 0} · pause ${r?.pausedAds || 0}.`);
+      await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không chạy được check tồn"); }
+    finally { setBusy(false); }
+  }
+
+  async function runLaunch() {
+    setBusy(true); setError("");
+    try {
+      const r = await apiJson("/meta-ads/autopilot/launch/run", { method: "POST", body: JSON.stringify({ dryRun }) });
+      setMessage(`Đã quét ${r?.summary?.scanned || 0} bài · xử lý ${r?.summary?.launched || 0}.`); await loadAll(false);
+    } catch (e: any) { setError(e?.message || "Không chạy được Auto Launch"); }
+    finally { setBusy(false); }
+  }
+
+  async function skipPost(postId: string) {
+    setBusy(true);
+    try { await apiJson("/meta-ads/autopilot/launch/skip", { method: "POST", body: JSON.stringify({ postId }) }); setMessage("Đã bỏ qua bài viết."); await loadAll(false); }
+    catch (e: any) { setError(e?.message || "Không bỏ qua được bài"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <main className="min-h-[100dvh] bg-[#f4f4f2] pb-[calc(96px+env(safe-area-inset-bottom))] text-neutral-950">
+      <div className="sticky top-0 z-30 border-b border-neutral-200 bg-[#f4f4f2]/95 px-4 pb-3 pt-[calc(12px+env(safe-area-inset-top))] backdrop-blur">
+        <div className="mx-auto flex max-w-md items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/mobile/home" className="grid h-10 w-10 place-items-center rounded-full bg-white shadow-sm"><ArrowLeft className="h-5 w-5" /></Link>
+            <div><div className="text-[10px] font-black uppercase tracking-[.18em] text-neutral-400">Meta Ads</div><h1 className="text-xl font-black tracking-tight">Autopilot</h1></div>
+          </div>
+          <button onClick={() => void loadAll()} disabled={loading || busy} className="grid h-10 w-10 place-items-center rounded-full bg-white shadow-sm"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-md space-y-4 px-4 py-4">
+        {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</div> : null}
+        {message ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+
+        <section className="overflow-hidden rounded-[28px] bg-neutral-950 p-5 text-white shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div><div className="flex items-center gap-2 text-[11px] font-bold text-neutral-400"><Sparkles className="h-4 w-4" /> AUTOPILOT LIVE</div><div className="mt-2 text-2xl font-black">{level === "manual" ? "Mức 1 · Manual" : level === "semi" ? "Mức 2 · Semi" : "Mức 3 · Auto"}</div></div>
+            <Badge value={dryRun ? "WAIT" : "ACTIVE"}>{dryRun ? "DRY RUN" : "LIVE"}</Badge>
+          </div>
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Ads active</div><div className="mt-1 text-xl font-black">{activeAds.length}</div></div>
+            <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Critical</div><div className="mt-1 text-xl font-black">{criticalAds.length}</div></div>
+            <div className="rounded-2xl bg-white/10 p-3"><div className="text-[10px] text-neutral-400">Chờ duyệt</div><div className="mt-1 text-xl font-black">{readyPosts.length}</div></div>
+          </div>
+        </section>
+
+        <section className="rounded-[26px] border border-neutral-200 bg-white p-3 shadow-sm">
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              ["manual", "Mức 1", "Theo dõi"], ["semi", "Mức 2", "Xét duyệt"], ["auto", "Mức 3", "Tự động"],
+            ] as Array<[AutomationLevel, string, string]>).map(([id, title, desc]) => (
+              <button key={id} disabled={busy} onClick={() => void changeLevel(id)} className={`rounded-2xl border px-2 py-3 text-center ${level === id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-neutral-50"}`}>
+                <div className="text-xs font-black">{title}</div><div className={`mt-1 text-[10px] ${level === id ? "text-neutral-300" : "text-neutral-400"}`}>{desc}</div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-neutral-200/70 p-1">
+          {([['ads','Ads',Zap],['posts','Bài mới',Rocket],['settings','Cài đặt',Settings2]] as Array<[TabKey,string,any]>).map(([id,label,Icon]) => (
+            <button key={id} onClick={() => setTab(id)} className={`flex h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-black ${tab === id ? "bg-white shadow-sm" : "text-neutral-500"}`}><Icon className="h-4 w-4" />{label}</button>
+          ))}
+        </div>
+
+        {loading ? <div className="py-16 text-center text-sm font-bold text-neutral-400">Đang tải Autopilot...</div> : null}
+
+        {!loading && tab === "ads" ? <div className="space-y-3">
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {([
+              ["all","Tất cả"],["active","ACTIVE"],["paused","PAUSED"],["scale","Có thể scale"],["stock","Thiếu size"],
+            ] as Array<[typeof adFilter,string]>).map(([id,label]) => (
+              <button key={id} onClick={() => setAdFilter(id)} className={`shrink-0 rounded-full border px-3 py-2 text-[10px] font-black ${adFilter === id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-500"}`}>{label}</button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button disabled={busy} onClick={() => void runPerformanceNow()} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">Chạy Auto Scale</button>
+            <button disabled={busy} onClick={() => void runInventoryNow()} className="h-11 rounded-2xl border border-neutral-200 bg-white text-xs font-black text-neutral-700 disabled:opacity-40">Check tồn ngay</button>
+          </div>
+          {filteredAds.map((row) => {
+            const id = String(row.metaAdId || row.id || "");
+            const stock = assessments[id] || {};
+            const budget = budgetOf(row);
+            const status = String(row.effectiveStatus || row.status || "—").toUpperCase();
+            const expanded = expandedId === id;
+            const historyCount = scaleCount(row);
+            return <article key={id} className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
+              <div className="flex gap-3 p-4">
+                {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 text-sm font-black leading-5">{row.name || "Unnamed Ad"}</div>
+                  <div className="mt-1 flex flex-wrap gap-1"><Badge value={status}>{status}</Badge>{stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}{historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}</div>
+                  <div className="mt-2 text-xs font-bold text-neutral-600">{stock?.productCode ? `${stock.productCode} · ${stock.color || ""}` : "Chưa map mã / màu"}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 border-y border-neutral-100 bg-neutral-50">
+                <div className="p-3"><div className="text-[10px] text-neutral-400">Budget</div><div className="mt-1 text-xs font-black">{budget.value ? money(budget.value) : "—"}</div><div className="text-[9px] text-neutral-400">{budget.level}</div></div>
+                <div className="p-3"><div className="text-[10px] text-neutral-400">Tồn màu</div><div className="mt-1 text-xs font-black">{stock?.totalQty ?? "—"}</div><div className="text-[9px] text-neutral-400">min size {stock?.minQty ?? "—"}</div></div>
+                <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || "—"}</div></div>
+              </div>
+              <button onClick={() => setExpandedId(expanded ? "" : id)} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+              {expanded ? <div className="space-y-3 border-t border-neutral-100 p-4">
+                <div><div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">Tồn từng size</div><div className="flex flex-wrap gap-2">{Array.isArray(stock?.sizes) && stock.sizes.length ? stock.sizes.map((s: AnyRow) => <span key={String(s.size)} className={`rounded-xl border px-2.5 py-1.5 text-xs font-black ${num(s.qty) < pauseThreshold ? "border-rose-200 bg-rose-50 text-rose-700" : num(s.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-neutral-50"}`}>{s.size}: {s.qty}</span>) : <span className="text-xs text-neutral-400">Chưa có dữ liệu tồn.</span>}</div></div>
+                <div className="rounded-2xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">{stock?.reason || "Chưa có đánh giá tồn kho."}</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Spend 24h</div><div className="mt-1 text-xs font-black">{money(row.spend24h ?? row.spend ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT nội bộ</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
+                </div>
+                {historyCount ? <div className="rounded-2xl border border-neutral-200 p-3">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">Lịch sử scale</div>
+                  <div className="space-y-2">
+                    {scaleHistory.filter((x) => String(x.metaAdSetId || x?.errorJson?.metaAdSetId || "") === String(row.metaAdSetId || row.adSetId || "")).slice(0,5).map((x,idx) => (
+                      <div key={String(x.id || idx)} className="rounded-xl bg-neutral-50 px-3 py-2 text-[11px]">
+                        <div className="font-black">+{num(x.percent || x?.errorJson?.percent)}% · {String(x.budgetLevel || x?.errorJson?.budgetLevel || "ADSET")}</div>
+                        <div className="mt-0.5 text-neutral-500">{money(x.oldBudget || x?.errorJson?.oldBudget)} → {money(x.newBudget || x?.errorJson?.newBudget)} · {x.source || x?.errorJson?.source || "manual"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div> : null}
+                <div className="grid grid-cols-2 gap-2">
+                  <button disabled={busy || status !== "ACTIVE"} onClick={() => void scaleAd(row, 20)} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">+20%</button>
+                  <button disabled={busy || status !== "ACTIVE"} onClick={() => void scaleAd(row, 30)} className="h-11 rounded-2xl bg-neutral-800 text-xs font-black text-white disabled:opacity-40">+30%</button>
+                  {status === "ACTIVE" ? <button disabled={busy} onClick={() => void setAdStatus(row, "PAUSED")} className="col-span-2 h-11 rounded-2xl bg-rose-600 text-xs font-black text-white"><Pause className="mr-1 inline h-4 w-4" /> Pause Ad</button> : <button disabled={busy || status !== "PAUSED"} onClick={() => void setAdStatus(row, "ACTIVE")} className="col-span-2 h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white disabled:opacity-40"><Play className="mr-1 inline h-4 w-4" /> Bật lại / Duyệt Ad</button>}
+                </div>
+              </div> : null}
+            </article>;
+          })}
+          {!filteredAds.length ? <div className="rounded-3xl bg-white p-8 text-center text-sm font-bold text-neutral-400">Không có Ads phù hợp bộ lọc.</div> : null}
+        </div> : null}
+
+        {!loading && tab === "posts" ? <div className="space-y-3">
+          {!launchAvailable ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold leading-5 text-amber-800">{launchError || "Auto Launch backend chưa sẵn sàng."}</div> : null}
+          <div className="flex gap-2"><button disabled={busy || !launchEnabled || !launchAvailable} onClick={() => void runLaunch()} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"><RefreshCw className="h-4 w-4" /> Quét bài mới</button></div>
+          {launchPosts.map((post) => {
+            const state = String(post.state || "WAITING").toUpperCase();
+            const a = post.assessment || {};
+            return <article key={String(post.postId)} className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="line-clamp-3 text-sm font-black leading-5">{post.message || post.postId}</div><div className="mt-1 text-[10px] text-neutral-400">{post.createdTime ? new Date(post.createdTime).toLocaleString("vi-VN") : "—"}</div></div><Badge value={state}>{state}</Badge></div>
+              <div className="mt-3 rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Mapping</div><div className="mt-1 text-sm font-black">{a.productCode ? `${a.productCode} · ${a.color || "Chưa màu"}` : "Chưa xác định sản phẩm"}</div><div className="mt-1 text-xs text-neutral-500">{a.productCode ? `Tổng tồn ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}` : a.reason || "Hashtag mã SP hoặc xác nhận mapping trước khi chạy."}</div></div>
+              {post.metaAdId ? <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-700"><BadgeCheck className="h-4 w-4" /> Ad: {post.metaAdId}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {state === "CREATED_PAUSED" && post.metaAdId ? <button disabled={busy} onClick={() => void setAdStatus({ metaAdId: post.metaAdId }, "ACTIVE")} className="h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white">Duyệt & bật Ad</button> : <button disabled={busy || !["READY","WAITING"].includes(state)} onClick={() => void apiJson("/meta-ads/autopilot/launch/run", { method: "POST", body: JSON.stringify({ postId: post.postId, force: true, dryRun }) }).then(() => loadAll(false)).catch((e) => setError(e.message))} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">{dryRun ? "Preview" : "Chạy bài này"}</button>}
+                <button disabled={busy} onClick={() => void skipPost(String(post.postId))} className="h-11 rounded-2xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Bỏ qua</button>
+              </div>
+            </article>;
+          })}
+          {!launchPosts.length ? <div className="rounded-3xl bg-white p-8 text-center text-sm font-bold text-neutral-400">Chưa phát hiện bài Page.</div> : null}
+        </div> : null}
+
+        {!loading && tab === "settings" ? <div className="space-y-4">
+          <section className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between"><div><div className="flex items-center gap-2 text-sm font-black"><ShieldAlert className="h-4 w-4" /> Chế độ an toàn</div><div className="mt-1 text-[11px] text-neutral-400">DRY RUN không ghi thay đổi lên Meta.</div></div><Toggle checked={dryRun} onChange={setDryRun} /></div>
+          </section>
+
+          <section className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between"><div><div className="flex items-center gap-2 text-sm font-black"><CircleDollarSign className="h-4 w-4" /> Auto Scale</div><div className="mt-1 text-[11px] text-neutral-400">Scale theo ROAS và tồn kho.</div></div><Toggle checked={performanceEnabled} onChange={setPerformanceEnabled} /></div>
+            <div className="mt-4 grid grid-cols-2 gap-3"><Field label="ROAS tối thiểu"><input className={inputClass} type="number" step="0.1" value={scaleRoas} onChange={e => setScaleRoas(num(e.target.value))} /></Field><Field label="Tăng mỗi lần (%)"><input className={inputClass} type="number" value={scalePercent} onChange={e => setScalePercent(num(e.target.value))} /></Field><div className="col-span-2"><Field label="Spend tối thiểu"><input className={inputClass} type="number" value={minSpend} onChange={e => setMinSpend(num(e.target.value))} /></Field></div></div>
+          </section>
+
+          <section className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between"><div><div className="flex items-center gap-2 text-sm font-black"><PackageCheck className="h-4 w-4" /> Auto Pause tồn kho</div><div className="mt-1 text-[11px] text-neutral-400">Dừng đúng Ad con khi hàng xuống thấp.</div></div><Toggle checked={inventoryEnabled} onChange={setInventoryEnabled} /></div>
+            <div className="mt-4 grid grid-cols-2 gap-3"><Field label="Warning size <"><input className={inputClass} type="number" value={warnThreshold} onChange={e => setWarnThreshold(num(e.target.value))} /></Field><Field label="Critical size <"><input className={inputClass} type="number" value={pauseThreshold} onChange={e => setPauseThreshold(num(e.target.value))} /></Field><Field label="Số size critical"><input className={inputClass} type="number" value={criticalSizeCount} onChange={e => setCriticalSizeCount(num(e.target.value))} /></Field><Field label="Tổng tồn màu <"><input className={inputClass} type="number" value={pauseTotalQty} onChange={e => setPauseTotalQty(num(e.target.value))} /></Field></div>
+            <button onClick={() => setRequireBoth(!requireBoth)} className={`mt-3 flex w-full items-center justify-between rounded-2xl border p-3 text-left text-xs font-bold ${requireBoth ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200"}`}><span>Pause khi đồng thời đủ 2 điều kiện</span><span>{requireBoth ? "AND" : "OR"}</span></button>
+          </section>
+
+          <section className={`rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm ${!launchAvailable ? "opacity-70" : ""}`}>
+            <div className="flex items-center justify-between"><div><div className="flex items-center gap-2 text-sm font-black"><Rocket className="h-4 w-4" /> Auto Launch bài mới</div><div className="mt-1 text-[11px] text-neutral-400">Phát hiện bài Page, chờ rồi tạo Ads.</div></div><Toggle checked={launchEnabled} onChange={setLaunchEnabled} disabled={!launchAvailable} /></div>
+            {!launchAvailable ? <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-bold leading-5 text-amber-800">Backend Auto Launch chưa có route. Deploy 3 file backend kèm bộ này để bật phần Bài mới.</div> : null}
+            <div className="mt-4 space-y-3"><Field label="Chờ sau khi đăng (giờ)"><input className={inputClass} type="number" value={waitHours} onChange={e => setWaitHours(num(e.target.value))} /></Field><Field label="Cách tạo Ads"><select className={inputClass} value={launchMode} onChange={e => setLaunchMode(e.target.value as any)}><option value="EXISTING_ADSET">Đưa vào Ad Set có sẵn</option><option value="CLONE_ADSET">Tạo Ad Set mới từ mẫu</option></select></Field><Field label={launchMode === "CLONE_ADSET" ? "Ad Set mẫu" : "Ad Set chạy"}><select className={inputClass} value={launchMode === "CLONE_ADSET" ? templateAdSetId : targetAdSetId} onChange={e => launchMode === "CLONE_ADSET" ? setTemplateAdSetId(e.target.value) : setTargetAdSetId(e.target.value)}><option value="">Chọn Ad Set...</option>{adSetOptions.map(x => <option key={x.id} value={x.id}>{x.name} · {x.campaignName}</option>)}</select></Field>{launchMode === "CLONE_ADSET" ? <Field label="Budget Ad Set mới"><input className={inputClass} type="number" value={launchDailyBudget} onChange={e => setLaunchDailyBudget(num(e.target.value))} /></Field> : null}</div>
+            <div className="mt-3 space-y-2">{[[requireInventoryMatch,setRequireInventoryMatch,"Chỉ chạy khi match mã + màu"],[blockCriticalStock,setBlockCriticalStock,"Chặn bài tồn CRITICAL"],[autoActivate,setAutoActivate,"Mức 3 tự ACTIVE"]].map(([v,setter,label]: any) => <button key={label} onClick={() => setter(!v)} className="flex w-full items-center justify-between rounded-2xl bg-neutral-50 p-3 text-xs font-bold"><span>{label}</span><Toggle checked={v} onChange={setter} /></button>)}</div>
+          </section>
+
+          <button disabled={busy} onClick={() => void saveSettings()} className="flex h-13 w-full items-center justify-center gap-2 rounded-[20px] bg-neutral-950 py-4 text-sm font-black text-white disabled:opacity-50"><Save className="h-4 w-4" /> Lưu toàn bộ cài đặt</button>
+          <div className="rounded-2xl bg-neutral-100 p-3 text-[11px] leading-5 text-neutral-500"><SlidersHorizontal className="mr-1 inline h-4 w-4" /> Rule hiện tại: ROAS ≥ <b>{scaleRoas}</b>, scale +<b>{scalePercent}%</b>; warning size &lt; <b>{warnThreshold}</b>; critical khi ≥ <b>{criticalSizeCount}</b> size &lt; <b>{pauseThreshold}</b> {requireBoth ? "và" : "hoặc"} tổng tồn màu &lt; <b>{pauseTotalQty}</b>; bài mới chờ <b>{waitHours}h</b>.</div>
+        </div> : null}
+      </div>
+    </main>
+  );
+}
