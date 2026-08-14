@@ -136,20 +136,46 @@ export default function MobileAutopilotPage() {
 
       const rawLiveRows = Array.isArray(rawLive) ? rawLive : rawLive?.items || rawLive?.ads || rawLive?.rows || [];
       const controlRows = Array.isArray(control?.ads) ? control.ads : Array.isArray(control?.rows) ? control.rows : [];
-      const adRows = controlRows.length ? controlRows : rawLiveRows;
-      const normalizedAdRows = adRows.map((row: AnyRow) => ({
-        ...row,
-        name: row.name || row.adName || row.ad_name || "",
-        adName: row.adName || row.name || row.ad_name || "",
-        campaignName: row.campaignName || row.campaign_name || "",
-        adSetName: row.adSetName || row.adsetName || row.adset_name || "",
-        metaAdId: row.metaAdId || row.adId || row.id || "",
-        metaAdSetId: row.metaAdSetId || row.adSetId || row.adset_id || "",
-        metaCampaignId: row.metaCampaignId || row.campaignId || row.campaign_id || "",
-        thumbnailUrl: row.thumbnailUrl || row.thumbnail_url || row.imageUrl || row.image_url || null,
-      }));
 
-      setLiveAds(normalizedAdRows);
+      // Không được chọn 1 trong 2 nguồn rồi làm mất field của nguồn còn lại.
+      // rawLive giữ structure Meta: tên Ad, Ad Set, Campaign, budget, thumbnail.
+      // control-center bổ sung metrics/ROAS/attribution/inventory/canScale.
+      const controlById = new Map<string, AnyRow>(
+        controlRows.map((row: AnyRow) => [String(row.metaAdId || row.adId || row.id || ''), row] as [string, AnyRow]),
+      );
+      const rawById = new Map<string, AnyRow>(
+        rawLiveRows.map((row: AnyRow) => [String(row.metaAdId || row.adId || row.id || ''), row] as [string, AnyRow]),
+      );
+      const allIds = Array.from(new Set([...rawById.keys(), ...controlById.keys()])).filter(Boolean);
+
+      const adRows = allIds.map((id) => {
+        const raw = rawById.get(id) || {};
+        const ctl = controlById.get(id) || {};
+        return {
+          ...raw,
+          ...ctl,
+          // Structure ưu tiên raw live nếu control-center trả thiếu/rỗng.
+          name: ctl.adName || ctl.name || raw.adName || raw.name || raw.ad_name || '',
+          adName: ctl.adName || ctl.name || raw.adName || raw.name || raw.ad_name || '',
+          campaignName: ctl.campaignName || raw.campaignName || raw.campaign_name || '',
+          adSetName: ctl.adSetName || raw.adSetName || raw.adsetName || raw.adset_name || '',
+          metaAdId: ctl.metaAdId || raw.metaAdId || raw.adId || raw.id || id,
+          metaAdSetId: ctl.metaAdSetId || ctl.adSetId || raw.metaAdSetId || raw.adSetId || raw.adset_id || '',
+          metaCampaignId: ctl.metaCampaignId || ctl.campaignId || raw.metaCampaignId || raw.campaignId || raw.campaign_id || '',
+          thumbnailUrl: ctl.thumbnailUrl || raw.thumbnailUrl || raw.thumbnail_url || raw.imageUrl || raw.image_url || null,
+          // Budget ưu tiên live structure; control-center không được ghi null đè mất.
+          adSetDailyBudget: num(ctl.adSetDailyBudget) > 0 ? ctl.adSetDailyBudget : raw.adSetDailyBudget,
+          campaignDailyBudget: num(ctl.campaignDailyBudget) > 0 ? ctl.campaignDailyBudget : raw.campaignDailyBudget,
+          currentBudget: num(ctl.currentBudget) > 0 ? ctl.currentBudget : raw.currentBudget,
+          budgetLevel: ctl.budgetLevel || raw.budgetLevel || null,
+          // Metrics ưu tiên control-center.
+          spend24h: ctl.spend24h ?? ctl.metrics?.spend ?? raw.spend24h ?? raw.spend,
+          revenue24h: ctl.revenue24h ?? ctl.productAttribution?.familyOrderRevenue ?? ctl.productAttribution?.orderRevenue ?? raw.revenue24h ?? raw.revenue,
+          roas24h: ctl.roas24h ?? ctl.productAttribution?.realRoasEstimate ?? raw.roas24h ?? raw.roas,
+        };
+      });
+
+      setLiveAds(adRows);
       setScaleHistory(Array.isArray(history) ? history : history?.items || history?.rows || []);
 
       const pickedLevel = (perf?.level || inv?.level || "manual") as AutomationLevel;
@@ -167,17 +193,17 @@ export default function MobileAutopilotPage() {
       setRequireBoth(inv?.requireBoth !== false);
 
       // Enrich tồn kho + budget, nhưng lỗi enrich không được xóa Ads.
-      if (normalizedAdRows.length) {
+      if (adRows.length) {
         const enrich = await Promise.allSettled([
           apiJson("/meta-ads/autopilot/inventory/assess", {
             method: "POST",
-            body: JSON.stringify({ ads: normalizedAdRows }),
+            body: JSON.stringify({ ads: adRows }),
           }),
           apiJson("/meta-ads/autopilot/budgets", {
             method: "POST",
             body: JSON.stringify({
-              metaAdSetIds: Array.from(new Set(normalizedAdRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
-              metaCampaignIds: Array.from(new Set(normalizedAdRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
+              metaAdSetIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
+              metaCampaignIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
             }),
           }),
         ]);
@@ -273,26 +299,25 @@ export default function MobileAutopilotPage() {
   });
 
   function budgetOf(row: AnyRow) {
+    const directCurrent = num(row.currentBudget);
+    if (directCurrent > 0) {
+      const level = String(row.budgetLevel || '').toUpperCase() === 'ADSET' ? 'Ad Set' : 'Campaign';
+      return { value: directCurrent, level };
+    }
+
     const directAdSetBudget = num(row.adSetDailyBudget ?? row.adsetDailyBudget ?? row.adset_daily_budget);
-    if (directAdSetBudget > 0) return { value: directAdSetBudget, level: "Ad Set" };
+    if (directAdSetBudget > 0) return { value: directAdSetBudget, level: 'Ad Set' };
 
     const directCampaignBudget = num(row.campaignDailyBudget ?? row.campaign_daily_budget);
-    if (directCampaignBudget > 0) return { value: directCampaignBudget, level: "Campaign" };
+    if (directCampaignBudget > 0) return { value: directCampaignBudget, level: 'Campaign' };
 
-    const adSetId = String(row.metaAdSetId || row.adSetId || "");
-    const campaignId = String(row.metaCampaignId || row.campaignId || "");
-
-    const adSet = budgets.adSets.find((x) => String(x.metaAdSetId || x.id || "") === adSetId);
-    if (num(adSet?.dailyBudget ?? adSet?.daily_budget) > 0) {
-      return { value: num(adSet?.dailyBudget ?? adSet?.daily_budget), level: "Ad Set" };
-    }
-
-    const campaign = budgets.campaigns.find((x) => String(x.metaCampaignId || x.id || "") === campaignId);
-    if (num(campaign?.dailyBudget ?? campaign?.daily_budget) > 0) {
-      return { value: num(campaign?.dailyBudget ?? campaign?.daily_budget), level: "Campaign" };
-    }
-
-    return { value: 0, level: "—" };
+    const adSetId = String(row.metaAdSetId || row.adSetId || '');
+    const campaignId = String(row.metaCampaignId || row.campaignId || '');
+    const adSet = budgets.adSets.find((x) => String(x.metaAdSetId || x.id || '') === adSetId);
+    if (num(adSet?.dailyBudget ?? adSet?.daily_budget) > 0) return { value: num(adSet?.dailyBudget ?? adSet?.daily_budget), level: 'Ad Set' };
+    const campaign = budgets.campaigns.find((x) => String(x.metaCampaignId || x.id || '') === campaignId);
+    if (num(campaign?.dailyBudget ?? campaign?.daily_budget) > 0) return { value: num(campaign?.dailyBudget ?? campaign?.daily_budget), level: 'Campaign' };
+    return { value: 0, level: '—' };
   }
 
   function scaleCount(row: AnyRow) {
