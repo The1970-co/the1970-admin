@@ -210,135 +210,184 @@ export default function AutopilotPage({
 
   const endpointPreview = `${apiBaseUrl.replace(/\/$/, "")}/meta-ads/autopilot/performance/run`;
 
-  const apiJson = async (path: string, init?: RequestInit) => {
+  const apiJson = async (path: string, init?: RequestInit, timeoutMs = 15000) => {
     const auth = typeof window !== "undefined" ? localStorage.getItem("access_token") || localStorage.getItem("token") || "" : "";
-    const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
-        ...(init?.headers || {}),
-      },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.message || JSON.stringify(data) || `HTTP ${res.status}`);
-    return data;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
+          ...(init?.headers || {}),
+        },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || JSON.stringify(data) || `HTTP ${res.status}`);
+      return data;
+    } catch (error: any) {
+      if (error?.name === "AbortError") throw new Error(`API timeout ${Math.round(timeoutMs / 1000)}s: ${path}`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const normalizeLiveAd = (ad: any): LiveAdControlRow => {
+    const groups = Array.isArray(ad?.inventory?.groups)
+      ? ad.inventory.groups
+      : Array.isArray(ad?.stockGroups)
+        ? ad.stockGroups
+        : Array.isArray(ad?.sizes) && ad?.stockLevel && ad?.stockLevel !== "UNMAPPED"
+          ? [{
+              colorKey: ad?.sku || ad?.familySku || ad?.productName || ad?.adName || "",
+              sizes: ad.sizes,
+              lowSizes: ad.sizes.filter((x: any) => Number(x?.qty || 0) < 10).map((x: any) => x?.size),
+              criticalSizes: ad.sizes.filter((x: any) => Number(x?.qty || 0) < 5).map((x: any) => x?.size),
+            }]
+          : [];
+
+    const spend24h = Number(ad?.spend24h ?? ad?.spend ?? ad?.metrics?.spend ?? 0) || 0;
+    const revenue24h = Number(ad?.revenue24h ?? ad?.revenue ?? ad?.productAttribution?.revenue ?? ad?.productAttribution?.orderRevenue ?? 0) || 0;
+    const roas24h = Number(ad?.roas24h ?? ad?.roas ?? (spend24h > 0 ? revenue24h / spend24h : 0)) || 0;
+    const scaleReasons = Array.isArray(ad?.autoScaleReasons)
+      ? ad.autoScaleReasons
+      : Array.isArray(ad?.scaleReasons)
+        ? ad.scaleReasons
+        : [];
+
+    return {
+      id: String(ad?.metaAdId || ad?.id || ""),
+      metaAdId: String(ad?.metaAdId || ad?.id || ""),
+      adName: String(ad?.adName || ad?.name || ""),
+      campaignName: String(ad?.campaignName || ""),
+      campaignId: String(ad?.metaCampaignId || ad?.campaignId || ""),
+      adSetName: String(ad?.adSetName || ""),
+      adSetId: String(ad?.metaAdSetId || ad?.adSetId || ""),
+      status: ad?.status || null,
+      effectiveStatus: ad?.effectiveStatus || ad?.status || null,
+      thumbnailUrl: ad?.thumbnailUrl || ad?.imageUrl || null,
+      spend: spend24h,
+      revenue: revenue24h,
+      roas: roas24h,
+      spend24h,
+      revenue24h,
+      roas24h,
+      orderCount24h: Number(ad?.orderCount24h || ad?.productAttribution?.orderCount || 0) || 0,
+      runHours: Number(ad?.runHours || 0) || 0,
+      budgetDaily: Number(ad?.budgetDaily ?? ad?.adSetDailyBudget ?? ad?.dailyBudget ?? ad?.daily_budget ?? 0) || 0,
+      canScale: Boolean(ad?.autoScaleEligible ?? ad?.canScale),
+      autoScaleEligible: Boolean(ad?.autoScaleEligible ?? ad?.canScale),
+      scaleReasons,
+      autoScaleReasons: scaleReasons,
+      nextScaleAt: ad?.nextScaleAt || null,
+      productAttribution: ad?.productAttribution || (ad?.sku || ad?.familySku || ad?.productName ? {
+        sku: ad?.sku || null,
+        familySku: ad?.familySku || ad?.sku || null,
+        productName: ad?.productName || null,
+        confidence: ad?.attributionConfidence || 0,
+        allocationMode: ad?.allocationMode || null,
+      } : null),
+      inventory: groups.length ? {
+        groups,
+        safe: ad?.stockSafe ?? !groups.some((g: any) => (g.lowSizes || []).length > 0),
+        level: ad?.stockLevel || null,
+        reason: ad?.stockReason || null,
+      } : null,
+    };
+  };
+
+  const buildAlertsFromRows = (rows: LiveAdControlRow[]) => {
+    const alerts: LiveAlert[] = [];
+    for (const row of rows) {
+      const groups = row?.inventory?.groups || [];
+      const critical = groups.filter((g: any) => (g.criticalSizes || []).length > 0);
+      const low = groups.filter((g: any) => (g.lowSizes || []).length > 0 && !(g.criticalSizes || []).length);
+      if (critical.length) {
+        alerts.push({
+          id: `stock-${row.metaAdId}`,
+          level: "critical",
+          title: `${row.productAttribution?.familySku || row.adName} cần pause`,
+          desc: critical.map((g: any) => `${g.colorKey}: ${g.criticalSizes.join(", ")} dưới 5`).join(" · "),
+        });
+      } else if (row.autoScaleEligible ?? row.canScale) {
+        alerts.push({
+          id: `scale-${row.metaAdId}`,
+          level: "good",
+          title: `${row.productAttribution?.familySku || row.adName} đủ điều kiện scale`,
+          desc: `ROAS 24h ${Number(row.roas24h ?? row.roas ?? 0).toFixed(2)} · Spend 24h ${currency(row.spend24h ?? row.spend ?? 0)} · tồn size an toàn.`,
+        });
+      } else if (low.length) {
+        alerts.push({
+          id: `low-${row.metaAdId}`,
+          level: "high",
+          title: `${row.productAttribution?.familySku || row.adName} sắp thiếu size`,
+          desc: low.map((g: any) => `${g.colorKey}: ${g.lowSizes.join(", ")} dưới 10`).join(" · "),
+        });
+      }
+    }
+    setLiveAlerts(alerts.slice(0, 20));
   };
 
   const loadControlCenter = async () => {
     setAdsBusy(true);
+    setRolling24hFallbackReason("");
+
+    let baseRows: LiveAdControlRow[] = [];
+    let structureError: any = null;
+
+    // 1) Ưu tiên tải structure trước để bảng hiện ads ngay, không chờ rolling-24h + attribution.
     try {
-      let data: any = null;
-
-      try {
-        data = await apiJson("/meta-ads/autopilot/control-center");
-      } catch (controlCenterError) {
-        // Fallback an toàn: vẫn phải hiện được Ads live ngay cả khi backend chưa deploy endpoint control-center.
-        try {
-          const rawAds = await apiJson("/meta-ads/autopilot/live-ads?limit=5000");
-          const structureRows = Array.isArray(rawAds) ? rawAds : Array.isArray(rawAds?.rows) ? rawAds.rows : [];
-          data = {
-            ok: true,
-            source: "meta_live_structure_fallback",
-            exactRolling24h: false,
-            fallbackReason: `Backend control-center chưa sẵn sàng: ${String(controlCenterError)}`,
-            rows: structureRows.map((ad: any) => ({
-              id: String(ad?.metaAdId || ad?.id || ""),
-              metaAdId: String(ad?.metaAdId || ad?.id || ""),
-              adName: ad?.name || "",
-              campaignName: ad?.campaignName || "",
-              campaignId: ad?.metaCampaignId || ad?.campaignId || "",
-              adSetName: ad?.adSetName || "",
-              adSetId: ad?.metaAdSetId || ad?.adSetId || "",
-              status: ad?.status || null,
-              effectiveStatus: ad?.effectiveStatus || ad?.status || null,
-              thumbnailUrl: ad?.thumbnailUrl || ad?.imageUrl || null,
-              spend: 0,
-              revenue: 0,
-              roas: 0,
-              spend24h: 0,
-              revenue24h: 0,
-              roas24h: 0,
-              budgetDaily: Number(ad?.budgetDaily || 0),
-              canScale: false,
-              autoScaleEligible: false,
-              scaleReasons: ["Đang tải metrics/attribution"],
-              productAttribution: null,
-              inventory: null,
-            })),
-          };
-        } catch {
-          const live = await apiJson("/meta-ads/live-insights?range=today&level=ad&limit=1000");
-          const sourceRows = Array.isArray(live?.topAds) ? live.topAds : [];
-          data = {
-            ok: true,
-            source: "meta_live_insights_fallback",
-            exactRolling24h: false,
-            fallbackReason: "Đang dùng live-insights fallback.",
-            rows: sourceRows.map((ad: any) => ({
-              id: String(ad?.metaAdId || ad?.id || ""),
-              metaAdId: String(ad?.metaAdId || ad?.id || ""),
-              adName: ad?.name || "",
-              campaignName: ad?.campaignName || "",
-              campaignId: ad?.metaCampaignId || "",
-              adSetName: ad?.adSetName || "",
-              adSetId: ad?.metaAdSetId || "",
-              status: ad?.status || null,
-              effectiveStatus: ad?.effectiveStatus || ad?.status || null,
-              thumbnailUrl: ad?.thumbnailUrl || ad?.imageUrl || null,
-              spend: Number(ad?.metrics?.spend || 0),
-              revenue: 0,
-              roas: 0,
-              spend24h: Number(ad?.metrics?.spend || 0),
-              revenue24h: 0,
-              roas24h: 0,
-              budgetDaily: 0,
-              canScale: false,
-              autoScaleEligible: false,
-              scaleReasons: ["Chưa ghép attribution/tồn kho"],
-              productAttribution: null,
-              inventory: null,
-            })),
-          };
-        }
-      }
-
-      const rows = Array.isArray(data?.rows) ? data.rows : [];
-      setLiveAds(rows);
-      setExactRolling24h(data?.exactRolling24h !== false);
-      setRolling24hFallbackReason(String(data?.fallbackReason || data?.rolling24hFallbackReason || ""));
-
-      const alerts: LiveAlert[] = [];
-      for (const row of rows) {
-        const groups = row?.inventory?.groups || [];
-        const critical = groups.filter((g: any) => (g.criticalSizes || []).length > 0);
-        const low = groups.filter((g: any) => (g.lowSizes || []).length > 0 && !(g.criticalSizes || []).length);
-        if (critical.length) {
-          alerts.push({
-            id: `stock-${row.metaAdId}`,
-            level: "critical",
-            title: `${row.productAttribution?.familySku || row.adName} cần pause`,
-            desc: critical.map((g: any) => `${g.colorKey}: ${g.criticalSizes.join(", ")} dưới 5`).join(" · "),
-          });
-        } else if (row.autoScaleEligible ?? row.canScale) {
-          alerts.push({
-            id: `scale-${row.metaAdId}`,
-            level: "good",
-            title: `${row.productAttribution?.familySku || row.adName} đủ điều kiện scale`,
-            desc: `ROAS 24h ${Number(row.roas24h ?? row.roas ?? 0).toFixed(2)} · Spend 24h ${currency(row.spend24h ?? row.spend ?? 0)} · tồn size an toàn.`,
-          });
-        } else if (low.length) {
-          alerts.push({
-            id: `low-${row.metaAdId}`,
-            level: "high",
-            title: `${row.productAttribution?.familySku || row.adName} sắp thiếu size`,
-            desc: low.map((g: any) => `${g.colorKey}: ${g.lowSizes.join(", ")} dưới 10`).join(" · "),
-          });
-        }
-      }
-      setLiveAlerts(alerts.slice(0, 20));
+      const rawAds = await apiJson("/meta-ads/autopilot/live-ads?limit=5000", undefined, 12000);
+      const sourceRows = Array.isArray(rawAds) ? rawAds : Array.isArray(rawAds?.rows) ? rawAds.rows : Array.isArray(rawAds?.ads) ? rawAds.ads : [];
+      baseRows = sourceRows.map(normalizeLiveAd);
+      setLiveAds(baseRows);
+      buildAlertsFromRows(baseRows);
+      setExactRolling24h(false);
+      if (baseRows.length) setAdsBusy(false);
     } catch (error) {
-      setExecutionOutput(`Không tải được danh sách ads live: ${String(error)}`);
+      structureError = error;
+    }
+
+    // 2) Sau đó mới enrich metrics 24h / attribution / tồn kho. Endpoint này có timeout riêng.
+    try {
+      const data = await apiJson("/meta-ads/autopilot/control-center", undefined, 30000);
+      const rawRows = Array.isArray(data?.ads) ? data.ads : Array.isArray(data?.rows) ? data.rows : [];
+      const enrichedRows = rawRows.map(normalizeLiveAd);
+
+      if (enrichedRows.length) {
+        setLiveAds(enrichedRows);
+        buildAlertsFromRows(enrichedRows);
+      } else if (!baseRows.length) {
+        throw new Error("Control Center trả về 0 ads");
+      }
+
+      setExactRolling24h(data?.exactRolling24h === true);
+      setRolling24hFallbackReason(String(data?.fallbackReason || data?.rolling24hFallbackReason || ""));
+      return;
+    } catch (controlCenterError) {
+      // Nếu structure đã tải được thì giữ bảng đó, không xóa ads chỉ vì phần metrics 24h lỗi/chậm.
+      if (baseRows.length) {
+        setExactRolling24h(false);
+        setRolling24hFallbackReason(`Đã tải Ads live; metrics rolling 24h chưa xong: ${String(controlCenterError)}`);
+        return;
+      }
+
+      // 3) Fallback cuối cùng: live-insights hôm nay, để không bao giờ treo màn hình loading vô hạn.
+      try {
+        const live = await apiJson("/meta-ads/live-insights?range=today&level=ad&limit=1000", undefined, 15000);
+        const sourceRows = Array.isArray(live?.topAds) ? live.topAds : [];
+        const fallbackRows = sourceRows.map(normalizeLiveAd);
+        setLiveAds(fallbackRows);
+        buildAlertsFromRows(fallbackRows);
+        setExactRolling24h(false);
+        setRolling24hFallbackReason(`Fallback live-insights. Structure lỗi: ${String(structureError)} · Control Center lỗi: ${String(controlCenterError)}`);
+      } catch (fallbackError) {
+        setLiveAds([]);
+        setExecutionOutput(`Không tải được Ads Meta. live-ads: ${String(structureError)} | control-center: ${String(controlCenterError)} | live-insights: ${String(fallbackError)}`);
+      }
     } finally {
       setAdsBusy(false);
     }
