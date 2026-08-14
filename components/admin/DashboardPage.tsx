@@ -410,6 +410,34 @@ type DashboardOverviewApi = {
   }>;
 };
 
+type MetaInventoryAutopilotStatus = {
+  ok?: boolean;
+  enabled?: boolean;
+  dryRun?: boolean;
+  running?: boolean;
+  warnThreshold?: number;
+  pauseThreshold?: number;
+  intervalMinutes?: number;
+  lastRunAt?: string | null;
+  lastRunDurationMs?: number;
+  lastSummary?: {
+    warningGroups?: number;
+    criticalGroups?: number;
+    noMatchGroups?: number;
+    matchedAds?: number;
+    pausedAds?: number;
+    failedAds?: number;
+  } | null;
+  recentActions?: Array<{
+    at?: string;
+    type?: string;
+    colorKey?: string;
+    productName?: string;
+    adName?: string;
+    reason?: string;
+  }>;
+};
+
 const DASHBOARD_API_BASE = (
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
@@ -713,6 +741,24 @@ async function dashboardFetchJson<T>(path: string): Promise<T | null> {
     cache: "no-store",
     credentials: "include",
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+
+  if (!res.ok) return null;
+  return (await res.json()) as T;
+}
+
+async function dashboardPostJson<T>(path: string, body: Record<string, unknown> = {}): Promise<T | null> {
+  const token = getStoredAuthToken();
+  const endpoint = `${DASHBOARD_API_BASE}${path}`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) return null;
@@ -2377,9 +2423,17 @@ export default function DashboardPage() {
     "normal" | "low_stock" | "review"
   >("normal");
   const [schedulerEnabled, setSchedulerEnabled] = useState(true);
+  const [adsAutopilot, setAdsAutopilot] = useState<MetaInventoryAutopilotStatus | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<
     Array<{ id: string; title: string; actionType: string; createdAt: string }>
   >([]);
+
+  useEffect(() => {
+    refreshAdsAutopilotStatus();
+    const timer = window.setInterval(refreshAdsAutopilotStatus, 60_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -3276,17 +3330,46 @@ export default function DashboardPage() {
     setActionLog((prev) => prev.filter((item) => item.id !== id));
   }
 
-  function toggleScheduler() {
+  async function refreshAdsAutopilotStatus() {
+    const status = await dashboardFetchJson<MetaInventoryAutopilotStatus>(
+      "/meta-ads/autopilot/inventory/status",
+    );
+    if (!status) return;
+    setAdsAutopilot(status);
+    if (typeof status.enabled === "boolean") setSchedulerEnabled(status.enabled);
+  }
+
+  async function toggleScheduler() {
     const next = !schedulerEnabled;
-    setSchedulerEnabled(next);
+    const status = await dashboardPostJson<MetaInventoryAutopilotStatus>(
+      "/meta-ads/autopilot/inventory/config",
+      { enabled: next },
+    );
+    if (status) {
+      setAdsAutopilot(status);
+      setSchedulerEnabled(Boolean(status.enabled));
+    } else {
+      setSchedulerEnabled(next);
+    }
     pushLog(
-      next ? "Bật Auto Scheduler" : "Tắt Auto Scheduler",
-      next ? "Lịch tự động đã được bật lại." : "Lịch tự động đã được tắt.",
+      next ? "Bật Inventory Ads Autopilot" : "Tắt Inventory Ads Autopilot",
+      next
+        ? "Đã bật kiểm tra tồn theo mã + màu để tự pause ad con khi có size dưới ngưỡng."
+        : "Đã tắt tự động pause ads theo tồn kho.",
     );
   }
 
-  function runScheduledTask(time: string) {
-    pushLog("Chạy Auto Scheduler", `Đã chạy tác vụ lịch ${time}.`);
+  async function runScheduledTask(time: string) {
+    const result = await dashboardPostJson<any>("/meta-ads/autopilot/inventory/run", {});
+    if (result?.ok) {
+      pushLog(
+        "Chạy Inventory Ads Autopilot",
+        `Đã quét ${result.scannedColorGroups || 0} mã màu · ${result.warningGroups || 0} cảnh báo · ${result.pausedAds || 0} ads đã pause.`,
+      );
+      await refreshAdsAutopilotStatus();
+    } else {
+      pushLog("Inventory Ads Autopilot lỗi", `Không chạy được tác vụ ${time}.`);
+    }
   }
 
   function resolveApproval(id: string, approved: boolean) {
@@ -4799,7 +4882,7 @@ export default function DashboardPage() {
                 <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
                   <div className="flex items-center justify-between">
                     <div className="text-xs uppercase tracking-[0.24em] text-stone-200">
-                      Auto Scheduler
+                      Inventory Ads Autopilot
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -4808,25 +4891,33 @@ export default function DashboardPage() {
                       >
                         {schedulerEnabled ? "Đang bật" : "Đang tắt"}
                       </button>
+                      <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] text-stone-300">
+                        {adsAutopilot?.intervalMinutes || 5} phút/lần
+                      </span>
+                      <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] text-stone-300">
+                        Cảnh báo &lt;{adsAutopilot?.warnThreshold || 10} · Pause &lt;{adsAutopilot?.pauseThreshold || 5}
+                      </span>
                       <button
-                        onClick={() => runScheduledTask("09:00")}
+                        onClick={() => runScheduledTask("manual")}
                         className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
                       >
-                        09:00
-                      </button>
-                      <button
-                        onClick={() => runScheduledTask("20:00")}
-                        className="rounded-full border border-white/10 px-3 py-1 text-[11px]"
-                      >
-                        20:00
+                        Chạy ngay
                       </button>
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
-                  Meta Ads đang ở chế độ DRY RUN. Hệ thống hiện chỉ mô phỏng
-                  lệnh và ghi log.
+                  {adsAutopilot?.enabled
+                    ? adsAutopilot?.dryRun
+                      ? `Meta Ads Autopilot đang bật ở DRY RUN · cảnh báo size <${adsAutopilot?.warnThreshold || 10} · mô phỏng pause khi size <${adsAutopilot?.pauseThreshold || 5}.`
+                      : `Meta Ads LIVE · tự pause AD CON theo mã + màu khi có size <${adsAutopilot?.pauseThreshold || 5} · không pause campaign/adset.`
+                    : "Inventory Ads Autopilot đang tắt. Bật để hệ thống tự kiểm tra tồn và pause ad con đúng màu."}
+                  {adsAutopilot?.lastSummary ? (
+                    <span className="ml-2 text-stone-400">
+                      Lần cuối: {adsAutopilot.lastSummary.warningGroups || 0} cảnh báo · {adsAutopilot.lastSummary.criticalGroups || 0} critical · {adsAutopilot.lastSummary.pausedAds || 0} ads pause.
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="mt-5">

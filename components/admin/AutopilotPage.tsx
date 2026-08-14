@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 export type AutopilotAction = "scale15" | "scale25" | "cut15" | "pause";
 export type AutomationLevel = "manual" | "semi" | "auto";
@@ -144,8 +144,17 @@ export default function AutopilotPage({
   const [automationLevel, setAutomationLevel] = useState<AutomationLevel>(defaultAutomationLevel);
   const [metaConnected, setMetaConnected] = useState(false);
   const [accountId, setAccountId] = useState(defaultAccountId);
-  const [token, setToken] = useState("");
   const [dryRun, setDryRun] = useState(defaultDryRun);
+  const [performanceEnabled, setPerformanceEnabled] = useState(false);
+  const [inventoryEnabled, setInventoryEnabled] = useState(false);
+  const [scaleRoas, setScaleRoas] = useState(3);
+  const [scalePercent, setScalePercent] = useState(20);
+  const [minSpend, setMinSpend] = useState(200000);
+  const [cooldownMinutes, setCooldownMinutes] = useState(360);
+  const [maxScalePerDay, setMaxScalePerDay] = useState(2);
+  const [backendStatus, setBackendStatus] = useState<any>(null);
+  const [inventoryStatus, setInventoryStatus] = useState<any>(null);
+  const [backendBusy, setBackendBusy] = useState(false);
   const [selectedMappingId, setSelectedMappingId] = useState(mappings[0]?.id || "");
   const [executionOutput, setExecutionOutput] = useState("Chưa chạy execute nào.");
   const [decisionLogs, setDecisionLogs] = useState<DecisionLog[]>([
@@ -175,7 +184,7 @@ export default function AutopilotPage({
       id: "a1",
       level: "high",
       title: "QS794 Palm đủ điều kiện scale",
-      desc: "ROAS đang vượt 3.0 và tồn kho còn an toàn.",
+      desc: "ROAS vượt ngưỡng scale và tồn toàn bộ size còn an toàn.",
     },
     {
       id: "a2",
@@ -187,7 +196,7 @@ export default function AutopilotPage({
 
   const selectedMapping = useMemo(() => mappings.find((m) => m.id === selectedMappingId) || mappings[0], [mappings, selectedMappingId]);
   const connectedCount = useMemo(() => mappings.filter((m) => m.status === "CONNECTED").length, [mappings]);
-  const scaleCandidates = useMemo(() => mappings.filter((m) => m.status === "CONNECTED" && m.roasToday >= 2.5).length, [mappings]);
+  const scaleCandidates = useMemo(() => mappings.filter((m) => m.status === "CONNECTED" && m.roasToday >= scaleRoas).length, [mappings, scaleRoas]);
   const weakCandidates = useMemo(() => mappings.filter((m) => m.status === "CONNECTED" && m.roasToday < 1.8).length, [mappings]);
 
   const selectedHistory = useMemo(() => {
@@ -203,11 +212,106 @@ export default function AutopilotPage({
     };
   }, [mappings, selectedMapping]);
 
-  const endpointPreview = `${apiBaseUrl.replace(/\/$/, "")}/autopilot/execute`;
+  const endpointPreview = `${apiBaseUrl.replace(/\/$/, "")}/meta-ads/autopilot/performance/run`;
 
-  const connectMeta = () => {
-    setMetaConnected(true);
-    pushActivity(`Đã kết nối Meta Ads account ${accountId}.`);
+  const apiJson = async (path: string, init?: RequestInit) => {
+    const auth = typeof window !== "undefined" ? localStorage.getItem("access_token") || localStorage.getItem("token") || "" : "";
+    const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
+        ...(init?.headers || {}),
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.message || JSON.stringify(data) || `HTTP ${res.status}`);
+    return data;
+  };
+
+  const loadBackendStatus = async () => {
+    setBackendBusy(true);
+    try {
+      const [perf, inv] = await Promise.all([
+        apiJson("/meta-ads/autopilot/performance/status"),
+        apiJson("/meta-ads/autopilot/inventory/status"),
+      ]);
+      setBackendStatus(perf);
+      setInventoryStatus(inv);
+      setPerformanceEnabled(Boolean(perf?.enabled));
+      setInventoryEnabled(Boolean(inv?.enabled));
+      setDryRun(Boolean(perf?.dryRun));
+      setAutomationLevel((perf?.level || defaultAutomationLevel) as AutomationLevel);
+      setScaleRoas(Number(perf?.scaleRoas || 3));
+      setScalePercent(Number(perf?.scalePercent || 20));
+      setMinSpend(Number(perf?.minSpend || 200000));
+      setCooldownMinutes(Number(perf?.cooldownMinutes || 360));
+      setMaxScalePerDay(Number(perf?.maxScalePerAdSetPerDay || 2));
+    } catch (error) {
+      setExecutionOutput(`Không tải được Autopilot backend: ${String(error)}`);
+    } finally {
+      setBackendBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadBackendStatus();
+    void connectMeta();
+  }, []);
+
+  const connectMeta = async () => {
+    try {
+      const data = await apiJson("/meta-ads/test");
+      const first = data?.data?.[0];
+      setMetaConnected(true);
+      if (first?.id) setAccountId(first.id);
+      pushActivity(`Meta Ads backend đã kết nối${first?.id ? ` ${first.id}` : ""}.`);
+    } catch (error) {
+      setMetaConnected(false);
+      setExecutionOutput(`Meta connection lỗi: ${String(error)}`);
+    }
+  };
+
+  const saveAutomationConfig = async (patch: Record<string, any> = {}) => {
+    setBackendBusy(true);
+    try {
+      const next = await apiJson("/meta-ads/autopilot/performance/config", {
+        method: "POST",
+        body: JSON.stringify({
+          enabled: performanceEnabled,
+          dryRun,
+          level: automationLevel,
+          scaleRoas,
+          scalePercent,
+          minSpend,
+          cooldownMinutes,
+          maxScalePerAdSetPerDay: maxScalePerDay,
+          ...patch,
+        }),
+      });
+      setBackendStatus(next);
+      if (typeof next?.enabled === "boolean") setPerformanceEnabled(next.enabled);
+      if (next?.level) setAutomationLevel(next.level);
+      pushActivity("Đã cập nhật rule Auto Scale trên backend.");
+      return next;
+    } finally {
+      setBackendBusy(false);
+    }
+  };
+
+  const saveInventoryConfig = async (enabled: boolean) => {
+    setBackendBusy(true);
+    try {
+      const next = await apiJson("/meta-ads/autopilot/inventory/config", {
+        method: "POST",
+        body: JSON.stringify({ enabled, dryRun }),
+      });
+      setInventoryStatus(next);
+      setInventoryEnabled(Boolean(next?.enabled));
+      pushActivity(`Auto pause tồn kho: ${next?.enabled ? "BẬT" : "TẮT"}.`);
+    } finally {
+      setBackendBusy(false);
+    }
   };
 
   const logDecision = (
@@ -301,52 +405,47 @@ export default function AutopilotPage({
     pushActivity(`Autopilot: rollback cho ${item.sku}.`);
   };
 
-  const runAutoDecision = () => {
-    if (automationLevel === "manual") return;
-
-    const candidates = mappings.filter((m) => m.status === "CONNECTED");
-    candidates.forEach((item) => {
-      if (item.roasToday >= 2.5) {
-        logDecision(
-          item,
-          automationLevel === "auto" ? "Auto scale +20%" : "Đề xuất scale +20%",
-          `ROAS ${item.roasToday.toFixed(2)} vượt ngưỡng 2.5`,
-          automationLevel === "auto" ? "applied" : "suggested",
-          Math.round(item.budgetDaily * 1.2),
-          item.budgetDaily
-        );
-      }
-      if (automationLevel === "auto" && item.roasToday < 1.5) {
-        logDecision(item, "Auto pause", `ROAS ${item.roasToday.toFixed(2)} dưới 1.5`, "applied", item.budgetDaily, item.budgetDaily);
-      }
-    });
-
-    pushActivity(`Autopilot: chạy rule ${automationLevel}.`);
+  const runAutoDecision = async () => {
+    if (automationLevel === "manual" && !performanceEnabled) return;
+    setBackendBusy(true);
+    try {
+      await saveAutomationConfig();
+      const data = await apiJson("/meta-ads/autopilot/performance/run", {
+        method: "POST",
+        body: JSON.stringify({ dryRun }),
+      });
+      setExecutionOutput(JSON.stringify(data, null, 2));
+      await loadBackendStatus();
+      pushActivity(`Performance Autopilot: quét ${data?.scannedAdSets || 0} ad set, scale ${data?.scaled || 0}.`);
+    } catch (error) {
+      setExecutionOutput(String(error));
+    } finally {
+      setBackendBusy(false);
+    }
   };
 
   const executeAgainstApi = async (action: AutopilotAction) => {
     if (!selectedMapping) return;
-
-    const payload = {
-      token,
-      action,
-      adsetId: selectedMapping.adsetId,
-      currentBudgetMinor: selectedMapping.budgetDaily,
-      dryRun,
-    };
-
+    setBackendBusy(true);
     try {
-      const res = await fetch(endpointPreview, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      setExecutionOutput(JSON.stringify(data, null, 2));
-      logDecision(selectedMapping, `Execute ${action}`, dryRun ? "Dry run từ UI Autopilot" : "Live execute từ UI Autopilot", dryRun ? "preview" : "applied", selectedMapping.budgetDaily, selectedMapping.budgetDaily);
-      pushActivity(`Autopilot API execute ${action} cho ${selectedMapping.sku}.`);
+      if (action === "scale15" || action === "scale25") {
+        const percent = action === "scale15" ? 15 : 25;
+        const data = await apiJson("/meta-ads/actions/scale-adset", {
+          method: "POST",
+          body: JSON.stringify({ metaAdSetId: selectedMapping.adsetId, percent, dryRun }),
+        });
+        setExecutionOutput(JSON.stringify(data, null, 2));
+        if (!dryRun && data?.newBudget) {
+          setMappings((prev) => prev.map((m) => m.id === selectedMapping.id ? { ...m, budgetDaily: Number(data.newBudget), lastAction: `Scale +${percent}%` } : m));
+        }
+        logDecision(selectedMapping, `Scale +${percent}%`, `Execute backend · ROAS ${selectedMapping.roasToday.toFixed(2)}`, dryRun ? "preview" : "applied", data?.newBudget, data?.oldBudget);
+      } else {
+        setExecutionOutput("Performance Autopilot mới chỉ tự SCALE. Giảm/pause theo ROAS chưa bật; pause hết hàng do Inventory Autopilot xử lý ở level ad con.");
+      }
     } catch (error) {
       setExecutionOutput(String(error));
+    } finally {
+      setBackendBusy(false);
     }
   };
 
@@ -409,15 +508,15 @@ export class AutopilotController {
     <div className="space-y-5">
       <div>
         <h2 className="text-[14px] font-semibold text-neutral-900">Autopilot</h2>
-        <p className="mt-1 text-[12px] text-neutral-400">Gộp Ads + Automation vào một chỗ: overview, control và automation engine.</p>
+        <p className="mt-1 text-[12px] text-neutral-400">Trung tâm điều khiển Ads: Auto Scale theo ROAS + Auto Pause ad con theo tồn kho.</p>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <StatCard title="Meta connection" value={metaConnected ? "Connected" : "Not connected"} sub={metaConnected ? accountId : "Cần token + ad account"} />
         <StatCard title="Automation level" value={automationLevel.toUpperCase()} sub={`Mức ${automationLevel === "manual" ? "1" : automationLevel === "semi" ? "2" : "3"} / 3`} />
         <StatCard title="SKU đã map" value={connectedCount} sub="Connected to Meta" />
-        <StatCard title="Nên scale" value={scaleCandidates} sub="ROAS >= 2.5" />
-        <StatCard title="Yếu / nên pause" value={weakCandidates} sub="ROAS < 1.8" />
+        <StatCard title="Nên scale" value={scaleCandidates} sub={`ROAS >= ${scaleRoas}`} />
+        <StatCard title="Yếu / nên pause" value={weakCandidates} sub="Theo dõi thủ công" />
       </div>
 
       <Panel>
@@ -426,6 +525,56 @@ export class AutopilotController {
             <TabPill active={autopilotTab === "overview"} onClick={() => setAutopilotTab("overview")}>Overview</TabPill>
             <TabPill active={autopilotTab === "control"} onClick={() => setAutopilotTab("control")}>Control</TabPill>
             <TabPill active={autopilotTab === "automation"} onClick={() => setAutopilotTab("automation")}>Automation</TabPill>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel>
+        <div className="p-4">
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-neutral-900">Auto Scale theo ROAS</h3>
+                  <p className="mt-1 text-[12px] text-neutral-500">Chỉ scale Ad Set khi ROAS nội bộ đủ cao, attribution chắc và tồn tất cả size vẫn an toàn.</p>
+                </div>
+                <label className="flex items-center gap-2 text-[12px] text-neutral-600">
+                  <input type="checkbox" checked={performanceEnabled} onChange={(e) => { const enabled = e.target.checked; setPerformanceEnabled(enabled); void saveAutomationConfig({ enabled }); }} />
+                  {performanceEnabled ? "Đang bật" : "Đang tắt"}
+                </label>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-5">
+                <label className="text-[11px] text-neutral-500">ROAS scale
+                  <input type="number" step="0.1" value={scaleRoas} onChange={(e) => setScaleRoas(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                </label>
+                <label className="text-[11px] text-neutral-500">Tăng mỗi lần %
+                  <input type="number" value={scalePercent} onChange={(e) => setScalePercent(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                </label>
+                <label className="text-[11px] text-neutral-500">Spend tối thiểu
+                  <input type="number" value={minSpend} onChange={(e) => setMinSpend(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                </label>
+                <label className="text-[11px] text-neutral-500">Cooldown phút
+                  <input type="number" value={cooldownMinutes} onChange={(e) => setCooldownMinutes(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                </label>
+                <label className="text-[11px] text-neutral-500">Max scale / 24h
+                  <input type="number" value={maxScalePerDay} onChange={(e) => setMaxScalePerDay(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                </label>
+              </div>
+            </div>
+            <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-[13px] font-semibold text-neutral-800">Auto Pause theo tồn kho</div>
+                <label className="flex items-center gap-2 text-[12px] text-neutral-600">
+                  <input type="checkbox" checked={inventoryEnabled} onChange={(e) => void saveInventoryConfig(e.target.checked)} />
+                  {inventoryEnabled ? "Đang bật" : "Đang tắt"}
+                </label>
+              </div>
+              <div className="mt-2 text-[12px] text-neutral-500">Cảnh báo size &lt; {inventoryStatus?.warnThreshold ?? 10}. Size &lt; {inventoryStatus?.pauseThreshold ?? 5} sẽ pause đúng ad con của mã + màu.</div>
+              <div className="mt-3 flex items-center gap-2">
+                <Badge tone={dryRun ? "amber" : "green"}>{dryRun ? "DRY RUN" : "LIVE"}</Badge>
+                <label className="flex items-center gap-2 text-[11px] text-neutral-500"><input type="checkbox" checked={dryRun} onChange={(e) => { setDryRun(e.target.checked); void saveAutomationConfig({ dryRun: e.target.checked }); }} /> Test trước khi chạy thật</label>
+              </div>
+            </div>
           </div>
         </div>
       </Panel>
@@ -545,10 +694,10 @@ export class AutopilotController {
                     <h3 className="text-[14px] font-semibold text-neutral-900">Kết nối Meta</h3>
                     <div className="mt-4 space-y-3">
                       <input value={accountId} onChange={(e) => setAccountId(e.target.value)} className="h-10 w-full rounded-[14px] border border-neutral-200 px-3 text-[13px] outline-none" placeholder="act_123456789" />
-                      <input value={token} onChange={(e) => setToken(e.target.value)} className="h-10 w-full rounded-[14px] border border-neutral-200 px-3 text-[13px] outline-none" placeholder="Access token" />
+                      <div className="rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-[12px] text-neutral-500">Token lấy từ backend ENV · không nhập token trong trình duyệt</div>
                       <input value={apiBaseUrl} readOnly className="h-10 w-full rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 text-[13px] outline-none" />
                       <div className="flex items-center gap-3">
-                        <ActionButton variant="primary" onClick={connectMeta}>Connect Meta</ActionButton>
+                        <ActionButton variant="primary" onClick={connectMeta} disabled={backendBusy}>Kiểm tra Meta</ActionButton>
                         <label className="flex items-center gap-2 text-[12px] text-neutral-500">
                           <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
                           Dry run
@@ -562,21 +711,21 @@ export class AutopilotController {
                       <h3 className="text-[14px] font-semibold text-neutral-900">3 mức tự động</h3>
                     </div>
                     <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-3">
-                      <button onClick={() => setAutomationLevel("manual")} className={`rounded-[16px] border p-4 text-left ${automationLevel === "manual" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
+                      <button onClick={() => { setAutomationLevel("manual"); void saveAutomationConfig({ level: "manual", enabled: false }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "manual" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 1</div>
                         <div className={`mt-1 text-[12px] ${automationLevel === "manual" ? "text-white/75" : "text-neutral-400"}`}>Chỉ gợi ý</div>
                       </button>
-                      <button onClick={() => setAutomationLevel("semi")} className={`rounded-[16px] border p-4 text-left ${automationLevel === "semi" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
+                      <button onClick={() => { setAutomationLevel("semi"); setPerformanceEnabled(true); void saveAutomationConfig({ level: "semi", enabled: true }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "semi" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 2</div>
                         <div className={`mt-1 text-[12px] ${automationLevel === "semi" ? "text-white/75" : "text-neutral-400"}`}>Có nút bấm scale</div>
                       </button>
-                      <button onClick={() => setAutomationLevel("auto")} className={`rounded-[16px] border p-4 text-left ${automationLevel === "auto" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
+                      <button onClick={() => { setAutomationLevel("auto"); setPerformanceEnabled(true); void saveAutomationConfig({ level: "auto", enabled: true }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "auto" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 3</div>
                         <div className={`mt-1 text-[12px] ${automationLevel === "auto" ? "text-white/75" : "text-neutral-400"}`}>Rule tự động</div>
                       </button>
                     </div>
                     <div className="mt-4 flex items-center gap-3">
-                      <ActionButton variant="secondary" onClick={runAutoDecision}>Run rule now</ActionButton>
+                      <ActionButton variant="secondary" onClick={runAutoDecision} disabled={backendBusy}>Chạy Auto Scale ngay</ActionButton>
                       <Badge tone="blue">{automationLevel.toUpperCase()}</Badge>
                     </div>
                   </div>
@@ -627,9 +776,9 @@ export class AutopilotController {
                           </td>
                           <td className="py-4">
                             <div className="flex flex-col gap-2">
-                              <ActionButton variant="soft" disabled={m.status !== "CONNECTED" || automationLevel === "manual"} onClick={() => updateBudget(m.id, 20, "Scale")}>+20%</ActionButton>
-                              <ActionButton variant="secondary" disabled={m.status !== "CONNECTED"} onClick={() => suggestCut(m.id)}>-15%</ActionButton>
-                              <ActionButton variant="danger" disabled={m.status !== "CONNECTED"} onClick={() => pauseAdset(m.id)}>Pause</ActionButton>
+                              <ActionButton variant="soft" disabled={m.status !== "CONNECTED" || backendBusy} onClick={() => { setSelectedMappingId(m.id); setTimeout(() => void executeAgainstApi("scale25"), 0); }}>Scale +25%</ActionButton>
+                              <ActionButton variant="secondary" disabled>Không auto giảm</ActionButton>
+                              <ActionButton variant="danger" disabled>Pause do tồn kho</ActionButton>
                             </div>
                           </td>
                         </tr>
@@ -659,10 +808,10 @@ export class AutopilotController {
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <ActionButton variant="soft" disabled={!selectedMapping || !token} onClick={() => executeAgainstApi("scale15")}>Execute +15%</ActionButton>
-                    <ActionButton variant="secondary" disabled={!selectedMapping || !token} onClick={() => executeAgainstApi("scale25")}>Execute +25%</ActionButton>
-                    <ActionButton variant="secondary" disabled={!selectedMapping || !token} onClick={() => executeAgainstApi("cut15")}>Execute -15%</ActionButton>
-                    <ActionButton variant="danger" disabled={!selectedMapping || !token} onClick={() => executeAgainstApi("pause")}>Pause thật</ActionButton>
+                    <ActionButton variant="soft" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("scale15")}>Execute +15%</ActionButton>
+                    <ActionButton variant="secondary" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("scale25")}>Execute +25%</ActionButton>
+                    <ActionButton variant="secondary" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("cut15")}>Execute -15%</ActionButton>
+                    <ActionButton variant="danger" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("pause")}>Pause thật</ActionButton>
                   </div>
 
                   <div className="rounded-[18px] bg-neutral-900 p-4 text-white">
@@ -685,7 +834,7 @@ export class AutopilotController {
             <Panel>
               <div className="p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-neutral-900">Code execute + Meta API</h3>
+                  <h3 className="text-[14px] font-semibold text-neutral-900">Performance Auto Scale backend</h3>
                   <ActionButton variant="secondary" className="!rounded-full !px-3 !py-1 !text-[11px]" onClick={() => navigator.clipboard.writeText(productionCode)}>Copy</ActionButton>
                 </div>
                 <pre className="max-h-[310px] overflow-auto rounded-[18px] bg-black p-4 text-[11px] leading-5 text-neutral-200">{productionCode}</pre>
@@ -695,7 +844,7 @@ export class AutopilotController {
             <Panel>
               <div className="p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-neutral-900">Nest API /autopilot/execute</h3>
+                  <h3 className="text-[14px] font-semibold text-neutral-900">Inventory Auto Pause backend</h3>
                   <ActionButton variant="secondary" className="!rounded-full !px-3 !py-1 !text-[11px]" onClick={() => navigator.clipboard.writeText(autopilotApiCode)}>Copy</ActionButton>
                 </div>
                 <pre className="max-h-[310px] overflow-auto rounded-[18px] bg-black p-4 text-[11px] leading-5 text-neutral-200">{autopilotApiCode}</pre>
