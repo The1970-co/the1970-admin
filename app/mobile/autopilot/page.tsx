@@ -137,8 +137,19 @@ export default function MobileAutopilotPage() {
       const rawLiveRows = Array.isArray(rawLive) ? rawLive : rawLive?.items || rawLive?.ads || rawLive?.rows || [];
       const controlRows = Array.isArray(control?.ads) ? control.ads : Array.isArray(control?.rows) ? control.rows : [];
       const adRows = controlRows.length ? controlRows : rawLiveRows;
+      const normalizedAdRows = adRows.map((row: AnyRow) => ({
+        ...row,
+        name: row.name || row.adName || row.ad_name || "",
+        adName: row.adName || row.name || row.ad_name || "",
+        campaignName: row.campaignName || row.campaign_name || "",
+        adSetName: row.adSetName || row.adsetName || row.adset_name || "",
+        metaAdId: row.metaAdId || row.adId || row.id || "",
+        metaAdSetId: row.metaAdSetId || row.adSetId || row.adset_id || "",
+        metaCampaignId: row.metaCampaignId || row.campaignId || row.campaign_id || "",
+        thumbnailUrl: row.thumbnailUrl || row.thumbnail_url || row.imageUrl || row.image_url || null,
+      }));
 
-      setLiveAds(adRows);
+      setLiveAds(normalizedAdRows);
       setScaleHistory(Array.isArray(history) ? history : history?.items || history?.rows || []);
 
       const pickedLevel = (perf?.level || inv?.level || "manual") as AutomationLevel;
@@ -156,17 +167,17 @@ export default function MobileAutopilotPage() {
       setRequireBoth(inv?.requireBoth !== false);
 
       // Enrich tồn kho + budget, nhưng lỗi enrich không được xóa Ads.
-      if (adRows.length) {
+      if (normalizedAdRows.length) {
         const enrich = await Promise.allSettled([
           apiJson("/meta-ads/autopilot/inventory/assess", {
             method: "POST",
-            body: JSON.stringify({ ads: adRows }),
+            body: JSON.stringify({ ads: normalizedAdRows }),
           }),
           apiJson("/meta-ads/autopilot/budgets", {
             method: "POST",
             body: JSON.stringify({
-              metaAdSetIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
-              metaCampaignIds: Array.from(new Set(adRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
+              metaAdSetIds: Array.from(new Set(normalizedAdRows.map((x: AnyRow) => String(x.metaAdSetId || x.adSetId || "")).filter(Boolean))),
+              metaCampaignIds: Array.from(new Set(normalizedAdRows.map((x: AnyRow) => String(x.metaCampaignId || x.campaignId || "")).filter(Boolean))),
             }),
           }),
         ]);
@@ -262,12 +273,25 @@ export default function MobileAutopilotPage() {
   });
 
   function budgetOf(row: AnyRow) {
+    const directAdSetBudget = num(row.adSetDailyBudget ?? row.adsetDailyBudget ?? row.adset_daily_budget);
+    if (directAdSetBudget > 0) return { value: directAdSetBudget, level: "Ad Set" };
+
+    const directCampaignBudget = num(row.campaignDailyBudget ?? row.campaign_daily_budget);
+    if (directCampaignBudget > 0) return { value: directCampaignBudget, level: "Campaign" };
+
     const adSetId = String(row.metaAdSetId || row.adSetId || "");
     const campaignId = String(row.metaCampaignId || row.campaignId || "");
-    const adSet = budgets.adSets.find((x) => String(x.metaAdSetId) === adSetId);
-    if (num(adSet?.dailyBudget) > 0) return { value: num(adSet.dailyBudget), level: "Ad Set" };
-    const campaign = budgets.campaigns.find((x) => String(x.metaCampaignId) === campaignId);
-    if (num(campaign?.dailyBudget) > 0) return { value: num(campaign.dailyBudget), level: "Campaign" };
+
+    const adSet = budgets.adSets.find((x) => String(x.metaAdSetId || x.id || "") === adSetId);
+    if (num(adSet?.dailyBudget ?? adSet?.daily_budget) > 0) {
+      return { value: num(adSet?.dailyBudget ?? adSet?.daily_budget), level: "Ad Set" };
+    }
+
+    const campaign = budgets.campaigns.find((x) => String(x.metaCampaignId || x.id || "") === campaignId);
+    if (num(campaign?.dailyBudget ?? campaign?.daily_budget) > 0) {
+      return { value: num(campaign?.dailyBudget ?? campaign?.daily_budget), level: "Campaign" };
+    }
+
     return { value: 0, level: "—" };
   }
 
@@ -347,7 +371,7 @@ export default function MobileAutopilotPage() {
         method: "POST",
         body: JSON.stringify({ dryRun }),
       });
-      setMessage(`Check tồn: ${r?.scannedColorGroups || 0} nhóm màu · critical ${r?.criticalGroups || 0} · pause ${r?.pausedAds || 0}.`);
+      setMessage(`Check ${r?.activeAds || 0} Ads ACTIVE · match ${r?.matchedAds || 0} · critical ${r?.criticalGroups || 0} · pause ${r?.pausedAds || 0}.`);
       await loadAll(false);
     } catch (e: any) { setError(e?.message || "Không chạy được check tồn"); }
     finally { setBusy(false); }
@@ -440,7 +464,7 @@ export default function MobileAutopilotPage() {
               <div className="flex gap-3 p-4">
                 {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
-                  <div className="line-clamp-2 text-sm font-black leading-5">{row.name || "Unnamed Ad"}</div>
+                  <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
                   <div className="mt-1 flex flex-wrap gap-1"><Badge value={status}>{status}</Badge>{stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}{historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}</div>
                   <div className="mt-2 text-xs font-bold text-neutral-600">{stock?.productCode ? `${stock.productCode} · ${stock.color || ""}` : "Chưa map mã / màu"}</div>
                 </div>
@@ -448,7 +472,7 @@ export default function MobileAutopilotPage() {
               <div className="grid grid-cols-3 border-y border-neutral-100 bg-neutral-50">
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Budget</div><div className="mt-1 text-xs font-black">{budget.value ? money(budget.value) : "—"}</div><div className="text-[9px] text-neutral-400">{budget.level}</div></div>
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Tồn màu</div><div className="mt-1 text-xs font-black">{stock?.totalQty ?? "—"}</div><div className="text-[9px] text-neutral-400">min size {stock?.minQty ?? "—"}</div></div>
-                <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || "—"}</div></div>
+                <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || row.metaAdSetId || row.adSetId || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || row.metaCampaignId || row.campaignId || "—"}</div></div>
               </div>
               <button onClick={() => setExpandedId(expanded ? "" : id)} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
               {expanded ? <div className="space-y-3 border-t border-neutral-100 p-4">
