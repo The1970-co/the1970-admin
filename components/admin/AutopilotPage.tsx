@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useState } from "react";
 
 export type AutopilotAction = "scale15" | "scale25" | "cut15" | "pause";
 export type AutomationLevel = "manual" | "semi" | "auto";
-export type AutopilotTab = "overview" | "control" | "automation";
 
 export type AdsMapping = {
   id: string;
@@ -58,6 +57,14 @@ export type LiveAdControlRow = {
   budgetDaily: number;
   canScale: boolean;
   scaleReasons?: string[];
+  spend24h?: number;
+  revenue24h?: number;
+  roas24h?: number;
+  orderCount24h?: number;
+  runHours?: number;
+  autoScaleEligible?: boolean;
+  autoScaleReasons?: string[];
+  nextScaleAt?: string | null;
   productAttribution?: any;
   inventory?: any;
 };
@@ -110,17 +117,6 @@ function StatCard({ title, value, sub }: { title: string; value: React.ReactNode
   );
 }
 
-function TabPill({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-[12px] font-medium transition ${active ? "bg-neutral-900 text-white" : "border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"}`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function ActionButton({
   children,
   onClick,
@@ -161,7 +157,6 @@ export default function AutopilotPage({
   defaultDryRun = true,
   defaultAutomationLevel = "manual",
 }: AutopilotPageProps) {
-  const [autopilotTab, setAutopilotTab] = useState<AutopilotTab>("overview");
   const [automationLevel, setAutomationLevel] = useState<AutomationLevel>(defaultAutomationLevel);
   const [metaConnected, setMetaConnected] = useState(false);
   const [accountId, setAccountId] = useState(defaultAccountId);
@@ -171,8 +166,10 @@ export default function AutopilotPage({
   const [scaleRoas, setScaleRoas] = useState(3);
   const [scalePercent, setScalePercent] = useState(20);
   const [minSpend, setMinSpend] = useState(200000);
-  const [cooldownMinutes, setCooldownMinutes] = useState(360);
-  const [maxScalePerDay, setMaxScalePerDay] = useState(2);
+  const [cooldownMinutes, setCooldownMinutes] = useState(1440);
+  const [maxScalePerDay, setMaxScalePerDay] = useState(1);
+  const [exactRolling24h, setExactRolling24h] = useState(true);
+  const [rolling24hFallbackReason, setRolling24hFallbackReason] = useState("");
   const [backendStatus, setBackendStatus] = useState<any>(null);
   const [inventoryStatus, setInventoryStatus] = useState<any>(null);
   const [backendBusy, setBackendBusy] = useState(false);
@@ -186,14 +183,14 @@ export default function AutopilotPage({
 
   const selectedMapping = useMemo(() => mappings.find((m) => m.id === selectedMappingId) || mappings[0], [mappings, selectedMappingId]);
   const connectedCount = useMemo(() => liveAds.length || mappings.filter((m) => m.status === "CONNECTED").length, [liveAds, mappings]);
-  const scaleCandidates = useMemo(() => liveAds.length ? liveAds.filter((m) => m.canScale).length : mappings.filter((m) => m.status === "CONNECTED" && m.roasToday >= scaleRoas).length, [liveAds, mappings, scaleRoas]);
+  const scaleCandidates = useMemo(() => liveAds.length ? liveAds.filter((m) => Boolean(m.autoScaleEligible ?? m.canScale)).length : mappings.filter((m) => m.status === "CONNECTED" && m.roasToday >= scaleRoas).length, [liveAds, mappings, scaleRoas]);
   const weakCandidates = useMemo(() => liveAds.length ? liveAds.filter((m) => m.inventory?.groups?.some((g: any) => (g.criticalSizes || []).length > 0)).length : mappings.filter((m) => m.status === "CONNECTED" && m.roasToday < 1.8).length, [liveAds, mappings]);
 
   const filteredLiveAds = useMemo(() => liveAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
     if (adFilter === "active") return status === "ACTIVE";
     if (adFilter === "paused") return status === "PAUSED";
-    if (adFilter === "scale") return row.canScale;
+    if (adFilter === "scale") return Boolean(row.autoScaleEligible ?? row.canScale);
     if (adFilter === "stock") return row.inventory?.groups?.some((g: any) => (g.lowSizes || []).length > 0);
     return true;
   }), [liveAds, adFilter]);
@@ -234,6 +231,8 @@ export default function AutopilotPage({
       const data = await apiJson("/meta-ads/autopilot/control-center");
       const rows = Array.isArray(data?.rows) ? data.rows : [];
       setLiveAds(rows);
+      setExactRolling24h(data?.exactRolling24h !== false);
+      setRolling24hFallbackReason(String(data?.fallbackReason || data?.rolling24hFallbackReason || ""));
 
       const alerts: LiveAlert[] = [];
       for (const row of rows) {
@@ -247,12 +246,12 @@ export default function AutopilotPage({
             title: `${row.productAttribution?.familySku || row.adName} cần pause`,
             desc: critical.map((g: any) => `${g.colorKey}: ${g.criticalSizes.join(", ")} dưới 5`).join(" · "),
           });
-        } else if (row.canScale) {
+        } else if (row.autoScaleEligible ?? row.canScale) {
           alerts.push({
             id: `scale-${row.metaAdId}`,
             level: "good",
             title: `${row.productAttribution?.familySku || row.adName} đủ điều kiện scale`,
-            desc: `ROAS ${Number(row.roas || 0).toFixed(2)} · Spend ${currency(row.spend)} · tồn size an toàn.`,
+            desc: `ROAS 24h ${Number(row.roas24h ?? row.roas ?? 0).toFixed(2)} · Spend 24h ${currency(row.spend24h ?? row.spend ?? 0)} · tồn size an toàn.`,
           });
         } else if (low.length) {
           alerts.push({
@@ -287,8 +286,8 @@ export default function AutopilotPage({
       setScaleRoas(Number(perf?.scaleRoas || 3));
       setScalePercent(Number(perf?.scalePercent || 20));
       setMinSpend(Number(perf?.minSpend || 200000));
-      setCooldownMinutes(Number(perf?.cooldownMinutes || 360));
-      setMaxScalePerDay(Number(perf?.maxScalePerAdSetPerDay || 2));
+      setCooldownMinutes(Number(perf?.scaleWindowHours || perf?.minRunHours || 24) * 60);
+      setMaxScalePerDay(Number(perf?.maxScalePerAdSetPer24h || 1));
     } catch (error) {
       setExecutionOutput(`Không tải được Autopilot backend: ${String(error)}`);
     } finally {
@@ -327,8 +326,6 @@ export default function AutopilotPage({
           scaleRoas,
           scalePercent,
           minSpend,
-          cooldownMinutes,
-          maxScalePerAdSetPerDay: maxScalePerDay,
           ...patch,
         }),
       });
@@ -515,7 +512,7 @@ export default function AutopilotPage({
     try {
       const data = await apiJson("/meta-ads/actions/scale-adset", {
         method: "POST",
-        body: JSON.stringify({ metaAdSetId: row.adSetId, percent: scalePercent, dryRun }),
+        body: JSON.stringify({ metaAdSetId: row.adSetId, metaAdId: row.metaAdId, percent: scalePercent, dryRun }),
       });
       setExecutionOutput(JSON.stringify(data, null, 2));
       pushActivity(`${dryRun ? "DRY RUN" : "LIVE"}: scale ${row.adSetName || row.adSetId} +${scalePercent}%.`);
@@ -587,26 +584,17 @@ export class AutopilotController {
     <div className="space-y-5">
       <div>
         <h2 className="text-[14px] font-semibold text-neutral-900">Autopilot</h2>
-        <p className="mt-1 text-[12px] text-neutral-400">Trung tâm điều khiển Ads: Auto Scale theo ROAS + Auto Pause ad con theo tồn kho.</p>
+        <p className="mt-1 text-[12px] text-neutral-400">Trung tâm điều khiển Ads: Auto Scale theo rolling 24 giờ + Auto Pause ad con theo tồn kho.</p>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <StatCard title="Meta connection" value={metaConnected ? "Connected" : "Not connected"} sub={metaConnected ? accountId : "Cần token + ad account"} />
         <StatCard title="Automation level" value={automationLevel.toUpperCase()} sub={`Mức ${automationLevel === "manual" ? "1" : automationLevel === "semi" ? "2" : "3"} / 3`} />
         <StatCard title="SKU đã map" value={connectedCount} sub="Connected to Meta" />
-        <StatCard title="Nên scale" value={scaleCandidates} sub={`ROAS >= ${scaleRoas}`} />
+        <StatCard title="Nên scale" value={scaleCandidates} sub={`ROAS 24h >= ${scaleRoas}`} />
         <StatCard title="Thiếu size critical" value={weakCandidates} sub="Có size dưới 5" />
       </div>
 
-      <Panel>
-        <div className="p-4">
-          <div className="flex flex-wrap gap-2">
-            <TabPill active={autopilotTab === "overview"} onClick={() => setAutopilotTab("overview")}>Overview</TabPill>
-            <TabPill active={autopilotTab === "control"} onClick={() => setAutopilotTab("control")}>Control</TabPill>
-            <TabPill active={autopilotTab === "automation"} onClick={() => setAutopilotTab("automation")}>Automation</TabPill>
-          </div>
-        </div>
-      </Panel>
 
       <Panel>
         <div className="p-4">
@@ -614,8 +602,8 @@ export class AutopilotController {
             <div>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-[14px] font-semibold text-neutral-900">Auto Scale theo ROAS</h3>
-                  <p className="mt-1 text-[12px] text-neutral-500">Chỉ scale Ad Set khi ROAS nội bộ đủ cao, attribution chắc và tồn tất cả size vẫn an toàn.</p>
+                  <h3 className="text-[14px] font-semibold text-neutral-900">Auto Scale theo rolling 24 giờ</h3>
+                  <p className="mt-1 text-[12px] text-neutral-500">Đủ 24h · ROAS 24h đủ cao · tồn tất cả size an toàn · chưa scale trong 24h → tăng ngân sách Ad Set.</p>
                 </div>
                 <label className="flex items-center gap-2 text-[12px] text-neutral-600">
                   <input type="checkbox" checked={performanceEnabled} onChange={(e) => { const enabled = e.target.checked; setPerformanceEnabled(enabled); void saveAutomationConfig({ enabled }); }} />
@@ -623,7 +611,7 @@ export class AutopilotController {
                 </label>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-5">
-                <label className="text-[11px] text-neutral-500">ROAS scale
+                <label className="text-[11px] text-neutral-500">ROAS 24h scale
                   <input type="number" step="0.1" value={scaleRoas} onChange={(e) => setScaleRoas(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
                 </label>
                 <label className="text-[11px] text-neutral-500">Tăng mỗi lần %
@@ -632,11 +620,11 @@ export class AutopilotController {
                 <label className="text-[11px] text-neutral-500">Spend tối thiểu
                   <input type="number" value={minSpend} onChange={(e) => setMinSpend(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
                 </label>
-                <label className="text-[11px] text-neutral-500">Cooldown phút
-                  <input type="number" value={cooldownMinutes} onChange={(e) => setCooldownMinutes(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                <label className="text-[11px] text-neutral-500">Chu kỳ scale (phút)
+                  <div className="mt-1 flex h-9 items-center rounded-xl border border-neutral-200 bg-neutral-50 px-3 text-[12px] font-medium text-neutral-700">1440 · cố định 24h</div>
                 </label>
                 <label className="text-[11px] text-neutral-500">Max scale / 24h
-                  <input type="number" value={maxScalePerDay} onChange={(e) => setMaxScalePerDay(Number(e.target.value))} onBlur={() => void saveAutomationConfig()} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 px-3 text-[12px]" />
+                  <div className="mt-1 flex h-9 items-center rounded-xl border border-neutral-200 bg-neutral-50 px-3 text-[12px] font-medium text-neutral-700">1 lần / 24h</div>
                 </label>
               </div>
             </div>
@@ -730,12 +718,12 @@ export class AutopilotController {
                           </div>
                         )) : <span className="text-[11px] text-neutral-400">Chưa match tồn kho</span>}
                       </td>
-                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.spend)}</td>
-                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.revenue)}</td>
+                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.spend24h ?? row.spend)}</td>
+                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.revenue24h ?? row.revenue)}</td>
                       <td className="px-3 py-4 text-right"><span className={`text-[13px] font-semibold ${row.roas >= scaleRoas ? "text-emerald-600" : "text-neutral-800"}`}>{Number(row.roas || 0).toFixed(2)}</span></td>
                       <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{row.budgetDaily ? compactMoney(row.budgetDaily) : "—"}</td>
                       <td className="px-3 py-4">
-                        {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : row.canScale ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
+                        {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : (row.autoScaleEligible ?? row.canScale) ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
                         {!row.canScale && row.scaleReasons?.length ? <div className="mt-2 max-w-[220px] text-[10px] leading-4 text-neutral-400">{row.scaleReasons.slice(0, 2).join(" · ")}</div> : null}
                       </td>
                       <td className="px-3 py-4">
@@ -756,7 +744,7 @@ export class AutopilotController {
         </div>
       </Panel>
 
-      {autopilotTab === "overview" && (
+      {(
         <>
           <div className="grid gap-4 xl:grid-cols-[1.06fr_0.94fr]">
             <Panel>
@@ -862,7 +850,7 @@ export class AutopilotController {
         </>
       )}
 
-      {autopilotTab === "control" && (
+      {(
         <>
           <div className="grid gap-4 xl:grid-cols-[1.06fr_0.94fr]">
             <Panel>
@@ -886,7 +874,7 @@ export class AutopilotController {
 
                   <div>
                     <div className="mb-4 flex items-center justify-between">
-                      <h3 className="text-[14px] font-semibold text-neutral-900">3 mức tự động</h3>
+                      <h3 className="text-[14px] font-semibold text-neutral-900">Mức vận hành Auto Scale</h3>
                     </div>
                     <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-3">
                       <button onClick={() => { setAutomationLevel("manual"); void saveAutomationConfig({ level: "manual", enabled: false }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "manual" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
@@ -899,7 +887,7 @@ export class AutopilotController {
                       </button>
                       <button onClick={() => { setAutomationLevel("auto"); setPerformanceEnabled(true); void saveAutomationConfig({ level: "auto", enabled: true }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "auto" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 3</div>
-                        <div className={`mt-1 text-[12px] ${automationLevel === "auto" ? "text-white/75" : "text-neutral-400"}`}>Rule tự động</div>
+                        <div className={`mt-1 text-[12px] ${automationLevel === "auto" ? "text-white/75" : "text-neutral-400"}`}>Rule tự động 24h</div>
                       </button>
                     </div>
                     <div className="mt-4 flex items-center gap-3">
@@ -1006,7 +994,7 @@ export class AutopilotController {
         </>
       )}
 
-      {autopilotTab === "automation" && (
+      {(
         <>
           <div className="grid gap-4 xl:grid-cols-2">
             <Panel>
@@ -1045,7 +1033,7 @@ export class AutopilotController {
                   </div>
                   <div className="rounded-[16px] border border-neutral-300 px-4 py-3">
                     <div className="text-[13px] font-medium text-neutral-800">Mức 3 · Auto</div>
-                    <div className="mt-1 text-[12px] text-neutral-500">Rule tự động có guardrail: scale nhẹ ad set tốt, pause ad set yếu.</div>
+                    <div className="mt-1 text-[12px] text-neutral-500">Rule tự động 24h có guardrail: scale nhẹ ad set tốt, pause ad set yếu.</div>
                   </div>
                 </div>
               </div>
