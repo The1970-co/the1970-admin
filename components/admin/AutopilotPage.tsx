@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-export type AutopilotAction = "scale15" | "scale25" | "cut15" | "pause";
 export type AutomationLevel = "manual" | "semi" | "auto";
 
 export type AdsMapping = {
@@ -55,6 +54,8 @@ export type LiveAdControlRow = {
   revenue: number;
   roas: number;
   budgetDaily: number;
+  budgetLevel?: "ADSET" | "CAMPAIGN" | null;
+  budgetEntityId?: string | null;
   canScale: boolean;
   scaleReasons?: string[];
   spend24h?: number;
@@ -67,6 +68,22 @@ export type LiveAdControlRow = {
   nextScaleAt?: string | null;
   productAttribution?: any;
   inventory?: any;
+};
+
+export type ScaleHistoryItem = {
+  id: string;
+  at: string | null;
+  metaAdId?: string | null;
+  metaAdSetId?: string | null;
+  metaCampaignId?: string | null;
+  budgetLevel: "ADSET" | "CAMPAIGN";
+  budgetEntityId?: string | null;
+  source: string;
+  percent: number;
+  oldBudget: number;
+  newBudget: number;
+  roas?: number | null;
+  spend?: number | null;
 };
 
 export type AutopilotPageProps = {
@@ -174,9 +191,21 @@ export default function AutopilotPage({
   const [inventoryStatus, setInventoryStatus] = useState<any>(null);
   const [backendBusy, setBackendBusy] = useState(false);
   const [liveAds, setLiveAds] = useState<LiveAdControlRow[]>([]);
+  const [scalePreviews, setScalePreviews] = useState<Record<string, {
+    oldBudget: number;
+    newBudget: number;
+    percent: number;
+    budgetLevel: "ADSET" | "CAMPAIGN" | null;
+    budgetEntityId: string | null;
+    dryRun: boolean;
+    at: string;
+  }>>({});
+  const [scaleHistory, setScaleHistory] = useState<ScaleHistoryItem[]>([]);
+  const [scaleCountByEntity, setScaleCountByEntity] = useState<Record<string, number>>({});
+  const [historyPopupAdId, setHistoryPopupAdId] = useState<string | null>(null);
   const [adsBusy, setAdsBusy] = useState(false);
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
-  const [selectedMappingId, setSelectedMappingId] = useState(mappings[0]?.id || "");
+  const selectedMappingId = mappings[0]?.id || "";
   const [executionOutput, setExecutionOutput] = useState("Chưa chạy execute nào.");
   const [decisionLogs, setDecisionLogs] = useState<DecisionLog[]>([]);
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
@@ -195,20 +224,7 @@ export default function AutopilotPage({
     return true;
   }), [liveAds, adFilter]);
 
-  const selectedHistory = useMemo(() => {
-    const target = selectedMapping || mappings.find((m) => m.status === "CONNECTED") || mappings[0];
-    if (!target) return null;
-    return {
-      sku: target.sku,
-      roas: target.roasToday,
-      spend: target.spendToday,
-      revenue: target.revenueToday,
-      budget: target.budgetDaily,
-      points: [54, 58, 63, 69, 74, 79, 86],
-    };
-  }, [mappings, selectedMapping]);
 
-  const endpointPreview = `${apiBaseUrl.replace(/\/$/, "")}/meta-ads/autopilot/performance/run`;
 
   const apiJson = async (path: string, init?: RequestInit, timeoutMs = 15000) => {
     const auth = typeof window !== "undefined" ? localStorage.getItem("access_token") || localStorage.getItem("token") || "" : "";
@@ -277,7 +293,9 @@ export default function AutopilotPage({
       roas24h,
       orderCount24h: Number(ad?.orderCount24h || ad?.productAttribution?.orderCount || 0) || 0,
       runHours: Number(ad?.runHours || 0) || 0,
-      budgetDaily: Number(ad?.budgetDaily ?? ad?.adSetDailyBudget ?? ad?.dailyBudget ?? ad?.daily_budget ?? 0) || 0,
+      budgetDaily: Number(ad?.budgetDaily ?? ad?.adSetDailyBudget ?? ad?.campaignDailyBudget ?? ad?.dailyBudget ?? ad?.daily_budget ?? 0) || 0,
+      budgetLevel: (ad?.budgetLevel || (Number(ad?.adSetDailyBudget || 0) > 0 ? "ADSET" : Number(ad?.campaignDailyBudget || 0) > 0 ? "CAMPAIGN" : null)) as "ADSET" | "CAMPAIGN" | null,
+      budgetEntityId: String(ad?.budgetEntityId || (Number(ad?.adSetDailyBudget || 0) > 0 ? (ad?.metaAdSetId || ad?.adSetId || "") : Number(ad?.campaignDailyBudget || 0) > 0 ? (ad?.metaCampaignId || ad?.campaignId || "") : "")) || null,
       canScale: Boolean(ad?.autoScaleEligible ?? ad?.canScale),
       autoScaleEligible: Boolean(ad?.autoScaleEligible ?? ad?.canScale),
       scaleReasons,
@@ -297,6 +315,40 @@ export default function AutopilotPage({
         reason: ad?.stockReason || null,
       } : null,
     };
+  };
+
+  const enrichRowsWithBudgets = async (rows: LiveAdControlRow[]) => {
+    if (!rows.length) return rows;
+    const metaAdSetIds = Array.from(new Set(rows.map((row) => String(row.adSetId || '')).filter(Boolean)));
+    const metaCampaignIds = Array.from(new Set(rows.map((row) => String(row.campaignId || '')).filter(Boolean)));
+    if (!metaAdSetIds.length && !metaCampaignIds.length) return rows;
+
+    try {
+      const snapshot = await apiJson('/meta-ads/autopilot/budgets', {
+        method: 'POST',
+        body: JSON.stringify({ metaAdSetIds, metaCampaignIds }),
+      }, 20000);
+      const adSetMap = new Map((snapshot?.adSets || []).map((item: any) => [String(item.metaAdSetId || ''), item]));
+      const campaignMap = new Map((snapshot?.campaigns || []).map((item: any) => [String(item.metaCampaignId || ''), item]));
+
+      return rows.map((row) => {
+        const adSet = adSetMap.get(String(row.adSetId || '')) as any;
+        const campaignId = String(row.campaignId || adSet?.metaCampaignId || '');
+        const campaign = campaignMap.get(campaignId) as any;
+        const adSetBudget = Number(adSet?.dailyBudget || 0);
+        const campaignBudget = Number(campaign?.dailyBudget || 0);
+        if (adSetBudget > 0) {
+          return { ...row, campaignId: campaignId || row.campaignId, budgetDaily: adSetBudget, budgetLevel: 'ADSET' as const, budgetEntityId: row.adSetId };
+        }
+        if (campaignBudget > 0) {
+          return { ...row, campaignId: campaignId || row.campaignId, budgetDaily: campaignBudget, budgetLevel: 'CAMPAIGN' as const, budgetEntityId: campaignId };
+        }
+        return row;
+      });
+    } catch (error) {
+      setExecutionOutput(`Không tải được ngân sách Meta: ${String(error)}`);
+      return rows;
+    }
   };
 
   const buildAlertsFromRows = (rows: LiveAdControlRow[]) => {
@@ -331,6 +383,87 @@ export default function AutopilotPage({
     setLiveAlerts(alerts.slice(0, 20));
   };
 
+  const loadScaleHistory = async () => {
+    try {
+      const data = await apiJson('/meta-ads/autopilot/scale-history?limit=2000', undefined, 12000);
+      setScaleHistory(Array.isArray(data?.items) ? data.items : []);
+      setScaleCountByEntity(data?.countByEntity && typeof data.countByEntity === 'object' ? data.countByEntity : {});
+    } catch (error) {
+      // History không được làm hỏng bảng Ads nếu endpoint tạm lỗi.
+      console.warn('Không tải được lịch sử scale', error);
+    }
+  };
+
+  const historyForRow = (row: LiveAdControlRow) => {
+    const entityId = String(row.budgetEntityId || (row.budgetLevel === 'CAMPAIGN' ? row.campaignId : row.adSetId) || '');
+    return scaleHistory.filter((item) => {
+      if (entityId && String(item.budgetEntityId || '') === entityId) return true;
+      if (row.adSetId && String(item.metaAdSetId || '') === String(row.adSetId)) return true;
+      if (row.campaignId && row.budgetLevel === 'CAMPAIGN' && String(item.metaCampaignId || '') === String(row.campaignId)) return true;
+      return false;
+    });
+  };
+
+  const scaleCountForRow = (row: LiveAdControlRow) => {
+    const entityId = String(row.budgetEntityId || (row.budgetLevel === 'CAMPAIGN' ? row.campaignId : row.adSetId) || '');
+    if (entityId && scaleCountByEntity[entityId] != null) return Number(scaleCountByEntity[entityId] || 0);
+    return historyForRow(row).length;
+  };
+
+  const enrichRowsWithInventory = async (rows: LiveAdControlRow[]) => {
+    if (!rows.length) return rows;
+    try {
+      const data = await apiJson("/meta-ads/autopilot/inventory/assess", {
+        method: "POST",
+        body: JSON.stringify({
+          ads: rows.map((row) => ({
+            metaAdId: row.metaAdId,
+            id: row.metaAdId,
+            name: row.adName,
+            adName: row.adName,
+            metaAdSetId: row.adSetId,
+            adSetId: row.adSetId,
+            adSetName: row.adSetName,
+            metaCampaignId: row.campaignId,
+            campaignId: row.campaignId,
+            campaignName: row.campaignName,
+            status: row.status,
+            effectiveStatus: row.effectiveStatus,
+          })),
+        }),
+      }, 20000);
+
+      const checks = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : Array.isArray(data?.items) ? data.items : [];
+      const byAd = new Map(checks.map((item: any) => [String(item?.metaAdId || item?.id || ""), item]));
+      return rows.map((row) => {
+        const check: any = byAd.get(String(row.metaAdId));
+        if (!check) return row;
+        const groups = Array.isArray(check?.groups) ? check.groups : [];
+        return {
+          ...row,
+          inventory: {
+            groups,
+            safe: Boolean(check?.safe),
+            level: check?.level || null,
+            reason: check?.reason || null,
+            matchScore: check?.matchScore ?? null,
+            ambiguous: Boolean(check?.ambiguous),
+          },
+          productAttribution: row.productAttribution || (groups[0] ? {
+            sku: groups[0]?.productCode || null,
+            familySku: groups[0]?.colorKey || groups[0]?.productCode || null,
+            productName: groups[0]?.productName || null,
+            confidence: check?.matchScore || 0,
+            allocationMode: "inventory_name_match",
+          } : null),
+        };
+      });
+    } catch (error) {
+      setRolling24hFallbackReason((prev) => `${prev ? `${prev} · ` : ""}Inventory match lỗi: ${String(error)}`);
+      return rows;
+    }
+  };
+
   const loadControlCenter = async () => {
     setAdsBusy(true);
     setRolling24hFallbackReason("");
@@ -347,6 +480,15 @@ export default function AutopilotPage({
       buildAlertsFromRows(baseRows);
       setExactRolling24h(false);
       if (baseRows.length) setAdsBusy(false);
+
+      // Budget phải hiện ngay trên list, không chờ người dùng bấm Scale.
+      if (baseRows.length) {
+        const withBudget = await enrichRowsWithBudgets(baseRows);
+        const withInventory = await enrichRowsWithInventory(withBudget);
+        baseRows = withInventory;
+        setLiveAds(withInventory);
+        buildAlertsFromRows(withInventory);
+      }
     } catch (error) {
       structureError = error;
     }
@@ -355,7 +497,9 @@ export default function AutopilotPage({
     try {
       const data = await apiJson("/meta-ads/autopilot/control-center", undefined, 30000);
       const rawRows = Array.isArray(data?.ads) ? data.ads : Array.isArray(data?.rows) ? data.rows : [];
-      const enrichedRows = rawRows.map(normalizeLiveAd);
+      const normalizedRows = rawRows.map(normalizeLiveAd);
+      const withBudget = normalizedRows.length ? await enrichRowsWithBudgets(normalizedRows) : normalizedRows;
+      const enrichedRows = withBudget.length ? await enrichRowsWithInventory(withBudget) : withBudget;
 
       if (enrichedRows.length) {
         setLiveAds(enrichedRows);
@@ -380,8 +524,10 @@ export default function AutopilotPage({
         const live = await apiJson("/meta-ads/live-insights?range=today&level=ad&limit=1000", undefined, 15000);
         const sourceRows = Array.isArray(live?.topAds) ? live.topAds : [];
         const fallbackRows = sourceRows.map(normalizeLiveAd);
-        setLiveAds(fallbackRows);
-        buildAlertsFromRows(fallbackRows);
+        const fallbackRowsWithBudget = await enrichRowsWithBudgets(fallbackRows);
+        const fallbackRowsWithInventory = await enrichRowsWithInventory(fallbackRowsWithBudget);
+        setLiveAds(fallbackRowsWithInventory);
+        buildAlertsFromRows(fallbackRowsWithInventory);
         setExactRolling24h(false);
         setRolling24hFallbackReason(`Fallback live-insights. Structure lỗi: ${String(structureError)} · Control Center lỗi: ${String(controlCenterError)}`);
       } catch (fallbackError) {
@@ -421,6 +567,7 @@ export default function AutopilotPage({
   useEffect(() => {
     void loadBackendStatus();
     void loadControlCenter();
+    void loadScaleHistory();
     void connectMeta();
   }, []);
 
@@ -500,52 +647,6 @@ export default function AutopilotPage({
     ]);
   };
 
-  const updateBudget = (id: string, percent: number, label: string) => {
-    const target = mappings.find((m) => m.id === id);
-    if (!target) return;
-    const nextBudget = Math.round(target.budgetDaily * (1 + percent / 100));
-
-    setMappings((prev) =>
-      prev.map((m) =>
-        m.id === id
-          ? {
-              ...m,
-              budgetDaily: nextBudget,
-              lastAction: percent > 0 ? "Đã scale" : "Đã giảm",
-            }
-          : m
-      )
-    );
-
-    logDecision(
-      target,
-      `${label} ${percent > 0 ? `+${percent}%` : `${percent}%`}`,
-      percent > 0 ? `ROAS ${target.roasToday.toFixed(2)}, tồn còn tốt, budget còn room` : `ROAS ${target.roasToday.toFixed(2)}, cần hạ ngân sách`,
-      "applied",
-      nextBudget,
-      target.budgetDaily
-    );
-
-    pushActivity(`Autopilot: ${label} cho ${target.sku}.`);
-  };
-
-  const suggestCut = (id: string) => {
-    const target = mappings.find((m) => m.id === id);
-    if (!target) return;
-    const nextBudget = Math.round(target.budgetDaily * 0.85);
-    logDecision(target, "Giảm -15%", `ROAS ${target.roasToday.toFixed(2)} dưới ngưỡng an toàn.`, "suggested", nextBudget, target.budgetDaily);
-    pushActivity(`Autopilot: gợi ý giảm budget cho ${target.sku}.`);
-  };
-
-  const pauseAdset = (id: string) => {
-    const target = mappings.find((m) => m.id === id);
-    if (!target) return;
-
-    setMappings((prev) => prev.map((m) => (m.id === id ? { ...m, lastAction: "Đã pause" } : m)));
-    logDecision(target, "Pause", `ROAS ${target.roasToday.toFixed(2)} dưới ngưỡng, cần dừng ad set.`, "applied", target.budgetDaily, target.budgetDaily);
-    pushActivity(`Autopilot: pause ad set cho ${target.sku}.`);
-  };
-
   const rollbackDecision = (logId: string) => {
     const item = decisionLogs.find((log) => log.id === logId);
     if (!item) return;
@@ -587,31 +688,6 @@ export default function AutopilotPage({
     }
   };
 
-  const executeAgainstApi = async (action: AutopilotAction) => {
-    if (!selectedMapping) return;
-    setBackendBusy(true);
-    try {
-      if (action === "scale15" || action === "scale25") {
-        const percent = action === "scale15" ? 15 : 25;
-        const data = await apiJson("/meta-ads/actions/scale-adset", {
-          method: "POST",
-          body: JSON.stringify({ metaAdSetId: selectedMapping.adsetId, percent, dryRun }),
-        });
-        setExecutionOutput(JSON.stringify(data, null, 2));
-        if (!dryRun && data?.newBudget) {
-          setMappings((prev) => prev.map((m) => m.id === selectedMapping.id ? { ...m, budgetDaily: Number(data.newBudget), lastAction: `Scale +${percent}%` } : m));
-        }
-        logDecision(selectedMapping, `Scale +${percent}%`, `Execute backend · ROAS ${selectedMapping.roasToday.toFixed(2)}`, dryRun ? "preview" : "applied", data?.newBudget, data?.oldBudget);
-      } else {
-        setExecutionOutput("Performance Autopilot mới chỉ tự SCALE. Giảm/pause theo ROAS chưa bật; pause hết hàng do Inventory Autopilot xử lý ở level ad con.");
-      }
-    } catch (error) {
-      setExecutionOutput(String(error));
-    } finally {
-      setBackendBusy(false);
-    }
-  };
-
   const setLiveAdStatus = async (row: LiveAdControlRow, nextStatus: "ACTIVE" | "PAUSED") => {
     setBackendBusy(true);
     try {
@@ -629,18 +705,39 @@ export default function AutopilotPage({
     }
   };
 
-  const scaleLiveAdSet = async (row: LiveAdControlRow) => {
+  const scaleLiveAdSet = async (row: LiveAdControlRow, percent: number) => {
     if (!row.adSetId) return;
+    const safePercent = Math.min(50, Math.max(1, Number(percent || 0)));
     setBackendBusy(true);
     try {
       const data = await apiJson("/meta-ads/actions/scale-adset", {
         method: "POST",
-        body: JSON.stringify({ metaAdSetId: row.adSetId, metaAdId: row.metaAdId, percent: scalePercent, dryRun }),
+        body: JSON.stringify({
+          metaAdSetId: row.adSetId,
+          metaAdId: row.metaAdId,
+          percent: safePercent,
+          dryRun,
+        }),
       });
       setExecutionOutput(JSON.stringify(data, null, 2));
-      pushActivity(`${dryRun ? "DRY RUN" : "LIVE"}: scale ${row.adSetName || row.adSetId} +${scalePercent}%.`);
-      await loadControlCenter();
-      await loadBackendStatus();
+
+      if (Number(data?.oldBudget || 0) > 0 && Number(data?.newBudget || 0) > 0) {
+        setScalePreviews((prev) => ({
+          ...prev,
+          [row.metaAdId]: {
+            oldBudget: Number(data.oldBudget),
+            newBudget: Number(data.newBudget),
+            percent: Number(data.percent || safePercent),
+            budgetLevel: (data?.budgetLevel || row.budgetLevel || null) as "ADSET" | "CAMPAIGN" | null,
+            budgetEntityId: String(data?.budgetEntityId || row.budgetEntityId || "") || null,
+            dryRun: Boolean(data?.dryRun),
+            at: new Date().toISOString(),
+          },
+        }));
+      }
+
+      pushActivity(`${dryRun ? "DRY RUN" : "LIVE"}: scale ${row.adSetName || row.adSetId} +${safePercent}%.`);
+      await Promise.all([loadControlCenter(), loadBackendStatus(), loadScaleHistory()]);
     } catch (error) {
       setExecutionOutput(String(error));
     } finally {
@@ -648,60 +745,25 @@ export default function AutopilotPage({
     }
   };
 
-  const productionCode = `export class MetaAdsService {
-  constructor(private readonly token: string, private readonly apiVersion = "v20.0") {}
-
-  async updateAdsetBudget(adsetId: string, budgetMinor: number) {
-    const url = new URL(\`https://graph.facebook.com/\${this.apiVersion}/\${adsetId}\`);
-    const body = new URLSearchParams({
-      access_token: this.token,
-      daily_budget: String(budgetMinor),
-    });
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  }
-
-  async pauseAdset(adsetId: string) {
-    const url = new URL(\`https://graph.facebook.com/\${this.apiVersion}/\${adsetId}\`);
-    const body = new URLSearchParams({
-      access_token: this.token,
-      status: "PAUSED",
-    });
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  }
-}`;
-
-  const autopilotApiCode = `import { Body, Controller, Post } from "@nestjs/common";
-
-class ExecuteDto {
-  token!: string;
-  action!: "scale15" | "scale25" | "cut15" | "pause";
-  adsetId!: string;
-  currentBudgetMinor!: number;
-  dryRun?: boolean;
-}
-
-@Controller("autopilot")
-export class AutopilotController {
-  @Post("execute")
-  async execute(@Body() dto: ExecuteDto) {
-    if (dto.dryRun) {
-      return { ok: true, mode: "dry_run", preview: dto };
+  const saveDryRunConfig = async (nextDryRun: boolean) => {
+    setDryRun(nextDryRun);
+    try {
+      await Promise.all([
+        apiJson("/meta-ads/autopilot/performance/config", {
+          method: "POST",
+          body: JSON.stringify({ dryRun: nextDryRun }),
+        }),
+        apiJson("/meta-ads/autopilot/inventory/config", {
+          method: "POST",
+          body: JSON.stringify({ enabled: inventoryEnabled, dryRun: nextDryRun }),
+        }),
+      ]);
+      pushActivity(`Autopilot DRY RUN: ${nextDryRun ? "BẬT" : "TẮT"}.`);
+      await loadBackendStatus();
+    } catch (error) {
+      setExecutionOutput(`Không đồng bộ được DRY RUN: ${String(error)}`);
     }
-    return executeAutopilotDecision(dto);
-  }
-}`;
+  };
 
   return (
     <div className="space-y-5">
@@ -726,7 +788,7 @@ export class AutopilotController {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-[14px] font-semibold text-neutral-900">Auto Scale theo rolling 24 giờ</h3>
-                  <p className="mt-1 text-[12px] text-neutral-500">Đủ 24h · ROAS 24h đủ cao · tồn tất cả size an toàn · chưa scale trong 24h → tăng ngân sách Ad Set.</p>
+                  <p className="mt-1 text-[12px] text-neutral-500">Đủ điều kiện ROAS · tồn size an toàn · chưa chạm cooldown → tăng đúng cấp Budget (Campaign hoặc Ad Set).</p>
                 </div>
                 <label className="flex items-center gap-2 text-[12px] text-neutral-600">
                   <input type="checkbox" checked={performanceEnabled} onChange={(e) => { const enabled = e.target.checked; setPerformanceEnabled(enabled); void saveAutomationConfig({ enabled }); }} />
@@ -762,7 +824,7 @@ export class AutopilotController {
               <div className="mt-2 text-[12px] text-neutral-500">Cảnh báo size &lt; {inventoryStatus?.warnThreshold ?? 10}. Size &lt; {inventoryStatus?.pauseThreshold ?? 5} sẽ pause đúng ad con của mã + màu.</div>
               <div className="mt-3 flex items-center gap-2">
                 <Badge tone={dryRun ? "amber" : "green"}>{dryRun ? "DRY RUN" : "LIVE"}</Badge>
-                <label className="flex items-center gap-2 text-[11px] text-neutral-500"><input type="checkbox" checked={dryRun} onChange={(e) => { setDryRun(e.target.checked); void saveAutomationConfig({ dryRun: e.target.checked }); }} /> Test trước khi chạy thật</label>
+                <label className="flex items-center gap-2 text-[11px] text-neutral-500"><input type="checkbox" checked={dryRun} onChange={(e) => void saveDryRunConfig(e.target.checked)} /> Test trước khi chạy thật</label>
               </div>
             </div>
           </div>
@@ -774,7 +836,7 @@ export class AutopilotController {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-[14px] font-semibold text-neutral-900">Ads đang chạy · Live Meta</h3>
-              <p className="mt-1 text-[12px] text-neutral-400">Scale ở cấp Ad Set · bật/tắt ở cấp Ad con · tồn kho theo đúng mã + màu.</p>
+              <p className="mt-1 text-[12px] text-neutral-400">Scale đúng cấp ngân sách Campaign/Ad Set · bật/tắt ở cấp Ad con · tồn kho theo đúng mã + màu.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {(["all", "active", "paused", "scale", "stock"] as const).map((item) => (
@@ -844,14 +906,46 @@ export class AutopilotController {
                       <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.spend24h ?? row.spend)}</td>
                       <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.revenue24h ?? row.revenue)}</td>
                       <td className="px-3 py-4 text-right"><span className={`text-[13px] font-semibold ${row.roas >= scaleRoas ? "text-emerald-600" : "text-neutral-800"}`}>{Number(row.roas || 0).toFixed(2)}</span></td>
-                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{row.budgetDaily ? compactMoney(row.budgetDaily) : "—"}</td>
+                      <td className="px-3 py-4 text-right">
+                        {(() => {
+                          const preview = scalePreviews[row.metaAdId];
+                          const visibleBudget = Number(row.budgetDaily || preview?.oldBudget || 0);
+                          const visibleLevel = row.budgetLevel || preview?.budgetLevel || null;
+                          return visibleBudget > 0 ? (
+                            <div>
+                              <div className="text-[12px] font-semibold text-neutral-800">{compactMoney(visibleBudget)}</div>
+                              <div className="mt-1 text-[9px] font-medium uppercase tracking-wide text-neutral-400">{visibleLevel === "CAMPAIGN" ? "Campaign" : visibleLevel === "ADSET" ? "Ad Set" : "Budget"}</div>
+                              {!row.budgetDaily && preview?.oldBudget ? <div className="mt-1 text-[9px] text-amber-600">Lấy từ lần kiểm tra gần nhất</div> : null}
+                            </div>
+                          ) : <span className="text-[12px] text-neutral-400">—</span>;
+                        })()}
+                      </td>
                       <td className="px-3 py-4">
                         {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : (row.autoScaleEligible ?? row.canScale) ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
                         {!row.canScale && row.scaleReasons?.length ? <div className="mt-2 max-w-[220px] text-[10px] leading-4 text-neutral-400">{row.scaleReasons.slice(0, 2).join(" · ")}</div> : null}
                       </td>
                       <td className="px-3 py-4">
-                        <div className="flex min-w-[160px] flex-col gap-2">
-                          <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => scaleLiveAdSet(row)}>Scale +{scalePercent}%</ActionButton>
+                        <div className="flex min-w-[190px] flex-col gap-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => scaleLiveAdSet(row, 20)}>+20%</ActionButton>
+                            <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => scaleLiveAdSet(row, 30)}>+30%</ActionButton>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            {scaleCountForRow(row) > 0 ? (
+                              <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold text-emerald-700" title={`${scaleCountForRow(row)} lần scale thật`}>✓ {scaleCountForRow(row)}</span>
+                            ) : <span className="text-[10px] text-neutral-300">Chưa scale</span>}
+                            <button type="button" onClick={() => setHistoryPopupAdId(row.metaAdId)} className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[10px] font-medium text-neutral-600 hover:bg-neutral-50">Lịch sử</button>
+                          </div>
+                          {scalePreviews[row.metaAdId] ? (() => {
+                            const preview = scalePreviews[row.metaAdId];
+                            return (
+                              <div className={`rounded-xl border px-3 py-2 text-[10px] leading-4 ${preview.dryRun ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                                <div className="font-semibold">{preview.dryRun ? "DRY RUN · Chưa đổi Meta" : "ĐÃ SCALE TRÊN META"}</div>
+                                <div className="mt-1">{compactMoney(preview.oldBudget)} → <span className="font-semibold">{compactMoney(preview.newBudget)}</span> (+{preview.percent}%)</div>
+                                <div className="mt-0.5 opacity-70">Cấp: {preview.budgetLevel === "CAMPAIGN" ? "Campaign" : preview.budgetLevel === "ADSET" ? "Ad Set" : "—"}</div>
+                              </div>
+                            );
+                          })() : null}
                           {status === "ACTIVE" ? <ActionButton variant="danger" disabled={backendBusy} onClick={() => setLiveAdStatus(row, "PAUSED")}>Pause Ad</ActionButton> : <ActionButton variant="secondary" disabled={backendBusy || status !== "PAUSED"} onClick={() => setLiveAdStatus(row, "ACTIVE")}>Bật lại Ad</ActionButton>}
                         </div>
                       </td>
@@ -866,6 +960,43 @@ export class AutopilotController {
           </div>
         </div>
       </Panel>
+
+      {historyPopupAdId ? (() => {
+        const row = liveAds.find((item) => item.metaAdId === historyPopupAdId);
+        if (!row) return null;
+        const items = historyForRow(row);
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 p-4" onClick={() => setHistoryPopupAdId(null)}>
+            <div className="max-h-[70vh] w-full max-w-[560px] overflow-hidden rounded-[22px] border border-neutral-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between border-b border-neutral-100 px-5 py-4">
+                <div>
+                  <div className="text-[13px] font-semibold text-neutral-900">Lịch sử scale · {row.adName}</div>
+                  <div className="mt-1 text-[11px] text-neutral-400">Đã scale thật {items.length} lần · {row.budgetLevel === 'CAMPAIGN' ? 'Campaign budget' : row.budgetLevel === 'ADSET' ? 'Ad Set budget' : 'Budget'}</div>
+                </div>
+                <button type="button" onClick={() => setHistoryPopupAdId(null)} className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-500">Đóng</button>
+              </div>
+              <div className="max-h-[56vh] overflow-y-auto p-4">
+                {items.length ? (
+                  <div className="space-y-2">
+                    {items.map((item, index) => (
+                      <div key={item.id || `${item.at}-${index}`} className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-[11px] font-semibold text-neutral-800">✓ Lần {items.length - index} · +{Number(item.percent || 0)}%</div>
+                          <div className="text-[10px] text-neutral-400">{item.at ? new Date(item.at).toLocaleString('vi-VN') : '—'}</div>
+                        </div>
+                        <div className="mt-2 text-[12px] text-neutral-700">{compactMoney(item.oldBudget)} → <span className="font-semibold text-neutral-900">{compactMoney(item.newBudget)}</span></div>
+                        <div className="mt-1 text-[10px] text-neutral-400">{item.budgetLevel === 'CAMPAIGN' ? 'Campaign' : 'Ad Set'} · {String(item.source || '').toLowerCase().includes('auto') ? 'Tự động' : 'Thủ công'}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-[12px] text-neutral-400">Chưa có lần scale LIVE nào được ghi nhận.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
 
       {(
         <>
@@ -898,44 +1029,22 @@ export class AutopilotController {
             <Panel>
               <div className="p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-neutral-900">History graph</h3>
-                  <Badge tone="amber">7 phiên gần nhất</Badge>
+                  <h3 className="text-[14px] font-semibold text-neutral-900">Scale gần đây</h3>
+                  <Badge tone="blue">Backend history</Badge>
                 </div>
-
-                {selectedHistory && (
-                  <>
-                    <div className="mb-3 flex items-center justify-between text-[12px] text-neutral-500">
-                      <span>{selectedHistory.sku}</span>
-                      <span>ROAS {selectedHistory.roas.toFixed(2)} · Budget {compactMoney(selectedHistory.budget)}</span>
+                <div className="space-y-2">
+                  {scaleHistory.slice(0, 6).map((item, index) => (
+                    <div key={item.id || `${item.at}-${index}`} className="rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[11px] font-semibold text-neutral-800">+{Number(item.percent || 0)}% · {item.budgetLevel === "CAMPAIGN" ? "Campaign" : "Ad Set"}</div>
+                        <div className="text-[10px] text-neutral-400">{item.at ? new Date(item.at).toLocaleString("vi-VN") : "—"}</div>
+                      </div>
+                      <div className="mt-1 text-[12px] text-neutral-700">{compactMoney(item.oldBudget)} → <span className="font-semibold text-neutral-900">{compactMoney(item.newBudget)}</span></div>
+                      <div className="mt-1 text-[10px] text-neutral-400">{String(item.source || "").toLowerCase().includes("auto") ? "Tự động" : "Thủ công"}</div>
                     </div>
-
-                    <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 p-3">
-                      <div className="flex h-[130px] items-end gap-2">
-                        {selectedHistory.points.map((point, index) => (
-                          <div key={index} className="flex-1">
-                            <div className="w-full rounded-t-[10px] bg-neutral-900" style={{ height: `${point}%` }} />
-                            <div className="mt-2 text-center text-[10px] text-neutral-400">D{index + 1}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-3 gap-3">
-                      <div className="rounded-[14px] border border-neutral-200 px-3 py-3 text-[12px]">
-                        <div className="text-neutral-400">Spend</div>
-                        <div className="mt-1 font-medium text-neutral-800">{compactMoney(selectedHistory.spend)}</div>
-                      </div>
-                      <div className="rounded-[14px] border border-neutral-200 px-3 py-3 text-[12px]">
-                        <div className="text-neutral-400">Revenue</div>
-                        <div className="mt-1 font-medium text-neutral-800">{compactMoney(selectedHistory.revenue)}</div>
-                      </div>
-                      <div className="rounded-[14px] border border-neutral-200 px-3 py-3 text-[12px]">
-                        <div className="text-neutral-400">Budget</div>
-                        <div className="mt-1 font-medium text-neutral-800">{compactMoney(selectedHistory.budget)}</div>
-                      </div>
-                    </div>
-                  </>
-                )}
+                  ))}
+                  {!scaleHistory.length ? <div className="rounded-[14px] border border-dashed border-neutral-200 px-4 py-8 text-center text-[12px] text-neutral-400">Chưa có lần scale LIVE nào được backend ghi nhận.</div> : null}
+                </div>
               </div>
             </Panel>
           </div>
@@ -988,7 +1097,7 @@ export class AutopilotController {
                       <div className="flex items-center gap-3">
                         <ActionButton variant="primary" onClick={connectMeta} disabled={backendBusy}>Kiểm tra Meta</ActionButton>
                         <label className="flex items-center gap-2 text-[12px] text-neutral-500">
-                          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
+                          <input type="checkbox" checked={dryRun} onChange={(e) => void saveDryRunConfig(e.target.checked)} />
                           Dry run
                         </label>
                       </div>
@@ -1002,15 +1111,15 @@ export class AutopilotController {
                     <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-3">
                       <button onClick={() => { setAutomationLevel("manual"); void saveAutomationConfig({ level: "manual", enabled: false }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "manual" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 1</div>
-                        <div className={`mt-1 text-[12px] ${automationLevel === "manual" ? "text-white/75" : "text-neutral-400"}`}>Chỉ gợi ý</div>
+                        <div className={`mt-1 text-[12px] ${automationLevel === "manual" ? "text-white/75" : "text-neutral-400"}`}>Manual · chỉ theo dõi/gợi ý, vẫn bấm tay được</div>
                       </button>
                       <button onClick={() => { setAutomationLevel("semi"); setPerformanceEnabled(true); void saveAutomationConfig({ level: "semi", enabled: true }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "semi" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 2</div>
-                        <div className={`mt-1 text-[12px] ${automationLevel === "semi" ? "text-white/75" : "text-neutral-400"}`}>Có nút bấm scale</div>
+                        <div className={`mt-1 text-[12px] ${automationLevel === "semi" ? "text-white/75" : "text-neutral-400"}`}>Semi · backend đề xuất, người dùng duyệt/bấm</div>
                       </button>
                       <button onClick={() => { setAutomationLevel("auto"); setPerformanceEnabled(true); void saveAutomationConfig({ level: "auto", enabled: true }); }} className={`rounded-[16px] border p-4 text-left ${automationLevel === "auto" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-800"}`}>
                         <div className="text-[14px] font-medium">Mức 3</div>
-                        <div className={`mt-1 text-[12px] ${automationLevel === "auto" ? "text-white/75" : "text-neutral-400"}`}>Rule tự động 24h</div>
+                        <div className={`mt-1 text-[12px] ${automationLevel === "auto" ? "text-white/75" : "text-neutral-400"}`}>Auto · rule tự scale theo cấu hình</div>
                       </button>
                     </div>
                     <div className="mt-4 flex items-center gap-3">
@@ -1023,157 +1132,6 @@ export class AutopilotController {
             </Panel>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[1.06fr_0.94fr]">
-            <Panel>
-              <div className="p-4">
-                <h3 className="text-[14px] font-semibold text-neutral-900">SKU ↔ Campaign / Ad Set Mapping</h3>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-left">
-                    <thead>
-                      <tr className="border-b border-neutral-200 text-[12px] text-neutral-400">
-                        <th className="pb-3 font-medium">SKU</th>
-                        <th className="pb-3 font-medium">Campaign</th>
-                        <th className="pb-3 font-medium">Ad set</th>
-                        <th className="pb-3 font-medium">ROAS hôm nay</th>
-                        <th className="pb-3 font-medium">Budget ngày</th>
-                        <th className="pb-3 font-medium">Trạng thái</th>
-                        <th className="pb-3 font-medium">Hành động</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {mappings.map((m) => (
-                        <tr key={m.id} className={`border-b border-neutral-100 align-top ${selectedMappingId === m.id ? "bg-neutral-50" : ""}`}>
-                          <td className="py-4">
-                            <button onClick={() => setSelectedMappingId(m.id)} className="text-left">
-                              <div className="text-[13px] font-medium text-neutral-800">{m.sku}</div>
-                              <div className="mt-1 text-[12px] text-neutral-400">{m.productName}</div>
-                            </button>
-                          </td>
-                          <td className="py-4 text-[12px] text-neutral-700">
-                            <div>{m.campaignName}</div>
-                            <div className="mt-1 text-neutral-400">{m.campaignId}</div>
-                          </td>
-                          <td className="py-4 text-[12px] text-neutral-700">
-                            <div>{m.adsetName}</div>
-                            <div className="mt-1 text-neutral-400">{m.adsetId}</div>
-                          </td>
-                          <td className="py-4 text-[13px] text-neutral-700">{m.roasToday.toFixed(2)}</td>
-                          <td className="py-4 text-[13px] text-neutral-700">{currency(m.budgetDaily)}</td>
-                          <td className="py-4">
-                            <Badge tone={toneForStatus(m.status) as any}>{m.status}</Badge>
-                            <div className="mt-2 text-[12px] text-neutral-400">{m.lastAction || "Không có"}</div>
-                          </td>
-                          <td className="py-4">
-                            <div className="flex flex-col gap-2">
-                              <ActionButton variant="soft" disabled={m.status !== "CONNECTED" || backendBusy} onClick={() => { setSelectedMappingId(m.id); setTimeout(() => void executeAgainstApi("scale25"), 0); }}>Scale +25%</ActionButton>
-                              <ActionButton variant="secondary" disabled>Không auto giảm</ActionButton>
-                              <ActionButton variant="danger" disabled>Pause do tồn kho</ActionButton>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </Panel>
-
-            <Panel>
-              <div className="p-4">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-neutral-900">Execute thật qua API</h3>
-                  <Badge tone="amber">{dryRun ? "DRY RUN" : "LIVE"}</Badge>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="rounded-[14px] border border-neutral-200 px-3 py-3 text-[12px]">
-                    <div className="text-neutral-400">Endpoint</div>
-                    <div className="mt-1 break-all font-mono text-[11px] text-neutral-700">{endpointPreview}</div>
-                  </div>
-
-                  <div className="rounded-[14px] border border-neutral-200 px-3 py-3 text-[12px]">
-                    <div className="text-neutral-400">Ad set đang chọn</div>
-                    <div className="mt-1 text-neutral-700">{selectedMapping?.adsetId || "—"}</div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <ActionButton variant="soft" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("scale15")}>Execute +15%</ActionButton>
-                    <ActionButton variant="secondary" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("scale25")}>Execute +25%</ActionButton>
-                    <ActionButton variant="secondary" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("cut15")}>Execute -15%</ActionButton>
-                    <ActionButton variant="danger" disabled={!selectedMapping || backendBusy} onClick={() => executeAgainstApi("pause")}>Pause thật</ActionButton>
-                  </div>
-
-                  <div className="rounded-[18px] bg-neutral-900 p-4 text-white">
-                    <div className="mb-3 flex items-center justify-between">
-                      <div className="text-[13px] font-medium">Execution output</div>
-                      <ActionButton variant="secondary" className="!rounded-full !px-3 !py-1 !text-[11px]" onClick={() => navigator.clipboard.writeText(executionOutput)}>Copy</ActionButton>
-                    </div>
-                    <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap text-[11px] text-neutral-200">{executionOutput}</pre>
-                  </div>
-                </div>
-              </div>
-            </Panel>
-          </div>
-        </>
-      )}
-
-      {(
-        <>
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Panel>
-              <div className="p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-neutral-900">Performance Auto Scale backend</h3>
-                  <ActionButton variant="secondary" className="!rounded-full !px-3 !py-1 !text-[11px]" onClick={() => navigator.clipboard.writeText(productionCode)}>Copy</ActionButton>
-                </div>
-                <pre className="max-h-[310px] overflow-auto rounded-[18px] bg-black p-4 text-[11px] leading-5 text-neutral-200">{productionCode}</pre>
-              </div>
-            </Panel>
-
-            <Panel>
-              <div className="p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[14px] font-semibold text-neutral-900">Inventory Auto Pause backend</h3>
-                  <ActionButton variant="secondary" className="!rounded-full !px-3 !py-1 !text-[11px]" onClick={() => navigator.clipboard.writeText(autopilotApiCode)}>Copy</ActionButton>
-                </div>
-                <pre className="max-h-[310px] overflow-auto rounded-[18px] bg-black p-4 text-[11px] leading-5 text-neutral-200">{autopilotApiCode}</pre>
-              </div>
-            </Panel>
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Panel>
-              <div className="p-4">
-                <h3 className="text-[14px] font-semibold text-neutral-900">3 mức vận hành</h3>
-                <div className="mt-4 space-y-3">
-                  <div className="rounded-[16px] border border-neutral-300 px-4 py-3">
-                    <div className="text-[13px] font-medium text-neutral-800">Mức 1 · Manual</div>
-                    <div className="mt-1 text-[12px] text-neutral-500">Chỉ hiển thị gợi ý. Người vận hành tự quyết định ngoài Ads Manager.</div>
-                  </div>
-                  <div className="rounded-[16px] border border-neutral-300 px-4 py-3">
-                    <div className="text-[13px] font-medium text-neutral-800">Mức 2 · Semi-auto</div>
-                    <div className="mt-1 text-[12px] text-neutral-500">Dashboard gợi ý, staff bấm scale / giảm / pause ngay trong hệ thống.</div>
-                  </div>
-                  <div className="rounded-[16px] border border-neutral-300 px-4 py-3">
-                    <div className="text-[13px] font-medium text-neutral-800">Mức 3 · Auto</div>
-                    <div className="mt-1 text-[12px] text-neutral-500">Rule tự động 24h có guardrail: scale nhẹ ad set tốt, pause ad set yếu.</div>
-                  </div>
-                </div>
-              </div>
-            </Panel>
-
-            <Panel>
-              <div className="p-4">
-                <h3 className="text-[14px] font-semibold text-neutral-900">Nguyên tắc an toàn</h3>
-                <div className="mt-4 space-y-3 text-[12px] text-neutral-500">
-                  <div>• Chỉ scale nếu SKU còn hàng và ROAS đủ tốt.</div>
-                  <div>• Chỉ tăng ngân sách nhẹ 15–25% mỗi lần.</div>
-                  <div>• Tự động pause khi ROAS quá thấp ở mức 3.</div>
-                  <div>• Mọi hành động đều ghi vào decision log và có rollback 1 click.</div>
-                </div>
-              </div>
-            </Panel>
-          </div>
         </>
       )}
     </div>
