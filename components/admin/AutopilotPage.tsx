@@ -228,7 +228,81 @@ export default function AutopilotPage({
   const loadControlCenter = async () => {
     setAdsBusy(true);
     try {
-      const data = await apiJson("/meta-ads/autopilot/control-center");
+      let data: any = null;
+
+      try {
+        data = await apiJson("/meta-ads/autopilot/control-center");
+      } catch (controlCenterError) {
+        // Fallback an toàn: vẫn phải hiện được Ads live ngay cả khi backend chưa deploy endpoint control-center.
+        try {
+          const rawAds = await apiJson("/meta-ads/autopilot/live-ads?limit=5000");
+          const structureRows = Array.isArray(rawAds) ? rawAds : Array.isArray(rawAds?.rows) ? rawAds.rows : [];
+          data = {
+            ok: true,
+            source: "meta_live_structure_fallback",
+            exactRolling24h: false,
+            fallbackReason: `Backend control-center chưa sẵn sàng: ${String(controlCenterError)}`,
+            rows: structureRows.map((ad: any) => ({
+              id: String(ad?.metaAdId || ad?.id || ""),
+              metaAdId: String(ad?.metaAdId || ad?.id || ""),
+              adName: ad?.name || "",
+              campaignName: ad?.campaignName || "",
+              campaignId: ad?.metaCampaignId || ad?.campaignId || "",
+              adSetName: ad?.adSetName || "",
+              adSetId: ad?.metaAdSetId || ad?.adSetId || "",
+              status: ad?.status || null,
+              effectiveStatus: ad?.effectiveStatus || ad?.status || null,
+              thumbnailUrl: ad?.thumbnailUrl || ad?.imageUrl || null,
+              spend: 0,
+              revenue: 0,
+              roas: 0,
+              spend24h: 0,
+              revenue24h: 0,
+              roas24h: 0,
+              budgetDaily: Number(ad?.budgetDaily || 0),
+              canScale: false,
+              autoScaleEligible: false,
+              scaleReasons: ["Đang tải metrics/attribution"],
+              productAttribution: null,
+              inventory: null,
+            })),
+          };
+        } catch {
+          const live = await apiJson("/meta-ads/live-insights?range=today&level=ad&limit=1000");
+          const sourceRows = Array.isArray(live?.topAds) ? live.topAds : [];
+          data = {
+            ok: true,
+            source: "meta_live_insights_fallback",
+            exactRolling24h: false,
+            fallbackReason: "Đang dùng live-insights fallback.",
+            rows: sourceRows.map((ad: any) => ({
+              id: String(ad?.metaAdId || ad?.id || ""),
+              metaAdId: String(ad?.metaAdId || ad?.id || ""),
+              adName: ad?.name || "",
+              campaignName: ad?.campaignName || "",
+              campaignId: ad?.metaCampaignId || "",
+              adSetName: ad?.adSetName || "",
+              adSetId: ad?.metaAdSetId || "",
+              status: ad?.status || null,
+              effectiveStatus: ad?.effectiveStatus || ad?.status || null,
+              thumbnailUrl: ad?.thumbnailUrl || ad?.imageUrl || null,
+              spend: Number(ad?.metrics?.spend || 0),
+              revenue: 0,
+              roas: 0,
+              spend24h: Number(ad?.metrics?.spend || 0),
+              revenue24h: 0,
+              roas24h: 0,
+              budgetDaily: 0,
+              canScale: false,
+              autoScaleEligible: false,
+              scaleReasons: ["Chưa ghép attribution/tồn kho"],
+              productAttribution: null,
+              inventory: null,
+            })),
+          };
+        }
+      }
+
       const rows = Array.isArray(data?.rows) ? data.rows : [];
       setLiveAds(rows);
       setExactRolling24h(data?.exactRolling24h !== false);
