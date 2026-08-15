@@ -103,6 +103,9 @@ export default function MobileAutopilotPage() {
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
   const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
   const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
+  const [mappingOptions, setMappingOptions] = useState<AnyRow[]>([]);
+  const [manualProductByPost, setManualProductByPost] = useState<Record<string, string>>({});
+  const [manualColorByPost, setManualColorByPost] = useState<Record<string, string>>({});
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -259,6 +262,7 @@ export default function MobileAutopilotPage() {
       const launchResults = await Promise.allSettled([
         apiJson("/meta-ads/autopilot/launch/status"),
         apiJson("/meta-ads/autopilot/launch/posts?limit=100"),
+        apiJson("/meta-ads/autopilot/inventory/mapping-options?limit=1500"),
       ]);
 
       if (launchResults[0].status === "fulfilled") {
@@ -289,6 +293,11 @@ export default function MobileAutopilotPage() {
         setLaunchPosts(Array.isArray(posts) ? posts : posts?.items || posts?.posts || []);
       } else {
         setLaunchPosts([]);
+      }
+
+      if (launchResults[2].status === "fulfilled") {
+        const options: any = launchResults[2].value;
+        setMappingOptions(Array.isArray(options) ? options : options?.items || []);
       }
 
       const coreFailed = core.slice(0, 4).filter((x) => x.status === "rejected");
@@ -452,6 +461,33 @@ export default function MobileAutopilotPage() {
       setPostFilter("no_ad");
     } catch (e: any) { setError(e?.message || "Không quét được bài đã đăng"); }
     finally { setBusy(false); }
+  }
+
+  async function savePostMapping(post: AnyRow) {
+    const postId = String(post.postId || post.id || "");
+    const currentAssessment = post.assessment || {};
+    const productCode = String(manualProductByPost[postId] ?? currentAssessment.productCode ?? "").trim().toUpperCase();
+    const color = String(manualColorByPost[postId] ?? currentAssessment.color ?? "").trim();
+
+    if (!productCode) {
+      setError("Chọn mã sản phẩm trước.");
+      return;
+    }
+
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const r = await apiJson("/meta-ads/autopilot/launch/map", {
+        method: "POST",
+        body: JSON.stringify({ postId, productCode, color: color || undefined }),
+      });
+      if (r?.ok === false) throw new Error(r?.error || r?.assessment?.reason || "Mapping chưa chính xác");
+      setMessage(`Đã map ${r?.assessment?.productCode || productCode}${r?.assessment?.color ? ` · ${r.assessment.color}` : ""} với tồn kho.`);
+      await loadAll(false);
+    } catch (e: any) {
+      setError(e?.message || "Không lưu được mapping");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function runLaunch() {
@@ -632,10 +668,71 @@ export default function MobileAutopilotPage() {
               {image ? <div className="aspect-[16/9] w-full overflow-hidden bg-neutral-100"><img src={image} alt="" className="h-full w-full object-cover" /></div> : null}
               <div className="p-4">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="line-clamp-3 text-sm font-black leading-5">{post.message || post.postId}</div><div className="mt-1 text-[10px] text-neutral-400">{post.createdTime ? new Date(post.createdTime).toLocaleString("vi-VN") : "—"}</div></div><div className="flex flex-col items-end gap-1"><Badge value={state}>{state}</Badge><span className={`text-[9px] font-black ${post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "text-emerald-700" : "text-amber-700"}`}>{post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "ĐÃ CÓ ADS" : "CHƯA CHẠY ADS"}</span></div></div>
-              <div className="mt-3 rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Mapping</div><div className="mt-1 text-sm font-black">{a.productCode ? `${a.productCode} · ${a.color || "Chưa màu"}` : "Chưa xác định sản phẩm"}</div><div className="mt-1 text-xs text-neutral-500">{a.productCode ? `Tổng tồn ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}` : a.reason || "Hashtag mã SP hoặc xác nhận mapping trước khi chạy."}</div></div>
+              <div className="mt-3 rounded-2xl bg-neutral-50 p-3">
+                <div className="text-[10px] font-black uppercase text-neutral-400">Mapping</div>
+                <div className="mt-1 text-sm font-black">{a.productCode ? `${a.productCode} · ${a.color || "Chưa màu"}` : "Chưa xác định sản phẩm"}</div>
+                <div className="mt-1 text-xs text-neutral-500">{a.productCode ? `Tổng tồn ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}` : a.reason || "Hashtag mã SP hoặc xác nhận mapping trước khi chạy."}</div>
+
+                <div className="mt-3 border-t border-neutral-200 pt-3">
+                  <div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Xác nhận / sửa thủ công</div>
+                  {(() => {
+                    const postId = String(post.postId || post.id || "");
+                    const selectedCode = String(manualProductByPost[postId] ?? a.productCode ?? "").toUpperCase();
+                    const selectedProduct = mappingOptions.find((x) => String(x.productCode || "").toUpperCase() === selectedCode);
+                    const colors = Array.isArray(selectedProduct?.colors) ? selectedProduct.colors : [];
+                    return <div className="mt-2 space-y-2">
+                      <select
+                        className="h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none"
+                        value={selectedCode}
+                        onChange={(e) => {
+                          const code = e.target.value.toUpperCase();
+                          setManualProductByPost((prev) => ({ ...prev, [postId]: code }));
+                          setManualColorByPost((prev) => ({ ...prev, [postId]: "" }));
+                        }}
+                      >
+                        <option value="">Chọn mã sản phẩm...</option>
+                        {mappingOptions.map((x) => <option key={String(x.productCode)} value={String(x.productCode)}>{x.productCode} · {x.productName}</option>)}
+                      </select>
+
+                      <select
+                        className="h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none disabled:bg-neutral-100 disabled:text-neutral-400"
+                        value={manualColorByPost[postId] ?? a.color ?? ""}
+                        disabled={!selectedCode}
+                        onChange={(e) => setManualColorByPost((prev) => ({ ...prev, [postId]: e.target.value }))}
+                      >
+                        <option value="">{colors.length > 1 ? "Chọn màu..." : colors.length === 1 ? colors[0]?.color : "Chưa có màu"}</option>
+                        {colors.map((c: AnyRow) => <option key={String(c.color)} value={String(c.color)}>{c.color} · tồn {c.totalQty}</option>)}
+                      </select>
+
+                      <button
+                        disabled={busy || !selectedCode || (colors.length > 1 && !(manualColorByPost[postId] ?? a.color))}
+                        onClick={() => void savePostMapping(post)}
+                        className="h-10 w-full rounded-xl border border-neutral-950 bg-white text-xs font-black text-neutral-950 disabled:border-neutral-200 disabled:text-neutral-300"
+                      >
+                        Lưu mapping với kho
+                      </button>
+                    </div>;
+                  })()}
+                </div>
+              </div>
               {post.metaAdId ? <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-700"><BadgeCheck className="h-4 w-4" /> Ad: {post.metaAdId}</div> : null}
+              {state === "UNMAPPED" ? <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold leading-5 text-amber-800">Bài chưa map mã + màu. Bấm chạy thủ công vẫn tạo Ads, nhưng bài này chưa được Auto Pause theo tồn kho cho tới khi map được sản phẩm.</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
-                {state === "CREATED_PAUSED" && post.metaAdId ? <button disabled={busy} onClick={() => void setAdStatus({ metaAdId: post.metaAdId }, "ACTIVE")} className="h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white">Duyệt & bật Ad</button> : <button disabled={busy || !["READY","WAITING"].includes(state)} onClick={() => void apiJson("/meta-ads/autopilot/launch/run", { method: "POST", body: JSON.stringify({ postId: post.postId, force: true, dryRun }) }).then(() => loadAll(false)).catch((e) => setError(e.message))} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">{dryRun ? "Preview" : "Chạy bài này"}</button>}
+                {state === "CREATED_PAUSED" && post.metaAdId ? <button disabled={busy} onClick={() => void setAdStatus({ metaAdId: post.metaAdId }, "ACTIVE")} className="h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white">Duyệt & bật Ad</button> : <button
+                  disabled={busy || !["READY","WAITING","UNMAPPED"].includes(state)}
+                  onClick={() => void apiJson("/meta-ads/autopilot/launch/run", {
+                    method: "POST",
+                    body: JSON.stringify({
+                      postId: post.postId,
+                      force: true,
+                      manualOverride: state === "UNMAPPED" || Boolean(manualProductByPost[String(post.postId || post.id || "")]),
+                      manualProductCode: manualProductByPost[String(post.postId || post.id || "")] || a.productCode || undefined,
+                      manualColor: manualColorByPost[String(post.postId || post.id || "")] || a.color || undefined,
+                      dryRun,
+                    }),
+                  }).then(() => loadAll(false)).catch((e) => setError(e.message))}
+                  className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"
+                >{dryRun ? "Preview" : state === "UNMAPPED" ? "Chạy dù chưa map" : "Chạy bài này"}</button>}
                 <button disabled={busy} onClick={() => void skipPost(String(post.postId))} className="h-11 rounded-2xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Bỏ qua</button>
               </div>
               </div>
