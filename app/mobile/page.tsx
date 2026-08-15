@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { BarChart3, Boxes, ClipboardCheck, ShoppingBag, WalletCards } from "lucide-react";
+import { BarChart3, Bot, Boxes, ClipboardCheck, ShoppingBag, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -191,6 +191,12 @@ export default function MobileEntryPage() {
               title="Kiểm kho"
               description="Quét mã vạch, nhập số lượng."
               icon={<ClipboardCheck className="h-7 w-7" />}
+            />
+            <SmallCard
+              href="/mobile/autopilot"
+              title="Autopilot"
+              description="Ads, scale, tồn kho, bài mới."
+              icon={<Bot className="h-7 w-7" />}
             />
           </div>
         </div>

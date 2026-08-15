@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Rocket,
   Save,
+  Search,
   Settings2,
   ShieldAlert,
   SlidersHorizontal,
@@ -144,6 +145,9 @@ export default function MobileAutopilotPage() {
   const [launchMode, setLaunchMode] = useState<"EXISTING_ADSET" | "CLONE_ADSET" | "NEW_CAMPAIGN">("NEW_CAMPAIGN");
   const [targetAdSetId, setTargetAdSetId] = useState("");
   const [templateAdSetId, setTemplateAdSetId] = useState("");
+  const [templateAdSets, setTemplateAdSets] = useState<AnyRow[]>([]);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [launchDailyBudget, setLaunchDailyBudget] = useState(1000000);
   const [requireInventoryMatch, setRequireInventoryMatch] = useState(true);
   const [blockCriticalStock, setBlockCriticalStock] = useState(true);
@@ -353,12 +357,43 @@ export default function MobileAutopilotPage() {
 
   const adSetOptions = useMemo(() => {
     const m = new Map<string, AnyRow>();
+
+    templateAdSets.forEach((x) => {
+      const id = String(x.id || x.metaAdSetId || x.adSetId || "");
+      if (id && !m.has(id)) m.set(id, {
+        id,
+        name: x.name || x.adSetName || id,
+        campaignName: x.campaignName || "",
+        effectiveStatus: x.effectiveStatus || x.status || "",
+        updatedTime: x.updatedTime || null,
+      });
+    });
+
     liveAds.forEach((x) => {
       const id = String(x.metaAdSetId || x.adSetId || "");
-      if (id && !m.has(id)) m.set(id, { id, name: x.adSetName || id, campaignName: x.campaignName || "" });
+      if (id && !m.has(id)) m.set(id, {
+        id,
+        name: x.adSetName || id,
+        campaignName: x.campaignName || "",
+        effectiveStatus: x.adSetEffectiveStatus || x.effectiveStatus || "",
+      });
     });
+
     return Array.from(m.values());
-  }, [liveAds]);
+  }, [liveAds, templateAdSets]);
+
+  async function searchTemplateAdSets(q = templateSearch) {
+    setTemplateLoading(true);
+    setError("");
+    try {
+      const r = await apiJson(`/meta-ads/autopilot/launch/adset-templates?q=${encodeURIComponent(q.trim())}&limit=120`);
+      setTemplateAdSets(Array.isArray(r?.items) ? r.items : []);
+    } catch (e: any) {
+      setError(e?.message || "Không tìm được Ad Set mẫu");
+    } finally {
+      setTemplateLoading(false);
+    }
+  }
 
   const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" && Boolean(String(x.thumbnailUrl || x.thumbnail_url || "").trim()));
   const criticalAds = liveAds.filter((x) => String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase().includes("CRITICAL"));
@@ -1050,11 +1085,51 @@ export default function MobileAutopilotPage() {
                   <div>• Tên: tên sản phẩm + ngày tạo.</div>
                 </div>
               </div>
-              <Field label="Ad Set mẫu (chỉ lấy tệp khách hàng/targeting)">
-                <select className={inputClass} value={templateAdSetId} onChange={e => setTemplateAdSetId(e.target.value)}>
-                  <option value="">Chọn Ad Set mẫu...</option>
-                  {adSetOptions.map(x => <option key={x.id} value={x.id}>{x.name} · {x.campaignName}</option>)}
-                </select>
+              <Field label="Ad Set mẫu (lấy targeting / messaging)">
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                      <input
+                        className={`${inputClass} pl-9`}
+                        value={templateSearch}
+                        onChange={e => setTemplateSearch(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") void searchTemplateAdSets(); }}
+                        placeholder="Tìm tên Ad Set / Campaign..."
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={templateLoading}
+                      onClick={() => void searchTemplateAdSets()}
+                      className="min-w-[74px] rounded-2xl bg-neutral-950 px-3 text-xs font-black text-white disabled:opacity-40"
+                    >
+                      {templateLoading ? "Đang tìm" : "Tìm"}
+                    </button>
+                  </div>
+
+                  <select
+                    className={inputClass}
+                    value={templateAdSetId}
+                    onFocus={() => { if (!templateAdSets.length) void searchTemplateAdSets(""); }}
+                    onChange={e => setTemplateAdSetId(e.target.value)}
+                  >
+                    <option value="">Chọn Ad Set mẫu...</option>
+                    {adSetOptions.map(x => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}{x.campaignName ? ` · ${x.campaignName}` : ""}{x.effectiveStatus ? ` · ${x.effectiveStatus}` : ""}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="text-[10px] leading-4 text-neutral-400">
+                    {templateLoading
+                      ? "Đang tải Ad Set từ Meta..."
+                      : templateAdSets.length
+                        ? `Đã tải ${templateAdSets.length} Ad Set gần nhất. Gõ tên hoặc mã để lọc nhanh.`
+                        : "Bấm vào danh sách hoặc Tìm để tải thêm Ad Set từ Meta; không còn giới hạn ở Ads đang chạy."}
+                  </div>
+                </div>
               </Field>
               <Field label="Ngân sách Campaign mới / ngày">
                 <input className={inputClass} type="number" value={launchDailyBudget} onChange={e => setLaunchDailyBudget(num(e.target.value))} />

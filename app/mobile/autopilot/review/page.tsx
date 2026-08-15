@@ -299,7 +299,7 @@ export default function MobileAutopilotReviewPage() {
           <Line label="Tên Campaign / Ad Set / Ad" value={l.adName} />
           <Line label="Mục tiêu" value="Lượt tương tác → Tin nhắn" />
           <Line label="Mục tiêu hiệu quả" value="Tối đa hóa số cuộc trò chuyện qua tin nhắn" />
-          <Line label="Chiến lược giá thầu" value="Mức cao nhất · Meta tự quyết định giá thầu" />
+          <Line label="Chiến lược giá thầu" value="Mặc định Meta · Mức cao nhất" />
           <Line label="Mục tiêu chi phí / kết quả" value="Không đặt · Meta tự quyết" />
           <Line label="Ngân sách" value={`${money(l.dailyBudget)} / ngày · Campaign`} />
           <Line label="Lịch chạy" value="Bắt đầu khi xác nhận · chạy liên tục" />
@@ -441,8 +441,8 @@ export default function MobileAutopilotReviewPage() {
                 <div>✓ Có mã + màu tồn kho.</div>
                 <div>✓ Có Ad Set mẫu.</div>
                 <div>✓ Budget đặt ở Campaign.</div>
-                <div>✓ Giá thầu LOWEST_COST_WITHOUT_CAP.</div>
-                <div>✓ Không gửi bid_amount / cost target.</div>
+                <div>✓ Giá thầu để mặc định Meta (không ép strategy nếu mẫu raw không có).</div>
+                <div>✓ Không gửi bid_amount / bid_constraints / cost target.</div>
                 <div>✓ Creative dùng đúng bài Page.</div>
               </div>
             </div>
