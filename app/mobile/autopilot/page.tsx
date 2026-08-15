@@ -30,6 +30,33 @@ type TabKey = "ads" | "posts" | "settings";
 type AnyRow = Record<string, any>;
 
 const money = (v: any) => `${Math.round(Number(v || 0)).toLocaleString("vi-VN")}đ`;
+
+function postImage(post: AnyRow) {
+  const direct = String(post?.fullPicture || post?.full_picture || post?.imageUrl || post?.image_url || "").trim();
+  if (direct) return direct;
+
+  const attachments =
+    post?.attachments?.data ||
+    post?.attachments ||
+    post?.raw?.attachments?.data ||
+    post?.rawPost?.attachments?.data ||
+    [];
+
+  const first = Array.isArray(attachments) ? attachments[0] : null;
+  const media =
+    first?.media?.image?.src ||
+    first?.media?.source ||
+    first?.media?.src ||
+    first?.url ||
+    "";
+
+  if (media) return String(media);
+
+  const subs = first?.subattachments?.data || [];
+  const sub = Array.isArray(subs) ? subs[0] : null;
+  return String(sub?.media?.image?.src || sub?.media?.source || sub?.url || "").trim();
+}
+
 const num = (v: any) => Number(v || 0) || 0;
 const pct = (v: any) => Number(v || 0).toFixed(2);
 
@@ -600,13 +627,17 @@ export default function MobileAutopilotPage() {
           {visiblePosts.map((post) => {
             const state = String(post.state || "WAITING").toUpperCase();
             const a = post.assessment || {};
-            return <article key={String(post.postId)} className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
+            const image = postImage(post);
+            return <article key={String(post.postId)} className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
+              {image ? <div className="aspect-[16/9] w-full overflow-hidden bg-neutral-100"><img src={image} alt="" className="h-full w-full object-cover" /></div> : null}
+              <div className="p-4">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="line-clamp-3 text-sm font-black leading-5">{post.message || post.postId}</div><div className="mt-1 text-[10px] text-neutral-400">{post.createdTime ? new Date(post.createdTime).toLocaleString("vi-VN") : "—"}</div></div><div className="flex flex-col items-end gap-1"><Badge value={state}>{state}</Badge><span className={`text-[9px] font-black ${post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "text-emerald-700" : "text-amber-700"}`}>{post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "ĐÃ CÓ ADS" : "CHƯA CHẠY ADS"}</span></div></div>
               <div className="mt-3 rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Mapping</div><div className="mt-1 text-sm font-black">{a.productCode ? `${a.productCode} · ${a.color || "Chưa màu"}` : "Chưa xác định sản phẩm"}</div><div className="mt-1 text-xs text-neutral-500">{a.productCode ? `Tổng tồn ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}` : a.reason || "Hashtag mã SP hoặc xác nhận mapping trước khi chạy."}</div></div>
               {post.metaAdId ? <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-700"><BadgeCheck className="h-4 w-4" /> Ad: {post.metaAdId}</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {state === "CREATED_PAUSED" && post.metaAdId ? <button disabled={busy} onClick={() => void setAdStatus({ metaAdId: post.metaAdId }, "ACTIVE")} className="h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white">Duyệt & bật Ad</button> : <button disabled={busy || !["READY","WAITING"].includes(state)} onClick={() => void apiJson("/meta-ads/autopilot/launch/run", { method: "POST", body: JSON.stringify({ postId: post.postId, force: true, dryRun }) }).then(() => loadAll(false)).catch((e) => setError(e.message))} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">{dryRun ? "Preview" : "Chạy bài này"}</button>}
                 <button disabled={busy} onClick={() => void skipPost(String(post.postId))} className="h-11 rounded-2xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Bỏ qua</button>
+              </div>
               </div>
             </article>;
           })}
