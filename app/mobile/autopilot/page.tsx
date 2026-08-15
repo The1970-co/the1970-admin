@@ -118,6 +118,10 @@ export default function MobileAutopilotPage() {
   const [assessments, setAssessments] = useState<Record<string, AnyRow>>({});
   const [budgets, setBudgets] = useState<{ adSets: AnyRow[]; campaigns: AnyRow[] }>({ adSets: [], campaigns: [] });
   const [scaleHistory, setScaleHistory] = useState<AnyRow[]>([]);
+  const [insightRangeByAd, setInsightRangeByAd] = useState<Record<string, "today" | "yesterday" | "7d">>({});
+  const [insightsByRange, setInsightsByRange] = useState<Record<string, Record<string, AnyRow>>>({});
+  const [insightLoadingKey, setInsightLoadingKey] = useState("");
+
 
   const [level, setLevel] = useState<AutomationLevel>("manual");
   const [dryRun, setDryRun] = useState(true);
@@ -143,6 +147,35 @@ export default function MobileAutopilotPage() {
   const [requireInventoryMatch, setRequireInventoryMatch] = useState(true);
   const [blockCriticalStock, setBlockCriticalStock] = useState(true);
   const [autoActivate, setAutoActivate] = useState(true);
+
+  async function ensureAdInsights(range: "today" | "yesterday" | "7d") {
+    if (insightsByRange[range]) return;
+    const key = `range:${range}`;
+    setInsightLoadingKey(key);
+    try {
+      const payload = await apiJson(`/meta-ads/live-insights?range=${range}&level=ad&limit=1000`);
+      const rows = Array.isArray(payload?.topAds) ? payload.topAds : Array.isArray(payload?.items) ? payload.items : Array.isArray(payload?.rows) ? payload.rows : [];
+      const map: Record<string, AnyRow> = {};
+      for (const row of rows) {
+        const id = String(row?.metaAdId || row?.adId || row?.id || "").trim();
+        if (id) map[id] = row;
+      }
+      setInsightsByRange((prev) => ({ ...prev, [range]: map }));
+    } catch (e: any) {
+      setError(e?.message || "Không tải được kết quả Ads");
+    } finally {
+      setInsightLoadingKey("");
+    }
+  }
+
+  function insightForAd(adId: string) {
+    const range = insightRangeByAd[adId] || "today";
+    return {
+      range,
+      row: insightsByRange[range]?.[adId] || null,
+      loading: insightLoadingKey === `range:${range}`,
+    };
+  }
 
   async function loadAll(showSpinner = true) {
     if (showSpinner) setLoading(true);
@@ -493,6 +526,59 @@ export default function MobileAutopilotPage() {
     }
   }
 
+  function manualSelectionForPost(post: AnyRow) {
+    const postId = String(post.postId || post.id || "");
+    const assessment = post.assessment || {};
+    const productCode = String(manualProductByPost[postId] ?? assessment.productCode ?? "").trim().toUpperCase();
+    const selectedProduct = mappingOptions.find((x) => String(x.productCode || "").trim().toUpperCase() === productCode);
+    const colors = Array.isArray(selectedProduct?.colors) ? selectedProduct.colors : [];
+    const color = String(manualColorByPost[postId] ?? assessment.color ?? "").trim();
+
+    const valid =
+      Boolean(productCode) &&
+      Boolean(selectedProduct) &&
+      (colors.length <= 1 || Boolean(color));
+
+    return { postId, productCode, color, selectedProduct, colors, valid };
+  }
+
+  async function preparePostRun(post: AnyRow) {
+    const selected = manualSelectionForPost(post);
+    const state = String(post?.state || "WAITING").toUpperCase();
+
+    if (state === "UNMAPPED" || state === "WAITING_MAPPED" || selected.productCode) {
+      if (!selected.valid) {
+        setError(selected.productCode ? "Chọn đúng màu sản phẩm trước." : "Chọn mã sản phẩm trước.");
+        return;
+      }
+
+      setBusy(true); setError(""); setMessage("");
+      try {
+        // Chỉ lưu mapping trước. Endpoint này không được tạo Ads.
+        const r = await apiJson("/meta-ads/autopilot/launch/map", {
+          method: "POST",
+          body: JSON.stringify({
+            postId: selected.postId,
+            productCode: selected.productCode,
+            color: selected.color || undefined,
+          }),
+        });
+        if (r?.ok === false) throw new Error(r?.error || r?.assessment?.reason || "Mapping chưa chính xác");
+
+        // Không reload ở đây để tránh UI quay lại UNMAPPED trước khi người dùng xác nhận.
+        setMessage(`Đã chốt mapping ${r?.assessment?.productCode || selected.productCode}${r?.assessment?.color ? ` · ${r.assessment.color}` : ""}. Chưa chạy Ads.`);
+        setConfirmRunPostId(selected.postId);
+      } catch (e: any) {
+        setError(e?.message || "Không lưu được mapping");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    setConfirmRunPostId(selected.postId);
+  }
+
   async function runLaunch() {
     setBusy(true); setError("");
     try {
@@ -625,7 +711,11 @@ export default function MobileAutopilotPage() {
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Tồn màu</div><div className="mt-1 text-xs font-black">{stock?.totalQty ?? "—"}</div><div className="text-[9px] text-neutral-400">min size {stock?.minQty ?? "—"}</div></div>
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || row.metaAdSetId || row.adSetId || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || row.metaCampaignId || row.campaignId || "—"}</div></div>
               </div>
-              <button onClick={() => setExpandedId(expanded ? "" : id)} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+              <button onClick={() => {
+                if (expanded) { setExpandedId(""); return; }
+                setExpandedId(id);
+                void ensureAdInsights(insightRangeByAd[id] || "today");
+              }} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
               {expanded ? <div className="space-y-3 border-t border-neutral-100 p-4">
                 <div><div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">Tồn từng size</div><div className="flex flex-wrap gap-2">{Array.isArray(stock?.sizes) && stock.sizes.length ? stock.sizes.map((s: AnyRow) => <span key={String(s.size)} className={`rounded-xl border px-2.5 py-1.5 text-xs font-black ${num(s.qty) < pauseThreshold ? "border-rose-200 bg-rose-50 text-rose-700" : num(s.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-neutral-50"}`}>{s.size}: {s.qty}</span>) : <span className="text-xs text-neutral-400">Chưa có dữ liệu tồn.</span>}</div></div>
                 <div className="rounded-2xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">{stock?.reason || "Chưa có đánh giá tồn kho."}</div>
@@ -634,6 +724,45 @@ export default function MobileAutopilotPage() {
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT nội bộ</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
                 </div>
+                {(() => {
+                  const result = insightForAd(id);
+                  const m = result.row?.metrics || {};
+                  return <div className="rounded-2xl border border-neutral-200 bg-white p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-black">Kết quả sau khi chạy</div>
+                        <div className="text-[9px] text-neutral-400">Meta Insights</div>
+                      </div>
+                      <div className="flex rounded-xl bg-neutral-100 p-1">
+                        {(["today","yesterday","7d"] as const).map((range) => <button
+                          key={range}
+                          onClick={() => {
+                            setInsightRangeByAd((prev) => ({ ...prev, [id]: range }));
+                            void ensureAdInsights(range);
+                          }}
+                          className={`rounded-lg px-2 py-1.5 text-[9px] font-black ${result.range === range ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-400"}`}
+                        >{range === "today" ? "Hôm nay" : range === "yesterday" ? "Hôm qua" : "7 ngày"}</button>)}
+                      </div>
+                    </div>
+
+                    {result.loading ? <div className="py-5 text-center text-[11px] font-bold text-neutral-400">Đang tải kết quả...</div> : result.row ? <>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Đã chi tiêu</div><div className="mt-1 text-sm font-black">{money(m.spend || 0)}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Budget/ngày</div><div className="mt-1 text-sm font-black">{budget.value ? money(budget.value) : "—"}</div><div className="text-[9px] text-neutral-400">{budget.level || ""}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Bắt đầu hội thoại</div><div className="mt-1 text-sm font-black">{Math.round(num(m.conversationStarts))}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Chi phí / hội thoại</div><div className="mt-1 text-sm font-black">{money(m.costPerConversation || 0)}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Reach</div><div className="mt-1 text-sm font-black">{Math.round(num(m.reach)).toLocaleString("vi-VN")}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Impressions</div><div className="mt-1 text-sm font-black">{Math.round(num(m.impressions)).toLocaleString("vi-VN")}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Người liên hệ nhắn tin</div><div className="mt-1 text-sm font-black">{Math.round(num(m.messages))}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Purchase Meta</div><div className="mt-1 text-sm font-black">{Math.round(num(m.metaPurchases))}</div></div>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="rounded-xl border border-neutral-200 p-3"><div className="text-[9px] text-neutral-400">ROAS Meta</div><div className="mt-1 text-sm font-black">{pct(m.roas || 0)}</div></div>
+                        <div className="rounded-xl border border-neutral-200 p-3"><div className="text-[9px] text-neutral-400">ROAS nội bộ</div><div className="mt-1 text-sm font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
+                      </div>
+                    </> : <div className="py-5 text-center text-[11px] font-bold text-neutral-400">Meta chưa có dữ liệu ở khoảng này.</div>}
+                  </div>;
+                })()}
                 {historyCount ? <div className="rounded-2xl border border-neutral-200 p-3">
                   <div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">Lịch sử scale</div>
                   <div className="space-y-2">
@@ -820,46 +949,77 @@ export default function MobileAutopilotPage() {
                 </div>
               </div>
               {post.metaAdId ? <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-700"><BadgeCheck className="h-4 w-4" /> Ad: {post.metaAdId}</div> : null}
-              {state === "UNMAPPED" ? <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold leading-5 text-amber-800">Bài chưa map mã + màu. Chọn đúng mã và màu rồi lưu mapping trước khi chạy Ads.</div> : null}
+              {state === "UNMAPPED" ? <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold leading-5 text-amber-800">Bài chưa map mã + màu. Chọn đúng mã và màu; bấm “Chạy bài này” sẽ lưu mapping trước rồi mới sang bước xác nhận Ads.</div> : null}
               {state === "WAITING_MAPPED" ? <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-[11px] font-semibold leading-5 text-emerald-800">Đã lưu mapping với kho. Chưa tạo Ads. Bấm “Chạy bài này” để sang bước xác nhận.</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {state === "CREATED_PAUSED" && post.metaAdId ? (
                   <button disabled={busy} onClick={() => void setAdStatus({ metaAdId: post.metaAdId }, "ACTIVE")} className="h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white">Duyệt & bật Ad</button>
                 ) : confirmRunPostId === String(post.postId || post.id || "") ? (
-                  <div className="col-span-2 rounded-2xl border border-neutral-950 bg-neutral-50 p-3">
-                    <div className="text-xs font-black">Xác nhận chạy Ads?</div>
-                    <div className="mt-1 text-[10px] leading-4 text-neutral-500">Sau bước này hệ thống mới tạo Campaign / Ad Set / Ad theo cấu hình Auto Launch đã lưu.</div>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <button disabled={busy} onClick={() => setConfirmRunPostId(null)} className="h-10 rounded-xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Huỷ</button>
-                      <button
-                        disabled={busy}
-                        onClick={() => {
-                          const postId = String(post.postId || post.id || "");
-                          void apiJson("/meta-ads/autopilot/launch/run", {
-                            method: "POST",
-                            body: JSON.stringify({
-                              postId,
-                              force: true,
-                              manualOverride: true,
-                              manualProductCode: manualProductByPost[postId] || a.productCode || undefined,
-                              manualColor: manualColorByPost[postId] || a.color || undefined,
-                              dryRun,
-                            }),
-                          }).then(() => {
-                            setConfirmRunPostId(null);
-                            return loadAll(false);
-                          }).catch((e) => setError(e.message));
-                        }}
-                        className="h-10 rounded-xl bg-neutral-950 text-xs font-black text-white"
-                      >
-                        Xác nhận chạy Ads
-                      </button>
+                  <div className="col-span-2 overflow-hidden rounded-2xl border border-neutral-950 bg-white">
+                    <div className="bg-neutral-950 px-4 py-3 text-white">
+                      <div className="text-xs font-black">Xem lại trước khi chạy</div>
+                      <div className="mt-1 text-[10px] text-neutral-300">Chỉ xác nhận cuối cùng mới tạo Ads.</div>
+                    </div>
+                    {image ? <div className="aspect-[16/9] w-full overflow-hidden bg-neutral-100"><img src={image} alt="" className="h-full w-full object-cover" /></div> : null}
+                    <div className="space-y-3 p-4">
+                      {(() => {
+                        const postId = String(post.postId || post.id || "");
+                        const selectedCode = manualProductByPost[postId] || a.productCode || "";
+                        const selectedColor = manualColorByPost[postId] || a.color || "";
+                        const template = adSetOptions.find((x) => String(x.id) === String(templateAdSetId));
+                        const firstLine = String(post.message || "Bài viết").split(/\n+/)[0].replace(/#\S+/g, "").trim();
+                        const adName = `${firstLine || selectedCode || "Bài viết"} ${new Date().toLocaleDateString("vi-VN")}`.replace(/\s+/g, " ").slice(0, 160);
+                        const rows = [
+                          ["Tên Campaign / Ad Set / Ad", adName],
+                          ["Mục tiêu", "Lượt tương tác → Tin nhắn"],
+                          ["Ngân sách", `${money(launchDailyBudget)} / ngày · Campaign`],
+                          ["Lịch chạy", "Bắt đầu khi xác nhận · liên tục"],
+                          ["Đối tượng", template ? `Theo Ad Set mẫu: ${template.name}` : "Theo Ad Set mẫu đã cấu hình"],
+                          ["Vị trí quảng cáo", "Advantage+ / theo mẫu"],
+                          ["Đích tin nhắn", "Theo cấu hình messaging của Ad Set mẫu"],
+                          ["Mapping kho", `${selectedCode || "—"}${selectedColor ? ` · ${selectedColor}` : ""}`],
+                          ["Tồn kho", `Tổng ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}`],
+                        ];
+                        return <div className="overflow-hidden rounded-2xl border border-neutral-200">
+                          {rows.map(([label,value], i) => <div key={label} className={`px-3 py-3 ${i ? "border-t border-neutral-100" : ""}`}>
+                            <div className="text-[9px] font-black uppercase tracking-wide text-neutral-400">{label}</div>
+                            <div className="mt-1 text-[11px] font-bold leading-5 text-neutral-900">{value}</div>
+                          </div>)}
+                        </div>;
+                      })()}
+                      <div className="rounded-xl bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">Kiểm tra đúng bài, đúng mã + màu, budget và Ad Set mẫu trước khi xác nhận.</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button disabled={busy} onClick={() => setConfirmRunPostId(null)} className="h-11 rounded-xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Quay lại</button>
+                        <button
+                          disabled={busy}
+                          onClick={() => {
+                            const postId = String(post.postId || post.id || "");
+                            void apiJson("/meta-ads/autopilot/launch/run", {
+                              method: "POST",
+                              body: JSON.stringify({
+                                postId,
+                                force: true,
+                                manualOverride: true,
+                                manualProductCode: manualProductByPost[postId] || a.productCode || undefined,
+                                manualColor: manualColorByPost[postId] || a.color || undefined,
+                                dryRun,
+                              }),
+                            }).then(() => {
+                              setConfirmRunPostId(null);
+                              return loadAll(false);
+                            }).catch((e) => setError(e.message));
+                          }}
+                          className="h-11 rounded-xl bg-neutral-950 text-xs font-black text-white"
+                        >
+                          {dryRun ? "Preview cấu hình" : "Xác nhận chạy Ads"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
                   <button
-                    disabled={busy || !["READY","WAITING","WAITING_MAPPED"].includes(state)}
-                    onClick={() => setConfirmRunPostId(String(post.postId || post.id || ""))}
+                    disabled={busy}
+                    onClick={() => void preparePostRun(post)}
                     className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"
                   >
                     {dryRun ? "Xem trước chạy Ads" : "Chạy bài này"}
