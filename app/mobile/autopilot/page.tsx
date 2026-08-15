@@ -684,36 +684,23 @@ export default function MobileAutopilotPage() {
                     const selectedProduct = mappingOptions.find((x) => String(x.productCode || "").toUpperCase() === selectedCode);
                     const colors = Array.isArray(selectedProduct?.colors) ? selectedProduct.colors : [];
                     return <div className="mt-2 space-y-2">
-                      <div className="relative">
-                        <div className="flex gap-2">
-                          <input
-                            value={productSearchByPost[postId] ?? ""}
-                            onFocus={() => setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: true }))}
-                            onChange={(e) => {
-                              setProductSearchByPost((prev) => ({ ...prev, [postId]: e.target.value }));
-                              setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: true }));
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Escape") {
-                                setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
-                                (e.currentTarget as HTMLInputElement).blur();
-                              }
-                            }}
-                            placeholder="Gõ mã hoặc tên SP để tìm..."
-                            className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setProductSearchByPost((prev) => ({ ...prev, [postId]: "" }));
-                              setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
-                              if (typeof document !== "undefined") (document.activeElement as HTMLElement | null)?.blur?.();
-                            }}
-                            className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-black text-neutral-500"
-                          >
-                            Đóng
-                          </button>
-                        </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: true }));
+                            setProductSearchByPost((prev) => ({ ...prev, [postId]: prev[postId] ?? "" }));
+                          }}
+                          className="flex h-12 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 text-left"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[9px] font-black uppercase tracking-wide text-neutral-400">Tìm mã sản phẩm</div>
+                            <div className="truncate text-xs font-black text-neutral-900">
+                              {selectedCode ? `${selectedCode}${selectedProduct?.productName ? ` · ${selectedProduct.productName}` : ""}` : "Bấm để tìm mã / tên SP"}
+                            </div>
+                          </div>
+                          <span className="ml-3 text-lg font-black text-neutral-400">⌕</span>
+                        </button>
 
                         {productSearchOpenByPost[postId] ? (() => {
                           const q = String(productSearchByPost[postId] || "").trim().toLowerCase();
@@ -723,27 +710,85 @@ export default function MobileAutopilotPage() {
                               return String(x.productCode || "").toLowerCase().includes(q) ||
                                      String(x.productName || "").toLowerCase().includes(q);
                             })
-                            .slice(0, 30);
+                            .slice(0, 100);
 
-                          return <div className="mt-2 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg">
-                            {rows.length ? rows.map((x) => {
-                              const code = String(x.productCode || "").toUpperCase();
-                              return <button
-                                type="button"
-                                key={code}
-                                onClick={() => {
-                                  setManualProductByPost((prev) => ({ ...prev, [postId]: code }));
-                                  setManualColorByPost((prev) => ({ ...prev, [postId]: "" }));
-                                  setProductSearchByPost((prev) => ({ ...prev, [postId]: `${code} · ${x.productName || ""}` }));
-                                  setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
-                                  if (typeof document !== "undefined") (document.activeElement as HTMLElement | null)?.blur?.();
-                                }}
-                                className={`block w-full border-b border-neutral-100 px-3 py-3 text-left last:border-b-0 ${selectedCode === code ? "bg-neutral-950 text-white" : "bg-white text-neutral-900"}`}
-                              >
-                                <div className="text-xs font-black">{code}</div>
-                                <div className={`mt-0.5 text-[10px] ${selectedCode === code ? "text-neutral-300" : "text-neutral-500"}`}>{x.productName || ""}</div>
-                              </button>;
-                            }) : <div className="px-3 py-4 text-center text-xs font-bold text-neutral-400">Không tìm thấy sản phẩm</div>}
+                          return <div className="fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col overflow-hidden bg-white" style={{ touchAction: "manipulation" }}>
+                            <div className="sticky top-0 z-10 border-b border-neutral-200 bg-white px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
+                                    setProductSearchByPost((prev) => ({ ...prev, [postId]: "" }));
+                                    if (typeof document !== "undefined") (document.activeElement as HTMLElement | null)?.blur?.();
+                                  }}
+                                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-xl font-black"
+                                >
+                                  ×
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-neutral-400">Chọn sản phẩm</div>
+                                  <div className="text-base font-black text-neutral-950">Tìm mã hoặc tên SP</div>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 flex gap-2">
+                                <input
+                                  inputMode="search"
+                                  enterKeyHint="search"
+                                  value={productSearchByPost[postId] ?? ""}
+                                  onChange={(e) => setProductSearchByPost((prev) => ({ ...prev, [postId]: e.target.value }))}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Escape") {
+                                      setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
+                                      (e.currentTarget as HTMLInputElement).blur();
+                                    }
+                                  }}
+                                  placeholder="Ví dụ: QSK941 hoặc quần short..."
+                                  className="h-12 min-w-0 flex-1 rounded-2xl border border-neutral-300 bg-neutral-50 px-4 text-[16px] font-bold outline-none focus:border-neutral-950"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setProductSearchByPost((prev) => ({ ...prev, [postId]: "" }))}
+                                  className="h-12 rounded-2xl border border-neutral-200 bg-white px-4 text-xs font-black text-neutral-600"
+                                >
+                                  Xoá
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-3">
+                              <div className="mb-2 text-[11px] font-semibold text-neutral-400">
+                                {q ? `${rows.length} kết quả` : `Hiển thị ${Math.min(mappingOptions.length, 100)} sản phẩm đầu`}
+                              </div>
+
+                              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                                {rows.length ? rows.map((x) => {
+                                  const code = String(x.productCode || "").toUpperCase();
+                                  const active = selectedCode === code;
+                                  return <button
+                                    type="button"
+                                    key={code}
+                                    onClick={() => {
+                                      setManualProductByPost((prev) => ({ ...prev, [postId]: code }));
+                                      setManualColorByPost((prev) => ({ ...prev, [postId]: "" }));
+                                      setProductSearchByPost((prev) => ({ ...prev, [postId]: "" }));
+                                      setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
+                                      if (typeof document !== "undefined") (document.activeElement as HTMLElement | null)?.blur?.();
+                                    }}
+                                    className={`block w-full border-b border-neutral-100 px-4 py-4 text-left last:border-b-0 ${active ? "bg-neutral-950 text-white" : "bg-white text-neutral-950"}`}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="text-sm font-black">{code}</div>
+                                        <div className={`mt-1 text-xs leading-5 ${active ? "text-neutral-300" : "text-neutral-500"}`}>{x.productName || ""}</div>
+                                      </div>
+                                      {active ? <span className="text-sm font-black">✓</span> : null}
+                                    </div>
+                                  </button>;
+                                }) : <div className="px-4 py-10 text-center text-sm font-bold text-neutral-400">Không tìm thấy sản phẩm</div>}
+                              </div>
+                            </div>
                           </div>;
                         })() : null}
                       </div>
@@ -754,7 +799,7 @@ export default function MobileAutopilotPage() {
                       </div>
 
                       <select
-                        className="h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none disabled:bg-neutral-100 disabled:text-neutral-400"
+                        className="h-12 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[16px] font-bold outline-none disabled:bg-neutral-100 disabled:text-neutral-400"
                         value={manualColorByPost[postId] ?? a.color ?? ""}
                         disabled={!selectedCode}
                         onChange={(e) => setManualColorByPost((prev) => ({ ...prev, [postId]: e.target.value }))}
