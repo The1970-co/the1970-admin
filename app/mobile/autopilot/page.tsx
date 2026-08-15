@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type AutomationLevel = "manual" | "semi" | "auto";
 type TabKey = "ads" | "posts" | "settings";
@@ -92,6 +93,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputClass = "h-11 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm font-semibold outline-none focus:border-neutral-400";
 
 export default function MobileAutopilotPage() {
+  const router = useRouter();
   const [tab, setTab] = useState<TabKey>("ads");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -107,7 +109,6 @@ export default function MobileAutopilotPage() {
   const [manualProductByPost, setManualProductByPost] = useState<Record<string, string>>({});
   const [manualColorByPost, setManualColorByPost] = useState<Record<string, string>>({});
   const [productSearchByPost, setProductSearchByPost] = useState<Record<string, string>>({});
-  const [confirmRunPostId, setConfirmRunPostId] = useState<string | null>(null);
   const [productSearchOpenByPost, setProductSearchOpenByPost] = useState<Record<string, boolean>>({});
 
   const [performance, setPerformance] = useState<AnyRow>({});
@@ -544,39 +545,86 @@ export default function MobileAutopilotPage() {
 
   async function preparePostRun(post: AnyRow) {
     const selected = manualSelectionForPost(post);
-    const state = String(post?.state || "WAITING").toUpperCase();
 
-    if (state === "UNMAPPED" || state === "WAITING_MAPPED" || selected.productCode) {
-      if (!selected.valid) {
-        setError(selected.productCode ? "Chọn đúng màu sản phẩm trước." : "Chọn mã sản phẩm trước.");
-        return;
-      }
-
-      setBusy(true); setError(""); setMessage("");
-      try {
-        // Chỉ lưu mapping trước. Endpoint này không được tạo Ads.
-        const r = await apiJson("/meta-ads/autopilot/launch/map", {
-          method: "POST",
-          body: JSON.stringify({
-            postId: selected.postId,
-            productCode: selected.productCode,
-            color: selected.color || undefined,
-          }),
-        });
-        if (r?.ok === false) throw new Error(r?.error || r?.assessment?.reason || "Mapping chưa chính xác");
-
-        // Không reload ở đây để tránh UI quay lại UNMAPPED trước khi người dùng xác nhận.
-        setMessage(`Đã chốt mapping ${r?.assessment?.productCode || selected.productCode}${r?.assessment?.color ? ` · ${r.assessment.color}` : ""}. Chưa chạy Ads.`);
-        setConfirmRunPostId(selected.postId);
-      } catch (e: any) {
-        setError(e?.message || "Không lưu được mapping");
-      } finally {
-        setBusy(false);
-      }
+    if (!selected.valid) {
+      setError(selected.productCode ? "Chọn đúng màu sản phẩm trước." : "Chọn mã sản phẩm trước.");
       return;
     }
 
-    setConfirmRunPostId(selected.postId);
+    setBusy(true);
+    setError("");
+    setMessage("");
+
+    try {
+      // Bước 1 chỉ chốt mapping. Tuyệt đối chưa tạo Ads.
+      const r = await apiJson("/meta-ads/autopilot/launch/map", {
+        method: "POST",
+        body: JSON.stringify({
+          postId: selected.postId,
+          productCode: selected.productCode,
+          color: selected.color || undefined,
+        }),
+      });
+      if (r?.ok === false) throw new Error(r?.error || r?.assessment?.reason || "Mapping chưa chính xác");
+
+      const assessment = r?.assessment || post?.assessment || {};
+      const template = adSetOptions.find((x) => String(x.id) === String(templateAdSetId)) || null;
+      const image = postImage(post);
+
+      const firstLine = String(post.message || "Bài viết").split(/\n+/)[0].replace(/#\S+/g, "").trim();
+      const marketingTitle = (firstLine.split(/\bM[ẫâ]u\b/i)[0] || firstLine).trim();
+      const codeUpper = String(assessment?.productCode || selected.productCode || "").trim().toUpperCase();
+      const colorUpper = String(assessment?.color || selected.color || "").trim().toUpperCase();
+      let baseName = marketingTitle || "Bài viết";
+      if (codeUpper) baseName = baseName.replace(new RegExp(`\\b${codeUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"), "").trim();
+      if (colorUpper) baseName = baseName.replace(new RegExp(`\\b${colorUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"), "").trim();
+      const adName = [baseName, codeUpper, colorUpper, new Date().toLocaleDateString("vi-VN")]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .slice(0, 160);
+
+      const review = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        post: {
+          postId: selected.postId,
+          message: post.message || "",
+          createdTime: post.createdTime || post.created_time || null,
+          image,
+        },
+        mapping: {
+          productCode: codeUpper,
+          color: colorUpper,
+          productName: assessment?.productName || selected.selectedProduct?.productName || "",
+          totalQty: assessment?.totalQty ?? null,
+          minQty: assessment?.minQty ?? null,
+          level: assessment?.level || null,
+          sizes: Array.isArray(assessment?.sizes) ? assessment.sizes : [],
+        },
+        launch: {
+          level,
+          dryRun,
+          launchMode,
+          dailyBudget: launchDailyBudget,
+          waitHours,
+          templateAdSetId,
+          templateAdSetName: template?.name || "",
+          templateCampaignName: template?.campaignName || "",
+          requireInventoryMatch,
+          blockCriticalStock,
+          autoActivate,
+          adName,
+        },
+      };
+
+      sessionStorage.setItem("autopilotLaunchReview", JSON.stringify(review));
+      router.push("/mobile/autopilot/review");
+    } catch (e: any) {
+      setError(e?.message || "Không chuẩn bị được cấu hình chạy Ads");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function runLaunch() {
@@ -954,75 +1002,13 @@ export default function MobileAutopilotPage() {
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {state === "CREATED_PAUSED" && post.metaAdId ? (
                   <button disabled={busy} onClick={() => void setAdStatus({ metaAdId: post.metaAdId }, "ACTIVE")} className="h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white">Duyệt & bật Ad</button>
-                ) : confirmRunPostId === String(post.postId || post.id || "") ? (
-                  <div className="col-span-2 overflow-hidden rounded-2xl border border-neutral-950 bg-white">
-                    <div className="bg-neutral-950 px-4 py-3 text-white">
-                      <div className="text-xs font-black">Xem lại trước khi chạy</div>
-                      <div className="mt-1 text-[10px] text-neutral-300">Chỉ xác nhận cuối cùng mới tạo Ads.</div>
-                    </div>
-                    {image ? <div className="aspect-[16/9] w-full overflow-hidden bg-neutral-100"><img src={image} alt="" className="h-full w-full object-cover" /></div> : null}
-                    <div className="space-y-3 p-4">
-                      {(() => {
-                        const postId = String(post.postId || post.id || "");
-                        const selectedCode = manualProductByPost[postId] || a.productCode || "";
-                        const selectedColor = manualColorByPost[postId] || a.color || "";
-                        const template = adSetOptions.find((x) => String(x.id) === String(templateAdSetId));
-                        const firstLine = String(post.message || "Bài viết").split(/\n+/)[0].replace(/#\S+/g, "").trim();
-                        const adName = `${firstLine || selectedCode || "Bài viết"} ${new Date().toLocaleDateString("vi-VN")}`.replace(/\s+/g, " ").slice(0, 160);
-                        const rows = [
-                          ["Tên Campaign / Ad Set / Ad", adName],
-                          ["Mục tiêu", "Lượt tương tác → Tin nhắn"],
-                          ["Ngân sách", `${money(launchDailyBudget)} / ngày · Campaign`],
-                          ["Lịch chạy", "Bắt đầu khi xác nhận · liên tục"],
-                          ["Đối tượng", template ? `Theo Ad Set mẫu: ${template.name}` : "Theo Ad Set mẫu đã cấu hình"],
-                          ["Vị trí quảng cáo", "Advantage+ / theo mẫu"],
-                          ["Đích tin nhắn", "Theo cấu hình messaging của Ad Set mẫu"],
-                          ["Mapping kho", `${selectedCode || "—"}${selectedColor ? ` · ${selectedColor}` : ""}`],
-                          ["Tồn kho", `Tổng ${a.totalQty ?? "—"} · min size ${a.minQty ?? "—"}`],
-                        ];
-                        return <div className="overflow-hidden rounded-2xl border border-neutral-200">
-                          {rows.map(([label,value], i) => <div key={label} className={`px-3 py-3 ${i ? "border-t border-neutral-100" : ""}`}>
-                            <div className="text-[9px] font-black uppercase tracking-wide text-neutral-400">{label}</div>
-                            <div className="mt-1 text-[11px] font-bold leading-5 text-neutral-900">{value}</div>
-                          </div>)}
-                        </div>;
-                      })()}
-                      <div className="rounded-xl bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">Kiểm tra đúng bài, đúng mã + màu, budget và Ad Set mẫu trước khi xác nhận.</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button disabled={busy} onClick={() => setConfirmRunPostId(null)} className="h-11 rounded-xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Quay lại</button>
-                        <button
-                          disabled={busy}
-                          onClick={() => {
-                            const postId = String(post.postId || post.id || "");
-                            void apiJson("/meta-ads/autopilot/launch/run", {
-                              method: "POST",
-                              body: JSON.stringify({
-                                postId,
-                                force: true,
-                                manualOverride: true,
-                                manualProductCode: manualProductByPost[postId] || a.productCode || undefined,
-                                manualColor: manualColorByPost[postId] || a.color || undefined,
-                                dryRun,
-                              }),
-                            }).then(() => {
-                              setConfirmRunPostId(null);
-                              return loadAll(false);
-                            }).catch((e) => setError(e.message));
-                          }}
-                          className="h-11 rounded-xl bg-neutral-950 text-xs font-black text-white"
-                        >
-                          {dryRun ? "Preview cấu hình" : "Xác nhận chạy Ads"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
                 ) : (
                   <button
                     disabled={busy}
                     onClick={() => void preparePostRun(post)}
                     className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"
                   >
-                    {dryRun ? "Xem trước chạy Ads" : "Chạy bài này"}
+                    {busy ? "Đang chuẩn bị..." : "Chạy bài này"}
                   </button>
                 )}
                 <button disabled={busy} onClick={() => void skipPost(String(post.postId))} className="h-11 rounded-2xl border border-neutral-200 bg-white text-xs font-black text-neutral-600">Bỏ qua</button>
