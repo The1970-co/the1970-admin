@@ -91,7 +91,10 @@ export default function MobileAutopilotReviewPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<AnyRow | null>(null);
-  const [showPayload, setShowPayload] = useState(true);
+  const [showPayload, setShowPayload] = useState(false);
+  const [templateComparison, setTemplateComparison] = useState<AnyRow | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState("");
 
   useEffect(() => {
     try {
@@ -152,8 +155,35 @@ export default function MobileAutopilotReviewPage() {
     };
   }, [review]);
 
+  async function loadTemplateComparison() {
+    if (!review || templateComparison || comparisonLoading) return;
+    setComparisonLoading(true);
+    setComparisonError("");
+    try {
+      const r = await apiJson("/meta-ads/autopilot/launch/template-comparison", {
+        method: "POST",
+        body: JSON.stringify({
+          launchMode: review.launch.launchMode,
+          templateAdSetId: review.launch.templateAdSetId,
+          dailyBudget: review.launch.dailyBudget,
+          name: review.launch.adName,
+        }),
+      });
+      setTemplateComparison(r);
+    } catch (e: any) {
+      setComparisonError(e?.message || "Không đọc được Ad Set mẫu từ Meta");
+    } finally {
+      setComparisonLoading(false);
+    }
+  }
+
   async function confirmRun() {
     if (!review) return;
+    if (templateComparison && templateComparison?.validation?.valid === false) {
+      setError("Payload chưa qua validator. Mở Xem chi tiết đối chiếu Meta để kiểm tra.");
+      return;
+    }
+
     setBusy(true);
     setError("");
     setMessage("");
@@ -303,51 +333,102 @@ export default function MobileAutopilotReviewPage() {
         </section>
 
         <section className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
-          <button onClick={() => setShowPayload(!showPayload)} className="flex w-full items-center justify-between px-4 py-4 text-left">
+          <button
+            onClick={() => {
+              const next = !showPayload;
+              setShowPayload(next);
+              if (next) void loadTemplateComparison();
+            }}
+            className="flex w-full items-center justify-between px-4 py-4 text-left"
+          >
             <div className="flex items-center gap-2">
               <FileJson2 className="h-5 w-5" />
               <div>
-                <div className="text-sm font-black">Đối chiếu field Meta API</div>
-                <div className="text-[10px] text-neutral-400">Tên UI ↔ field/code dự kiến gửi sang Meta.</div>
+                <div className="text-sm font-black">Xem chi tiết đối chiếu Meta</div>
+                <div className="text-[10px] text-neutral-400">Ẩn mặc định · chỉ mở khi cần kiểm tra raw mẫu ↔ payload sẽ gửi.</div>
               </div>
             </div>
             {showPayload ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
 
-          {showPayload && expected ? <div className="border-t border-neutral-100">
-            <div className="bg-neutral-50 px-4 py-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Campaign</div>
-            <MetaField field="name" value={expected.campaign.name} />
-            <MetaField field="objective" value="OUTCOME_ENGAGEMENT" note="Mục tiêu Lượt tương tác." />
-            <MetaField field="buying_type" value="AUCTION" />
-            <MetaField field="daily_budget" value={`${expected.campaign.daily_budget} (${money(expected.campaign.daily_budget)})`} />
-            <MetaField field="bid_strategy" value="LOWEST_COST_WITHOUT_CAP" note="Mức cao nhất / Meta tự quyết định giá thầu." />
-            <MetaField field="bid_amount" value="OMIT · KHÔNG GỬI" note="Không được gửi khi dùng LOWEST_COST_WITHOUT_CAP." />
-            <MetaField field="cost_per_result_goal" value="OMIT · KHÔNG GỬI" />
-            <MetaField field="special_ad_categories" value="[]" />
-            <MetaField field="status" value="PAUSED" />
+          {showPayload ? <div className="border-t border-neutral-100">
+            {comparisonLoading ? <div className="px-4 py-8 text-center text-sm font-bold text-neutral-400">Đang query raw Ad Set mẫu từ Meta...</div> : null}
+            {comparisonError ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold leading-5 text-rose-700">{comparisonError}</div> : null}
 
-            <div className="bg-neutral-50 px-4 py-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Ad Set</div>
-            <MetaField field="name" value={expected.adset.name} />
-            <MetaField field="campaign_id" value="ID Campaign vừa tạo" />
-            <MetaField field="optimization_goal" value="CONVERSATIONS" note="Tối ưu cuộc trò chuyện qua tin nhắn." />
-            <MetaField field="billing_event" value="IMPRESSIONS" />
-            <MetaField field="bid_strategy" value="LOWEST_COST_WITHOUT_CAP" />
-            <MetaField field="bid_amount" value="OMIT · KHÔNG GỬI" />
-            <MetaField field="targeting" value={`COPY FROM TEMPLATE ${l.templateAdSetId || "—"}`} />
-            <MetaField field="promoted_object" value={`COPY FROM TEMPLATE ${l.templateAdSetId || "—"}`} />
-            <MetaField field="destination_type" value="COPY / NORMALIZE FROM TEMPLATE" />
-            <MetaField field="attribution_spec" value="COPY FROM TEMPLATE IF VALID" />
-            <MetaField field="status" value="PAUSED" />
+            {templateComparison ? <>
+              <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Ad Set mẫu Meta trả thật</div>
+                    <div className="mt-1 text-sm font-black">{templateComparison?.templateRaw?.name || review.launch.templateAdSetName || "—"}</div>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[9px] font-black ${templateComparison?.validation?.valid ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+                    {templateComparison?.validation?.valid ? "VALID" : "CHECK"}
+                  </span>
+                </div>
+              </div>
 
-            <div className="bg-neutral-50 px-4 py-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Creative</div>
-            <MetaField field="name" value={`${l.adName} · Creative`} />
-            <MetaField field="object_story_id" value={review.post.postId} note="Dùng chính bài Page đã chọn." />
+              <div className="grid grid-cols-[1fr_1fr] border-b border-neutral-100 bg-white px-4 py-2 text-[9px] font-black uppercase tracking-wide text-neutral-400">
+                <div>Meta mẫu trả</div>
+                <div>Auto Launch sẽ gửi</div>
+              </div>
 
-            <div className="bg-neutral-50 px-4 py-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Ad</div>
-            <MetaField field="name" value={l.adName} />
-            <MetaField field="adset_id" value="ID Ad Set vừa tạo" />
-            <MetaField field="creative_id" value="ID Creative vừa tạo" />
-            <MetaField field="status" value="PAUSED" />
+              {(templateComparison?.comparison?.adSet || []).map((x: AnyRow) => (
+                <div key={x.field} className="border-b border-neutral-100 px-4 py-3 last:border-b-0">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="font-mono text-[11px] font-black text-neutral-700">{x.field}</div>
+                    <span className={`rounded-full px-2 py-0.5 text-[8px] font-black ${
+                      x.state === "SAME" ? "bg-emerald-100 text-emerald-700" :
+                      x.state === "OMITTED" ? "bg-amber-100 text-amber-700" :
+                      "bg-blue-100 text-blue-700"
+                    }`}>{x.state}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="min-w-0 rounded-xl bg-neutral-50 p-2.5">
+                      <div className="break-all font-mono text-[9px] leading-4 text-neutral-500">
+                        {x.raw === null ? "null / không có" : typeof x.raw === "object" ? JSON.stringify(x.raw) : String(x.raw)}
+                      </div>
+                    </div>
+                    <div className="min-w-0 rounded-xl bg-neutral-950 p-2.5">
+                      <div className="break-all font-mono text-[9px] leading-4 text-white">
+                        {x.send === null ? "OMIT / không gửi" : typeof x.send === "object" ? JSON.stringify(x.send) : String(x.send)}
+                      </div>
+                    </div>
+                  </div>
+                  {x.note ? <div className="mt-2 text-[9px] leading-4 text-neutral-400">{x.note}</div> : null}
+                </div>
+              ))}
+
+              <div className="bg-neutral-50 px-4 py-3">
+                <div className="text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Validator trước khi gửi</div>
+                <div className="mt-2 space-y-2">
+                  {(templateComparison?.validation?.checks || []).map((x: AnyRow) => (
+                    <div key={x.key} className="flex items-start gap-2 text-[11px] font-semibold">
+                      <span className={x.ok ? "text-emerald-600" : "text-rose-600"}>{x.ok ? "✓" : "✕"}</span>
+                      <span>{x.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <details className="border-t border-neutral-100">
+                <summary className="cursor-pointer px-4 py-3 text-[11px] font-black">Raw JSON đầy đủ</summary>
+                <div className="space-y-3 px-4 pb-4">
+                  <div>
+                    <div className="mb-1 text-[9px] font-black uppercase text-neutral-400">templateRaw</div>
+                    <pre className="max-h-72 overflow-auto rounded-xl bg-neutral-950 p-3 text-[9px] leading-4 text-neutral-200">{JSON.stringify(templateComparison?.templateRaw, null, 2)}</pre>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[9px] font-black uppercase text-neutral-400">willSend.adSet</div>
+                    <pre className="max-h-72 overflow-auto rounded-xl bg-neutral-950 p-3 text-[9px] leading-4 text-neutral-200">{JSON.stringify(templateComparison?.willSend?.adSet, null, 2)}</pre>
+                  </div>
+                  {templateComparison?.willSend?.campaign ? <div>
+                    <div className="mb-1 text-[9px] font-black uppercase text-neutral-400">willSend.campaign</div>
+                    <pre className="max-h-72 overflow-auto rounded-xl bg-neutral-950 p-3 text-[9px] leading-4 text-neutral-200">{JSON.stringify(templateComparison.willSend.campaign, null, 2)}</pre>
+                  </div> : null}
+                </div>
+              </details>
+            </> : !comparisonLoading && !comparisonError ? <div className="px-4 py-6 text-center text-[11px] font-bold text-neutral-400">Mở mục này để query trực tiếp Ad Set mẫu từ Meta.</div> : null}
           </div> : null}
         </section>
 
