@@ -76,7 +76,6 @@ export default function MobileAutopilotPage() {
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
   const [selectedLevel, setSelectedLevel] = useState<AutomationLevel>("manual");
   const [postFilter, setPostFilter] = useState<"all" | "no_ad" | "has_ad">("no_ad");
-  const [brokenPreviewIds, setBrokenPreviewIds] = useState<Set<string>>(() => new Set());
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -104,10 +103,10 @@ export default function MobileAutopilotPage() {
   const [requireBoth, setRequireBoth] = useState(true);
 
   const [waitHours, setWaitHours] = useState(48);
-  const [launchMode, setLaunchMode] = useState<"EXISTING_ADSET" | "CLONE_ADSET">("EXISTING_ADSET");
+  const [launchMode, setLaunchMode] = useState<"EXISTING_ADSET" | "CLONE_ADSET" | "NEW_CAMPAIGN">("NEW_CAMPAIGN");
   const [targetAdSetId, setTargetAdSetId] = useState("");
   const [templateAdSetId, setTemplateAdSetId] = useState("");
-  const [launchDailyBudget, setLaunchDailyBudget] = useState(500000);
+  const [launchDailyBudget, setLaunchDailyBudget] = useState(1000000);
   const [requireInventoryMatch, setRequireInventoryMatch] = useState(true);
   const [blockCriticalStock, setBlockCriticalStock] = useState(true);
   const [autoActivate, setAutoActivate] = useState(true);
@@ -169,20 +168,8 @@ export default function MobileAutopilotPage() {
           // Budget ưu tiên live structure; control-center không được ghi null đè mất.
           adSetDailyBudget: num(ctl.adSetDailyBudget) > 0 ? ctl.adSetDailyBudget : raw.adSetDailyBudget,
           campaignDailyBudget: num(ctl.campaignDailyBudget) > 0 ? ctl.campaignDailyBudget : raw.campaignDailyBudget,
-          // Web Control Center trả budgetDaily; mobile phải giữ field này thay vì bỏ mất.
-          budgetDaily:
-            num(ctl.budgetDaily) > 0 ? ctl.budgetDaily
-            : num(raw.budgetDaily) > 0 ? raw.budgetDaily
-            : num(ctl.currentBudget) > 0 ? ctl.currentBudget
-            : raw.currentBudget,
-          currentBudget:
-            num(ctl.currentBudget) > 0 ? ctl.currentBudget
-            : num(raw.currentBudget) > 0 ? raw.currentBudget
-            : num(ctl.budgetDaily) > 0 ? ctl.budgetDaily
-            : raw.budgetDaily,
+          currentBudget: num(ctl.currentBudget) > 0 ? ctl.currentBudget : raw.currentBudget,
           budgetLevel: ctl.budgetLevel || raw.budgetLevel || null,
-          budgetEntityId: ctl.budgetEntityId || raw.budgetEntityId || null,
-          liveThumbnailUrl: raw.liveThumbnailUrl || ctl.liveThumbnailUrl || null,
           // Metrics ưu tiên control-center.
           spend24h: ctl.spend24h ?? ctl.metrics?.spend ?? raw.spend24h ?? raw.spend,
           revenue24h: ctl.revenue24h ?? ctl.productAttribution?.familyOrderRevenue ?? ctl.productAttribution?.orderRevenue ?? raw.revenue24h ?? raw.revenue,
@@ -253,10 +240,13 @@ export default function MobileAutopilotPage() {
         setLaunch(lau);
         setLaunchEnabled(Boolean(lau?.enabled));
         setWaitHours(num(lau?.waitHours) || 48);
-        setLaunchMode(String(lau?.launchMode || "EXISTING_ADSET").toUpperCase() === "CLONE_ADSET" ? "CLONE_ADSET" : "EXISTING_ADSET");
+        {
+          const mode = String(lau?.launchMode || "NEW_CAMPAIGN").toUpperCase();
+          setLaunchMode(mode === "EXISTING_ADSET" ? "EXISTING_ADSET" : mode === "CLONE_ADSET" ? "CLONE_ADSET" : "NEW_CAMPAIGN");
+        }
         setTargetAdSetId(String(lau?.targetAdSetId || ""));
         setTemplateAdSetId(String(lau?.templateAdSetId || ""));
-        setLaunchDailyBudget(num(lau?.dailyBudget) || 500000);
+        setLaunchDailyBudget(num(lau?.dailyBudget) || 1000000);
         setRequireInventoryMatch(lau?.requireInventoryMatch !== false);
         setBlockCriticalStock(lau?.blockCriticalStock !== false);
         setAutoActivate(lau?.autoActivate !== false);
@@ -297,19 +287,13 @@ export default function MobileAutopilotPage() {
     return Array.from(m.values());
   }, [liveAds]);
 
-  const activeAds = liveAds.filter((x) => {
-    const id = String(x.metaAdId || x.id || "");
-    const status = String(x.effectiveStatus || x.status || "").toUpperCase();
-    const preview = String(x.liveThumbnailUrl || x.thumbnailUrl || x.thumbnail_url || "").trim();
-    return status === "ACTIVE" && Boolean(preview) && !brokenPreviewIds.has(id);
-  });
+  const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" && Boolean(String(x.thumbnailUrl || x.thumbnail_url || "").trim()));
   const criticalAds = liveAds.filter((x) => String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase().includes("CRITICAL"));
   const readyPosts = launchPosts.filter((x) => ["READY", "CREATED_PAUSED"].includes(String(x.state || "").toUpperCase()));
   const operationalAds = liveAds.filter((row) => {
-    const id = String(row.metaAdId || row.id || "");
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
-    const preview = String(row.liveThumbnailUrl || row.thumbnailUrl || row.thumbnail_url || "").trim();
-    return status === "ACTIVE" && Boolean(preview) && !brokenPreviewIds.has(id);
+    const hasCreative = Boolean(String(row.thumbnailUrl || row.thumbnail_url || "").trim());
+    return status === "ACTIVE" && hasCreative;
   });
   const filteredAds = operationalAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
@@ -326,13 +310,6 @@ export default function MobileAutopilotPage() {
   });
 
   function budgetOf(row: AnyRow) {
-    // Web đang dùng budgetDaily trước; mobile phải theo cùng contract.
-    const webBudget = num(row.budgetDaily);
-    if (webBudget > 0) {
-      const rawLevel = String(row.budgetLevel || "").toUpperCase();
-      return { value: webBudget, level: rawLevel === "ADSET" ? "Ad Set" : rawLevel === "CAMPAIGN" ? "Campaign" : "Budget" };
-    }
-
     const directCurrent = num(row.currentBudget);
     if (directCurrent > 0) {
       const level = String(row.budgetLevel || '').toUpperCase() === 'ADSET' ? 'Ad Set' : 'Campaign';
@@ -367,7 +344,7 @@ export default function MobileAutopilotPage() {
         apiJson("/meta-ads/autopilot/inventory/config", { method: "POST", body: JSON.stringify({ enabled: inventoryEnabled, dryRun, level, warnThreshold, pauseThreshold, criticalSizeCount, pauseTotalQty, requireBoth }) }),
       ];
       if (launchAvailable) {
-        tasks.push(apiJson("/meta-ads/autopilot/launch/config", { method: "POST", body: JSON.stringify({ enabled: launchEnabled, dryRun, level, waitHours, launchMode, targetAdSetId, templateAdSetId, dailyBudget: launchDailyBudget, requireInventoryMatch, blockCriticalStock, autoActivate }) }));
+        tasks.push(apiJson("/meta-ads/autopilot/launch/config", { method: "POST", body: JSON.stringify({ enabled: launchEnabled, dryRun, level, waitHours, launchMode: "NEW_CAMPAIGN", targetAdSetId: "", templateAdSetId, dailyBudget: launchDailyBudget, requireInventoryMatch, blockCriticalStock, autoActivate }) }));
       }
       await Promise.all(tasks);
       setMessage("Đã lưu cấu hình Autopilot."); await loadAll(false);
@@ -570,16 +547,7 @@ export default function MobileAutopilotPage() {
             const historyCount = scaleCount(row);
             return <article key={id} className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
               <div className="flex gap-3 p-4">
-                {row.liveThumbnailUrl || row.thumbnailUrl || row.thumbnail_url ? <img
-                  src={row.liveThumbnailUrl || row.thumbnailUrl || row.thumbnail_url}
-                  alt=""
-                  className="h-20 w-20 rounded-2xl object-cover bg-neutral-100"
-                  onError={() => setBrokenPreviewIds((prev) => {
-                    const next = new Set(prev);
-                    next.add(id);
-                    return next;
-                  })}
-                /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
+                {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
                   <div className="mt-1 flex flex-wrap gap-1"><Badge value={status}>{status}</Badge>{stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}{historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}</div>
@@ -664,7 +632,28 @@ export default function MobileAutopilotPage() {
           <section className={`rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm ${!launchAvailable ? "opacity-70" : ""}`}>
             <div className="flex items-center justify-between"><div><div className="flex items-center gap-2 text-sm font-black"><Rocket className="h-4 w-4" /> Auto Launch bài mới</div><div className="mt-1 text-[11px] text-neutral-400">Phát hiện bài Page, chờ rồi tạo Ads.</div></div><Toggle checked={launchEnabled} onChange={setLaunchEnabled} disabled={!launchAvailable} /></div>
             {!launchAvailable ? <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-bold leading-5 text-amber-800">Backend Auto Launch chưa có route. Deploy 3 file backend kèm bộ này để bật phần Bài mới.</div> : null}
-            <div className="mt-4 space-y-3"><Field label="Chờ sau khi đăng (giờ)"><input className={inputClass} type="number" value={waitHours} onChange={e => setWaitHours(num(e.target.value))} /></Field><Field label="Cách tạo Ads"><select className={inputClass} value={launchMode} onChange={e => setLaunchMode(e.target.value as any)}><option value="EXISTING_ADSET">Đưa vào Ad Set có sẵn</option><option value="CLONE_ADSET">Tạo Ad Set mới từ mẫu</option></select></Field><Field label={launchMode === "CLONE_ADSET" ? "Ad Set mẫu" : "Ad Set chạy"}><select className={inputClass} value={launchMode === "CLONE_ADSET" ? templateAdSetId : targetAdSetId} onChange={e => launchMode === "CLONE_ADSET" ? setTemplateAdSetId(e.target.value) : setTargetAdSetId(e.target.value)}><option value="">Chọn Ad Set...</option>{adSetOptions.map(x => <option key={x.id} value={x.id}>{x.name} · {x.campaignName}</option>)}</select></Field>{launchMode === "CLONE_ADSET" ? <Field label="Budget Ad Set mới"><input className={inputClass} type="number" value={launchDailyBudget} onChange={e => setLaunchDailyBudget(num(e.target.value))} /></Field> : null}</div>
+            <div className="mt-4 space-y-3">
+              <Field label="Chờ sau khi đăng (giờ)"><input className={inputClass} type="number" value={waitHours} onChange={e => setWaitHours(num(e.target.value))} /></Field>
+              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+                <div className="text-xs font-black">Rule tạo Ads</div>
+                <div className="mt-2 space-y-1 text-[11px] leading-5 text-neutral-600">
+                  <div>• Tạo Campaign mới cho từng bài.</div>
+                  <div>• Campaign / Ad Set / Ad dùng cùng một tên.</div>
+                  <div>• Mục tiêu: Tương tác → Tin nhắn.</div>
+                  <div>• Budget mặc định: {money(launchDailyBudget)} / ngày ở Campaign.</div>
+                  <div>• Tên: tên sản phẩm + ngày tạo.</div>
+                </div>
+              </div>
+              <Field label="Ad Set mẫu (chỉ lấy tệp khách hàng/targeting)">
+                <select className={inputClass} value={templateAdSetId} onChange={e => setTemplateAdSetId(e.target.value)}>
+                  <option value="">Chọn Ad Set mẫu...</option>
+                  {adSetOptions.map(x => <option key={x.id} value={x.id}>{x.name} · {x.campaignName}</option>)}
+                </select>
+              </Field>
+              <Field label="Ngân sách Campaign mới / ngày">
+                <input className={inputClass} type="number" value={launchDailyBudget} onChange={e => setLaunchDailyBudget(num(e.target.value))} />
+              </Field>
+            </div>
             <div className="mt-3 space-y-2">{[[requireInventoryMatch,setRequireInventoryMatch,"Chỉ chạy khi match mã + màu"],[blockCriticalStock,setBlockCriticalStock,"Chặn bài tồn CRITICAL"],[autoActivate,setAutoActivate,"Mức 3 tự ACTIVE"]].map(([v,setter,label]: any) => <button key={label} onClick={() => setter(!v)} className="flex w-full items-center justify-between rounded-2xl bg-neutral-50 p-3 text-xs font-bold"><span>{label}</span><Toggle checked={v} onChange={setter} /></button>)}</div>
           </section>
 
