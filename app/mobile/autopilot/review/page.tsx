@@ -116,22 +116,22 @@ export default function MobileAutopilotReviewPage() {
     return {
       campaign: {
         name: l.adName,
-        objective: "OUTCOME_ENGAGEMENT",
-        buying_type: "AUCTION",
-        daily_budget: l.dailyBudget,
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        bid_amount: "OMIT",
-        cost_per_result_goal: "OMIT",
+        objective: "COPY/NORMALIZE FROM TEMPLATE",
+        buying_type: "COPY FROM TEMPLATE",
+        daily_budget: "AUTO DETECT CBO/ABO",
+        bid_strategy: "COPY FROM TEMPLATE IF PRESENT",
+        bid_amount: "COPY FROM TEMPLATE IF PRESENT",
+        cost_per_result_goal: "COPY FROM TEMPLATE IF PRESENT",
         special_ad_categories: "[]",
         status: "PAUSED",
       },
       adset: {
         name: l.adName,
         campaign_id: "ID Campaign vừa tạo",
-        optimization_goal: "CONVERSATIONS",
-        billing_event: "IMPRESSIONS",
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        bid_amount: "OMIT",
+        optimization_goal: "COPY FROM TEMPLATE",
+        billing_event: "COPY FROM TEMPLATE",
+        bid_strategy: "COPY FROM TEMPLATE IF PRESENT",
+        bid_amount: "COPY FROM TEMPLATE IF PRESENT",
         targeting: `COPY FROM TEMPLATE ${l.templateAdSetId || "—"}`,
         promoted_object: `COPY FROM TEMPLATE ${l.templateAdSetId || "—"}`,
         destination_type: `COPY/NORMALIZE FROM TEMPLATE`,
@@ -368,6 +368,51 @@ export default function MobileAutopilotReviewPage() {
                 </div>
               </div>
 
+              <div className="border-b border-neutral-100 px-4 py-3">
+                <div className="rounded-2xl bg-neutral-950 p-3 text-white">
+                  <div className="text-[9px] font-black uppercase tracking-[.14em] text-neutral-400">Phát hiện ngân sách</div>
+                  <div className="mt-1 text-sm font-black">{templateComparison?.budgetDetection?.label || "—"}</div>
+                  <div className="mt-1 text-[10px] text-neutral-300">
+                    Mẫu: {Number(templateComparison?.budgetDetection?.templateAmount || 0).toLocaleString("vi-VN")}đ
+                    {" · "}Sẽ chạy: {Number(templateComparison?.budgetDetection?.desiredBudget || 0).toLocaleString("vi-VN")}đ/ngày
+                  </div>
+                </div>
+              </div>
+
+              {(templateComparison?.comparison?.campaign || []).length ? <>
+                <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-2 text-[9px] font-black uppercase tracking-[.14em] text-neutral-500">Campaign</div>
+                <div className="grid grid-cols-[1fr_1fr] border-b border-neutral-100 bg-white px-4 py-2 text-[9px] font-black uppercase tracking-wide text-neutral-400">
+                  <div>Meta mẫu trả</div>
+                  <div>Auto Launch sẽ gửi</div>
+                </div>
+                {(templateComparison?.comparison?.campaign || []).map((x: AnyRow) => (
+                  <div key={`campaign:${x.field}`} className="border-b border-neutral-100 px-4 py-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="font-mono text-[11px] font-black text-neutral-700">{x.field}</div>
+                      <span className={`rounded-full px-2 py-0.5 text-[8px] font-black ${
+                        x.state === "SAME" ? "bg-emerald-100 text-emerald-700" :
+                        x.state === "OMITTED" ? "bg-amber-100 text-amber-700" :
+                        "bg-blue-100 text-blue-700"
+                      }`}>{x.state}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="min-w-0 rounded-xl bg-neutral-50 p-2.5">
+                        <div className="break-all font-mono text-[9px] leading-4 text-neutral-500">
+                          {x.raw === null ? "null / không có" : typeof x.raw === "object" ? JSON.stringify(x.raw) : String(x.raw)}
+                        </div>
+                      </div>
+                      <div className="min-w-0 rounded-xl bg-neutral-950 p-2.5">
+                        <div className="break-all font-mono text-[9px] leading-4 text-white">
+                          {x.send === null ? "OMIT / không gửi" : typeof x.send === "object" ? JSON.stringify(x.send) : String(x.send)}
+                        </div>
+                      </div>
+                    </div>
+                    {x.note ? <div className="mt-2 text-[9px] leading-4 text-neutral-400">{x.note}</div> : null}
+                  </div>
+                ))}
+              </> : null}
+
+              <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-2 text-[9px] font-black uppercase tracking-[.14em] text-neutral-500">Ad Set</div>
               <div className="grid grid-cols-[1fr_1fr] border-b border-neutral-100 bg-white px-4 py-2 text-[9px] font-black uppercase tracking-wide text-neutral-400">
                 <div>Meta mẫu trả</div>
                 <div>Auto Launch sẽ gửi</div>
@@ -419,6 +464,10 @@ export default function MobileAutopilotReviewPage() {
                     <pre className="max-h-72 overflow-auto rounded-xl bg-neutral-950 p-3 text-[9px] leading-4 text-neutral-200">{JSON.stringify(templateComparison?.templateRaw, null, 2)}</pre>
                   </div>
                   <div>
+                    <div className="mb-1 text-[9px] font-black uppercase text-neutral-400">templateCampaignRaw</div>
+                    <pre className="max-h-72 overflow-auto rounded-xl bg-neutral-950 p-3 text-[9px] leading-4 text-neutral-200">{JSON.stringify(templateComparison?.templateCampaignRaw, null, 2)}</pre>
+                  </div>
+                  <div>
                     <div className="mb-1 text-[9px] font-black uppercase text-neutral-400">willSend.adSet</div>
                     <pre className="max-h-72 overflow-auto rounded-xl bg-neutral-950 p-3 text-[9px] leading-4 text-neutral-200">{JSON.stringify(templateComparison?.willSend?.adSet, null, 2)}</pre>
                   </div>
@@ -440,9 +489,9 @@ export default function MobileAutopilotReviewPage() {
               <div className="mt-2 space-y-1.5 text-[11px] font-semibold leading-5 text-emerald-800">
                 <div>✓ Có mã + màu tồn kho.</div>
                 <div>✓ Có Ad Set mẫu.</div>
-                <div>✓ Budget đặt ở Campaign.</div>
-                <div>✓ Giá thầu để mặc định Meta (không ép strategy nếu mẫu raw không có).</div>
-                <div>✓ Không gửi bid_amount / bid_constraints / cost target.</div>
+                <div>✓ Tự phát hiện budget ở Campaign (CBO) hoặc Ad Set (ABO).</div>
+                <div>✓ Bidding copy đúng level mẫu; raw không có thì không tự thêm.</div>
+                <div>✓ Không ép bid cap/cost target; chỉ copy nếu mẫu thực sự có.</div>
                 <div>✓ Creative dùng đúng bài Page.</div>
               </div>
             </div>
