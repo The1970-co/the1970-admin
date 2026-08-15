@@ -108,6 +108,7 @@ export default function MobileAutopilotPage() {
   const [manualColorByPost, setManualColorByPost] = useState<Record<string, string>>({});
   const [productSearchByPost, setProductSearchByPost] = useState<Record<string, string>>({});
   const [confirmRunPostId, setConfirmRunPostId] = useState<string | null>(null);
+  const [productSearchOpenByPost, setProductSearchOpenByPost] = useState<Record<string, boolean>>({});
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -683,32 +684,74 @@ export default function MobileAutopilotPage() {
                     const selectedProduct = mappingOptions.find((x) => String(x.productCode || "").toUpperCase() === selectedCode);
                     const colors = Array.isArray(selectedProduct?.colors) ? selectedProduct.colors : [];
                     return <div className="mt-2 space-y-2">
-                      <input
-                        value={productSearchByPost[postId] ?? ""}
-                        onChange={(e) => setProductSearchByPost((prev) => ({ ...prev, [postId]: e.target.value }))}
-                        placeholder="Gõ mã hoặc tên SP để tìm..."
-                        className="h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none"
-                      />
-                      <select
-                        className="h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none"
-                        value={selectedCode}
-                        onChange={(e) => {
-                          const code = e.target.value.toUpperCase();
-                          setManualProductByPost((prev) => ({ ...prev, [postId]: code }));
-                          setManualColorByPost((prev) => ({ ...prev, [postId]: "" }));
-                        }}
-                      >
-                        <option value="">Chọn mã sản phẩm...</option>
-                        {mappingOptions
-                          .filter((x) => {
-                            const q = String(productSearchByPost[postId] || "").trim().toLowerCase();
-                            if (!q) return true;
-                            return String(x.productCode || "").toLowerCase().includes(q) ||
-                                   String(x.productName || "").toLowerCase().includes(q);
-                          })
-                          .slice(0, 80)
-                          .map((x) => <option key={String(x.productCode)} value={String(x.productCode)}>{x.productCode} · {x.productName}</option>)}
-                      </select>
+                      <div className="relative">
+                        <div className="flex gap-2">
+                          <input
+                            value={productSearchByPost[postId] ?? ""}
+                            onFocus={() => setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: true }))}
+                            onChange={(e) => {
+                              setProductSearchByPost((prev) => ({ ...prev, [postId]: e.target.value }));
+                              setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: true }));
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
+                                (e.currentTarget as HTMLInputElement).blur();
+                              }
+                            }}
+                            placeholder="Gõ mã hoặc tên SP để tìm..."
+                            className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProductSearchByPost((prev) => ({ ...prev, [postId]: "" }));
+                              setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
+                              if (typeof document !== "undefined") (document.activeElement as HTMLElement | null)?.blur?.();
+                            }}
+                            className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-black text-neutral-500"
+                          >
+                            Đóng
+                          </button>
+                        </div>
+
+                        {productSearchOpenByPost[postId] ? (() => {
+                          const q = String(productSearchByPost[postId] || "").trim().toLowerCase();
+                          const rows = mappingOptions
+                            .filter((x) => {
+                              if (!q) return true;
+                              return String(x.productCode || "").toLowerCase().includes(q) ||
+                                     String(x.productName || "").toLowerCase().includes(q);
+                            })
+                            .slice(0, 30);
+
+                          return <div className="mt-2 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-lg">
+                            {rows.length ? rows.map((x) => {
+                              const code = String(x.productCode || "").toUpperCase();
+                              return <button
+                                type="button"
+                                key={code}
+                                onClick={() => {
+                                  setManualProductByPost((prev) => ({ ...prev, [postId]: code }));
+                                  setManualColorByPost((prev) => ({ ...prev, [postId]: "" }));
+                                  setProductSearchByPost((prev) => ({ ...prev, [postId]: `${code} · ${x.productName || ""}` }));
+                                  setProductSearchOpenByPost((prev) => ({ ...prev, [postId]: false }));
+                                  if (typeof document !== "undefined") (document.activeElement as HTMLElement | null)?.blur?.();
+                                }}
+                                className={`block w-full border-b border-neutral-100 px-3 py-3 text-left last:border-b-0 ${selectedCode === code ? "bg-neutral-950 text-white" : "bg-white text-neutral-900"}`}
+                              >
+                                <div className="text-xs font-black">{code}</div>
+                                <div className={`mt-0.5 text-[10px] ${selectedCode === code ? "text-neutral-300" : "text-neutral-500"}`}>{x.productName || ""}</div>
+                              </button>;
+                            }) : <div className="px-3 py-4 text-center text-xs font-bold text-neutral-400">Không tìm thấy sản phẩm</div>}
+                          </div>;
+                        })() : null}
+                      </div>
+
+                      <div className="rounded-xl border border-neutral-200 bg-white px-3 py-3">
+                        <div className="text-[9px] font-black uppercase tracking-wide text-neutral-400">Mã đã chọn</div>
+                        <div className="mt-1 text-xs font-black">{selectedCode ? `${selectedCode}${selectedProduct?.productName ? ` · ${selectedProduct.productName}` : ""}` : "Chưa chọn mã sản phẩm"}</div>
+                      </div>
 
                       <select
                         className="h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold outline-none disabled:bg-neutral-100 disabled:text-neutral-400"
