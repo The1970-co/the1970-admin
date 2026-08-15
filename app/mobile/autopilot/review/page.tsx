@@ -169,6 +169,16 @@ export default function MobileAutopilotReviewPage() {
           name: review.launch.adName,
         }),
       });
+
+      if (r?.ok === false) {
+        const detail = [
+          r?.stage ? `stage=${r.stage}` : "",
+          r?.error || "",
+          r?.code ? `code=${r.code}` : "",
+        ].filter(Boolean).join(" · ");
+        throw new Error(detail || "Backend không tạo được dữ liệu đối chiếu");
+      }
+
       setTemplateComparison(r);
     } catch (e: any) {
       setComparisonError(e?.message || "Không đọc được Ad Set mẫu từ Meta");
