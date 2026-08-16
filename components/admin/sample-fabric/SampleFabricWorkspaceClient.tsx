@@ -137,6 +137,11 @@ function compositionText(parts: FabricCompositionPart[]) {
     .join(", ");
 }
 
+function uniqueTextValues(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, "vi", { sensitivity: "base", numeric: true }));
+}
+
 type WorkspaceMeta = {
   suppliers: Supplier[]; staff: Staff[]; seasons: string[]; productGroups: string[]; fabricCompositions: string[];
   boards?: FabricBoard[]; branches?: Branch[]; samples?: Array<Pick<Sample,"id"|"code"|"name"|"year"|"fabricBoardId"|"fabricColorId">>;
@@ -192,21 +197,25 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
   const [dispatchSample, setDispatchSample] = useState<Sample | null>(null);
 
   async function loadLibrary() {
-    const [rows, meta] = await Promise.all([
+    const [rows, meta, productCategoryOptions] = await Promise.all([
       api<FabricBoard[]>(`/sample-fabric/library${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
       api<WorkspaceMeta>("/sample-fabric/library/meta"),
+      api<string[]>("/products/category-options").catch(() => []),
     ]);
-    setBoards(rows); setWorkspaceMeta(meta); setSuppliers(meta.suppliers || []); setStaff(meta.staff || []); setSeasons(meta.seasons || []); setProductGroups(meta.productGroups || []); setFabricCompositions(meta.fabricCompositions || []);
+    const groups = uniqueTextValues([...(productCategoryOptions || []), ...(meta.productGroups || [])]);
+    setBoards(rows); setWorkspaceMeta({ ...meta, productGroups: groups }); setSuppliers(meta.suppliers || []); setStaff(meta.staff || []); setSeasons(meta.seasons || []); setProductGroups(groups); setFabricCompositions(meta.fabricCompositions || []);
   }
   async function loadSamples() {
     const params = new URLSearchParams();
     if (sampleStatus) params.set("status", sampleStatus);
     if (q.trim()) params.set("q", q.trim());
-    const [rows, meta] = await Promise.all([
+    const [rows, meta, productCategoryOptions] = await Promise.all([
       api<Sample[]>(`/sample-fabric/samples${params.toString() ? `?${params}` : ""}`),
       api<WorkspaceMeta>("/sample-fabric/samples/meta"),
+      api<string[]>("/products/category-options").catch(() => []),
     ]);
-    setSamples(rows); setWorkspaceMeta(meta); setSuppliers(meta.suppliers || []); setStaff(meta.staff || []); setSeasons(meta.seasons || []); setProductGroups(meta.productGroups || []); setFabricCompositions(meta.fabricCompositions || []);
+    const groups = uniqueTextValues([...(productCategoryOptions || []), ...(meta.productGroups || [])]);
+    setSamples(rows); setWorkspaceMeta({ ...meta, productGroups: groups }); setSuppliers(meta.suppliers || []); setStaff(meta.staff || []); setSeasons(meta.seasons || []); setProductGroups(groups); setFabricCompositions(meta.fabricCompositions || []);
   }
   async function loadFabric() {
     const params = new URLSearchParams();
@@ -451,6 +460,7 @@ function SampleForm({
   const [supplierName, setSupplierName] = useState("");
   const [supplierPhone, setSupplierPhone] = useState("");
   const [creatingSupplier, setCreatingSupplier] = useState(false);
+  const [customCategory, setCustomCategory] = useState(() => Boolean(sample?.category && !productGroups.includes(sample.category)));
 
   const patch = (key: string, value: any) => setForm((current: any) => ({ ...current, [key]: value }));
   const selectedComposition = useMemo(() => compositionParts.map((item) => item.name), [compositionParts]);
@@ -462,18 +472,24 @@ function SampleForm({
   }, [compositionParts]);
 
   useEffect(() => {
-    if (sample) return;
     const code = normalizeSampleCode(form.code);
+    const originalCode = normalizeSampleCode(sample?.code || "");
     if (!code) {
       setCodeCheck({ loading: false, available: null, message: "" });
+      return;
+    }
+    if (sample && code === originalCode) {
+      setCodeCheck({ loading: false, available: true, message: "Mã hiện tại của mẫu." });
       return;
     }
 
     setCodeCheck((current) => ({ ...current, loading: true }));
     const timer = window.setTimeout(async () => {
       try {
+        const params = new URLSearchParams({ code });
+        if (sample?.id) params.set("excludeId", sample.id);
         const result = await api<{ available: boolean; message: string }>(
-          `/sample-fabric/samples/check-code?code=${encodeURIComponent(code)}`,
+          `/sample-fabric/samples/check-code?${params.toString()}`,
         );
         setCodeCheck({ loading: false, available: result.available, message: result.message || "" });
       } catch (e) {
@@ -485,7 +501,14 @@ function SampleForm({
       }
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [form.code, sample]);
+  }, [form.code, sample?.id, sample?.code]);
+
+  useEffect(() => {
+    if (form.fabricBoardId || !form.fabricBoardCode || !boards.length) return;
+    const matched = boards.find((board) => String(board.boardCode || "").toUpperCase() === String(form.fabricBoardCode || "").toUpperCase());
+    if (matched) patch("fabricBoardId", matched.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boards]);
 
   function toggleComposition(value: string) {
     const normalized = titleCaseVi(value);
@@ -545,7 +568,7 @@ function SampleForm({
       setSaving(true);
       setError("");
       const code = normalizeSampleCode(form.code);
-      if (!sample && code && codeCheck.available !== true) {
+      if (code && codeCheck.available !== true) {
         throw new Error(codeCheck.message || "Mã mẫu chưa được xác nhận là hợp lệ.");
       }
       const assigned = staff.find((item) => item.id === form.assigneeStaffId);
@@ -585,13 +608,12 @@ function SampleForm({
           <Field label="Mã mẫu">
             <div>
               <input
-                className={`${inputClass} ${!sample && codeCheck.available === false ? "border-red-400" : !sample && codeCheck.available === true ? "border-emerald-400" : ""}`}
+                className={`${inputClass} ${codeCheck.available === false ? "border-red-400" : codeCheck.available === true ? "border-emerald-400" : ""}`}
                 value={form.code}
-                disabled={!!sample}
                 placeholder="VD: QSK925"
                 onChange={(e) => patch("code", normalizeSampleCode(e.target.value))}
               />
-              {!sample && form.code ? (
+              {form.code ? (
                 <p className={`mt-1.5 text-xs ${codeCheck.loading ? "text-neutral-400" : codeCheck.available ? "text-emerald-600" : "text-red-600"}`}>
                   {codeCheck.loading ? "Đang kiểm tra mã trong mẫu mã và danh sách sản phẩm..." : codeCheck.message}
                 </p>
@@ -611,26 +633,45 @@ function SampleForm({
           </Field>
 
           <Field label="Nhóm sản phẩm">
-            <div>
-              <input
+            <div className="space-y-2">
+              <select
                 className={inputClass}
-                list="sample-product-groups"
-                value={form.category}
-                onChange={(e) => patch("category", e.target.value)}
-                onBlur={() => patch("category", titleCaseVi(form.category))}
-                placeholder="Chọn hoặc gõ nhóm mới"
-              />
-              <datalist id="sample-product-groups">
-                {productGroups.map((group) => <option key={group} value={group} />)}
-              </datalist>
-              <p className="mt-1.5 text-xs text-neutral-400">Có thể gõ nhóm mới. Hệ thống tự chuẩn hoá kiểu “Áo Khoác”, “Sơ Mi”.</p>
+                value={customCategory ? "__NEW__" : form.category}
+                onChange={(e) => {
+                  if (e.target.value === "__NEW__") { setCustomCategory(true); patch("category", ""); }
+                  else { setCustomCategory(false); patch("category", e.target.value); }
+                }}
+              >
+                <option value="">Chưa chọn</option>
+                {uniqueTextValues([...productGroups, !customCategory ? form.category : ""]).map((group) => <option key={group} value={group}>{group}</option>)}
+                <option value="__NEW__">+ Thêm nhóm mới</option>
+              </select>
+              {customCategory ? (
+                <input className={inputClass} value={form.category} onChange={(e) => patch("category", e.target.value)} onBlur={() => patch("category", titleCaseVi(form.category))} placeholder="Nhập nhóm mới, VD: Áo Khoác" />
+              ) : null}
+              <p className="text-xs text-neutral-400">Danh sách lấy từ Danh mục/Danh sách sản phẩm hiện tại.</p>
             </div>
           </Field>
 
-          <Field label="Bảng vải sử dụng">
-            <select className={inputClass} value={form.fabricBoardId} onChange={(e) => { const id=e.target.value; const board=boards.find(x=>x.id===id); patch("fabricBoardId",id); patch("fabricColorId",""); if(board){ patch("supplierId",board.supplierId||""); patch("fabricBoardCode",board.boardCode||""); patch("fabricCode",board.fabricCode||""); setCompositionParts(parseCompositionParts(board.composition)); } }}>
-              <option value="">Chưa chọn bảng vải</option>
-              {boards.map((board) => <option key={board.id} value={board.id}>{board.supplier?.name || "NCC"} · {board.boardCode} · {board.fabricCode || "—"}</option>)}
+          <Field label="Mã bảng vải">
+            <select
+              className={inputClass}
+              value={form.fabricBoardId}
+              onChange={(e) => {
+                const id = e.target.value;
+                const board = boards.find((item) => item.id === id);
+                patch("fabricBoardId", id);
+                patch("fabricColorId", "");
+                if (board) {
+                  patch("supplierId", board.supplierId || "");
+                  patch("fabricBoardCode", board.boardCode || "");
+                  patch("fabricCode", board.fabricCode || "");
+                  setCompositionParts(parseCompositionParts(board.composition));
+                }
+              }}
+            >
+              <option value="">Chưa gắn bảng vải</option>
+              {boards.map((board) => <option key={board.id} value={board.id}>{board.boardCode} · {board.supplier?.name || "NCC"}{board.fabricCode ? ` · ${board.fabricCode}` : ""}</option>)}
             </select>
           </Field>
           <Field label="Màu vải trong bảng">
@@ -642,7 +683,10 @@ function SampleForm({
           <Field label="Nhà cung cấp vải">
             <div className="space-y-2">
               <div className="flex gap-2">
-                <input className={inputClass} value={selectedBoard?.supplier?.name || suppliers.find(x=>x.id===form.supplierId)?.name || ""} readOnly placeholder="Theo bảng vải" />
+                <select className={inputClass} value={form.supplierId} onChange={(e) => patch("supplierId", e.target.value)}>
+                  <option value="">Chưa chọn</option>
+                  {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                </select>
                 <button type="button" onClick={() => setShowSupplierCreator((value) => !value)} className="shrink-0 rounded-2xl border border-neutral-300 px-3 text-xs font-semibold hover:bg-neutral-50">+ NCC vải</button>
               </div>
               {showSupplierCreator ? (
@@ -656,8 +700,7 @@ function SampleForm({
               ) : null}
             </div>
           </Field>
-          <Field label="Mã bảng vải"><input className={inputClass} value={selectedBoard?.boardCode || form.fabricBoardCode} readOnly /></Field>
-          <Field label="Mã chất vải"><input className={inputClass} value={selectedBoard?.fabricCode || form.fabricCode} readOnly /></Field>
+          <Field label="Mã chất vải"><input className={inputClass} value={form.fabricCode} onChange={(e) => patch("fabricCode", normalizeSampleCode(e.target.value))} placeholder="VD: A2309-01" /></Field>
           <Field label="Tiến độ">
             <select className={inputClass} value={form.status} onChange={(e) => patch("status", e.target.value)}>
               {SAMPLE_STATUSES.map((item) => <option key={item[0]} value={item[0]}>{item[1]}</option>)}
@@ -779,7 +822,7 @@ function SampleForm({
           <button type="button" onClick={onClose} className="rounded-2xl border px-4 py-2.5 text-sm">Đóng</button>
           <button
             type="button"
-            disabled={saving || (!sample && !!form.code && (codeCheck.loading || codeCheck.available !== true))}
+            disabled={saving || (!!form.code && (codeCheck.loading || codeCheck.available !== true))}
             onClick={save}
             className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
           >
