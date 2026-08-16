@@ -870,8 +870,27 @@ export default function MobileAutopilotPage() {
 
         {!loading && tab === "posts" ? <div className="space-y-3">
           {!launchAvailable ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold leading-5 text-amber-800">{launchError || "Auto Launch backend chưa sẵn sàng."}</div> : null}
-          <button disabled={busy || !launchAvailable} onClick={() => void scanPublishedPosts()} className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"><RefreshCw className="h-4 w-4" /> Quét 100 bài đã đăng</button>
-          <div className="rounded-2xl bg-neutral-100 p-3 text-[11px] leading-5 text-neutral-500">Quét cả bài cũ trong 100 bài published gần nhất, không chỉ bài hôm nay. Chế độ quét này chỉ phát hiện trạng thái, không tự tạo Ads.</div>
+
+          {/* REVIEW TEMP: giúp Meta reviewer nhìn rõ pages_show_list đang dùng cho Page The 1970.
+              Sau khi App Review xong có thể bỏ block này nếu muốn gọn UI. */}
+          <div className="overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm">
+            <div className="flex items-center gap-3 p-3">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#1877F2] text-white">
+                <span className="text-lg font-black leading-none">f</span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-black uppercase tracking-[.14em] text-blue-600">Facebook Page được cấp quyền</div>
+                <div className="mt-0.5 text-base font-black text-neutral-950">The 1970</div>
+                <div className="mt-0.5 text-[10px] leading-4 text-neutral-500">Autopilot đang đọc danh sách bài viết đã đăng từ Facebook Page The 1970.</div>
+              </div>
+              <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[9px] font-black text-blue-700">PAGE</span>
+            </div>
+            <div className="border-t border-blue-50 bg-blue-50/60 px-3 py-2 text-[10px] font-bold text-blue-800">
+              DANH SÁCH BÀI VIẾT · FACEBOOK PAGE THE 1970
+            </div>
+          </div>
+          <button disabled={busy || !launchAvailable} onClick={() => void scanPublishedPosts()} className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40"><RefreshCw className="h-4 w-4" /> Quét 100 bài từ Page The 1970</button>
+          <div className="rounded-2xl bg-neutral-100 p-3 text-[11px] leading-5 text-neutral-500">Quét 100 bài published gần nhất từ Facebook Page The 1970, không chỉ bài hôm nay. Chế độ quét này chỉ phát hiện trạng thái, không tự tạo Ads.</div>
           <div className="grid grid-cols-3 gap-2">
             {([["no_ad","Chưa chạy Ads"],["has_ad","Đã có Ads"],["all","Tất cả"]] as Array<[typeof postFilter,string]>).map(([id,label]) => <button key={id} onClick={() => setPostFilter(id)} className={`rounded-xl border px-2 py-2 text-[10px] font-black ${postFilter === id ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 bg-white text-neutral-500"}`}>{label}</button>)}
           </div>
@@ -880,6 +899,18 @@ export default function MobileAutopilotPage() {
             const a = post.assessment || {};
             const image = postImage(post);
             return <article key={String(post.postId)} className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
+              {/* REVIEW TEMP: nhận diện rõ đây là Page Post của The 1970 */}
+              <div className="flex items-center gap-2.5 border-b border-neutral-100 px-4 py-3">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#1877F2] text-white">
+                  <span className="text-sm font-black leading-none">f</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-black text-neutral-950">The 1970</div>
+                  <div className="text-[9px] font-bold uppercase tracking-wide text-neutral-400">Bài viết từ Facebook Page The 1970</div>
+                </div>
+                <span className="rounded-full bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-700">PAGE POST</span>
+              </div>
+
               {image ? <div className="aspect-[16/9] w-full overflow-hidden bg-neutral-100"><img src={image} alt="" className="h-full w-full object-cover" /></div> : null}
               <div className="p-4">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="line-clamp-3 text-sm font-black leading-5">{post.message || post.postId}</div><div className="mt-1 text-[10px] text-neutral-400">{post.createdTime ? new Date(post.createdTime).toLocaleString("vi-VN") : "—"}</div></div><div className="flex flex-col items-end gap-1"><Badge value={state === "WAITING_MAPPED" ? "READY" : state}>{state === "WAITING_MAPPED" ? "MAPPED" : state}</Badge><span className={`text-[9px] font-black ${post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "text-emerald-700" : "text-amber-700"}`}>{post?.hasAd || post?.metaAdId || state === "ALREADY_AD" ? "ĐÃ CÓ ADS" : "CHƯA CHẠY ADS"}</span></div></div>
