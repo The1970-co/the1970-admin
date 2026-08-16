@@ -18,6 +18,8 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/stocktake": PERMISSIONS.MENU_STOCKTAKE,
   "/stocktake-sessions": PERMISSIONS.MENU_STOCKTAKE,
   "/control/warehouse-map": PERMISSIONS.MENU_WAREHOUSE_MAP,
+  "/design-samples": "menu.design_samples",
+  "/fabric-receipts": "menu.fabric_receipts",
   "/finance/daily": PERMISSIONS.MENU_FINANCE,
   "/finance/cash-receipts": PERMISSIONS.MENU_CASH_VOUCHER,
   "/finance/cash-payments": PERMISSIONS.MENU_CASH_VOUCHER,
