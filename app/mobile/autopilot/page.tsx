@@ -111,6 +111,10 @@ export default function MobileAutopilotPage() {
   const [manualColorByPost, setManualColorByPost] = useState<Record<string, string>>({});
   const [productSearchByPost, setProductSearchByPost] = useState<Record<string, string>>({});
   const [productSearchOpenByPost, setProductSearchOpenByPost] = useState<Record<string, boolean>>({});
+  const [manualProductByAd, setManualProductByAd] = useState<Record<string, string>>({});
+  const [manualColorByAd, setManualColorByAd] = useState<Record<string, string>>({});
+  const [productSearchByAd, setProductSearchByAd] = useState<Record<string, string>>({});
+  const [productSearchOpenByAd, setProductSearchOpenByAd] = useState<Record<string, boolean>>({});
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -243,8 +247,15 @@ export default function MobileAutopilotPage() {
           budgetLevel: ctl.budgetLevel || raw.budgetLevel || null,
           // Metrics ưu tiên control-center.
           spend24h: ctl.spend24h ?? ctl.metrics?.spend ?? raw.spend24h ?? raw.spend,
-          revenue24h: ctl.revenue24h ?? ctl.productAttribution?.familyOrderRevenue ?? ctl.productAttribution?.orderRevenue ?? raw.revenue24h ?? raw.revenue,
-          roas24h: ctl.roas24h ?? ctl.productAttribution?.realRoasEstimate ?? raw.roas24h ?? raw.roas,
+          revenue24h: ctl.revenue24h ?? ctl.productAttribution?.totalRevenue ?? ctl.productAttribution?.familyOrderRevenue ?? ctl.productAttribution?.orderRevenue ?? raw.revenue24h ?? raw.revenue,
+          facebookRevenue24h: ctl.facebookRevenue24h ?? ctl.productAttribution?.facebookRevenue ?? raw.facebookRevenue24h,
+          posRevenue24h: ctl.posRevenue24h ?? ctl.productAttribution?.posRevenue ?? raw.posRevenue24h,
+          roasFacebook24h: ctl.roasFacebook24h ?? ctl.productAttribution?.facebookRoas ?? raw.roasFacebook24h,
+          roasPos24h: ctl.roasPos24h ?? ctl.productAttribution?.posRoas ?? raw.roasPos24h,
+          roas24h: ctl.roasTotal24h ?? ctl.roas24h ?? ctl.productAttribution?.totalRoas ?? ctl.productAttribution?.realRoasEstimate ?? raw.roas24h ?? raw.roas,
+          manualProductCode: ctl.manualProductCode ?? raw.manualProductCode ?? ctl.manualMapping?.productCode ?? raw.manualMapping?.productCode ?? null,
+          manualColor: ctl.manualColor ?? raw.manualColor ?? ctl.manualMapping?.color ?? raw.manualMapping?.color ?? null,
+          manualMapping: ctl.manualMapping ?? raw.manualMapping ?? null,
         };
       });
 
@@ -535,6 +546,82 @@ export default function MobileAutopilotPage() {
     finally { setBusy(false); }
   }
 
+  async function saveAdMapping(row: AnyRow) {
+    const metaAdId = String(row.metaAdId || row.id || "").trim();
+    const stock = assessments[metaAdId] || {};
+
+    const currentCode = String(
+      row.manualProductCode ||
+      row.manualMapping?.productCode ||
+      stock.productCode ||
+      ""
+    ).trim().toUpperCase();
+
+    const productCode = String(
+      manualProductByAd[metaAdId] ?? currentCode
+    ).trim().toUpperCase();
+
+    const selectedProduct = mappingOptions.find(
+      (x) => String(x.productCode || "").trim().toUpperCase() === productCode,
+    );
+    const colors = Array.isArray(selectedProduct?.colors) ? selectedProduct.colors : [];
+
+    const currentColor = String(
+      row.manualColor ||
+      row.manualMapping?.color ||
+      stock.color ||
+      ""
+    ).trim();
+
+    const color = String(
+      manualColorByAd[metaAdId] ?? currentColor
+    ).trim();
+
+    if (!metaAdId) {
+      setError("Thiếu Meta Ad ID.");
+      return;
+    }
+    if (!productCode || !selectedProduct) {
+      setError("Chọn đúng mã sản phẩm nội bộ trước.");
+      return;
+    }
+    if (colors.length > 1 && !color) {
+      setError("Chọn màu sản phẩm trước.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const r = await apiJson("/meta-ads/autopilot/ads/map", {
+        method: "POST",
+        body: JSON.stringify({
+          metaAdId,
+          productCode,
+          color: color || undefined,
+        }),
+      });
+
+      if (r?.ok === false) {
+        throw new Error(r?.error || "Không lưu được mapping Ads");
+      }
+
+      setMessage(
+        `Đã map Ad với ${r?.mapping?.productCode || productCode}${
+          r?.mapping?.color ? ` · ${r.mapping.color}` : ""
+        }.`,
+      );
+
+      await loadAll(false);
+    } catch (e: any) {
+      setError(e?.message || "Không lưu được mapping Ads");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function savePostMapping(post: AnyRow) {
     const postId = String(post.postId || post.id || "");
     const currentAssessment = post.assessment || {};
@@ -786,7 +873,7 @@ export default function MobileAutopilotPage() {
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
                   <div className="mt-1 flex flex-wrap gap-1"><Badge value={status}>{status}</Badge>{stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}{historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}</div>
-                  <div className="mt-2 text-xs font-bold text-neutral-600">{stock?.productCode ? `${stock.productCode} · ${stock.color || ""}` : "Chưa map mã / màu"}</div>
+                  <div className="mt-2 text-xs font-bold text-neutral-600">{stock?.productCode ? `${stock.productCode} · ${stock.color || ""}` : row.manualProductCode || row.manualMapping?.productCode ? `${row.manualProductCode || row.manualMapping?.productCode} · ${row.manualColor || row.manualMapping?.color || ""}` : "Chưa map mã / màu"}</div>
                 </div>
               </div>
               <div className="grid grid-cols-3 border-y border-neutral-100 bg-neutral-50">
@@ -800,12 +887,178 @@ export default function MobileAutopilotPage() {
                 void ensureAdInsights(insightRangeByAd[id] || "today");
               }} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
               {expanded ? <div className="space-y-3 border-t border-neutral-100 p-4">
+                {(() => {
+                  const currentCode = String(
+                    manualProductByAd[id] ??
+                    row.manualProductCode ??
+                    row.manualMapping?.productCode ??
+                    stock?.productCode ??
+                    ""
+                  ).trim().toUpperCase();
+
+                  const selectedProduct = mappingOptions.find(
+                    (x) => String(x.productCode || "").trim().toUpperCase() === currentCode,
+                  );
+                  const colors = Array.isArray(selectedProduct?.colors) ? selectedProduct.colors : [];
+                  const currentColor = String(
+                    manualColorByAd[id] ??
+                    row.manualColor ??
+                    row.manualMapping?.color ??
+                    stock?.color ??
+                    ""
+                  ).trim();
+
+                  return <div className={`rounded-2xl border p-3 ${stock?.productCode ? "border-neutral-200 bg-neutral-50" : "border-sky-200 bg-sky-50"}`}>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-wider text-neutral-500">Mapping mã sản phẩm</div>
+                        <div className="mt-0.5 text-[11px] text-neutral-500">
+                          {stock?.productCode
+                            ? "Đã match với kho. Có thể đổi mapping thủ công nếu cần."
+                            : "Ads chưa có mã trong tên · chọn mã nội bộ để tồn kho và ROAS tính chính xác."}
+                        </div>
+                      </div>
+                      {row.manualProductCode || row.manualMapping?.productCode ? <Badge value="ACTIVE">MANUAL</Badge> : null}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProductSearchOpenByAd((prev) => ({ ...prev, [id]: true }));
+                        setProductSearchByAd((prev) => ({ ...prev, [id]: prev[id] ?? "" }));
+                      }}
+                      className="flex h-12 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 text-left"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-black uppercase tracking-wide text-neutral-400">Tìm mã sản phẩm</div>
+                        <div className="truncate text-xs font-black text-neutral-900">
+                          {currentCode
+                            ? `${currentCode}${selectedProduct?.productName ? ` · ${selectedProduct.productName}` : ""}`
+                            : "Bấm để tìm mã / tên SP"}
+                        </div>
+                      </div>
+                      <Search className="ml-3 h-4 w-4 text-neutral-400" />
+                    </button>
+
+                    {productSearchOpenByAd[id] ? (() => {
+                      const q = String(productSearchByAd[id] || "").trim().toLowerCase();
+                      const rows = mappingOptions
+                        .filter((x) => {
+                          if (!q) return true;
+                          return (
+                            String(x.productCode || "").toLowerCase().includes(q) ||
+                            String(x.productName || "").toLowerCase().includes(q)
+                          );
+                        })
+                        .slice(0, 100);
+
+                      return <div className="fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col overflow-hidden bg-white">
+                        <div className="border-b border-neutral-200 bg-white px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProductSearchOpenByAd((prev) => ({ ...prev, [id]: false }));
+                                setProductSearchByAd((prev) => ({ ...prev, [id]: "" }));
+                              }}
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-xl font-black"
+                            >
+                              ×
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[10px] font-black uppercase tracking-[0.16em] text-neutral-400">Map Ads với kho</div>
+                              <div className="text-base font-black text-neutral-950">Tìm mã hoặc tên SP</div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex gap-2">
+                            <input
+                              autoFocus
+                              inputMode="search"
+                              enterKeyHint="search"
+                              value={productSearchByAd[id] ?? ""}
+                              onChange={(e) => setProductSearchByAd((prev) => ({ ...prev, [id]: e.target.value }))}
+                              placeholder="Ví dụ: QJ930 hoặc jean xanh..."
+                              className="h-12 min-w-0 flex-1 rounded-2xl border border-neutral-300 bg-neutral-50 px-4 text-[16px] font-bold outline-none focus:border-neutral-950"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setProductSearchByAd((prev) => ({ ...prev, [id]: "" }))}
+                              className="h-12 rounded-2xl border border-neutral-200 bg-white px-4 text-xs font-black text-neutral-600"
+                            >
+                              Xoá
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-3">
+                          <div className="mb-2 text-[11px] font-semibold text-neutral-400">
+                            {q ? `${rows.length} kết quả` : `Hiển thị ${Math.min(mappingOptions.length, 100)} sản phẩm đầu`}
+                          </div>
+                          <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                            {rows.length ? rows.map((x) => {
+                              const code = String(x.productCode || "").toUpperCase();
+                              const active = currentCode === code;
+                              return <button
+                                type="button"
+                                key={code}
+                                onClick={() => {
+                                  setManualProductByAd((prev) => ({ ...prev, [id]: code }));
+                                  setManualColorByAd((prev) => ({ ...prev, [id]: "" }));
+                                  setProductSearchByAd((prev) => ({ ...prev, [id]: "" }));
+                                  setProductSearchOpenByAd((prev) => ({ ...prev, [id]: false }));
+                                }}
+                                className={`block w-full border-b border-neutral-100 px-4 py-4 text-left last:border-b-0 ${active ? "bg-neutral-950 text-white" : "bg-white text-neutral-950"}`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-black">{code}</div>
+                                    <div className={`mt-1 text-xs leading-5 ${active ? "text-neutral-300" : "text-neutral-500"}`}>
+                                      {x.productName || ""}
+                                    </div>
+                                  </div>
+                                  {active ? <span className="text-sm font-black">✓</span> : null}
+                                </div>
+                              </button>;
+                            }) : <div className="px-4 py-10 text-center text-sm font-bold text-neutral-400">Không tìm thấy sản phẩm</div>}
+                          </div>
+                        </div>
+                      </div>;
+                    })() : null}
+
+                    <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                      <select
+                        className="h-11 min-w-0 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-bold outline-none disabled:bg-neutral-100 disabled:text-neutral-400"
+                        value={currentColor}
+                        disabled={!currentCode}
+                        onChange={(e) => setManualColorByAd((prev) => ({ ...prev, [id]: e.target.value }))}
+                      >
+                        <option value="">
+                          {colors.length > 1 ? "Chọn màu..." : colors.length === 1 ? colors[0]?.color : "Chưa có màu"}
+                        </option>
+                        {colors.map((c: AnyRow) => (
+                          <option key={String(c.color)} value={String(c.color)}>
+                            {c.color} · tồn {c.totalQty}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        disabled={busy || !currentCode || (colors.length > 1 && !currentColor)}
+                        onClick={() => void saveAdMapping(row)}
+                        className="h-11 rounded-xl bg-neutral-950 px-4 text-xs font-black text-white disabled:bg-neutral-200 disabled:text-neutral-400"
+                      >
+                        Lưu
+                      </button>
+                    </div>
+                  </div>;
+                })()}
                 <div><div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">Tồn từng size</div><div className="flex flex-wrap gap-2">{Array.isArray(stock?.sizes) && stock.sizes.length ? stock.sizes.map((s: AnyRow) => <span key={String(s.size)} className={`rounded-xl border px-2.5 py-1.5 text-xs font-black ${num(s.qty) < pauseThreshold ? "border-rose-200 bg-rose-50 text-rose-700" : num(s.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-neutral-50"}`}>{s.size}: {s.qty}</span>) : <span className="text-xs text-neutral-400">Chưa có dữ liệu tồn.</span>}</div></div>
                 <div className="rounded-2xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">{stock?.reason || "Chưa có đánh giá tồn kho."}</div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Spend 24h</div><div className="mt-1 text-xs font-black">{money(row.spend24h ?? row.spend ?? 0)}</div></div>
-                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT nội bộ</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
-                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT tổng</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS Tổng</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
                 </div>
                 {(() => {
                   const result = insightForAd(id);
@@ -840,9 +1093,32 @@ export default function MobileAutopilotPage() {
                         <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Purchase Meta</div><div className="mt-1 text-sm font-black">{Math.round(num(m.metaPurchases))}</div></div>
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2">
-                        <div className="rounded-xl border border-neutral-200 p-3"><div className="text-[9px] text-neutral-400">ROAS Meta</div><div className="mt-1 text-sm font-black">{pct(m.roas || 0)}</div></div>
-                        <div className="rounded-xl border border-neutral-200 p-3"><div className="text-[9px] text-neutral-400">ROAS nội bộ</div><div className="mt-1 text-sm font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
-                      </div>
+                         <div className="rounded-xl border border-neutral-200 p-3">
+                           <div className="text-[9px] text-neutral-400">DT Facebook</div>
+                           <div className="mt-1 text-sm font-black">{money(m.facebookRevenue ?? result.row?.facebookRevenue ?? 0)}</div>
+                         </div>
+                         <div className="rounded-xl border border-neutral-200 p-3">
+                           <div className="text-[9px] text-neutral-400">DT POS</div>
+                           <div className="mt-1 text-sm font-black">{money(m.posRevenue ?? result.row?.posRevenue ?? 0)}</div>
+                         </div>
+                         <div className="rounded-xl border border-neutral-200 p-3">
+                           <div className="text-[9px] text-neutral-400">ROAS Facebook</div>
+                           <div className="mt-1 text-sm font-black">{pct(m.facebookRoas ?? result.row?.facebookRoas ?? 0)}</div>
+                         </div>
+                         <div className="rounded-xl border border-neutral-200 p-3">
+                           <div className="text-[9px] text-neutral-400">ROAS POS</div>
+                           <div className="mt-1 text-sm font-black">{pct(m.posRoas ?? result.row?.posRoas ?? 0)}</div>
+                         </div>
+                         <div className="col-span-2 rounded-xl bg-neutral-950 p-3 text-white">
+                           <div className="text-[9px] font-black uppercase tracking-wide text-neutral-400">ROAS Tổng · ngưỡng scale {pct(scaleRoas)}</div>
+                           <div className="mt-1 flex items-end justify-between gap-3">
+                             <div className="text-xl font-black">{pct(m.totalRoas ?? m.internalRoas ?? result.row?.totalRoas ?? row.roas24h ?? 0)}</div>
+                             <div className="text-[10px] font-bold text-neutral-300">
+                               {num(m.totalRoas ?? m.internalRoas ?? result.row?.totalRoas ?? row.roas24h ?? 0) >= scaleRoas ? "Đạt ngưỡng ROAS" : "Chưa đạt ngưỡng"}
+                             </div>
+                           </div>
+                         </div>
+                       </div>
                     </> : <div className="py-5 text-center text-[11px] font-bold text-neutral-400">Meta chưa có dữ liệu ở khoảng này.</div>}
                   </div>;
                 })()}
