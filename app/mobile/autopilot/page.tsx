@@ -867,7 +867,11 @@ export default function MobileAutopilotPage() {
             const status = String(row.effectiveStatus || row.status || "—").toUpperCase();
             const expanded = expandedId === id;
             const historyCount = scaleCount(row);
-            return <article key={id} className="overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm">
+            return <article
+              id={`autopilot-ad-card-${id}`}
+              key={id}
+              className="scroll-mt-24 overflow-hidden rounded-[26px] border border-neutral-200 bg-white shadow-sm"
+            >
               <div className="flex gap-3 p-4">
                 {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
@@ -882,9 +886,24 @@ export default function MobileAutopilotPage() {
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || row.metaAdSetId || row.adSetId || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || row.metaCampaignId || row.campaignId || "—"}</div></div>
               </div>
               <button onClick={() => {
-                if (expanded) { setExpandedId(""); return; }
+                if (expanded) {
+                  setExpandedId("");
+                  return;
+                }
+
+                // Mở card xong luôn đưa phần đầu card về đúng viewport.
+                // Tránh browser scroll anchoring giữ vị trí cũ rồi đẩy người dùng xuống
+                // tận phần cuối card / sang card kế tiếp khi nội dung dài được mount.
                 setExpandedId(id);
                 void ensureAdInsights(insightRangeByAd[id] || "today");
+
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => {
+                    document
+                      .getElementById(`autopilot-ad-card-${id}`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  });
+                });
               }} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
               {expanded ? <div className="space-y-3 border-t border-neutral-100 p-4">
                 {(() => {
