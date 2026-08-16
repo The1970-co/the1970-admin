@@ -7,13 +7,13 @@ import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 
 const FULL_NAV_ITEMS = [
-  { label: "Home", href: "/mobile", icon: Home, match: ["/mobile"] },
-  { label: "Báo cáo", href: "/mobile/reports/overview", icon: BarChart3, match: ["/mobile/reports"] },
-  { label: "Auto", href: "/mobile/autopilot", icon: Bot, match: ["/mobile/autopilot"], autopilotOnly: true },
-  { label: "Đơn", href: "/mobile/orders", icon: ShoppingBag, match: ["/mobile/orders"] },
-  { label: "Kiểm", href: "/mobile/stocktake", icon: ClipboardCheck, match: ["/mobile/stocktake"] },
-  { label: "Lịch sử", href: "/mobile/stocktake-history", icon: ClipboardList, match: ["/mobile/stocktake-history"] },
-  { label: "Tôi", href: "/mobile/profile", icon: User, match: ["/mobile/profile", "/mobile/account"] },
+  { label: "Home", href: "/mobile", icon: Home, match: ["/mobile"], permissionKey: "mobile.nav.home" },
+  { label: "Báo cáo", href: "/mobile/reports/overview", icon: BarChart3, match: ["/mobile/reports"], permissionKey: "mobile.nav.reports" },
+  { label: "Auto", href: "/mobile/autopilot", icon: Bot, match: ["/mobile/autopilot"], permissionKey: "mobile.nav.autopilot", autopilotOnly: true },
+  { label: "Đơn", href: "/mobile/orders", icon: ShoppingBag, match: ["/mobile/orders"], permissionKey: "mobile.nav.orders" },
+  { label: "Kiểm", href: "/mobile/stocktake", icon: ClipboardCheck, match: ["/mobile/stocktake"], permissionKey: "mobile.nav.stocktake" },
+  { label: "Lịch sử", href: "/mobile/stocktake-history", icon: ClipboardList, match: ["/mobile/stocktake-history"], permissionKey: "mobile.nav.history" },
+  { label: "Tôi", href: "/mobile/profile", icon: User, match: ["/mobile/profile", "/mobile/account"], permissionKey: "mobile.nav.profile" },
 ];
 
 const STOCKTAKE_ONLY_NAV_ITEMS = [
@@ -44,6 +44,30 @@ function canSeeAutopilot(user: any) {
 
   const keys = getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId);
   return keys.includes("*") || keys.includes("autopilot.view");
+}
+
+function getMobileNavItems(user: any) {
+  if (!user) return [];
+  if (isOwnerOrAdmin(user)) return FULL_NAV_ITEMS;
+
+  const keys = getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId);
+  if (keys.includes("*")) return FULL_NAV_ITEMS;
+
+  const hasExplicitMobileNavConfig = keys.some((key) => String(key).startsWith("mobile.nav."));
+
+  // Backward compatible: tài khoản cũ chưa được gán bộ quyền mobile.nav.*
+  // vẫn dùng menu cũ. Khi đã có ít nhất 1 mobile.nav.* thì chỉ hiện đúng các mục được cấp.
+  if (!hasExplicitMobileNavConfig) {
+    return FULL_NAV_ITEMS.filter(
+      (item) => !item.autopilotOnly || canSeeAutopilot(user),
+    );
+  }
+
+  return FULL_NAV_ITEMS.filter((item) => {
+    if (!keys.includes(item.permissionKey)) return false;
+    if (item.autopilotOnly && !canSeeAutopilot(user)) return false;
+    return true;
+  });
 }
 
 function hasAny(keys: string[], candidates: string[]) {
@@ -89,10 +113,26 @@ export default function MobileBottomNav() {
   const pathname = usePathname() || "";
   const user = typeof window === "undefined" ? null : getCurrentUserFromStorage();
   const stocktakeOnly = useMemo(() => isStocktakeOnlyUser(user), [user]);
-  const items = stocktakeOnly
-    ? STOCKTAKE_ONLY_NAV_ITEMS
-    : FULL_NAV_ITEMS.filter((item) => !("autopilotOnly" in item) || !item.autopilotOnly || canSeeAutopilot(user));
-  const gridCols = stocktakeOnly ? "grid-cols-3" : items.length >= 7 ? "grid-cols-7" : "grid-cols-6";
+  const items = useMemo(
+    () => (stocktakeOnly ? STOCKTAKE_ONLY_NAV_ITEMS : getMobileNavItems(user)),
+    [stocktakeOnly, user],
+  );
+  const gridCols =
+    items.length <= 1
+      ? "grid-cols-1"
+      : items.length === 2
+        ? "grid-cols-2"
+        : items.length === 3
+          ? "grid-cols-3"
+          : items.length === 4
+            ? "grid-cols-4"
+            : items.length === 5
+              ? "grid-cols-5"
+              : items.length === 6
+                ? "grid-cols-6"
+                : "grid-cols-7";
+
+  if (!items.length) return null;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-neutral-200 bg-white/95 px-3 pb-[calc(10px+env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur">
