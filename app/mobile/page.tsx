@@ -134,26 +134,6 @@ export default function MobileEntryPage() {
     isOwnerOrAdmin(user) || permissionKeys.includes("*") || permissionKeys.includes(key);
 
 
-  useEffect(() => {
-    if (!user || isOwnerOrAdmin(user) || permissionKeys.includes("*")) return;
-
-    const visibleHomeKeys = [
-      "mobile.home.reports",
-      "mobile.home.finance",
-      "mobile.home.orders",
-      "mobile.home.products",
-      "mobile.home.stocktake",
-      "mobile.home.autopilot",
-    ].filter((key) => permissionKeys.includes(key));
-
-    if (
-      visibleHomeKeys.length === 1 &&
-      visibleHomeKeys[0] === "mobile.home.autopilot" &&
-      permissionKeys.includes("autopilot.view")
-    ) {
-      router.replace("/mobile/autopilot");
-    }
-  }, [permissionKeys, router, user]);
 
   if (stocktakeOnly) {
     return (
