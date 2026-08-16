@@ -44,7 +44,8 @@ const MENU: MenuItem[] = [
     label: "Mẫu mã & Vải",
     permission: "menu.sample_fabric",
     children: [
-      { href: "/design-samples", label: "Quản lý mẫu mã", permission: "menu.design_samples" },
+      { href: "/fabric-library", label: "Bảng vải", permission: "menu.fabric_library" },
+      { href: "/design-samples", label: "Triển khai mẫu", permission: "menu.design_samples" },
       { href: "/fabric-receipts", label: "Vải về", permission: "menu.fabric_receipts" },
     ],
   },

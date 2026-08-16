@@ -193,7 +193,6 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
   const [measureReceipt, setMeasureReceipt] = useState<FabricReceipt | null>(null);
   const [boardForm, setBoardForm] = useState<FabricBoard | null | undefined>(undefined);
   const [boardDetail, setBoardDetail] = useState<FabricBoard | null>(null);
-  const [dispatchBoard, setDispatchBoard] = useState<FabricBoard | null>(null);
   const [dispatchSample, setDispatchSample] = useState<Sample | null>(null);
 
   async function loadLibrary() {
@@ -275,21 +274,20 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     </div></Card>
 
     {loading ? <Card className="p-10 text-center text-sm text-neutral-500">Đang tải dữ liệu...</Card> : defaultSection === "library" ?
-      <LibraryView rows={boards} can={can} onEdit={x=>setBoardForm(x)} onDetail={async x=>{const full=await api<FabricBoard>(`/sample-fabric/library/${x.id}`);setBoardDetail(full)}} onDispatch={x=>setDispatchBoard(x)} onChanged={reload}/> :
-      defaultSection === "samples" ? <SamplesView rows={filteredSamples} can={can} onEdit={x=>{setEditingSample(x);setShowSampleForm(true)}} onChanged={reload}/> :
+      <LibraryView rows={boards} can={can} onEdit={x=>setBoardForm(x)} onDetail={async x=>{const full=await api<FabricBoard>(`/sample-fabric/library/${x.id}`);setBoardDetail(full)}} onChanged={reload}/> :
+      defaultSection === "samples" ? <SamplesView rows={filteredSamples} can={can} onEdit={x=>{setEditingSample(x);setShowSampleForm(true)}} onDispatch={x=>setDispatchSample(x)} onChanged={reload}/> :
       <FabricView rows={filteredReceipts} can={can} onEdit={x=>{setEditingReceipt(x);setShowReceiptForm(true)}} onMeasure={setMeasureReceipt} onChanged={reload}/>}
 
     {boardForm !== undefined && <BoardForm board={boardForm} meta={workspaceMeta} canUpload={can("fabric_library.upload_images")} onSupplierCreated={supplier=>setWorkspaceMeta(m=>({...m,suppliers:[...m.suppliers.filter(x=>x.id!==supplier.id),supplier].sort((a,b)=>a.name.localeCompare(b.name,"vi"))}))} onClose={()=>setBoardForm(undefined)} onSaved={async()=>{setBoardForm(undefined);await reload()}}/>}
-    {boardDetail && <BoardDetail board={boardDetail} can={can} onClose={()=>setBoardDetail(null)} onDispatch={()=>{setDispatchBoard(boardDetail);setBoardDetail(null)}}/>}
-    {dispatchBoard && <DispatchForm board={dispatchBoard} sample={null} meta={workspaceMeta} onClose={()=>setDispatchBoard(null)} onSaved={async()=>{setDispatchBoard(null);await reload()}}/>}
+    {boardDetail && <BoardDetail board={boardDetail} can={can} onClose={()=>setBoardDetail(null)}/>}
     {dispatchSample && dispatchSample.fabricBoard && <DispatchForm board={dispatchSample.fabricBoard} sample={dispatchSample} meta={workspaceMeta} onClose={()=>setDispatchSample(null)} onSaved={async()=>{setDispatchSample(null);await reload()}}/>}
-    {showSampleForm && <SampleForm sample={editingSample} boards={workspaceMeta.boards || []} suppliers={suppliers} staff={staff} seasons={seasons} productGroups={productGroups} fabricCompositions={fabricCompositions} canUpload={can("design_sample.upload_images")} onSupplierCreated={(supplier)=>setSuppliers((rows)=>[...rows.filter((row)=>row.id!==supplier.id),supplier].sort((a,b)=>a.name.localeCompare(b.name,"vi")))} onClose={()=>setShowSampleForm(false)} onSaved={async()=>{setShowSampleForm(false);await reload()}} />}
+    {showSampleForm && <SampleForm sample={editingSample} boards={workspaceMeta.boards || []} staff={staff} seasons={seasons} productGroups={productGroups} canUpload={can("design_sample.upload_images")} onClose={()=>setShowSampleForm(false)} onSaved={async()=>{setShowSampleForm(false);await reload()}} />}
     {showReceiptForm && <ReceiptForm receipt={editingReceipt} suppliers={suppliers} branches={branches} samples={metaSamples} canCostView={can("fabric_receipt.cost.view") || can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} onClose={()=>setShowReceiptForm(false)} onSaved={async()=>{setShowReceiptForm(false);await reload()}} />}
     {measureReceipt && <MeasurementForm receipt={measureReceipt} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setMeasureReceipt(null)} onSaved={async()=>{setMeasureReceipt(null);await reload()}} />}
   </div>;
 }
 
-function LibraryView({rows,can,onEdit,onDetail,onDispatch,onChanged}:{rows:FabricBoard[];can:(k:string)=>boolean;onEdit:(x:FabricBoard)=>void;onDetail:(x:FabricBoard)=>void;onDispatch:(x:FabricBoard)=>void;onChanged:()=>Promise<void>}){
+function LibraryView({rows,can,onEdit,onDetail,onChanged}:{rows:FabricBoard[];can:(k:string)=>boolean;onEdit:(x:FabricBoard)=>void;onDetail:(x:FabricBoard)=>void;onChanged:()=>Promise<void>}){
   if(!rows.length)return <Card className="p-12 text-center text-sm text-neutral-500">Chưa có bảng vải.</Card>;
   return <div className="grid gap-4 xl:grid-cols-2">{rows.map(b=><Card key={b.id} className="overflow-hidden"><div className="flex gap-4 p-4">
     <button onClick={()=>onDetail(b)} className="h-32 w-28 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{b.coverImageUrl?<img src={assetUrl(b.coverImageUrl)} className="h-full w-full object-cover"/>:<span className="text-2xl text-neutral-300">✦</span>}</button>
@@ -299,45 +297,158 @@ function LibraryView({rows,can,onEdit,onDetail,onDispatch,onChanged}:{rows:Fabri
       <div className="mt-3 flex flex-wrap gap-1.5">{b.colors.slice(0,8).map(c=><span key={`${c.code}-${c.name}`} className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs">{c.name}{c.code?` · ${c.code}`:""}</span>)}{b.colors.length>8&&<span className="text-xs text-neutral-400">+{b.colors.length-8}</span>}</div>
     </div>
   </div><div className="flex flex-wrap items-center gap-2 border-t px-4 py-3"><span className="mr-auto text-xs text-neutral-400">{b._count?.designSamples||0} mẫu · {b._count?.sampleDispatches||0} lần gửi · {b._count?.fabricReceipts||0} phiếu vải</span>
-    {can("sample_dispatch.create")&&<button onClick={()=>onDispatch(b)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">Gửi làm mẫu</button>}
+    
     <button onClick={()=>onDetail(b)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Lịch sử</button>
     {can("fabric_library.edit")&&<button onClick={()=>onEdit(b)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Sửa</button>}
     {can("fabric_library.delete")&&<button onClick={async()=>{if(!confirmDelete(`Xoá bảng vải ${b.boardCode}?`))return;await api(`/sample-fabric/library/${b.id}`,{method:"DELETE"});await onChanged()}} className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}
   </div></Card>)}</div>
 }
 
-function BoardDetail({board,can,onClose,onDispatch}:{board:any;can:(k:string)=>boolean;onClose:()=>void;onDispatch:()=>void}){
+function BoardDetail({board,can,onClose}:{board:any;can:(k:string)=>boolean;onClose:()=>void}){
   return <Modal title={`Bảng vải ${board.boardCode}`} onClose={onClose}><div className="space-y-6 p-5">
     <div className="grid gap-5 lg:grid-cols-[1.2fr_.8fr]"><div><h3 className="font-semibold">Ảnh bảng vải / miếng vải</h3><div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">{(board.images||[]).map((im:BoardImage)=><img key={im.id||im.url} src={assetUrl(im.url)} className="aspect-square w-full rounded-2xl object-cover"/>)}{!board.images?.length&&<div className="col-span-full rounded-2xl bg-neutral-50 p-8 text-center text-sm text-neutral-400">Chưa có ảnh.</div>}</div></div>
-      <Card className="p-4"><div className="text-sm"><b>{board.supplier?.name}</b><div className="mt-2">Mã bảng: <b>{board.boardCode}</b></div><div>Mã vải: <b>{board.fabricCode||"—"}</b></div><div>Thành phần: {board.composition||"—"}</div><div>Mùa: {board.seasons?.join(", ")||"—"}</div><div>Nhóm SP: {board.productGroups?.join(", ")||"—"}</div></div>{can("sample_dispatch.create")&&<button onClick={onDispatch} className="mt-4 w-full rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white">+ Gửi miếng vải đi làm mẫu</button>}</Card>
+      <Card className="p-4"><div className="text-sm"><b>{board.supplier?.name}</b><div className="mt-2">Mã bảng: <b>{board.boardCode}</b></div><div>Mã vải: <b>{board.fabricCode||"—"}</b></div><div>Thành phần: {board.composition||"—"}</div><div>Mùa: {board.seasons?.join(", ")||"—"}</div><div>Nhóm SP: {board.productGroups?.join(", ")||"—"}</div></div></Card>
     </div>
     <div><h3 className="font-semibold">Lịch sử gửi làm mẫu</h3><div className="mt-2 overflow-x-auto rounded-2xl border"><table className="min-w-[950px] w-full text-sm"><thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500"><tr><th className="p-3">Ngày gửi</th><th className="p-3">Mẫu</th><th className="p-3">Màu</th><th className="p-3">Công ty / xưởng</th><th className="p-3">Người gửi</th><th className="p-3">Hạn</th><th className="p-3">Tiến độ</th></tr></thead><tbody>{(board.sampleDispatches||[]).map((d:any)=><tr key={d.id} className="border-t"><td className="p-3">{date(d.sentAt)}</td><td className="p-3"><b>{d.designSample?.code}</b><div className="text-xs text-neutral-500">{d.designSample?.name}</div></td><td className="p-3">{d.fabricColor?.name||"—"} {d.fabricColor?.code?`· ${d.fabricColor.code}`:""}</td><td className="p-3 font-medium">{d.recipientName}</td><td className="p-3">{d.sentByName||"—"}</td><td className="p-3">{date(d.dueDate)}</td><td className="p-3"><Badge tone={d.status==="APPROVED"?"green":d.status==="CANCELLED"?"red":"blue"}>{statusLabel(d.status,DISPATCH_STATUSES)}</Badge></td></tr>)}{!board.sampleDispatches?.length&&<tr><td colSpan={7} className="p-6 text-center text-neutral-400">Chưa gửi đi làm mẫu.</td></tr>}</tbody></table></div></div>
     <div><h3 className="font-semibold">Lịch sử sử dụng / mẫu đã sản xuất</h3><div className="mt-2 grid gap-3 md:grid-cols-2">{(board.designSamples||[]).map((s:any)=><Card key={s.id} className="p-4"><div className="flex justify-between gap-3"><div><b>{s.code} · {s.name}</b><div className="mt-1 text-xs text-neutral-500">{s.year} · {s.season||"—"} · {s.category||"—"}</div></div><Badge tone={s.producedProduct?"green":"gray"}>{s.producedProduct?"Đã liên kết SP":"Mẫu triển khai"}</Badge></div>{s.producedProduct&&<div className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">Sản phẩm: <b>{s.producedProduct.name}</b> · {s.producedProduct.slug}</div>}</Card>)}{!board.designSamples?.length&&<div className="text-sm text-neutral-400">Chưa có mẫu sử dụng bảng vải này.</div>}</div></div>
   </div></Modal>
 }
 
-function BoardForm({board,meta,canUpload,onClose,onSaved,onSupplierCreated}:{board:FabricBoard|null;meta:WorkspaceMeta;canUpload:boolean;onClose:()=>void;onSaved:()=>void;onSupplierCreated:(s:Supplier)=>void}){
-  const [form,setForm]=useState<any>({supplierId:board?.supplierId||"",boardCode:board?.boardCode||"",fabricCode:board?.fabricCode||"",name:board?.name||"",composition:board?.composition||"",expectedGsm:board?.expectedGsm||"",seasons:board?.seasons||[],productGroups:board?.productGroups||[],note:board?.note||"",coverImageUrl:board?.coverImageUrl||""});
-  const [colors,setColors]=useState<BoardColor[]>(board?.colors?.length?board.colors.map(x=>({...x})):[{name:"",code:""}]);
-  const [images,setImages]=useState<BoardImage[]>(board?.images?.map(x=>({...x}))||[]);
-  const [error,setError]=useState("");const [saving,setSaving]=useState(false);const [newSupplier,setNewSupplier]=useState(false);const [supplierName,setSupplierName]=useState("");
-  const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
-  const toggle=(k:"seasons"|"productGroups",v:string)=>patch(k,form[k].includes(v)?form[k].filter((x:string)=>x!==v):[...form[k],v]);
-  async function addImage(file:File){const r=await uploadWorkspaceFile("/sample-fabric/library/upload", file);setImages(x=>[...x,{type:"BOARD",url:r.url}]);if(!form.coverImageUrl)patch("coverImageUrl",r.url)}
-  async function save(){try{setSaving(true);setError("");await api(board?`/sample-fabric/library/${board.id}`:"/sample-fabric/library",{method:board?"PATCH":"POST",body:JSON.stringify({...form,boardCode:normalizeSampleCode(form.boardCode),fabricCode:normalizeSampleCode(form.fabricCode),composition:form.composition,colors:colors.filter(x=>x.name.trim()).map(x=>({...x,name:titleCaseVi(x.name),code:normalizeSampleCode(x.code)})),images})});onSaved()}catch(e){setError(e instanceof Error?e.message:"Không lưu được bảng vải.")}finally{setSaving(false)}}
-  async function createSupplier(){if(!supplierName.trim())return;try{const s=await api<Supplier>("/sample-fabric/fabric-suppliers",{method:"POST",body:JSON.stringify({name:titleCaseVi(supplierName)})});onSupplierCreated(s);patch("supplierId",s.id);setNewSupplier(false);setSupplierName("")}catch(e){setError(e instanceof Error?e.message:"Không tạo được NCC vải.")}}
-  return <Modal title={board?`Sửa bảng vải ${board.boardCode}`:"Thêm bảng vải"} onClose={onClose}><div className="space-y-5 p-5">{error&&<div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-    <div className="grid gap-4 md:grid-cols-3"><Field label="Nhà cung cấp"><div className="flex gap-2"><select className={inputClass} value={form.supplierId} onChange={e=>patch("supplierId",e.target.value)}><option value="">Chưa chọn</option>{meta.suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><button onClick={()=>setNewSupplier(!newSupplier)} className="shrink-0 rounded-xl border px-3 text-xs font-semibold">+ NCC</button></div></Field>
-      <Field label="Mã bảng vải"><input className={inputClass} value={form.boardCode} onChange={e=>patch("boardCode",e.target.value)}/></Field><Field label="Mã chất vải"><input className={inputClass} value={form.fabricCode} onChange={e=>patch("fabricCode",e.target.value)}/></Field>
-      <Field label="Tên / mô tả vải"><input className={inputClass} value={form.name} onChange={e=>patch("name",e.target.value)}/></Field><Field label="Thành phần"><input list="fabric-comps" className={inputClass} value={form.composition} onChange={e=>patch("composition",e.target.value)} placeholder="Cotton, Linen..."/><datalist id="fabric-comps">{meta.fabricCompositions.map(x=><option key={x} value={x}/>)}</datalist></Field><Field label="GSM NCC"><input type="number" className={inputClass} value={form.expectedGsm} onChange={e=>patch("expectedGsm",e.target.value)}/></Field>
-    </div>{newSupplier&&<div className="flex gap-2 rounded-2xl bg-neutral-50 p-3"><input className={inputClass} value={supplierName} onChange={e=>setSupplierName(e.target.value)} placeholder="Tên NCC vải"/><button onClick={createSupplier} className="rounded-xl bg-neutral-900 px-4 text-sm text-white">Tạo</button></div>}
-    <div className="grid gap-4 md:grid-cols-2"><div><div className="text-xs font-semibold uppercase text-neutral-500">Mùa có thể dùng</div><div className="mt-2 flex flex-wrap gap-2">{meta.seasons.map(x=><button key={x} onClick={()=>toggle("seasons",x)} className={`rounded-xl border px-3 py-2 text-sm ${form.seasons.includes(x)?"bg-neutral-900 text-white":"bg-white"}`}>{x}</button>)}</div></div>
-      <div><div className="text-xs font-semibold uppercase text-neutral-500">Nhóm sản phẩm phù hợp</div><div className="mt-2 flex flex-wrap gap-2">{meta.productGroups.map(x=><button key={x} onClick={()=>toggle("productGroups",x)} className={`rounded-xl border px-3 py-2 text-sm ${form.productGroups.includes(x)?"bg-neutral-900 text-white":"bg-white"}`}>{x}</button>)}</div><input className={`${inputClass} mt-2`} placeholder="Gõ nhóm mới rồi Enter" onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();const v=titleCaseVi((e.target as HTMLInputElement).value);if(v&&!form.productGroups.includes(v))patch("productGroups",[...form.productGroups,v]);(e.target as HTMLInputElement).value=""}}}/></div></div>
-    <div><div className="flex items-center justify-between"><b className="text-sm">Màu trong bảng</b><button onClick={()=>setColors(x=>[...x,{name:"",code:""}])} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Thêm màu</button></div><div className="mt-2 space-y-2">{colors.map((c,i)=><div key={i} className="grid gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[1fr_1fr_auto]"><input className={inputClass} value={c.name} onChange={e=>setColors(x=>x.map((y,j)=>j===i?{...y,name:e.target.value}:y))} placeholder="Tên màu"/><input className={inputClass} value={c.code||""} onChange={e=>setColors(x=>x.map((y,j)=>j===i?{...y,code:e.target.value}:y))} placeholder="Mã màu"/><button onClick={()=>setColors(x=>x.filter((_,j)=>j!==i))} className="px-3 text-xs text-red-600">Xoá</button></div>)}</div></div>
-    <div><div className="flex items-center justify-between"><b className="text-sm">Ảnh bảng vải / ảnh miếng vải</b>{canUpload&&<label className="cursor-pointer rounded-xl border px-3 py-2 text-xs font-semibold">Tải ảnh từ máy<input type="file" accept="image/*" multiple className="hidden" onChange={e=>Array.from(e.target.files||[]).forEach(f=>void addImage(f))}/></label>}</div><div className="mt-3 grid grid-cols-3 gap-3 md:grid-cols-6">{images.map((im,i)=><div key={`${im.url}-${i}`} className="relative"><img src={assetUrl(im.url)} className="aspect-square w-full rounded-xl object-cover"/><button onClick={()=>setImages(x=>x.filter((_,j)=>j!==i))} className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-white">×</button></div>)}</div></div>
-    <Field label="Ghi chú"><textarea className={`${inputClass} min-h-24`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field>
-    <div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-xl border px-4 py-2 text-sm">Đóng</button><button disabled={saving} onClick={save} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white">{saving?"Đang lưu...":"Lưu bảng vải"}</button></div>
-  </div></Modal>
+function BoardForm({
+  board,
+  meta,
+  canUpload,
+  onClose,
+  onSaved,
+  onSupplierCreated,
+}: {
+  board: FabricBoard | null;
+  meta: WorkspaceMeta;
+  canUpload: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+  onSupplierCreated: (supplier: Supplier) => void;
+}) {
+  const [form, setForm] = useState<any>({
+    supplierId: board?.supplierId || "",
+    boardCode: board?.boardCode || "",
+    fabricCode: board?.fabricCode || "",
+    name: board?.name || "",
+    expectedGsm: board?.expectedGsm || "",
+    seasons: board?.seasons || [],
+    productGroups: board?.productGroups || [],
+    note: board?.note || "",
+    coverImageUrl: board?.coverImageUrl || "",
+  });
+  const [compositionParts, setCompositionParts] = useState<FabricCompositionPart[]>(() => parseCompositionParts(board?.composition));
+  const [compositionDraft, setCompositionDraft] = useState("");
+  const [colors, setColors] = useState<BoardColor[]>(board?.colors?.length ? board.colors.map((x) => ({ ...x })) : [{ name: "", code: "" }]);
+  const [images, setImages] = useState<BoardImage[]>(board?.images?.map((x) => ({ ...x })) || []);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [newSupplier, setNewSupplier] = useState(false);
+  const [supplierName, setSupplierName] = useState("");
+  const patch = (key: string, value: any) => setForm((current: any) => ({ ...current, [key]: value }));
+  const toggle = (key: "seasons" | "productGroups", value: string) => patch(key, form[key].includes(value) ? form[key].filter((x: string) => x !== value) : [...form[key], value]);
+  const selectedComposition = useMemo(() => compositionParts.map((item) => item.name), [compositionParts]);
+
+  function toggleComposition(value: string) {
+    const normalized = titleCaseVi(value);
+    const exists = compositionParts.some((item) => item.name.toLocaleLowerCase("vi-VN") === normalized.toLocaleLowerCase("vi-VN"));
+    setCompositionParts((current) => exists ? current.filter((item) => item.name.toLocaleLowerCase("vi-VN") !== normalized.toLocaleLowerCase("vi-VN")) : [...current, { name: normalized, percent: "" }]);
+  }
+
+  function addComposition() {
+    const value = titleCaseVi(compositionDraft);
+    if (!value) return;
+    setCompositionParts((current) => current.some((item) => item.name.toLocaleLowerCase("vi-VN") === value.toLocaleLowerCase("vi-VN")) ? current : [...current, { name: value, percent: "" }]);
+    setCompositionDraft("");
+  }
+
+  function updateCompositionPercent(name: string, value: string) {
+    const clean = value.replace(/[^0-9.,]/g, "").replace(",", ".");
+    const numeric = clean === "" ? "" : String(Math.min(100, Math.max(0, Number(clean) || 0)));
+    setCompositionParts((current) => current.map((item) => item.name === name ? { ...item, percent: numeric } : item));
+  }
+
+  async function addImage(file: File) {
+    const result = await uploadWorkspaceFile("/sample-fabric/library/upload", file);
+    setImages((current) => [...current, { type: "BOARD", url: result.url }]);
+    if (!form.coverImageUrl) patch("coverImageUrl", result.url);
+  }
+
+  async function save() {
+    try {
+      setSaving(true);
+      setError("");
+      await api(board ? `/sample-fabric/library/${board.id}` : "/sample-fabric/library", {
+        method: board ? "PATCH" : "POST",
+        body: JSON.stringify({
+          ...form,
+          boardCode: normalizeSampleCode(form.boardCode),
+          fabricCode: normalizeSampleCode(form.fabricCode),
+          composition: compositionText(compositionParts),
+          colors: colors.filter((item) => item.name.trim()).map((item) => ({ ...item, name: titleCaseVi(item.name), code: normalizeSampleCode(item.code) })),
+          images,
+        }),
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được bảng vải.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createSupplier() {
+    if (!supplierName.trim()) return;
+    try {
+      const supplier = await api<Supplier>("/sample-fabric/fabric-suppliers", { method: "POST", body: JSON.stringify({ name: titleCaseVi(supplierName) }) });
+      onSupplierCreated(supplier);
+      patch("supplierId", supplier.id);
+      setNewSupplier(false);
+      setSupplierName("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tạo được NCC vải.");
+    }
+  }
+
+  return (
+    <Modal title={board ? `Sửa bảng vải ${board.boardCode}` : "Thêm bảng vải"} onClose={onClose} wide>
+      <div className="space-y-5 p-5">
+        {error && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Nhà cung cấp"><div className="flex gap-2"><select className={inputClass} value={form.supplierId} onChange={(e) => patch("supplierId", e.target.value)}><option value="">Chưa chọn</option>{meta.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select><button type="button" onClick={() => setNewSupplier(!newSupplier)} className="shrink-0 rounded-xl border px-3 text-xs font-semibold">+ NCC</button></div></Field>
+          <Field label="Mã bảng vải"><input className={inputClass} value={form.boardCode} onChange={(e) => patch("boardCode", e.target.value)} /></Field>
+          <Field label="Mã chất vải"><input className={inputClass} value={form.fabricCode} onChange={(e) => patch("fabricCode", e.target.value)} /></Field>
+          <Field label="Tên / mô tả vải"><input className={inputClass} value={form.name} onChange={(e) => patch("name", e.target.value)} /></Field>
+          <Field label="GSM NCC"><input type="number" className={inputClass} value={form.expectedGsm} onChange={(e) => patch("expectedGsm", e.target.value)} /></Field>
+        </div>
+        {newSupplier && <div className="flex gap-2 rounded-2xl bg-neutral-50 p-3"><input className={inputClass} value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Tên NCC vải" /><button type="button" onClick={createSupplier} className="rounded-xl bg-neutral-900 px-4 text-sm text-white">Tạo</button></div>}
+
+        <div className="rounded-2xl border border-neutral-200 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><b className="text-sm">Thành phần chất vải</b><p className="mt-1 text-xs text-neutral-400">Khai báo thành phần tại bảng vải, ví dụ Cotton 97%, Spandex 3%.</p></div>
+            <div className="flex gap-2"><input className={`${inputClass} sm:w-44`} value={compositionDraft} onChange={(e) => setCompositionDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addComposition(); } }} placeholder="VD: Cotton" /><button type="button" onClick={addComposition} className="rounded-2xl border px-3 text-xs font-semibold">+ Thêm</button></div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">{meta.fabricCompositions.map((composition) => { const active = selectedComposition.includes(composition); return <button type="button" key={composition} onClick={() => toggleComposition(composition)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${active ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-600"}`}>{composition}</button>; })}</div>
+          {compositionParts.length ? <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{compositionParts.map((part) => <div key={part.name} className="flex items-center gap-2 rounded-2xl bg-neutral-50 px-3 py-2"><span className="min-w-0 flex-1 truncate text-sm font-semibold">{part.name}</span><div className="flex w-24 items-center rounded-xl border bg-white px-2"><input type="number" min="0" max="100" step="0.1" value={part.percent} onChange={(e) => updateCompositionPercent(part.name, e.target.value)} className="w-full bg-transparent py-1.5 text-right text-sm outline-none" placeholder="0" /><span className="ml-1 text-sm text-neutral-500">%</span></div></div>)}</div> : null}
+          {compositionParts.length ? <div className="mt-3 text-xs text-neutral-500">Lưu thành: <b>{compositionText(compositionParts)}</b></div> : null}
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div><div className="text-xs font-semibold uppercase text-neutral-500">Mùa có thể dùng</div><div className="mt-2 flex flex-wrap gap-2">{meta.seasons.map((season) => <button type="button" key={season} onClick={() => toggle("seasons", season)} className={`rounded-xl border px-3 py-2 text-sm ${form.seasons.includes(season) ? "bg-neutral-900 text-white" : "bg-white"}`}>{season}</button>)}</div></div>
+          <div><div className="text-xs font-semibold uppercase text-neutral-500">Nhóm sản phẩm phù hợp</div><div className="mt-2 flex flex-wrap gap-2">{meta.productGroups.map((group) => <button type="button" key={group} onClick={() => toggle("productGroups", group)} className={`rounded-xl border px-3 py-2 text-sm ${form.productGroups.includes(group) ? "bg-neutral-900 text-white" : "bg-white"}`}>{group}</button>)}</div><input className={`${inputClass} mt-2`} placeholder="Gõ nhóm mới rồi Enter" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const value = titleCaseVi((e.target as HTMLInputElement).value); if (value && !form.productGroups.includes(value)) patch("productGroups", [...form.productGroups, value]); (e.target as HTMLInputElement).value = ""; } }} /></div>
+        </div>
+
+        <div><div className="flex items-center justify-between"><b className="text-sm">Màu trong bảng</b><button type="button" onClick={() => setColors((current) => [...current, { name: "", code: "" }])} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Thêm màu</button></div><div className="mt-2 space-y-2">{colors.map((color, index) => <div key={index} className="grid gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[1fr_1fr_auto]"><input className={inputClass} value={color.name} onChange={(e) => setColors((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Tên màu" /><input className={inputClass} value={color.code || ""} onChange={(e) => setColors((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, code: e.target.value } : item))} placeholder="Mã màu" /><button type="button" onClick={() => setColors((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="px-3 text-xs text-red-600">Xoá</button></div>)}</div></div>
+
+        <div><div className="flex items-center justify-between"><b className="text-sm">Ảnh bảng vải / ảnh miếng vải</b>{canUpload && <label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">Tải ảnh từ máy<input type="file" accept="image/*" multiple className="hidden" onChange={(e) => Array.from(e.target.files || []).forEach((file) => void addImage(file))} /></label>}</div><div className="mt-3 grid grid-cols-3 gap-3 md:grid-cols-6">{images.map((image, index) => <div key={`${image.url}-${index}`} className="relative"><img src={assetUrl(image.url)} className="aspect-square w-full rounded-xl object-cover" /><button type="button" onClick={() => setImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-xs text-white">×</button></div>)}</div></div>
+        <Field label="Ghi chú"><textarea className={`${inputClass} min-h-24`} value={form.note} onChange={(e) => patch("note", e.target.value)} /></Field>
+        <div className="flex justify-end gap-2 border-t pt-4"><button type="button" onClick={onClose} className="rounded-xl border px-4 py-2 text-sm">Đóng</button><button type="button" disabled={saving} onClick={save} className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? "Đang lưu..." : "Lưu bảng vải"}</button></div>
+      </div>
+    </Modal>
+  );
 }
 
 function DispatchForm({board,sample,meta,onClose,onSaved}:{board:FabricBoard;sample:Sample|null;meta:WorkspaceMeta;onClose:()=>void;onSaved:()=>void}){
@@ -354,36 +465,17 @@ function DispatchForm({board,sample,meta,onClose,onSaved}:{board:FabricBoard;sam
   </div><Field label="Ghi chú"><textarea className={`${inputClass} min-h-24`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field><div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-xl border px-4 py-2">Đóng</button><button disabled={saving} onClick={save} className="rounded-xl bg-neutral-950 px-4 py-2 font-semibold text-white">{saving?"Đang lưu...":"Ghi nhận gửi mẫu"}</button></div></div></Modal>
 }
 
-function SamplesView({ rows, can, onEdit, onChanged }: { rows: Sample[]; can: (k:string)=>boolean; onEdit:(x:Sample)=>void; onChanged:()=>Promise<void> }) {
+function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sample[]; can: (k:string)=>boolean; onEdit:(x:Sample)=>void; onDispatch:(x:Sample)=>void; onChanged:()=>Promise<void> }) {
   const stats = useMemo(()=>({ total: rows.length, active: rows.filter(x=>!["COMPLETED","ON_HOLD"].includes(x.status)).length, approved: rows.filter(x=>["APPROVED_FOR_PRODUCTION","IN_PRODUCTION","COMPLETED"].includes(x.status)).length, late: rows.filter(x=>x.dueDate && !["COMPLETED","ON_HOLD"].includes(x.status) && new Date(x.dueDate).getTime() < Date.now()).length }),[rows]);
   return <>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Tổng mẫu",stats.total],["Đang triển khai",stats.active],["Đã duyệt SX",stats.approved],["Chậm tiến độ",stats.late]].map(([l,v])=><Card key={l} className="p-4"><div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{l}</div><div className="mt-2 text-2xl font-semibold">{v}</div></Card>)}</div>
-    <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{rows.map(row=><Card key={row.id} className="overflow-hidden">
-      <div className="flex gap-4 p-4">
-        <div className="h-28 w-24 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{row.coverImageUrl ? <img src={assetUrl(row.coverImageUrl)} className="h-full w-full object-cover"/> : <div className="flex h-full items-center justify-center text-2xl text-neutral-300">✦</div>}</div>
-        <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div><div className="mt-1 text-lg font-semibold text-neutral-950">{row.name}</div></div><Badge status={row.status}>{statusLabel(row.status,SAMPLE_STATUSES)}</Badge></div>
-          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-neutral-600"><div>NCC: <b>{row.supplier?.name || "—"}</b></div><div>Bảng vải: <b>{row.fabricBoardCode || "—"}</b></div><div>Mã vải: <b>{row.fabricCode || "—"}</b></div><div>Thành phần: <b>{row.fabricComposition || "—"}</b></div><div>Phụ trách: <b>{row.assigneeName || "—"}</b></div></div>
-        </div>
+    <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{rows.map(row=>{const latest=row.sampleDispatches?.[0];return <Card key={row.id} className="overflow-hidden">
+      <div className="flex gap-4 p-4"><div className="h-28 w-24 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{row.coverImageUrl?<img src={assetUrl(row.coverImageUrl)} className="h-full w-full object-cover"/>:<div className="flex h-full items-center justify-center text-2xl text-neutral-300">✦</div>}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div><div className="mt-1 text-lg font-semibold">{row.name}</div></div><Badge status={row.status}>{statusLabel(row.status,SAMPLE_STATUSES)}</Badge></div><div className="mt-3 grid gap-y-1 text-xs text-neutral-600"><div>Bảng vải: <b>{row.fabricBoard?.boardCode||row.fabricBoardCode||"—"}</b>{row.fabricColor&&<> · <b>{row.fabricColor.name}{row.fabricColor.code?` · ${row.fabricColor.code}`:""}</b></>}</div><div>Nhóm: <b>{row.category||"—"}</b> · Phụ trách: <b>{row.assigneeName||"—"}</b></div></div></div></div>
+      <div className="border-t border-neutral-100 px-4 py-3">{latest?<div className="rounded-2xl bg-neutral-50 p-3 text-xs"><div className="flex items-center justify-between gap-2"><b>Gửi gần nhất: {latest.recipientName}</b><Badge tone={latest.status==="APPROVED"?"green":latest.status==="REVISING"?"amber":"blue"}>{statusLabel(latest.status,DISPATCH_STATUSES)}</Badge></div><div className="mt-1 text-neutral-500">Ngày gửi {date(latest.sentAt)} · Hạn {date(latest.dueDate)} · Người gửi {latest.sentByName||"—"}</div></div>:<div className="text-xs text-neutral-400">Chưa ghi nhận lần gửi mẫu nào.</div>}
+        <div className="mt-3 flex items-center justify-between gap-3"><div className="min-w-0 text-xs text-neutral-500">{row.nextAction?<>Tiếp theo: <b>{row.nextAction}</b></>:"Chưa ghi việc tiếp theo"}</div><div className="flex shrink-0 flex-wrap gap-2">{can("sample_dispatch.create")&&row.fabricBoard&&<button onClick={()=>onDispatch(row)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Gửi / gửi lại</button>}{can("design_sample.edit")&&<button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}{can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await onChanged()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}</div></div>
       </div>
-      <div className="border-t border-neutral-100 px-4 py-3"><div className="flex flex-wrap gap-1.5">{row.colors.length ? row.colors.map(c=><span key={c.id || c.name} className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-700">{c.name}{c.code ? ` · ${c.code}` : ""}</span>) : <span className="text-xs text-neutral-400">Chưa khai báo màu</span>}</div>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="min-w-0 text-xs text-neutral-500">{row.nextAction ? <>Tiếp theo: <b className="text-neutral-800">{row.nextAction}</b></> : "Chưa ghi việc tiếp theo"}</div>
-          <div className="flex shrink-0 items-center gap-2">
-            {can("design_sample.edit") && <button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
-            {can("design_sample.delete") && <button onClick={async()=>{
-              if (!window.confirm(`Xoá mẫu ${row.code} · ${row.name}? Hành động này không thể hoàn tác.`)) return;
-              try {
-                await api(`/sample-fabric/samples/${row.id}`, { method: "DELETE" });
-                await onChanged();
-              } catch (e) {
-                window.alert(e instanceof Error ? e.message : "Không xoá được mẫu.");
-              }
-            }} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100">Xoá</button>}
-          </div>
-        </div>
-      </div>
-    </Card>)}</div>
-    {!rows.length && <Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu nào.</Card>}
+    </Card>})}</div>
+    {!rows.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu nào.</Card>}
   </>;
 }
 
@@ -398,440 +490,22 @@ function FabricView({ rows, can, onEdit, onMeasure, onChanged }: { rows: FabricR
 
 function Modal({ title, children, onClose, wide=false }: { title:string; children:React.ReactNode; onClose:()=>void; wide?:boolean }) { return <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 md:p-8"><div className={`my-auto w-full ${wide?"max-w-5xl":"max-w-2xl"} rounded-3xl bg-white shadow-2xl`}><div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="h-9 w-9 rounded-xl border border-neutral-200 text-neutral-500">×</button></div>{children}</div></div>; }
 
-function SampleForm({
-  sample,
-  boards,
-  suppliers,
-  staff,
-  seasons,
-  productGroups,
-  fabricCompositions,
-  canUpload,
-  onSupplierCreated,
-  onClose,
-  onSaved,
-}: {
-  sample: Sample | null;
-  boards: FabricBoard[];
-  suppliers: Supplier[];
-  staff: Staff[];
-  seasons: string[];
-  productGroups: string[];
-  fabricCompositions: string[];
-  canUpload: boolean;
-  onSupplierCreated: (supplier: Supplier) => void;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [form, setForm] = useState<any>({
-    name: sample?.name || "",
-    code: sample?.code || "",
-    year: sample?.year || new Date().getFullYear(),
-    season: sample?.season || "",
-    category: sample?.category || "",
-    fabricBoardId: sample?.fabricBoardId || "",
-    fabricColorId: sample?.fabricColorId || "",
-    supplierId: sample?.supplierId || "",
-    fabricBoardCode: sample?.fabricBoardCode || "",
-    fabricCode: sample?.fabricCode || "",
-    fabricComposition: sample?.fabricComposition || "",
-    status: sample?.status || "IDEA",
-    assigneeStaffId: sample?.assigneeStaffId || "",
-    assigneeName: sample?.assigneeName || "",
-    nextAction: sample?.nextAction || "",
-    dueDate: sample?.dueDate ? sample.dueDate.slice(0, 10) : "",
-    note: sample?.note || "",
-    technicalNote: sample?.technicalNote || "",
-    coverImageUrl: sample?.coverImageUrl || "",
-  });
-  const [colors, setColors] = useState<SampleColor[]>(
-    sample?.colors?.length ? sample.colors : [{ name: "", code: "", status: sample?.status || "IDEA" }],
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [codeCheck, setCodeCheck] = useState<{ loading: boolean; available: boolean | null; message: string }>({
-    loading: false,
-    available: sample ? true : null,
-    message: "",
-  });
-  const [compositionDraft, setCompositionDraft] = useState("");
-  const [compositionParts, setCompositionParts] = useState<FabricCompositionPart[]>(() => parseCompositionParts(sample?.fabricComposition));
-  const [showSupplierCreator, setShowSupplierCreator] = useState(false);
-  const [supplierName, setSupplierName] = useState("");
-  const [supplierPhone, setSupplierPhone] = useState("");
-  const [creatingSupplier, setCreatingSupplier] = useState(false);
-  const [customCategory, setCustomCategory] = useState(() => Boolean(sample?.category && !productGroups.includes(sample.category)));
-
-  const patch = (key: string, value: any) => setForm((current: any) => ({ ...current, [key]: value }));
-  const selectedComposition = useMemo(() => compositionParts.map((item) => item.name), [compositionParts]);
-  const selectedBoard = useMemo(() => boards.find((item) => item.id === form.fabricBoardId) || null, [boards, form.fabricBoardId]);
-
-  useEffect(() => {
-    patch("fabricComposition", compositionText(compositionParts));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compositionParts]);
-
-  useEffect(() => {
-    const code = normalizeSampleCode(form.code);
-    const originalCode = normalizeSampleCode(sample?.code || "");
-    if (!code) {
-      setCodeCheck({ loading: false, available: null, message: "" });
-      return;
-    }
-    if (sample && code === originalCode) {
-      setCodeCheck({ loading: false, available: true, message: "Mã hiện tại của mẫu." });
-      return;
-    }
-
-    setCodeCheck((current) => ({ ...current, loading: true }));
-    const timer = window.setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({ code });
-        if (sample?.id) params.set("excludeId", sample.id);
-        const result = await api<{ available: boolean; message: string }>(
-          `/sample-fabric/samples/check-code?${params.toString()}`,
-        );
-        setCodeCheck({ loading: false, available: result.available, message: result.message || "" });
-      } catch (e) {
-        setCodeCheck({
-          loading: false,
-          available: false,
-          message: e instanceof Error ? e.message : "Không kiểm tra được mã mẫu.",
-        });
-      }
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [form.code, sample?.id, sample?.code]);
-
-  useEffect(() => {
-    if (form.fabricBoardId || !form.fabricBoardCode || !boards.length) return;
-    const matched = boards.find((board) => String(board.boardCode || "").toUpperCase() === String(form.fabricBoardCode || "").toUpperCase());
-    if (matched) patch("fabricBoardId", matched.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boards]);
-
-  function toggleComposition(value: string) {
-    const normalized = titleCaseVi(value);
-    const existing = compositionParts.find((item) => item.name.toLocaleLowerCase("vi-VN") === normalized.toLocaleLowerCase("vi-VN"));
-    setCompositionParts((current) => existing
-      ? current.filter((item) => item.name.toLocaleLowerCase("vi-VN") !== normalized.toLocaleLowerCase("vi-VN"))
-      : [...current, { name: normalized, percent: "" }]);
-  }
-
-  function addComposition() {
-    const value = titleCaseVi(compositionDraft);
-    if (!value) return;
-    setCompositionParts((current) => {
-      if (current.some((item) => item.name.toLocaleLowerCase("vi-VN") === value.toLocaleLowerCase("vi-VN"))) return current;
-      return [...current, { name: value, percent: "" }];
-    });
-    setCompositionDraft("");
-  }
-
-  function updateCompositionPercent(name: string, percent: string) {
-    const clean = percent.replace(/[^0-9.,]/g, "").replace(",", ".");
-    const numeric = clean === "" ? "" : String(Math.min(100, Math.max(0, Number(clean) || 0)));
-    setCompositionParts((current) => current.map((item) => item.name === name ? { ...item, percent: numeric } : item));
-  }
-
-  async function createSupplier() {
-    const name = titleCaseVi(supplierName);
-    if (!name) return;
-    try {
-      setCreatingSupplier(true);
-      setError("");
-      const supplier = await api<Supplier>("/sample-fabric/fabric-suppliers", {
-        method: "POST",
-        body: JSON.stringify({ name, phone: supplierPhone.trim() || null }),
-      });
-      onSupplierCreated(supplier);
-      patch("supplierId", supplier.id);
-      setSupplierName("");
-      setSupplierPhone("");
-      setShowSupplierCreator(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tạo được nhà cung cấp vải.");
-    } finally {
-      setCreatingSupplier(false);
-    }
-  }
-
-  async function upload(file: File) {
-    const fd = new FormData();
-    fd.append("file", file);
-    const result = await api<{ url: string }>("/sample-fabric/samples/upload", { method: "POST", body: fd });
-    patch("coverImageUrl", result.url);
-  }
-
-  async function save() {
-    try {
-      setSaving(true);
-      setError("");
-      const code = normalizeSampleCode(form.code);
-      if (code && codeCheck.available !== true) {
-        throw new Error(codeCheck.message || "Mã mẫu chưa được xác nhận là hợp lệ.");
-      }
-      const assigned = staff.find((item) => item.id === form.assigneeStaffId);
-      const payload = {
-        ...form,
-        code,
-        category: titleCaseVi(form.category),
-        fabricComposition: compositionText(compositionParts),
-        assigneeName: assigned?.name || form.assigneeName || null,
-        colors: colors
-          .filter((item) => item.name.trim())
-          .map((item) => ({ ...item, name: titleCaseVi(item.name), status: item.status || form.status })),
-        images: form.coverImageUrl ? [{ url: form.coverImageUrl, caption: "Ảnh đại diện" }] : [],
-      };
-      await api(sample ? `/sample-fabric/samples/${sample.id}` : "/sample-fabric/samples", {
-        method: sample ? "PATCH" : "POST",
-        body: JSON.stringify(payload),
-      });
-      onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Không lưu được mẫu.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal title={sample ? `Sửa mẫu ${sample.code}` : "Tạo mẫu mới"} onClose={onClose} wide>
-      <div className="space-y-5 p-5">
-        {error ? <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Tên mẫu">
-            <input className={inputClass} value={form.name} onChange={(e) => patch("name", e.target.value)} />
-          </Field>
-
-          <Field label="Mã mẫu">
-            <div>
-              <input
-                className={`${inputClass} ${codeCheck.available === false ? "border-red-400" : codeCheck.available === true ? "border-emerald-400" : ""}`}
-                value={form.code}
-                placeholder="VD: QSK925"
-                onChange={(e) => patch("code", normalizeSampleCode(e.target.value))}
-              />
-              {form.code ? (
-                <p className={`mt-1.5 text-xs ${codeCheck.loading ? "text-neutral-400" : codeCheck.available ? "text-emerald-600" : "text-red-600"}`}>
-                  {codeCheck.loading ? "Đang kiểm tra mã trong mẫu mã và danh sách sản phẩm..." : codeCheck.message}
-                </p>
-              ) : null}
-            </div>
-          </Field>
-
-          <Field label="Năm">
-            <input type="number" className={inputClass} value={form.year} onChange={(e) => patch("year", e.target.value)} />
-          </Field>
-
-          <Field label="Mùa / BST">
-            <select className={inputClass} value={form.season} onChange={(e) => patch("season", e.target.value)}>
-              <option value="">Chưa chọn</option>
-              {seasons.map((season) => <option key={season} value={season}>{season}</option>)}
-            </select>
-          </Field>
-
-          <Field label="Nhóm sản phẩm">
-            <div className="space-y-2">
-              <select
-                className={inputClass}
-                value={customCategory ? "__NEW__" : form.category}
-                onChange={(e) => {
-                  if (e.target.value === "__NEW__") { setCustomCategory(true); patch("category", ""); }
-                  else { setCustomCategory(false); patch("category", e.target.value); }
-                }}
-              >
-                <option value="">Chưa chọn</option>
-                {uniqueTextValues([...productGroups, !customCategory ? form.category : ""]).map((group) => <option key={group} value={group}>{group}</option>)}
-                <option value="__NEW__">+ Thêm nhóm mới</option>
-              </select>
-              {customCategory ? (
-                <input className={inputClass} value={form.category} onChange={(e) => patch("category", e.target.value)} onBlur={() => patch("category", titleCaseVi(form.category))} placeholder="Nhập nhóm mới, VD: Áo Khoác" />
-              ) : null}
-              <p className="text-xs text-neutral-400">Danh sách lấy từ Danh mục/Danh sách sản phẩm hiện tại.</p>
-            </div>
-          </Field>
-
-          <Field label="Mã bảng vải">
-            <select
-              className={inputClass}
-              value={form.fabricBoardId}
-              onChange={(e) => {
-                const id = e.target.value;
-                const board = boards.find((item) => item.id === id);
-                patch("fabricBoardId", id);
-                patch("fabricColorId", "");
-                if (board) {
-                  patch("supplierId", board.supplierId || "");
-                  patch("fabricBoardCode", board.boardCode || "");
-                  patch("fabricCode", board.fabricCode || "");
-                  setCompositionParts(parseCompositionParts(board.composition));
-                }
-              }}
-            >
-              <option value="">Chưa gắn bảng vải</option>
-              {boards.map((board) => <option key={board.id} value={board.id}>{board.boardCode} · {board.supplier?.name || "NCC"}{board.fabricCode ? ` · ${board.fabricCode}` : ""}</option>)}
-            </select>
-          </Field>
-          <Field label="Màu vải trong bảng">
-            <select className={inputClass} value={form.fabricColorId} onChange={(e)=>patch("fabricColorId",e.target.value)} disabled={!selectedBoard}>
-              <option value="">Chưa chọn màu</option>
-              {selectedBoard?.colors?.map((color)=><option key={color.id || `${color.name}-${color.code}`} value={color.id || ""}>{color.name}{color.code ? ` · ${color.code}` : ""}</option>)}
-            </select>
-          </Field>
-          <Field label="Nhà cung cấp vải">
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <select className={inputClass} value={form.supplierId} onChange={(e) => patch("supplierId", e.target.value)}>
-                  <option value="">Chưa chọn</option>
-                  {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-                </select>
-                <button type="button" onClick={() => setShowSupplierCreator((value) => !value)} className="shrink-0 rounded-2xl border border-neutral-300 px-3 text-xs font-semibold hover:bg-neutral-50">+ NCC vải</button>
-              </div>
-              {showSupplierCreator ? (
-                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <input className={inputClass} value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Tên NCC vải" />
-                    <input className={inputClass} value={supplierPhone} onChange={(e) => setSupplierPhone(e.target.value)} placeholder="SĐT (không bắt buộc)" />
-                  </div>
-                  <button type="button" disabled={creatingSupplier || !supplierName.trim()} onClick={createSupplier} className="mt-2 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{creatingSupplier ? "Đang tạo..." : "Tạo NCC vải"}</button>
-                </div>
-              ) : null}
-            </div>
-          </Field>
-          <Field label="Mã chất vải"><input className={inputClass} value={form.fabricCode} onChange={(e) => patch("fabricCode", normalizeSampleCode(e.target.value))} placeholder="VD: A2309-01" /></Field>
-          <Field label="Tiến độ">
-            <select className={inputClass} value={form.status} onChange={(e) => patch("status", e.target.value)}>
-              {SAMPLE_STATUSES.map((item) => <option key={item[0]} value={item[0]}>{item[1]}</option>)}
-            </select>
-          </Field>
-          <Field label="Người phụ trách">
-            <select className={inputClass} value={form.assigneeStaffId} onChange={(e) => patch("assigneeStaffId", e.target.value)}>
-              <option value="">Chưa gán</option>
-              {staff.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.code}</option>)}
-            </select>
-          </Field>
-          <Field label="Việc tiếp theo">
-            <input className={inputClass} value={form.nextAction} onChange={(e) => patch("nextAction", e.target.value)} />
-          </Field>
-          <Field label="Hạn dự kiến">
-            <input type="date" className={inputClass} value={form.dueDate} onChange={(e) => patch("dueDate", e.target.value)} />
-          </Field>
-        </div>
-
-        <div className="rounded-2xl border border-neutral-200 p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <b className="text-sm">Thành phần chất vải</b>
-              <p className="mt-1 text-xs text-neutral-400">Chọn nhiều thành phần hoặc tự thêm thành phần mới.</p>
-            </div>
-            <div className="flex gap-2">
-              <input className={`${inputClass} sm:w-44`} value={compositionDraft} onChange={(e) => setCompositionDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addComposition(); } }} placeholder="VD: Cotton" />
-              <button type="button" onClick={addComposition} className="rounded-2xl border border-neutral-300 px-3 text-xs font-semibold">+ Thêm</button>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {fabricCompositions.map((composition) => {
-              const active = selectedComposition.includes(composition);
-              return (
-                <button
-                  type="button"
-                  key={composition}
-                  onClick={() => toggleComposition(composition)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${active ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-600"}`}
-                >
-                  {composition}
-                </button>
-              );
-            })}
-          </div>
-          {compositionParts.length ? (
-            <div className="mt-4 space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Tỷ lệ thành phần</div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {compositionParts.map((part) => (
-                  <div key={part.name} className="flex items-center gap-2 rounded-2xl bg-neutral-50 px-3 py-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-800">{part.name}</span>
-                    <div className="flex w-24 items-center rounded-xl border border-neutral-300 bg-white px-2">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.1"
-                        value={part.percent}
-                        onChange={(e) => updateCompositionPercent(part.name, e.target.value)}
-                        className="w-full bg-transparent py-1.5 text-right text-sm outline-none"
-                        placeholder="0"
-                      />
-                      <span className="ml-1 text-sm text-neutral-500">%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="text-xs text-neutral-500">Lưu thành: <b className="text-neutral-800">{compositionText(compositionParts)}</b></div>
-            </div>
-          ) : null}
-        </div>
-
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <b className="text-sm">Màu triển khai</b>
-            <button type="button" onClick={() => setColors((current) => [...current, { name: "", code: "", status: form.status }])} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Thêm màu</button>
-          </div>
-          <div className="space-y-2">
-            {colors.map((color, index) => (
-              <div key={index} className="grid gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[1fr_0.8fr_1fr_auto]">
-                <input className={inputClass} placeholder="Tên màu" value={color.name} onBlur={(e) => setColors((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: titleCaseVi(e.target.value) } : item))} onChange={(e) => setColors((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} />
-                <input className={inputClass} placeholder="Mã màu" value={color.code || ""} onChange={(e) => setColors((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, code: e.target.value } : item))} />
-                <select className={inputClass} value={color.status || form.status} onChange={(e) => setColors((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: e.target.value } : item))}>
-                  {SAMPLE_STATUSES.map((item) => <option key={item[0]} value={item[0]}>{item[1]}</option>)}
-                </select>
-                <button type="button" onClick={() => setColors((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-xl px-2 text-sm text-red-600">Xoá</button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Ghi chú mẫu">
-            <textarea className={`${inputClass} min-h-28`} value={form.note} onChange={(e) => patch("note", e.target.value)} />
-          </Field>
-          <Field label="Ghi chú kỹ thuật">
-            <textarea className={`${inputClass} min-h-28`} value={form.technicalNote} onChange={(e) => patch("technicalNote", e.target.value)} />
-          </Field>
-        </div>
-
-        {canUpload ? (
-          <div className="rounded-2xl border border-dashed border-neutral-300 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <b className="text-sm">Ảnh mẫu / ảnh tham khảo</b>
-                <p className="mt-1 text-xs text-neutral-400">Chọn ảnh từ máy để tải lên Cloudinary.</p>
-              </div>
-              <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800">
-                Tải ảnh từ máy
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-              </label>
-            </div>
-            {form.coverImageUrl ? <img src={assetUrl(form.coverImageUrl)} className="mt-3 h-40 rounded-2xl object-cover" alt="Ảnh mẫu" /> : <div className="mt-3 rounded-2xl bg-neutral-50 px-4 py-8 text-center text-xs text-neutral-400">Chưa có ảnh mẫu.</div>}
-          </div>
-        ) : null}
-
-        <div className="flex justify-end gap-2 border-t pt-4">
-          <button type="button" onClick={onClose} className="rounded-2xl border px-4 py-2.5 text-sm">Đóng</button>
-          <button
-            type="button"
-            disabled={saving || (!!form.code && (codeCheck.loading || codeCheck.available !== true))}
-            onClick={save}
-            className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-          >
-            {saving ? "Đang lưu..." : "Lưu mẫu"}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
+function SampleForm({ sample, boards, staff, seasons, productGroups, canUpload, onClose, onSaved }: { sample: Sample | null; boards: FabricBoard[]; staff: Staff[]; seasons: string[]; productGroups: string[]; canUpload: boolean; onClose: () => void; onSaved: () => void }) {
+  const [form,setForm]=useState<any>({name:sample?.name||"",code:sample?.code||"",year:sample?.year||new Date().getFullYear(),season:sample?.season||"",category:sample?.category||"",fabricBoardId:sample?.fabricBoardId||"",fabricColorId:sample?.fabricColorId||"",status:sample?.status||"IDEA",assigneeStaffId:sample?.assigneeStaffId||"",assigneeName:sample?.assigneeName||"",nextAction:sample?.nextAction||"",dueDate:sample?.dueDate?sample.dueDate.slice(0,10):"",note:sample?.note||"",technicalNote:sample?.technicalNote||"",coverImageUrl:sample?.coverImageUrl||""});
+  const [saving,setSaving]=useState(false); const [error,setError]=useState("");
+  const [codeCheck,setCodeCheck]=useState<{loading:boolean;available:boolean|null;message:string}>({loading:false,available:sample?true:null,message:""});
+  const [customCategory,setCustomCategory]=useState(()=>Boolean(sample?.category&&!productGroups.includes(sample.category)));
+  const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
+  const selectedBoard=useMemo(()=>boards.find(x=>x.id===form.fabricBoardId)||null,[boards,form.fabricBoardId]);
+  const selectedFabricColor=useMemo(()=>selectedBoard?.colors?.find(x=>x.id===form.fabricColorId)||null,[selectedBoard,form.fabricColorId]);
+  useEffect(()=>{const code=normalizeSampleCode(form.code);const original=normalizeSampleCode(sample?.code||"");if(!code){setCodeCheck({loading:false,available:null,message:""});return}if(sample&&code===original){setCodeCheck({loading:false,available:true,message:"Mã hiện tại của mẫu."});return}setCodeCheck(x=>({...x,loading:true}));const timer=window.setTimeout(async()=>{try{const params=new URLSearchParams({code});if(sample?.id)params.set("excludeId",sample.id);const r=await api<{available:boolean;message:string}>(`/sample-fabric/samples/check-code?${params.toString()}`);setCodeCheck({loading:false,available:r.available,message:r.message||""})}catch(e){setCodeCheck({loading:false,available:false,message:e instanceof Error?e.message:"Không kiểm tra được mã mẫu."})}},350);return()=>window.clearTimeout(timer)},[form.code,sample?.id,sample?.code]);
+  async function upload(file:File){const r=await uploadWorkspaceFile("/sample-fabric/samples/upload",file);patch("coverImageUrl",r.url)}
+  async function save(){try{setSaving(true);setError("");const code=normalizeSampleCode(form.code);if(code&&codeCheck.available!==true)throw new Error(codeCheck.message||"Mã mẫu chưa được xác nhận là hợp lệ.");const assigned=staff.find(x=>x.id===form.assigneeStaffId);await api(sample?`/sample-fabric/samples/${sample.id}`:"/sample-fabric/samples",{method:sample?"PATCH":"POST",body:JSON.stringify({name:form.name,code,year:form.year,season:form.season,category:titleCaseVi(form.category),fabricBoardId:form.fabricBoardId||null,fabricColorId:form.fabricColorId||null,status:form.status,assigneeStaffId:form.assigneeStaffId||null,assigneeName:assigned?.name||form.assigneeName||null,nextAction:form.nextAction||null,dueDate:form.dueDate||null,note:form.note||null,technicalNote:form.technicalNote||null,coverImageUrl:form.coverImageUrl||null,images:form.coverImageUrl?[{url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[]})});onSaved()}catch(e){setError(e instanceof Error?e.message:"Không lưu được mẫu.")}finally{setSaving(false)}}
+  return <Modal title={sample?`Sửa mẫu ${sample.code}`:"Tạo mẫu triển khai"} onClose={onClose} wide><div className="space-y-5 p-5">{error&&<div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>}<div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-900">Trang này chỉ quản lý <b>mẫu gửi đi / tiến độ mẫu</b>. Thành phần, GSM, NCC, mã chất vải và danh sách màu được quản lý tại <Link href="/fabric-library" className="font-semibold underline">Bảng vải</Link>.</div><div className="grid gap-4 md:grid-cols-3">
+    <Field label="Tên mẫu"><input className={inputClass} value={form.name} onChange={e=>patch("name",e.target.value)}/></Field><Field label="Mã mẫu"><div><input className={`${inputClass} ${codeCheck.available===false?"border-red-400":codeCheck.available===true?"border-emerald-400":""}`} value={form.code} onChange={e=>patch("code",normalizeSampleCode(e.target.value))} placeholder="VD: QSK925"/>{form.code&&<p className={`mt-1.5 text-xs ${codeCheck.loading?"text-neutral-400":codeCheck.available?"text-emerald-600":"text-red-600"}`}>{codeCheck.loading?"Đang kiểm tra mã...":codeCheck.message}</p>}</div></Field><Field label="Năm"><input type="number" className={inputClass} value={form.year} onChange={e=>patch("year",e.target.value)}/></Field>
+    <Field label="Mùa / BST"><select className={inputClass} value={form.season} onChange={e=>patch("season",e.target.value)}><option value="">Chưa chọn</option>{seasons.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Nhóm sản phẩm"><div className="space-y-2"><select className={inputClass} value={customCategory?"__NEW__":form.category} onChange={e=>{if(e.target.value==="__NEW__"){setCustomCategory(true);patch("category","")}else{setCustomCategory(false);patch("category",e.target.value)}}}><option value="">Chưa chọn</option>{uniqueTextValues([...productGroups,!customCategory?form.category:""]).map(x=><option key={x} value={x}>{x}</option>)}<option value="__NEW__">+ Thêm nhóm mới</option></select>{customCategory&&<input className={inputClass} value={form.category} onChange={e=>patch("category",e.target.value)} onBlur={()=>patch("category",titleCaseVi(form.category))} placeholder="VD: Áo Khoác"/>}</div></Field><Field label="Bảng vải"><select className={inputClass} value={form.fabricBoardId} onChange={e=>{patch("fabricBoardId",e.target.value);patch("fabricColorId","")}}><option value="">Chưa chọn bảng vải</option>{boards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.name?` · ${b.name}`:""}</option>)}</select></Field>
+    <Field label="Màu lấy từ bảng"><select className={inputClass} value={form.fabricColorId} onChange={e=>patch("fabricColorId",e.target.value)} disabled={!selectedBoard}><option value="">Chưa chọn màu</option>{selectedBoard?.colors?.map(c=><option key={c.id||`${c.name}-${c.code}`} value={c.id||""}>{c.name}{c.code?` · ${c.code}`:""}</option>)}</select></Field><Field label="Tiến độ"><select className={inputClass} value={form.status} onChange={e=>patch("status",e.target.value)}>{SAMPLE_STATUSES.map(x=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select></Field><Field label="Người phụ trách"><select className={inputClass} value={form.assigneeStaffId} onChange={e=>patch("assigneeStaffId",e.target.value)}><option value="">Chưa gán</option>{staff.map(x=><option key={x.id} value={x.id}>{x.name} · {x.code}</option>)}</select></Field><Field label="Việc tiếp theo"><input className={inputClass} value={form.nextAction} onChange={e=>patch("nextAction",e.target.value)}/></Field><Field label="Hạn dự kiến"><input type="date" className={inputClass} value={form.dueDate} onChange={e=>patch("dueDate",e.target.value)}/></Field>
+  </div>{selectedBoard&&<div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Liên kết bảng vải</div><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm"><span>Bảng: <b>{selectedBoard.boardCode}</b></span>{selectedFabricColor&&<span>Màu: <b>{selectedFabricColor.name}{selectedFabricColor.code?` · ${selectedFabricColor.code}`:""}</b></span>}<Link href="/fabric-library" className="font-semibold text-blue-700 hover:underline">Mở Bảng vải →</Link></div></div>}<div className="grid gap-4 md:grid-cols-2"><Field label="Ghi chú mẫu"><textarea className={`${inputClass} min-h-28`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field><Field label="Ghi chú kỹ thuật"><textarea className={`${inputClass} min-h-28`} value={form.technicalNote} onChange={e=>patch("technicalNote",e.target.value)}/></Field></div>{canUpload&&<div className="rounded-2xl border border-dashed border-neutral-300 p-4"><div className="flex items-center justify-between gap-3"><div><b className="text-sm">Ảnh mẫu / ảnh tham khảo</b><p className="mt-1 text-xs text-neutral-400">Ảnh của mẫu triển khai, không phải ảnh bảng vải.</p></div><label className="cursor-pointer rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Tải ảnh từ máy<input type="file" accept="image/*" className="hidden" onChange={e=>e.target.files?.[0]&&void upload(e.target.files[0])}/></label></div>{form.coverImageUrl?<img src={assetUrl(form.coverImageUrl)} className="mt-3 h-40 rounded-2xl object-cover"/>:<div className="mt-3 rounded-xl bg-neutral-50 p-6 text-center text-xs text-neutral-400">Chưa có ảnh mẫu.</div>}</div>}<div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-2xl border px-4 py-2.5 text-sm">Đóng</button><button disabled={saving||!!form.code&&(codeCheck.loading||codeCheck.available!==true)} onClick={save} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu mẫu"}</button></div></div></Modal>
 }
 
 function ReceiptForm({ receipt, suppliers, branches, samples, canCostView, canCostEdit, onClose, onSaved }: { receipt:FabricReceipt|null; suppliers:Supplier[]; branches:Branch[]; samples:any[]; canCostView:boolean; canCostEdit:boolean; onClose:()=>void; onSaved:()=>void }) {
