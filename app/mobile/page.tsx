@@ -125,6 +125,36 @@ export default function MobileEntryPage() {
 
   const stocktakeOnly = useMemo(() => isStocktakeOnlyUser(user), [user]);
 
+  const permissionKeys = useMemo(
+    () => getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId),
+    [user],
+  );
+
+  const can = (key: string) =>
+    isOwnerOrAdmin(user) || permissionKeys.includes("*") || permissionKeys.includes(key);
+
+
+  useEffect(() => {
+    if (!user || isOwnerOrAdmin(user) || permissionKeys.includes("*")) return;
+
+    const visibleHomeKeys = [
+      "mobile.home.reports",
+      "mobile.home.finance",
+      "mobile.home.orders",
+      "mobile.home.products",
+      "mobile.home.stocktake",
+      "mobile.home.autopilot",
+    ].filter((key) => permissionKeys.includes(key));
+
+    if (
+      visibleHomeKeys.length === 1 &&
+      visibleHomeKeys[0] === "mobile.home.autopilot" &&
+      permissionKeys.includes("autopilot.view")
+    ) {
+      router.replace("/mobile/autopilot");
+    }
+  }, [permissionKeys, router, user]);
+
   if (stocktakeOnly) {
     return (
       <main className="min-h-[100dvh] bg-neutral-100 px-5 py-14 pb-32 text-neutral-950">
@@ -157,47 +187,59 @@ export default function MobileEntryPage() {
         </div>
 
         <div className="flex flex-col gap-5">
-          <MainCard
-            href="/mobile/reports/overview"
-            eyebrow="Báo cáo vận hành"
-            title="Tổng quan báo cáo"
-            description="Đơn hàng đã tạo, doanh thu, sản phẩm bán chạy và cảnh báo tồn kho."
-            icon={<BarChart3 className="h-7 w-7" />}
-          />
+          {can("mobile.home.reports") && (
+            <MainCard
+              href="/mobile/reports/overview"
+              eyebrow="Báo cáo vận hành"
+              title="Tổng quan báo cáo"
+              description="Đơn hàng đã tạo, doanh thu, sản phẩm bán chạy và cảnh báo tồn kho."
+              icon={<BarChart3 className="h-7 w-7" />}
+            />
+          )}
 
-          <MainCard
-            href="/mobile/finance/daily"
-            eyebrow="Dòng tiền hôm nay"
-            title="Tổng quan nguồn tiền"
-            description="Tiền mặt, chuyển khoản, COD pending, phiếu thu chi và số dư cuối ngày."
-            icon={<WalletCards className="h-7 w-7" />}
-          />
+          {can("mobile.home.finance") && (
+            <MainCard
+              href="/mobile/finance/daily"
+              eyebrow="Dòng tiền hôm nay"
+              title="Tổng quan nguồn tiền"
+              description="Tiền mặt, chuyển khoản, COD pending, phiếu thu chi và số dư cuối ngày."
+              icon={<WalletCards className="h-7 w-7" />}
+            />
+          )}
 
           <div className="grid grid-cols-2 gap-4">
-            <SmallCard
-              href="/mobile/orders"
-              title="Đơn hàng"
-              description="Xem đơn mới, chi tiết đơn."
-              icon={<ShoppingBag className="h-7 w-7" />}
-            />
-            <SmallCard
-              href="/mobile/products"
-              title="Sản phẩm"
-              description="Tra SKU, tồn kho, biến thể."
-              icon={<Boxes className="h-7 w-7" />}
-            />
-            <SmallCard
-              href="/mobile/stocktake"
-              title="Kiểm kho"
-              description="Quét mã vạch, nhập số lượng."
-              icon={<ClipboardCheck className="h-7 w-7" />}
-            />
-            <SmallCard
-              href="/mobile/autopilot"
-              title="Autopilot"
-              description="Ads, scale, tồn kho, bài mới."
-              icon={<Bot className="h-7 w-7" />}
-            />
+            {can("mobile.home.orders") && (
+              <SmallCard
+                href="/mobile/orders"
+                title="Đơn hàng"
+                description="Xem đơn mới, chi tiết đơn."
+                icon={<ShoppingBag className="h-7 w-7" />}
+              />
+            )}
+            {can("mobile.home.products") && (
+              <SmallCard
+                href="/mobile/products"
+                title="Sản phẩm"
+                description="Tra SKU, tồn kho, biến thể."
+                icon={<Boxes className="h-7 w-7" />}
+              />
+            )}
+            {can("mobile.home.stocktake") && (
+              <SmallCard
+                href="/mobile/stocktake"
+                title="Kiểm kho"
+                description="Quét mã vạch, nhập số lượng."
+                icon={<ClipboardCheck className="h-7 w-7" />}
+              />
+            )}
+            {can("mobile.home.autopilot") && (
+              <SmallCard
+                href="/mobile/autopilot"
+                title="Autopilot"
+                description="Ads, scale, tồn kho, bài mới."
+                icon={<Bot className="h-7 w-7" />}
+              />
+            )}
           </div>
         </div>
 

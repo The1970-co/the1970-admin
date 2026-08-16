@@ -308,7 +308,6 @@ const MODULE_HEALTH = [
   { module: "Phiếu thu / chi", backend: "cash_voucher.*", status: "ready", note: "Controller đã có PermissionGuard và action mapping." },
   { module: "Khuyến mại", backend: "promotions.*", status: "watch", note: "Permission keys đã định nghĩa; cần gắn guard vào promotion.controller." },
   { module: "Tài chính", backend: "finance.*", status: "ready", note: "Các endpoint tài chính chính đã có guard." },
-  { module: "Meta Ads Autopilot", backend: "autopilot.*", status: "watch", note: "Permission keys tách riêng cho màn Ads / Bài mới / Cài đặt / Review / Launch." },
 ];
 
 
@@ -594,29 +593,34 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "omni_livestream.reply", label: "Trả lời livestream", risk: "medium" },
     ],
   },
+
   {
-    id: "autopilot",
-    title: "Meta Ads Autopilot",
-    subtitle: "Quyền riêng cho Meta Review: xem Ads, bài Page, mapping, cài đặt, review và xác nhận chạy Ads.",
-    icon: "🤖",
-    tone: "blue",
+    id: "mobile",
+    title: "Mobile App",
+    subtitle: "Quyền hiển thị từng thẻ/khu vực trên trang Home mobile và thanh điều hướng.",
+    icon: "📱",
+    tone: "cyan",
     actions: [
-      { key: "autopilot.view", label: "Mở Autopilot", risk: "low", desc: "Quyền nền để truy cập /mobile/autopilot. Không cấp quyền vào các module khác." },
-      { key: "autopilot.ads.view", label: "Xem tab Ads", risk: "low", desc: "Xem danh sách quảng cáo, trạng thái và số liệu được hiển thị trong Autopilot." },
-      { key: "autopilot.posts.view", label: "Xem tab Bài mới / Page Posts", risk: "low", desc: "Xem danh sách bài đã đăng từ Facebook Page The 1970." },
-      { key: "autopilot.mapping.edit", label: "Gán mã sản phẩm + màu cho bài", risk: "medium", desc: "Cho phép thao tác mapping nội bộ trên card bài viết; không cấp quyền sửa sản phẩm/kho." },
-      { key: "autopilot.settings.view", label: "Xem Cài đặt Autopilot", risk: "medium", desc: "Chỉ xem cấu hình template, budget và rule vận hành." },
-      { key: "autopilot.settings.manage", label: "Sửa Cài đặt Autopilot", risk: "critical", desc: "Thay đổi template, budget, automation rule và các thiết lập vận hành." },
-      { key: "autopilot.review.view", label: "Xem màn Review trước khi chạy", risk: "low", desc: "Xem Campaign / Ad Set / Ad, budget, targeting và phần đối chiếu Meta." },
-      { key: "autopilot.meta_compare.view", label: "Xem đối chiếu raw Meta", risk: "medium", desc: "Xem raw Ad Set/Campaign mẫu và payload Auto Launch sẽ gửi." },
-      { key: "autopilot.ads.manage", label: "Pause / Scale / quản lý Ads", risk: "critical", desc: "Cho phép thao tác write lên quảng cáo đang vận hành." },
-      { key: "autopilot.launch.execute", label: "Xác nhận chạy Ads thật", risk: "critical", desc: "Cho phép POST tạo Campaign / Ad Set / Creative / Ad lên Meta." },
+      { key: "mobile.home.reports", label: "Hiện thẻ Tổng quan báo cáo", risk: "low" },
+      { key: "mobile.home.finance", label: "Hiện thẻ Tổng quan nguồn tiền", risk: "high" },
+      { key: "mobile.home.orders", label: "Hiện thẻ Đơn hàng", risk: "medium" },
+      { key: "mobile.home.products", label: "Hiện thẻ Sản phẩm", risk: "low" },
+      { key: "mobile.home.stocktake", label: "Hiện thẻ Kiểm kho", risk: "low" },
+      { key: "mobile.home.autopilot", label: "Hiện thẻ Autopilot", risk: "low" },
+
+      { key: "mobile.nav.home", label: "Hiện tab Home", risk: "low" },
+      { key: "mobile.nav.reports", label: "Hiện tab Báo cáo", risk: "low" },
+      { key: "mobile.nav.orders", label: "Hiện tab Đơn", risk: "low" },
+      { key: "mobile.nav.stocktake", label: "Hiện tab Kiểm", risk: "low" },
+      { key: "mobile.nav.history", label: "Hiện tab Lịch sử", risk: "medium" },
+      { key: "mobile.nav.profile", label: "Hiện tab Tôi", risk: "low" },
+      { key: "mobile.nav.autopilot", label: "Hiện tab Autopilot", risk: "low" },
     ],
   },
   {
     id: "system",
     title: "Hệ thống",
-    subtitle: "Phân quyền, cấu hình, chi nhánh, audit và tích hợp hệ thống.",
+    subtitle: "Phân quyền, cấu hình, chi nhánh, audit, tích hợp và autopilot.",
     icon: "🛡️",
     tone: "red",
     actions: [
@@ -633,6 +637,8 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "staff.transfer_branch", label: "Thực hiện chuyển chi nhánh", risk: "critical" },
       { key: "audit.view", label: "Xem audit log", risk: "high" },
       { key: "carriers.manage", label: "Cấu hình hãng vận chuyển", risk: "high" },
+      { key: "autopilot.view", label: "Xem Autopilot", risk: "medium" },
+      { key: "autopilot.manage", label: "Quản lý Autopilot", risk: "critical" },
     ],
   },
 ];
@@ -670,13 +676,14 @@ const ROLE_TEMPLATES: RoleItem[] = [
       ...ALL_PERMISSION_KEYS.filter((key) => key !== "orders.delete"),
     ],
   },
+
   {
     id: "meta-reviewer",
     name: "Meta Reviewer",
     scope: "ALL_BRANCHES",
-    description: "Tài khoản chỉ dành cho Meta App Review. Chỉ vào Autopilot, không được truy cập đơn hàng, kho, tài chính, khách hàng hay phân quyền.",
-    badge: "Meta Review Only",
-    tone: "blue",
+    description: "Tài khoản chỉ dùng cho Meta App Review; chỉ xem Autopilot trên mobile.",
+    badge: "Meta Review",
+    tone: "cyan",
     defaultPermissionKeys: [
       "autopilot.view",
       "autopilot.ads.view",
@@ -684,6 +691,9 @@ const ROLE_TEMPLATES: RoleItem[] = [
       "autopilot.settings.view",
       "autopilot.review.view",
       "autopilot.meta_compare.view",
+      "mobile.home.autopilot",
+      "mobile.nav.home",
+      "mobile.nav.autopilot",
     ],
   },
   {
