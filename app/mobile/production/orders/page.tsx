@@ -52,6 +52,22 @@ function asset(url?:string|null) {
   if(!url) return "";
   return /^https?:\/\//.test(url) ? url : `${API_BASE}${url.startsWith("/")?"":"/"}${url}`;
 }
+
+function viNumber(value:any){
+  const raw=String(value??"").trim().replace(/\s/g,"").replace(",",".");
+  const n=Number(raw);
+  return Number.isFinite(n)?n:null;
+}
+function viDisplay(value:any,maximumFractionDigits=4){
+  if(value===null||value===undefined||value==="") return "";
+  const n=viNumber(value);
+  if(n===null) return String(value);
+  return n.toLocaleString("vi-VN",{maximumFractionDigits,useGrouping:false});
+}
+function withUnit(value:any,unit:string,maximumFractionDigits=4){
+  const displayed=viDisplay(value,maximumFractionDigits);
+  return displayed?`${displayed} ${unit}`:"—";
+}
 function dt(v?:string|null) {
   if(!v) return "";
   const d=new Date(v);
@@ -166,8 +182,9 @@ function DetailModal({detail,loading,onClose}:{detail:any;loading:boolean;onClos
         <div className="grid grid-cols-2 gap-3">
           <Info l="Trạng thái" v={LABEL[detail.status]||detail.status}/>
           <Info l="Nhà may" v={detail.factory?.name||"—"}/>
-          <Info l="Định mức vải" v={detail.fabricConsumptionM?`${detail.fabricConsumptionM} m/sp`:"—"}/>
-          <Info l="Khổ vải" v={detail.fabricWidthCm?`${detail.fabricWidthCm} cm`:"—"}/>
+          <Info l="Định mức vải" v={withUnit(detail.fabricConsumptionM,"m/sp",4)}/>
+          <Info l="Khổ vải" v={withUnit(detail.fabricWidthCm,"cm",2)}/>
+          <Info l="Hao hụt vải" v={withUnit(detail.fabricWastePercent,"%",3)}/>
         </div>
         <section><b className="text-sm">Cây vải đã chọn</b><div className="mt-2 space-y-2">{detail.rolls?.length?detail.rolls.map((r:any)=><div key={r.id} className="rounded-2xl bg-neutral-50 p-3 text-sm"><b>{r.rollCode||"Cây"}</b><div className="text-xs text-neutral-500">{r.colorName||"—"} {r.colorCode||""} · {Number(r.allocatedM||0).toLocaleString("vi-VN")}m</div></div>):<Empty text="Chưa chọn cây vải"/>}</div></section>
         <section><b className="text-sm">Kế hoạch size</b><div className="mt-2 flex flex-wrap gap-2">{detail.sizes?.length?detail.sizes.map((s:any)=><span key={s.id||`${s.colorName}-${s.size}`} className="rounded-full bg-neutral-100 px-3 py-2 text-xs font-black">{s.size}: {s.plannedQty}</span>):<span className="text-xs text-neutral-400">Chưa tính size.</span>}</div></section>

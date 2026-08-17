@@ -447,9 +447,9 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
           <div className="space-y-5">
             <div className="grid gap-4 md:grid-cols-4">
               <Field l="Loại sản phẩm"><select className={input} value={order.productKind || "OTHER"} onChange={(e) => setOrder({ ...order, productKind: e.target.value })}><option value="SHIRT">Áo</option><option value="PANTS">Quần</option><option value="OTHER">Khác</option></select></Field>
-              <Field l="Định mức vải m/sp"><input type="number" step="0.001" className={input} value={order.fabricConsumptionM ?? ""} onChange={(e) => setOrder({ ...order, fabricConsumptionM: e.target.value })} /></Field>
-              <Field l="Khổ vải cm"><input type="number" className={input} value={order.fabricWidthCm ?? ""} onChange={(e) => setOrder({ ...order, fabricWidthCm: e.target.value })} /></Field>
-              <Field l="Hao hụt vải %"><input type="number" className={input} value={order.fabricWastePercent ?? 0} onChange={(e) => setOrder({ ...order, fabricWastePercent: e.target.value })} /></Field>
+              <Field l="Định mức vải / sp"><ViNumberInput value={order.fabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, fabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 1,5" /></Field>
+              <Field l="Khổ vải"><ViNumberInput value={order.fabricWidthCm ?? ""} onChange={(v) => setOrder({ ...order, fabricWidthCm: v })} suffix="cm" decimals={2} placeholder="VD: 155" /></Field>
+              <Field l="Hao hụt vải"><ViNumberInput value={order.fabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, fabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field>
             </div>
 
             <div className="rounded-3xl border p-4">
@@ -571,6 +571,10 @@ function FactoryModal({ factories, onClose, onSaved }: { factories: FactoryItem[
   return <Modal title="Nhà may / xưởng" onClose={onClose}><div className="grid gap-5 p-5 md:grid-cols-2"><div className="max-h-96 overflow-y-auto rounded-2xl border">{factories.map((x) => <div key={x.id} className="border-b p-3 text-sm"><b>{x.code} · {x.name}</b><div className="text-xs text-neutral-400">{x.contactName || ""} {x.phone || ""}</div></div>)}</div><div className="space-y-3">{error && <Err x={error} />}<Field l="Tên"><input className={input} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field l="Mã"><input className={input} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="Tự sinh nếu trống" /></Field><Field l="Liên hệ"><input className={input} value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field l="SĐT"><input className={input} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field><button onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-2.5 font-semibold text-white">Tạo nhà may</button></div></div></Modal>;
 }
 
+
+function viNumber(v:any){const raw=String(v??"").trim().replace(/\s/g,"").replace(",",".");const n=Number(raw);return Number.isFinite(n)?n:null}
+function viDisplay(v:any,decimals=4){if(v===null||v===undefined||v==="")return "";const n=viNumber(v);if(n===null)return String(v);return n.toLocaleString("vi-VN",{maximumFractionDigits:decimals,useGrouping:false})}
+function ViNumberInput({value,onChange,suffix,decimals=4,placeholder=""}:{value:any;onChange:(v:string)=>void;suffix:string;decimals?:number;placeholder?:string}){return <div className="relative"><input inputMode="decimal" className={`${input} pr-12`} value={String(value??"")} placeholder={placeholder} onChange={e=>onChange(e.target.value.replace(/[^0-9,.-]/g,""))} onBlur={()=>onChange(viDisplay(value,decimals))}/><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-neutral-400">{suffix}</span></div>}
 function Field({ l, children }: { l: string; children: React.ReactNode }) {
   return <label className="block"><span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{l}</span>{children}</label>;
 }
