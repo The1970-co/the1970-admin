@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Scissors, Shirt, ShoppingBag, WalletCards } from "lucide-react";
+import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Layers3, PackageOpen, Scissors, Shirt, ShoppingBag, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -54,6 +54,8 @@ function isStocktakeOnlyUser(user: any) {
     "production.view",
     "design_sample.view",
     "fabric_receipt.view",
+    "fabric_library.view",
+    "accessories.view",
   ]);
 
   const roleText = rolesOf(user).join(" ");
@@ -225,34 +227,72 @@ export default function MobileEntryPage() {
             )}
           </div>
 
-          {(can("production.view") || can("design_sample.view") || can("fabric_receipt.view")) && (
+          {(can("fabric_library.view") ||
+            can("design_sample.view") ||
+            can("fabric_receipt.view") ||
+            can("production.view") ||
+            can("accessories.view")) && (
             <div className="mt-1">
-              <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-neutral-400">
-                Mẫu mã & Sản xuất
+              <div className="mb-3 flex items-end justify-between">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.18em] text-neutral-400">
+                    Sản xuất & Nguyên liệu
+                  </div>
+                  <div className="mt-1 text-sm text-neutral-500">
+                    Bảng vải, mẫu mã, vải về, sản xuất và nguyên phụ liệu.
+                  </div>
+                </div>
+                <Link
+                  href="/mobile/production"
+                  className="shrink-0 rounded-full border border-neutral-300 bg-white px-3 py-2 text-[11px] font-black"
+                >
+                  Xem chung
+                </Link>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
+                {can("fabric_library.view") && (
+                  <SmallCard
+                    href="/mobile/fabric-library"
+                    title="Bảng vải"
+                    description="Mã bảng, thành phần, mùa và nhóm sản phẩm."
+                    icon={<Layers3 className="h-7 w-7" />}
+                  />
+                )}
+
                 {can("design_sample.view") && (
                   <SmallCard
                     href="/mobile/samples"
-                    title="Mẫu mã"
-                    description="Tạo mẫu nhanh, chụp ảnh mẫu và bảng vải."
+                    title="Triển khai mẫu"
+                    description="Tạo mẫu nhanh, ảnh tham khảo và tiến độ mẫu."
                     icon={<Shirt className="h-7 w-7" />}
                   />
                 )}
+
                 {can("fabric_receipt.view") && (
                   <SmallCard
                     href="/mobile/fabric"
                     title="Vải về"
-                    description="Nhập cây vải, màu và chụp ảnh từng cây."
+                    description="Phiếu nhập, cây vải, màu, mét/kg và ảnh."
                     icon={<Scissors className="h-7 w-7" />}
                   />
                 )}
+
                 {can("production.view") && (
                   <SmallCard
-                    href="/mobile/production"
+                    href="/mobile/production/orders"
                     title="Sản xuất"
-                    description="Theo dõi lệnh sản xuất và nhà may."
+                    description="Lệnh SX, nhà may, cắt, may, QC và hoàn tất."
                     icon={<Factory className="h-7 w-7" />}
+                  />
+                )}
+
+                {can("accessories.view") && (
+                  <SmallCard
+                    href="/mobile/accessories"
+                    title="Nguyên phụ liệu"
+                    description="Cúc, mác, khóa, chun, tồn kho và NCC NPL."
+                    icon={<PackageOpen className="h-7 w-7" />}
                   />
                 )}
               </div>
