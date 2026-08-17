@@ -73,6 +73,7 @@ function statusLabel(status?: string) {
 
 type PayrollColumnKey =
   | "branch"
+  | "salaryTemplate"
   | "attendance"
   | "workingDays"
   | "baseSalary"
@@ -89,6 +90,7 @@ type PayrollColumnKey =
 
 const payrollColumnOptions: Array<{ key: PayrollColumnKey; label: string }> = [
   { key: "branch", label: "Chi nhánh" },
+  { key: "salaryTemplate", label: "Mẫu cấu hình lương" },
   { key: "attendance", label: "Chấm công" },
   { key: "workingDays", label: "Công" },
   { key: "baseSalary", label: "Lương cứng" },
@@ -633,6 +635,7 @@ export default function PayrollPeriodDetailPageClient({
               <tr>
                 <th className="px-4 py-3">Nhân viên</th>
                 {visibleColumns.branch ? <th className="px-4 py-3">Chi nhánh</th> : null}
+                {visibleColumns.salaryTemplate ? <th className="px-4 py-3">Mẫu cấu hình lương</th> : null}
                 {visibleColumns.attendance ? <th className="px-4 py-3">Chấm công</th> : null}
                 {visibleColumns.workingDays ? <th className="px-4 py-3 text-right">Công</th> : null}
                 {visibleColumns.baseSalary ? <th className="px-4 py-3 text-right">Lương cứng</th> : null}
@@ -659,6 +662,13 @@ export default function PayrollPeriodDetailPageClient({
                     <div className="mt-1 text-xs text-neutral-500">{line.staffCode || line.staffId}</div>
                   </td>
                   {visibleColumns.branch ? <td className="px-4 py-4 text-neutral-600">{line.branchName || line.branchId || "—"}</td> : null}
+                  {visibleColumns.salaryTemplate ? (
+                    <td className="max-w-[220px] px-4 py-4">
+                      <div className="font-medium text-neutral-800">
+                        {(line as any).sourceTemplateName || "Cấu hình riêng"}
+                      </div>
+                    </td>
+                  ) : null}
                   {visibleColumns.attendance ? (
                     <td className="px-4 py-4 text-xs">
                       <div className={["WARNING", "CRITICAL"].includes(String(line.attendanceWarningLevel || "").toUpperCase()) ? "font-semibold text-red-600" : "text-neutral-500"}>
