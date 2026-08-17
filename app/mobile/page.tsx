@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { BarChart3, Bot, Boxes, ClipboardCheck, ShoppingBag, WalletCards } from "lucide-react";
+import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Scissors, Shirt, ShoppingBag, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -51,6 +51,9 @@ function isStocktakeOnlyUser(user: any) {
     "products.view",
     "inventory.view",
     "marketing.view",
+    "production.view",
+    "design_sample.view",
+    "fabric_receipt.view",
   ]);
 
   const roleText = rolesOf(user).join(" ");
@@ -221,6 +224,40 @@ export default function MobileEntryPage() {
               />
             )}
           </div>
+
+          {(can("production.view") || can("design_sample.view") || can("fabric_receipt.view")) && (
+            <div className="mt-1">
+              <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-neutral-400">
+                Mẫu mã & Sản xuất
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {can("design_sample.view") && (
+                  <SmallCard
+                    href="/mobile/samples"
+                    title="Mẫu mã"
+                    description="Tạo mẫu nhanh, chụp ảnh mẫu và bảng vải."
+                    icon={<Shirt className="h-7 w-7" />}
+                  />
+                )}
+                {can("fabric_receipt.view") && (
+                  <SmallCard
+                    href="/mobile/fabric"
+                    title="Vải về"
+                    description="Nhập cây vải, màu và chụp ảnh từng cây."
+                    icon={<Scissors className="h-7 w-7" />}
+                  />
+                )}
+                {can("production.view") && (
+                  <SmallCard
+                    href="/mobile/production"
+                    title="Sản xuất"
+                    description="Theo dõi lệnh sản xuất và nhà may."
+                    icon={<Factory className="h-7 w-7" />}
+                  />
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <MobileBottomNav />
