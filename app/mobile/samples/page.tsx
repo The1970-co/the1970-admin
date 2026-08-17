@@ -2,10 +2,9 @@
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
-import { getMobileToken } from "@/lib/mobile-auth-token";
 import { Camera,ImagePlus,Plus } from "lucide-react";
 import { useEffect,useState } from "react";
-async function api<T=any>(p:string,i:RequestInit={}){await getMobileToken();return apiJson<T>(p,{...i,redirectOnUnauthorized:false} as any)}
+async function api<T=any>(p:string,i:RequestInit={}){return apiJson<T>(p,{...i,redirectOnUnauthorized:false} as any)}
 async function upload(file:File){const fd=new FormData();fd.append("file",file);return api<{url:string}>("/sample-fabric/samples/upload",{method:"POST",body:fd})}
 function asset(u?:string|null){return !u?"":u.startsWith("http")?u:`${API_BASE}${u}`}
 const SEASONS=["Xuân Hạ","Thu Đông","Đông Xuân","Xuân Hè"];

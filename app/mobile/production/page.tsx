@@ -2,7 +2,6 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
-import { getMobileToken } from "@/lib/mobile-auth-token";
 import {
   CheckCircle2,
   Factory,
@@ -54,12 +53,8 @@ type ProductionOrder = {
   status: ProductionStatus;
   updatedAt?: string | null;
   designSampleId?: string | null;
-  sample?: {
-    id?: string;
-    code?: string;
-    name?: string;
-    coverImageUrl?: string | null;
-  } | null;
+  sample?: { id?: string; code?: string; name?: string; coverImageUrl?: string | null } | null;
+  source?: { type?: string; id?: string; code?: string; name?: string; imageUrl?: string | null } | null;
   factory?: {
     id?: string;
     code?: string;
@@ -114,7 +109,6 @@ const PRODUCTION_LABEL: Record<string, string> = {
 };
 
 async function api<T = any>(path: string, init: RequestInit = {}) {
-  await getMobileToken();
   return apiJson<T>(path, { ...init, redirectOnUnauthorized: false } as any);
 }
 
@@ -524,7 +518,7 @@ export default function MobileProductionPage() {
                           {row.code}
                         </div>
                         <div className="mt-1 text-base font-black">
-                          {row.sample?.code || "—"} · {row.sample?.name || "Chưa có tên"}
+                          {row.source?.code || row.sample?.code || "—"} · {row.source?.name || row.sample?.name || "Chưa có tên"}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <StatusBadge
