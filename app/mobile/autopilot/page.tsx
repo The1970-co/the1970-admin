@@ -62,6 +62,17 @@ function postImage(post: AnyRow) {
 const num = (v: any) => Number(v || 0) || 0;
 const pct = (v: any) => Number(v || 0).toFixed(2);
 
+const hcmDateKey = (value: any) => {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+};
+
 function toneClass(value: string) {
   const s = String(value || "").toUpperCase();
   if (s.includes("ACTIVE") || s.includes("NORMAL") || s.includes("READY")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -427,6 +438,42 @@ export default function MobileAutopilotPage() {
     }
     return true;
   });
+
+  const todayScaleHistory = scaleHistory.filter(
+    (item) => hcmDateKey(item?.startedAt || item?.createdAt) === hcmDateKey(new Date()),
+  );
+
+  function todayScaleLogsForAd(row: AnyRow) {
+    const adId = String(row?.metaAdId || row?.id || "").trim();
+    const adSetId = String(row?.metaAdSetId || row?.adSetId || "").trim();
+
+    return todayScaleHistory.filter((item) => {
+      const logAdId = String(item?.metaAdId || item?.errorJson?.metaAdId || "").trim();
+      const logAdSetId = String(item?.metaAdSetId || item?.errorJson?.metaAdSetId || "").trim();
+
+      if (logAdId) return Boolean(adId && logAdId === adId);
+      return Boolean(adSetId && logAdSetId && logAdSetId === adSetId);
+    });
+  }
+
+  const scaledAdsToday = liveAds.filter((row) => todayScaleLogsForAd(row).length > 0);
+
+  function scaleBadgeText(row: AnyRow) {
+    const logs = todayScaleLogsForAd(row);
+    if (!logs.length) return "";
+
+    const percents = Array.from(
+      new Set(
+        logs
+          .map((item) => Math.round(num(item?.percent ?? item?.errorJson?.percent)))
+          .filter((value) => value > 0),
+      ),
+    );
+
+    return percents.length
+      ? `Đã scale ${percents.map((value) => `+${value}%`).join(", ")} hôm nay`
+      : "Đã scale hôm nay";
+  }
 
   function budgetOf(row: AnyRow) {
     const directCurrent = num(row.currentBudget);
@@ -860,6 +907,23 @@ export default function MobileAutopilotPage() {
             <button disabled={busy} onClick={() => void runPerformanceNow()} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">Chạy Auto Scale</button>
             <button disabled={busy} onClick={() => void runInventoryNow()} className="h-11 rounded-2xl border border-neutral-200 bg-white text-xs font-black text-neutral-700 disabled:opacity-40">Check tồn ngay</button>
           </div>
+          <div className={`rounded-2xl border px-4 py-3 ${scaledAdsToday.length ? "border-emerald-200 bg-emerald-50" : "border-neutral-200 bg-white"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className={`text-[10px] font-black uppercase tracking-[.12em] ${scaledAdsToday.length ? "text-emerald-700" : "text-neutral-400"}`}>
+                  Scale hôm nay
+                </div>
+                <div className="mt-1 text-sm font-black text-neutral-950">
+                  {scaledAdsToday.length
+                    ? `Đã scale ${scaledAdsToday.length} bài đang chạy`
+                    : "Hôm nay chưa scale bài nào"}
+                </div>
+              </div>
+              <div className={`grid h-10 min-w-10 place-items-center rounded-xl px-3 text-lg font-black ${scaledAdsToday.length ? "bg-emerald-600 text-white" : "bg-neutral-100 text-neutral-400"}`}>
+                {scaledAdsToday.length}
+              </div>
+            </div>
+          </div>
           {filteredAds.map((row) => {
             const id = String(row.metaAdId || row.id || "");
             const stock = assessments[id] || {};
@@ -867,6 +931,7 @@ export default function MobileAutopilotPage() {
             const status = String(row.effectiveStatus || row.status || "—").toUpperCase();
             const expanded = expandedId === id;
             const historyCount = scaleCount(row);
+            const todayScaleText = scaleBadgeText(row);
             return <article
               id={`autopilot-ad-card-${id}`}
               key={id}
@@ -876,7 +941,17 @@ export default function MobileAutopilotPage() {
                 {row.thumbnailUrl || row.thumbnail_url ? <img src={row.thumbnailUrl || row.thumbnail_url} alt="" className="h-20 w-20 rounded-2xl object-cover bg-neutral-100" /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-neutral-100"><Activity className="h-6 w-6 text-neutral-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
-                  <div className="mt-1 flex flex-wrap gap-1"><Badge value={status}>{status}</Badge>{stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}{historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <Badge value={status}>{status}</Badge>
+                    {stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}
+                    {todayScaleText ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-black text-white">
+                        <span className="h-2 w-2 rounded-[2px] bg-emerald-200" />
+                        {todayScaleText}
+                      </span>
+                    ) : null}
+                    {historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}
+                  </div>
                   <div className="mt-2 text-xs font-bold text-neutral-600">{stock?.productCode ? `${stock.productCode} · ${stock.color || ""}` : row.manualProductCode || row.manualMapping?.productCode ? `${row.manualProductCode || row.manualMapping?.productCode} · ${row.manualColor || row.manualMapping?.color || ""}` : "Chưa map mã / màu"}</div>
                 </div>
               </div>
@@ -1076,8 +1151,8 @@ export default function MobileAutopilotPage() {
                 <div className="rounded-2xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">{stock?.reason || "Chưa có đánh giá tồn kho."}</div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Spend 24h</div><div className="mt-1 text-xs font-black">{money(row.spend24h ?? row.spend ?? 0)}</div></div>
-                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT 24h</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
-                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS 24h</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT tổng</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS Tổng</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
                 </div>
                 {(() => {
                   const result = insightForAd(id);

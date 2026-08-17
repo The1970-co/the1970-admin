@@ -90,6 +90,33 @@ function rolesOf(user:any){
 }
 function isAdmin(user:any){const r=rolesOf(user);return r.includes("owner")||r.includes("admin")}
 
+const MOBILE_VIEWPORT_CONTENT = "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
+function lockMobileViewport(){
+  if(typeof document==="undefined")return;
+  let meta=document.querySelector('meta[name="viewport"]') as HTMLMetaElement|null;
+  if(!meta){
+    meta=document.createElement("meta");
+    meta.name="viewport";
+    document.head.appendChild(meta);
+  }
+  if(meta.content!==MOBILE_VIEWPORT_CONTENT)meta.content=MOBILE_VIEWPORT_CONTENT;
+}
+function resetIosZoom(){
+  if(typeof window==="undefined")return;
+  if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
+  lockMobileViewport();
+  window.requestAnimationFrame(()=>{
+    lockMobileViewport();
+    window.scrollTo({left:0,top:window.scrollY,behavior:"auto"});
+  });
+}
+function closeWithZoomReset(fn:()=>void){
+  resetIosZoom();
+  fn();
+  window.setTimeout(resetIosZoom,50);
+  window.setTimeout(resetIosZoom,250);
+}
+
 export default function Page(){
   const [rows,setRows]=useState<Sample[]>([]);
   const [meta,setMeta]=useState<Meta>({staff:[],boards:[],factories:[],seasons:[],productGroups:[]});
@@ -127,7 +154,24 @@ export default function Page(){
     finally{setLoading(false)}
   }
 
-  useEffect(()=>{setUser(getCurrentUserFromStorage());void load()},[]);
+  useEffect(()=>{
+    setUser(getCurrentUserFromStorage());
+    lockMobileViewport();
+    void load();
+
+    const reset=()=>resetIosZoom();
+    const onVisibility=()=>{if(document.visibilityState==="visible")window.setTimeout(reset,50)};
+    window.addEventListener("pageshow",reset);
+    window.addEventListener("focus",reset);
+    window.addEventListener("orientationchange",reset);
+    document.addEventListener("visibilitychange",onVisibility);
+    return()=>{
+      window.removeEventListener("pageshow",reset);
+      window.removeEventListener("focus",reset);
+      window.removeEventListener("orientationchange",reset);
+      document.removeEventListener("visibilitychange",onVisibility);
+    };
+  },[]);
 
   const filtered=useMemo(()=>{
     const k=q.trim().toLowerCase();
@@ -161,7 +205,7 @@ export default function Page(){
             {can("design_sample.create")&&<button onClick={()=>setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Tạo mẫu</button>}
           </div>
         </div>
-        <input className={`${input} mt-4`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã mẫu, tên, bảng vải, màu..."/>
+        <input className={`${input} mt-4`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã mẫu, tên, bảng vải, màu..." onBlur={resetIosZoom}/>
       </header>
 
       <div className="space-y-3 p-4">
@@ -224,7 +268,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     <div className="mx-auto my-4 max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b p-4">
         <div><div className="text-xs font-black text-neutral-400">{sample.code}</div><div className="font-black">{sample.name}</div></div>
-        <button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button>
+        <button onClick={()=>closeWithZoomReset(onClose)} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button>
       </div>
 
       <div className="space-y-4 p-4">
@@ -371,7 +415,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
         })
       });
       if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
-      requestAnimationFrame(()=>onSaved());
+      requestAnimationFrame(()=>{resetIosZoom();onSaved()});
     }catch(e){setError(e instanceof Error?e.message:"Không lưu được mẫu.")}
     finally{setSaving(false)}
   }
@@ -426,7 +470,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
       <Field l="Ghi chú kỹ thuật"><textarea className={`${input} min-h-24`} value={form.technicalNote} onChange={e=>patch("technicalNote",e.target.value)}/></Field>
 
       <div className="grid grid-cols-2 gap-2 border-t pt-4">
-        <button onClick={onClose} className="rounded-2xl border py-3 font-black">Đóng</button>
+        <button onClick={()=>closeWithZoomReset(onClose)} className="rounded-2xl border py-3 font-black">Đóng</button>
         <button disabled={saving||!form.name||!form.code} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu mẫu"}</button>
       </div>
     </div>
@@ -469,7 +513,7 @@ function DispatchForm({sample,meta,onClose,onSaved}:{sample:Sample;meta:Meta;onC
         })
       });
       if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
-      requestAnimationFrame(()=>onSaved());
+      requestAnimationFrame(()=>{resetIosZoom();onSaved()});
     }catch(e){setError(e instanceof Error?e.message:"Không gửi được mẫu.")}
     finally{setSaving(false)}
   }
@@ -506,7 +550,7 @@ function DispatchForm({sample,meta,onClose,onSaved}:{sample:Sample;meta:Meta;onC
       <Field l="Ghi chú gửi mẫu"><textarea className={`${input} min-h-24`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field>
 
       <div className="grid grid-cols-2 gap-2 border-t pt-4">
-        <button onClick={onClose} className="rounded-2xl border py-3 font-black">Đóng</button>
+        <button onClick={()=>closeWithZoomReset(onClose)} className="rounded-2xl border py-3 font-black">Đóng</button>
         <button disabled={saving} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40"><Send className="mr-1 inline h-4 w-4"/>{saving?"Đang gửi...":"Gửi mẫu"}</button>
       </div>
     </div>
@@ -520,7 +564,7 @@ function Info({l,v}:{l:string;v:any}){return <div className="rounded-2xl bg-neut
 function Badge({children}:{children:any}){return <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-[10px] font-black text-neutral-600">{children}</span>}
 function SmallBtn({children,onClick,disabled,danger=false}:{children:any;onClick:()=>void;disabled?:boolean;danger?:boolean}){return <button disabled={disabled} onClick={onClick} className={`shrink-0 rounded-full border px-3 py-2 text-[10px] font-black disabled:opacity-40 ${danger?"border-red-200 bg-red-50 text-red-700":"border-neutral-200 bg-white"}`}>{children}</button>}
 function Err({x}:{x:string}){return <div className="rounded-2xl bg-red-50 p-3 text-sm font-bold text-red-700">{x}</div>}
-function Modal({title,children,onClose}:{title:string;children:any;onClose:()=>void}){return <div className="fixed inset-0 z-50 overflow-y-auto bg-black/45 p-3"><div className="mx-auto my-3 max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl"><div className="flex items-center justify-between border-b p-4"><h2 className="font-black">{title}</h2><button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>{children}</div></div>}
+function Modal({title,children,onClose}:{title:string;children:any;onClose:()=>void}){return <div className="fixed inset-0 z-50 overflow-y-auto bg-black/45 p-3"><div className="mx-auto my-3 max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl"><div className="flex items-center justify-between border-b p-4"><h2 className="font-black">{title}</h2><button onClick={()=>closeWithZoomReset(onClose)} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>{children}</div></div>}
 
 const label="mb-1.5 block text-[10px] font-black uppercase tracking-wide text-neutral-400";
-const input="w-full min-w-0 rounded-2xl border border-neutral-300 bg-white px-3.5 py-3 text-base outline-none focus:border-neutral-950";
+const input="w-full min-w-0 rounded-2xl border border-neutral-300 bg-white px-3.5 py-3 text-[16px] leading-6 outline-none focus:border-neutral-950";
