@@ -18,8 +18,10 @@ export function getPayrollSettings() { return apiJson<PayrollSettings>("/payroll
 export function updatePayrollSettings(body: PayrollSettings) { return apiJson<PayrollSettings>("/payroll/settings", { method: "PATCH", body: JSON.stringify(body) }); }
 export function listPayrollPeriods(params: Record<string, any> = {}) { return apiJson<{ rows: PayrollPeriod[]; total: number; page: number; pageSize: number; totalPages: number }>(`/payroll/periods${qs(params)}`); }
 export function createPayrollPeriod(body: any) { return apiJson<PayrollPeriod>("/payroll/periods", { method: "POST", body: JSON.stringify(body) }); }
+export function deletePayrollPeriod(id: string) { return apiJson<{ ok: boolean; id: string }>(`/payroll/periods/${id}`, { method: "DELETE" }); }
 export function getPayrollPeriod(id: string) { return apiJson<PayrollPeriod>(`/payroll/periods/${id}`); }
 export function calculatePayrollPeriod(id: string, body: any = {}) { return apiJson<PayrollPeriod>(`/payroll/periods/${id}/calculate`, { method: "POST", body: JSON.stringify(body) }); }
+export function calculateThirteenthSalary(id: string, body: any = {}) { return apiJson<PayrollPeriod>(`/payroll/periods/${id}/calculate-thirteenth`, { method: "POST", body: JSON.stringify(body) }); }
 export function lockPayrollPeriod(id: string) { return apiJson<PayrollPeriod>(`/payroll/periods/${id}/lock`, { method: "POST" }); }
 export function unlockPayrollPeriod(id: string) { return apiJson<PayrollPeriod>(`/payroll/periods/${id}/unlock`, { method: "POST" }); }
 export function markPayrollPeriodPaid(id: string, body: any = {}) { return apiJson<PayrollPeriod>(`/payroll/periods/${id}/mark-paid`, { method: "POST", body: JSON.stringify(body) }); }

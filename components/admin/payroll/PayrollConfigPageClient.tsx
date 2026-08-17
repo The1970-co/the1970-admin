@@ -90,6 +90,47 @@ const emptyTemplateForm = {
   isActive: true,
 };
 
+type ConfigColumnKey =
+  | "branch"
+  | "template"
+  | "orderSource"
+  | "baseSalary"
+  | "hourly"
+  | "perOrder"
+  | "perItem"
+  | "manualItem"
+  | "revenuePercent"
+  | "effective"
+  | "status";
+
+const configColumnOptions: Array<{ key: ConfigColumnKey; label: string }> = [
+  { key: "branch", label: "Chi nhánh" },
+  { key: "template", label: "Mẫu cấu hình" },
+  { key: "orderSource", label: "Nguồn đơn" },
+  { key: "baseSalary", label: "Lương cứng" },
+  { key: "hourly", label: "/ giờ" },
+  { key: "perOrder", label: "/ đơn" },
+  { key: "perItem", label: "/ sản phẩm" },
+  { key: "manualItem", label: "SP nhập tay" },
+  { key: "revenuePercent", label: "% DT" },
+  { key: "effective", label: "Hiệu lực" },
+  { key: "status", label: "TT" },
+];
+
+const defaultVisibleConfigColumns: Record<ConfigColumnKey, boolean> = {
+  branch: true,
+  template: true,
+  orderSource: false,
+  baseSalary: true,
+  hourly: true,
+  perOrder: true,
+  perItem: true,
+  manualItem: true,
+  revenuePercent: true,
+  effective: true,
+  status: true,
+};
+
 export default function PayrollConfigPageClient() {
   const [configs, setConfigs] = useState<PayrollConfig[]>([]);
   const [templates, setTemplates] = useState<PayrollBranchConfigTemplate[]>([]);
@@ -106,6 +147,9 @@ export default function PayrollConfigPageClient() {
   const [bulkOverwrite, setBulkOverwrite] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<string[]>([]);
   const [savingConfigBranchId, setSavingConfigBranchId] = useState<string | null>(null);
+
+  const [visibleConfigColumns, setVisibleConfigColumns] =
+    useState<Record<ConfigColumnKey, boolean>>(defaultVisibleConfigColumns);
 
   async function load() {
     setLoading(true);
@@ -136,6 +180,18 @@ export default function PayrollConfigPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("payroll-config-visible-columns");
+      if (saved) {
+        setVisibleConfigColumns({
+          ...defaultVisibleConfigColumns,
+          ...JSON.parse(saved),
+        });
+      }
+    } catch {}
+  }, []);
+
   const selectedTemplateBranch = useMemo(
     () => branches.find((item) => item.id === templateForm.branchId),
     [branches, templateForm.branchId],
@@ -152,6 +208,33 @@ export default function PayrollConfigPageClient() {
     return map;
   }, [templates]);
 
+
+  const templateNameById = useMemo(
+    () =>
+      new Map(
+        templates.map((template) => [
+          String(template.id),
+          template.name || "Cấu hình mặc định",
+        ]),
+      ),
+    [templates],
+  );
+
+  function toggleConfigColumn(key: ConfigColumnKey) {
+    setVisibleConfigColumns((current) => {
+      const next = { ...current, [key]: !current[key] };
+      try {
+        window.localStorage.setItem(
+          "payroll-config-visible-columns",
+          JSON.stringify(next),
+        );
+      } catch {}
+      return next;
+    });
+  }
+
+  const visibleConfigColumnCount =
+    1 + configColumnOptions.filter((column) => visibleConfigColumns[column.key]).length;
 
   const groupedConfigs = useMemo(() => {
     const map = new Map<string, PayrollConfig[]>();
@@ -327,7 +410,9 @@ export default function PayrollConfigPageClient() {
         branchName: branch?.name || undefined,
         ...baseToPayload(templateForm),
         isActive: templateForm.isActive !== false,
-        syncApplied: true,
+        // Không tự đồng bộ ngược vào cấu hình nhân viên vì sẽ làm thay đổi
+        // lịch sử lương. Sửa mẫu xong, dùng khung "Áp dụng hàng loạt" để chọn ngày hiệu lực.
+        syncApplied: false,
       };
       if (!payload.branchId)
         throw new Error("Chọn chi nhánh cho mẫu cấu hình.");
@@ -336,7 +421,7 @@ export default function PayrollConfigPageClient() {
       else await createPayrollBranchTemplate(payload);
       setNotice(
         templateForm.id
-          ? "Đã cập nhật mẫu và đồng bộ cấu hình nhân viên trong chi nhánh."
+          ? "Đã cập nhật mẫu. Chọn mẫu ở khung áp dụng hàng loạt để áp dụng với ngày hiệu lực mới."
           : "Đã lưu mẫu lương chi nhánh.",
       );
       setTemplateForm(emptyTemplateForm);
@@ -462,7 +547,7 @@ export default function PayrollConfigPageClient() {
               dụng lại.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -478,6 +563,48 @@ export default function PayrollConfigPageClient() {
             >
               Lọc
             </button>
+            <details className="relative">
+              <summary className="cursor-pointer list-none rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-bold hover:bg-neutral-50">
+                Cột hiển thị
+              </summary>
+              <div className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-neutral-200 bg-white p-3 shadow-xl">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wide text-neutral-500">
+                    Bật / tắt cột
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisibleConfigColumns(defaultVisibleConfigColumns);
+                      try {
+                        window.localStorage.setItem(
+                          "payroll-config-visible-columns",
+                          JSON.stringify(defaultVisibleConfigColumns),
+                        );
+                      } catch {}
+                    }}
+                    className="text-xs font-bold text-neutral-500 hover:text-neutral-950"
+                  >
+                    Mặc định
+                  </button>
+                </div>
+                <div className="grid gap-1">
+                  {configColumnOptions.map((column) => (
+                    <label
+                      key={column.key}
+                      className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={visibleConfigColumns[column.key]}
+                        onChange={() => toggleConfigColumn(column.key)}
+                      />
+                      {column.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </details>
           </div>
         </div>
         <div className="overflow-hidden rounded-[26px] border border-neutral-200">
@@ -486,21 +613,22 @@ export default function PayrollConfigPageClient() {
               <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
                 <tr>
                   <th className="px-4 py-3">Nhân viên</th>
-                  <th className="px-4 py-3">Chi nhánh</th>
-                  <th className="px-4 py-3">Nguồn đơn</th>
-                  <th className="px-4 py-3 text-right">Lương cứng</th>
-                  <th className="px-4 py-3 text-right">/ giờ</th>
-                  <th className="px-4 py-3 text-right">/ đơn</th>
-                  <th className="px-4 py-3 text-right">/ sản phẩm</th>
-                  <th className="px-4 py-3 text-right">SP nhập tay</th>
-                  <th className="px-4 py-3 text-right">% DT</th>
-                  <th className="px-4 py-3">Hiệu lực</th>
-                  <th className="px-4 py-3">TT</th>
+                  {visibleConfigColumns.branch ? <th className="px-4 py-3">Chi nhánh</th> : null}
+                  {visibleConfigColumns.template ? <th className="px-4 py-3">Mẫu cấu hình</th> : null}
+                  {visibleConfigColumns.orderSource ? <th className="px-4 py-3">Nguồn đơn</th> : null}
+                  {visibleConfigColumns.baseSalary ? <th className="px-4 py-3 text-right">Lương cứng</th> : null}
+                  {visibleConfigColumns.hourly ? <th className="px-4 py-3 text-right">/ giờ</th> : null}
+                  {visibleConfigColumns.perOrder ? <th className="px-4 py-3 text-right">/ đơn</th> : null}
+                  {visibleConfigColumns.perItem ? <th className="px-4 py-3 text-right">/ sản phẩm</th> : null}
+                  {visibleConfigColumns.manualItem ? <th className="px-4 py-3 text-right">SP nhập tay</th> : null}
+                  {visibleConfigColumns.revenuePercent ? <th className="px-4 py-3 text-right">% DT</th> : null}
+                  {visibleConfigColumns.effective ? <th className="px-4 py-3">Hiệu lực</th> : null}
+                  {visibleConfigColumns.status ? <th className="px-4 py-3">TT</th> : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {groupedConfigs.flatMap(([branch, rows]) => [
-                  <tr key={`branch-${branch}`} className="bg-neutral-100"><td colSpan={11} className="px-4 py-2 text-xs font-black uppercase tracking-wide text-neutral-700">{branch} · {rows.length} nhân viên</td></tr>,
+                  <tr key={`branch-${branch}`} className="bg-neutral-100"><td colSpan={visibleConfigColumnCount} className="px-4 py-2 text-xs font-black uppercase tracking-wide text-neutral-700">{branch} · {rows.length} nhân viên</td></tr>,
                   ...rows.map((config) => (
                   <tr key={config.id} className="hover:bg-neutral-50/70">
                     <td className="px-4 py-4">
@@ -512,7 +640,7 @@ export default function PayrollConfigPageClient() {
                         {config.attendanceCode || "—"}
                       </div>
                     </td>
-                    <td className="px-4 py-4 text-neutral-600">
+                    {visibleConfigColumns.branch ? <td className="px-4 py-4 text-neutral-600">
                       <select
                         value={config.branchId || ""}
                         disabled={savingConfigBranchId === config.id}
@@ -530,55 +658,62 @@ export default function PayrollConfigPageClient() {
                       {savingConfigBranchId === config.id ? (
                         <div className="mt-1 text-xs text-neutral-400">Đang lưu...</div>
                       ) : null}
-                    </td>
-                    <td className="px-4 py-4 text-xs text-neutral-600">
+                    </td> : null}
+                    {visibleConfigColumns.template ? (
+                      <td className="px-4 py-4 text-sm font-semibold text-neutral-700">
+                        {config.sourceTemplateId
+                          ? templateNameById.get(String(config.sourceTemplateId)) || "Mẫu đã xóa / không tìm thấy"
+                          : "Cấu hình riêng"}
+                      </td>
+                    ) : null}
+                    {visibleConfigColumns.orderSource ? <td className="px-4 py-4 text-xs text-neutral-600">
                       {attributionLabel(config.orderAttributionMode)}
-                    </td>
-                    <td className="px-4 py-4 text-right font-bold">
+                    </td> : null}
+                    {visibleConfigColumns.baseSalary ? <td className="px-4 py-4 text-right font-bold">
                       {money(config.baseSalary)}
-                    </td>
-                    <td className="px-4 py-4 text-right">
+                    </td> : null}
+                    {visibleConfigColumns.hourly ? <td className="px-4 py-4 text-right">
                       {config.hourlyEnabled ? money(config.hourlyRate) : "—"}
-                    </td>
-                    <td className="px-4 py-4 text-right">
+                    </td> : null}
+                    {visibleConfigColumns.perOrder ? <td className="px-4 py-4 text-right">
                       {config.commissionPerOrderEnabled
                         ? money(config.commissionPerOrderAmount)
                         : "—"}
-                    </td>
-                    <td className="px-4 py-4 text-right">
+                    </td> : null}
+                    {visibleConfigColumns.perItem ? <td className="px-4 py-4 text-right">
                       {config.commissionPerItemEnabled
                         ? money(config.commissionPerItemAmount)
                         : "—"}
-                    </td>
-                    <td className="px-4 py-4 text-right">
+                    </td> : null}
+                    {visibleConfigColumns.manualItem ? <td className="px-4 py-4 text-right">
                       {config.taggedProductEnabled
                         ? money(config.taggedProductRate)
                         : "—"}
-                    </td>
-                    <td className="px-4 py-4 text-right">
+                    </td> : null}
+                    {visibleConfigColumns.revenuePercent ? <td className="px-4 py-4 text-right">
                       {config.commissionPercentEnabled
                         ? `${config.commissionRate || 0}%`
                         : "—"}
-                    </td>
-                    <td className="px-4 py-4 text-neutral-600">
+                    </td> : null}
+                    {visibleConfigColumns.effective ? <td className="px-4 py-4 text-neutral-600">
                       {dateInput(config.effectiveFrom)}{" "}
                       {config.effectiveTo
                         ? `→ ${dateInput(config.effectiveTo)}`
                         : ""}
-                    </td>
-                    <td className="px-4 py-4">
+                    </td> : null}
+                    {visibleConfigColumns.status ? <td className="px-4 py-4">
                       <span
                         className={`rounded-full border px-2.5 py-1 text-xs font-bold ${config.isActive === false ? "border-neutral-200 bg-neutral-50 text-neutral-500" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}
                       >
                         {config.isActive === false ? "Tắt" : "Đang áp dụng"}
                       </span>
-                    </td>
+                    </td> : null}
                   </tr>
                 ))])}
                 {!configs.length ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={visibleConfigColumnCount}
                       className="px-4 py-12 text-center text-neutral-500"
                     >
                       {loading
