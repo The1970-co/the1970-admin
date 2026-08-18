@@ -147,9 +147,9 @@ export default function Page() {
   }, []);
 
   return (
-    <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(112px+env(safe-area-inset-bottom))] text-neutral-950">
+    <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(84px+env(safe-area-inset-bottom))] text-neutral-950">
       <div className="mx-auto max-w-md">
-        <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[calc(16px+env(safe-area-inset-top))] backdrop-blur">
+        <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur">
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-3">
               <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
@@ -216,7 +216,7 @@ export default function Page() {
 
 function CreateOrderModal({ meta, onClose, onSaved }: { meta: Meta; onClose: () => void; onSaved: (id: string) => void }) {
   const [sourceType, setSourceType] = useState<"SAMPLE" | "PRODUCT">("SAMPLE");
-  const [sourceId, setSourceId] = useState("");
+  const [sourceId, setSourceId] = useState(() => meta.samples?.[0]?.id || "");
   const [factoryId, setFactoryId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [q, setQ] = useState("");
@@ -257,10 +257,10 @@ function CreateOrderModal({ meta, onClose, onSaved }: { meta: Meta; onClose: () 
       <div className="space-y-5 p-5">
         {error && <Err x={error} />}
         <div className="grid grid-cols-2 gap-2 rounded-2xl bg-neutral-100 p-1">
-          <button onClick={() => { setSourceType("SAMPLE"); setSourceId(""); }} className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${sourceType === "SAMPLE" ? "bg-white shadow-sm" : "text-neutral-500"}`}>
+          <button onClick={() => { setSourceType("SAMPLE"); setSourceId(meta.samples?.[0]?.id || ""); }} className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${sourceType === "SAMPLE" ? "bg-white shadow-sm" : "text-neutral-500"}`}>
             Mẫu mới / Triển khai mẫu
           </button>
-          <button onClick={() => { setSourceType("PRODUCT"); setSourceId(""); }} className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${sourceType === "PRODUCT" ? "bg-white shadow-sm" : "text-neutral-500"}`}>
+          <button onClick={() => { setSourceType("PRODUCT"); setSourceId(meta.products?.[0]?.id || ""); }} className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${sourceType === "PRODUCT" ? "bg-white shadow-sm" : "text-neutral-500"}`}>
             Mã cũ / Danh sách sản phẩm
           </button>
         </div>
@@ -290,7 +290,9 @@ function CreateOrderModal({ meta, onClose, onSaved }: { meta: Meta; onClose: () 
           <Field l="Hạn hoàn thành"><input type="date" className={input} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
         </div>
 
-        <button disabled={saving || !sourceId || !factoryId} onClick={() => void save()} className="w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">
+        {!sourceId && <div className="rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">Chọn một mã sản xuất ở danh sách phía trên.</div>}
+        {!factoryId && <div className="rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">Chọn nhà may / xưởng để tạo lệnh.</div>}
+        <button disabled={saving || !sourceId || !factoryId} onClick={() => void save()} className="w-full rounded-2xl bg-neutral-950 py-3.5 text-sm font-black text-white disabled:bg-neutral-300 disabled:text-neutral-500 disabled:opacity-100">
           {saving ? "Đang tạo..." : "Tạo lệnh & nhập định mức"}
         </button>
       </div>
@@ -598,5 +600,67 @@ function Field({ l, children }: { l: string; children: React.ReactNode }) {
 }
 function Err({ x }: { x: string }) { return <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{x}</div>; }
 function Modal({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div className="fixed inset-0 z-50 overflow-y-auto bg-black/45 p-3"><div className="mx-auto my-3 w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl"><div className="sticky top-0 z-20 flex items-center justify-between border-b bg-white px-4 py-4"><h2 className="min-w-0 truncate pr-3 font-black">{title}</h2><button onClick={onClose} className="h-10 w-10 shrink-0 rounded-full border">×</button></div>{children}</div></div>;
+  const [viewport, setViewport] = useState<{ height: number; top: number }>(() => ({
+    height: typeof window === "undefined" ? 800 : window.innerHeight,
+    top: 0,
+  }));
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const sync = () =>
+      setViewport({
+        height: vv?.height || window.innerHeight,
+        top: vv?.offsetTop || 0,
+      });
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    sync();
+    vv?.addEventListener("resize", sync);
+    vv?.addEventListener("scroll", sync);
+    window.addEventListener("orientationchange", sync);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      vv?.removeEventListener("resize", sync);
+      vv?.removeEventListener("scroll", sync);
+      window.removeEventListener("orientationchange", sync);
+    };
+  }, []);
+
+  function close() {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const sync = () => {
+      const vv = window.visualViewport;
+      setViewport({
+        height: vv?.height || window.innerHeight,
+        top: vv?.offsetTop || 0,
+      });
+    };
+    requestAnimationFrame(sync);
+    setTimeout(sync, 80);
+    setTimeout(onClose, 100);
+  }
+
+  return (
+    <div
+      className="fixed left-0 right-0 z-[80] overflow-y-auto overscroll-contain bg-black/45 px-3"
+      style={{
+        top: viewport.top,
+        height: viewport.height,
+        paddingTop: 12,
+        paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+        WebkitOverflowScrolling: "touch",
+        touchAction: "pan-y",
+      }}
+    >
+      <div className="mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b bg-white px-4 py-4">
+          <h2 className="min-w-0 truncate pr-3 font-black">{title}</h2>
+          <button onClick={close} className="h-10 w-10 shrink-0 rounded-full border">×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 }

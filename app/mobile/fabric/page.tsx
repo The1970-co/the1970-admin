@@ -47,6 +47,13 @@ function dateText(v?:string|null){if(!v)return "—";const d=new Date(v);return 
 function statusLabel(v:string){return STATUSES.find(x=>x[0]===v)?.[1]||v}
 function roles(u:any){return [...(Array.isArray(u?.roles)?u.roles:[]),u?.role,u?.roleCode,u?.staffRole].map(x=>String(x||"").toLowerCase()).filter(Boolean)}
 function owner(u:any){const r=roles(u);return r.includes("owner")||r.includes("admin")}
+function resetMobileViewport(){
+ if(typeof window==="undefined")return;
+ if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
+ const y=window.scrollY;
+ const reset=()=>{window.scrollTo({top:y,left:0,behavior:"auto"});document.documentElement.scrollLeft=0;document.body.scrollLeft=0};
+ requestAnimationFrame(reset);setTimeout(reset,80);setTimeout(reset,220);
+}
 
 export default function Page(){
  const [rows,setRows]=useState<Receipt[]>([]);
@@ -87,9 +94,9 @@ export default function Page(){
   catch(e){setError(e instanceof Error?e.message:"Không cập nhật được phiếu.")}
  }
 
- return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(112px+env(safe-area-inset-bottom))] text-neutral-950">
+ return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(84px+env(safe-area-inset-bottom))] text-neutral-950">
   <div className="mx-auto max-w-md">
-   <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[calc(16px+env(safe-area-inset-top))] backdrop-blur">
+   <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur">
     <div className="flex items-center justify-between gap-2">
      <div className="flex items-center gap-3"><Link href="/mobile/production" className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link><div><div className="text-[10px] font-black uppercase tracking-[.18em] text-neutral-400">Nguyên liệu</div><h1 className="text-xl font-black">Vải về</h1></div></div>
      <div className="flex gap-2"><button onClick={()=>void load()} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><RefreshCw className={`h-4 w-4 ${loading?"animate-spin":""}`}/></button>{can("fabric_receipt.create")&&<button onClick={()=>setEditing(null)} className="rounded-2xl bg-neutral-950 px-3 py-2.5 text-xs font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Nhận vải</button>}</div>
@@ -141,7 +148,7 @@ function ReceiptForm({receipt,meta,admin,canCostView,canCostEdit,canUpload,onClo
    const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,colorCode:colorCode(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized})});
    if(canCostEdit&&f.unitPrice!=="")await api(`/sample-fabric/fabric-receipts/${saved.id}/cost`,{method:"PATCH",body:JSON.stringify({unitPrice:num(f.unitPrice),priceUnit:f.priceUnit})});
    for(const [ix,arr] of Object.entries(files)){const i=Number(ix),server=saved.rolls?.[i];if(!server?.id)continue;for(const file of arr){const u=await upload(file);await api(`/sample-fabric/fabric-receipts/${saved.id}/images`,{method:"POST",body:JSON.stringify({rollId:server.id,type:"FABRIC",url:u.url,caption:`Ảnh ${server.rollCode||`cây ${i+1}`}`})})}}
-   if(document.activeElement instanceof HTMLElement)document.activeElement.blur();requestAnimationFrame(onSaved);
+   resetMobileViewport();setTimeout(onSaved,90);
   }catch(e){setError(e instanceof Error?e.message:"Không lưu được phiếu.")}
   finally{setSaving(false)}
  }
@@ -214,7 +221,25 @@ function MeasurementForm({receipt,onClose,onSaved,canUpload}:{receipt:Receipt;on
 function MoneyInput({value,onChange}:{value:any;onChange:(v:string)=>void}){return <Field l="Đơn giá"><div className="relative"><input inputMode="numeric" className={`${input} pr-9`} value={value===""?"":Number(value||0).toLocaleString("vi-VN")} onChange={e=>onChange(e.target.value.replace(/\D/g,""))}/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-neutral-400">đ</span></div></Field>}
 function UnitInput({l,unit,value,onChange}:{l:string;unit:string;value:any;onChange:(v:string)=>void}){return <Field l={l}><UnitInputBare unit={unit} value={value} onChange={onChange}/></Field>}
 function UnitInputBare({unit,value,onChange}:{unit:string;value:any;onChange:(v:string)=>void}){return <div className="relative"><input inputMode="decimal" className={`${input} pr-14`} value={String(value??"").replace(".",",")} onChange={e=>onChange(e.target.value.replace(/[^0-9,.-]/g,""))}/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-neutral-400">{unit}</span></div>}
-function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:any}){return <div className="fixed inset-0 z-50 overflow-y-auto bg-black/45 p-3"><div className="mx-auto my-3 max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl"><div className="sticky top-0 z-20 flex items-center justify-between border-b bg-white p-4"><h2 className="font-black">{title}</h2><button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>{children}</div></div>}
+function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:any}){
+ const [vp,setVp]=useState<{top:number;height:number}>({top:0,height:0});
+ useEffect(()=>{
+  const vv=window.visualViewport;
+  const update=()=>setVp({top:vv?.offsetTop||0,height:vv?.height||window.innerHeight});
+  update();vv?.addEventListener("resize",update);vv?.addEventListener("scroll",update);
+  const oldOverflow=document.body.style.overflow;document.body.style.overflow="hidden";
+  return()=>{vv?.removeEventListener("resize",update);vv?.removeEventListener("scroll",update);document.body.style.overflow=oldOverflow;resetMobileViewport()};
+ },[]);
+ const close=()=>{resetMobileViewport();setTimeout(onClose,70)};
+ return <div className="fixed left-0 right-0 z-[80] overflow-hidden bg-black/45" style={{top:vp.top,height:vp.height||"100dvh"}}>
+  <div className="h-full overflow-y-auto overscroll-contain px-3 py-3 [-webkit-overflow-scrolling:touch]">
+   <div className="mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
+    <div className="sticky top-0 z-20 flex items-center justify-between border-b bg-white p-4"><h2 className="font-black">{title}</h2><button onClick={close} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>
+    <div className="pb-[calc(18px+env(safe-area-inset-bottom))]">{children}</div>
+   </div>
+  </div>
+ </div>
+}
 function Field({l,children}:{l:string;children:any}){return <label className="block"><span className="mb-1.5 block text-[10px] font-black uppercase tracking-wide text-neutral-400">{l}</span>{children}</label>}
 function Stat({l,v}:{l:string;v:string}){return <div className="rounded-2xl bg-white p-3"><div className="text-[10px] font-black text-neutral-400">{l}</div><div className="mt-1 text-lg font-black">{v}</div></div>}
 function Mini({l,v}:{l:string;v:any}){return <div className="rounded-xl bg-neutral-50 p-2.5"><div className="text-[9px] font-black uppercase text-neutral-400">{l}</div><div className="mt-1 text-xs font-black">{v}</div></div>}
