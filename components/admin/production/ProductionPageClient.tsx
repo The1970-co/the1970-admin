@@ -57,6 +57,7 @@ type Accessory = {
   typeName?: string;
   unit: string;
   stockQty?: number;
+  specifications?: Record<string, any> | null;
 };
 type Meta = {
   samples: Sample[];
@@ -336,12 +337,16 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
         method: "PATCH",
         body: JSON.stringify({
           productKind: order.productKind,
-          fabricWidthCm: order.fabricWidthCm,
-          fabricConsumptionM: order.fabricConsumptionM,
-          fabricWastePercent: order.fabricWastePercent,
+          fabricWidthCm: numberOrNull(order.fabricWidthCm),
+          fabricConsumptionM: numberOrNull(order.fabricConsumptionM),
+          fabricWastePercent: numberOrZero(order.fabricWastePercent),
           sizeSet,
-          sizeRatio: ratio,
-          materials,
+          sizeRatio: Object.fromEntries(Object.entries(ratio).map(([key, value]) => [key, numberOrZero(value)])),
+          materials: materials.map((m) => ({
+            ...m,
+            qtyPerProduct: numberOrZero(m.qtyPerProduct),
+            wastePercent: numberOrZero(m.wastePercent),
+          })),
         }),
       });
       await load();
@@ -374,12 +379,16 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
         method: "PATCH",
         body: JSON.stringify({
           productKind: order.productKind,
-          fabricWidthCm: order.fabricWidthCm,
-          fabricConsumptionM: order.fabricConsumptionM,
-          fabricWastePercent: order.fabricWastePercent,
+          fabricWidthCm: numberOrNull(order.fabricWidthCm),
+          fabricConsumptionM: numberOrNull(order.fabricConsumptionM),
+          fabricWastePercent: numberOrZero(order.fabricWastePercent),
           sizeSet,
-          sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, Number(ratio[s] || 0)])),
-          materials,
+          sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
+          materials: materials.map((m) => ({
+            ...m,
+            qtyPerProduct: numberOrZero(m.qtyPerProduct),
+            wastePercent: numberOrZero(m.wastePercent),
+          })),
         }),
       });
       await load();
@@ -418,6 +427,21 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     [1, "Chọn mã"], [2, "Định mức & NPL"], [3, "Cây vải"], [4, "Size & tỷ lệ"], [5, "Tính sản lượng"], [6, "Gửi lệnh SX"],
   ] as const;
 
+  async function goNext() {
+    if (busy || step >= 6) return;
+    if (step === 1) { setStep(2); return; }
+    if (step === 2) { await saveSpec(); return; }
+    if (step === 3) { await saveRolls(); return; }
+    if (step === 4) { await saveSizes(); return; }
+    if (step === 5) { await calculate(); return; }
+  }
+
+  function goBack() {
+    if (busy || step <= 1) return;
+    setError("");
+    setStep((current) => Math.max(1, current - 1));
+  }
+
   return (
     <Modal title={`${order.code} · ${order.sourceCode}`} onClose={onClose} wide>
       <div className="space-y-5 p-5">
@@ -455,15 +479,99 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
             <div className="rounded-3xl border p-4">
               <div className="flex items-center justify-between"><div><b>Nguyên phụ liệu của lệnh này</b><div className="text-xs text-neutral-400">Chọn NPL đã tạo sẵn và nhập định mức / sản phẩm.</div></div><button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button></div>
               <div className="mt-3 space-y-2">
-                {materials.map((m, i) => (
-                  <div key={i} className="grid gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[2fr_1fr_1fr_120px_auto]">
-                    <select className={input} value={m.accessoryItemId} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, accessoryItemId: e.target.value } : x))}><option value="">Chọn NPL</option>{meta.accessories.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select>
-                    <input type="number" step="0.001" className={input} value={m.qtyPerProduct} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: e.target.value } : x))} placeholder="SL/sp" />
-                    <input type="number" className={input} value={m.wastePercent} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: e.target.value } : x))} placeholder="Hao hụt %" />
-                    <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={m.sizeScoped} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, sizeScoped: e.target.checked } : x))} /> Theo size</label>
-                    <button onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))} className="text-xs font-semibold text-red-600">Xoá</button>
-                  </div>
-                ))}
+                {materials.map((m, i) => {
+                  const selectedAccessory = meta.accessories.find((a) => a.id === m.accessoryItemId);
+                  const qtySuffix = selectedAccessory ? `${accessoryUnitLabel(selectedAccessory.unit)}/SP` : "/SP";
+                  return (
+                    <div key={i} className="rounded-2xl bg-neutral-50 p-3">
+                      <div className="grid gap-2 md:grid-cols-[2fr_1fr_1fr_120px_auto]">
+                        <select
+                          className={input}
+                          value={m.accessoryItemId}
+                          onChange={(e) => {
+                            const accessoryItemId = e.target.value;
+                            const accessory = meta.accessories.find((a) => a.id === accessoryItemId);
+                            const defaultQty = accessory?.specifications?.defaultQtyPerProduct;
+                            setMaterials((rows) =>
+                              rows.map((x, j) =>
+                                j === i
+                                  ? {
+                                      ...x,
+                                      accessoryItemId,
+                                      qtyPerProduct:
+                                        defaultQty !== null && defaultQty !== undefined && defaultQty !== ""
+                                          ? viDisplay(defaultQty, 4)
+                                          : x.qtyPerProduct,
+                                    }
+                                  : x,
+                              ),
+                            );
+                          }}
+                        >
+                          <option value="">Chọn NPL</option>
+                          {meta.accessories.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.code} · {a.name}{accessorySpecShort(a) ? ` · ${accessorySpecShort(a)}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <ViNumberInput
+                          value={m.qtyPerProduct}
+                          onChange={(v) =>
+                            setMaterials((rows) =>
+                              rows.map((x, j) => (j === i ? { ...x, qtyPerProduct: v } : x)),
+                            )
+                          }
+                          suffix={qtySuffix}
+                          decimals={4}
+                          placeholder="VD: 1 hoặc 0,75"
+                        />
+                        <ViNumberInput
+                          value={m.wastePercent}
+                          onChange={(v) =>
+                            setMaterials((rows) =>
+                              rows.map((x, j) => (j === i ? { ...x, wastePercent: v } : x)),
+                            )
+                          }
+                          suffix="%"
+                          decimals={3}
+                          placeholder="Hao hụt"
+                        />
+                        <label className="flex items-center gap-2 text-xs font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={m.sizeScoped}
+                            onChange={(e) =>
+                              setMaterials((rows) =>
+                                rows.map((x, j) =>
+                                  j === i ? { ...x, sizeScoped: e.target.checked } : x,
+                                ),
+                              )
+                            }
+                          />
+                          Theo size
+                        </label>
+                        <button
+                          onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))}
+                          className="text-xs font-semibold text-red-600"
+                        >
+                          Xoá
+                        </button>
+                      </div>
+                      {selectedAccessory && (
+                        <div className="mt-2 text-xs text-neutral-500">
+                          <b>{selectedAccessory.typeName || "NPL"}</b>
+                          {accessorySpecShort(selectedAccessory) ? ` · ${accessorySpecShort(selectedAccessory)}` : ""}
+                          {selectedAccessory.specifications?.defaultQtyPerProduct !== null &&
+                          selectedAccessory.specifications?.defaultQtyPerProduct !== undefined &&
+                          selectedAccessory.specifications?.defaultQtyPerProduct !== ""
+                            ? ` · Mặc định ${viDisplay(selectedAccessory.specifications.defaultQtyPerProduct, 4)} ${accessoryUnitLabel(selectedAccessory.unit)}/SP`
+                            : ""}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 {!materials.length && <div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa gắn nguyên phụ liệu.</div>}
               </div>
             </div>
@@ -508,6 +616,41 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
           </div>
         )}
+
+        <div className="sticky bottom-0 z-10 -mx-5 mt-5 border-t bg-white/95 px-5 py-3 backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              disabled={busy || step <= 1}
+              onClick={goBack}
+              className="min-w-28 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-black text-neutral-800 disabled:opacity-30"
+            >
+              ← Quay lại
+            </button>
+            <div className="text-center text-[11px] font-black text-neutral-400">
+              Bước {step} / 6
+            </div>
+            {step < 6 ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void goNext()}
+                className="min-w-28 rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+              >
+                Tiếp →
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy || !calc || order.status === "SENT"}
+                onClick={() => void sendOrder()}
+                className="min-w-28 rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+              >
+                {order.status === "SENT" ? "Đã gửi" : "Gửi lệnh"}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </Modal>
   );
@@ -571,6 +714,63 @@ function FactoryModal({ factories, onClose, onSaved }: { factories: FactoryItem[
   return <Modal title="Nhà may / xưởng" onClose={onClose}><div className="grid gap-5 p-5 md:grid-cols-2"><div className="max-h-96 overflow-y-auto rounded-2xl border">{factories.map((x) => <div key={x.id} className="border-b p-3 text-sm"><b>{x.code} · {x.name}</b><div className="text-xs text-neutral-400">{x.contactName || ""} {x.phone || ""}</div></div>)}</div><div className="space-y-3">{error && <Err x={error} />}<Field l="Tên"><input className={input} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field l="Mã"><input className={input} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="Tự sinh nếu trống" /></Field><Field l="Liên hệ"><input className={input} value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field l="SĐT"><input className={input} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field><button onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-2.5 font-semibold text-white">Tạo nhà may</button></div></div></Modal>;
 }
 
+
+function accessoryUnitLabel(unit: string) {
+  const labels: Record<string, string> = {
+    PIECE: "cái",
+    METER: "m",
+    ROLL: "cuộn",
+    SET: "bộ",
+    KG: "kg",
+    PACK: "gói",
+    BOX: "hộp",
+    OTHER: "đv",
+  };
+  return labels[unit] || unit || "đv";
+}
+
+function accessorySpecShort(a: Accessory) {
+  const s = a.specifications || {};
+  if (a.typeName === "Khóa Kéo") {
+    return [
+      s.teethType || (String(s.teethMaterial || "").startsWith("Răng") ? s.teethMaterial : ""),
+      s.zipperGauge,
+      s.lengthCm ? `${viDisplay(s.lengthCm, 3)}cm` : "",
+      s.surfaceFinish,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (a.typeName === "Cúc") {
+    return [
+      s.material,
+      s.diameterMm ? `Ø${viDisplay(s.diameterMm, 3)}mm` : "",
+      s.surfaceFinish,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (String(a.typeName || "").startsWith("Mác")) {
+    return [
+      s.material,
+      s.widthCm && s.heightCm ? `${viDisplay(s.widthCm, 3)}×${viDisplay(s.heightCm, 3)}cm` : "",
+      s.foldType,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return [s.material, s.color, s.customSpec].filter(Boolean).join(" · ");
+}
+
+function numberOrNull(v: any) {
+  const n = viNumber(v);
+  return n === null ? null : n;
+}
+
+function numberOrZero(v: any) {
+  const n = viNumber(v);
+  return n === null ? 0 : n;
+}
 
 function viNumber(v:any){const raw=String(v??"").trim().replace(/\s/g,"").replace(",",".");const n=Number(raw);return Number.isFinite(n)?n:null}
 function viDisplay(v:any,decimals=4){if(v===null||v===undefined||v==="")return "";const n=viNumber(v);if(n===null)return String(v);return n.toLocaleString("vi-VN",{maximumFractionDigits:decimals,useGrouping:false})}

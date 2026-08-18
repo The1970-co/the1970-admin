@@ -209,7 +209,7 @@ export default function Page() {
           {factoryOpen && <FactoryModal factories={meta.factories} onClose={() => setFactoryOpen(false)} onSaved={load} />}
         </div>
       </div>
-      <MobileBottomNav />
+      {!createOpen && !detailId && !factoryOpen && <MobileBottomNav />}
     </main>
   );
 }
@@ -438,6 +438,21 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     [1, "Chọn mã"], [2, "Định mức & NPL"], [3, "Cây vải"], [4, "Size & tỷ lệ"], [5, "Tính sản lượng"], [6, "Gửi lệnh SX"],
   ] as const;
 
+  async function goNext() {
+    if (busy || step >= 6) return;
+    if (step === 1) { setStep(2); return; }
+    if (step === 2) { await saveSpec(); return; }
+    if (step === 3) { await saveRolls(); return; }
+    if (step === 4) { await saveSizes(); return; }
+    if (step === 5) { await calculate(); return; }
+  }
+
+  function goBack() {
+    if (busy || step <= 1) return;
+    setError("");
+    setStep((current) => Math.max(1, current - 1));
+  }
+
   return (
     <Modal title={`${order.code} · ${order.sourceCode}`} onClose={onClose} wide>
       <div className="space-y-5 p-5">
@@ -528,6 +543,41 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
           </div>
         )}
+
+        <div className="sticky bottom-0 z-10 -mx-5 mt-5 border-t bg-white/95 px-5 pb-[max(8px,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              disabled={busy || step <= 1}
+              onClick={goBack}
+              className="min-w-28 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-black text-neutral-800 disabled:opacity-30"
+            >
+              ← Quay lại
+            </button>
+            <div className="text-center text-[11px] font-black text-neutral-400">
+              Bước {step} / 6
+            </div>
+            {step < 6 ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void goNext()}
+                className="min-w-28 rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+              >
+                Tiếp →
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy || !calc || order.status === "SENT"}
+                onClick={() => void sendOrder()}
+                className="min-w-28 rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+              >
+                {order.status === "SENT" ? "Đã gửi" : "Gửi lệnh"}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </Modal>
   );
