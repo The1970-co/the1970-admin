@@ -57,11 +57,34 @@ function resetMobileViewport(){
  if(typeof window==="undefined")return;
  if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
  const y=window.scrollY;
- const reset=()=>{window.scrollTo({top:y,left:0,behavior:"auto"});document.documentElement.scrollLeft=0;document.body.scrollLeft=0};
- requestAnimationFrame(reset);setTimeout(reset,80);setTimeout(reset,220);
+ const reset=()=>{
+  window.scrollTo({top:y,left:0,behavior:"auto"});
+  document.documentElement.scrollLeft=0;
+  document.body.scrollLeft=0;
+  document.documentElement.style.minHeight="100%";
+  document.body.style.minHeight="100%";
+  window.dispatchEvent(new Event("resize"));
+ };
+ requestAnimationFrame(reset);
+ setTimeout(reset,80);
+ setTimeout(reset,220);
+ setTimeout(reset,420);
 }
 
 export default function Page(){
+ useEffect(()=>{
+  const htmlBg=document.documentElement.style.backgroundColor;
+  const bodyBg=document.body.style.backgroundColor;
+  const bodyMin=document.body.style.minHeight;
+  document.documentElement.style.backgroundColor="#f5f5f5";
+  document.body.style.backgroundColor="#f5f5f5";
+  document.body.style.minHeight="100lvh";
+  return()=>{
+   document.documentElement.style.backgroundColor=htmlBg;
+   document.body.style.backgroundColor=bodyBg;
+   document.body.style.minHeight=bodyMin;
+  };
+ },[]);
  const [rows,setRows]=useState<Receipt[]>([]);
  const [meta,setMeta]=useState<Meta>({suppliers:[],branches:[],samples:[],boards:[]});
  const [q,setQ]=useState(""),[status,setStatus]=useState("");
@@ -102,8 +125,8 @@ export default function Page(){
   catch(e){setError(e instanceof Error?e.message:"Không cập nhật được phiếu.")}
  }
 
- if(user&&!canOpenPage)return <main className="min-h-[100dvh] bg-neutral-100 p-6 pt-[max(56px,calc(env(safe-area-inset-top)+24px))]"><div className="mx-auto max-w-md rounded-3xl bg-white p-6 text-center"><div className="text-lg font-black">Không có quyền Vải về</div><div className="mt-2 text-sm text-neutral-500">Bật quyền màn App và fabric_receipt.view trong Phân quyền.</div></div></main>;
- return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
+ if(user&&!canOpenPage)return <main className="min-h-screen min-h-[100lvh] bg-neutral-100 p-6 pt-[max(56px,calc(env(safe-area-inset-top)+24px))]"><div className="mx-auto max-w-md rounded-3xl bg-white p-6 text-center"><div className="text-lg font-black">Không có quyền Vải về</div><div className="mt-2 text-sm text-neutral-500">Bật quyền màn App và fabric_receipt.view trong Phân quyền.</div></div></main>;
+ return <main className="min-h-screen min-h-[100lvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
   <div className="mx-auto max-w-md">
    <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur">
     <div className="flex items-center justify-between gap-2">
