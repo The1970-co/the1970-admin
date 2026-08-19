@@ -26,6 +26,51 @@ const STORAGE_KEY = "the1970.measurementTemplates.v1";
 const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
 const PANTS_SIZES = ["29", "30", "31", "32", "33", "34", "36", "38"];
 
+const SHIRT_MEASUREMENT_PRESETS = [
+  "1/2 Rộng ngực",
+  "1/2 Rộng lai",
+  "1/2 Rộng vai",
+  "Dài áo",
+  "Dài tay",
+  "Rộng bắp tay",
+  "Rộng cửa tay",
+  "Hạ nách",
+  "Rộng cổ",
+  "Sâu cổ trước",
+  "Sâu cổ sau",
+  "Cao bo cổ",
+  "Rộng bo cổ",
+  "Dài bo cổ",
+  "Rộng túi ngực",
+  "Cao túi ngực",
+];
+
+const PANTS_MEASUREMENT_PRESETS = [
+  "1/2 Rộng cạp khi để êm",
+  "1/2 Rộng cạp khi kéo căng",
+  "1/2 Rộng hông (16cm đo từ dưới cạp)",
+  "1/2 Đùi",
+  "1/2 Rộng ống khi để êm",
+  "1/2 Rộng ống khi kéo căng",
+  "Dài quần (đo từ cạp đến hết quần)",
+  "Dài đứng trước (dưới cạp)",
+  "Dài đứng sau (dưới cạp)",
+  "Cao cạp",
+  "Moi dây kéo (cao x rộng)",
+  "Túi trước (cao x rộng)",
+  "Túi sau (cao x rộng)",
+  "Lót túi sau (cao x rộng)",
+  "Lót túi trước (cao x rộng)",
+];
+
+const CUSTOM_MEASUREMENT_PRESETS = [
+  "Rộng",
+  "Dài",
+  "Cao",
+  "Chu vi",
+  "Đường kính",
+];
+
 function uid(prefix = "m") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -112,9 +157,9 @@ export default function Page() {
   }
 
   return (
-    <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(84px+env(safe-area-inset-bottom))] text-neutral-950">
-      <div className="mx-auto max-w-md">
-        <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur">
+    <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(12px+env(safe-area-inset-bottom))] text-neutral-950">
+      <div className="mx-auto min-h-[100dvh] max-w-md bg-neutral-100">
+        <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(56px,calc(env(safe-area-inset-top)+24px))] backdrop-blur">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <Link href="/mobile/production" className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100">
@@ -173,7 +218,7 @@ export default function Page() {
       </div>
 
       {editing && <TemplateEditor template={editing} onClose={() => setEditing(null)} onSave={saveTemplate} />}
-      {!editing && <MobileBottomNav />}
+      {!editing && <div className="relative z-40"><MobileBottomNav /></div>}
     </main>
   );
 }
@@ -181,6 +226,7 @@ export default function Page() {
 function TemplateEditor({ template, onClose, onSave }: { template: MeasurementTemplate; onClose: () => void; onSave: (t: MeasurementTemplate) => void }) {
   const [f, setF] = useState<MeasurementTemplate>(template);
   const [newSize, setNewSize] = useState("");
+  const [presetOpen, setPresetOpen] = useState(false);
 
   function changeKind(kind: ProductKind) {
     const sizes = defaultSizes(kind);
@@ -225,8 +271,31 @@ function TemplateEditor({ template, onClose, onSave }: { template: MeasurementTe
     }));
   }
 
+  const presets =
+    f.productKind === "PANTS"
+      ? PANTS_MEASUREMENT_PRESETS
+      : f.productKind === "SHIRT"
+        ? SHIRT_MEASUREMENT_PRESETS
+        : CUSTOM_MEASUREMENT_PRESETS;
+
+  function addPreset(name: string) {
+    if (f.rows.some((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase())) return;
+    setF((x) => ({
+      ...x,
+      rows: [
+        ...x.rows,
+        {
+          id: uid("row"),
+          name,
+          unit: "cm",
+          values: Object.fromEntries(x.sizes.map((s) => [s, ""])),
+        },
+      ],
+    }));
+  }
+
   return (
-    <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/45 p-3 pb-[max(16px,env(safe-area-inset-bottom))]" style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}>
+    <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/45 p-3 pb-[max(16px,env(safe-area-inset-bottom))]" style={{ WebkitOverflowScrolling: "touch", touchAction: "auto" }}>
       <div className="mx-auto max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
         <div className="sticky top-0 z-30 flex items-center justify-between border-b bg-white p-4">
           <div>
@@ -265,15 +334,50 @@ function TemplateEditor({ template, onClose, onSave }: { template: MeasurementTe
           </div>
 
           <div className="rounded-3xl border">
-            <div className="flex items-center justify-between border-b p-3">
-              <div>
-                <div className="text-sm font-black">Thông số</div>
-                <div className="text-[10px] text-neutral-400">Thông số chạy dọc, size chạy ngang.</div>
+            <div className="border-b p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-black">Thông số</div>
+                  <div className="text-[10px] text-neutral-400">Thông số chạy dọc, size chạy ngang.</div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setPresetOpen((x) => !x)} className="rounded-xl border px-3 py-2 text-xs font-black">
+                    + Chọn thông số
+                  </button>
+                  <button onClick={addRow} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white">+ Dòng</button>
+                </div>
               </div>
-              <button onClick={addRow} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white">+ Dòng</button>
+
+              {presetOpen && (
+                <div className="mt-3 rounded-2xl bg-neutral-50 p-2">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-neutral-400">
+                    Thư viện thông số {f.productKind === "PANTS" ? "quần" : f.productKind === "SHIRT" ? "áo" : ""}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {presets.map((name) => {
+                      const selected = f.rows.some((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase());
+                      return (
+                        <button
+                          type="button"
+                          key={name}
+                          onClick={() => addPreset(name)}
+                          disabled={selected}
+                          className={`rounded-full border px-3 py-2 text-[11px] font-black ${
+                            selected
+                              ? "border-neutral-200 bg-neutral-200 text-neutral-400"
+                              : "border-neutral-300 bg-white text-neutral-800"
+                          }`}
+                        >
+                          {selected ? "✓ " : "+ "}{name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="overflow-x-auto overscroll-x-contain" style={{ WebkitOverflowScrolling: "touch" }}>
+            <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-x pinch-zoom" }}>
               <div style={{ minWidth: Math.max(520, 190 + f.sizes.length * 88) }}>
                 <div className="grid border-b bg-neutral-50" style={{ gridTemplateColumns: `190px repeat(${f.sizes.length},88px)` }}>
                   <div className="sticky left-0 z-20 border-r bg-neutral-50 p-3 text-[10px] font-black uppercase text-neutral-400">Thông số</div>
