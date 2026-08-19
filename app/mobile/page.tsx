@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Layers3, PackageOpen, Scissors, Shirt, ShoppingBag, WalletCards } from "lucide-react";
+import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Layers3, PackageOpen, Ruler, Scissors, Shirt, ShoppingBag, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -239,7 +239,7 @@ export default function MobileEntryPage() {
                     Sản xuất & Nguyên liệu
                   </div>
                   <div className="mt-1 text-sm text-neutral-500">
-                    Bảng vải, mẫu mã, vải về, sản xuất và nguyên phụ liệu.
+                    Bảng vải, mẫu mã, bảng thông số, vải về, sản xuất và nguyên phụ liệu.
                   </div>
                 </div>
                 <Link
@@ -266,6 +266,15 @@ export default function MobileEntryPage() {
                     title="Triển khai mẫu"
                     description="Tạo mẫu nhanh, ảnh tham khảo và tiến độ mẫu."
                     icon={<Shirt className="h-7 w-7" />}
+                  />
+                )}
+
+                {can("design_sample.view") && (
+                  <SmallCard
+                    href="/mobile/measurement-library"
+                    title="Bảng thông số"
+                    description="Thư viện size và bảng đo cho mẫu áo, quần."
+                    icon={<Ruler className="h-7 w-7" />}
                   />
                 )}
 

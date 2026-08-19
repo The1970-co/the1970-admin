@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Ruler,
   Send,
   Trash2,
   X,
@@ -42,6 +43,42 @@ const SAMPLE_STATUSES:[string,string][] = [
   ["COMPLETED","Hoàn tất"],
   ["ON_HOLD","Tạm dừng"],
 ];
+
+
+type MeasurementRow = { id:string; name:string; unit:string; values:Record<string,string> };
+type MeasurementTemplate = { id:string; name:string; productKind:"SHIRT"|"PANTS"|"CUSTOM"; sizes:string[]; rows:MeasurementRow[]; note?:string; updatedAt:string };
+type SampleMeasurementSnapshot = MeasurementTemplate & { sourceTemplateId?:string|null; sampleId?:string|null; sampleCode?:string|null };
+
+const MEASUREMENT_TEMPLATE_KEY="the1970.measurementTemplates.v1";
+const MEASUREMENT_SNAPSHOT_KEY="the1970.sampleMeasurements.v1";
+const SHIRT_MEASUREMENT_SIZES=["S","M","L","XL","XXL"];
+const PANTS_MEASUREMENT_SIZES=["29","30","31","32","33","34","36","38"];
+
+function measurementUid(prefix="m"){return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`}
+function loadMeasurementTemplates():MeasurementTemplate[]{
+  if(typeof window==="undefined")return [];
+  try{const x=JSON.parse(localStorage.getItem(MEASUREMENT_TEMPLATE_KEY)||"[]");return Array.isArray(x)?x:[]}catch{return []}
+}
+function loadMeasurementSnapshots():Record<string,SampleMeasurementSnapshot>{
+  if(typeof window==="undefined")return {};
+  try{const x=JSON.parse(localStorage.getItem(MEASUREMENT_SNAPSHOT_KEY)||"{}");return x&&typeof x==="object"?x:{}}catch{return {}}
+}
+function snapshotKeys(sample:any){return [sample?.id?`id:${sample.id}`:"",sample?.code?`code:${normalizeCode(sample.code)}`:""].filter(Boolean)}
+function loadSampleMeasurement(sample:any):SampleMeasurementSnapshot|null{
+  const all=loadMeasurementSnapshots();for(const k of snapshotKeys(sample)){if(all[k])return all[k]}return null
+}
+function saveSampleMeasurement(sample:any,snapshot:SampleMeasurementSnapshot|null){
+  if(typeof window==="undefined"||!snapshot)return;
+  const all=loadMeasurementSnapshots();
+  const next={...snapshot,sampleId:sample?.id||snapshot.sampleId||null,sampleCode:normalizeCode(sample?.code||snapshot.sampleCode||"")||null,updatedAt:new Date().toISOString()};
+  for(const k of snapshotKeys({...sample,code:sample?.code||snapshot.sampleCode})){all[k]=next}
+  localStorage.setItem(MEASUREMENT_SNAPSHOT_KEY,JSON.stringify(all));
+}
+function blankSampleMeasurement(kind:"SHIRT"|"PANTS"|"CUSTOM"="SHIRT"):SampleMeasurementSnapshot{
+  const sizes=kind==="PANTS"?[...PANTS_MEASUREMENT_SIZES]:kind==="SHIRT"?[...SHIRT_MEASUREMENT_SIZES]:[];
+  return {id:measurementUid("snapshot"),name:"",productKind:kind,sizes,rows:[],note:"",updatedAt:new Date().toISOString(),sourceTemplateId:null};
+}
+function normalizeMeasurementDecimal(v:string){return String(v||"").replace(/[^\d,.-]/g,"").replace(".",",")}
 
 const DISPATCH_STATUSES:[string,string][] = [
   ["SENT","Đã gửi"],
@@ -288,7 +325,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
         </div>
 
         {sample.note&&<Info l="Ghi chú mẫu" v={sample.note}/>}
-        {sample.technicalNote&&<Info l="Ghi chú kỹ thuật" v={sample.technicalNote}/>}
+        {sample.technicalNote&&<Info l="Ghi chú kỹ thuật" v={sample.technicalNote}/>}<MeasurementSummary sample={sample}/>
 
         <section>
           <div className="flex items-center justify-between"><b className="text-sm">Lịch sử gửi mẫu</b>{can("sample_dispatch.create")&&<button onClick={onDispatch} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white"><Send className="mr-1 inline h-3.5 w-3.5"/>Gửi / gửi lại</button>}</div>
@@ -353,6 +390,10 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
   const [error,setError]=useState("");
   const [codeMessage,setCodeMessage]=useState("");
   const [codeAvailable,setCodeAvailable]=useState<boolean|null>(sample?true:null);
+  const [measurementTemplates,setMeasurementTemplates]=useState<MeasurementTemplate[]>([]);
+  const [measurement,setMeasurement]=useState<SampleMeasurementSnapshot|null>(null);
+  const [measurementOpen,setMeasurementOpen]=useState(false);
+  useEffect(()=>{setMeasurementTemplates(loadMeasurementTemplates());setMeasurement(loadSampleMeasurement(sample))},[sample?.id,sample?.code]);
 
   const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
 
@@ -387,7 +428,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
       const factory=meta.factories.find(x=>x.id===form.sampleFactoryId);
       const board=meta.boards.find(x=>x.id===form.fabricBoardId);
 
-      await api(sample?`/sample-fabric/samples/${sample.id}`:"/sample-fabric/samples",{
+      const saved=await api<any>(sample?`/sample-fabric/samples/${sample.id}`:"/sample-fabric/samples",{
         method:sample?"PATCH":"POST",
         body:JSON.stringify({
           name:form.name,
@@ -414,6 +455,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
           images:form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[],
         })
       });
+      if(measurement)saveSampleMeasurement({id:saved?.id||sample?.id,code:saved?.code||form.code},measurement);
       if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
       requestAnimationFrame(()=>{resetIosZoom();onSaved()});
     }catch(e){setError(e instanceof Error?e.message:"Không lưu được mẫu.")}
@@ -466,6 +508,28 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
 
       <Field l="Việc tiếp theo"><input className={input} value={form.nextAction} onChange={e=>patch("nextAction",e.target.value)}/></Field>
       <Field l="Hạn dự kiến"><input type="date" className={input} value={form.dueDate} onChange={e=>patch("dueDate",e.target.value)}/></Field>
+      <section className="rounded-3xl border border-neutral-200 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div><div className="text-sm font-black">Bảng thông số</div><div className="mt-1 text-[11px] text-neutral-400">Lấy từ thư viện, tạo mới hoặc chỉnh riêng cho mẫu này.</div></div>
+          <Link href="/mobile/measurement-library" className="shrink-0 rounded-xl border px-3 py-2 text-[11px] font-black"><Ruler className="mr-1 inline h-3.5 w-3.5"/>Thư viện</Link>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <select className={input} value={measurement?.sourceTemplateId||""} onChange={e=>{
+            const t=measurementTemplates.find(x=>x.id===e.target.value);
+            if(!t){setMeasurement(null);return}
+            setMeasurement({...structuredClone(t),id:measurementUid("snapshot"),sourceTemplateId:t.id});
+          }}>
+            <option value="">Chọn từ thư viện</option>
+            {measurementTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <button type="button" onClick={()=>{setMeasurement(measurement||blankSampleMeasurement("SHIRT"));setMeasurementOpen(true)}} className="rounded-2xl bg-neutral-950 px-3 py-3 text-xs font-black text-white">{measurement?"Chỉnh bảng":"Tạo mới"}</button>
+        </div>
+        {measurement&&<div className="mt-3 rounded-2xl bg-neutral-50 p-3">
+          <div className="font-black">{measurement.name||"Bảng riêng của mẫu"}</div>
+          <div className="mt-1 text-xs text-neutral-500">{measurement.sizes.join(" · ")} · {measurement.rows.length} thông số</div>
+          <div className="mt-2 flex gap-2"><button type="button" onClick={()=>setMeasurementOpen(true)} className="rounded-xl border bg-white px-3 py-2 text-xs font-black">Mở bảng</button><button type="button" onClick={()=>setMeasurement(null)} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700">Bỏ liên kết</button></div>
+        </div>}
+      </section>
       <Field l="Ghi chú mẫu"><textarea className={`${input} min-h-24`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field>
       <Field l="Ghi chú kỹ thuật"><textarea className={`${input} min-h-24`} value={form.technicalNote} onChange={e=>patch("technicalNote",e.target.value)}/></Field>
 
@@ -474,7 +538,55 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
         <button disabled={saving||!form.name||!form.code} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu mẫu"}</button>
       </div>
     </div>
+    {measurementOpen&&measurement&&<SampleMeasurementEditor value={measurement} onChange={setMeasurement} onClose={()=>setMeasurementOpen(false)} onSaveTemplate={tpl=>{const rows=[tpl,...loadMeasurementTemplates().filter(x=>x.id!==tpl.id)];localStorage.setItem(MEASUREMENT_TEMPLATE_KEY,JSON.stringify(rows));setMeasurementTemplates(rows)}}/>}
   </Modal>
+}
+
+
+function MeasurementSummary({sample}:{sample:any}){
+  const [m,setM]=useState<SampleMeasurementSnapshot|null>(null);
+  useEffect(()=>setM(loadSampleMeasurement(sample)),[sample?.id,sample?.code]);
+  if(!m)return null;
+  return <div className="rounded-3xl border border-neutral-200 p-3"><div className="flex items-center justify-between"><div><div className="text-[10px] font-black uppercase text-neutral-400">Bảng thông số</div><div className="mt-1 text-sm font-black">{m.name||"Bảng riêng của mẫu"}</div></div><Ruler className="h-5 w-5 text-neutral-400"/></div><div className="mt-2 flex gap-1.5 overflow-x-auto">{m.sizes.map(s=><span key={s} className="shrink-0 rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-black">{s}</span>)}</div><div className="mt-2 text-xs text-neutral-500">{m.rows.length} dòng thông số</div></div>
+}
+
+function SampleMeasurementEditor({value,onChange,onClose,onSaveTemplate}:{value:SampleMeasurementSnapshot;onChange:(v:SampleMeasurementSnapshot)=>void;onClose:()=>void;onSaveTemplate:(v:MeasurementTemplate)=>void}){
+  const [f,setF]=useState<SampleMeasurementSnapshot>(structuredClone(value));
+  const [newSize,setNewSize]=useState("");
+  function changeKind(kind:"SHIRT"|"PANTS"|"CUSTOM"){const sizes=kind==="PANTS"?[...PANTS_MEASUREMENT_SIZES]:kind==="SHIRT"?[...SHIRT_MEASUREMENT_SIZES]:[];setF(x=>({...x,productKind:kind,sizes,rows:x.rows.map(r=>({...r,values:Object.fromEntries(sizes.map(s=>[s,r.values?.[s]||""]))}))}))}
+  function addRow(){setF(x=>({...x,rows:[...x.rows,{id:measurementUid("row"),name:"",unit:"cm",values:Object.fromEntries(x.sizes.map(s=>[s,""]))}]}))}
+  function saveToLibrary(){
+    const {
+      sourceTemplateId: _sourceTemplateId,
+      sampleId: _sampleId,
+      sampleCode: _sampleCode,
+      ...templateBase
+    } = structuredClone(f);
+    const tpl:MeasurementTemplate={
+      ...templateBase,
+      id:measurementUid("tpl"),
+      updatedAt:new Date().toISOString(),
+    };
+    if(!tpl.name.trim())tpl.name=`Bảng thông số ${new Date().toLocaleDateString("vi-VN")}`;
+    onSaveTemplate(tpl);
+    setF(x=>({...x,sourceTemplateId:tpl.id,name:tpl.name}));
+  }
+  return <div className="fixed inset-0 z-[95] overflow-y-auto overscroll-contain bg-black/50 p-3 pb-[max(16px,env(safe-area-inset-bottom))]" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-y"}}><div className="mx-auto max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
+    <div className="sticky top-0 z-30 flex items-center justify-between border-b bg-white p-4"><div><div className="text-[10px] font-black uppercase text-neutral-400">Thông số mẫu</div><div className="font-black">{f.name||"Bảng mới"}</div></div><button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>
+    <div className="space-y-4 p-4">
+      <Field l="Tên bảng"><input className={input} value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} placeholder="VD: Quần Short Kaki Relaxed"/></Field>
+      <div><div className="mb-1.5 text-[10px] font-black uppercase tracking-wide text-neutral-400">Hệ size</div><div className="grid grid-cols-3 gap-2">{([["SHIRT","Áo"],["PANTS","Quần"],["CUSTOM","Tự chọn"]] as const).map(([k,t])=><button type="button" key={k} onClick={()=>changeKind(k)} className={`rounded-xl border px-2 py-2.5 text-xs font-black ${f.productKind===k?"border-neutral-950 bg-neutral-950 text-white":""}`}>{t}</button>)}</div></div>
+      <div><div className="flex gap-2 overflow-x-auto pb-1">{f.sizes.map(s=><button type="button" key={s} onClick={()=>setF(x=>({...x,sizes:x.sizes.filter(v=>v!==s),rows:x.rows.map(r=>{const values={...r.values};delete values[s];return {...r,values}})}))} className="shrink-0 rounded-full bg-neutral-950 px-3 py-2 text-xs font-black text-white">{s} ×</button>)}</div><div className="mt-2 flex gap-2"><input className={input} value={newSize} onChange={e=>setNewSize(e.target.value)} placeholder="Thêm size"/><button type="button" onClick={()=>{const s=newSize.trim().toUpperCase();if(!s||f.sizes.includes(s))return;setF(x=>({...x,sizes:[...x.sizes,s],rows:x.rows.map(r=>({...r,values:{...r.values,[s]:""}}))}));setNewSize("")}} className="shrink-0 rounded-xl border px-3 text-xs font-black">+ Size</button></div></div>
+      <div className="rounded-3xl border"><div className="flex items-center justify-between border-b p-3"><div><div className="text-sm font-black">Bảng đo</div><div className="text-[10px] text-neutral-400">Vuốt ngang để xem size.</div></div><button type="button" onClick={addRow} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white">+ Dòng</button></div>
+        <div className="overflow-x-auto" style={{WebkitOverflowScrolling:"touch"}}><div style={{minWidth:Math.max(520,190+f.sizes.length*88)}}>
+          <div className="grid border-b bg-neutral-50" style={{gridTemplateColumns:`190px repeat(${f.sizes.length},88px)`}}><div className="sticky left-0 z-20 border-r bg-neutral-50 p-3 text-[10px] font-black uppercase text-neutral-400">Thông số</div>{f.sizes.map(s=><div key={s} className="border-r p-3 text-center text-xs font-black">{s}</div>)}</div>
+          {f.rows.map((r,ri)=><div key={r.id} className="grid border-b" style={{gridTemplateColumns:`190px repeat(${f.sizes.length},88px)`}}><div className="sticky left-0 z-10 border-r bg-white p-2"><input className="w-full rounded-xl border px-2 py-2 text-[14px] font-bold" value={r.name} onChange={e=>setF(x=>({...x,rows:x.rows.map((v,i)=>i===ri?{...v,name:e.target.value}:v)}))} placeholder="Tên thông số"/><div className="mt-1 flex gap-1"><input className="w-16 rounded-lg border px-2 py-1 text-[11px]" value={r.unit} onChange={e=>setF(x=>({...x,rows:x.rows.map((v,i)=>i===ri?{...v,unit:e.target.value}:v)}))}/><button type="button" onClick={()=>setF(x=>({...x,rows:x.rows.filter((_,i)=>i!==ri)}))} className="ml-auto text-[10px] font-black text-red-600">Xoá</button></div></div>{f.sizes.map(size=><div key={size} className="border-r p-1.5"><input inputMode="decimal" className="h-12 w-full rounded-xl border px-2 text-center text-[16px] font-black" value={r.values?.[size]||""} onChange={e=>setF(x=>({...x,rows:x.rows.map((v,i)=>i===ri?{...v,values:{...v.values,[size]:normalizeMeasurementDecimal(e.target.value)}}:v)}))}/></div>)}</div>)}
+          {!f.rows.length&&<div className="p-8 text-center text-xs font-bold text-neutral-400">Chưa có dòng thông số.</div>}
+        </div></div>
+      </div>
+      <div className="grid grid-cols-2 gap-2"><button type="button" onClick={saveToLibrary} className="rounded-2xl border py-3 text-xs font-black">Lưu thành bảng mới</button><button type="button" onClick={()=>{onChange(f);onClose()}} className="rounded-2xl bg-neutral-950 py-3 text-xs font-black text-white">Dùng cho mẫu này</button></div>
+    </div>
+  </div></div>
 }
 
 function DispatchForm({sample,meta,onClose,onSaved}:{sample:Sample;meta:Meta;onClose:()=>void;onSaved:()=>void}){
