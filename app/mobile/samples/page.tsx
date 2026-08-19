@@ -5,26 +5,35 @@ import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 import {
   ArrowLeft,
+  ArrowUpRight,
   CalendarDays,
+  Circle,
+  Eraser,
   Camera,
   Download,
   FileUp,
   FlipHorizontal,
   ImagePlus,
+  MousePointer2,
   Pencil,
+  PenTool,
   Plus,
+  Redo2,
   RefreshCcw,
   RefreshCw,
   RotateCcw,
   RotateCw,
   Ruler,
+  Square,
+  Type,
+  Undo2,
   Save,
   Send,
   Trash2,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Staff = { id:string; code?:string|null; name:string };
 type Factory = { id:string; code:string; name:string; contactName?:string|null; phone?:string|null };
@@ -123,17 +132,57 @@ function parsePatternCaption(caption?:string|null):{name:string;mimetype?:string
 }
 function isPatternAsset(x:any){return String(x?.type||"")==="OTHER"&&!!parsePatternCaption(x?.caption)}
 function safeFilename(v:string){return String(v||"file").replace(/[\\/:*?"<>|]+/g,"-").replace(/\s+/g," ").trim()}
+function filenameWithMime(filename:string,mime?:string){
+  const clean=safeFilename(filename||"anh-mau");
+  if(/\.[a-z0-9]{2,6}$/i.test(clean))return clean;
+  const ext=String(mime||"").includes("png")?".png":String(mime||"").includes("webp")?".webp":String(mime||"").includes("pdf")?".pdf":".jpg";
+  return `${clean}${ext}`;
+}
+function cloudinaryAttachmentUrl(raw:string,filename:string){
+  const url=asset(raw);
+  if(!/res\.cloudinary\.com\//i.test(url)||!/\/upload\//.test(url))return url;
+  const base=safeFilename(filename).replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]+/g,"-")||"download";
+  return url.replace("/upload/",`/upload/fl_attachment:${encodeURIComponent(base)}/`);
+}
 async function downloadUrl(url:string,filename:string){
+  const resolved=asset(url);
+  if(!resolved)return;
   try{
-    const res=await fetch(asset(url));
-    if(!res.ok)throw new Error("download");
+    const res=await fetch(resolved,{mode:"cors",credentials:"omit"});
+    if(!res.ok)throw new Error("Không tải được file.");
     const blob=await res.blob();
+    const finalName=filenameWithMime(filename,blob.type);
+    const file=new File([blob],finalName,{type:blob.type||"application/octet-stream"});
+
+    // iPhone/iPad PWA/Safari: Share sheet is much more reliable than <a download>.
+    const nav:any=navigator;
+    if(typeof nav.share==="function"&&typeof nav.canShare==="function"&&nav.canShare({files:[file]})){
+      await nav.share({files:[file],title:finalName});
+      return;
+    }
+
     const href=URL.createObjectURL(blob);
     const a=document.createElement("a");
-    a.href=href;a.download=safeFilename(filename);document.body.appendChild(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(href),1000);
-  }catch{
-    window.open(asset(url),"_blank","noopener,noreferrer");
+    a.href=href;
+    a.download=finalName;
+    a.rel="noopener";
+    a.style.display="none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(href),5000);
+  }catch(e:any){
+    // If user cancelled native share, do nothing.
+    if(String(e?.name||"")==="AbortError")return;
+    // Cloudinary can force Content-Disposition attachment without relying on JS download.
+    const direct=cloudinaryAttachmentUrl(resolved,filename);
+    const a=document.createElement("a");
+    a.href=direct;
+    a.target="_blank";
+    a.rel="noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 }
 function asset(url?:string|null){
@@ -288,7 +337,8 @@ export default function Page(){
         {loading&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Đang tải...</div>}
 
         {!loading&&filtered.map(r=>{
-          const image=asset(r.coverImageUrl||r.images?.[0]?.url||r.matchedProduct?.imageUrl);
+          const firstVisual=(r.images||[]).find((x:any)=>!isPatternAsset(x))?.url;
+          const image=asset(r.coverImageUrl||firstVisual||r.matchedProduct?.imageUrl);
           return <button type="button" onClick={()=>setDetail(r)} key={r.id} className="flex w-full gap-4 rounded-[28px] bg-white p-4 text-left shadow-sm active:scale-[.995]">
             <div className="h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-2xl text-neutral-300">✦</div>}</div>
             <div className="min-w-0 flex-1">
@@ -337,12 +387,44 @@ export default function Page(){
   </main>
 }
 
+type ImageEditorTool="select"|"arrowText"|"text"|"circle"|"rect"|"pen";
+type EditorPoint={x:number;y:number};
+type EditorAnnotation={
+  id:string;
+  type:"arrowText"|"text"|"circle"|"rect"|"pen";
+  color:string;
+  strokeWidth:number;
+  fontSize:number;
+  fontFamily:string;
+  text?:string;
+  target?:EditorPoint;
+  label?:EditorPoint;
+  center?:EditorPoint;
+  width?:number;
+  height?:number;
+  points?:EditorPoint[];
+};
+
+function editorUid(){return `ann_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`}
+function clamp01(v:number){return Math.max(0,Math.min(1,v))}
+function canvasArrow(ctx:CanvasRenderingContext2D,x1:number,y1:number,x2:number,y2:number,color:string,width:number){
+  const head=Math.max(10,width*4);
+  const angle=Math.atan2(y2-y1,x2-x1);
+  ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=width;ctx.lineCap="round";ctx.lineJoin="round";
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-head*Math.cos(angle-Math.PI/7),y2-head*Math.sin(angle-Math.PI/7));
+  ctx.lineTo(x2-head*Math.cos(angle+Math.PI/7),y2-head*Math.sin(angle+Math.PI/7));
+  ctx.closePath();ctx.fill();ctx.restore();
+}
+
 function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{sample:Sample;can:(k:string)=>boolean;onClose:()=>void;onEdit:()=>void;onDelete:()=>void;onDispatch:()=>void;onChanged:()=>void}){
   const dispatches=Array.isArray(sample.sampleDispatches)?sample.sampleDispatches:[];
   const patternAttachments=(sample.images||[]).filter((x:any)=>isPatternAsset(x)).map((x:any)=>({...x,...parsePatternCaption(x.caption)}));
+  const visualUrls=(sample.images||[]).filter((x:any)=>!isPatternAsset(x)).map((x:any)=>x?.url).filter(Boolean);
   const initialGallery=Array.from(new Set([
-    sample.coverImageUrl,
-    ...(sample.images||[]).filter((x:any)=>!isPatternAsset(x)).map((x:any)=>x?.url),
+    sample.coverImageUrl||visualUrls[0],
+    ...visualUrls,
     sample.matchedProduct?.imageUrl,
   ].filter(Boolean).map((x:any)=>asset(x))));
   const [gallery,setGallery]=useState<string[]>(initialGallery);
@@ -356,11 +438,93 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
   const [contrast,setContrast]=useState(100);
   const [editBusy,setEditBusy]=useState(false);
   const [viewerError,setViewerError]=useState("");
+  const editorRef=useRef<HTMLDivElement|null>(null);
+  const [tool,setTool]=useState<ImageEditorTool>("select");
+  const [annotations,setAnnotations]=useState<EditorAnnotation[]>([]);
+  const [selectedAnnotationId,setSelectedAnnotationId]=useState<string|null>(null);
+  const [annotationColor,setAnnotationColor]=useState("#ff3b30");
+  const [annotationFontSize,setAnnotationFontSize]=useState(22);
+  const [annotationFontFamily,setAnnotationFontFamily]=useState("Arial");
+  const [annotationStrokeWidth,setAnnotationStrokeWidth]=useState(3);
+  const [undoStack,setUndoStack]=useState<EditorAnnotation[][]>([]);
+  const [redoStack,setRedoStack]=useState<EditorAnnotation[][]>([]);
+  const drawingId=useRef<string|null>(null);
   const openViewer=(url:string)=>{const i=gallery.indexOf(url);setViewerIndex(i>=0?i:0);setEditMode(false);setViewerError("")};
   const closeViewer=()=>{setViewerIndex(null);setEditMode(false);setViewerError("")};
   const prevImage=()=>setViewerIndex(i=>i===null?null:(i-1+gallery.length)%gallery.length);
   const nextImage=()=>setViewerIndex(i=>i===null?null:(i+1)%gallery.length);
-  function resetEdit(){setRotate(0);setFlipX(false);setCropRatio("original");setBrightness(100);setContrast(100);setViewerError("")}
+  function resetEdit(){
+    setRotate(0);setFlipX(false);setCropRatio("original");setBrightness(100);setContrast(100);setViewerError("");
+    setTool("select");setAnnotations([]);setSelectedAnnotationId(null);setUndoStack([]);setRedoStack([]);
+  }
+  function editorPoint(e:any):EditorPoint{
+    const box=editorRef.current?.getBoundingClientRect();
+    if(!box||!box.width||!box.height)return{x:.5,y:.5};
+    return{x:clamp01((e.clientX-box.left)/box.width),y:clamp01((e.clientY-box.top)/box.height)};
+  }
+  function commitAnnotations(make:(prev:EditorAnnotation[])=>EditorAnnotation[]){
+    setAnnotations(prev=>{
+      setUndoStack(h=>[...h,prev].slice(-40));setRedoStack([]);
+      return make(prev);
+    });
+  }
+  function undoAnnotation(){
+    setUndoStack(h=>{
+      if(!h.length)return h;
+      const prev=h[h.length-1];
+      setRedoStack(r=>[annotations,...r].slice(0,40));
+      setAnnotations(prev);setSelectedAnnotationId(null);
+      return h.slice(0,-1);
+    });
+  }
+  function redoAnnotation(){
+    setRedoStack(r=>{
+      if(!r.length)return r;
+      const next=r[0];
+      setUndoStack(h=>[...h,annotations].slice(-40));
+      setAnnotations(next);setSelectedAnnotationId(null);
+      return r.slice(1);
+    });
+  }
+  function updateSelectedAnnotation(patch:Partial<EditorAnnotation>){
+    if(!selectedAnnotationId)return;
+    commitAnnotations(prev=>prev.map(a=>a.id===selectedAnnotationId?{...a,...patch}:a));
+  }
+  function deleteSelectedAnnotation(){
+    if(!selectedAnnotationId)return;
+    commitAnnotations(prev=>prev.filter(a=>a.id!==selectedAnnotationId));setSelectedAnnotationId(null);
+  }
+  function beginAnnotation(e:any){
+    if(!editMode)return;
+    const p=editorPoint(e);
+    if(tool==="select")return;
+    if(tool==="arrowText"){
+      const label={x:clamp01(p.x+(p.x>.68?-.28:.24)),y:clamp01(p.y+(p.y<.22?.18:-.14))};
+      const a:EditorAnnotation={id:editorUid(),type:"arrowText",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,text:"Ghi chú",target:p,label};
+      commitAnnotations(prev=>[...prev,a]);setSelectedAnnotationId(a.id);setTool("select");return;
+    }
+    if(tool==="text"){
+      const a:EditorAnnotation={id:editorUid(),type:"text",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,text:"Ghi chú",label:p};
+      commitAnnotations(prev=>[...prev,a]);setSelectedAnnotationId(a.id);setTool("select");return;
+    }
+    if(tool==="circle"||tool==="rect"){
+      const a:EditorAnnotation={id:editorUid(),type:tool,color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,center:p,width:.24,height:.16};
+      commitAnnotations(prev=>[...prev,a]);setSelectedAnnotationId(a.id);setTool("select");return;
+    }
+    if(tool==="pen"){
+      const id=editorUid();drawingId.current=id;
+      setUndoStack(h=>[...h,annotations].slice(-40));setRedoStack([]);
+      setAnnotations(prev=>[...prev,{id,type:"pen",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,points:[p]}]);
+      setSelectedAnnotationId(id);
+      try{e.currentTarget.setPointerCapture?.(e.pointerId)}catch{}
+    }
+  }
+  function moveAnnotation(e:any){
+    if(tool!=="pen"||!drawingId.current)return;
+    const p=editorPoint(e),id=drawingId.current;
+    setAnnotations(prev=>prev.map(a=>a.id===id?{...a,points:[...(a.points||[]),p]}:a));
+  }
+  function endAnnotation(){drawingId.current=null;if(tool==="pen")setTool("select")}
   async function saveEditedImage(){
     if(viewerIndex===null||!gallery[viewerIndex]||!can("design_sample.edit")||!can("design_sample.upload_images"))return;
     try{
@@ -391,6 +555,46 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
       ctx.save();ctx.translate(canvas.width/2,canvas.height/2);ctx.rotate(angle*Math.PI/180);ctx.scale(flipX?-1:1,1);
       ctx.filter=`brightness(${brightness}%) contrast(${contrast}%)`;
       ctx.drawImage(img,sx,sy,sw,sh,-drawW/2,-drawH/2,drawW,drawH);ctx.restore();
+
+      // Burn technical annotations into final image.
+      ctx.filter="none";
+      const previewW=Math.max(1,editorRef.current?.clientWidth||700);
+      const styleScale=canvas.width/previewW;
+      for(const a of annotations){
+        const color=a.color||"#ff3b30";
+        const line=Math.max(1,(a.strokeWidth||3)*styleScale);
+        const fontPx=Math.max(12,(a.fontSize||22)*styleScale);
+        ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=line;ctx.lineCap="round";ctx.lineJoin="round";
+        if(a.type==="arrowText"&&a.target&&a.label){
+          const tx=a.target.x*canvas.width,ty=a.target.y*canvas.height,lx=a.label.x*canvas.width,ly=a.label.y*canvas.height;
+          canvasArrow(ctx,lx,ly,tx,ty,color,line);
+          const text=String(a.text||"Ghi chú");
+          ctx.font=`700 ${fontPx}px ${a.fontFamily||"Arial"}`;
+          ctx.textBaseline="middle";
+          const pad=7*styleScale,metrics=ctx.measureText(text),boxH=fontPx*1.35;
+          ctx.fillStyle="rgba(255,255,255,.92)";
+          ctx.fillRect(lx-pad,ly-boxH/2,metrics.width+pad*2,boxH);
+          ctx.strokeStyle=color;ctx.lineWidth=Math.max(1,line*.6);ctx.strokeRect(lx-pad,ly-boxH/2,metrics.width+pad*2,boxH);
+          ctx.fillStyle=color;ctx.fillText(text,lx,ly);
+        }else if(a.type==="text"&&a.label){
+          ctx.font=`700 ${fontPx}px ${a.fontFamily||"Arial"}`;ctx.textBaseline="middle";
+          const x=a.label.x*canvas.width,y=a.label.y*canvas.height,text=String(a.text||"Ghi chú");
+          const pad=6*styleScale,metrics=ctx.measureText(text),boxH=fontPx*1.35;
+          ctx.fillStyle="rgba(255,255,255,.9)";ctx.fillRect(x-pad,y-boxH/2,metrics.width+pad*2,boxH);
+          ctx.fillStyle=color;ctx.fillText(text,x,y);
+        }else if((a.type==="circle"||a.type==="rect")&&a.center){
+          const cx=a.center.x*canvas.width,cy=a.center.y*canvas.height,w=(a.width||.24)*canvas.width,h=(a.height||.16)*canvas.height;
+          ctx.strokeStyle=color;ctx.lineWidth=line;
+          if(a.type==="circle"){ctx.beginPath();ctx.ellipse(cx,cy,w/2,h/2,0,0,Math.PI*2);ctx.stroke()}
+          else ctx.strokeRect(cx-w/2,cy-h/2,w,h);
+        }else if(a.type==="pen"&&a.points?.length){
+          ctx.strokeStyle=color;ctx.lineWidth=line;ctx.beginPath();
+          a.points.forEach((p,i)=>{const x=p.x*canvas.width,y=p.y*canvas.height;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
       const editedBlob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Không xuất được ảnh.")),"image/jpeg",0.92));
       const file=new File([editedBlob],`${safeFilename(sample.code||"mau")}-edited-${Date.now()}.jpg`,{type:"image/jpeg"});
       const uploaded=await upload(file);
@@ -466,12 +670,81 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:editMode?"pan-y":"pan-x pan-y pinch-zoom"}}>
         {gallery.length>1&&!editMode&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">‹</button>}
-        <img src={gallery[viewerIndex]} className="max-h-full max-w-full object-contain transition-transform" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
+        <div ref={editorRef} className="relative inline-block max-h-full max-w-full select-none" onPointerDown={beginAnnotation} onPointerMove={moveAnnotation} onPointerUp={endAnnotation} onPointerCancel={endAnnotation}>
+          <img src={gallery[viewerIndex]} draggable={false} className="block max-h-[68vh] max-w-[94vw] object-contain transition-transform" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
+          {editMode&&<svg className={`absolute inset-0 h-full w-full ${tool==="select"?"":"cursor-crosshair"}`} viewBox="0 0 1000 1000" preserveAspectRatio="none">
+            <defs><marker id="editorArrowHead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="context-stroke"/></marker></defs>
+            {annotations.map(a=>{
+              const selected=a.id===selectedAnnotationId;
+              const sw=Math.max(2,a.strokeWidth*2.2);
+              if(a.type==="arrowText"&&a.target&&a.label){
+                const x1=a.label.x*1000,y1=a.label.y*1000,x2=a.target.x*1000,y2=a.target.y*1000;
+                return <g key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}}>
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={sw} markerEnd="url(#editorArrowHead)"/>
+                  <rect x={x1-8} y={y1-a.fontSize*.8} width={Math.max(90,(a.text?.length||7)*a.fontSize*.62)} height={a.fontSize*1.45} rx="8" fill="white" fillOpacity=".94" stroke={selected?a.color:"white"} strokeWidth={selected?4:1}/>
+                  <text x={x1} y={y1+a.fontSize*.18} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily}>{a.text||"Ghi chú"}</text>
+                  {selected&&<circle cx={x2} cy={y2} r="14" fill="none" stroke={a.color} strokeWidth="4"/>}
+                </g>
+              }
+              if(a.type==="text"&&a.label){
+                const x=a.label.x*1000,y=a.label.y*1000;
+                return <g key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}}>
+                  <rect x={x-8} y={y-a.fontSize*.85} width={Math.max(90,(a.text?.length||7)*a.fontSize*.62)} height={a.fontSize*1.5} rx="8" fill="white" fillOpacity=".94" stroke={selected?a.color:"white"} strokeWidth={selected?4:1}/>
+                  <text x={x} y={y+a.fontSize*.2} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily}>{a.text||"Ghi chú"}</text>
+                </g>
+              }
+              if((a.type==="circle"||a.type==="rect")&&a.center){
+                const cx=a.center.x*1000,cy=a.center.y*1000,w=(a.width||.24)*1000,h=(a.height||.16)*1000;
+                return <g key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}}>
+                  {a.type==="circle"?<ellipse cx={cx} cy={cy} rx={w/2} ry={h/2} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw}/>:<rect x={cx-w/2} y={cy-h/2} width={w} height={h} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw}/>}
+                </g>
+              }
+              if(a.type==="pen"&&a.points?.length){
+                return <polyline key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}} points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw} strokeLinecap="round" strokeLinejoin="round"/>
+              }
+              return null
+            })}
+          </svg>}
+        </div>
         {gallery.length>1&&!editMode&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">›</button>}
       </div>
 
       {editMode&&<div className="shrink-0 border-t border-white/20 bg-black/80 p-3 pb-[max(12px,env(safe-area-inset-bottom))] text-white">
         {viewerError&&<div className="mb-2 rounded-xl bg-red-500/20 p-2 text-xs text-red-200">{viewerError}</div>}
+        <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+          <button onClick={()=>setTool("select")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="select"?"bg-amber-300 text-black":"bg-white/10"}`}><MousePointer2 className="mr-1 inline h-4 w-4"/>Chọn</button>
+          <button onClick={()=>setTool("arrowText")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="arrowText"?"bg-amber-300 text-black":"bg-white/10"}`}><ArrowUpRight className="mr-1 inline h-4 w-4"/>Mũi tên + chữ</button>
+          <button onClick={()=>setTool("text")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="text"?"bg-amber-300 text-black":"bg-white/10"}`}><Type className="mr-1 inline h-4 w-4"/>Chữ</button>
+          <button onClick={()=>setTool("circle")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="circle"?"bg-amber-300 text-black":"bg-white/10"}`}><Circle className="mr-1 inline h-4 w-4"/>Khoanh</button>
+          <button onClick={()=>setTool("rect")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="rect"?"bg-amber-300 text-black":"bg-white/10"}`}><Square className="mr-1 inline h-4 w-4"/>Khung</button>
+          <button onClick={()=>setTool("pen")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="pen"?"bg-amber-300 text-black":"bg-white/10"}`}><PenTool className="mr-1 inline h-4 w-4"/>Vẽ tay</button>
+          <button disabled={!undoStack.length} onClick={undoAnnotation} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black disabled:opacity-30"><Undo2 className="mr-1 inline h-4 w-4"/>Lùi</button>
+          <button disabled={!redoStack.length} onClick={redoAnnotation} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black disabled:opacity-30"><Redo2 className="mr-1 inline h-4 w-4"/>Tiến</button>
+          <button disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} className="shrink-0 rounded-xl bg-red-500/20 px-3 py-2 text-xs font-black text-red-200 disabled:opacity-30"><Eraser className="mr-1 inline h-4 w-4"/>Xóa dấu</button>
+          <button disabled={!annotations.length} onClick={()=>commitAnnotations(()=>[])} className="shrink-0 rounded-xl bg-red-500/20 px-3 py-2 text-xs font-black text-red-200 disabled:opacity-30"><Trash2 className="mr-1 inline h-4 w-4"/>Xóa hết</button>
+        </div>
+
+        <div className="mb-2 grid grid-cols-[52px_1fr] gap-2">
+          <input aria-label="Màu đánh dấu" type="color" value={annotationColor} onChange={e=>{setAnnotationColor(e.target.value);if(selectedAnnotationId)updateSelectedAnnotation({color:e.target.value})}} className="h-10 w-full rounded-xl border-0 bg-white/10 p-1"/>
+          <div className="grid grid-cols-2 gap-2">
+            <select value={annotationFontFamily} onChange={e=>{setAnnotationFontFamily(e.target.value);if(selectedAnnotationId)updateSelectedAnnotation({fontFamily:e.target.value})}} className="rounded-xl bg-white/10 px-2 text-xs font-bold text-white">
+              <option className="text-black" value="Arial">Arial</option><option className="text-black" value="Helvetica">Helvetica</option><option className="text-black" value="Georgia">Georgia</option><option className="text-black" value="Courier New">Mono</option><option className="text-black" value="Times New Roman">Times</option>
+            </select>
+            <div className="flex items-center gap-2 rounded-xl bg-white/10 px-2"><span className="text-[10px] font-black">Nét</span><input type="range" min="1" max="10" value={annotationStrokeWidth} onChange={e=>{const v=Number(e.target.value);setAnnotationStrokeWidth(v);if(selectedAnnotationId)updateSelectedAnnotation({strokeWidth:v})}} className="min-w-0 flex-1"/></div>
+          </div>
+        </div>
+
+        <div className="mb-2 flex items-center gap-2 rounded-xl bg-white/10 p-2">
+          <span className="shrink-0 text-[10px] font-black uppercase text-white/60">Cỡ chữ</span>
+          <input type="range" min="12" max="48" value={annotationFontSize} onChange={e=>{const v=Number(e.target.value);setAnnotationFontSize(v);if(selectedAnnotationId)updateSelectedAnnotation({fontSize:v})}} className="min-w-0 flex-1"/>
+          <b className="w-8 text-right text-xs">{annotationFontSize}</b>
+        </div>
+
+        {selectedAnnotationId&&(()=>{const a=annotations.find(x=>x.id===selectedAnnotationId);return a&&(a.type==="arrowText"||a.type==="text")?<input value={a.text||""} onChange={e=>updateSelectedAnnotation({text:e.target.value})} placeholder="Nhập ghi chú kỹ thuật…" className="mb-2 w-full rounded-xl bg-white px-3 py-2.5 text-sm font-bold text-black outline-none"/>:null})()}
+
+        {tool==="arrowText"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Chạm vào đúng chi tiết cần đánh dấu. Hệ thống tự tạo mũi tên với đầu mũi tên tại điểm chạm và ô chữ ở phía ngoài.</div>}
+        {tool==="pen"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Giữ tay và kéo trực tiếp trên ảnh để vẽ.</div>}
+
         <div className="flex gap-2 overflow-x-auto pb-2">
           <button onClick={()=>setRotate(x=>x-90)} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RotateCcw className="mr-1 inline h-4 w-4"/>Trái</button>
           <button onClick={()=>setRotate(x=>x+90)} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RotateCw className="mr-1 inline h-4 w-4"/>Phải</button>
@@ -532,7 +805,7 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
     dueDate:dateOnly(sample?.dueDate),
     note:sample?.note||"",
     technicalNote:sample?.technicalNote||"",
-    coverImageUrl:sample?.coverImageUrl||sample?.images?.[0]?.url||"",
+    coverImageUrl:sample?.coverImageUrl||(sample?.images||[]).find((x:any)=>!isPatternAsset(x))?.url||"",
   });
   const [sampleImages,setSampleImages]=useState<Array<{type:string;url:string;caption?:string}>>(
     Array.isArray(sample?.images) && sample!.images!.some((x:any)=>!isPatternAsset(x))
@@ -585,10 +858,18 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       }
       setSampleImages(current=>{
         const next=[...current,...uploaded];
-        if(!form.coverImageUrl && next[0]?.url) patch("coverImageUrl",next[0].url);
+        setForm((prev:any)=>({
+          ...prev,
+          coverImageUrl:prev.coverImageUrl||next[0]?.url||"",
+        }));
         return next;
       });
     }catch(e){setError(e instanceof Error?e.message:"Upload lỗi")}
+  }
+
+  function setCoverImage(url:string){
+    if(!url)return;
+    setForm((prev:any)=>({...prev,coverImageUrl:url}));
   }
 
   async function changePatternFiles(files?:FileList|File[]){
@@ -616,6 +897,12 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       const factory=meta.factories.find(x=>x.id===form.sampleFactoryId);
       const board=meta.boards.find(x=>x.id===form.fabricBoardId);
 
+      const visualImages=sampleImages.filter(x=>!!x.url);
+      const validCover=visualImages.some(x=>x.url===form.coverImageUrl)
+        ? form.coverImageUrl
+        : (visualImages[0]?.url||form.coverImageUrl||null);
+      if(validCover&&validCover!==form.coverImageUrl)setForm((prev:any)=>({...prev,coverImageUrl:validCover}));
+
       const saved=await api<any>(sample?`/sample-fabric/samples/${sample.id}`:"/sample-fabric/samples",{
         method:sample?"PATCH":"POST",
         body:JSON.stringify({
@@ -639,7 +926,7 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
           dueDate:form.dueDate||null,
           note:form.note||null,
           technicalNote:form.technicalNote||null,
-          coverImageUrl:form.coverImageUrl||null,
+          coverImageUrl:validCover,
           images:[
             ...(sampleImages.length?sampleImages:(form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[])),
             ...patternFiles.map(x=>({type:"OTHER",url:x.url,caption:x.caption})),
@@ -659,8 +946,23 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
 
       <Field l="Ảnh mẫu / ảnh tham khảo">
         <div className="rounded-3xl border border-dashed p-3">
-          {!!sampleImages.length&&<div className="mb-3 flex gap-2 overflow-x-auto pb-1">{sampleImages.map((img,i)=><div key={`${img.url}-${i}`} className="relative shrink-0"><button type="button" onClick={()=>patch("coverImageUrl",img.url)} className={`block overflow-hidden rounded-2xl border-2 ${form.coverImageUrl===img.url?"border-neutral-950":"border-transparent"}`}><img src={asset(img.url)} className="h-28 w-24 object-cover" alt=""/></button>{canUpload&&<button type="button" onClick={()=>{const next=sampleImages.filter((_,j)=>j!==i);setSampleImages(next);if(form.coverImageUrl===img.url)patch("coverImageUrl",next[0]?.url||"")}} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button>}</div>)}</div>}
-          <div className="mb-2 text-[11px] text-neutral-400">Chọn ảnh để đặt làm ảnh đại diện. Có thể tải nhiều ảnh cùng lúc.</div>
+          {!!sampleImages.length&&<div className="mb-3 flex gap-3 overflow-x-auto pb-2">{sampleImages.map((img,i)=>{
+            const active=form.coverImageUrl===img.url;
+            return <div key={`${img.url}-${i}`} className="relative w-28 shrink-0">
+              <button type="button" onClick={()=>setCoverImage(img.url)} className={`relative block w-full overflow-hidden rounded-2xl border-2 ${active?"border-neutral-950":"border-neutral-200"}`}>
+                <img src={asset(img.url)} className="h-28 w-full object-cover" alt=""/>
+                {active&&<span className="absolute bottom-1 left-1 rounded-full bg-neutral-950 px-2 py-1 text-[9px] font-black text-white">ẢNH ĐẠI DIỆN</span>}
+              </button>
+              {!active&&<button type="button" onClick={()=>setCoverImage(img.url)} className="mt-1.5 w-full rounded-xl border py-1.5 text-[10px] font-black">Đặt đại diện</button>}
+              {active&&<div className="mt-1.5 py-1.5 text-center text-[10px] font-black text-emerald-700">Đang đại diện</div>}
+              {canUpload&&<button type="button" onClick={()=>{
+                const next=sampleImages.filter((_,j)=>j!==i);
+                setSampleImages(next);
+                if(form.coverImageUrl===img.url)setForm((prev:any)=>({...prev,coverImageUrl:next[0]?.url||""}));
+              }} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button>}
+            </div>
+          })}</div>}
+          <div className="mb-2 text-[11px] text-neutral-400">Upload nhiều ảnh: ảnh đầu tiên tự làm đại diện. Bấm “Đặt đại diện” để đổi sang ảnh khác.</div>
           {canUpload&&<div className="grid grid-cols-2 gap-2">
             <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
             <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
