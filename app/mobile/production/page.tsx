@@ -1,7 +1,6 @@
 "use client";
 
-import MobileBottomNav from "@/components/mobile/MobileBottomNav";
-import { Boxes, ChevronRight, Layers3, PackageOpen, Scissors, Shirt } from "lucide-react";
+import { Boxes, ChevronRight, Layers3, PackageOpen, Ruler, Scissors, Shirt } from "lucide-react";
 import Link from "next/link";
 
 const cards = [
@@ -16,6 +15,12 @@ const cards = [
     title: "Triển khai mẫu",
     description: "Mẫu mã, ảnh tham khảo và tiến độ làm mẫu.",
     icon: Shirt,
+  },
+  {
+    href: "/mobile/measurement-library",
+    title: "Bảng thông số",
+    description: "Thư viện size và bảng đo cho mẫu áo, quần.",
+    icon: Ruler,
   },
   {
     href: "/mobile/fabric",
@@ -39,7 +44,7 @@ const cards = [
 
 export default function MobileProductionHubPage() {
   return (
-    <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(112px+env(safe-area-inset-bottom))] text-neutral-950">
+    <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
       <div className="mx-auto max-w-md">
         <header className="border-b border-neutral-200 bg-white px-4 pb-5 pt-[calc(18px+env(safe-area-inset-top))]">
           <div className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-400">
@@ -80,7 +85,6 @@ export default function MobileProductionHubPage() {
           ))}
         </section>
       </div>
-      <MobileBottomNav />
     </main>
   );
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
@@ -22,7 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 type Supplier={id:string;code?:string|null;name?:string|null};
 type Branch={id:string;name:string};
 type Sample={id:string;code:string;name:string;year?:number;fabricBoardCode?:string|null;fabricCode?:string|null};
-type Roll={id?:string;rollCode?:string|null;colorName?:string|null;colorCode?:string|null;supplierDeclaredM?:any;supplierDeclaredKg?:any;actualM?:any;actualKg?:any;passed?:boolean;images?:Array<{id:string;url:string;caption?:string|null}>};
+type Roll={id?:string;rollCode?:string|null;colorName?:string|null;colorCode?:string|null;supplierDeclaredM?:any;supplierDeclaredKg?:any;actualM?:any;actualKg?:any;defectNote?:string|null;passed?:boolean;images?:Array<{id:string;url:string;caption?:string|null}>};
 type Measurement={id:string;areaCm2:number;weightGrams:number;gsm:number;positionLabel?:string|null;imageUrl?:string|null;measuredByName?:string|null;createdAt:string};
 type Receipt={
  id:string;receiptCode:string;designSampleId?:string|null;designSample?:Sample|null;supplierId?:string|null;supplier?:Supplier|null;branchId?:string|null;branch?:Branch|null;
@@ -32,7 +31,9 @@ type Receipt={
  receivedAt?:string|null;completedAt?:string|null;note?:string|null;rolls:Roll[];measurements:Measurement[];
  images?:Array<{id:string;type:string;url:string;caption?:string|null}>;
 };
-type Meta={suppliers:Supplier[];branches:Branch[];samples:Sample[]};
+type BoardColor={id:string;name:string;code?:string|null;imageUrl?:string|null};
+type FabricBoard={id:string;boardCode:string;fabricCode?:string|null;name?:string|null;supplierId?:string|null;expectedGsm?:number|null;colors?:BoardColor[]};
+type Meta={suppliers:Supplier[];branches:Branch[];samples:Sample[];boards:FabricBoard[]};
 
 const STATUSES=[["DRAFT","Nháp"],["RECEIVING","Đang nhận"],["INSPECTING","Đang kiểm"],["COMPLETED","Hoàn tất"],["CANCELLED","Đã huỷ"]] as const;
 
@@ -43,6 +44,11 @@ function num(v:any){const n=Number(String(v??"").replace(",","."));return Number
 function fmt(v:any,d=3){return new Intl.NumberFormat("vi-VN",{maximumFractionDigits:d}).format(num(v))}
 function money(v:any){return new Intl.NumberFormat("vi-VN").format(num(v))+"đ"}
 function colorCode(v:any){const raw=String(v||"").trim();return raw?`#${raw.replace(/^#+/,"")}`:""}
+function colorCodes(v:any){
+ return Array.from(new Set(String(v||"").split(/[;,\s]+/).map(x=>x.trim()).filter(Boolean).map(x=>colorCode(x)))).join(", ");
+}
+function colorCodeList(v:any){return colorCodes(v).split(",").map(x=>x.trim()).filter(Boolean)}
+function colorNameList(v:any){return String(v||"").split(",").map(x=>x.trim()).filter(Boolean)}
 function dateText(v?:string|null){if(!v)return "—";const d=new Date(v);return Number.isNaN(d.getTime())?"—":d.toLocaleDateString("vi-VN")}
 function statusLabel(v:string){return STATUSES.find(x=>x[0]===v)?.[1]||v}
 function roles(u:any){return [...(Array.isArray(u?.roles)?u.roles:[]),u?.role,u?.roleCode,u?.staffRole].map(x=>String(x||"").toLowerCase()).filter(Boolean)}
@@ -57,7 +63,7 @@ function resetMobileViewport(){
 
 export default function Page(){
  const [rows,setRows]=useState<Receipt[]>([]);
- const [meta,setMeta]=useState<Meta>({suppliers:[],branches:[],samples:[]});
+ const [meta,setMeta]=useState<Meta>({suppliers:[],branches:[],samples:[],boards:[]});
  const [q,setQ]=useState(""),[status,setStatus]=useState("");
  const [loading,setLoading]=useState(true),[error,setError]=useState("");
  const [editing,setEditing]=useState<Receipt|null|undefined>(undefined);
@@ -66,7 +72,9 @@ export default function Page(){
  const [user,setUser]=useState<any>(null);
  const keys=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
  const can=(k:string)=>owner(user)||keys.includes("*")||keys.includes(k);
- const admin=owner(user);
+ const canSupplierIdentity=can("fabric_receipt.supplier_identity.view");
+ const canCostView=can("fabric_receipt.cost.view")||can("fabric_receipt.cost.edit");
+ const canOpenPage=can("mobile.page.fabric_receipts")&&can("fabric_receipt.view");
 
  async function load(){
   try{
@@ -77,7 +85,7 @@ export default function Page(){
     api<Meta>("/sample-fabric/fabric-receipts/meta")
    ]);
    setRows(Array.isArray(r)?r:[]);
-   setMeta({suppliers:Array.isArray(m.suppliers)?m.suppliers:[],branches:Array.isArray(m.branches)?m.branches:[],samples:Array.isArray(m.samples)?m.samples:[]});
+   setMeta({suppliers:Array.isArray(m.suppliers)?m.suppliers:[],branches:Array.isArray(m.branches)?m.branches:[],samples:Array.isArray(m.samples)?m.samples:[],boards:Array.isArray((m as any).boards)?(m as any).boards:[]});
   }catch(e){setError(e instanceof Error?e.message:"Không tải được vải về.")}
   finally{setLoading(false)}
  }
@@ -94,7 +102,8 @@ export default function Page(){
   catch(e){setError(e instanceof Error?e.message:"Không cập nhật được phiếu.")}
  }
 
- return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(84px+env(safe-area-inset-bottom))] text-neutral-950">
+ if(user&&!canOpenPage)return <main className="min-h-[100dvh] bg-neutral-100 p-6 pt-[max(56px,calc(env(safe-area-inset-top)+24px))]"><div className="mx-auto max-w-md rounded-3xl bg-white p-6 text-center"><div className="text-lg font-black">Không có quyền Vải về</div><div className="mt-2 text-sm text-neutral-500">Bật quyền màn App và fabric_receipt.view trong Phân quyền.</div></div></main>;
+ return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
   <div className="mx-auto max-w-md">
    <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur">
     <div className="flex items-center justify-between gap-2">
@@ -126,26 +135,60 @@ export default function Page(){
    </div>
   </div>
 
-  {editing!==undefined&&<ReceiptForm receipt={editing} meta={meta} admin={admin} canCostView={can("fabric_receipt.cost.view")||can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await load()}}/>}
+  {editing!==undefined&&<ReceiptForm receipt={editing} meta={meta} canSupplierIdentity={canSupplierIdentity} canCostView={canCostView} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await load()}}/>}
   {measure&&<MeasurementForm receipt={measure} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setMeasure(null)} onSaved={async()=>{setMeasure(null);await load()}}/>}
-  {detail&&<Detail receipt={detail} admin={admin} canCostView={can("fabric_receipt.cost.view")||can("fabric_receipt.cost.edit")} onClose={()=>setDetail(null)}/>}
-  <MobileBottomNav/>
+  {detail&&<Detail receipt={detail} canSupplierIdentity={canSupplierIdentity} canCostView={canCostView} onClose={()=>setDetail(null)}/>}
  </main>
 }
 
-function ReceiptForm({receipt,meta,admin,canCostView,canCostEdit,canUpload,onClose,onSaved}:{receipt:Receipt|null;meta:Meta;admin:boolean;canCostView:boolean;canCostEdit:boolean;canUpload:boolean;onClose:()=>void;onSaved:()=>void}){
+function ReceiptForm({receipt,meta,canSupplierIdentity,canCostView,canCostEdit,canUpload,onClose,onSaved}:{receipt:Receipt|null;meta:Meta;canSupplierIdentity:boolean;canCostView:boolean;canCostEdit:boolean;canUpload:boolean;onClose:()=>void;onSaved:()=>void}){
  const [f,setF]=useState<any>({receiptCode:receipt?.receiptCode||"",designSampleId:receipt?.designSampleId||"",supplierId:receipt?.supplierId||"",branchId:receipt?.branchId||"",fabricBoardCode:receipt?.fabricBoardCode||"",fabricCode:receipt?.fabricCode||"",fabricName:receipt?.fabricName||"",colorName:receipt?.colorName||"",colorCode:receipt?.colorCode||"",lotCode:receipt?.lotCode||"",supplierDeclaredM:receipt?.supplierDeclaredM??"",supplierDeclaredKg:receipt?.supplierDeclaredKg??"",actualM:receipt?.actualM??"",actualKg:receipt?.actualKg??"",unitPrice:receipt?.unitPrice??"",priceUnit:receipt?.priceUnit||"METER",priceCurrency:receipt?.priceCurrency||"VND",exchangeRateToVnd:receipt?.exchangeRateToVnd??"",expectedGsm:receipt?.expectedGsm??"",status:receipt?.status||"RECEIVING",receivedAt:receipt?.receivedAt?receipt.receivedAt.slice(0,10):new Date().toISOString().slice(0,10),note:receipt?.note||""});
  const [rolls,setRolls]=useState<Roll[]>(receipt?.rolls?.length?receipt.rolls:[{rollCode:"",colorName:"",colorCode:"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",passed:true}]);
  const [files,setFiles]=useState<Record<number,File[]>>({});
+ const [manualRollColor,setManualRollColor]=useState<Record<number,boolean>>({});
  const [saving,setSaving]=useState(false),[error,setError]=useState("");
  const patch=(k:string,v:any)=>setF((x:any)=>({...x,[k]:v}));
  useEffect(()=>{if(receipt)return;const p=new URLSearchParams();if(f.receivedAt)p.set("receivedAt",f.receivedAt);api<{code:string}>(`/sample-fabric/fabric-receipts/next-code?${p}`).then(r=>patch("receiptCode",r.code)).catch(()=>{})},[f.receivedAt,receipt?.id]);
- function chooseSample(id:string){patch("designSampleId",id);const s=meta.samples.find(x=>x.id===id);if(s){if(!f.fabricBoardCode)patch("fabricBoardCode",s.fabricBoardCode||"");if(!f.fabricCode)patch("fabricCode",s.fabricCode||"")}}
+ function chooseSample(id:string){
+  patch("designSampleId",id);
+  const s=meta.samples.find(x=>x.id===id);
+  if(s){
+   const board=meta.boards.find(b=>b.boardCode===s.fabricBoardCode || (!!s.fabricCode&&b.fabricCode===s.fabricCode));
+   if(board)chooseBoard(board.id);
+   else{if(!f.fabricBoardCode)patch("fabricBoardCode",s.fabricBoardCode||"");if(!f.fabricCode)patch("fabricCode",s.fabricCode||"")}
+  }
+ }
+ function chooseBoard(id:string){
+  const b=meta.boards.find(x=>x.id===id);
+  patch("fabricBoardId",id||"");
+  if(!b)return;
+  patch("fabricBoardCode",b.boardCode||"");
+  patch("fabricCode",b.fabricCode||"");
+  patch("fabricName",b.name||"");
+  if(b.supplierId)patch("supplierId",b.supplierId);
+  if(b.expectedGsm!=null)patch("expectedGsm",b.expectedGsm);
+ }
+ const selectedBoard=meta.boards.find(x=>x.id===f.fabricBoardId)||meta.boards.find(x=>x.boardCode===f.fabricBoardCode);
+ const allowedCodes=colorCodeList(f.colorCode);
+ const allowedNames=colorNameList(f.colorName);
+ const allowedColors=allowedCodes.map((code,index)=>{
+  const fromBoard=selectedBoard?.colors?.find(c=>colorCode(c.code)===code);
+  return {code,name:fromBoard?.name||allowedNames[index]||""};
+ });
+ function toggleBoardColor(c:BoardColor){
+  const code=colorCode(c.code||c.name);
+  const current=colorCodeList(f.colorCode);
+  const has=current.includes(code);
+  const next=has?current.filter(x=>x!==code):[...current,code];
+  const names=next.map(x=>selectedBoard?.colors?.find(bc=>colorCode(bc.code||bc.name)===x)?.name||"").filter(Boolean);
+  patch("colorCode",next.join(", "));
+  patch("colorName",names.join(", "));
+ }
  async function save(){
   try{
    setSaving(true);setError("");
-   const normalized=rolls.map(r=>({...r,colorCode:colorCode(r.colorCode)||null}));
-   const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,colorCode:colorCode(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized})});
+   const normalized=rolls.map(r=>({...r,colorCode:colorCode(r.colorCode)||null,defectNote:String(r.defectNote||"").trim()||null}));
+   const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,colorCode:colorCodes(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized})});
    if(canCostEdit&&f.unitPrice!=="")await api(`/sample-fabric/fabric-receipts/${saved.id}/cost`,{method:"PATCH",body:JSON.stringify({unitPrice:num(f.unitPrice),priceUnit:f.priceUnit,priceCurrency:f.priceCurrency||"VND",exchangeRateToVnd:f.priceCurrency==="CNY"?num(f.exchangeRateToVnd):1})});
    for(const [ix,arr] of Object.entries(files)){const i=Number(ix),server=saved.rolls?.[i];if(!server?.id)continue;for(const file of arr){const u=await upload(file);await api(`/sample-fabric/fabric-receipts/${saved.id}/images`,{method:"POST",body:JSON.stringify({rollId:server.id,type:"FABRIC",url:u.url,caption:`Ảnh ${server.rollCode||`cây ${i+1}`}`})})}}
    resetMobileViewport();setTimeout(onSaved,90);
@@ -160,14 +203,29 @@ function ReceiptForm({receipt,meta,admin,canCostView,canCostEdit,canUpload,onClo
   </div>
   <Field l="Mẫu sử dụng"><select className={input} value={f.designSampleId} onChange={e=>chooseSample(e.target.value)}><option value="">Chưa gắn mẫu</option>{meta.samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
   <div className="grid grid-cols-2 gap-3">
-   <Field l="Nhà cung cấp"><select className={input} value={f.supplierId} onChange={e=>patch("supplierId",e.target.value)}><option value="">Chưa chọn</option>{meta.suppliers.map(s=><option key={s.id} value={s.id}>{admin?(s.name||s.code):(s.code||"NCC")}</option>)}</select></Field>
+   <Field l="Nhà cung cấp"><select className={input} value={f.supplierId} onChange={e=>patch("supplierId",e.target.value)}><option value="">Chưa chọn</option>{meta.suppliers.map(s=><option key={s.id} value={s.id}>{canSupplierIdentity?`${s.code||"NCC"} · ${s.name||""}`.trim():(s.code||"NCC")}</option>)}</select></Field>
    <Field l="Kho nhận"><select className={input} value={f.branchId} onChange={e=>patch("branchId",e.target.value)}><option value="">Không gắn</option>{meta.branches.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-   <Field l="Mã bảng vải"><input className={input} value={f.fabricBoardCode} onChange={e=>patch("fabricBoardCode",e.target.value)}/></Field>
-   <Field l="Mã vải"><input className={input} value={f.fabricCode} onChange={e=>patch("fabricCode",e.target.value)}/></Field>
+   <Field l="Bảng vải">
+    <select className={input} value={f.fabricBoardId||selectedBoard?.id||""} onChange={e=>chooseBoard(e.target.value)}>
+     <option value="">Chưa liên kết bảng vải</option>
+     {meta.boards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.fabricCode?` · ${b.fabricCode}`:""}{b.name?` · ${b.name}`:""}</option>)}
+    </select>
+   </Field>
+   <div className="grid grid-cols-2 gap-3">
+    <Field l="Mã bảng vải"><input className={input} value={f.fabricBoardCode} onChange={e=>patch("fabricBoardCode",e.target.value)} placeholder="Có thể nhập tay"/></Field>
+    <Field l="Mã vải"><input className={input} value={f.fabricCode} onChange={e=>patch("fabricCode",e.target.value)} placeholder="Có thể nhập tay"/></Field>
+   </div>
    <Field l="Tên vải"><input className={input} value={f.fabricName} onChange={e=>patch("fabricName",e.target.value)}/></Field>
    <Field l="Mã lô"><input className={input} value={f.lotCode} onChange={e=>patch("lotCode",e.target.value)}/></Field>
-   <Field l="Màu"><input className={input} value={f.colorName} onChange={e=>patch("colorName",e.target.value)}/></Field>
-   <Field l="Mã màu"><input className={input} value={f.colorCode} onChange={e=>patch("colorCode",colorCode(e.target.value))} placeholder="#2"/></Field>
+   <Field l="Màu"><input className={input} value={f.colorName} onChange={e=>patch("colorName",e.target.value)} placeholder="VD: Xanh rêu, Kem"/></Field>
+   <Field l="Mã màu">
+    <input className={input} value={f.colorCode} onChange={e=>patch("colorCode",e.target.value)} onBlur={()=>patch("colorCode",colorCodes(f.colorCode))} placeholder="VD: 8, 9 → #8, #9"/>
+    {!!allowedCodes.length&&<div className="mt-2 flex flex-wrap gap-2">{allowedCodes.map(c=><span key={c} className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-black">{c}</span>)}</div>}
+   </Field>
+   {!!selectedBoard?.colors?.length&&<div className="col-span-2 rounded-2xl border p-3">
+    <div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Màu từ bảng vải · chọn nhiều</div>
+    <div className="mt-2 flex flex-wrap gap-2">{selectedBoard.colors.map(c=>{const code=colorCode(c.code||c.name);const active=allowedCodes.includes(code);return <button type="button" key={c.id} onClick={()=>toggleBoardColor(c)} className={`rounded-full border px-3 py-2 text-xs font-black ${active?"bg-neutral-950 text-white":"bg-white"}`}>{c.name}{c.code?` ${colorCode(c.code)}`:""}</button>})}</div>
+   </div>}
   </div>
   <div className="grid grid-cols-2 gap-3">
    <UnitInput l="NCC báo" unit="m" value={f.supplierDeclaredM} onChange={v=>patch("supplierDeclaredM",v)}/>
@@ -180,18 +238,27 @@ function ReceiptForm({receipt,meta,admin,canCostView,canCostEdit,canUpload,onClo
   {canCostView&&<div className="space-y-3 rounded-3xl bg-amber-50 p-3"><div className="grid grid-cols-2 gap-3"><MoneyInput value={f.unitPrice} onChange={v=>patch("unitPrice",v)}/><Field l="Tiền tệ"><select className={input} value={f.priceCurrency} onChange={e=>patch("priceCurrency",e.target.value)}><option value="VND">VND · Việt Nam</option><option value="CNY">CNY · Nhân dân tệ</option></select></Field><Field l="Tính giá theo"><select className={input} value={f.priceUnit} onChange={e=>patch("priceUnit",e.target.value)}><option value="METER">Mét</option><option value="KG">Kg</option><option value="ROLL">Cây</option></select></Field>{f.priceCurrency==="CNY"&&<Field l="Tỷ giá 1 CNY"><div className="relative"><input inputMode="numeric" className={`${input} pr-12`} value={f.exchangeRateToVnd} onChange={e=>patch("exchangeRateToVnd",e.target.value.replace(/\D/g,""))} placeholder="VD: 3.650"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-neutral-400">VND</span></div></Field>}</div>{f.priceCurrency==="CNY"&&num(f.unitPrice)>0&&num(f.exchangeRateToVnd)>0&&<div className="rounded-2xl bg-white p-3 text-sm"><div className="text-[10px] font-black uppercase text-neutral-400">Đơn giá quy đổi</div><div className="mt-1 text-lg font-black">{money(num(f.unitPrice)*num(f.exchangeRateToVnd))} / {f.priceUnit==="KG"?"kg":f.priceUnit==="ROLL"?"cây":"m"}</div></div>}</div>}
 
   <section className="rounded-3xl border p-3">
-   <div className="flex items-center justify-between"><div><b className="text-sm">Chi tiết từng cây vải</b><div className="text-[11px] text-neutral-400">Màu, mã màu, số NCC báo, thực nhận và ảnh từng cây.</div></div><button onClick={()=>setRolls(x=>[...x,{rollCode:"",colorName:f.colorName||"",colorCode:colorCode(f.colorCode)||"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",passed:true}])} className={smallBtn}>+ Cây</button></div>
+   <div className="flex items-center justify-between"><div><b className="text-sm">Chi tiết từng cây vải</b><div className="text-[11px] text-neutral-400">Màu, mã màu, số NCC báo, thực nhận và ảnh từng cây.</div></div><button onClick={()=>setRolls(x=>[...x,{rollCode:"",colorName:allowedColors.length===1?allowedColors[0].name:"",colorCode:allowedColors.length===1?allowedColors[0].code:"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",defectNote:"",passed:true}])} className={smallBtn}>+ Cây</button></div>
    <div className="mt-3 space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-3xl bg-neutral-50 p-3">
     <div className="flex items-center justify-between"><b>Cây {i+1}</b><button onClick={()=>{setRolls(x=>x.filter((_,j)=>j!==i));setFiles(c=>{const n={...c};delete n[i];return n})}} className="text-xs font-black text-red-600">Xoá</button></div>
     <div className="mt-2 grid grid-cols-2 gap-2">
      <input className={input} value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))} placeholder={`Mã cây ${i+1}`}/>
-     <input className={input} value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))} placeholder="Màu"/>
-     <input className={input} value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:colorCode(e.target.value)}:v))} placeholder="# Mã màu"/>
+     {allowedColors.length>0&&!manualRollColor[i]?<>
+      <select className={input} value={r.colorCode||""} onChange={e=>{const picked=allowedColors.find(c=>c.code===e.target.value);setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:picked?.code||"",colorName:picked?.name||""}:v))}}>
+       <option value="">Chọn màu cây</option>
+       {allowedColors.map(c=><option key={c.code} value={c.code}>{c.name?`${c.name} · `:""}{c.code}</option>)}
+      </select>
+      <button type="button" onClick={()=>setManualRollColor(x=>({...x,[i]:true}))} className={smallBtn}>Nhập màu tay</button>
+     </>:<>
+      <input className={input} value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))} placeholder="Màu"/>
+      <input className={input} value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:colorCode(v.colorCode)}:v))} placeholder="# Mã màu"/>
+     </>}
      <UnitInputBare unit="m NCC" value={r.supplierDeclaredM} onChange={v=>setRolls(x=>x.map((y,j)=>j===i?{...y,supplierDeclaredM:v}:y))}/>
      <UnitInputBare unit="kg NCC" value={r.supplierDeclaredKg} onChange={v=>setRolls(x=>x.map((y,j)=>j===i?{...y,supplierDeclaredKg:v}:y))}/>
      <UnitInputBare unit="m thực" value={r.actualM} onChange={v=>setRolls(x=>x.map((y,j)=>j===i?{...y,actualM:v}:y))}/>
      <UnitInputBare unit="kg thực" value={r.actualKg} onChange={v=>setRolls(x=>x.map((y,j)=>j===i?{...y,actualKg:v}:y))}/>
     </div>
+    <div className="mt-2"><Field l="Ghi chú cây"><textarea className={`${input} min-h-20`} value={r.defectNote||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,defectNote:e.target.value}:v))} placeholder="VD: cây hơi lệch màu, đầu cây bẩn, thiếu mét..."/></Field></div>
     {canUpload&&<div className="mt-3"><div className="grid grid-cols-2 gap-2"><label className="cursor-pointer rounded-xl bg-neutral-950 py-2.5 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-3 w-3"/>Chụp ảnh<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>e.target.files?.[0]&&setFiles(c=>({...c,[i]:[...(c[i]||[]),e.target.files![0]]}))}/></label><label className="cursor-pointer rounded-xl border py-2.5 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-3 w-3"/>Chọn ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>setFiles(c=>({...c,[i]:[...(c[i]||[]),...Array.from(e.target.files||[])]}))}/></label></div><div className="mt-2 flex gap-2 overflow-x-auto">{r.images?.map(im=><img key={im.id} src={asset(im.url)} className="h-14 w-14 rounded-xl object-cover"/>)}{files[i]?.map((file,j)=><div key={j} className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-emerald-50 text-[10px] font-black text-emerald-700">Ảnh mới</div>)}</div></div>}
    </div>)}</div>
   </section>
@@ -201,11 +268,11 @@ function ReceiptForm({receipt,meta,admin,canCostView,canCostEdit,canUpload,onClo
  </div></Modal>
 }
 
-function Detail({receipt:r,admin,canCostView,onClose}:{receipt:Receipt;admin:boolean;canCostView:boolean;onClose:()=>void}){
+function Detail({receipt:r,canSupplierIdentity,canCostView,onClose}:{receipt:Receipt;canSupplierIdentity:boolean;canCostView:boolean;onClose:()=>void}){
  return <Modal title={r.receiptCode} onClose={onClose}><div className="space-y-4 p-4">
-  <div className="grid grid-cols-2 gap-2"><Mini l="Vải" v={r.fabricName||r.fabricCode||"—"}/><Mini l="Màu" v={`${r.colorName||"—"} ${r.colorCode||""}`}/><Mini l="NCC" v={admin?(r.supplier?.name||r.supplier?.code||"—"):(r.supplier?.code||"NCC")}/><Mini l="Kho" v={r.branch?.name||"—"}/><Mini l="Ngày nhận" v={dateText(r.receivedAt)}/><Mini l="Trạng thái" v={statusLabel(r.status)}/></div>
+  <div className="grid grid-cols-2 gap-2"><Mini l="Vải" v={r.fabricName||r.fabricCode||"—"}/><Mini l="Màu" v={`${r.colorName||"—"} ${r.colorCode||""}`}/><Mini l="NCC" v={canSupplierIdentity?`${r.supplier?.code||"NCC"} · ${r.supplier?.name||""}`.trim():(r.supplier?.code||"NCC")}/><Mini l="Kho" v={r.branch?.name||"—"}/><Mini l="Ngày nhận" v={dateText(r.receivedAt)}/><Mini l="Trạng thái" v={statusLabel(r.status)}/></div>
   {canCostView&&<div className="rounded-2xl bg-amber-50 p-3 text-sm"><b>Đơn giá:</b> {r.unitPrice?`${fmt(r.unitPrice,2)} ${r.priceCurrency||"VND"}`:"—"} / {r.priceUnit==="KG"?"kg":r.priceUnit==="ROLL"?"cây":"m"}{r.priceCurrency==="CNY"&&r.exchangeRateToVnd?<div className="mt-1 text-xs text-neutral-600">Tỷ giá: 1 CNY = {new Intl.NumberFormat("vi-VN").format(Number(r.exchangeRateToVnd))}đ · Quy đổi: <b>{money(r.unitPriceVnd||Number(r.unitPrice||0)*Number(r.exchangeRateToVnd))}</b></div>:null}</div>}
-  <div><b className="text-sm">Các cây vải</b><div className="mt-2 space-y-2">{r.rolls?.map((x,i)=><div key={x.id||i} className="rounded-2xl bg-neutral-50 p-3"><div className="font-black">{x.rollCode||`Cây ${i+1}`} · {x.colorName||"—"} {x.colorCode||""}</div><div className="mt-1 text-xs text-neutral-500">NCC {fmt(x.supplierDeclaredM)}m / {fmt(x.supplierDeclaredKg)}kg · Thực {fmt(x.actualM)}m / {fmt(x.actualKg)}kg</div>{x.images?.length?<div className="mt-2 flex gap-2 overflow-x-auto">{x.images.map(im=><img key={im.id} src={asset(im.url)} className="h-20 w-20 rounded-xl object-cover"/>)}</div>:null}</div>)}</div></div>
+  <div><b className="text-sm">Các cây vải</b><div className="mt-2 space-y-2">{r.rolls?.map((x,i)=><div key={x.id||i} className="rounded-2xl bg-neutral-50 p-3"><div className="font-black">{x.rollCode||`Cây ${i+1}`} · {x.colorName||"—"} {x.colorCode||""}</div><div className="mt-1 text-xs text-neutral-500">NCC {fmt(x.supplierDeclaredM)}m / {fmt(x.supplierDeclaredKg)}kg · Thực {fmt(x.actualM)}m / {fmt(x.actualKg)}kg</div>{x.defectNote?<div className="mt-1 text-xs text-neutral-600">Ghi chú: {x.defectNote}</div>:null}{x.images?.length?<div className="mt-2 flex gap-2 overflow-x-auto">{x.images.map(im=><img key={im.id} src={asset(im.url)} className="h-20 w-20 rounded-xl object-cover"/>)}</div>:null}</div>)}</div></div>
   <div><b className="text-sm">Các lần cân GSM</b><div className="mt-2 space-y-2">{r.measurements?.map(m=><div key={m.id} className="flex justify-between rounded-xl bg-neutral-50 p-3 text-xs"><span>{m.positionLabel||"Mẫu"} · {fmt(m.weightGrams,4)}g</span><b>{fmt(m.gsm,2)} GSM</b></div>)}{!r.measurements?.length&&<Empty t="Chưa có phép đo GSM."/>}</div></div>
  </div></Modal>
 }

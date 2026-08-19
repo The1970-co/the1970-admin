@@ -439,8 +439,8 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
     try{
       setSaving(true);setError("");
       if(!form.name.trim())throw new Error("Thiếu tên mẫu.");
-      if(!normalizeCode(form.code))throw new Error("Thiếu mã mẫu.");
-      if(codeAvailable!==true)throw new Error(codeMessage||"Mã mẫu chưa hợp lệ.");
+      const normalizedCode=normalizeCode(form.code);
+      if(normalizedCode && codeAvailable!==true)throw new Error(codeMessage||"Mã mẫu chưa hợp lệ.");
       const staff=meta.staff.find(x=>x.id===form.assigneeStaffId);
       const factory=meta.factories.find(x=>x.id===form.sampleFactoryId);
       const board=meta.boards.find(x=>x.id===form.fabricBoardId);
@@ -449,7 +449,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
         method:sample?"PATCH":"POST",
         body:JSON.stringify({
           name:form.name,
-          code:normalizeCode(form.code),
+          code:normalizedCode||undefined,
           year:Number(form.year||new Date().getFullYear()),
           season:form.season||null,
           category:titleCase(form.category)||null,
@@ -496,7 +496,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
 
       <div className="grid grid-cols-2 gap-3">
         <Field l="Tên mẫu"><input className={input} value={form.name} onChange={e=>patch("name",e.target.value)}/></Field>
-        <Field l="Mã mẫu"><input className={input} value={form.code} onChange={e=>patch("code",normalizeCode(e.target.value))}/><div className={`mt-1 text-[11px] ${codeAvailable===false?"text-red-600":codeAvailable?"text-emerald-600":"text-neutral-400"}`}>{codeMessage}</div></Field>
+        <Field l="Mã mẫu"><input className={input} value={form.code} onChange={e=>patch("code",normalizeCode(e.target.value))} placeholder={sample?"Mã mẫu":"Để trống để tự sinh mã"}/><div className={`mt-1 text-[11px] ${codeAvailable===false?"text-red-600":codeAvailable?"text-emerald-600":"text-neutral-400"}`}>{codeMessage||(!sample&&!form.code?"Để trống, hệ thống sẽ tự sinh mã mẫu.":"")}</div></Field>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -553,7 +553,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
 
       <div className="grid grid-cols-2 gap-2 border-t pt-4">
         <button onClick={()=>closeWithZoomReset(onClose)} className="rounded-2xl border py-3 font-black">Đóng</button>
-        <button disabled={saving||!form.name||!form.code} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu mẫu"}</button>
+        <button disabled={saving||!form.name.trim()} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu mẫu"}</button>
       </div>
     </div>
     {measurementOpen&&measurement&&<SampleMeasurementEditor value={measurement} onChange={setMeasurement} onClose={()=>setMeasurementOpen(false)} onSaveTemplate={tpl=>{const rows=[tpl,...loadMeasurementTemplates().filter(x=>x.id!==tpl.id)];localStorage.setItem(MEASUREMENT_TEMPLATE_KEY,JSON.stringify(rows));setMeasurementTemplates(rows)}}/>}
