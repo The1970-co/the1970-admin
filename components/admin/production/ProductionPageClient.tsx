@@ -13,6 +13,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { asset, fmt, productionApi } from "./production-api";
+import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 
 type Sample = {
   id: string;
@@ -44,6 +45,9 @@ type Roll = {
   colorCode?: string | null;
   actualM: number;
   actualKg: number;
+  supplierDeclaredM?: number;
+  supplierDeclaredKg?: number;
+  usingSupplierDeclaredM?: boolean;
   remainingM: number;
   remainingKg: number;
   isDepleted?: boolean;
@@ -104,7 +108,22 @@ const STATUS_LABEL: Record<string, string> = {
 const input =
   "w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900";
 
+function useProductionPermissions(){
+  const user=getCurrentUserFromStorage() as any;
+  const roles=[...(Array.isArray(user?.roles)?user.roles:[]),user?.role,user?.roleCode,user?.staffRole].map(x=>String(x||"").toLowerCase());
+  const root=roles.includes("owner")||roles.includes("admin");
+  const keys=new Set(getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId));
+  const can=(key:string)=>root||keys.has("*")||keys.has(key);
+  return {user,can};
+}
+
 export default function ProductionPageClient() {
+  const {user,can}=useProductionPermissions();
+  const canView=can("production.view");
+  const canCreate=can("production.create");
+  const canEdit=can("production.edit");
+  const canCalculate=can("production.calculate");
+  const canManage=can("production.manage");
   const [meta, setMeta] = useState<Meta>({ samples: [], products: [], factories: [], accessories: [], rolls: [] });
   const [orders, setOrders] = useState<Order[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -130,6 +149,7 @@ export default function ProductionPageClient() {
     void load();
   }, []);
 
+  if(user&&!canView)return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Lệnh sản xuất.</div>;
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
@@ -141,12 +161,8 @@ export default function ProductionPageClient() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setFactoryOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">
-            <Factory className="mr-1 inline h-4 w-4" /> Nhà may
-          </button>
-          <button onClick={() => setCreateOpen(true)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">
-            <Plus className="mr-1 inline h-4 w-4" /> Tạo lệnh SX
-          </button>
+          {canManage&&<button onClick={() => setFactoryOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Factory className="mr-1 inline h-4 w-4" /> Nhà may</button>}
+          {canCreate&&<button onClick={() => setCreateOpen(true)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" /> Tạo lệnh SX</button>}
         </div>
       </div>
 
@@ -191,8 +207,8 @@ export default function ProductionPageClient() {
           }}
         />
       )}
-      {detailId && <OrderWizard id={detailId} meta={meta} onClose={() => setDetailId(null)} onChanged={load} />}
-      {factoryOpen && <FactoryModal factories={meta.factories} onClose={() => setFactoryOpen(false)} onSaved={load} />}
+      {detailId && <OrderWizard id={detailId} meta={meta} canEdit={canEdit} canCalculate={canCalculate} canManage={canManage} onClose={() => setDetailId(null)} onChanged={load} />}
+      {factoryOpen && canManage && <FactoryModal factories={meta.factories} onClose={() => setFactoryOpen(false)} onSaved={load} />}
     </div>
   );
 }
@@ -281,7 +297,7 @@ function CreateOrderModal({ meta, onClose, onSaved }: { meta: Meta; onClose: () 
   );
 }
 
-function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta; onClose: () => void; onChanged: () => void }) {
+function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onChanged }: { id: string; meta: Meta; canEdit:boolean; canCalculate:boolean; canManage:boolean; onClose: () => void; onChanged: () => void }) {
   const [order, setOrder] = useState<any>(null);
   const [step, setStep] = useState(2);
   const [materials, setMaterials] = useState<MaterialSpec[]>([]);
@@ -333,6 +349,7 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     try {
       setBusy(true);
       setError("");
+      if(!canEdit)throw new Error("Bạn không có quyền sửa lệnh sản xuất.");
       await productionApi(`/production/orders/${id}/spec`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -359,12 +376,17 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     try {
       setBusy(true);
       setError("");
+      if(!canEdit) throw new Error("Bạn không có quyền sửa cây vải của lệnh.");
       const allRolls = await productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}`);
       const selectedRows = allRolls.filter((r) => selected[r.id]);
-      await productionApi(`/production/orders/${id}/rolls`, {
-        method: "PATCH",
-        body: JSON.stringify({ rolls: selectedRows.map((r) => ({ fabricReceiptRollId: r.id, allocatedM: allocated[r.id] || r.remainingM, allocatedKg: r.remainingKg })) }),
+      const payload=selectedRows.map((r)=>{
+        const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
+        const meters=Number(String(allocated[r.id]||availableM).replace(",","."));
+        if(!meters||meters<=0)throw new Error(`Nhập số mét xuất cho cây ${r.rollCode||r.id}.`);
+        if(meters>availableM+0.0001)throw new Error(`Cây ${r.rollCode||r.id} chỉ còn ${fmt(availableM)}m.`);
+        return {fabricReceiptRollId:r.id,allocatedM:meters,allocatedKg:r.remainingKg};
       });
+      await productionApi(`/production/orders/${id}/rolls`, {method:"PATCH",body:JSON.stringify({rolls:payload})});
       await load();
       setStep(4);
     } catch (e) { setError(e instanceof Error ? e.message : "Không lưu được cây vải."); }
@@ -375,6 +397,7 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     try {
       setBusy(true);
       setError("");
+      if(!canEdit)throw new Error("Bạn không có quyền sửa lệnh sản xuất.");
       await productionApi(`/production/orders/${id}/spec`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -401,6 +424,7 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     try {
       setBusy(true);
       setError("");
+      if(!canCalculate)throw new Error("Bạn không có quyền tính sản lượng.");
       const c = await productionApi<any>(`/production/orders/${id}/calculate`, { method: "POST" });
       setCalc(c);
       await load();
@@ -414,6 +438,7 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
     try {
       setBusy(true);
       setError("");
+      if(!canManage)throw new Error("Bạn không có quyền gửi lệnh sản xuất.");
       await productionApi(`/production/orders/${id}/send`, { method: "POST" });
       await load();
       onChanged();
@@ -575,7 +600,7 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
                 {!materials.length && <div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa gắn nguyên phụ liệu.</div>}
               </div>
             </div>
-            <div className="flex justify-end"><button disabled={busy} onClick={() => void saveSpec()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu định mức → Chọn cây vải</button></div>
+            <div className="flex justify-end"><button disabled={busy||!canEdit} onClick={() => void saveSpec()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu định mức → Chọn cây vải</button></div>
           </div>
         )}
 
@@ -584,28 +609,32 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
             <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className={`${input} pl-10`} value={rollQ} onChange={(e) => void searchRolls(e.target.value)} placeholder="Tìm mã phiếu, mã cây, mã vải, màu, #mã màu..." /></div>
             <div className="max-h-[460px] space-y-2 overflow-y-auto rounded-2xl border p-2">
               {rolls.map((r) => {
-                const disabled = !!r.isDepleted || !!r.missingActual;
-                const active = !!selected[r.id];
+                const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
+                const disabled=!!r.isDepleted||availableM<=0;
+                const active=!!selected[r.id];
+                const exportM=Number(String(allocated[r.id]??"").replace(",","."))||0;
+                const afterM=Math.max(0,availableM-exportM);
                 return (
-                  <div key={r.id} className={`grid items-center gap-3 rounded-2xl border p-3 md:grid-cols-[auto_1fr_130px] ${disabled ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
-                    <input type="checkbox" disabled={disabled} checked={active} onChange={(e) => setSelected({ ...selected, [r.id]: e.target.checked })} />
-                    <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${r.isDepleted ? "text-red-600" : r.missingActual ? "text-amber-600" : "text-emerald-700"}`}>{r.isDepleted ? "Đã xuất hết" : r.missingActual ? "Chưa nhập mét thực nhận" : `Còn ${fmt(r.remainingM)}m / ${fmt(r.remainingKg)}kg`}</div></div>
-                    <input disabled={!active || disabled} type="number" step="0.001" className={input} value={allocated[r.id] ?? String(r.remainingM || "")} onChange={(e) => setAllocated({ ...allocated, [r.id]: e.target.value })} placeholder="Mét xuất" />
+                  <div key={r.id} className={`grid items-center gap-3 rounded-2xl border p-3 md:grid-cols-[auto_1fr_170px_150px] ${disabled ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
+                    <input type="checkbox" disabled={disabled||!canEdit} checked={active} onChange={(e) => setSelected({ ...selected, [r.id]: e.target.checked })} />
+                    <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${r.isDepleted?"text-red-600":r.usingSupplierDeclaredM?"text-amber-600":"text-emerald-700"}`}>{r.isDepleted?"Đã xuất hết":availableM<=0?"Cây chưa có số mét":`Còn ${fmt(availableM)}m${r.usingSupplierDeclaredM?" · dùng mét NCC báo":""}`}</div></div>
+                    <div><div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">Xuất cây này</div><input disabled={!active||disabled||!canEdit} inputMode="decimal" className={input} value={allocated[r.id] ?? (active?String(availableM):"")} onChange={(e) => setAllocated({ ...allocated, [r.id]: e.target.value })} placeholder="Mét xuất" /></div>
+                    <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[10px] font-semibold uppercase text-neutral-400">Còn sau xuất</div><div className="mt-1 font-semibold">{active?fmt(afterM):fmt(availableM)} m</div></div>
                   </div>
                 );
               })}
             </div>
-            <div className="flex justify-end"><button disabled={busy} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu cây vải → Chọn size</button></div>
+            <div className="flex justify-end"><button disabled={busy||!canEdit} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu cây vải → Chọn size</button></div>
           </div>
         )}
 
         {step === 4 && (
-          <SizeRatioEditor order={order} setOrder={setOrder} sizeSet={sizeSet} setSizeSet={setSizeSet} ratio={ratio} setRatio={setRatio} onNext={() => void saveSizes()} busy={busy} />
+          <SizeRatioEditor order={order} setOrder={setOrder} sizeSet={sizeSet} setSizeSet={setSizeSet} ratio={ratio} setRatio={setRatio} onNext={() => void saveSizes()} busy={busy||!canEdit} />
         )}
 
         {step === 5 && (
           <div className="space-y-5">
-            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Tính sản lượng cắt và nguyên phụ liệu</b><div className="text-xs text-neutral-400">Dựa trên cây vải đã chọn, định mức, hao hụt và tỷ lệ size.</div></div></div><button disabled={busy} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">Tính sản lượng & NPL</button></div>
+            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Tính sản lượng cắt và nguyên phụ liệu</b><div className="text-xs text-neutral-400">Dựa trên cây vải đã chọn, định mức, hao hụt và tỷ lệ size.</div></div></div><button disabled={busy||!canCalculate} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">Tính sản lượng & NPL</button></div>
             {calc && <Results c={calc} />}
           </div>
         )}
@@ -613,7 +642,7 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
         {step === 6 && (
           <div className="space-y-5">
             {calc ? <Results c={calc} /> : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại bước 5 để tính sản lượng.</div>}
-            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
+            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !canManage || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
           </div>
         )}
 
