@@ -1,6 +1,5 @@
 "use client";
 
-import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
@@ -8,11 +7,18 @@ import {
   ArrowLeft,
   CalendarDays,
   Camera,
+  Download,
+  FileUp,
+  FlipHorizontal,
   ImagePlus,
   Pencil,
   Plus,
+  RefreshCcw,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
   Ruler,
+  Save,
   Send,
   Trash2,
   X,
@@ -97,6 +103,38 @@ async function upload(file:File) {
   const fd=new FormData();
   fd.append("file",file);
   return api<{url:string}>("/sample-fabric/samples/upload",{method:"POST",body:fd});
+}
+
+async function uploadPatternFile(file:File) {
+  const fd=new FormData();
+  fd.append("file",file);
+  return api<{url:string;filename?:string;mimetype?:string;size?:number}>("/sample-fabric/samples/upload-file",{method:"POST",body:fd});
+}
+type SampleAsset={type:string;url:string;caption?:string|null};
+type PatternAttachment={type:"OTHER";url:string;caption:string;name:string;mimetype?:string;size?:number};
+function patternCaption(name:string,mimetype?:string,size?:number){
+  return `RAP_FILE|${encodeURIComponent(name)}|${encodeURIComponent(mimetype||"")}|${Number(size||0)}`;
+}
+function parsePatternCaption(caption?:string|null):{name:string;mimetype?:string;size?:number}|null{
+  const raw=String(caption||"");
+  if(!raw.startsWith("RAP_FILE|"))return null;
+  const parts=raw.split("|");
+  try{return {name:decodeURIComponent(parts[1]||"file-rập"),mimetype:decodeURIComponent(parts[2]||"")||undefined,size:Number(parts[3]||0)||undefined}}catch{return {name:parts[1]||"file-rập"}}
+}
+function isPatternAsset(x:any){return String(x?.type||"")==="OTHER"&&!!parsePatternCaption(x?.caption)}
+function safeFilename(v:string){return String(v||"file").replace(/[\\/:*?"<>|]+/g,"-").replace(/\s+/g," ").trim()}
+async function downloadUrl(url:string,filename:string){
+  try{
+    const res=await fetch(asset(url));
+    if(!res.ok)throw new Error("download");
+    const blob=await res.blob();
+    const href=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=href;a.download=safeFilename(filename);document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(href),1000);
+  }catch{
+    window.open(asset(url),"_blank","noopener,noreferrer");
+  }
 }
 function asset(url?:string|null){
   if(!url)return "";
@@ -229,7 +267,7 @@ export default function Page(){
     }catch(e){setError(e instanceof Error?e.message:"Không xoá được mẫu.")}
   }
 
-  return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(112px+env(safe-area-inset-bottom))] text-neutral-950">
+  return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
     <div className="mx-auto max-w-md">
       <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[calc(16px+env(safe-area-inset-top))] backdrop-blur">
         <div className="flex items-center justify-between gap-3">
@@ -283,6 +321,7 @@ export default function Page(){
       sample={editing}
       meta={meta}
       canViewFabricLink={can("fabric_library.view")}
+      canUpload={can("design_sample.upload_images")}
       onClose={()=>setEditing(undefined)}
       onSaved={async()=>{setEditing(undefined);await load()}}
     />}
@@ -294,13 +333,81 @@ export default function Page(){
       onSaved={async()=>{setDispatching(null);setDetail(null);await load()}}
     />}
 
-    {!detail && editing === undefined && !dispatching && <MobileBottomNav/>}
+    
   </main>
 }
 
 function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{sample:Sample;can:(k:string)=>boolean;onClose:()=>void;onEdit:()=>void;onDelete:()=>void;onDispatch:()=>void;onChanged:()=>void}){
-  const image=asset(sample.coverImageUrl||sample.images?.[0]?.url||sample.matchedProduct?.imageUrl);
   const dispatches=Array.isArray(sample.sampleDispatches)?sample.sampleDispatches:[];
+  const patternAttachments=(sample.images||[]).filter((x:any)=>isPatternAsset(x)).map((x:any)=>({...x,...parsePatternCaption(x.caption)}));
+  const initialGallery=Array.from(new Set([
+    sample.coverImageUrl,
+    ...(sample.images||[]).filter((x:any)=>!isPatternAsset(x)).map((x:any)=>x?.url),
+    sample.matchedProduct?.imageUrl,
+  ].filter(Boolean).map((x:any)=>asset(x))));
+  const [gallery,setGallery]=useState<string[]>(initialGallery);
+  const image=gallery[0]||"";
+  const [viewerIndex,setViewerIndex]=useState<number|null>(null);
+  const [editMode,setEditMode]=useState(false);
+  const [rotate,setRotate]=useState(0);
+  const [flipX,setFlipX]=useState(false);
+  const [cropRatio,setCropRatio]=useState<"original"|"1:1"|"4:5"|"3:4">("original");
+  const [brightness,setBrightness]=useState(100);
+  const [contrast,setContrast]=useState(100);
+  const [editBusy,setEditBusy]=useState(false);
+  const [viewerError,setViewerError]=useState("");
+  const openViewer=(url:string)=>{const i=gallery.indexOf(url);setViewerIndex(i>=0?i:0);setEditMode(false);setViewerError("")};
+  const closeViewer=()=>{setViewerIndex(null);setEditMode(false);setViewerError("")};
+  const prevImage=()=>setViewerIndex(i=>i===null?null:(i-1+gallery.length)%gallery.length);
+  const nextImage=()=>setViewerIndex(i=>i===null?null:(i+1)%gallery.length);
+  function resetEdit(){setRotate(0);setFlipX(false);setCropRatio("original");setBrightness(100);setContrast(100);setViewerError("")}
+  async function saveEditedImage(){
+    if(viewerIndex===null||!gallery[viewerIndex]||!can("design_sample.edit")||!can("design_sample.upload_images"))return;
+    try{
+      setEditBusy(true);setViewerError("");
+      const currentAsset=gallery[viewerIndex];
+      const res=await fetch(currentAsset);
+      if(!res.ok)throw new Error("Không đọc được ảnh gốc.");
+      const blob=await res.blob();
+      const img=await new Promise<HTMLImageElement>((resolve,reject)=>{
+        const el=new Image();const u=URL.createObjectURL(blob);
+        el.onload=()=>{URL.revokeObjectURL(u);resolve(el)};el.onerror=()=>{URL.revokeObjectURL(u);reject(new Error("Không mở được ảnh."))};el.src=u;
+      });
+      let sx=0,sy=0,sw=img.naturalWidth,sh=img.naturalHeight;
+      const ratioMap:any={"1:1":1,"4:5":4/5,"3:4":3/4};
+      const wanted=ratioMap[cropRatio];
+      if(wanted){
+        const current=sw/sh;
+        if(current>wanted){const nw=sh*wanted;sx=(sw-nw)/2;sw=nw}else{const nh=sw/wanted;sy=(sh-nh)/2;sh=nh}
+      }
+      const angle=((rotate%360)+360)%360;
+      const quarter=angle===90||angle===270;
+      const maxSide=2200;
+      const scale=Math.min(1,maxSide/Math.max(sw,sh));
+      const drawW=Math.max(1,Math.round(sw*scale)),drawH=Math.max(1,Math.round(sh*scale));
+      const canvas=document.createElement("canvas");
+      canvas.width=quarter?drawH:drawW;canvas.height=quarter?drawW:drawH;
+      const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Không tạo được ảnh chỉnh sửa.");
+      ctx.save();ctx.translate(canvas.width/2,canvas.height/2);ctx.rotate(angle*Math.PI/180);ctx.scale(flipX?-1:1,1);
+      ctx.filter=`brightness(${brightness}%) contrast(${contrast}%)`;
+      ctx.drawImage(img,sx,sy,sw,sh,-drawW/2,-drawH/2,drawW,drawH);ctx.restore();
+      const editedBlob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Không xuất được ảnh.")),"image/jpeg",0.92));
+      const file=new File([editedBlob],`${safeFilename(sample.code||"mau")}-edited-${Date.now()}.jpg`,{type:"image/jpeg"});
+      const uploaded=await upload(file);
+      const rawImages=(sample.images||[]).map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||null}));
+      let replaced=false;
+      const nextImages=rawImages.map((x:any)=>{
+        if(!isPatternAsset(x)&&asset(x.url)===currentAsset){replaced=true;return {...x,url:uploaded.url,caption:x.caption||"Ảnh đã chỉnh sửa"}}
+        return x;
+      });
+      if(!replaced)nextImages.push({type:"SAMPLE",url:uploaded.url,caption:"Ảnh đã chỉnh sửa"});
+      const nextCover=asset(sample.coverImageUrl)===currentAsset?uploaded.url:(sample.coverImageUrl||uploaded.url);
+      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({coverImageUrl:nextCover,images:nextImages})});
+      setGallery(g=>g.map((u,i)=>i===viewerIndex?asset(uploaded.url):u));
+      setEditMode(false);resetEdit();await onChanged();
+    }catch(e){setViewerError(e instanceof Error?e.message:"Không lưu được ảnh chỉnh sửa.")}
+    finally{setEditBusy(false)}
+  }
   return <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/45 p-3 pb-[max(16px,env(safe-area-inset-bottom))]" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-y"}}>
     <div className="mx-auto my-4 max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b p-4">
@@ -309,7 +416,14 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
       </div>
 
       <div className="space-y-4 p-4">
-        {image&&<img src={image} className="h-64 w-full rounded-3xl object-cover" alt=""/>}{(sample.images||[]).length>1&&<div className="flex gap-2 overflow-x-auto pb-1">{(sample.images||[]).map((img:any,i:number)=><img key={img.id||`${img.url}-${i}`} src={asset(img.url)} className="h-20 w-20 shrink-0 rounded-2xl object-cover" alt=""/>)}</div>}
+        {image&&<button type="button" onClick={()=>openViewer(image)} className="block w-full overflow-hidden rounded-3xl"><img src={image} className="h-64 w-full object-cover" alt=""/><div className="mt-2 text-center text-[11px] font-semibold text-neutral-400">Bấm ảnh để xem lớn</div></button>}
+        {gallery.length>1&&<div className="flex gap-2 overflow-x-auto pb-1">{gallery.map((url:string,i:number)=><div key={`${url}-${i}`} className="relative shrink-0"><button type="button" onClick={()=>setViewerIndex(i)} className="overflow-hidden rounded-2xl border"><img src={url} className="h-20 w-20 object-cover" alt=""/></button><button type="button" onClick={()=>void downloadUrl(url,`${sample.code||"mau"}-${i+1}.jpg`)} className="absolute bottom-1 right-1 grid h-7 w-7 place-items-center rounded-lg bg-white/95 shadow"><Download className="h-3.5 w-3.5"/></button></div>)}</div>}
+        {!!gallery.length&&<button type="button" onClick={()=>void downloadUrl(gallery[0],`${sample.code||"mau"}-anh-dai-dien.jpg`)} className="w-full rounded-2xl border py-2.5 text-xs font-black"><Download className="mr-1 inline h-4 w-4"/>Tải ảnh đại diện</button>}
+
+        {!!patternAttachments.length&&<section className="rounded-2xl bg-neutral-50 p-3">
+          <div className="mb-2 text-xs font-black">File rập / tài liệu kỹ thuật</div>
+          <div className="space-y-2">{patternAttachments.map((f:any,i:number)=><div key={f.id||`${f.url}-${i}`} className="flex items-center gap-2 rounded-xl bg-white p-2.5"><div className="min-w-0 flex-1"><div className="truncate text-xs font-black">{f.name||`File rập ${i+1}`}</div><div className="text-[10px] text-neutral-400">{f.size?`${(Number(f.size)/1024/1024).toFixed(2)} MB`:""}</div></div><button onClick={()=>void downloadUrl(f.url,`${sample.code||"mau"}-${f.name||`file-rap-${i+1}`}`)} className="grid h-9 w-9 place-items-center rounded-xl border"><Download className="h-4 w-4"/></button></div>)}</div>
+        </section>}
 
         <div className="grid grid-cols-2 gap-3">
           <Info l="Năm" v={sample.year||"—"}/>
@@ -340,6 +454,40 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
         </div>
       </div>
     </div>
+
+    {viewerIndex!==null&&gallery[viewerIndex]&&<div className="fixed inset-0 z-[120] flex flex-col bg-black/95" style={{touchAction:"pinch-zoom"}}>
+      <div className="flex shrink-0 items-center justify-between gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]">
+        <div className="flex gap-2">
+          <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="grid h-10 w-10 place-items-center rounded-full bg-white/95"><Download className="h-4 w-4"/></button>
+          {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>{setEditMode(x=>!x);resetEdit()}} className={`rounded-full px-4 text-xs font-black ${editMode?"bg-amber-300 text-black":"bg-white/95"}`}><Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh</button>}
+        </div>
+        <button type="button" onClick={closeViewer} className="grid h-10 w-10 place-items-center rounded-full bg-white/95"><X className="h-5 w-5"/></button>
+      </div>
+
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:editMode?"pan-y":"pan-x pan-y pinch-zoom"}}>
+        {gallery.length>1&&!editMode&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">‹</button>}
+        <img src={gallery[viewerIndex]} className="max-h-full max-w-full object-contain transition-transform" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
+        {gallery.length>1&&!editMode&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">›</button>}
+      </div>
+
+      {editMode&&<div className="shrink-0 border-t border-white/20 bg-black/80 p-3 pb-[max(12px,env(safe-area-inset-bottom))] text-white">
+        {viewerError&&<div className="mb-2 rounded-xl bg-red-500/20 p-2 text-xs text-red-200">{viewerError}</div>}
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          <button onClick={()=>setRotate(x=>x-90)} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RotateCcw className="mr-1 inline h-4 w-4"/>Trái</button>
+          <button onClick={()=>setRotate(x=>x+90)} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RotateCw className="mr-1 inline h-4 w-4"/>Phải</button>
+          <button onClick={()=>setFlipX(x=>!x)} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${flipX?"bg-white text-black":"bg-white/10"}`}><FlipHorizontal className="mr-1 inline h-4 w-4"/>Lật ngang</button>
+          {(["original","1:1","4:5","3:4"] as const).map(r=><button key={r} onClick={()=>setCropRatio(r)} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${cropRatio===r?"bg-white text-black":"bg-white/10"}`}>{r==="original"?"Gốc":r}</button>)}
+          <button onClick={resetEdit} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RefreshCcw className="mr-1 inline h-4 w-4"/>Reset</button>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-[10px] font-black uppercase text-white/60">Độ sáng <b className="text-white">{brightness}%</b><input type="range" min="50" max="150" value={brightness} onChange={e=>setBrightness(Number(e.target.value))} className="mt-1 w-full"/></label>
+          <label className="text-[10px] font-black uppercase text-white/60">Tương phản <b className="text-white">{contrast}%</b><input type="range" min="50" max="150" value={contrast} onChange={e=>setContrast(Number(e.target.value))} className="mt-1 w-full"/></label>
+        </div>
+        <button disabled={editBusy} onClick={()=>void saveEditedImage()} className="mt-3 w-full rounded-2xl bg-white py-3 text-sm font-black text-black disabled:opacity-50"><Save className="mr-1 inline h-4 w-4"/>{editBusy?"Đang lưu ảnh...":"Lưu bản chỉnh sửa"}</button>
+      </div>}
+
+      {!editMode&&gallery.length>1&&<div className="shrink-0 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 text-center"><span className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-black text-black">{viewerIndex+1}/{gallery.length}</span></div>}
+    </div>}
   </div>
 }
 
@@ -367,7 +515,7 @@ function DispatchRow({dispatch,can,onChanged}:{dispatch:any;can:(k:string)=>bool
   </div>
 }
 
-function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Sample|null;meta:Meta;canViewFabricLink:boolean;onClose:()=>void;onSaved:()=>void}){
+function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{sample:Sample|null;meta:Meta;canViewFabricLink:boolean;canUpload:boolean;onClose:()=>void;onSaved:()=>void}){
   const [form,setForm]=useState<any>({
     name:sample?.name||"",
     code:sample?.code||"",
@@ -387,9 +535,17 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
     coverImageUrl:sample?.coverImageUrl||sample?.images?.[0]?.url||"",
   });
   const [sampleImages,setSampleImages]=useState<Array<{type:string;url:string;caption?:string}>>(
-    Array.isArray(sample?.images) && sample!.images!.length
-      ? sample!.images!.map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||"Ảnh mẫu / ảnh tham khảo"}))
+    Array.isArray(sample?.images) && sample!.images!.some((x:any)=>!isPatternAsset(x))
+      ? sample!.images!.filter((x:any)=>!isPatternAsset(x)).map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||"Ảnh mẫu / ảnh tham khảo"}))
       : (sample?.coverImageUrl ? [{type:"SAMPLE",url:sample.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}] : [])
+  );
+  const [patternFiles,setPatternFiles]=useState<PatternAttachment[]>(
+    Array.isArray(sample?.images)
+      ? sample!.images!.filter((x:any)=>isPatternAsset(x)).map((x:any)=>{
+          const meta=parsePatternCaption(x.caption);
+          return {type:"OTHER",url:x.url,caption:x.caption,name:meta?.name||"file-rập",mimetype:meta?.mimetype,size:meta?.size};
+        })
+      : []
   );
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState("");
@@ -435,6 +591,21 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
     }catch(e){setError(e instanceof Error?e.message:"Upload lỗi")}
   }
 
+  async function changePatternFiles(files?:FileList|File[]){
+    const list=Array.from(files||[]);
+    if(!list.length)return;
+    if(!canUpload){setError("Không có quyền tải file mẫu.");return}
+    try{
+      const uploaded:PatternAttachment[]=[];
+      for(const file of list){
+        const r=await uploadPatternFile(file);
+        const name=r.filename||file.name;
+        uploaded.push({type:"OTHER",url:r.url,caption:patternCaption(name,r.mimetype||file.type,r.size||file.size),name,mimetype:r.mimetype||file.type,size:r.size||file.size});
+      }
+      setPatternFiles(current=>[...current,...uploaded]);
+    }catch(e){setError(e instanceof Error?e.message:"Không tải được file rập.")}
+  }
+
   async function save(){
     try{
       setSaving(true);setError("");
@@ -469,7 +640,10 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
           note:form.note||null,
           technicalNote:form.technicalNote||null,
           coverImageUrl:form.coverImageUrl||null,
-          images:sampleImages.length?sampleImages:(form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[]),
+          images:[
+            ...(sampleImages.length?sampleImages:(form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[])),
+            ...patternFiles.map(x=>({type:"OTHER",url:x.url,caption:x.caption})),
+          ],
         })
       });
       if(measurement)saveSampleMeasurement({id:saved?.id||sample?.id,code:saved?.code||form.code},measurement);
@@ -485,12 +659,12 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
 
       <Field l="Ảnh mẫu / ảnh tham khảo">
         <div className="rounded-3xl border border-dashed p-3">
-          {!!sampleImages.length&&<div className="mb-3 flex gap-2 overflow-x-auto pb-1">{sampleImages.map((img,i)=><div key={`${img.url}-${i}`} className="relative shrink-0"><button type="button" onClick={()=>patch("coverImageUrl",img.url)} className={`block overflow-hidden rounded-2xl border-2 ${form.coverImageUrl===img.url?"border-neutral-950":"border-transparent"}`}><img src={asset(img.url)} className="h-28 w-24 object-cover" alt=""/></button><button type="button" onClick={()=>{const next=sampleImages.filter((_,j)=>j!==i);setSampleImages(next);if(form.coverImageUrl===img.url)patch("coverImageUrl",next[0]?.url||"")}} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button></div>)}</div>}
+          {!!sampleImages.length&&<div className="mb-3 flex gap-2 overflow-x-auto pb-1">{sampleImages.map((img,i)=><div key={`${img.url}-${i}`} className="relative shrink-0"><button type="button" onClick={()=>patch("coverImageUrl",img.url)} className={`block overflow-hidden rounded-2xl border-2 ${form.coverImageUrl===img.url?"border-neutral-950":"border-transparent"}`}><img src={asset(img.url)} className="h-28 w-24 object-cover" alt=""/></button>{canUpload&&<button type="button" onClick={()=>{const next=sampleImages.filter((_,j)=>j!==i);setSampleImages(next);if(form.coverImageUrl===img.url)patch("coverImageUrl",next[0]?.url||"")}} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button>}</div>)}</div>}
           <div className="mb-2 text-[11px] text-neutral-400">Chọn ảnh để đặt làm ảnh đại diện. Có thể tải nhiều ảnh cùng lúc.</div>
-          <div className="grid grid-cols-2 gap-2">
+          {canUpload&&<div className="grid grid-cols-2 gap-2">
             <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
             <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
-          </div>
+          </div>}
         </div>
       </Field>
 
@@ -526,6 +700,21 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
 
       <Field l="Việc tiếp theo"><input className={input} value={form.nextAction} onChange={e=>patch("nextAction",e.target.value)}/></Field>
       <Field l="Hạn dự kiến"><input type="date" className={input} value={form.dueDate} onChange={e=>patch("dueDate",e.target.value)}/></Field>
+      <section className="rounded-3xl border border-neutral-200 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div><div className="text-sm font-black">File rập / tài liệu kỹ thuật</div><div className="mt-1 text-[11px] text-neutral-400">PDF, DXF, DWG, AI, PLT, ZIP… lưu theo từng mẫu.</div></div>
+          {canUpload&&<label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white"><FileUp className="mr-1 inline h-4 w-4"/>Tải file<input type="file" multiple className="hidden" accept=".pdf,.dxf,.dwg,.ai,.plt,.zip,.rar,.7z,.astm,.aama,.rul,.mdl,.pds,.hpgl,.svg" onChange={e=>void changePatternFiles(e.target.files||undefined)}/></label>}
+        </div>
+        <div className="mt-3 space-y-2">
+          {patternFiles.map((f,i)=><div key={`${f.url}-${i}`} className="flex items-center gap-2 rounded-2xl bg-neutral-50 p-3">
+            <div className="min-w-0 flex-1"><div className="truncate text-xs font-black">{f.name}</div><div className="mt-0.5 text-[10px] text-neutral-400">{f.size?`${(f.size/1024/1024).toFixed(f.size>1024*1024?2:3)} MB`:"File rập"}{f.mimetype?` · ${f.mimetype}`:""}</div></div>
+            <button type="button" onClick={()=>void downloadUrl(f.url,`${form.code||form.name||"mau"}-${f.name}`)} className="grid h-9 w-9 place-items-center rounded-xl border bg-white"><Download className="h-4 w-4"/></button>
+            {canUpload&&<button type="button" onClick={()=>setPatternFiles(x=>x.filter((_,j)=>j!==i))} className="grid h-9 w-9 place-items-center rounded-xl border border-red-200 bg-red-50 text-red-600"><X className="h-4 w-4"/></button>}
+          </div>)}
+          {!patternFiles.length&&<div className="rounded-2xl bg-neutral-50 p-3 text-xs text-neutral-400">Chưa có file rập.</div>}
+        </div>
+      </section>
+
       <section className="rounded-3xl border border-neutral-200 p-3">
         <div className="flex items-start justify-between gap-3">
           <div><div className="text-sm font-black">Bảng thông số</div><div className="mt-1 text-[11px] text-neutral-400">Lấy từ thư viện, tạo mới hoặc chỉnh riêng cho mẫu này.</div></div>
