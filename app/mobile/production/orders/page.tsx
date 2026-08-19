@@ -61,6 +61,9 @@ type Roll = {
   colorCode?: string | null;
   actualM: number;
   actualKg: number;
+  supplierDeclaredM?: number;
+  supplierDeclaredKg?: number;
+  usingSupplierDeclaredM?: boolean;
   remainingM: number;
   remainingKg: number;
   isDepleted?: boolean;
@@ -378,7 +381,13 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
       const selectedRows = allRolls.filter((r) => selected[r.id]);
       await productionApi(`/production/orders/${id}/rolls`, {
         method: "PATCH",
-        body: JSON.stringify({ rolls: selectedRows.map((r) => ({ fabricReceiptRollId: r.id, allocatedM: allocated[r.id] || r.remainingM, allocatedKg: r.remainingKg })) }),
+        body: JSON.stringify({ rolls: selectedRows.map((r) => {
+          const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
+          const meters=Number(String(allocated[r.id]||availableM).replace(",","."));
+          if(!meters||meters<=0)throw new Error(`Nhập số mét xuất cho cây ${r.rollCode||r.id}.`);
+          if(meters>availableM+0.0001)throw new Error(`Cây ${r.rollCode||r.id} chỉ còn ${fmt(availableM)}m.`);
+          return {fabricReceiptRollId:r.id,allocatedM:meters,allocatedKg:r.remainingKg};
+        }) }),
       });
       await load();
       setStep(4);
@@ -493,8 +502,8 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
                 {materials.map((m, i) => (
                   <div key={i} className="grid gap-2 rounded-2xl bg-neutral-50 p-3 grid-cols-1">
                     <select className={input} value={m.accessoryItemId} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, accessoryItemId: e.target.value } : x))}><option value="">Chọn NPL</option>{meta.accessories.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select>
-                    <input type="number" step="0.001" className={input} value={m.qtyPerProduct} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: e.target.value } : x))} placeholder="SL/sp" />
-                    <input type="number" className={input} value={m.wastePercent} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: e.target.value } : x))} placeholder="Hao hụt %" />
+                    <Field l={`Định mức / SP${meta.accessories.find(a=>a.id===m.accessoryItemId)?.unit?` · ${meta.accessories.find(a=>a.id===m.accessoryItemId)?.unit}`:""}`}><input list={`qty-options-${i}`} inputMode="decimal" className={input} value={m.qtyPerProduct} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: e.target.value } : x))} placeholder="Chọn hoặc nhập"/><datalist id={`qty-options-${i}`}>{["0.25","0.5","0.75","1","1.5","2","3","4","5","6","8","10"].map(v=><option key={v} value={v}/>)}</datalist></Field>
+                    <Field l="Hao hụt NPL"><input list={`waste-options-${i}`} inputMode="decimal" className={input} value={m.wastePercent} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: e.target.value } : x))} placeholder="Chọn hoặc nhập %"/><datalist id={`waste-options-${i}`}>{["0","0.5","1","2","3","5","7","10"].map(v=><option key={v} value={v}/>)}</datalist></Field>
                     <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={m.sizeScoped} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, sizeScoped: e.target.checked } : x))} /> Theo size</label>
                     <button onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))} className="text-xs font-semibold text-red-600">Xoá</button>
                   </div>
@@ -511,13 +520,16 @@ function OrderWizard({ id, meta, onClose, onChanged }: { id: string; meta: Meta;
             <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className={`${input} pl-10`} value={rollQ} onChange={(e) => void searchRolls(e.target.value)} placeholder="Tìm mã phiếu, mã cây, mã vải, màu, #mã màu..." /></div>
             <div className="max-h-[460px] space-y-2 overflow-y-auto rounded-2xl border p-2">
               {rolls.map((r) => {
-                const disabled = !!r.isDepleted || !!r.missingActual;
+                const availableM = Number(r.remainingM || r.actualM || r.supplierDeclaredM || 0);
+                const disabled = !!r.isDepleted || availableM <= 0;
                 const active = !!selected[r.id];
+                const exportM = Number(String(allocated[r.id] ?? "").replace(",", ".")) || 0;
+                const afterM = Math.max(0, availableM - exportM);
                 return (
                   <div key={r.id} className={`grid items-center gap-3 rounded-2xl border p-3 grid-cols-[auto_1fr] ${disabled ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
                     <input type="checkbox" disabled={disabled} checked={active} onChange={(e) => setSelected({ ...selected, [r.id]: e.target.checked })} />
-                    <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${r.isDepleted ? "text-red-600" : r.missingActual ? "text-amber-600" : "text-emerald-700"}`}>{r.isDepleted ? "Đã xuất hết" : r.missingActual ? "Chưa nhập mét thực nhận" : `Còn ${fmt(r.remainingM)}m / ${fmt(r.remainingKg)}kg`}</div></div>
-                    <input disabled={!active || disabled} type="number" step="0.001" className={input} value={allocated[r.id] ?? String(r.remainingM || "")} onChange={(e) => setAllocated({ ...allocated, [r.id]: e.target.value })} placeholder="Mét xuất" />
+                    <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${r.isDepleted ? "text-red-600" : r.usingSupplierDeclaredM ? "text-amber-600" : "text-emerald-700"}`}>{r.isDepleted ? "Đã xuất hết" : availableM<=0 ? "Cây chưa có số mét" : `Còn ${fmt(availableM)}m${r.usingSupplierDeclaredM?" · đang dùng mét NCC báo":""}`}</div></div>
+                    <div className="col-span-2 grid grid-cols-2 gap-2"><Field l="Xuất cây này"><ViNumberInput value={allocated[r.id] ?? (active?String(availableM):"")} onChange={(v)=>setAllocated({...allocated,[r.id]:v})} suffix="m" decimals={3} placeholder="Mét xuất"/></Field><div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Còn lại sau xuất</div><div className="mt-1 text-base font-black">{active?`${fmt(afterM)} m`:`${fmt(availableM)} m`}</div></div></div>
                   </div>
                 );
               })}

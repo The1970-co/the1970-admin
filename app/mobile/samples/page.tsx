@@ -309,7 +309,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
       </div>
 
       <div className="space-y-4 p-4">
-        {image&&<img src={image} className="h-64 w-full rounded-3xl object-cover" alt=""/>}
+        {image&&<img src={image} className="h-64 w-full rounded-3xl object-cover" alt=""/>}{(sample.images||[]).length>1&&<div className="flex gap-2 overflow-x-auto pb-1">{(sample.images||[]).map((img:any,i:number)=><img key={img.id||`${img.url}-${i}`} src={asset(img.url)} className="h-20 w-20 shrink-0 rounded-2xl object-cover" alt=""/>)}</div>}
 
         <div className="grid grid-cols-2 gap-3">
           <Info l="Năm" v={sample.year||"—"}/>
@@ -386,6 +386,11 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
     technicalNote:sample?.technicalNote||"",
     coverImageUrl:sample?.coverImageUrl||sample?.images?.[0]?.url||"",
   });
+  const [sampleImages,setSampleImages]=useState<Array<{type:string;url:string;caption?:string}>>(
+    Array.isArray(sample?.images) && sample!.images!.length
+      ? sample!.images!.map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||"Ảnh mẫu / ảnh tham khảo"}))
+      : (sample?.coverImageUrl ? [{type:"SAMPLE",url:sample.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}] : [])
+  );
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState("");
   const [codeMessage,setCodeMessage]=useState("");
@@ -413,9 +418,21 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
     return()=>clearTimeout(t);
   },[form.code,sample?.id,sample?.code]);
 
-  async function changeImage(file?:File){
-    if(!file)return;
-    try{const r=await upload(file);patch("coverImageUrl",r.url)}catch(e){setError(e instanceof Error?e.message:"Upload lỗi")}
+  async function changeImages(files?:FileList|File[]){
+    const list=Array.from(files||[]);
+    if(!list.length)return;
+    try{
+      const uploaded:Array<{type:string;url:string;caption:string}>=[];
+      for(const file of list){
+        const r=await upload(file);
+        uploaded.push({type:"SAMPLE",url:r.url,caption:"Ảnh mẫu / ảnh tham khảo"});
+      }
+      setSampleImages(current=>{
+        const next=[...current,...uploaded];
+        if(!form.coverImageUrl && next[0]?.url) patch("coverImageUrl",next[0].url);
+        return next;
+      });
+    }catch(e){setError(e instanceof Error?e.message:"Upload lỗi")}
   }
 
   async function save(){
@@ -452,7 +469,7 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
           note:form.note||null,
           technicalNote:form.technicalNote||null,
           coverImageUrl:form.coverImageUrl||null,
-          images:form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[],
+          images:sampleImages.length?sampleImages:(form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[]),
         })
       });
       if(measurement)saveSampleMeasurement({id:saved?.id||sample?.id,code:saved?.code||form.code},measurement);
@@ -468,10 +485,11 @@ function SampleForm({sample,meta,canViewFabricLink,onClose,onSaved}:{sample:Samp
 
       <Field l="Ảnh mẫu / ảnh tham khảo">
         <div className="rounded-3xl border border-dashed p-3">
-          {form.coverImageUrl&&<img src={asset(form.coverImageUrl)} className="mb-3 h-56 w-full rounded-3xl object-cover" alt=""/>}
+          {!!sampleImages.length&&<div className="mb-3 flex gap-2 overflow-x-auto pb-1">{sampleImages.map((img,i)=><div key={`${img.url}-${i}`} className="relative shrink-0"><button type="button" onClick={()=>patch("coverImageUrl",img.url)} className={`block overflow-hidden rounded-2xl border-2 ${form.coverImageUrl===img.url?"border-neutral-950":"border-transparent"}`}><img src={asset(img.url)} className="h-28 w-24 object-cover" alt=""/></button><button type="button" onClick={()=>{const next=sampleImages.filter((_,j)=>j!==i);setSampleImages(next);if(form.coverImageUrl===img.url)patch("coverImageUrl",next[0]?.url||"")}} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button></div>)}</div>}
+          <div className="mb-2 text-[11px] text-neutral-400">Chọn ảnh để đặt làm ảnh đại diện. Có thể tải nhiều ảnh cùng lúc.</div>
           <div className="grid grid-cols-2 gap-2">
-            <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void changeImage(e.target.files?.[0])}/></label>
-            <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải ảnh<input type="file" accept="image/*" className="hidden" onChange={e=>void changeImage(e.target.files?.[0])}/></label>
+            <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
+            <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
           </div>
         </div>
       </Field>
