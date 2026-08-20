@@ -316,6 +316,19 @@ function formatDateTime(value?: string | null) {
   });
 }
 
+function formatMessageDateTime(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 function channelBadge(channel: OmniChannel) {
   if (channel === "FACEBOOK") {
     return (
@@ -1756,25 +1769,8 @@ export default function MessagesPageClient({
 
   function applyQuickReplyTemplate(template: OmniQuickReplyTemplate) {
     const meta = parseQuickReplyImportMeta(template.category);
-
-    // Ảnh của mẫu phải đi dưới dạng attachment, không chèn URL ảnh vào nội dung chat.
-    // Một số mẫu import cũ có URL nằm cả trong content và category.imageUrls.
-    let nextText = replaceQuickReplyVariables(template.content || "");
-    for (const imageUrl of meta.imageUrls) {
-      nextText = nextText
-        .split(imageUrl)
-        .join(" ")
-        .replace(/[ \t]{2,}/g, " ")
-        .replace(/\n[ \t]+/g, "\n")
-        .trim();
-    }
-
-    setDraft(nextText);
+    setDraft(replaceQuickReplyVariables(template.content || ""));
     setDraftImageUrls(meta.imageUrls);
-
-    // Chữ và ảnh là hai phần độc lập:
-    // xoá chữ đã bung từ gõ tắt KHÔNG được tự xoá ảnh.
-    // Ảnh chỉ mất khi người dùng bấm dấu X trên ảnh (hoặc đổi hội thoại/gửi xong).
     // Nạp ảnh ngay lúc chọn mẫu để khi bấm Gửi không phải chờ trình duyệt tải từng ảnh.
     preloadQuickReplyImages(meta.imageUrls);
   }
@@ -3876,9 +3872,15 @@ export default function MessagesPageClient({
                         <textarea
                           value={draft}
                           onChange={(event) => {
-                            // Chỉ sửa nội dung chữ. Không đụng tới draftImageUrls:
-                            // xoá hết chữ thì ảnh gõ tắt vẫn phải còn.
-                            setDraft(event.target.value);
+                            const nextValue = event.target.value;
+                            setDraft(nextValue);
+                            if (!nextValue.trim()) setDraftImageUrls([]);
+                          }}
+                          onCompositionStart={() => {
+                            draftComposingRef.current = true;
+                          }}
+                          onCompositionEnd={() => {
+                            draftComposingRef.current = false;
                           }}
                           onKeyDown={(event) => {
                             const nativeEvent = event.nativeEvent as KeyboardEvent;
@@ -7226,6 +7228,9 @@ function MessageBubble({
   name: string;
 }) {
   const isOut = message.direction === "OUT";
+  const senderLabel = String(
+    (message as any)?.senderName || (isOut ? "The 1970" : name) || "Không rõ người gửi",
+  ).trim();
 
   return (
     <div className={cx("flex gap-3", isOut && "justify-end")}>
@@ -7252,9 +7257,16 @@ function MessageBubble({
             />
           )}
         </div>
-        <p className="mt-1 text-xs font-medium text-neutral-400">
-          {formatTime(message.sentAt)}
-        </p>
+        <div
+          className={cx(
+            "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-medium text-neutral-400",
+            isOut && "justify-end",
+          )}
+        >
+          <span className="font-semibold text-neutral-500">{senderLabel}</span>
+          <span aria-hidden="true">•</span>
+          <span>{formatMessageDateTime(message.sentAt)}</span>
+        </div>
       </div>
     </div>
   );
