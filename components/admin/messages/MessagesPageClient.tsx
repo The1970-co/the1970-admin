@@ -1756,8 +1756,25 @@ export default function MessagesPageClient({
 
   function applyQuickReplyTemplate(template: OmniQuickReplyTemplate) {
     const meta = parseQuickReplyImportMeta(template.category);
-    setDraft(replaceQuickReplyVariables(template.content || ""));
+
+    // Ảnh của mẫu phải đi dưới dạng attachment, không chèn URL ảnh vào nội dung chat.
+    // Một số mẫu import cũ có URL nằm cả trong content và category.imageUrls.
+    let nextText = replaceQuickReplyVariables(template.content || "");
+    for (const imageUrl of meta.imageUrls) {
+      nextText = nextText
+        .split(imageUrl)
+        .join(" ")
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/\n[ \t]+/g, "\n")
+        .trim();
+    }
+
+    setDraft(nextText);
     setDraftImageUrls(meta.imageUrls);
+
+    // Chữ và ảnh là hai phần độc lập:
+    // xoá chữ đã bung từ gõ tắt KHÔNG được tự xoá ảnh.
+    // Ảnh chỉ mất khi người dùng bấm dấu X trên ảnh (hoặc đổi hội thoại/gửi xong).
     // Nạp ảnh ngay lúc chọn mẫu để khi bấm Gửi không phải chờ trình duyệt tải từng ảnh.
     preloadQuickReplyImages(meta.imageUrls);
   }
@@ -3859,15 +3876,9 @@ export default function MessagesPageClient({
                         <textarea
                           value={draft}
                           onChange={(event) => {
-                            const nextValue = event.target.value;
-                            setDraft(nextValue);
-                            if (!nextValue.trim()) setDraftImageUrls([]);
-                          }}
-                          onCompositionStart={() => {
-                            draftComposingRef.current = true;
-                          }}
-                          onCompositionEnd={() => {
-                            draftComposingRef.current = false;
+                            // Chỉ sửa nội dung chữ. Không đụng tới draftImageUrls:
+                            // xoá hết chữ thì ảnh gõ tắt vẫn phải còn.
+                            setDraft(event.target.value);
                           }}
                           onKeyDown={(event) => {
                             const nativeEvent = event.nativeEvent as KeyboardEvent;
