@@ -39,6 +39,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import type {
   AdminOrder,
   OrderPaymentStatus,
@@ -152,49 +153,144 @@ function MultiFilterSelect({
 }) {
   const normalized = normalizeMultiFilterValue(value);
   const label = multiFilterSelectedLabel(normalized, options, allLabel);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [menuRect, setMenuRect] = useState({ left: 0, top: 0, width: 0, maxHeight: 320 });
+
+  const updateMenuPosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.max(rect.width, 260);
+    const left = Math.min(
+      Math.max(8, rect.left),
+      Math.max(8, viewportWidth - width - 8),
+    );
+
+    // Tận dụng toàn bộ chiều cao viewport thay vì khóa cứng 320px.
+    // Nếu phía dưới chật hơn phía trên thì tự mở menu lên trên.
+    const gap = 8;
+    const edge = 12;
+    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - gap - edge);
+    const spaceAbove = Math.max(0, rect.top - gap - edge);
+    const estimatedMenuHeight = Math.min(640, 42 + options.length * 34);
+    const openAbove = spaceBelow < Math.min(estimatedMenuHeight, 360) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(180, Math.min(640, openAbove ? spaceAbove : spaceBelow));
+    const top = openAbove
+      ? Math.max(edge, rect.top - gap - Math.min(estimatedMenuHeight, maxHeight))
+      : rect.bottom + gap;
+
+    setMenuRect({
+      left,
+      top,
+      width,
+      maxHeight,
+    });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updateMenuPosition();
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (wrapperRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    const handleViewportChange = () => updateMenuPosition();
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  const dropdown =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={menuRef}
+            className="overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-2xl"
+            style={{
+              position: "fixed",
+              left: menuRect.left,
+              top: menuRect.top,
+              width: menuRect.width,
+              maxHeight: menuRect.maxHeight,
+              zIndex: 999999,
+            }}
+          >
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50">
+              <input
+                type="checkbox"
+                checked={isAllMultiFilter(normalized)}
+                onChange={() => onChange(["ALL"])}
+              />
+              <span>{allLabel}</span>
+            </label>
+
+            {options.map((option) => {
+              const checked = selectedMultiFilterValues(normalized).includes(option.value);
+              return (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onChange(setMultiFilterValue(normalized, option.value))}
+                  />
+                  <span className="whitespace-nowrap">{option.label}</span>
+                </label>
+              );
+            })}
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
-    <details className={`group relative z-[110] ${className}`}>
-      <summary
-        className={`flex min-h-[46px] cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none marker:hidden ${
-          disabled ? "pointer-events-none opacity-50" : ""
+    <div ref={wrapperRef} className={`relative ${className}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          updateMenuPosition();
+          setOpen((prev) => !prev);
+        }}
+        className={`flex min-h-[46px] w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-left text-sm outline-none ${
+          disabled ? "cursor-not-allowed opacity-50" : ""
         }`}
+        aria-expanded={open}
       >
         <span className="min-w-0 truncate">{label}</span>
         <span className="shrink-0 text-neutral-400">⌄</span>
-      </summary>
-
-      <div className="absolute left-0 z-[160] mt-2 max-h-[280px] min-w-full overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
-        <label className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50">
-          <input
-            type="checkbox"
-            checked={isAllMultiFilter(normalized)}
-            onChange={() => onChange(["ALL"])}
-          />
-          <span>{allLabel}</span>
-        </label>
-
-        {options.map((option) => {
-          const checked = selectedMultiFilterValues(normalized).includes(option.value);
-          return (
-            <label
-              key={option.value}
-              className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => onChange(setMultiFilterValue(normalized, option.value))}
-              />
-              <span className="whitespace-nowrap">{option.label}</span>
-            </label>
-          );
-        })}
-      </div>
-    </details>
+      </button>
+      {dropdown}
+    </div>
   );
 }
-
 
 function ProductSkuSearchBox({
   value,
@@ -4521,26 +4617,56 @@ export default function OrdersPageClient() {
           ? json.items
           : [];
 
-    return data.filter((item: any) => item?.isActive !== false);
+    // Không loại nhân viên inactive ở đây. Bộ lọc đơn hàng phải nhìn được cả
+    // nhân viên cũ để lọc lịch sử đơn. Việc gán đơn sẽ lọc active riêng.
+    return data;
+  };
+
+  const mergeStaffRows = (...groups: any[][]) => {
+    const map = new Map<string, any>();
+    for (const group of groups) {
+      for (const item of group || []) {
+        const key = String(item?.id || item?.code || item?.name || item?.fullName || "").trim();
+        if (!key) continue;
+        map.set(key, { ...(map.get(key) || {}), ...item });
+      }
+    }
+    return Array.from(map.values());
   };
 
   const loadStaffList = async () => {
-    try {
-      // Nhân viên thường không nhất thiết có quyền mở toàn bộ /staff.
-      // Endpoint này chỉ trả danh sách nhân viên có thể nhận đơn theo chi nhánh/quyền hiện tại.
-      const json = await apiJson<any>("/orders/assignable-staff");
-      setStaffList(normalizeStaffRows(json));
-      return;
-    } catch {
-      // fallback cho owner/admin hoặc bản core cũ chưa có endpoint mới
+    const groups: any[][] = [];
+
+    // Owner/admin có /staff = danh sách đầy đủ (kể cả inactive).
+    // Đây mới là nguồn đúng cho bộ lọc lịch sử "NV tạo đơn/NV phụ trách".
+    if (isOwnerOrAdminUser(currentUser)) {
+      try {
+        const json = await apiJson<any>("/staff");
+        groups.push(normalizeStaffRows(json));
+      } catch {
+        // tiếp tục lấy assignable-staff bên dưới
+      }
     }
 
     try {
-      const json = await apiJson<any>("/staff");
-      setStaffList(normalizeStaffRows(json));
+      // Nguồn này phục vụ quyền gán đơn và chỉ có nhân viên active/phù hợp quyền.
+      const json = await apiJson<any>("/orders/assignable-staff");
+      groups.push(normalizeStaffRows(json));
     } catch {
-      setStaffList([]);
+      // với user thường có thể chỉ có một trong hai endpoint
     }
+
+    // Core cũ hoặc trường hợp admin nhưng /staff chưa được gọi ở nhánh trên.
+    if (!groups.length) {
+      try {
+        const json = await apiJson<any>("/staff");
+        groups.push(normalizeStaffRows(json));
+      } catch {
+        // ignore
+      }
+    }
+
+    setStaffList(mergeStaffRows(...groups));
   };
 
   const [page, setPage] = useState(1);
@@ -4770,12 +4896,14 @@ export default function OrdersPageClient() {
   };
 
   const assignableStaffList = useMemo(() => {
+    const activeStaff = staffList.filter((staff) => staff.isActive !== false);
+
     if (isOwnerOrAdminUser(currentUser) || isAllMultiFilter(branchFilter)) {
-      return staffList;
+      return activeStaff;
     }
 
     const selectedBranches = selectedMultiFilterValues(branchFilter);
-    return staffList.filter(
+    return activeStaff.filter(
       (staff) => !staff.branchId || selectedBranches.includes(staff.branchId),
     );
   }, [staffList, currentUser, branchFilter]);
@@ -4968,6 +5096,12 @@ export default function OrdersPageClient() {
     }
 
     void loadBranches();
+
+    // Bộ lọc nhân viên phải dùng danh sách nhân viên độc lập với số đơn đang hiển thị.
+    // Nếu chỉ tải khi mở popup gán đơn thì staffList luôn rỗng ở màn danh sách,
+    // khiến createdByOptions/assignedStaffOptions fallback sang normalizedOrders
+    // và số nhân viên thay đổi theo pageSize (25/50/100 đơn).
+    void loadStaffList();
   }, []);
 
   useEffect(() => {
@@ -5593,14 +5727,27 @@ export default function OrdersPageClient() {
     ).sort((a, b) => a.localeCompare(b, "vi"));
   };
 
+  const staffNameOptions = useMemo(
+    () => uniqueOptions(staffList.map((staff) => staffLabel(staff))),
+    [staffList],
+  );
+
   const createdByOptions = useMemo(
-    () => uniqueOptions(normalizedOrders.map((o) => o._createdByName)),
-    [normalizedOrders],
+    () =>
+      uniqueOptions([
+        ...staffNameOptions,
+        ...normalizedOrders.map((o) => o._createdByName),
+      ]),
+    [staffNameOptions, normalizedOrders],
   );
 
   const assignedStaffOptions = useMemo(
-    () => uniqueOptions(normalizedOrders.map((o) => o._assignedStaffName)),
-    [normalizedOrders],
+    () =>
+      uniqueOptions([
+        ...staffNameOptions,
+        ...normalizedOrders.map((o) => o._assignedStaffName),
+      ]),
+    [staffNameOptions, normalizedOrders],
   );
 
   const smartStaffNameOptions = useMemo(
@@ -8249,7 +8396,7 @@ export default function OrdersPageClient() {
           </Panel>
 
 
-          <Panel className="relative z-[100] overflow-visible px-2 py-1.5">
+          <Panel className="px-2 py-1.5">
             <div className="grid gap-1.5 lg:grid-cols-[minmax(420px,1fr)_100px_auto_auto] lg:items-center">
               <input
                 className="h-8 rounded-xl border border-neutral-300 px-3 text-xs outline-none focus:border-neutral-900"
@@ -8929,7 +9076,7 @@ export default function OrdersPageClient() {
             </Panel>
           ) : null}
 
-          <Panel className="relative z-0 overflow-hidden">
+          <Panel className="overflow-hidden">
             <div
               ref={tableScrollRef}
               onScroll={updateTableScrollState}

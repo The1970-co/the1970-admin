@@ -42,14 +42,14 @@ const MENU: MenuItem[] = [
   },
   {
     label: "Mẫu mã & Vải",
-    permission: "menu.sample_fabric",
+    permission: PERMISSIONS.MENU_SAMPLE_FABRIC,
     children: [
-      { href: "/fabric-library", label: "Bảng vải", permission: "menu.fabric_library" },
-      { href: "/design-samples", label: "Triển khai mẫu", permission: "menu.design_samples" },
-      { href: "/measurement-library", label: "Bảng thông số", permission: "menu.design_samples" },
-      { href: "/fabric-receipts", label: "Vải về", permission: "menu.fabric_receipts" },
-      { href: "/production", label: "Sản xuất", permission: "menu.production" },
-      { href: "/accessories", label: "Nguyên phụ liệu", permission: "menu.accessories" },
+      { href: "/fabric-library", label: "Bảng vải", permission: PERMISSIONS.MENU_FABRIC_LIBRARY },
+      { href: "/design-samples", label: "Triển khai mẫu", permission: PERMISSIONS.MENU_DESIGN_SAMPLES },
+      { href: "/measurement-library", label: "Bảng thông số", permission: PERMISSIONS.MENU_MEASUREMENT_LIBRARY },
+      { href: "/fabric-receipts", label: "Vải về", permission: PERMISSIONS.MENU_FABRIC_RECEIPTS },
+      { href: "/production", label: "Sản xuất", permission: PERMISSIONS.MENU_PRODUCTION },
+      { href: "/accessories", label: "Nguyên phụ liệu", permission: PERMISSIONS.MENU_ACCESSORIES },
     ],
   },
   {
