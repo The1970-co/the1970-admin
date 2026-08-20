@@ -144,38 +144,17 @@ function cloudinaryAttachmentUrl(raw:string,filename:string){
   const base=safeFilename(filename).replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]+/g,"-")||"download";
   return url.replace("/upload/",`/upload/fl_attachment:${encodeURIComponent(base)}/`);
 }
-async function downloadUrl(url:string,filename:string){
+function downloadUrl(url:string,filename:string){
   const resolved=asset(url);
   if(!resolved)return;
   const direct=cloudinaryAttachmentUrl(resolved,filename);
-  try{
-    const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
-    if(!res.ok)throw new Error("download");
-    const blob=await res.blob();
-    const finalName=filenameWithMime(filename,blob.type);
-    const href=URL.createObjectURL(blob);
-    const a=document.createElement("a");
-    a.href=href;
-    a.download=finalName;
-    a.rel="noopener";
-    a.style.display="none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.setTimeout(()=>URL.revokeObjectURL(href),10000);
-    return;
-  }catch{
-    // Cloudinary attachment response forces Safari/PWA to use the browser download path.
-    const a=document.createElement("a");
-    a.href=direct;
-    a.download=safeFilename(filename);
-    a.rel="noopener";
-    a.style.display="none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
+  // Keep this synchronous with the user tap so iOS does not block it as a popup.
+  if(direct!==resolved){ window.location.assign(direct); return; }
+  const a=document.createElement("a");
+  a.href=resolved; a.download=safeFilename(filename); a.rel="noopener";
+  document.body.appendChild(a); a.click(); a.remove();
 }
+
 function asset(url?:string|null){
   if(!url)return "";
   return /^https?:\/\//.test(url)?url:`${API_BASE}${url.startsWith("/")?"":"/"}${url}`;
@@ -519,6 +498,23 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     const p=editorPoint(e);
 
     if(tool==="select"){
+      const dist=(a:EditorPoint,b:EditorPoint)=>Math.hypot(a.x-b.x,a.y-b.y);
+      const lineDist=(q:EditorPoint,a:EditorPoint,b:EditorPoint)=>{const vx=b.x-a.x,vy=b.y-a.y,wx=q.x-a.x,wy=q.y-a.y;const c2=vx*vx+vy*vy||1;const t=Math.max(0,Math.min(1,(wx*vx+wy*vy)/c2));return Math.hypot(q.x-(a.x+t*vx),q.y-(a.y+t*vy))};
+      for(const a of [...annotations].reverse()){
+        if(a.type==="arrowText"&&a.target&&a.label){
+          if(dist(p,a.target)<.055){beginManipulation(e,a,"arrowTarget");return}
+          if(dist(p,a.label)<.075){beginManipulation(e,a,"arrowLabel");return}
+          if(lineDist(p,a.label,a.target)<.035){beginManipulation(e,a,"move");return}
+        }
+        if(a.type==="text"&&a.label&&dist(p,a.label)<.10){beginManipulation(e,a,"move");return}
+        if((a.type==="circle"||a.type==="rect")&&a.center){
+          const w=a.width||.24,h=a.height||.16;const corner={x:a.center.x+w/2,y:a.center.y+h/2};
+          if(dist(p,corner)<.065){beginManipulation(e,a,"shapeResize");return}
+          const nx=Math.abs((p.x-a.center.x)/(w/2||1)),ny=Math.abs((p.y-a.center.y)/(h/2||1));
+          if(nx<=1.25&&ny<=1.25){beginManipulation(e,a,"move");return}
+        }
+        if(a.type==="pen"&&a.points?.some(q=>dist(p,q)<.045)){beginManipulation(e,a,"move");return}
+      }
       setSelectedAnnotationId(null);
       return;
     }
@@ -760,12 +756,12 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
         <button type="button" onClick={closeViewer} className="grid h-10 w-10 place-items-center rounded-full bg-white/95"><X className="h-5 w-5"/></button>
       </div>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:editMode?"pan-y":"pan-x pan-y pinch-zoom"}}>
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:editMode?"none":"pan-x pan-y pinch-zoom"}}>
         {gallery.length>1&&!editMode&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">‹</button>}
-        <div ref={editorRef} className="relative inline-block max-h-full max-w-full select-none" onPointerDown={beginAnnotation} onPointerMove={moveAnnotation} onPointerUp={endAnnotation} onPointerCancel={endAnnotation}>
-          <img src={gallery[viewerIndex]} draggable={false} className="block max-h-[68vh] max-w-[94vw] object-contain transition-[transform,filter]" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,WebkitFilter:`brightness(${brightness}%) contrast(${contrast}%)`,willChange:"filter,transform",aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
-          {editMode&&<svg className={`absolute inset-0 h-full w-full ${tool==="select"?"":"cursor-crosshair"}`} viewBox="0 0 1000 1000" preserveAspectRatio="none">
-            <defs><marker id="editorArrowHead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="context-stroke"/></marker></defs>
+        <div ref={editorRef} className="relative inline-block max-h-full max-w-full select-none" style={{touchAction:editMode?"none":"auto"}} onPointerDown={beginAnnotation} onPointerMove={moveAnnotation} onPointerUp={endAnnotation} onPointerCancel={endAnnotation}>
+          <img src={gallery[viewerIndex]} draggable={false} className="block max-h-[68vh] max-w-[94vw] object-contain transition-transform" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,WebkitFilter:`brightness(${brightness}%) contrast(${contrast}%)`,willChange:"filter,transform",aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
+          {editMode&&<svg className={`pointer-events-none absolute inset-0 h-full w-full ${tool==="select"?"":"cursor-crosshair"}`} viewBox="0 0 1000 1000" preserveAspectRatio="none">
+            
             {annotations.map(a=>{
               const selected=a.id===selectedAnnotationId;
               const sw=Math.max(2,a.strokeWidth*2.2);
@@ -774,20 +770,21 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
                 const x1=a.label.x*1000,y1=a.label.y*1000,x2=a.target.x*1000,y2=a.target.y*1000;
                 const textWidth=Math.max(100,(a.text?.length||7)*a.fontSize*1.15);
                 return <g key={a.id} data-editor-handle="1">
-                  <line onPointerDown={selectAndMove} x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={sw} markerEnd="url(#editorArrowHead)" style={{pointerEvents:"stroke",cursor:"move"}}/>
-                  <rect onPointerDown={selectAndMove} x={x1-12} y={y1-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1} style={{cursor:"move"}}/>
-                  <text onPointerDown={selectAndMove} x={x1} y={y1+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{cursor:"move",userSelect:"none"}}>{a.text||"Ghi chú"}</text>
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={sw} pointerEvents="none"/>
+                  {(()=>{const ang=Math.atan2(y2-y1,x2-x1),head=Math.max(18,sw*4);const p1=`${x2},${y2}`;const p2=`${x2-head*Math.cos(ang-Math.PI/7)},${y2-head*Math.sin(ang-Math.PI/7)}`;const p3=`${x2-head*Math.cos(ang+Math.PI/7)},${y2-head*Math.sin(ang+Math.PI/7)}`;return <polygon points={`${p1} ${p2} ${p3}`} fill={a.color} pointerEvents="none"/>})()}
+                  <rect x={x1-12} y={y1-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1} style={{cursor:"move"}}/>
+                  <text x={x1} y={y1+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{cursor:"move",userSelect:"none"}}>{a.text||"Ghi chú"}</text>
                   {selected&&<>
                     <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="34"/>
-                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"arrowTarget")} cx={x2} cy={y2} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
-                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"arrowLabel")} cx={x1} cy={y1} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
+                    <circle cx={x2} cy={y2} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
+                    <circle cx={x1} cy={y1} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
                   </>}
                 </g>
               }
               if(a.type==="text"&&a.label){
                 const x=a.label.x*1000,y=a.label.y*1000;
                 const textWidth=Math.max(100,(a.text?.length||7)*a.fontSize*1.15);
-                return <g key={a.id} data-editor-handle="1" onPointerDown={selectAndMove}>
+                return <g key={a.id} data-editor-handle="1">
                   <rect x={x-12} y={y-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1}/>
                   <text x={x} y={y+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{userSelect:"none"}}>{a.text||"Ghi chú"}</text>
                   {selected&&<circle cx={x} cy={y} r="18" fill="none" stroke={a.color} strokeWidth="5"/>}
@@ -797,17 +794,17 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
                 const cx=a.center.x*1000,cy=a.center.y*1000,w=(a.width||.24)*1000,h=(a.height||.16)*1000;
                 return <g key={a.id} data-editor-handle="1">
                   {a.type==="circle"
-                    ?<ellipse onPointerDown={selectAndMove} cx={cx} cy={cy} rx={w/2} ry={h/2} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>
-                    :<rect onPointerDown={selectAndMove} x={cx-w/2} y={cy-h/2} width={w} height={h} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>}
+                    ?<ellipse cx={cx} cy={cy} rx={w/2} ry={h/2} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>
+                    :<rect x={cx-w/2} y={cy-h/2} width={w} height={h} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>}
                   {selected&&<>
-                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"move")} cx={cx} cy={cy} r="19" fill="#fff" stroke={a.color} strokeWidth="6" style={{cursor:"move"}}/>
-                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"shapeResize")} cx={cx+w/2} cy={cy+h/2} r="23" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"nwse-resize"}}/>
+                    <circle cx={cx} cy={cy} r="19" fill="#fff" stroke={a.color} strokeWidth="6" style={{cursor:"move"}}/>
+                    <circle cx={cx+w/2} cy={cy+h/2} r="23" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"nwse-resize"}}/>
                   </>}
                 </g>
               }
               if(a.type==="pen"&&a.points?.length){
                 return <g key={a.id} data-editor-handle="1">
-                  <polyline onPointerDown={selectAndMove} points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke="transparent" strokeWidth={Math.max(24,sw+18)} strokeLinecap="round" strokeLinejoin="round" style={{cursor:"move"}}/>
+                  <polyline points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke="transparent" strokeWidth={Math.max(24,sw+18)} strokeLinecap="round" strokeLinejoin="round" style={{cursor:"move"}}/>
                   <polyline points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
                 </g>
               }
