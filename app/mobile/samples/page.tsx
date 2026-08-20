@@ -147,20 +147,12 @@ function cloudinaryAttachmentUrl(raw:string,filename:string){
 async function downloadUrl(url:string,filename:string){
   const resolved=asset(url);
   if(!resolved)return;
+  const direct=cloudinaryAttachmentUrl(resolved,filename);
   try{
-    const res=await fetch(resolved,{mode:"cors",credentials:"omit"});
-    if(!res.ok)throw new Error("Không tải được file.");
+    const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
+    if(!res.ok)throw new Error("download");
     const blob=await res.blob();
     const finalName=filenameWithMime(filename,blob.type);
-    const file=new File([blob],finalName,{type:blob.type||"application/octet-stream"});
-
-    // iPhone/iPad PWA/Safari: Share sheet is much more reliable than <a download>.
-    const nav:any=navigator;
-    if(typeof nav.share==="function"&&typeof nav.canShare==="function"&&nav.canShare({files:[file]})){
-      await nav.share({files:[file],title:finalName});
-      return;
-    }
-
     const href=URL.createObjectURL(blob);
     const a=document.createElement("a");
     a.href=href;
@@ -170,16 +162,15 @@ async function downloadUrl(url:string,filename:string){
     document.body.appendChild(a);
     a.click();
     a.remove();
-    window.setTimeout(()=>URL.revokeObjectURL(href),5000);
-  }catch(e:any){
-    // If user cancelled native share, do nothing.
-    if(String(e?.name||"")==="AbortError")return;
-    // Cloudinary can force Content-Disposition attachment without relying on JS download.
-    const direct=cloudinaryAttachmentUrl(resolved,filename);
+    window.setTimeout(()=>URL.revokeObjectURL(href),10000);
+    return;
+  }catch{
+    // Cloudinary attachment response forces Safari/PWA to use the browser download path.
     const a=document.createElement("a");
     a.href=direct;
-    a.target="_blank";
-    a.rel="noopener noreferrer";
+    a.download=safeFilename(filename);
+    a.rel="noopener";
+    a.style.display="none";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -448,7 +439,8 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
   const [annotationStrokeWidth,setAnnotationStrokeWidth]=useState(3);
   const [undoStack,setUndoStack]=useState<EditorAnnotation[][]>([]);
   const [redoStack,setRedoStack]=useState<EditorAnnotation[][]>([]);
-  const drawingId=useRef<string|null>(null);
+  type EditorDragMode="createArrow"|"createShape"|"pen"|"move"|"arrowTarget"|"arrowLabel"|"shapeResize";
+  const dragRef=useRef<{id:string;mode:EditorDragMode;start:EditorPoint;original:EditorAnnotation}|null>(null);
   const openViewer=(url:string)=>{const i=gallery.indexOf(url);setViewerIndex(i>=0?i:0);setEditMode(false);setViewerError("")};
   const closeViewer=()=>{setViewerIndex(null);setEditMode(false);setViewerError("")};
   const prevImage=()=>setViewerIndex(i=>i===null?null:(i-1+gallery.length)%gallery.length);
@@ -462,18 +454,25 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     if(!box||!box.width||!box.height)return{x:.5,y:.5};
     return{x:clamp01((e.clientX-box.left)/box.width),y:clamp01((e.clientY-box.top)/box.height)};
   }
+  function cloneAnnotations(rows:EditorAnnotation[]){return rows.map(a=>({...a,target:a.target?{...a.target}:undefined,label:a.label?{...a.label}:undefined,center:a.center?{...a.center}:undefined,points:a.points?.map(p=>({...p}))}))}
+  function pushUndoSnapshot(snapshot?:EditorAnnotation[]){
+    const snap=cloneAnnotations(snapshot||annotations);
+    setUndoStack(h=>[...h,snap].slice(-40));
+    setRedoStack([]);
+  }
   function commitAnnotations(make:(prev:EditorAnnotation[])=>EditorAnnotation[]){
     setAnnotations(prev=>{
-      setUndoStack(h=>[...h,prev].slice(-40));setRedoStack([]);
+      pushUndoSnapshot(prev);
       return make(prev);
     });
   }
   function undoAnnotation(){
     setUndoStack(h=>{
       if(!h.length)return h;
-      const prev=h[h.length-1];
-      setRedoStack(r=>[annotations,...r].slice(0,40));
-      setAnnotations(prev);setSelectedAnnotationId(null);
+      const previous=h[h.length-1];
+      setRedoStack(r=>[cloneAnnotations(annotations),...r].slice(0,40));
+      setAnnotations(cloneAnnotations(previous));
+      setSelectedAnnotationId(null);
       return h.slice(0,-1);
     });
   }
@@ -481,50 +480,143 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     setRedoStack(r=>{
       if(!r.length)return r;
       const next=r[0];
-      setUndoStack(h=>[...h,annotations].slice(-40));
-      setAnnotations(next);setSelectedAnnotationId(null);
+      setUndoStack(h=>[...h,cloneAnnotations(annotations)].slice(-40));
+      setAnnotations(cloneAnnotations(next));
+      setSelectedAnnotationId(null);
       return r.slice(1);
     });
   }
-  function updateSelectedAnnotation(patch:Partial<EditorAnnotation>){
+  function selectAnnotation(a:EditorAnnotation){
+    setSelectedAnnotationId(a.id);
+    setTool("select");
+    setAnnotationColor(a.color||"#ff3b30");
+    setAnnotationStrokeWidth(a.strokeWidth||3);
+    setAnnotationFontSize(a.fontSize||22);
+    setAnnotationFontFamily(a.fontFamily||"Arial");
+  }
+  function patchSelectedLive(patch:Partial<EditorAnnotation>){
     if(!selectedAnnotationId)return;
-    commitAnnotations(prev=>prev.map(a=>a.id===selectedAnnotationId?{...a,...patch}:a));
+    setAnnotations(prev=>prev.map(a=>a.id===selectedAnnotationId?{...a,...patch}:a));
   }
   function deleteSelectedAnnotation(){
     if(!selectedAnnotationId)return;
-    commitAnnotations(prev=>prev.filter(a=>a.id!==selectedAnnotationId));setSelectedAnnotationId(null);
+    commitAnnotations(prev=>prev.filter(a=>a.id!==selectedAnnotationId));
+    setSelectedAnnotationId(null);
+  }
+  function capturePointer(e:any){
+    try{e.currentTarget?.setPointerCapture?.(e.pointerId)}catch{}
+  }
+  function beginManipulation(e:any,a:EditorAnnotation,mode:EditorDragMode){
+    e.preventDefault();e.stopPropagation();
+    selectAnnotation(a);
+    pushUndoSnapshot();
+    dragRef.current={id:a.id,mode,start:editorPoint(e),original:cloneAnnotations([a])[0]};
+    capturePointer(e);
   }
   function beginAnnotation(e:any){
     if(!editMode)return;
+    if((e.target as HTMLElement)?.closest?.("[data-editor-handle='1']"))return;
     const p=editorPoint(e);
-    if(tool==="select")return;
-    if(tool==="arrowText"){
-      const label={x:clamp01(p.x+(p.x>.68?-.28:.24)),y:clamp01(p.y+(p.y<.22?.18:-.14))};
-      const a:EditorAnnotation={id:editorUid(),type:"arrowText",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,text:"Ghi chú",target:p,label};
-      commitAnnotations(prev=>[...prev,a]);setSelectedAnnotationId(a.id);setTool("select");return;
+
+    if(tool==="select"){
+      setSelectedAnnotationId(null);
+      return;
     }
+
     if(tool==="text"){
       const a:EditorAnnotation={id:editorUid(),type:"text",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,text:"Ghi chú",label:p};
-      commitAnnotations(prev=>[...prev,a]);setSelectedAnnotationId(a.id);setTool("select");return;
+      pushUndoSnapshot();
+      setAnnotations(prev=>[...prev,a]);
+      selectAnnotation(a);
+      return;
     }
+
+    if(tool==="arrowText"){
+      const a:EditorAnnotation={id:editorUid(),type:"arrowText",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,text:"Ghi chú",target:p,label:p};
+      pushUndoSnapshot();
+      setAnnotations(prev=>[...prev,a]);
+      setSelectedAnnotationId(a.id);
+      dragRef.current={id:a.id,mode:"createArrow",start:p,original:cloneAnnotations([a])[0]};
+      capturePointer(e);
+      return;
+    }
+
     if(tool==="circle"||tool==="rect"){
-      const a:EditorAnnotation={id:editorUid(),type:tool,color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,center:p,width:.24,height:.16};
-      commitAnnotations(prev=>[...prev,a]);setSelectedAnnotationId(a.id);setTool("select");return;
+      const a:EditorAnnotation={id:editorUid(),type:tool,color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,center:p,width:.001,height:.001};
+      pushUndoSnapshot();
+      setAnnotations(prev=>[...prev,a]);
+      setSelectedAnnotationId(a.id);
+      dragRef.current={id:a.id,mode:"createShape",start:p,original:cloneAnnotations([a])[0]};
+      capturePointer(e);
+      return;
     }
+
     if(tool==="pen"){
-      const id=editorUid();drawingId.current=id;
-      setUndoStack(h=>[...h,annotations].slice(-40));setRedoStack([]);
-      setAnnotations(prev=>[...prev,{id,type:"pen",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,points:[p]}]);
-      setSelectedAnnotationId(id);
-      try{e.currentTarget.setPointerCapture?.(e.pointerId)}catch{}
+      const a:EditorAnnotation={id:editorUid(),type:"pen",color:annotationColor,strokeWidth:annotationStrokeWidth,fontSize:annotationFontSize,fontFamily:annotationFontFamily,points:[p]};
+      pushUndoSnapshot();
+      setAnnotations(prev=>[...prev,a]);
+      setSelectedAnnotationId(a.id);
+      dragRef.current={id:a.id,mode:"pen",start:p,original:cloneAnnotations([a])[0]};
+      capturePointer(e);
     }
   }
   function moveAnnotation(e:any){
-    if(tool!=="pen"||!drawingId.current)return;
-    const p=editorPoint(e),id=drawingId.current;
-    setAnnotations(prev=>prev.map(a=>a.id===id?{...a,points:[...(a.points||[]),p]}:a));
+    const drag=dragRef.current;
+    if(!drag)return;
+    e.preventDefault();
+    const p=editorPoint(e);
+    const dx=p.x-drag.start.x,dy=p.y-drag.start.y;
+    setAnnotations(prev=>prev.map(a=>{
+      if(a.id!==drag.id)return a;
+      const o=drag.original;
+
+      if(drag.mode==="createArrow"){
+        return {...a,label:p};
+      }
+      if(drag.mode==="createShape"){
+        const w=Math.max(.015,Math.abs(p.x-drag.start.x));
+        const h=Math.max(.015,Math.abs(p.y-drag.start.y));
+        return {...a,center:{x:(p.x+drag.start.x)/2,y:(p.y+drag.start.y)/2},width:w,height:h};
+      }
+      if(drag.mode==="pen"){
+        return {...a,points:[...(a.points||[]),p]};
+      }
+      if(drag.mode==="arrowTarget"){
+        return {...a,target:p};
+      }
+      if(drag.mode==="arrowLabel"){
+        return {...a,label:p};
+      }
+      if(drag.mode==="shapeResize"&&o.center){
+        return {...a,width:Math.max(.02,Math.abs(p.x-o.center.x)*2),height:Math.max(.02,Math.abs(p.y-o.center.y)*2)};
+      }
+      if(drag.mode==="move"){
+        if(o.type==="arrowText")return {...a,target:o.target?{x:clamp01(o.target.x+dx),y:clamp01(o.target.y+dy)}:undefined,label:o.label?{x:clamp01(o.label.x+dx),y:clamp01(o.label.y+dy)}:undefined};
+        if(o.type==="text")return {...a,label:o.label?{x:clamp01(o.label.x+dx),y:clamp01(o.label.y+dy)}:undefined};
+        if(o.type==="circle"||o.type==="rect")return {...a,center:o.center?{x:clamp01(o.center.x+dx),y:clamp01(o.center.y+dy)}:undefined};
+        if(o.type==="pen")return {...a,points:o.points?.map(q=>({x:clamp01(q.x+dx),y:clamp01(q.y+dy)}))};
+      }
+      return a;
+    }));
   }
-  function endAnnotation(){drawingId.current=null;if(tool==="pen")setTool("select")}
+  function endAnnotation(e?:any){
+    const drag=dragRef.current;
+    if(!drag)return;
+    if(drag.mode==="createArrow"){
+      setAnnotations(prev=>prev.map(a=>{
+        if(a.id!==drag.id||!a.target||!a.label)return a;
+        const distance=Math.hypot(a.label.x-a.target.x,a.label.y-a.target.y);
+        if(distance>.025)return a;
+        return {...a,label:{x:clamp01(a.target.x+.24),y:clamp01(a.target.y-.12)}};
+      }));
+    }
+    if(drag.mode==="createShape"){
+      setAnnotations(prev=>prev.map(a=>a.id===drag.id&&((a.width||0)<.03||(a.height||0)<.03)?{...a,width:.22,height:.14}:a));
+    }
+    dragRef.current=null;
+    setTool("select");
+    try{e?.currentTarget?.releasePointerCapture?.(e.pointerId)}catch{}
+  }
   async function saveEditedImage(){
     if(viewerIndex===null||!gallery[viewerIndex]||!can("design_sample.edit")||!can("design_sample.upload_images"))return;
     try{
@@ -671,36 +763,53 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:editMode?"pan-y":"pan-x pan-y pinch-zoom"}}>
         {gallery.length>1&&!editMode&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">‹</button>}
         <div ref={editorRef} className="relative inline-block max-h-full max-w-full select-none" onPointerDown={beginAnnotation} onPointerMove={moveAnnotation} onPointerUp={endAnnotation} onPointerCancel={endAnnotation}>
-          <img src={gallery[viewerIndex]} draggable={false} className="block max-h-[68vh] max-w-[94vw] object-contain transition-transform" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
+          <img src={gallery[viewerIndex]} draggable={false} className="block max-h-[68vh] max-w-[94vw] object-contain transition-[transform,filter]" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,WebkitFilter:`brightness(${brightness}%) contrast(${contrast}%)`,willChange:"filter,transform",aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
           {editMode&&<svg className={`absolute inset-0 h-full w-full ${tool==="select"?"":"cursor-crosshair"}`} viewBox="0 0 1000 1000" preserveAspectRatio="none">
             <defs><marker id="editorArrowHead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="context-stroke"/></marker></defs>
             {annotations.map(a=>{
               const selected=a.id===selectedAnnotationId;
               const sw=Math.max(2,a.strokeWidth*2.2);
+              const selectAndMove=(e:any)=>beginManipulation(e,a,"move");
               if(a.type==="arrowText"&&a.target&&a.label){
                 const x1=a.label.x*1000,y1=a.label.y*1000,x2=a.target.x*1000,y2=a.target.y*1000;
-                return <g key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}}>
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={sw} markerEnd="url(#editorArrowHead)"/>
-                  <rect x={x1-8} y={y1-a.fontSize*.8} width={Math.max(90,(a.text?.length||7)*a.fontSize*.62)} height={a.fontSize*1.45} rx="8" fill="white" fillOpacity=".94" stroke={selected?a.color:"white"} strokeWidth={selected?4:1}/>
-                  <text x={x1} y={y1+a.fontSize*.18} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily}>{a.text||"Ghi chú"}</text>
-                  {selected&&<circle cx={x2} cy={y2} r="14" fill="none" stroke={a.color} strokeWidth="4"/>}
+                const textWidth=Math.max(100,(a.text?.length||7)*a.fontSize*1.15);
+                return <g key={a.id} data-editor-handle="1">
+                  <line onPointerDown={selectAndMove} x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={sw} markerEnd="url(#editorArrowHead)" style={{pointerEvents:"stroke",cursor:"move"}}/>
+                  <rect onPointerDown={selectAndMove} x={x1-12} y={y1-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1} style={{cursor:"move"}}/>
+                  <text onPointerDown={selectAndMove} x={x1} y={y1+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{cursor:"move",userSelect:"none"}}>{a.text||"Ghi chú"}</text>
+                  {selected&&<>
+                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="34"/>
+                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"arrowTarget")} cx={x2} cy={y2} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
+                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"arrowLabel")} cx={x1} cy={y1} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
+                  </>}
                 </g>
               }
               if(a.type==="text"&&a.label){
                 const x=a.label.x*1000,y=a.label.y*1000;
-                return <g key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}}>
-                  <rect x={x-8} y={y-a.fontSize*.85} width={Math.max(90,(a.text?.length||7)*a.fontSize*.62)} height={a.fontSize*1.5} rx="8" fill="white" fillOpacity=".94" stroke={selected?a.color:"white"} strokeWidth={selected?4:1}/>
-                  <text x={x} y={y+a.fontSize*.2} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily}>{a.text||"Ghi chú"}</text>
+                const textWidth=Math.max(100,(a.text?.length||7)*a.fontSize*1.15);
+                return <g key={a.id} data-editor-handle="1" onPointerDown={selectAndMove}>
+                  <rect x={x-12} y={y-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1}/>
+                  <text x={x} y={y+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{userSelect:"none"}}>{a.text||"Ghi chú"}</text>
+                  {selected&&<circle cx={x} cy={y} r="18" fill="none" stroke={a.color} strokeWidth="5"/>}
                 </g>
               }
               if((a.type==="circle"||a.type==="rect")&&a.center){
                 const cx=a.center.x*1000,cy=a.center.y*1000,w=(a.width||.24)*1000,h=(a.height||.16)*1000;
-                return <g key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}}>
-                  {a.type==="circle"?<ellipse cx={cx} cy={cy} rx={w/2} ry={h/2} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw}/>:<rect x={cx-w/2} y={cy-h/2} width={w} height={h} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw}/>}
+                return <g key={a.id} data-editor-handle="1">
+                  {a.type==="circle"
+                    ?<ellipse onPointerDown={selectAndMove} cx={cx} cy={cy} rx={w/2} ry={h/2} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>
+                    :<rect onPointerDown={selectAndMove} x={cx-w/2} y={cy-h/2} width={w} height={h} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>}
+                  {selected&&<>
+                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"move")} cx={cx} cy={cy} r="19" fill="#fff" stroke={a.color} strokeWidth="6" style={{cursor:"move"}}/>
+                    <circle onPointerDown={(e:any)=>beginManipulation(e,a,"shapeResize")} cx={cx+w/2} cy={cy+h/2} r="23" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"nwse-resize"}}/>
+                  </>}
                 </g>
               }
               if(a.type==="pen"&&a.points?.length){
-                return <polyline key={a.id} onPointerDown={e=>{e.stopPropagation();setSelectedAnnotationId(a.id);setTool("select")}} points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw} strokeLinecap="round" strokeLinejoin="round"/>
+                return <g key={a.id} data-editor-handle="1">
+                  <polyline onPointerDown={selectAndMove} points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke="transparent" strokeWidth={Math.max(24,sw+18)} strokeLinecap="round" strokeLinejoin="round" style={{cursor:"move"}}/>
+                  <polyline points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
+                </g>
               }
               return null
             })}
@@ -725,24 +834,26 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
         </div>
 
         <div className="mb-2 grid grid-cols-[52px_1fr] gap-2">
-          <input aria-label="Màu đánh dấu" type="color" value={annotationColor} onChange={e=>{setAnnotationColor(e.target.value);if(selectedAnnotationId)updateSelectedAnnotation({color:e.target.value})}} className="h-10 w-full rounded-xl border-0 bg-white/10 p-1"/>
+          <input aria-label="Màu đánh dấu" type="color" value={annotationColor} onChange={e=>{const v=e.target.value;setAnnotationColor(v);patchSelectedLive({color:v})}} className="h-10 w-full rounded-xl border-0 bg-white/10 p-1"/>
           <div className="grid grid-cols-2 gap-2">
-            <select value={annotationFontFamily} onChange={e=>{setAnnotationFontFamily(e.target.value);if(selectedAnnotationId)updateSelectedAnnotation({fontFamily:e.target.value})}} className="rounded-xl bg-white/10 px-2 text-xs font-bold text-white">
+            <select value={annotationFontFamily} onChange={e=>{const v=e.target.value;setAnnotationFontFamily(v);patchSelectedLive({fontFamily:v})}} className="rounded-xl bg-white/10 px-2 text-xs font-bold text-white">
               <option className="text-black" value="Arial">Arial</option><option className="text-black" value="Helvetica">Helvetica</option><option className="text-black" value="Georgia">Georgia</option><option className="text-black" value="Courier New">Mono</option><option className="text-black" value="Times New Roman">Times</option>
             </select>
-            <div className="flex items-center gap-2 rounded-xl bg-white/10 px-2"><span className="text-[10px] font-black">Nét</span><input type="range" min="1" max="10" value={annotationStrokeWidth} onChange={e=>{const v=Number(e.target.value);setAnnotationStrokeWidth(v);if(selectedAnnotationId)updateSelectedAnnotation({strokeWidth:v})}} className="min-w-0 flex-1"/></div>
+            <div className="flex items-center gap-2 rounded-xl bg-white/10 px-2"><span className="text-[10px] font-black">Nét</span><input type="range" min="1" max="10" value={annotationStrokeWidth} onInput={e=>{const v=Number((e.target as HTMLInputElement).value);setAnnotationStrokeWidth(v);patchSelectedLive({strokeWidth:v})}} onChange={e=>{const v=Number(e.target.value);setAnnotationStrokeWidth(v);patchSelectedLive({strokeWidth:v})}} className="min-w-0 flex-1"/></div>
           </div>
         </div>
 
         <div className="mb-2 flex items-center gap-2 rounded-xl bg-white/10 p-2">
           <span className="shrink-0 text-[10px] font-black uppercase text-white/60">Cỡ chữ</span>
-          <input type="range" min="12" max="48" value={annotationFontSize} onChange={e=>{const v=Number(e.target.value);setAnnotationFontSize(v);if(selectedAnnotationId)updateSelectedAnnotation({fontSize:v})}} className="min-w-0 flex-1"/>
+          <input type="range" min="12" max="48" value={annotationFontSize} onInput={e=>{const v=Number((e.target as HTMLInputElement).value);setAnnotationFontSize(v);patchSelectedLive({fontSize:v})}} onChange={e=>{const v=Number(e.target.value);setAnnotationFontSize(v);patchSelectedLive({fontSize:v})}} className="min-w-0 flex-1"/>
           <b className="w-8 text-right text-xs">{annotationFontSize}</b>
         </div>
 
-        {selectedAnnotationId&&(()=>{const a=annotations.find(x=>x.id===selectedAnnotationId);return a&&(a.type==="arrowText"||a.type==="text")?<input value={a.text||""} onChange={e=>updateSelectedAnnotation({text:e.target.value})} placeholder="Nhập ghi chú kỹ thuật…" className="mb-2 w-full rounded-xl bg-white px-3 py-2.5 text-sm font-bold text-black outline-none"/>:null})()}
+        {selectedAnnotationId&&<div className="mb-2 rounded-xl bg-emerald-400/15 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-emerald-200">Đang chọn đối tượng · màu, nét, font và cỡ chữ phía trên áp dụng ngay</div>}
+        {selectedAnnotationId&&(()=>{const a=annotations.find(x=>x.id===selectedAnnotationId);return a&&(a.type==="arrowText"||a.type==="text")?<input value={a.text||""} onChange={e=>patchSelectedLive({text:e.target.value})} placeholder="Nhập ghi chú kỹ thuật…" className="mb-2 w-full rounded-xl bg-white px-3 py-2.5 text-sm font-bold text-black outline-none"/>:null})()}
 
-        {tool==="arrowText"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Chạm vào đúng chi tiết cần đánh dấu. Hệ thống tự tạo mũi tên với đầu mũi tên tại điểm chạm và ô chữ ở phía ngoài.</div>}
+        {tool==="arrowText"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Chạm giữ tại chi tiết cần chỉ rồi kéo tới vị trí đặt chữ. Sau khi tạo, kéo nút tròn ở đầu/đuôi để đổi hướng và độ dài, hoặc kéo thân mũi tên để di chuyển cả cụm.</div>}
+        {(tool==="circle"||tool==="rect")&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Chạm giữ và kéo để tạo kích thước. Chọn lại hình rồi kéo tâm để di chuyển hoặc kéo nút góc để phóng/thu.</div>}
         {tool==="pen"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Giữ tay và kéo trực tiếp trên ảnh để vẽ.</div>}
 
         <div className="flex gap-2 overflow-x-auto pb-2">
@@ -753,8 +864,8 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
           <button onClick={resetEdit} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RefreshCcw className="mr-1 inline h-4 w-4"/>Reset</button>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <label className="text-[10px] font-black uppercase text-white/60">Độ sáng <b className="text-white">{brightness}%</b><input type="range" min="50" max="150" value={brightness} onChange={e=>setBrightness(Number(e.target.value))} className="mt-1 w-full"/></label>
-          <label className="text-[10px] font-black uppercase text-white/60">Tương phản <b className="text-white">{contrast}%</b><input type="range" min="50" max="150" value={contrast} onChange={e=>setContrast(Number(e.target.value))} className="mt-1 w-full"/></label>
+          <label className="text-[10px] font-black uppercase text-white/60">Độ sáng <b className="text-white">{brightness}%</b><input type="range" min="40" max="180" value={brightness} onInput={e=>setBrightness(Number((e.target as HTMLInputElement).value))} onChange={e=>setBrightness(Number(e.target.value))} className="mt-1 w-full"/></label>
+          <label className="text-[10px] font-black uppercase text-white/60">Tương phản <b className="text-white">{contrast}%</b><input type="range" min="40" max="180" value={contrast} onInput={e=>setContrast(Number((e.target as HTMLInputElement).value))} onChange={e=>setContrast(Number(e.target.value))} className="mt-1 w-full"/></label>
         </div>
         <button disabled={editBusy} onClick={()=>void saveEditedImage()} className="mt-3 w-full rounded-2xl bg-white py-3 text-sm font-black text-black disabled:opacity-50"><Save className="mr-1 inline h-4 w-4"/>{editBusy?"Đang lưu ảnh...":"Lưu bản chỉnh sửa"}</button>
       </div>}
