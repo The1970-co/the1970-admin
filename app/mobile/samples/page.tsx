@@ -33,6 +33,8 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import { saveAs } from "file-saver";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Staff = { id:string; code?:string|null; name:string };
@@ -46,6 +48,8 @@ type Meta = {
   productGroups:string[];
 };
 type Sample = any;
+
+const SampleImageEditorKonva=dynamic(()=>import("@/components/mobile/SampleImageEditorKonva"),{ssr:false});
 
 const SAMPLE_STATUSES:[string,string][] = [
   ["IDEA","Ý tưởng"],
@@ -144,15 +148,17 @@ function cloudinaryAttachmentUrl(raw:string,filename:string){
   const base=safeFilename(filename).replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]+/g,"-")||"download";
   return url.replace("/upload/",`/upload/fl_attachment:${encodeURIComponent(base)}/`);
 }
-function downloadUrl(url:string,filename:string){
+async function downloadUrl(url:string,filename:string){
   const resolved=asset(url);
   if(!resolved)return;
-  const direct=cloudinaryAttachmentUrl(resolved,filename);
-  // Keep this synchronous with the user tap so iOS does not block it as a popup.
-  if(direct!==resolved){ window.location.assign(direct); return; }
-  const a=document.createElement("a");
-  a.href=resolved; a.download=safeFilename(filename); a.rel="noopener";
-  document.body.appendChild(a); a.click(); a.remove();
+  try{
+    const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
+    if(!res.ok)throw new Error("download");
+    const blob=await res.blob();
+    saveAs(blob,filenameWithMime(filename,blob.type));
+  }catch{
+    saveAs(cloudinaryAttachmentUrl(resolved,filename),safeFilename(filename));
+  }
 }
 
 function asset(url?:string|null){
@@ -613,6 +619,35 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     setTool("select");
     try{e?.currentTarget?.releasePointerCapture?.(e.pointerId)}catch{}
   }
+  async function saveKonvaEditedImage(blob:Blob){
+    if(viewerIndex===null||!gallery[viewerIndex]||!can("design_sample.edit")||!can("design_sample.upload_images"))return;
+    try{
+      setEditBusy(true);setViewerError("");
+      const currentAsset=gallery[viewerIndex];
+      const file=new File([blob],`${safeFilename(sample.code||"mau")}-edited-${Date.now()}.jpg`,{type:"image/jpeg"});
+      const uploaded=await upload(file);
+      const rawImages=(sample.images||[]).map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||null}));
+      let replaced=false;
+      const nextImages=rawImages.map((x:any)=>{
+        if(!isPatternAsset(x)&&asset(x.url)===currentAsset){
+          replaced=true;
+          return {...x,url:uploaded.url,caption:x.caption||"Ảnh đã chỉnh sửa"};
+        }
+        return x;
+      });
+      if(!replaced)nextImages.push({type:"SAMPLE",url:uploaded.url,caption:"Ảnh đã chỉnh sửa"});
+      const nextCover=asset(sample.coverImageUrl)===currentAsset?uploaded.url:(sample.coverImageUrl||uploaded.url);
+      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({coverImageUrl:nextCover,images:nextImages})});
+      setGallery(g=>g.map((u,i)=>i===viewerIndex?asset(uploaded.url):u));
+      setEditMode(false);
+      await onChanged();
+    }catch(e){
+      setViewerError(e instanceof Error?e.message:"Không lưu được ảnh chỉnh sửa.");
+    }finally{
+      setEditBusy(false);
+    }
+  }
+
   async function saveEditedImage(){
     if(viewerIndex===null||!gallery[viewerIndex]||!can("design_sample.edit")||!can("design_sample.upload_images"))return;
     try{
@@ -747,127 +782,40 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
       </div>
     </div>
 
-    {viewerIndex!==null&&gallery[viewerIndex]&&<div className="fixed inset-0 z-[120] flex flex-col bg-black/95" style={{touchAction:"pinch-zoom"}}>
-      <div className="flex shrink-0 items-center justify-between gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]">
-        <div className="flex gap-2">
-          <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="grid h-10 w-10 place-items-center rounded-full bg-white/95"><Download className="h-4 w-4"/></button>
-          {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>{setEditMode(x=>!x);resetEdit()}} className={`rounded-full px-4 text-xs font-black ${editMode?"bg-amber-300 text-black":"bg-white/95"}`}><Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh</button>}
-        </div>
-        <button type="button" onClick={closeViewer} className="grid h-10 w-10 place-items-center rounded-full bg-white/95"><X className="h-5 w-5"/></button>
-      </div>
+    {viewerIndex!==null&&gallery[viewerIndex]&&<div className="fixed inset-0 z-[120] flex flex-col bg-black/95">
+      {!editMode?<>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:editMode?"none":"pan-x pan-y pinch-zoom"}}>
-        {gallery.length>1&&!editMode&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">‹</button>}
-        <div ref={editorRef} className="relative inline-block max-h-full max-w-full select-none" style={{touchAction:editMode?"none":"auto"}} onPointerDown={beginAnnotation} onPointerMove={moveAnnotation} onPointerUp={endAnnotation} onPointerCancel={endAnnotation}>
-          <img src={gallery[viewerIndex]} draggable={false} className="block max-h-[68vh] max-w-[94vw] object-contain transition-transform" style={{transform:`rotate(${rotate}deg) scaleX(${flipX?-1:1})`,filter:`brightness(${brightness}%) contrast(${contrast}%)`,WebkitFilter:`brightness(${brightness}%) contrast(${contrast}%)`,willChange:"filter,transform",aspectRatio:cropRatio==="original"?undefined:cropRatio.replace(":", "/") as any}} alt=""/>
-          {editMode&&<svg className={`pointer-events-none absolute inset-0 h-full w-full ${tool==="select"?"":"cursor-crosshair"}`} viewBox="0 0 1000 1000" preserveAspectRatio="none">
-            
-            {annotations.map(a=>{
-              const selected=a.id===selectedAnnotationId;
-              const sw=Math.max(2,a.strokeWidth*2.2);
-              const selectAndMove=(e:any)=>beginManipulation(e,a,"move");
-              if(a.type==="arrowText"&&a.target&&a.label){
-                const x1=a.label.x*1000,y1=a.label.y*1000,x2=a.target.x*1000,y2=a.target.y*1000;
-                const textWidth=Math.max(100,(a.text?.length||7)*a.fontSize*1.15);
-                return <g key={a.id} data-editor-handle="1">
-                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={sw} pointerEvents="none"/>
-                  {(()=>{const ang=Math.atan2(y2-y1,x2-x1),head=Math.max(18,sw*4);const p1=`${x2},${y2}`;const p2=`${x2-head*Math.cos(ang-Math.PI/7)},${y2-head*Math.sin(ang-Math.PI/7)}`;const p3=`${x2-head*Math.cos(ang+Math.PI/7)},${y2-head*Math.sin(ang+Math.PI/7)}`;return <polygon points={`${p1} ${p2} ${p3}`} fill={a.color} pointerEvents="none"/>})()}
-                  <rect x={x1-12} y={y1-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1} style={{cursor:"move"}}/>
-                  <text x={x1} y={y1+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{cursor:"move",userSelect:"none"}}>{a.text||"Ghi chú"}</text>
-                  {selected&&<>
-                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="34"/>
-                    <circle cx={x2} cy={y2} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
-                    <circle cx={x1} cy={y1} r="22" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"grab"}}/>
-                  </>}
-                </g>
-              }
-              if(a.type==="text"&&a.label){
-                const x=a.label.x*1000,y=a.label.y*1000;
-                const textWidth=Math.max(100,(a.text?.length||7)*a.fontSize*1.15);
-                return <g key={a.id} data-editor-handle="1">
-                  <rect x={x-12} y={y-a.fontSize*1.25} width={textWidth} height={a.fontSize*2.05} rx="10" fill="white" fillOpacity=".96" stroke={selected?a.color:"white"} strokeWidth={selected?5:1}/>
-                  <text x={x} y={y+a.fontSize*.3} fill={a.color} fontSize={a.fontSize*2.1} fontWeight="700" fontFamily={a.fontFamily} style={{userSelect:"none"}}>{a.text||"Ghi chú"}</text>
-                  {selected&&<circle cx={x} cy={y} r="18" fill="none" stroke={a.color} strokeWidth="5"/>}
-                </g>
-              }
-              if((a.type==="circle"||a.type==="rect")&&a.center){
-                const cx=a.center.x*1000,cy=a.center.y*1000,w=(a.width||.24)*1000,h=(a.height||.16)*1000;
-                return <g key={a.id} data-editor-handle="1">
-                  {a.type==="circle"
-                    ?<ellipse cx={cx} cy={cy} rx={w/2} ry={h/2} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>
-                    :<rect x={cx-w/2} y={cy-h/2} width={w} height={h} fill="transparent" stroke={a.color} strokeWidth={selected?sw+3:sw} style={{cursor:"move",pointerEvents:"all"}}/>}
-                  {selected&&<>
-                    <circle cx={cx} cy={cy} r="19" fill="#fff" stroke={a.color} strokeWidth="6" style={{cursor:"move"}}/>
-                    <circle cx={cx+w/2} cy={cy+h/2} r="23" fill="#fff" stroke={a.color} strokeWidth="7" style={{cursor:"nwse-resize"}}/>
-                  </>}
-                </g>
-              }
-              if(a.type==="pen"&&a.points?.length){
-                return <g key={a.id} data-editor-handle="1">
-                  <polyline points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke="transparent" strokeWidth={Math.max(24,sw+18)} strokeLinecap="round" strokeLinejoin="round" style={{cursor:"move"}}/>
-                  <polyline points={a.points.map(p=>`${p.x*1000},${p.y*1000}`).join(" ")} fill="none" stroke={a.color} strokeWidth={selected?sw+3:sw} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>
-                </g>
-              }
-              return null
-            })}
-          </svg>}
-        </div>
-        {gallery.length>1&&!editMode&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl">›</button>}
-      </div>
-
-      {editMode&&<div className="shrink-0 border-t border-white/20 bg-black/80 p-3 pb-[max(12px,env(safe-area-inset-bottom))] text-white">
-        {viewerError&&<div className="mb-2 rounded-xl bg-red-500/20 p-2 text-xs text-red-200">{viewerError}</div>}
-        <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-          <button onClick={()=>setTool("select")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="select"?"bg-amber-300 text-black":"bg-white/10"}`}><MousePointer2 className="mr-1 inline h-4 w-4"/>Chọn</button>
-          <button onClick={()=>setTool("arrowText")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="arrowText"?"bg-amber-300 text-black":"bg-white/10"}`}><ArrowUpRight className="mr-1 inline h-4 w-4"/>Mũi tên + chữ</button>
-          <button onClick={()=>setTool("text")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="text"?"bg-amber-300 text-black":"bg-white/10"}`}><Type className="mr-1 inline h-4 w-4"/>Chữ</button>
-          <button onClick={()=>setTool("circle")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="circle"?"bg-amber-300 text-black":"bg-white/10"}`}><Circle className="mr-1 inline h-4 w-4"/>Khoanh</button>
-          <button onClick={()=>setTool("rect")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="rect"?"bg-amber-300 text-black":"bg-white/10"}`}><Square className="mr-1 inline h-4 w-4"/>Khung</button>
-          <button onClick={()=>setTool("pen")} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${tool==="pen"?"bg-amber-300 text-black":"bg-white/10"}`}><PenTool className="mr-1 inline h-4 w-4"/>Vẽ tay</button>
-          <button disabled={!undoStack.length} onClick={undoAnnotation} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black disabled:opacity-30"><Undo2 className="mr-1 inline h-4 w-4"/>Lùi</button>
-          <button disabled={!redoStack.length} onClick={redoAnnotation} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black disabled:opacity-30"><Redo2 className="mr-1 inline h-4 w-4"/>Tiến</button>
-          <button disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} className="shrink-0 rounded-xl bg-red-500/20 px-3 py-2 text-xs font-black text-red-200 disabled:opacity-30"><Eraser className="mr-1 inline h-4 w-4"/>Xóa dấu</button>
-          <button disabled={!annotations.length} onClick={()=>commitAnnotations(()=>[])} className="shrink-0 rounded-xl bg-red-500/20 px-3 py-2 text-xs font-black text-red-200 disabled:opacity-30"><Trash2 className="mr-1 inline h-4 w-4"/>Xóa hết</button>
-        </div>
-
-        <div className="mb-2 grid grid-cols-[52px_1fr] gap-2">
-          <input aria-label="Màu đánh dấu" type="color" value={annotationColor} onChange={e=>{const v=e.target.value;setAnnotationColor(v);patchSelectedLive({color:v})}} className="h-10 w-full rounded-xl border-0 bg-white/10 p-1"/>
-          <div className="grid grid-cols-2 gap-2">
-            <select value={annotationFontFamily} onChange={e=>{const v=e.target.value;setAnnotationFontFamily(v);patchSelectedLive({fontFamily:v})}} className="rounded-xl bg-white/10 px-2 text-xs font-bold text-white">
-              <option className="text-black" value="Arial">Arial</option><option className="text-black" value="Helvetica">Helvetica</option><option className="text-black" value="Georgia">Georgia</option><option className="text-black" value="Courier New">Mono</option><option className="text-black" value="Times New Roman">Times</option>
-            </select>
-            <div className="flex items-center gap-2 rounded-xl bg-white/10 px-2"><span className="text-[10px] font-black">Nét</span><input type="range" min="1" max="10" value={annotationStrokeWidth} onInput={e=>{const v=Number((e.target as HTMLInputElement).value);setAnnotationStrokeWidth(v);patchSelectedLive({strokeWidth:v})}} onChange={e=>{const v=Number(e.target.value);setAnnotationStrokeWidth(v);patchSelectedLive({strokeWidth:v})}} className="min-w-0 flex-1"/></div>
+        <div className="flex shrink-0 items-center justify-between gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]">
+          <div className="flex gap-2">
+            <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="rounded-full bg-white/95 px-4 py-2 text-xs font-black text-black">
+              <Download className="mr-1 inline h-4 w-4"/>Tải ảnh
+            </button>
+            {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>setEditMode(true)} className="rounded-full bg-amber-300 px-4 py-2 text-xs font-black text-black">
+              <Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh
+            </button>}
           </div>
+          <button type="button" onClick={closeViewer} className="grid h-10 w-10 place-items-center rounded-full bg-white/95 text-black"><X className="h-5 w-5"/></button>
         </div>
 
-        <div className="mb-2 flex items-center gap-2 rounded-xl bg-white/10 p-2">
-          <span className="shrink-0 text-[10px] font-black uppercase text-white/60">Cỡ chữ</span>
-          <input type="range" min="12" max="48" value={annotationFontSize} onInput={e=>{const v=Number((e.target as HTMLInputElement).value);setAnnotationFontSize(v);patchSelectedLive({fontSize:v})}} onChange={e=>{const v=Number(e.target.value);setAnnotationFontSize(v);patchSelectedLive({fontSize:v})}} className="min-w-0 flex-1"/>
-          <b className="w-8 text-right text-xs">{annotationFontSize}</b>
+        <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-x pan-y pinch-zoom"}}>
+          {gallery.length>1&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">‹</button>}
+          <img src={gallery[viewerIndex]} className="max-h-full max-w-full object-contain" alt=""/>
+          {gallery.length>1&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">›</button>}
         </div>
 
-        {selectedAnnotationId&&<div className="mb-2 rounded-xl bg-emerald-400/15 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-emerald-200">Đang chọn đối tượng · màu, nét, font và cỡ chữ phía trên áp dụng ngay</div>}
-        {selectedAnnotationId&&(()=>{const a=annotations.find(x=>x.id===selectedAnnotationId);return a&&(a.type==="arrowText"||a.type==="text")?<input value={a.text||""} onChange={e=>patchSelectedLive({text:e.target.value})} placeholder="Nhập ghi chú kỹ thuật…" className="mb-2 w-full rounded-xl bg-white px-3 py-2.5 text-sm font-bold text-black outline-none"/>:null})()}
-
-        {tool==="arrowText"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Chạm giữ tại chi tiết cần chỉ rồi kéo tới vị trí đặt chữ. Sau khi tạo, kéo nút tròn ở đầu/đuôi để đổi hướng và độ dài, hoặc kéo thân mũi tên để di chuyển cả cụm.</div>}
-        {(tool==="circle"||tool==="rect")&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Chạm giữ và kéo để tạo kích thước. Chọn lại hình rồi kéo tâm để di chuyển hoặc kéo nút góc để phóng/thu.</div>}
-        {tool==="pen"&&<div className="mb-2 rounded-xl bg-amber-300/15 px-3 py-2 text-[11px] font-bold text-amber-200">Giữ tay và kéo trực tiếp trên ảnh để vẽ.</div>}
-
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          <button onClick={()=>setRotate(x=>x-90)} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RotateCcw className="mr-1 inline h-4 w-4"/>Trái</button>
-          <button onClick={()=>setRotate(x=>x+90)} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RotateCw className="mr-1 inline h-4 w-4"/>Phải</button>
-          <button onClick={()=>setFlipX(x=>!x)} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${flipX?"bg-white text-black":"bg-white/10"}`}><FlipHorizontal className="mr-1 inline h-4 w-4"/>Lật ngang</button>
-          {(["original","1:1","4:5","3:4"] as const).map(r=><button key={r} onClick={()=>setCropRatio(r)} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${cropRatio===r?"bg-white text-black":"bg-white/10"}`}>{r==="original"?"Gốc":r}</button>)}
-          <button onClick={resetEdit} className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-black"><RefreshCcw className="mr-1 inline h-4 w-4"/>Reset</button>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-[10px] font-black uppercase text-white/60">Độ sáng <b className="text-white">{brightness}%</b><input type="range" min="40" max="180" value={brightness} onInput={e=>setBrightness(Number((e.target as HTMLInputElement).value))} onChange={e=>setBrightness(Number(e.target.value))} className="mt-1 w-full"/></label>
-          <label className="text-[10px] font-black uppercase text-white/60">Tương phản <b className="text-white">{contrast}%</b><input type="range" min="40" max="180" value={contrast} onInput={e=>setContrast(Number((e.target as HTMLInputElement).value))} onChange={e=>setContrast(Number(e.target.value))} className="mt-1 w-full"/></label>
-        </div>
-        <button disabled={editBusy} onClick={()=>void saveEditedImage()} className="mt-3 w-full rounded-2xl bg-white py-3 text-sm font-black text-black disabled:opacity-50"><Save className="mr-1 inline h-4 w-4"/>{editBusy?"Đang lưu ảnh...":"Lưu bản chỉnh sửa"}</button>
-      </div>}
-
-      {!editMode&&gallery.length>1&&<div className="shrink-0 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 text-center"><span className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-black text-black">{viewerIndex+1}/{gallery.length}</span></div>}
+        {gallery.length>1&&<div className="shrink-0 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 text-center">
+          <span className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-black text-black">{viewerIndex+1}/{gallery.length}</span>
+        </div>}
+      </>:(
+        <SampleImageEditorKonva
+          imageUrl={gallery[viewerIndex]}
+          filename={`${sample.code||"mau"}-${viewerIndex+1}-edited.jpg`}
+          busy={editBusy}
+          onCancel={()=>setEditMode(false)}
+          onSave={saveKonvaEditedImage}
+        />
+      )}
+      {viewerError&&<div className="absolute left-3 right-3 top-[max(64px,env(safe-area-inset-top))] z-[130] rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white">{viewerError}</div>}
     </div>}
   </div>
 }

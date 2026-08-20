@@ -199,6 +199,41 @@ export const PERMISSIONS = {
   OMNI_LIVESTREAM_VIEW: "omni_livestream.view",
   OMNI_LIVESTREAM_REPLY: "omni_livestream.reply",
 
+  // Mobile production hub / per-screen visibility
+  MOBILE_HOME_PRODUCTION: "mobile.home.production",
+  MOBILE_PRODUCTION_HUB_VIEW: "mobile.production_hub.view",
+  MOBILE_PAGE_FABRIC_LIBRARY: "mobile.page.fabric_library",
+  MOBILE_PAGE_DESIGN_SAMPLES: "mobile.page.design_samples",
+  MOBILE_PAGE_MEASUREMENT_LIBRARY: "mobile.page.measurement_library",
+  MOBILE_PAGE_FABRIC_RECEIPTS: "mobile.page.fabric_receipts",
+  MOBILE_PAGE_PRODUCTION: "mobile.page.production",
+  MOBILE_PAGE_ACCESSORIES: "mobile.page.accessories",
+
+  // Production / accessories
+  MENU_MEASUREMENT_LIBRARY: "menu.measurement_library",
+  MEASUREMENT_LIBRARY_VIEW: "measurement_library.view",
+  MEASUREMENT_LIBRARY_CREATE: "measurement_library.create",
+  MEASUREMENT_LIBRARY_EDIT: "measurement_library.edit",
+  MEASUREMENT_LIBRARY_DELETE: "measurement_library.delete",
+
+  MENU_PRODUCTION: "menu.production",
+  PRODUCTION_VIEW: "production.view",
+  PRODUCTION_CREATE: "production.create",
+  PRODUCTION_EDIT: "production.edit",
+  PRODUCTION_CALCULATE: "production.calculate",
+  PRODUCTION_MANAGE: "production.manage",
+  MENU_ACCESSORIES: "menu.accessories",
+  ACCESSORIES_VIEW: "accessories.view",
+  ACCESSORIES_COST_VIEW: "accessories.cost.view",
+  ACCESSORIES_SUPPLIER_IDENTITY_VIEW: "accessories.supplier_identity.view",
+  ACCESSORIES_MANAGE: "accessories.manage",
+  ACCESSORIES_STOCK: "accessories.stock",
+
+  // Fabric receipt sensitive fields
+  FABRIC_RECEIPT_SUPPLIER_IDENTITY_VIEW: "fabric_receipt.supplier_identity.view",
+  FABRIC_RECEIPT_COST_VIEW: "fabric_receipt.cost.view",
+  FABRIC_RECEIPT_COST_EDIT: "fabric_receipt.cost.edit",
+
   PERMISSIONS_VIEW: "permissions.view",
   PERMISSIONS_MANAGE: "permissions.manage",
   SYSTEM_MANAGE: "system.manage",
