@@ -7239,6 +7239,16 @@ function MessageBubble({
       <div className={cx("max-w-[72%]", isOut && "text-right")}>
         <div
           className={cx(
+            "mb-1 flex items-center gap-1.5 text-[11px] font-bold text-neutral-500",
+            isOut && "justify-end",
+          )}
+        >
+          <span>{senderLabel}</span>
+          <span aria-hidden="true">•</span>
+          <span>{formatMessageDateTime(message.sentAt)}</span>
+        </div>
+        <div
+          className={cx(
             "inline-block rounded-[22px] px-4 py-3 text-sm shadow-sm",
             isOut
               ? "rounded-br-md bg-blue-600 text-white"
@@ -7256,16 +7266,6 @@ function MessageBubble({
               isOut={isOut}
             />
           )}
-        </div>
-        <div
-          className={cx(
-            "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-medium text-neutral-400",
-            isOut && "justify-end",
-          )}
-        >
-          <span className="font-semibold text-neutral-500">{senderLabel}</span>
-          <span aria-hidden="true">•</span>
-          <span>{formatMessageDateTime(message.sentAt)}</span>
         </div>
       </div>
     </div>
