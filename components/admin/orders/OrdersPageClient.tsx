@@ -154,7 +154,7 @@ function MultiFilterSelect({
   const label = multiFilterSelectedLabel(normalized, options, allLabel);
 
   return (
-    <details className={`group relative ${className}`}>
+    <details className={`group relative z-[110] ${className}`}>
       <summary
         className={`flex min-h-[46px] cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm outline-none marker:hidden ${
           disabled ? "pointer-events-none opacity-50" : ""
@@ -164,7 +164,7 @@ function MultiFilterSelect({
         <span className="shrink-0 text-neutral-400">⌄</span>
       </summary>
 
-      <div className="absolute left-0 z-40 mt-2 max-h-[280px] min-w-full overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
+      <div className="absolute left-0 z-[160] mt-2 max-h-[280px] min-w-full overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
         <label className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50">
           <input
             type="checkbox"
@@ -8249,7 +8249,7 @@ export default function OrdersPageClient() {
           </Panel>
 
 
-          <Panel className="px-2 py-1.5">
+          <Panel className="relative z-[100] overflow-visible px-2 py-1.5">
             <div className="grid gap-1.5 lg:grid-cols-[minmax(420px,1fr)_100px_auto_auto] lg:items-center">
               <input
                 className="h-8 rounded-xl border border-neutral-300 px-3 text-xs outline-none focus:border-neutral-900"
@@ -8929,7 +8929,7 @@ export default function OrdersPageClient() {
             </Panel>
           ) : null}
 
-          <Panel className="overflow-hidden">
+          <Panel className="relative z-0 overflow-hidden">
             <div
               ref={tableScrollRef}
               onScroll={updateTableScrollState}

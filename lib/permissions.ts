@@ -183,6 +183,16 @@ export const PERMISSIONS = {
   OMNI_INBOX_EXPORT: "omni_inbox.export",
   OMNI_INBOX_SETTINGS: "omni_inbox.settings",
 
+  // Compatibility constants: controller Omni cũ vẫn dùng tên OMNI_MESSAGES_*.
+  // Value giữ cùng bộ permission omni_inbox.* đang dùng trong RBAC / role templates.
+  OMNI_MESSAGES_VIEW: "omni_inbox.view",
+  OMNI_MESSAGES_REPLY: "omni_inbox.reply",
+  OMNI_MESSAGES_ASSIGN: "omni_inbox.assign",
+  OMNI_MESSAGES_MANAGE: "omni_inbox.settings",
+  OMNI_MESSAGES_TAGS: "omni_inbox.tags.manage",
+  OMNI_MESSAGES_NOTES: "omni_inbox.notes.manage",
+  OMNI_MESSAGES_CREATE_ORDER: "omni_inbox.create_order",
+
   OMNI_QUICK_REPLIES_VIEW: "omni_inbox.quick_replies.view",
   OMNI_QUICK_REPLIES_CREATE: "omni_inbox.quick_replies.create",
   OMNI_QUICK_REPLIES_EDIT: "omni_inbox.quick_replies.edit",
