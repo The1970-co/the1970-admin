@@ -1628,7 +1628,15 @@ export default function MessagesPageClient({
             });
           }
 
-          void loadList();
+          // Chỉ sắp xếp lại danh sách khi có TIN KHÁCH GỬI VÀO.
+          // Tin OUT do nhân viên vừa trả lời không reload toàn bộ danh sách,
+          // nếu không backend sort lastMessageAt desc sẽ kéo hội thoại đang xử lý
+          // từ vị trí hiện tại lên đầu danh sách, làm nhân viên đang check từ dưới
+          // lên bị mất vị trí và dễ sót hội thoại. conversation.updated phía sau
+          // vẫn cập nhật nội dung/trạng thái của đúng dòng mà không đổi thứ tự.
+          if (message.direction === "IN") {
+            void loadList();
+          }
           return;
         }
 
@@ -3118,7 +3126,10 @@ export default function MessagesPageClient({
   return (
     <div className="min-h-screen bg-[#f6f6f4] text-neutral-950">
       <div className="flex min-h-screen">
-        <aside className="hidden w-[268px] shrink-0 border-r border-neutral-200 bg-white xl:flex xl:flex-col">
+        <aside className={cx(
+          "hidden w-[268px] shrink-0 border-r border-neutral-200 bg-white xl:flex xl:flex-col",
+          isInboxWorkspace && "xl:hidden",
+        )}>
           <div className="border-b border-neutral-200 px-6 py-7">
             <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-neutral-400">
               The 1970
@@ -3260,7 +3271,10 @@ export default function MessagesPageClient({
         </aside>
 
         <main className="min-w-0 flex-1">
-          <header className="sticky top-0 z-20 flex h-20 items-center gap-4 border-b border-neutral-200 bg-white/95 px-6 backdrop-blur">
+          <header className={cx(
+            "sticky top-0 z-20 h-20 items-center gap-4 border-b border-neutral-200 bg-white/95 px-6 backdrop-blur",
+            isInboxWorkspace ? "hidden" : "flex",
+          )}>
             <button
               type="button"
               onClick={() =>
@@ -3360,7 +3374,7 @@ export default function MessagesPageClient({
           </header>
 
           {isInboxWorkspace ? (
-            <section className="grid h-[calc(100vh-80px)] grid-cols-1 gap-4 p-4 2xl:grid-cols-[440px_minmax(600px,1fr)_380px]">
+            <section className="grid h-[calc(100dvh-72px)] min-h-0 grid-cols-1 gap-3 overflow-hidden p-3 2xl:grid-cols-[360px_minmax(720px,1fr)_340px]">
               <aside className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
                 <div className="shrink-0 border-b border-neutral-200 p-5">
                   <div className="mb-4 flex items-start justify-between">
@@ -3386,6 +3400,26 @@ export default function MessagesPageClient({
                         <Filter className="h-4 w-4" />
                       </button>
                     </div>
+                  </div>
+
+                  <div className="mb-3 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
+                    <Search className="h-4 w-4 shrink-0 text-neutral-400" />
+                    <input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
+                      placeholder="Tìm khách, SĐT, nội dung tin..."
+                    />
+                    {search ? (
+                      <button
+                        type="button"
+                        onClick={() => setSearch("")}
+                        className="rounded-full p-1 text-neutral-400 hover:bg-white"
+                        aria-label="Xóa tìm kiếm"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="mb-4 rounded-3xl border border-blue-100 bg-blue-50 p-4">

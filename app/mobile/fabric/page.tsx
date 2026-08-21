@@ -24,6 +24,7 @@ type Staff={id:string;code:string;name:string;branchId?:string|null};
 type Sample={id:string;code:string;name:string;year?:number;fabricBoardCode?:string|null;fabricCode?:string|null};
 type Roll={id?:string;sortOrder?:number|null;fabricCode?:string|null;rollCode?:string|null;colorName?:string|null;colorCode?:string|null;supplierDeclaredM?:any;supplierDeclaredKg?:any;actualM?:any;actualKg?:any;unitPriceCny?:any;priceUnit?:"METER"|"KG"|"ROLL"|null;lineAmountCny?:number|null;lineAmountVnd?:number|null;defectNote?:string|null;passed?:boolean;images?:Array<{id:string;url:string;caption?:string|null}>};
 type FabricCostGroup={id?:string;fabricCode:string;chinaShippingCny?:any;vietnamShippingRateVndPerKg?:any;vietnamShippingVnd?:any;note?:string|null};
+type FabricColorMap={id?:string;fabricCode:string;colorName:string;colorCode?:string|null};
 type ReceiptCostSummary={exchangeRateToVnd:number;goodsCny:number;goodsVnd:number;chinaShippingCny:number;chinaShippingVnd:number;vietnamShippingVnd:number;totalShippingVnd:number;grandTotalVnd:number};
 type Measurement={id:string;areaCm2:number;weightGrams:number;gsm:number;positionLabel?:string|null;imageUrl?:string|null;measuredByName?:string|null;createdAt:string};
 type Receipt={
@@ -31,7 +32,7 @@ type Receipt={
  fabricBoardCode?:string|null;fabricCode?:string|null;fabricName?:string|null;colorName?:string|null;colorCode?:string|null;lotCode?:string|null;
  supplierDeclaredM?:number|null;supplierDeclaredKg?:number|null;actualM?:number|null;actualKg?:number|null;rollCount:number;
  unitPrice?:number|null;priceUnit:"METER"|"KG"|"ROLL";priceCurrency?:string|null;exchangeRateToVnd?:number|null;unitPriceVnd?:number|null;expectedGsm?:number|null;measuredGsm?:number|null;varianceApproved:boolean;status:string;
- receivedAt?:string|null;completedAt?:string|null;receivedByStaffId?:string|null;receivedByName?:string|null;note?:string|null;rolls:Roll[];measurements:Measurement[];fabricCosts?:FabricCostGroup[];costSummary?:ReceiptCostSummary|null;
+ receivedAt?:string|null;completedAt?:string|null;receivedByStaffId?:string|null;receivedByName?:string|null;note?:string|null;rolls:Roll[];measurements:Measurement[];fabricCosts?:FabricCostGroup[];colorMaps?:FabricColorMap[];costSummary?:ReceiptCostSummary|null;
  images?:Array<{id:string;type:string;url:string;caption?:string|null}>;
 };
 type BoardColor={id:string;name:string;code?:string|null;imageUrl?:string|null};
@@ -111,9 +112,9 @@ export default function Page(){
  }
 
  if(user&&!canOpenPage)return <main className="min-h-[100dvh] bg-neutral-100 p-6 pt-[max(56px,calc(env(safe-area-inset-top)+24px))]"><div className="mx-auto max-w-md rounded-3xl bg-white p-6 text-center"><div className="text-lg font-black">Không có quyền Vải về</div><div className="mt-2 text-sm text-neutral-500">Bật quyền màn App và fabric_receipt.view trong Phân quyền.</div></div></main>;
- return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
+ return <main className="min-h-screen bg-neutral-100 text-neutral-950" style={{minHeight:"100svh"}}>
   <div className="mx-auto max-w-md">
-   <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur">
+   <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[54px] backdrop-blur">
     <div className="flex items-center justify-between gap-2">
      <div className="flex items-center gap-3"><Link href="/mobile/production" className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link><div><div className="text-[10px] font-black uppercase tracking-[.18em] text-neutral-400">Nguyên liệu</div><h1 className="text-xl font-black">Vải về</h1></div></div>
      <div className="flex gap-2"><button onClick={()=>void load()} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><RefreshCw className={`h-4 w-4 ${loading?"animate-spin":""}`}/></button>{can("fabric_receipt.create")&&<button onClick={()=>setEditing(null)} className="rounded-2xl bg-neutral-950 px-3 py-2.5 text-xs font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Nhận vải</button>}</div>
@@ -155,6 +156,7 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
  const [files,setFiles]=useState<Record<number,File[]>>({});
  const [manualRollColor,setManualRollColor]=useState<Record<number,boolean>>({});
  const [fabricCosts,setFabricCosts]=useState<FabricCostGroup[]>(receipt?.fabricCosts||[]);
+ const [colorMaps,setColorMaps]=useState<FabricColorMap[]>(receipt?.colorMaps||[]);
  const [saving,setSaving]=useState(false),[error,setError]=useState("");
  const patch=(k:string,v:any)=>setF((x:any)=>({...x,[k]:v}));
  useEffect(()=>{if(receipt)return;const p=new URLSearchParams();if(f.receivedAt)p.set("receivedAt",f.receivedAt);api<{code:string}>(`/sample-fabric/fabric-receipts/next-code?${p}`).then(r=>patch("receiptCode",r.code)).catch(()=>{})},[f.receivedAt,receipt?.id]);
@@ -180,10 +182,17 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
  const selectedBoard=meta.boards.find(x=>x.id===f.fabricBoardId)||meta.boards.find(x=>x.boardCode===f.fabricBoardCode);
  const allowedCodes=colorCodeList(f.colorCode);
  const allowedNames=colorNameList(f.colorName);
- const allowedColors=allowedCodes.map((code,index)=>{
-  const fromBoard=selectedBoard?.colors?.find(c=>colorCode(c.code)===code);
-  return {code,name:fromBoard?.name||allowedNames[index]||""};
- });
+ const legacyColors=allowedCodes.map((code,index)=>({fabricCode:String(f.fabricCode||"").trim().toUpperCase(),code,name:allowedNames[index]||""}));
+ function mapsForFabric(code:any){
+  const fc=String(code||"").trim().toUpperCase();
+  const mapped=colorMaps.filter(x=>String(x.fabricCode||"").trim().toUpperCase()===fc).map(x=>({code:colorCode(x.colorCode),name:String(x.colorName||"").trim()}));
+  if(mapped.length)return mapped;
+  return legacyColors.filter(x=>!x.fabricCode||x.fabricCode===fc);
+ }
+ function addColorMap(){setColorMaps(x=>[...x,{fabricCode:String(f.fabricCode||"").trim().toUpperCase(),colorName:"",colorCode:""}])}
+ function patchColorMap(i:number,k:keyof FabricColorMap,v:any){setColorMaps(x=>x.map((row,j)=>j===i?{...row,[k]:k==="fabricCode"?String(v||"").toUpperCase():v}:row))}
+ function removeColorMap(i:number){setColorMaps(x=>x.filter((_,j)=>j!==i))}
+ function applyConfiguredColorsToRolls(){setRolls(rows=>rows.map(r=>{const opts=mapsForFabric(r.fabricCode);const byCode=r.colorCode?opts.find(x=>colorCode(x.code)===colorCode(r.colorCode)):undefined;const byName=!byCode&&r.colorName?opts.find(x=>x.name.trim().toLowerCase()===String(r.colorName||"").trim().toLowerCase()):undefined;const hit=byCode||byName;return hit?{...r,colorName:hit.name||r.colorName,colorCode:hit.code||r.colorCode}:r}))}
  function toggleBoardColor(c:BoardColor){
   const code=colorCode(c.code||c.name);
   const current=colorCodeList(f.colorCode);
@@ -193,7 +202,7 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
   patch("colorCode",next.join(", "));
   patch("colorName",names.join(", "));
  }
- function addRoll(){setRolls(x=>[...x,{sortOrder:x.length+1,fabricCode:f.fabricCode||"",rollCode:"",colorName:allowedColors.length===1?allowedColors[0].name:"",colorCode:allowedColors.length===1?allowedColors[0].code:"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",unitPriceCny:"",priceUnit:"METER",defectNote:"",passed:true}])}
+ function addRoll(){const fc=String(f.fabricCode||"").trim().toUpperCase();const opts=mapsForFabric(fc);const only=opts.length===1?opts[0]:null;setRolls(x=>[...x,{sortOrder:x.length+1,fabricCode:fc,rollCode:"",colorName:only?.name||"",colorCode:only?.code||"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",unitPriceCny:"",priceUnit:"METER",defectNote:"",passed:true}])}
  const fabricCodes=Array.from(new Set(rolls.map(r=>String(r.fabricCode||"").trim().toUpperCase()).filter(Boolean)));
  function fabricCostFor(code:string){return fabricCosts.find(x=>x.fabricCode===code)||{fabricCode:code,chinaShippingCny:"",vietnamShippingRateVndPerKg:"",vietnamShippingVnd:"",note:""}}
  function patchFabricCost(code:string,key:keyof FabricCostGroup,value:any){setFabricCosts(c=>{const found=c.find(x=>x.fabricCode===code);return found?c.map(x=>x.fabricCode===code?{...x,[key]:value}:x):[...c,{fabricCode:code,[key]:value}]})}
@@ -203,8 +212,8 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
  async function save(){
   try{
    setSaving(true);setError("");
-   const receiver=meta.staff.find(x=>x.id===f.receivedByStaffId);const normalized=rolls.map((r,i)=>({...r,sortOrder:i+1,fabricCode:String(r.fabricCode||"").trim().toUpperCase()||null,colorCode:colorCode(r.colorCode)||null,unitPriceCny:canCostEdit?r.unitPriceCny:undefined,priceUnit:canCostEdit?(r.priceUnit||"METER"):undefined,defectNote:String(r.defectNote||"").trim()||null}));const normalizedFabricCosts=fabricCodes.map(code=>{const c=fabricCostFor(code),calc=codeCost(code);return{...c,fabricCode:code,chinaShippingCny:num(c.chinaShippingCny),vietnamShippingRateVndPerKg:num(c.vietnamShippingRateVndPerKg),vietnamShippingVnd:calc.vietnamShippingVnd}});
-   const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,receivedByStaffId:f.receivedByStaffId||null,receivedByName:receiver?.name||f.receivedByName||null,colorCode:colorCodes(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized,fabricCosts:canCostEdit?normalizedFabricCosts:undefined})});
+   const receiver=meta.staff.find(x=>x.id===f.receivedByStaffId);const normalizedColorMaps=colorMaps.map(x=>({id:x.id,fabricCode:String(x.fabricCode||"").trim().toUpperCase(),colorName:String(x.colorName||"").trim(),colorCode:colorCode(x.colorCode)||null})).filter(x=>x.fabricCode&&x.colorName);const normalized=rolls.map((r,i)=>({...r,sortOrder:i+1,fabricCode:String(r.fabricCode||"").trim().toUpperCase()||null,colorCode:colorCode(r.colorCode)||null,unitPriceCny:canCostEdit?r.unitPriceCny:undefined,priceUnit:canCostEdit?(r.priceUnit||"METER"):undefined,defectNote:String(r.defectNote||"").trim()||null}));const normalizedFabricCosts=fabricCodes.map(code=>{const c=fabricCostFor(code),calc=codeCost(code);return{...c,fabricCode:code,chinaShippingCny:num(c.chinaShippingCny),vietnamShippingRateVndPerKg:num(c.vietnamShippingRateVndPerKg),vietnamShippingVnd:calc.vietnamShippingVnd}});
+   const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,receivedByStaffId:f.receivedByStaffId||null,receivedByName:receiver?.name||f.receivedByName||null,colorCode:colorCodes(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized,colorMaps:normalizedColorMaps,fabricCosts:canCostEdit?normalizedFabricCosts:undefined})});
    if(canCostEdit&&f.exchangeRateToVnd!=="")await api(`/sample-fabric/fabric-receipts/${saved.id}/cost`,{method:"PATCH",body:JSON.stringify({unitPrice:null,priceUnit:"METER",priceCurrency:"CNY",exchangeRateToVnd:num(f.exchangeRateToVnd)})});
    for(const [ix,arr] of Object.entries(files)){const i=Number(ix),server=saved.rolls?.[i];if(!server?.id)continue;for(const file of arr){const u=await upload(file);await api(`/sample-fabric/fabric-receipts/${saved.id}/images`,{method:"POST",body:JSON.stringify({rollId:server.id,type:"FABRIC",url:u.url,caption:`Ảnh ${server.rollCode||`cây ${i+1}`}`})})}}
    resetMobileViewport();setTimeout(onSaved,90);
@@ -254,20 +263,27 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
   {canCostView&&<div className="rounded-3xl bg-amber-50 p-3"><Field l="Tỷ giá lúc nhập"><div className="relative"><input disabled={!canCostEdit} inputMode="decimal" className={`${input} pr-16 disabled:bg-neutral-100`} value={moneyInput(f.exchangeRateToVnd)} onChange={e=>patch("exchangeRateToVnd",moneyRaw(e.target.value))} placeholder="VD: 3.920"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-neutral-400">VND/CNY</span></div></Field><div className="mt-2 grid grid-cols-2 gap-2"><Mini l="Tiền vải" v={`${fmt(liveCostSummary.goodsCny,2)} CNY`}/><Mini l="Tổng đơn" v={money(liveCostSummary.grandTotalVnd)}/></div></div>}
 
   <section className="rounded-3xl border p-3">
+   <div className="flex items-center justify-between gap-2"><div><b className="text-sm">Cấu hình màu theo mã vải</b><div className="text-[11px] text-neutral-400">VD: AB99 · Đen · #20. Không bắt buộc; vẫn có thể nhập tay ở cây.</div></div><button type="button" onClick={addColorMap} className={smallBtn}>+ Màu</button></div>
+   <div className="mt-3 space-y-2">{colorMaps.map((c,i)=><div key={c.id||i} className="grid grid-cols-2 gap-2"><input className={input} value={c.fabricCode||""} onChange={e=>patchColorMap(i,"fabricCode",e.target.value)} placeholder="Mã vải · AB99"/><input className={input} value={c.colorName||""} onChange={e=>patchColorMap(i,"colorName",e.target.value)} placeholder="Tên màu · Đen"/><input className={input} value={c.colorCode||""} onChange={e=>patchColorMap(i,"colorCode",e.target.value)} onBlur={()=>patchColorMap(i,"colorCode",colorCode(c.colorCode))} placeholder="# Mã màu · không bắt buộc"/><button type="button" onClick={()=>removeColorMap(i)} className="rounded-2xl border px-3 text-xs font-black text-red-500">Xoá</button></div>)}</div>
+   {!!colorMaps.length&&<button type="button" onClick={applyConfiguredColorsToRolls} className="mt-3 w-full rounded-2xl border py-3 text-xs font-black">Áp cấu hình cho cây đã tạo</button>}
+  </section>
+
+  <section className="rounded-3xl border p-3">
    <div><div><b className="text-sm">Chi tiết từng cây vải</b><div className="text-[11px] text-neutral-400">Điền theo thứ tự kiểm thực tế; xong có thể gom theo mã vải.</div></div><div className="mt-2 flex gap-2"><button type="button" onClick={sortRollsByFabricCode} className={smallBtn}>Sắp xếp mã</button><button type="button" onClick={addRoll} className={smallBtn}>+ Cây</button></div></div>
    <div className="mt-3 space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-3xl bg-neutral-50 p-3">
     <div className="flex items-center justify-between"><b>STT {i+1}</b><button onClick={()=>{setRolls(x=>x.filter((_,j)=>j!==i));setFiles(c=>{const n={...c};delete n[i];return n})}} className="text-xs font-black text-red-600">Xoá</button></div>
     <div className="mt-2 grid grid-cols-2 gap-2">
-     <input className={input} value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))} placeholder={`Mã cây ${i+1}`}/>
-     {allowedColors.length>0&&!manualRollColor[i]?<>
-      <select className={input} value={r.colorCode||""} onChange={e=>{const picked=allowedColors.find(c=>c.code===e.target.value);setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:picked?.code||"",colorName:picked?.name||""}:v))}}>
-       <option value="">Chọn màu cây</option>
-       {allowedColors.map(c=><option key={c.code} value={c.code}>{c.name?`${c.name} · `:""}{c.code}</option>)}
+     <input className={input} value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:e.target.value.toUpperCase()}:v))} placeholder="Mã vải · AB99"/>
+     <input className={input} value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))} placeholder={`Mã cây ${i+1} (nếu có)`}/>
+     {mapsForFabric(r.fabricCode).length>0&&!manualRollColor[i]?<>
+      <select className={input} value={r.colorCode||""} onChange={e=>{const picked=mapsForFabric(r.fabricCode).find(c=>colorCode(c.code)===colorCode(e.target.value));setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:picked?.code||"",colorName:picked?.name||""}:v))}}>
+       <option value="">Chọn màu đã cấu hình</option>
+       {mapsForFabric(r.fabricCode).map((c,ix)=><option key={`${c.code}-${c.name}-${ix}`} value={c.code||""}>{c.name||"Không tên"}{c.code?` · ${c.code}`:""}</option>)}
       </select>
       <button type="button" onClick={()=>setManualRollColor(x=>({...x,[i]:true}))} className={smallBtn}>Nhập màu tay</button>
      </>:<>
-      <input className={input} value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))} placeholder="Màu"/>
-      <input className={input} value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:colorCode(v.colorCode)}:v))} placeholder="# Mã màu"/>
+      <input className={input} value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const hit=mapsForFabric(v.fabricCode).find(c=>c.name.trim().toLowerCase()===String(v.colorName||"").trim().toLowerCase());return hit?{...v,colorName:hit.name,colorCode:hit.code||v.colorCode}:v}))} placeholder="Tên màu · có thể chỉ điền ô này"/>
+      <input className={input} value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const cc=colorCode(v.colorCode);const hit=mapsForFabric(v.fabricCode).find(c=>colorCode(c.code)===cc);return hit?{...v,colorCode:hit.code,colorName:hit.name||v.colorName}:{...v,colorCode:cc}}))} placeholder="# Mã màu · không bắt buộc"/>
      </>}
      <UnitInputBare unit="m NCC" value={r.supplierDeclaredM} onChange={v=>setRolls(x=>x.map((y,j)=>j===i?{...y,supplierDeclaredM:v}:y))}/>
      <UnitInputBare unit="kg NCC" value={r.supplierDeclaredKg} onChange={v=>setRolls(x=>x.map((y,j)=>j===i?{...y,supplierDeclaredKg:v}:y))}/>
@@ -319,7 +335,7 @@ function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:
   <div className="h-full overflow-y-auto overscroll-contain px-3 py-3 [-webkit-overflow-scrolling:touch]">
    <div className="mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
     <div className="sticky top-0 z-20 flex items-center justify-between border-b bg-white p-4"><h2 className="font-black">{title}</h2><button onClick={close} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>
-    <div className="pb-[calc(18px+env(safe-area-inset-bottom))]">{children}</div>
+    <div>{children}</div>
    </div>
   </div>
  </div>
