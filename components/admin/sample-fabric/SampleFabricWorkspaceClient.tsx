@@ -5,11 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 import { hasPermission, type AppRole } from "@/lib/authz";
+import { getProducts } from "@/lib/products-api";
 
 type Section = "library" | "samples" | "fabric" | "measurements";
 type Supplier = { id: string; code: string; name: string; phone?: string | null; email?: string | null; address?: string | null; note?: string | null };
 type Branch = { id: string; name: string };
 type Staff = { id: string; code: string; name: string; branchId?: string | null };
+type ProductOption = { id:string; name:string; slug:string; imageUrl?:string|null; status?:string|null };
 type Factory = { id: string; code: string; name: string; contactName?: string | null; phone?: string | null };
 
 type BoardColor = { id?: string; name: string; code?: string | null; imageUrl?: string | null; note?: string | null };
@@ -215,6 +217,7 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
   const [productGroups, setProductGroups] = useState<string[]>([]);
   const [fabricCompositions, setFabricCompositions] = useState<string[]>([]);
   const [metaSamples, setMetaSamples] = useState<Array<Pick<Sample,"id"|"code"|"name"|"year"|"fabricBoardCode"|"fabricCode">>>([]);
+  const [catalogProducts, setCatalogProducts] = useState<ProductOption[]>([]);
   const [workspaceMeta, setWorkspaceMeta] = useState<WorkspaceMeta>({ suppliers: [], staff: [], seasons: [], productGroups: [], fabricCompositions: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -258,11 +261,24 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     const params = new URLSearchParams();
     if (receiptStatus) params.set("status", receiptStatus);
     if (q.trim()) params.set("q", q.trim());
-    const [rows, meta] = await Promise.all([
+    const [rows, meta, productResult] = await Promise.all([
       api<FabricReceipt[]>(`/sample-fabric/fabric-receipts${params.toString() ? `?${params}` : ""}`),
       api<WorkspaceMeta>("/sample-fabric/fabric-receipts/meta"),
+      (getProducts as any)({ page: 1, limit: 2000 }).catch(() => ({ data: [] })),
     ]);
-    setReceipts(rows); setWorkspaceMeta(meta); setSuppliers(meta.suppliers || []); setBranches(meta.branches || []); setStaff(meta.staff || []);
+    const productRows = Array.isArray(productResult) ? productResult : (productResult?.data || []);
+    const normalizedProducts:ProductOption[] = (Array.isArray(productRows) ? productRows : [])
+      .map((p:any)=>({
+        id:String(p?.id||""),
+        name:String(p?.name||"").trim(),
+        slug:String(p?.slug||p?.skuCode||p?.code||"").trim(),
+        imageUrl:p?.imageUrl||null,
+        status:p?.status||null,
+      }))
+      .filter((p:ProductOption)=>p.id&&p.name)
+      .sort((a:ProductOption,b:ProductOption)=>a.name.localeCompare(b.name,"vi",{numeric:true,sensitivity:"base"}));
+    setCatalogProducts(normalizedProducts);
+    setReceipts(rows); setWorkspaceMeta({ ...meta, products: normalizedProducts }); setSuppliers(meta.suppliers || []); setBranches(meta.branches || []); setStaff(meta.staff || []);
     setMetaSamples((meta.samples || []).map((s:any)=>({ ...s, fabricBoardCode: (s as any).fabricBoardCode, fabricCode: (s as any).fabricCode })));
   }
   async function reload() {
@@ -330,7 +346,7 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     {boardDetail && <BoardDetail board={boardDetail} can={can} onClose={()=>setBoardDetail(null)}/>}
     {dispatchSample && dispatchSample.fabricBoard && <DispatchForm board={dispatchSample.fabricBoard} sample={dispatchSample} meta={workspaceMeta} onClose={()=>setDispatchSample(null)} onSaved={async()=>{setDispatchSample(null);await reload()}}/>}
     {showSampleForm && <SampleForm sample={editingSample} measurementTemplates={measurementTemplates} boards={workspaceMeta.boards || []} staff={staff} seasons={seasons} productGroups={productGroups} canUpload={can("design_sample.upload_images")} canViewFabricLink={owner} factories={workspaceMeta.factories || []} onClose={()=>setShowSampleForm(false)} onSaved={async()=>{setShowSampleForm(false);await reload()}} />}
-    {showReceiptForm && <ReceiptForm receipt={editingReceipt} suppliers={suppliers} branches={branches} staff={staff} samples={metaSamples} products={workspaceMeta.products || []} boards={workspaceMeta.boards || []} canFabricBoardLink={can("fabric_receipt.fabric_board_link")} canSupplierIdentity={can("fabric_receipt.supplier_identity.view")} canCostView={can("fabric_receipt.cost.view") || can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setShowReceiptForm(false)} onSaved={async()=>{setShowReceiptForm(false);await reload()}} />}
+    {showReceiptForm && <ReceiptForm receipt={editingReceipt} suppliers={suppliers} branches={branches} staff={staff} samples={metaSamples} products={catalogProducts} boards={workspaceMeta.boards || []} canFabricBoardLink={can("fabric_receipt.fabric_board_link")} canSupplierIdentity={can("fabric_receipt.supplier_identity.view")} canCostView={can("fabric_receipt.cost.view") || can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setShowReceiptForm(false)} onSaved={async()=>{setShowReceiptForm(false);await reload()}} />}
     {measurementEdit && <MeasurementEditor initial={measurementEdit} onClose={()=>setMeasurementEdit(null)} onSave={row=>{const next=[...measurementTemplates.filter(x=>x.id!==row.id),{...row,updatedAt:new Date().toISOString()}].sort((a,b)=>a.name.localeCompare(b.name,"vi"));saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementEdit(null)}}/>}
     {measureReceipt && <MeasurementForm receipt={measureReceipt} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setMeasureReceipt(null)} onSaved={async()=>{setMeasureReceipt(null);await reload()}} />}
   </div>;
@@ -960,7 +976,7 @@ function ReceiptForm({ receipt, suppliers, branches, staff, samples, products, b
         <div className="mt-3 grid gap-2 md:grid-cols-[170px_1fr_1.35fr]">
           <Field label="Mã vải"><input className={inputClass} value={cfg.fabricCode||""} onChange={e=>patchFabricConfig(ci,"fabricCode",e.target.value)} placeholder="VD: AB99"/></Field>
           <Field label="Tên chất liệu"><input className={inputClass} value={cfg.materialName||""} onChange={e=>patchFabricConfig(ci,"materialName",e.target.value)} placeholder="VD: Kaki co giãn"/></Field>
-          <Field label="Mẫu sử dụng"><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",cfg.productId||"");patchFabricConfig(ci,"designSampleId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",null);patchFabricConfig(ci,"designSampleId",cfg.designSampleId||"")}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<select className={`${inputClass} mt-2`} value={cfg.productId||""} onChange={e=>patchFabricConfig(ci,"productId",e.target.value||null)}><option value="">Chưa chọn sản phẩm</option>{products.map(x=><option key={x.id} value={x.id}>{x.name} · {x.slug}</option>)}</select>:<select className={`${inputClass} mt-2`} value={cfg.designSampleId||""} onChange={e=>patchFabricConfig(ci,"designSampleId",e.target.value||null)}><option value="">Chưa chọn mẫu triển khai</option>{samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select>}</Field>
+          <Field label="Mẫu sử dụng"><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",cfg.productId||"");patchFabricConfig(ci,"designSampleId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",null);patchFabricConfig(ci,"designSampleId",cfg.designSampleId||"")}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<div className="mt-2 space-y-2"><select className={inputClass} value={cfg.productId||""} onChange={e=>patchFabricConfig(ci,"productId",e.target.value||null)}><option value="">{products.length?"Chọn từ danh sách sản phẩm":"Không tải được danh sách sản phẩm"}</option>{products.map(x=><option key={x.id} value={x.id}>{x.name}{x.slug?` · ${x.slug}`:""}</option>)}</select>{cfg.productId&&<div className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-xs"><span className="truncate text-neutral-500">{(()=>{const p=products.find(x=>x.id===cfg.productId);return p?p.name:"Sản phẩm đã chọn"})()}</span><Link href={`/products/${encodeURIComponent(String(cfg.productId))}`} target="_blank" className="ml-3 shrink-0 font-semibold underline underline-offset-2">Mở sản phẩm ↗</Link></div>}</div>:<select className={`${inputClass} mt-2`} value={cfg.designSampleId||""} onChange={e=>patchFabricConfig(ci,"designSampleId",e.target.value||null)}><option value="">Chưa chọn mẫu triển khai</option>{samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select>}</Field>
         </div>
         <div className="mt-3 rounded-2xl border bg-white p-3"><div className="flex items-center justify-between"><div><b className="text-xs">Màu của {code||"mã vải này"}</b><div className="text-[11px] text-neutral-400">Tên màu bắt buộc; mã màu có thể để trống.</div></div><button type="button" disabled={!code} onClick={()=>addColorMap(code)} className="rounded-xl border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">+ Thêm màu</button></div><div className="mt-2 space-y-2">{colors.map(({x,index})=><div key={x.id||index} className="grid gap-2 md:grid-cols-[1fr_160px_auto]"><input className={inputClass} value={x.colorName||""} onChange={e=>patchColorMap(index,"colorName",e.target.value)} placeholder="Tên màu · VD Đen"/><input className={inputClass} value={x.colorCode||""} onChange={e=>patchColorMap(index,"colorCode",e.target.value)} onBlur={()=>patchColorMap(index,"colorCode",normalizeColorCode(String(x.colorCode||"")))} placeholder="#20 · không bắt buộc"/><button type="button" onClick={()=>removeColorMap(index)} className="rounded-xl border px-3 text-xs font-semibold text-red-600">Xoá</button></div>)}</div>{!colors.length&&<div className="mt-2 text-xs text-neutral-400">Chưa có màu. Có thể để trống và nhập màu trực tiếp khi kiểm cây.</div>}</div>
       </div>})}{!fabricConfigs.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-500">Chưa có mã vải. Bấm “+ Thêm mã vải” để bắt đầu.</div>}</div>

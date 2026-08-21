@@ -3915,28 +3915,50 @@ export default function MessagesPageClient({
                             <FacebookCommentSourceCard conversation={activeConversation} />
                           ) : null}
 
-                          {Boolean(
-                            activeConversation.adId ||
-                              activeConversation.adPostId ||
-                              activeConversation.adTitle ||
-                              activeConversation.adBody ||
-                              activeConversation.adImageUrl ||
-                              activeConversation.referralSource,
-                          ) ? (
-                            <MetaAdReferralCard
-                              conversation={activeConversation}
-                            />
-                          ) : null}
-
                           {activeConversation.messages?.length ? (
-                            activeConversation.messages.map((message) => (
-                              <MessageBubble
-                                key={message.id}
-                                message={message}
-                                avatar={customerAvatar(activeConversation)}
-                                name={customerName(activeConversation)}
-                              />
-                            ))
+                            (() => {
+                              const hasAdReferral = Boolean(
+                                activeConversation.adId ||
+                                  activeConversation.adPostId ||
+                                  activeConversation.adTitle ||
+                                  activeConversation.adBody ||
+                                  activeConversation.adImageUrl ||
+                                  activeConversation.referralSource,
+                              );
+                              const adSeenAtRaw = (activeConversation as any).adFirstSeenAt;
+                              const adSeenAt = adSeenAtRaw ? new Date(adSeenAtRaw).getTime() : Number.NaN;
+                              const messages = activeConversation.messages || [];
+                              let adInserted = false;
+
+                              return (
+                                <>
+                                  {messages.map((message) => {
+                                    const messageAt = new Date(message.sentAt || 0).getTime();
+                                    const shouldInsertAd =
+                                      hasAdReferral &&
+                                      !adInserted &&
+                                      (Number.isNaN(adSeenAt) || messageAt >= adSeenAt);
+                                    if (shouldInsertAd) adInserted = true;
+
+                                    return (
+                                      <React.Fragment key={message.id}>
+                                        {shouldInsertAd ? (
+                                          <MetaAdReferralCard conversation={activeConversation} />
+                                        ) : null}
+                                        <MessageBubble
+                                          message={message}
+                                          avatar={customerAvatar(activeConversation)}
+                                          name={customerName(activeConversation)}
+                                        />
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                  {hasAdReferral && !adInserted ? (
+                                    <MetaAdReferralCard conversation={activeConversation} />
+                                  ) : null}
+                                </>
+                              );
+                            })()
                           ) : (
                             <div className="flex min-h-56 items-center justify-center text-center">
                               <div>
