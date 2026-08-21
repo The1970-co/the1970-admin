@@ -187,11 +187,43 @@ export function getOmniConversation(id: string) {
   return apiJson<OmniConversation>(`/omni-inbox/conversations/${id}`);
 }
 
-export function sendOmniMessage(id: string, body: { text: string; attachmentUrl?: string }) {
+export function sendOmniMessage(id: string, body: { text: string; attachmentUrl?: string; attachmentType?: "image" | "file"; fileName?: string }) {
   return apiJson<OmniMessage>(`/omni-inbox/conversations/${id}/messages`, {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+
+export async function uploadOmniAttachment(file: File) {
+  const baseUrl = getApiBaseUrl();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") || localStorage.getItem("accessToken")
+      : null;
+
+  const res = await fetch(`${baseUrl}/omni-inbox/attachments/upload`, {
+    method: "POST",
+    credentials: "include",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message || "Không upload được tệp đính kèm.");
+  }
+
+  return data as {
+    success: boolean;
+    url: string;
+    fileName?: string;
+    mimeType?: string;
+    attachmentType: "image" | "file";
+  };
 }
 
 export function assignOmniConversation(id: string, body: { assigneeId: string; assigneeName: string }) {

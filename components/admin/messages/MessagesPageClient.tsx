@@ -56,6 +56,7 @@ import {
   markOmniConversationUnread,
   openOmniInboxEventSource,
   sendOmniMessage,
+  uploadOmniAttachment,
   updateOmniConversationStatus,
   updateOmniConversationTags,
   type OmniChannel,
@@ -1013,6 +1014,10 @@ export default function MessagesPageClient({
   const draftComposingRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [draftImageUrls, setDraftImageUrls] = useState<string[]>([]);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const conversationListRef = useRef<HTMLDivElement | null>(null);
+  const [uploadingChatAttachment, setUploadingChatAttachment] = useState(false);
   const [quickReplySuggestionIndex, setQuickReplySuggestionIndex] = useState(0);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteTemplates, setNoteTemplates] = useState<OmniNoteTemplate[]>([]);
@@ -1630,15 +1635,10 @@ export default function MessagesPageClient({
             });
           }
 
-          // Chỉ sắp xếp lại danh sách khi có TIN KHÁCH GỬI VÀO.
-          // Tin OUT do nhân viên vừa trả lời không reload toàn bộ danh sách,
-          // nếu không backend sort lastMessageAt desc sẽ kéo hội thoại đang xử lý
-          // từ vị trí hiện tại lên đầu danh sách, làm nhân viên đang check từ dưới
-          // lên bị mất vị trí và dễ sót hội thoại. conversation.updated phía sau
-          // vẫn cập nhật nội dung/trạng thái của đúng dòng mà không đổi thứ tự.
-          if (message.direction === "IN") {
-            void loadList();
-          }
+          // Không reload toàn bộ list khi SSE có tin mới. Backend đã emit
+          // conversation.updated ngay sau message.created; dùng event đó để cập nhật
+          // đúng một dòng giúp tin mới hiện nhanh và không phá vị trí nhân viên đang
+          // check các hội thoại cũ ở phía dưới.
           return;
         }
 
@@ -1691,6 +1691,12 @@ export default function MessagesPageClient({
       );
     }
 
+    // Đợi phản hồi phải là OPEN cả ở client. Khi nhân viên vừa gửi xong,
+    // hội thoại rời danh sách ngay tại chỗ, không chờ lần reload API kế tiếp.
+    if (inboxFilter === "WAITING") {
+      return items.filter((item) => item.status === "OPEN");
+    }
+
     // Chưa đọc là bộ lọc theo unreadCount, không phụ thuộc status nghiệp vụ.
     if (inboxFilter === "UNREAD") {
       return items.filter((item) => Number(item.unreadCount || 0) > 0);
@@ -1722,8 +1728,15 @@ export default function MessagesPageClient({
           Math.max(0, traversal.index),
           visibleConversations.length - 1,
         );
+        const nextId = visibleConversations[nextIndex]?.id || visibleConversations[0].id;
         replyTraversalRef.current = null;
-        setActiveId(visibleConversations[nextIndex]?.id || visibleConversations[0].id);
+        setActiveId(nextId);
+        window.requestAnimationFrame(() => {
+          const el = conversationListRef.current?.querySelector(
+            `[data-conversation-id="${nextId}"]`,
+          ) as HTMLElement | null;
+          el?.scrollIntoView({ block: "nearest" });
+        });
       } else {
         setActiveId(visibleConversations[0].id);
       }
@@ -1874,6 +1887,126 @@ export default function MessagesPageClient({
     }
   }
 
+  const handleLocalChatAttachments = useCallback(async (
+    files?: FileList | File[] | null,
+    requestedType?: "image" | "file",
+  ) => {
+    const selected = Array.from(files || []);
+    if (!selected.length || !activeConversation?.id) return;
+    if (isFacebookCommentConversation(activeConversation)) {
+      setError("Bình luận công khai chỉ hỗ trợ nội dung chữ.");
+      return;
+    }
+
+    const allowed = selected.slice(0, 6);
+    setUploadingChatAttachment(true);
+    setError("");
+
+    try {
+      // Upload song song; ảnh được giảm kích thước trước để giảm thời gian upload.
+      const uploaded = await Promise.all(
+        allowed.map(async (file) => {
+          const uploadFile = file.type.startsWith("image/")
+            ? await resizeQuickReplyImageBeforeUpload(file)
+            : file;
+          const result = await uploadOmniAttachment(uploadFile);
+          return {
+            url: String(result?.url || "").trim(),
+            fileName: result?.fileName || file.name,
+            attachmentType:
+              requestedType === "image" || file.type.startsWith("image/")
+                ? ("image" as const)
+                : ("file" as const),
+          };
+        }),
+      );
+
+      const valid = uploaded.filter((item) => item.url);
+      if (!valid.length) throw new Error("Upload xong nhưng không có URL tệp.");
+
+      const conversationId = activeConversation.id;
+      const nowIso = new Date().toISOString();
+      const optimisticIds = valid.map(
+        (_, index) => `optimistic-upload-${Date.now()}-${index}`,
+      );
+      const optimistic = valid.map((item, index) => ({
+        id: optimisticIds[index],
+        conversationId,
+        direction: "OUT",
+        type: item.attachmentType === "file" ? "FILE" : "IMAGE",
+        text: item.attachmentType === "file" ? item.fileName : "",
+        attachmentUrl: item.url,
+        senderName: currentUserName,
+        sentAt: nowIso,
+        sendStatus: "QUEUED",
+      })) as any[];
+
+      setActiveConversation((prev) =>
+        prev?.id === conversationId
+          ? { ...prev, messages: [...(prev.messages || []), ...optimistic] }
+          : prev,
+      );
+
+      // Gửi tối đa 3 attachment song song, rồi thay optimistic bằng response thật.
+      const CONCURRENCY = 3;
+      let cursor = 0;
+      for (let offset = 0; offset < valid.length; offset += CONCURRENCY) {
+        const batch = valid.slice(offset, offset + CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map((item) =>
+            sendOmniMessage(conversationId, {
+              text: "",
+              attachmentUrl: item.url,
+              attachmentType: item.attachmentType,
+              fileName: item.fileName,
+            }),
+          ),
+        );
+
+        results.forEach((result) => {
+          const optimisticId = optimisticIds[cursor++];
+          if (result.status === "fulfilled") {
+            setActiveConversation((prev) => {
+              if (!prev || prev.id !== conversationId) return prev;
+              const withoutOptimistic = (prev.messages || []).filter(
+                (message: any) => message.id !== optimisticId,
+              );
+              return {
+                ...prev,
+                messages: reconcileOmniMessage(withoutOptimistic, result.value),
+                lastMessageText:
+                  result.value.type === "FILE"
+                    ? `[Tệp] ${result.value.text || ""}`.trim()
+                    : "[Ảnh]",
+                lastMessageAt: result.value.sentAt || prev.lastMessageAt,
+              };
+            });
+          } else {
+            setActiveConversation((prev) =>
+              prev?.id === conversationId
+                ? {
+                    ...prev,
+                    messages: (prev.messages || []).filter(
+                      (message: any) => message.id !== optimisticId,
+                    ),
+                  }
+                : prev,
+            );
+          }
+        });
+
+        const failed = results.filter((item) => item.status === "rejected").length;
+        if (failed) setError(`Có ${failed} tệp gửi không thành công.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không gửi được tệp đính kèm.");
+    } finally {
+      setUploadingChatAttachment(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [activeConversation, currentUserName]);
+
   const processSendQueue = useCallback(async () => {
     if (sendQueueProcessingRef.current) return;
     sendQueueProcessingRef.current = true;
@@ -1909,7 +2042,7 @@ export default function MessagesPageClient({
           }
 
           if (job.imageUrls.length) {
-            const IMAGE_CONCURRENCY = 2;
+            const IMAGE_CONCURRENCY = 3;
             const batch = job.imageUrls.slice(0, IMAGE_CONCURRENCY);
             const remaining = job.imageUrls.slice(IMAGE_CONCURRENCY);
             const results = await Promise.allSettled(
@@ -3576,6 +3709,7 @@ export default function MessagesPageClient({
                 )}
 
                 <div
+                  ref={conversationListRef}
                   className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
                   onScroll={handleConversationListScroll}
                 >
@@ -3857,7 +3991,16 @@ export default function MessagesPageClient({
                         </div>
                       ) : null}
 
-                      <div className="relative rounded-3xl border border-neutral-200 bg-white p-4">
+                      <div
+                        className="relative rounded-3xl border border-neutral-200 bg-white p-4"
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          if (event.dataTransfer?.files?.length) {
+                            void handleLocalChatAttachments(event.dataTransfer.files);
+                          }
+                        }}
+                      >
                         {quickReplySuggestionsOpen ? (
                           <div className="absolute bottom-[calc(100%+10px)] left-0 right-0 z-40 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl">
                             <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
@@ -3953,6 +4096,13 @@ export default function MessagesPageClient({
                           }}
                           onCompositionEnd={() => {
                             draftComposingRef.current = false;
+                          }}
+                          onPaste={(event) => {
+                            const files = Array.from(event.clipboardData?.files || []);
+                            if (files.length) {
+                              event.preventDefault();
+                              void handleLocalChatAttachments(files);
+                            }
                           }}
                           onKeyDown={(event) => {
                             const nativeEvent = event.nativeEvent as KeyboardEvent;
@@ -4080,10 +4230,41 @@ export default function MessagesPageClient({
                               <button className="rounded-full p-2 hover:bg-neutral-100">
                                 <Sparkles className="h-4 w-4" />
                               </button>
-                              <button className="rounded-full p-2 hover:bg-neutral-100">
+                              <input
+                                ref={imageInputRef}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                className="hidden"
+                                onChange={(event) =>
+                                  void handleLocalChatAttachments(event.target.files, "image")
+                                }
+                              />
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                className="hidden"
+                                onChange={(event) =>
+                                  void handleLocalChatAttachments(event.target.files, "file")
+                                }
+                              />
+                              <button
+                                type="button"
+                                disabled={uploadingChatAttachment}
+                                onClick={() => imageInputRef.current?.click()}
+                                className="rounded-full p-2 hover:bg-neutral-100 disabled:opacity-40"
+                                title="Gửi ảnh từ máy"
+                              >
                                 <ImageIcon className="h-4 w-4" />
                               </button>
-                              <button className="rounded-full p-2 hover:bg-neutral-100">
+                              <button
+                                type="button"
+                                disabled={uploadingChatAttachment}
+                                onClick={() => fileInputRef.current?.click()}
+                                className="rounded-full p-2 hover:bg-neutral-100 disabled:opacity-40"
+                                title="Gửi tệp từ máy"
+                              >
                                 <Paperclip className="h-4 w-4" />
                               </button>
                             </div>
@@ -7148,6 +7329,7 @@ function ConversationRow({
   const tags = item.tags || [];
   return (
     <button
+      data-conversation-id={item.id}
       onClick={onClick}
       className={cx(
         "relative flex w-full gap-3 border-b border-neutral-100 px-5 py-4 text-left transition",
@@ -7332,11 +7514,25 @@ function MessageBubble({
               {message.text}
             </p>
           )}
-          {message.attachmentUrl && (
+          {message.attachmentUrl && message.type !== "FILE" && (
             <MessageImage
               src={message.attachmentUrl}
               isOut={isOut}
             />
+          )}
+          {message.attachmentUrl && message.type === "FILE" && (
+            <a
+              href={message.attachmentUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={cx(
+                "mt-2 flex max-w-sm items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold underline",
+                isOut ? "border-white/30 text-white" : "border-neutral-200 text-blue-600",
+              )}
+            >
+              <Paperclip className="h-4 w-4 shrink-0" />
+              <span className="truncate">{message.text || "Tệp đính kèm"}</span>
+            </a>
           )}
         </div>
       </div>
