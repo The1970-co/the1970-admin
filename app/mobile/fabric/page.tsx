@@ -57,6 +57,8 @@ function colorCodes(v:any){
 }
 function colorCodeList(v:any){return colorCodes(v).split(",").map(x=>x.trim()).filter(Boolean)}
 function colorNameList(v:any){return String(v||"").split(",").map(x=>x.trim()).filter(Boolean)}
+function fabricCodeList(v:any){return Array.from(new Set(String(v||"").split(/[,;\n|]+/).map(x=>x.trim().toUpperCase()).filter(Boolean)))}
+function fabricCodesText(v:any){return fabricCodeList(v).join(", ")}
 function dateText(v?:string|null){if(!v)return "—";const d=new Date(v);return Number.isNaN(d.getTime())?"—":d.toLocaleDateString("vi-VN")}
 function statusLabel(v:string){return STATUSES.find(x=>x[0]===v)?.[1]||v}
 function roles(u:any){return [...(Array.isArray(u?.roles)?u.roles:[]),u?.role,u?.roleCode,u?.staffRole].map(x=>String(x||"").toLowerCase()).filter(Boolean)}
@@ -182,14 +184,15 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
  const selectedBoard=meta.boards.find(x=>x.id===f.fabricBoardId)||meta.boards.find(x=>x.boardCode===f.fabricBoardCode);
  const allowedCodes=colorCodeList(f.colorCode);
  const allowedNames=colorNameList(f.colorName);
- const legacyColors=allowedCodes.map((code,index)=>({fabricCode:String(f.fabricCode||"").trim().toUpperCase(),code,name:allowedNames[index]||""}));
+ const topFabricCodes=fabricCodeList(f.fabricCode);
+ const legacyColors=allowedCodes.map((code,index)=>({fabricCode:topFabricCodes[0]||"",code,name:allowedNames[index]||""}));
  function mapsForFabric(code:any){
   const fc=String(code||"").trim().toUpperCase();
   const mapped=colorMaps.filter(x=>String(x.fabricCode||"").trim().toUpperCase()===fc).map(x=>({code:colorCode(x.colorCode),name:String(x.colorName||"").trim()}));
   if(mapped.length)return mapped;
   return legacyColors.filter(x=>!x.fabricCode||x.fabricCode===fc);
  }
- function addColorMap(){setColorMaps(x=>[...x,{fabricCode:String(f.fabricCode||"").trim().toUpperCase(),colorName:"",colorCode:""}])}
+ function addColorMap(){setColorMaps(x=>[...x,{fabricCode:topFabricCodes[0]||"",colorName:"",colorCode:""}])}
  function patchColorMap(i:number,k:keyof FabricColorMap,v:any){setColorMaps(x=>x.map((row,j)=>j===i?{...row,[k]:k==="fabricCode"?String(v||"").toUpperCase():v}:row))}
  function removeColorMap(i:number){setColorMaps(x=>x.filter((_,j)=>j!==i))}
  function applyConfiguredColorsToRolls(){setRolls(rows=>rows.map(r=>{const opts=mapsForFabric(r.fabricCode);const byCode=r.colorCode?opts.find(x=>colorCode(x.code)===colorCode(r.colorCode)):undefined;const byName=!byCode&&r.colorName?opts.find(x=>x.name.trim().toLowerCase()===String(r.colorName||"").trim().toLowerCase()):undefined;const hit=byCode||byName;return hit?{...r,colorName:hit.name||r.colorName,colorCode:hit.code||r.colorCode}:r}))}
@@ -202,8 +205,8 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
   patch("colorCode",next.join(", "));
   patch("colorName",names.join(", "));
  }
- function addRoll(){const fc=String(f.fabricCode||"").trim().toUpperCase();const opts=mapsForFabric(fc);const only=opts.length===1?opts[0]:null;setRolls(x=>[...x,{sortOrder:x.length+1,fabricCode:fc,rollCode:"",colorName:only?.name||"",colorCode:only?.code||"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",unitPriceCny:"",priceUnit:"METER",defectNote:"",passed:true}])}
- const fabricCodes=Array.from(new Set(rolls.map(r=>String(r.fabricCode||"").trim().toUpperCase()).filter(Boolean)));
+ function addRoll(){const fc=topFabricCodes[0]||"";const opts=mapsForFabric(fc);const only=opts.length===1?opts[0]:null;setRolls(x=>[...x,{sortOrder:x.length+1,fabricCode:fc,rollCode:"",colorName:only?.name||"",colorCode:only?.code||"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",unitPriceCny:"",priceUnit:"METER",defectNote:"",passed:true}])}
+ const fabricCodes=Array.from(new Set([...topFabricCodes,...rolls.map(r=>String(r.fabricCode||"").trim().toUpperCase()).filter(Boolean)]));
  function fabricCostFor(code:string){return fabricCosts.find(x=>x.fabricCode===code)||{fabricCode:code,chinaShippingCny:"",vietnamShippingRateVndPerKg:"",vietnamShippingVnd:"",note:""}}
  function patchFabricCost(code:string,key:keyof FabricCostGroup,value:any){setFabricCosts(c=>{const found=c.find(x=>x.fabricCode===code);return found?c.map(x=>x.fabricCode===code?{...x,[key]:value}:x):[...c,{fabricCode:code,[key]:value}]})}
  function sortRollsByFabricCode(){const combo=rolls.map((roll,index)=>({roll,index,files:files[index]||[],manual:manualRollColor[index]})).sort((a,b)=>String(a.roll.fabricCode||"").localeCompare(String(b.roll.fabricCode||""),"vi",{numeric:true,sensitivity:"base"})||String(a.roll.colorCode||"").localeCompare(String(b.roll.colorCode||""),"vi",{numeric:true,sensitivity:"base"})||a.index-b.index);setRolls(combo.map((x,i)=>({...x.roll,sortOrder:i+1})));const nf:Record<number,File[]>={},nm:Record<number,boolean>={};combo.forEach((x,i)=>{if(x.files.length)nf[i]=x.files;if(x.manual)nm[i]=true});setFiles(nf);setManualRollColor(nm)}
@@ -213,7 +216,7 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
   try{
    setSaving(true);setError("");
    const receiver=meta.staff.find(x=>x.id===f.receivedByStaffId);const normalizedColorMaps=colorMaps.map(x=>({id:x.id,fabricCode:String(x.fabricCode||"").trim().toUpperCase(),colorName:String(x.colorName||"").trim(),colorCode:colorCode(x.colorCode)||null})).filter(x=>x.fabricCode&&x.colorName);const normalized=rolls.map((r,i)=>({...r,sortOrder:i+1,fabricCode:String(r.fabricCode||"").trim().toUpperCase()||null,colorCode:colorCode(r.colorCode)||null,unitPriceCny:canCostEdit?r.unitPriceCny:undefined,priceUnit:canCostEdit?(r.priceUnit||"METER"):undefined,defectNote:String(r.defectNote||"").trim()||null}));const normalizedFabricCosts=fabricCodes.map(code=>{const c=fabricCostFor(code),calc=codeCost(code);return{...c,fabricCode:code,chinaShippingCny:num(c.chinaShippingCny),vietnamShippingRateVndPerKg:num(c.vietnamShippingRateVndPerKg),vietnamShippingVnd:calc.vietnamShippingVnd}});
-   const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,receivedByStaffId:f.receivedByStaffId||null,receivedByName:receiver?.name||f.receivedByName||null,colorCode:colorCodes(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized,colorMaps:normalizedColorMaps,fabricCosts:canCostEdit?normalizedFabricCosts:undefined})});
+   const saved=await api<Receipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...f,fabricCode:fabricCodesText(f.fabricCode)||null,receivedByStaffId:f.receivedByStaffId||null,receivedByName:receiver?.name||f.receivedByName||null,colorCode:colorCodes(f.colorCode)||null,unitPrice:undefined,priceUnit:undefined,rollCount:normalized.length,rolls:normalized,colorMaps:normalizedColorMaps,fabricCosts:canCostEdit?normalizedFabricCosts:undefined})});
    if(canCostEdit&&f.exchangeRateToVnd!=="")await api(`/sample-fabric/fabric-receipts/${saved.id}/cost`,{method:"PATCH",body:JSON.stringify({unitPrice:null,priceUnit:"METER",priceCurrency:"CNY",exchangeRateToVnd:num(f.exchangeRateToVnd)})});
    for(const [ix,arr] of Object.entries(files)){const i=Number(ix),server=saved.rolls?.[i];if(!server?.id)continue;for(const file of arr){const u=await upload(file);await api(`/sample-fabric/fabric-receipts/${saved.id}/images`,{method:"POST",body:JSON.stringify({rollId:server.id,type:"FABRIC",url:u.url,caption:`Ảnh ${server.rollCode||`cây ${i+1}`}`})})}}
    resetMobileViewport();setTimeout(onSaved,90);
@@ -238,19 +241,10 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
    </Field>}
    <div className="grid grid-cols-2 gap-3">
     <Field l="Mã bảng vải"><input className={input} value={f.fabricBoardCode} onChange={e=>patch("fabricBoardCode",e.target.value)} placeholder="Có thể nhập tay"/></Field>
-    <Field l="Mã vải"><input className={input} value={f.fabricCode} onChange={e=>patch("fabricCode",e.target.value)} placeholder="Có thể nhập tay"/></Field>
+    <Field l="Mã vải"><input className={input} value={f.fabricCode} onChange={e=>patch("fabricCode",e.target.value)} onBlur={()=>patch("fabricCode",fabricCodesText(f.fabricCode))} placeholder="VD: AB88, AB99"/>{!!topFabricCodes.length&&<div className="mt-2 flex flex-wrap gap-1.5">{topFabricCodes.map(code=><span key={code} className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-black">{code}</span>)}</div>}</Field>
    </div>
    <Field l="Tên vải"><input className={input} value={f.fabricName} onChange={e=>patch("fabricName",e.target.value)}/></Field>
    <Field l="Mã lô"><input className={input} value={f.lotCode} onChange={e=>patch("lotCode",e.target.value)}/></Field>
-   <Field l="Màu"><input className={input} value={f.colorName} onChange={e=>patch("colorName",e.target.value)} placeholder="VD: Xanh rêu, Kem"/></Field>
-   <Field l="Mã màu">
-    <input className={input} value={f.colorCode} onChange={e=>patch("colorCode",e.target.value)} onBlur={()=>patch("colorCode",colorCodes(f.colorCode))} placeholder="VD: 8, 9 → #8, #9"/>
-    {!!allowedCodes.length&&<div className="mt-2 flex flex-wrap gap-2">{allowedCodes.map(c=><span key={c} className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-black">{c}</span>)}</div>}
-   </Field>
-   {canFabricBoardLink&&!!selectedBoard?.colors?.length&&<div className="col-span-2 rounded-2xl border p-3">
-    <div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Màu từ bảng vải · chọn nhiều</div>
-    <div className="mt-2 flex flex-wrap gap-2">{selectedBoard.colors.map(c=>{const code=colorCode(c.code||c.name);const active=allowedCodes.includes(code);return <button type="button" key={c.id} onClick={()=>toggleBoardColor(c)} className={`rounded-full border px-3 py-2 text-xs font-black ${active?"bg-neutral-950 text-white":"bg-white"}`}>{c.name}{c.code?` ${colorCode(c.code)}`:""}</button>})}</div>
-   </div>}
   </div>
   <div className="grid grid-cols-2 gap-3">
    <UnitInput l="NCC báo" unit="m" value={f.supplierDeclaredM} onChange={v=>patch("supplierDeclaredM",v)}/>
@@ -263,8 +257,9 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
   {canCostView&&<div className="rounded-3xl bg-amber-50 p-3"><Field l="Tỷ giá lúc nhập"><div className="relative"><input disabled={!canCostEdit} inputMode="decimal" className={`${input} pr-16 disabled:bg-neutral-100`} value={moneyInput(f.exchangeRateToVnd)} onChange={e=>patch("exchangeRateToVnd",moneyRaw(e.target.value))} placeholder="VD: 3.920"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-neutral-400">VND/CNY</span></div></Field><div className="mt-2 grid grid-cols-2 gap-2"><Mini l="Tiền vải" v={`${fmt(liveCostSummary.goodsCny,2)} CNY`}/><Mini l="Tổng đơn" v={money(liveCostSummary.grandTotalVnd)}/></div></div>}
 
   <section className="rounded-3xl border p-3">
-   <div className="flex items-center justify-between gap-2"><div><b className="text-sm">Cấu hình màu theo mã vải</b><div className="text-[11px] text-neutral-400">VD: AB99 · Đen · #20. Không bắt buộc; vẫn có thể nhập tay ở cây.</div></div><button type="button" onClick={addColorMap} className={smallBtn}>+ Màu</button></div>
-   <div className="mt-3 space-y-2">{colorMaps.map((c,i)=><div key={c.id||i} className="grid grid-cols-2 gap-2"><input className={input} value={c.fabricCode||""} onChange={e=>patchColorMap(i,"fabricCode",e.target.value)} placeholder="Mã vải · AB99"/><input className={input} value={c.colorName||""} onChange={e=>patchColorMap(i,"colorName",e.target.value)} placeholder="Tên màu · Đen"/><input className={input} value={c.colorCode||""} onChange={e=>patchColorMap(i,"colorCode",e.target.value)} onBlur={()=>patchColorMap(i,"colorCode",colorCode(c.colorCode))} placeholder="# Mã màu · không bắt buộc"/><button type="button" onClick={()=>removeColorMap(i)} className="rounded-2xl border px-3 text-xs font-black text-red-500">Xoá</button></div>)}</div>
+   <div className="flex items-center justify-between gap-2"><div><b className="text-sm">Mã vải & màu</b><div className="text-[11px] text-neutral-400">VD: AB88 · Xám · #8; AB99 · Đen · #20; AB99 · Xanh · #21. Mã màu không bắt buộc.</div></div><button type="button" onClick={addColorMap} className={smallBtn}>+ Màu</button></div>
+   {!topFabricCodes.length&&<div className="mt-3 rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">Nhập ít nhất một Mã vải ở phía trên trước.</div>}
+   <div className="mt-3 space-y-2">{colorMaps.map((c,i)=><div key={c.id||i} className="rounded-2xl bg-neutral-50 p-2"><div className="grid grid-cols-2 gap-2"><select className={input} value={c.fabricCode||""} onChange={e=>patchColorMap(i,"fabricCode",e.target.value)}><option value="">Chọn mã vải</option>{topFabricCodes.map(code=><option key={code} value={code}>{code}</option>)}</select><input className={input} value={c.colorName||""} onChange={e=>patchColorMap(i,"colorName",e.target.value)} placeholder="Tên màu · Đen"/><input className={input} value={c.colorCode||""} onChange={e=>patchColorMap(i,"colorCode",e.target.value)} onBlur={()=>patchColorMap(i,"colorCode",colorCode(c.colorCode))} placeholder="#20 · không bắt buộc"/><button type="button" onClick={()=>removeColorMap(i)} className="rounded-2xl border px-3 text-xs font-black text-red-500">Xoá</button></div></div>)}</div>
    {!!colorMaps.length&&<button type="button" onClick={applyConfiguredColorsToRolls} className="mt-3 w-full rounded-2xl border py-3 text-xs font-black">Áp cấu hình cho cây đã tạo</button>}
   </section>
 
@@ -273,7 +268,7 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
    <div className="mt-3 space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-3xl bg-neutral-50 p-3">
     <div className="flex items-center justify-between"><b>STT {i+1}</b><button onClick={()=>{setRolls(x=>x.filter((_,j)=>j!==i));setFiles(c=>{const n={...c};delete n[i];return n})}} className="text-xs font-black text-red-600">Xoá</button></div>
     <div className="mt-2 grid grid-cols-2 gap-2">
-     <input className={input} value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:e.target.value.toUpperCase()}:v))} placeholder="Mã vải · AB99"/>
+     {topFabricCodes.length?<select className={input} value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const fc=e.target.value,opts=mapsForFabric(fc),only=opts.length===1?opts[0]:null;return {...v,fabricCode:fc,colorName:only?.name||"",colorCode:only?.code||""}}))}><option value="">Chọn mã vải</option>{topFabricCodes.map(code=><option key={code} value={code}>{code}</option>)}</select>:<input className={input} value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:e.target.value.toUpperCase()}:v))} placeholder="Mã vải · AB99"/>}
      <input className={input} value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))} placeholder={`Mã cây ${i+1} (nếu có)`}/>
      {mapsForFabric(r.fabricCode).length>0&&!manualRollColor[i]?<>
       <select className={input} value={r.colorCode||""} onChange={e=>{const picked=mapsForFabric(r.fabricCode).find(c=>colorCode(c.code)===colorCode(e.target.value));setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:picked?.code||"",colorName:picked?.name||""}:v))}}>

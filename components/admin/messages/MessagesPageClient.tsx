@@ -1064,6 +1064,8 @@ export default function MessagesPageClient({
   const [workspace, setWorkspace] = useState<WorkspaceKey>(initialWorkspace);
   const listRequestId = useRef(0);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const [omniNavCollapsed, setOmniNavCollapsed] = useState(true);
+  const replyTraversalRef = useRef<{ conversationId: string; index: number } | null>(null);
   const [imagePreview, setImagePreview] = useState<{
     src: string;
     alt: string;
@@ -1711,10 +1713,20 @@ export default function MessagesPageClient({
       return;
     }
 
-    // Khi chuyển giữa Messenger và Bình luận, không giữ lại hội thoại
-    // thuộc màn trước ở khung chi tiết.
+    // Khi hội thoại vừa trả lời biến mất khỏi tab "Đợi phản hồi",
+    // tiếp tục ở đúng vị trí đang check thay vì nhảy về dòng đầu tiên.
     if (!visibleConversations.some((item) => item.id === activeId)) {
-      setActiveId(visibleConversations[0].id);
+      const traversal = replyTraversalRef.current;
+      if (traversal?.conversationId === activeId) {
+        const nextIndex = Math.min(
+          Math.max(0, traversal.index),
+          visibleConversations.length - 1,
+        );
+        replyTraversalRef.current = null;
+        setActiveId(visibleConversations[nextIndex]?.id || visibleConversations[0].id);
+      } else {
+        setActiveId(visibleConversations[0].id);
+      }
     }
   }, [activeId, visibleConversations, workspace]);
 
@@ -1982,6 +1994,18 @@ export default function MessagesPageClient({
     }
 
     const conversationId = activeConversation.id;
+    // Trong tab Đợi phản hồi, sau khi gửi tin conversation sẽ OPEN -> PROCESSING
+    // và biến khỏi danh sách. Ghi nhớ đúng vị trí hiện tại để chuyển sang khách
+    // kế tiếp ở ngay chỗ đó, không bật ngược lên đầu danh sách.
+    if (inboxFilter === "WAITING") {
+      replyTraversalRef.current = {
+        conversationId,
+        index: Math.max(0, visibleConversations.findIndex((item) => item.id === conversationId)),
+      };
+    } else {
+      replyTraversalRef.current = null;
+    }
+
     const optimisticPrefix = `optimistic-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
@@ -3128,7 +3152,7 @@ export default function MessagesPageClient({
       <div className="flex min-h-screen">
         <aside className={cx(
           "hidden w-[268px] shrink-0 border-r border-neutral-200 bg-white xl:flex xl:flex-col",
-          isInboxWorkspace && "xl:hidden",
+          isInboxWorkspace && omniNavCollapsed && "xl:hidden",
         )}>
           <div className="border-b border-neutral-200 px-6 py-7">
             <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-neutral-400">
@@ -3385,6 +3409,20 @@ export default function MessagesPageClient({
                       </p>
                     </div>
                     <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOmniNavCollapsed((value) => !value)}
+                        className={cx(
+                          "rounded-full border p-2 text-neutral-600 hover:bg-neutral-50",
+                          !omniNavCollapsed
+                            ? "border-blue-200 bg-blue-50 text-blue-700"
+                            : "border-neutral-200",
+                        )}
+                        title={omniNavCollapsed ? "Hiện menu Omni Inbox" : "Ẩn menu Omni Inbox"}
+                        aria-label={omniNavCollapsed ? "Hiện menu Omni Inbox" : "Ẩn menu Omni Inbox"}
+                      >
+                        <Menu className="h-4 w-4" />
+                      </button>
                       <button
                         onClick={() => void loadList()}
                         className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50"
