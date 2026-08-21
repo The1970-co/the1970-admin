@@ -9,22 +9,75 @@ type Item={id:string;code:string;name:string;typeName:string;imageUrl?:string|nu
 const TYPES=["Cúc","Mác Cổ","Mác Gáy","Mác Sườn","Mác Size","Mác Quần","Khóa Kéo","Chun","Dây Rút","Mex","Túi Nylon","Tem Barcode","Thùng Carton","Chỉ May","Khác"];
 const UNITS=[["PIECE","Cái"],["METER","Mét"],["ROLL","Cuộn"],["SET","Bộ"],["KG","Kg"],["PACK","Gói"],["BOX","Hộp"],["OTHER","Khác"]];
 
-function useAccessoryPermissions(){const user=getCurrentUserFromStorage() as any;const roles=[...(Array.isArray(user?.roles)?user.roles:[]),user?.role,user?.roleCode,user?.staffRole].map(x=>String(x||"").toLowerCase());const root=roles.includes("owner")||roles.includes("admin");const keys=new Set(getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId));const can=(key:string)=>root||keys.has("*")||keys.has(key);return {user,can}}
+function useAccessoryPermissions(){const user=getCurrentUserFromStorage() as any;const roles=[...(Array.isArray(user?.roles)?user.roles:[]),user?.role,user?.roleCode,user?.staffRole].map(x=>String(x||"").toLowerCase());const root=roles.includes("owner")||roles.includes("admin");const keys=new Set(getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId));const can=(key:string)=>root||keys.has("*")||keys.has(key);return {user,can,root}}
+function accessoryGroup(typeName:string){
+ const t=String(typeName||"").trim();
+ if(t==="Cúc")return "Cúc";
+ if(t.startsWith("Mác"))return "Mác";
+ if(t.includes("Khóa"))return "Khóa";
+ if(t.includes("Chun"))return "Chun";
+ if(t.includes("Dây"))return "Dây / Rút";
+ if(["Túi Nylon","Tem Barcode","Thùng Carton"].includes(t))return "Bao bì";
+ if(t==="Chỉ May")return "Chỉ may";
+ if(t==="Mex")return "Mex";
+ return "Khác";
+}
+const ACCESSORY_GROUP_ORDER=["Cúc","Mác","Khóa","Chun","Dây / Rút","Mex","Chỉ may","Bao bì","Khác"];
+function fmtQty(v:any){return Number(v||0).toLocaleString("vi-VN",{maximumFractionDigits:3})}
+
 export default function AccessoriesPageClient(){
- const {user,can}=useAccessoryPermissions();const canView=can("accessories.view"),canManage=can("accessories.manage"),canStock=can("accessories.stock"),canCostView=can("accessories.cost.view"),canSupplierIdentity=can("accessories.supplier_identity.view");
- const [items,setItems]=useState<Item[]>([]),[suppliers,setSuppliers]=useState<Supplier[]>([]);const [q,setQ]=useState("");const [editing,setEditing]=useState<Item|null|undefined>(undefined);const [supplierOpen,setSupplierOpen]=useState(false);const [error,setError]=useState("");
+ const {user,can,root}=useAccessoryPermissions();
+ const canView=can("accessories.view"),canManage=can("accessories.manage"),canStock=can("accessories.stock"),canCostView=can("accessories.cost.view"),canSupplierIdentity=can("accessories.supplier_identity.view");
+ const [items,setItems]=useState<Item[]>([]),[suppliers,setSuppliers]=useState<Supplier[]>([]);
+ const [q,setQ]=useState(""),[groupFilter,setGroupFilter]=useState("ALL");
+ const [editing,setEditing]=useState<Item|null|undefined>(undefined),[supplierOpen,setSupplierOpen]=useState(false),[error,setError]=useState("");
  async function load(){try{setError("");const [a,s]=await Promise.all([productionApi<Item[]>("/production/accessories"),productionApi<Supplier[]>("/production/accessory-suppliers")]);setItems(a);setSuppliers(s)}catch(e){setError(e instanceof Error?e.message:"Không tải được NPL.")}}
  useEffect(()=>{void load()},[]);
- const rows=useMemo(()=>{const k=q.trim().toLowerCase();return k?items.filter(x=>[x.code,x.name,x.typeName].some(v=>String(v).toLowerCase().includes(k))):items},[items,q]);
+ const availableGroups=useMemo(()=>ACCESSORY_GROUP_ORDER.filter(g=>items.some(x=>accessoryGroup(x.typeName)===g)),[items]);
+ const rows=useMemo(()=>{const k=q.trim().toLowerCase();return items.filter(x=>(groupFilter==="ALL"||accessoryGroup(x.typeName)===groupFilter)&&(!k||[x.code,x.name,x.typeName,specSummary(x)].some(v=>String(v||"").toLowerCase().includes(k))))},[items,q,groupFilter]);
+ const grouped=useMemo(()=>ACCESSORY_GROUP_ORDER.map(group=>({group,rows:rows.filter(x=>accessoryGroup(x.typeName)===group)})).filter(x=>x.rows.length),[rows]);
+ const report=useMemo(()=>{const totalValue=items.reduce((sum,x)=>sum+Number(x.stockQty||0)*Number(x.unitPrice||0),0);return {sku:items.length,inStock:items.filter(x=>Number(x.stockQty||0)>0).length,outStock:items.filter(x=>Number(x.stockQty||0)<=0).length,totalValue,groups:ACCESSORY_GROUP_ORDER.map(group=>{const rs=items.filter(x=>accessoryGroup(x.typeName)===group);return {group,count:rs.length,stock:rs.reduce((sum,x)=>sum+Number(x.stockQty||0),0),value:rs.reduce((sum,x)=>sum+Number(x.stockQty||0)*Number(x.unitPrice||0),0)}}).filter(x=>x.count)}} ,[items]);
  if(user&&!canView)return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Nguyên phụ liệu.</div>;
- return <div className="space-y-5">
+ return <div className="space-y-4">
    <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"><div><div className="text-xs font-semibold uppercase tracking-[.16em] text-neutral-400">Sản xuất</div><h1 className="mt-1 text-2xl font-semibold">Nguyên phụ liệu</h1><p className="mt-1 text-sm text-neutral-500">Quản lý cúc, mác, khóa, chun, bao bì, tồn và NCC NPL.</p></div><div className="flex gap-2">{canManage&&<button onClick={()=>setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4"/>NCC NPL</button>}{canManage&&<button onClick={()=>setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4"/>Thêm NPL</button>}</div></div>
    {error&&<Err x={error}/>}
-   <div className="rounded-3xl border bg-white p-4 shadow-sm"><div className="relative max-w-md"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className="w-full rounded-2xl border py-2.5 pl-10 pr-3 text-sm" value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã, tên, loại..."/></div></div>
-   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{rows.map(x=><div key={x.id} className="overflow-hidden rounded-3xl border bg-white shadow-sm"><div className="flex gap-4 p-4"><div className="h-24 w-24 overflow-hidden rounded-2xl bg-neutral-100">{x.imageUrl?<img src={asset(x.imageUrl)} className="h-full w-full object-cover"/>:<div className="flex h-full items-center justify-center text-2xl text-neutral-300">✦</div>}</div><div className="min-w-0 flex-1"><div className="text-xs font-semibold text-neutral-400">{x.code} · {x.typeName}</div><div className="mt-1 text-lg font-semibold">{x.name}</div><div className="mt-2 text-sm">Tồn: <b>{Number(x.stockQty||0).toLocaleString("vi-VN")}</b> {UNITS.find(u=>u[0]===x.unit)?.[1]||x.unit}</div>{canCostView&&<div className="text-xs text-neutral-400">{x.unitPrice?money(x.unitPrice):"Chưa có giá"}</div>}{specSummary(x)&&<div className="mt-1 text-xs font-medium text-neutral-500">{specSummary(x)}</div>}</div></div><div className="flex justify-end border-t p-3">{(canManage||canStock)&&<button onClick={()=>setEditing(x)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}</div></div>)}</div>
-   {!rows.length&&<div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu.</div>}
+
+   {root&&<section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+     <div className="bg-neutral-950 px-5 py-4 text-white"><div className="text-base font-semibold">Báo cáo nhanh tồn NPL</div><div className="mt-1 text-xs text-neutral-400">Giá trị tồn = số lượng tồn hiện tại × đơn giá NPL. Chỉ Admin / Owner nhìn thấy.</div></div>
+     <div className="grid gap-3 p-4 md:grid-cols-4">
+       <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">Tổng mã NPL</div><div className="mt-2 text-2xl font-semibold">{report.sku}</div></div>
+       <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">Đang có tồn</div><div className="mt-2 text-2xl font-semibold">{report.inStock}</div></div>
+       <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">Hết tồn</div><div className="mt-2 text-2xl font-semibold">{report.outStock}</div></div>
+       <div className="rounded-2xl bg-neutral-950 p-4 text-white"><div className="text-xs font-semibold uppercase text-neutral-400">Giá trị tồn NPL</div><div className="mt-2 text-2xl font-semibold">{money(report.totalValue)}</div></div>
+     </div>
+     <div className="border-t px-4 pb-4"><div className="grid gap-2 pt-4 md:grid-cols-2 xl:grid-cols-4">{report.groups.map(g=><div key={g.group} className="rounded-2xl border p-3"><div className="flex items-center justify-between"><b>{g.group}</b><span className="text-xs text-neutral-400">{g.count} mã</span></div><div className="mt-2 text-sm">Tổng tồn: <b>{fmtQty(g.stock)}</b></div><div className="mt-1 text-xs text-neutral-500">Giá trị: <b>{money(g.value)}</b></div></div>)}</div></div>
+   </section>}
+
+   <div className="rounded-3xl border bg-white p-4 shadow-sm">
+     <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+       <div className="relative max-w-md flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className="w-full rounded-2xl border py-2.5 pl-10 pr-3 text-sm" value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã, tên, loại, quy cách..."/></div>
+       <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>setGroupFilter("ALL")} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter==="ALL"?"bg-neutral-950 text-white":"bg-white"}`}>Tất cả · {items.length}</button>{availableGroups.map(g=><button type="button" key={g} onClick={()=>setGroupFilter(g)} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter===g?"bg-neutral-950 text-white":"bg-white"}`}>{g} · {items.filter(x=>accessoryGroup(x.typeName)===g).length}</button>)}</div>
+     </div>
+   </div>
+
+   <div className="space-y-4">{grouped.map(section=>{
+     const stock=section.rows.reduce((sum,x)=>sum+Number(x.stockQty||0),0);
+     const value=section.rows.reduce((sum,x)=>sum+Number(x.stockQty||0)*Number(x.unitPrice||0),0);
+     return <section key={section.group} className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-50 px-4 py-3"><div><b className="text-base">{section.group}</b><span className="ml-2 text-xs text-neutral-400">{section.rows.length} mã</span></div><div className="flex gap-4 text-xs text-neutral-500"><span>Tồn: <b className="text-neutral-900">{fmtQty(stock)}</b></span>{canCostView&&<span>Giá trị: <b className="text-neutral-900">{money(value)}</b></span>}</div></div>
+       <div className="divide-y">{section.rows.map(x=><div key={x.id} className="grid items-center gap-3 px-4 py-3 md:grid-cols-[56px_120px_minmax(240px,1fr)_150px_180px_auto]">
+         <div className="h-12 w-12 overflow-hidden rounded-xl bg-neutral-100">{x.imageUrl?<img src={asset(x.imageUrl)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}</div>
+         <div><div className="text-xs font-semibold text-neutral-400">{x.code}</div><div className="mt-0.5 text-xs text-neutral-500">{x.typeName}</div></div>
+         <div className="min-w-0"><div className="truncate font-semibold">{x.name}</div>{specSummary(x)&&<div className="mt-1 truncate text-xs text-neutral-500">{specSummary(x)}</div>}</div>
+         <div className="text-sm">Tồn <b>{fmtQty(x.stockQty)}</b><div className="text-xs text-neutral-400">{UNITS.find(u=>u[0]===x.unit)?.[1]||x.unit}</div></div>
+         <div className="text-sm">{canCostView?<><b>{x.unitPrice?money(x.unitPrice):"Chưa có giá"}</b><div className="text-xs text-neutral-400">Giá trị {money(Number(x.stockQty||0)*Number(x.unitPrice||0))}</div></>:<span className="text-neutral-400">Ẩn giá</span>}</div>
+         <button onClick={()=>setEditing(x)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>
+       </div>)}</div>
+     </section>
+   })}</div>
+   {!rows.length&&<div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
    {editing!==undefined&&<ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await load()}}/>}
-   {supplierOpen&&canManage&&<SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={()=>setSupplierOpen(false)} onSaved={load}/>}
+   {supplierOpen&&<SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={()=>setSupplierOpen(false)} onSaved={load}/>}
  </div>
 }
 function ItemModal({item,suppliers,canManage,canStock,canCostView,canSupplierIdentity,onClose,onSaved}:{item:Item|null;suppliers:Supplier[];canManage:boolean;canStock:boolean;canCostView:boolean;canSupplierIdentity:boolean;onClose:()=>void;onSaved:()=>void}){

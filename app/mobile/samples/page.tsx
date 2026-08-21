@@ -155,7 +155,13 @@ async function downloadUrl(url:string,filename:string){
     const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
     if(!res.ok)throw new Error("download");
     const blob=await res.blob();
-    saveAs(blob,filenameWithMime(filename,blob.type));
+    const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||"image/jpeg"});
+    const nav=navigator as Navigator & {canShare?:(data:ShareData)=>boolean};
+    if(typeof navigator.share==="function"&&(!nav.canShare||nav.canShare({files:[file]}))){
+      await navigator.share({files:[file],title:file.name});
+      return;
+    }
+    saveAs(blob,file.name);
   }catch{
     saveAs(cloudinaryAttachmentUrl(resolved,filename),safeFilename(filename));
   }
@@ -227,6 +233,7 @@ export default function Page(){
   const [editing,setEditing]=useState<Sample|null|undefined>(undefined);
   const [dispatching,setDispatching]=useState<Sample|null>(null);
   const [user,setUser]=useState<any>(null);
+  const [sampleTab,setSampleTab]=useState<"IDEA"|"DEPLOY">("IDEA");
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
@@ -275,12 +282,28 @@ export default function Page(){
 
   const filtered=useMemo(()=>{
     const k=q.trim().toLowerCase();
-    if(!k)return rows;
-    return rows.filter(r=>[
-      r.code,r.name,r.season,r.category,r.fabricBoard?.boardCode,
-      r.fabricColorName,r.fabricColorCode,r.sampleFactoryName,r.assigneeName
-    ].some(v=>String(v||"").toLowerCase().includes(k)));
-  },[rows,q]);
+    return rows.filter(r=>{
+      const inTab=sampleTab==="IDEA"?String(r.status||"IDEA")==="IDEA":String(r.status||"IDEA")!=="IDEA";
+      if(!inTab)return false;
+      if(!k)return true;
+      return [
+        r.code,r.name,r.season,r.category,r.fabricBoard?.boardCode,
+        r.fabricColorName,r.fabricColorCode,r.sampleFactoryName,r.assigneeName
+      ].some(v=>String(v||"").toLowerCase().includes(k));
+    });
+  },[rows,q,sampleTab]);
+
+  async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
+    if(!can("design_sample.edit"))return;
+    const status=target==="IDEA"?"IDEA":"FABRIC_SELECTED";
+    try{
+      setError("");
+      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({status})});
+      if(detail?.id===sample.id)setDetail({...detail,status});
+      setSampleTab(target);
+      await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không chuyển được mẫu.")}
+  }
 
   async function removeSample(sample:Sample){
     if(!window.confirm(`Xoá mẫu ${sample.code} · ${sample.name}?`))return;
@@ -306,6 +329,10 @@ export default function Page(){
           </div>
         </div>
         <input className={`${input} mt-4`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã mẫu, tên, bảng vải, màu..." onBlur={resetIosZoom}/>
+        <div className="mt-3 grid grid-cols-2 rounded-2xl bg-neutral-100 p-1">
+          <button type="button" onClick={()=>setSampleTab("IDEA")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {rows.filter(x=>String(x.status||"IDEA")==="IDEA").length}</button>
+          <button type="button" onClick={()=>setSampleTab("DEPLOY")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {rows.filter(x=>String(x.status||"IDEA")!=="IDEA").length}</button>
+        </div>
       </header>
 
       <div className="space-y-3 p-4">
@@ -315,19 +342,26 @@ export default function Page(){
         {!loading&&filtered.map(r=>{
           const firstVisual=(r.images||[]).find((x:any)=>!isPatternAsset(x))?.url;
           const image=asset(r.coverImageUrl||firstVisual||r.matchedProduct?.imageUrl);
-          return <button type="button" onClick={()=>setDetail(r)} key={r.id} className="flex w-full gap-4 rounded-[28px] bg-white p-4 text-left shadow-sm active:scale-[.995]">
-            <div className="h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-2xl text-neutral-300">✦</div>}</div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-black text-neutral-400">{r.code} · {r.year}</div>
-              <div className="mt-1 text-base font-black">{r.name}</div>
-              <div className="mt-2 text-xs text-neutral-500">{r.season||"—"} · {r.category||"—"}</div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <Badge>{statusLabel(r.status)}</Badge>
-                {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
-                {r.sampleFactoryName&&<Badge>{r.sampleFactoryName}</Badge>}
+          return <div key={r.id} className="rounded-[28px] bg-white p-4 shadow-sm">
+            <button type="button" onClick={()=>setDetail(r)} className="flex w-full gap-4 text-left active:scale-[.995]">
+              <div className="h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-2xl text-neutral-300">✦</div>}</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-black text-neutral-400">{r.code} · {r.year}</div>
+                <div className="mt-1 text-base font-black">{r.name}</div>
+                <div className="mt-2 text-xs text-neutral-500">{r.season||"—"} · {r.category||"—"}</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <Badge>{statusLabel(r.status)}</Badge>
+                  {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
+                  {r.sampleFactoryName&&<Badge>{r.sampleFactoryName}</Badge>}
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+            {can("design_sample.edit")&&<div className="mt-3 flex justify-end border-t pt-3">
+              <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">
+                {sampleTab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}
+              </button>
+            </div>}
+          </div>
         })}
         {!loading&&!filtered.length&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Chưa có mẫu phù hợp.</div>}
       </div>
