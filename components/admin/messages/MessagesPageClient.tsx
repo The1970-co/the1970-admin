@@ -1319,7 +1319,7 @@ export default function MessagesPageClient({
     try {
       const data = await listOmniConversations({
         q: debouncedSearch,
-        status: inboxFilter === "WAITING" ? "PROCESSING" : "ALL",
+        status: inboxFilter === "WAITING" ? "OPEN" : "ALL",
         channel,
         assigneeId: assigneeFilter,
         tag: tagFilter,
@@ -1374,7 +1374,7 @@ export default function MessagesPageClient({
       const nextPage = conversationPage + 1;
       const data = await listOmniConversations({
         q: debouncedSearch,
-        status: inboxFilter === "WAITING" ? "PROCESSING" : "ALL",
+        status: inboxFilter === "WAITING" ? "OPEN" : "ALL",
         channel,
         assigneeId: assigneeFilter,
         tag: tagFilter,
@@ -3412,7 +3412,7 @@ export default function MessagesPageClient({
 
                   <div className="grid grid-cols-3 gap-2">
                     <Metric label="Mới nhất" value={visibleConversations.length} />
-                    <Metric label="Đợi phản hồi" value={selectedSummary.processing} />
+                    <Metric label="Đợi phản hồi" value={selectedSummary.open} />
                     <Metric label="Chưa đọc" value={selectedSummary.unread} />
                   </div>
 
