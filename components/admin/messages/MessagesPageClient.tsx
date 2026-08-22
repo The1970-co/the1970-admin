@@ -1534,8 +1534,12 @@ export default function MessagesPageClient({
         null,
       trackingCode:
         order?.shipment?.trackingCode ||
-        (Array.isArray(order?.shipments) ? order.shipments[0]?.trackingCode : null) ||
+        order?.shipment?.tracking_code ||
+        (Array.isArray(order?.shipments)
+          ? order.shipments[0]?.trackingCode || order.shipments[0]?.tracking_code
+          : null) ||
         order?.trackingCode ||
+        order?.tracking_code ||
         order?.ghnTrackingCode ||
         null,
       shippingStatus:
@@ -1590,7 +1594,7 @@ export default function MessagesPageClient({
         ? apiJson(`/orders?page=1&pageSize=50&q=${encodeURIComponent(phone)}`, {
             redirectOnUnauthorized: false,
             timeoutMs: 15000,
-          } as any).catch(() => [] as any)
+          } as any)
         : Promise.resolve([] as any[]);
 
       const [linkedResponse, phoneResponse]: any[] = await Promise.all([
