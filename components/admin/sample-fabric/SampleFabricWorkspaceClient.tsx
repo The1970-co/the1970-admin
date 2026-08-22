@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 import { hasPermission, type AppRole } from "@/lib/authz";
+import * as XLSX from "xlsx";
 
 type Section = "library" | "samples" | "fabric" | "measurements";
 type Supplier = { id: string; code: string; name: string; phone?: string | null; email?: string | null; address?: string | null; note?: string | null };
@@ -62,16 +63,97 @@ type FabricReceipt = {
   fabricCosts?:FabricCostGroup[]; fabricConfigs?:FabricConfig[]; colorMaps?:FabricColorMap[]; costSummary?:ReceiptCostSummary|null;
 };
 
-type MeasurementTemplate = { id:string; name:string; productType:"SHIRT"|"PANTS"|"CUSTOM"; unit:string; sizes:string[]; rows:Array<{id:string;name:string;nameEn?:string;unit:string;values:Record<string,string>}>; updatedAt:string };
+type MeasurementTemplate = { id:string; name:string; productType:"SHIRT"|"PANTS"|"CUSTOM"; category?:string|null; sourceImageUrl?:string|null; sourceFileName?:string|null; unit:string; sizes:string[]; rows:Array<{id:string;name:string;nameEn?:string;unit:string;values:Record<string,string>}>; updatedAt:string };
 const MEASUREMENT_LIBRARY_KEY="the1970.measurement-templates.v1";
 const SHIRT_SIZES=["S","M","L","XL","XXL"];
 const PANTS_SIZES=["29","30","31","32","33","34","36","38"];
-function newMeasurementTemplate(kind:"SHIRT"|"PANTS"|"CUSTOM"="SHIRT"):MeasurementTemplate { return {id:`mt-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,name:"",productType:kind,unit:"cm",sizes:kind==="PANTS"?[...PANTS_SIZES]:kind==="SHIRT"?[...SHIRT_SIZES]:[],rows:[],updatedAt:new Date().toISOString()}; }
+function newMeasurementTemplate(kind:"SHIRT"|"PANTS"|"CUSTOM"="SHIRT"):MeasurementTemplate { return {id:`mt-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,name:"",productType:kind,category:null,sourceImageUrl:null,sourceFileName:null,unit:"cm",sizes:kind==="PANTS"?[...PANTS_SIZES]:kind==="SHIRT"?[...SHIRT_SIZES]:[],rows:[],updatedAt:new Date().toISOString()}; }
 function loadMeasurementTemplates():MeasurementTemplate[]{if(typeof window==="undefined")return[];try{return JSON.parse(localStorage.getItem(MEASUREMENT_LIBRARY_KEY)||"[]")}catch{return[]}}
 function saveMeasurementTemplates(rows:MeasurementTemplate[]){if(typeof window!=="undefined")localStorage.setItem(MEASUREMENT_LIBRARY_KEY,JSON.stringify(rows))}
 function measurementSnapshotKey(sampleCode:string){return `the1970.sample-measurement.${normalizeSampleCode(sampleCode)||"draft"}`}
 function loadMeasurementSnapshot(sampleCode:string):MeasurementTemplate|null{if(typeof window==="undefined")return null;try{return JSON.parse(localStorage.getItem(measurementSnapshotKey(sampleCode))||"null")}catch{return null}}
 function saveMeasurementSnapshot(sampleCode:string,row:MeasurementTemplate|null){if(typeof window==="undefined")return;const k=measurementSnapshotKey(sampleCode);if(row)localStorage.setItem(k,JSON.stringify(row));else localStorage.removeItem(k)}
+
+function cleanMeasurementCell(v:any){return String(v??"").replace(/\s+/g," ").trim()}
+function isMeasurementSize(v:any){
+  const x=cleanMeasurementCell(v).toUpperCase();
+  return /^(XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[.,]\d+)?)$/.test(x);
+}
+function detectMeasurementProductType(category?:string|null):"SHIRT"|"PANTS"|"CUSTOM"{
+  const x=String(category||"").toLocaleLowerCase("vi-VN");
+  if(/quần|short|jean|chino|pants/.test(x))return "PANTS";
+  if(/áo|shirt|jacket|coat|blazer|polo|sơ mi|len|sweater|hoodie|parka|tee/.test(x))return "SHIRT";
+  return "CUSTOM";
+}
+function parseMeasurementWorkbook(fileName:string,buffer:ArrayBuffer,category:string):MeasurementTemplate[]{
+  const wb=XLSX.read(buffer,{type:"array"});
+  const result:MeasurementTemplate[]=[];
+  wb.SheetNames.forEach((sheetName,sheetIndex)=>{
+    const sheet=wb.Sheets[sheetName];
+    const grid=XLSX.utils.sheet_to_json<any[]>(sheet,{header:1,raw:false,defval:""});
+    grid.forEach((row:any[],r:number)=>{
+      row.forEach((cell:any,c:number)=>{
+        if(cleanMeasurementCell(cell).toUpperCase()!=="SIZE")return;
+        const sizes:string[]=[];
+        for(let cc=c+1;cc<Math.min((row||[]).length,c+12);cc++){
+          const value=cleanMeasurementCell(row[cc]);
+          if(!value){if(sizes.length)break;continue}
+          if(!isMeasurementSize(value)){if(sizes.length)break;continue}
+          sizes.push(value.replace(",","."));
+        }
+        if(!sizes.length)return;
+
+        let title="";
+        for(let rr=r-1;rr>=Math.max(0,r-3)&&!title;rr--){
+          const candidates=(grid[rr]||[]).slice(Math.max(0,c-1),c+sizes.length+2).map(cleanMeasurementCell).filter(Boolean);
+          title=candidates.sort((a,b)=>b.length-a.length)[0]||"";
+        }
+        if(!title||title.toUpperCase()==="SIZE")title=`${sheetName} ${result.length+1}`;
+
+        const rows:MeasurementTemplate["rows"]=[];
+        let blankCount=0;
+        for(let rr=r+1;rr<Math.min(grid.length,r+80);rr++){
+          const name=cleanMeasurementCell(grid[rr]?.[c]);
+          if(!name){
+            blankCount++;
+            if(blankCount>=2)break;
+            continue;
+          }
+          blankCount=0;
+          if(name.toUpperCase()==="SIZE")break;
+          const vals=sizes.map((_,i)=>cleanMeasurementCell(grid[rr]?.[c+1+i]).replace(",","."));
+          if(vals.every(v=>!v)&&/THÔNG SỐ/i.test(name))break;
+          if(vals.every(v=>!v))continue;
+          rows.push({
+            id:`mr-${Date.now()}-${sheetIndex}-${r}-${rr}-${Math.random().toString(36).slice(2,5)}`,
+            name,
+            unit:"cm",
+            values:Object.fromEntries(sizes.map((sz,i)=>[sz,vals[i]||""]))
+          });
+        }
+        if(!rows.length)return;
+        result.push({
+          id:`mt-${Date.now()}-${sheetIndex}-${r}-${c}-${Math.random().toString(36).slice(2,6)}`,
+          name:title,
+          productType:detectMeasurementProductType(category),
+          category:category||null,
+          sourceImageUrl:null,
+          sourceFileName:fileName,
+          unit:"cm",
+          sizes,
+          rows,
+          updatedAt:new Date().toISOString(),
+        });
+      });
+    });
+  });
+  const seen=new Set<string>();
+  return result.filter(x=>{
+    const key=`${x.name}|${x.sizes.join("|")}|${x.rows.map(r=>r.name).join("|")}`.toLowerCase();
+    if(seen.has(key))return false;seen.add(key);return true;
+  });
+}
+
 const SAMPLE_STATUSES = [
   ["IDEA", "Ý tưởng"], ["FABRIC_SELECTED", "Chọn vải"], ["SAMPLING", "Đang lên mẫu"], ["SAMPLE_READY", "Đã có mẫu thử"],
   ["REVISING", "Đang chỉnh sửa"], ["APPROVED_FOR_PRODUCTION", "Duyệt sản xuất"], ["IN_PRODUCTION", "Đang sản xuất"],
@@ -119,6 +201,19 @@ function Badge({ children, status, tone }: { children: React.ReactNode; status?:
 }
 function Card({ children, className="" }: { children: React.ReactNode; className?: string }) { return <div className={`rounded-3xl border border-neutral-200 bg-white shadow-sm ${className}`}>{children}</div>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block"><span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</span>{children}</label>; }
+
+function Modal({ title, children, onClose, wide=false }: { title:string; children:React.ReactNode; onClose:()=>void; wide?:boolean }) {
+  return <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 md:p-8">
+    <div className={`my-auto w-full ${wide?"max-w-5xl":"max-w-2xl"} rounded-3xl bg-white shadow-2xl`}>
+      <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <button type="button" onClick={onClose} className="h-9 w-9 rounded-xl border border-neutral-200 text-neutral-500">×</button>
+      </div>
+      {children}
+    </div>
+  </div>;
+}
+
 const inputClass = "w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-neutral-900";
 
 function titleCaseVi(value: string) {
@@ -254,6 +349,11 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
   const [measureReceipt, setMeasureReceipt] = useState<FabricReceipt | null>(null);
   const [measurementTemplates,setMeasurementTemplates]=useState<MeasurementTemplate[]>([]);
   const [measurementEdit,setMeasurementEdit]=useState<MeasurementTemplate|null>(null);
+  const [measurementImportMode,setMeasurementImportMode]=useState<"EXCEL"|"IMAGE"|null>(null);
+  const [measurementCategory,setMeasurementCategory]=useState("");
+  const [measurementName,setMeasurementName]=useState("");
+  const [measurementImporting,setMeasurementImporting]=useState(false);
+  const [measurementPreview,setMeasurementPreview]=useState<string|null>(null);
   const [boardForm, setBoardForm] = useState<FabricBoard | null | undefined>(undefined);
   const [showSupplierSettings, setShowSupplierSettings] = useState(false);
   const [boardDetail, setBoardDetail] = useState<FabricBoard | null>(null);
@@ -294,7 +394,12 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
   async function reload() {
     try {
       setLoading(true); setError("");
-      if (defaultSection === "measurements") { setMeasurementTemplates(loadMeasurementTemplates()); return; }
+      if (defaultSection === "measurements") {
+        const categories=await api<string[]>("/products/category-options").catch(()=>[]);
+        setProductGroups(uniqueTextValues(categories||[]));
+        setMeasurementTemplates(loadMeasurementTemplates());
+        return;
+      }
       if (defaultSection === "library") await loadLibrary();
       else if (defaultSection === "samples") await loadSamples();
       else await loadFabric();
@@ -323,7 +428,7 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
 
   return <div className="space-y-5">
     <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Sản xuất / nguyên liệu</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">Mẫu mã & Vải</h1><p className="mt-1 text-sm text-neutral-500">Bảng vải, lịch sử gửi làm mẫu, tiến độ mẫu và kiểm thực nhận vải.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Sản xuất / nguyên liệu</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">{defaultSection==="measurements"?"Thư viện bảng thông số":"Mẫu mã & Vải"}</h1><p className="mt-1 text-sm text-neutral-500">{defaultSection==="measurements"?"Lưu bảng size chuẩn, nhập nhanh từ Excel hoặc ảnh và dùng lại cho các mẫu.":"Bảng vải, lịch sử gửi làm mẫu, tiến độ mẫu và kiểm thực nhận vải."}</p></div>
       <div className="flex flex-wrap gap-2">
         {canViewLibrary && <Link href="/fabric-library" className={`rounded-2xl px-4 py-2.5 text-sm font-semibold ${defaultSection === "library" ? "bg-neutral-950 text-white" : "border border-neutral-300 bg-white text-neutral-800"}`}>Bảng vải</Link>}
         {canViewMeasurements && <Link href="/measurement-library" className={`rounded-2xl px-4 py-2.5 text-sm font-semibold ${defaultSection === "measurements" ? "bg-neutral-950 text-white" : "border border-neutral-300 bg-white text-neutral-800"}`}>Bảng thông số</Link>}
@@ -334,19 +439,24 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
     <Card className="p-4"><div className="flex flex-col gap-3 md:flex-row md:items-center">
       <input className={`${inputClass} md:max-w-md`} value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter") void reload()}} placeholder={defaultSection==="measurements"?"Tìm tên bảng thông số...":defaultSection==="library"?"Tìm NCC, mã bảng, mã vải, thành phần...":defaultSection==="samples"?"Tìm mã mẫu, tên mẫu, bảng vải, màu...":"Tìm phiếu, mã vải, màu, lô, NCC..."}/>
+      {defaultSection === "measurements" && <select className={`${inputClass} md:w-64`} value={measurementCategory} onChange={e=>setMeasurementCategory(e.target.value)}><option value="">Tất cả danh mục sản phẩm</option>{productGroups.map(x=><option key={x} value={x}>{x}</option>)}</select>}
       {defaultSection === "samples" && <select className={`${inputClass} md:w-56`} value={sampleStatus} onChange={e=>setSampleStatus(e.target.value)}><option value="">Tất cả tiến độ</option>{SAMPLE_STATUSES.map(x=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select>}
       {defaultSection === "fabric" && <select className={`${inputClass} md:w-56`} value={receiptStatus} onChange={e=>setReceiptStatus(e.target.value)}><option value="">Tất cả trạng thái</option>{RECEIPT_STATUSES.map(x=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select>}
       <div className="md:ml-auto flex gap-2">
         {q.trim() && <button onClick={()=>void reload()} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">Tìm</button>}
         {defaultSection === "library" && owner && <button onClick={()=>setShowSupplierSettings(true)} className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800">NCC vải</button>}
         {defaultSection === "library" && can("fabric_library.create") && <button onClick={()=>setBoardForm(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">+ Thêm bảng vải</button>}
-        {defaultSection === "measurements" && can("design_sample.create") && <button onClick={()=>setMeasurementEdit(newMeasurementTemplate("SHIRT"))} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">+ Tạo bảng thông số</button>}
+        {defaultSection === "measurements" && can("design_sample.create") && <>
+          <button onClick={()=>{setMeasurementImportMode("EXCEL");setMeasurementCategory("");setMeasurementName("");setMeasurementPreview(null)}} className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold">↑ Nhập Excel</button>
+          <button onClick={()=>{setMeasurementImportMode("IMAGE");setMeasurementCategory("");setMeasurementName("");setMeasurementPreview(null)}} className="rounded-2xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold">↑ Thêm từ ảnh</button>
+          <button onClick={()=>setMeasurementEdit(newMeasurementTemplate("SHIRT"))} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">+ Tạo thủ công</button>
+        </>}
         {defaultSection === "samples" && can("design_sample.create") && <button onClick={()=>{setEditingSample(null);setShowSampleForm(true)}} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">+ Tạo mẫu</button>}
         {defaultSection === "fabric" && can("fabric_receipt.create") && <button onClick={()=>{setEditingReceipt(null);setShowReceiptForm(true)}} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">+ Nhận vải</button>}
       </div>
     </div></Card>
 
-    {loading ? <Card className="p-10 text-center text-sm text-neutral-500">Đang tải dữ liệu...</Card> : defaultSection === "measurements" ? <MeasurementLibrary rows={measurementTemplates.filter(x=>!q.trim()||x.name.toLowerCase().includes(q.trim().toLowerCase()))} onEdit={setMeasurementEdit} onChanged={rows=>{setMeasurementTemplates(rows);saveMeasurementTemplates(rows)}}/> : defaultSection === "library" ?
+    {loading ? <Card className="p-10 text-center text-sm text-neutral-500">Đang tải dữ liệu...</Card> : defaultSection === "measurements" ? <MeasurementLibrary rows={measurementTemplates.filter(x=>(!q.trim()||[x.name,x.category,x.sourceFileName].some(v=>String(v||"").toLowerCase().includes(q.trim().toLowerCase())))&&(!measurementCategory||x.category===measurementCategory))} onEdit={setMeasurementEdit} onChanged={rows=>{setMeasurementTemplates(rows);saveMeasurementTemplates(rows)}}/> : defaultSection === "library" ?
       <LibraryView rows={boards} can={can} onEdit={x=>setBoardForm(x)} onDetail={async x=>{const full=await api<FabricBoard>(`/sample-fabric/library/${x.id}`);setBoardDetail(full)}} onChanged={reload}/> :
       defaultSection === "samples" ? <SamplesView rows={filteredSamples} can={can} onEdit={x=>{setEditingSample(x);setShowSampleForm(true)}} onDispatch={x=>setDispatchSample(x)} onChanged={reload}/> :
       <FabricView rows={filteredReceipts} can={can} onEdit={x=>{setEditingReceipt(x);setShowReceiptForm(true)}} onMeasure={setMeasureReceipt} onChanged={reload}/>}
@@ -357,7 +467,25 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     {dispatchSample && dispatchSample.fabricBoard && <DispatchForm board={dispatchSample.fabricBoard} sample={dispatchSample} meta={workspaceMeta} onClose={()=>setDispatchSample(null)} onSaved={async()=>{setDispatchSample(null);await reload()}}/>}
     {showSampleForm && <SampleForm sample={editingSample} measurementTemplates={measurementTemplates} boards={workspaceMeta.boards || []} staff={staff} seasons={seasons} productGroups={productGroups} canUpload={can("design_sample.upload_images")} canViewFabricLink={owner} factories={workspaceMeta.factories || []} onClose={()=>setShowSampleForm(false)} onSaved={async()=>{setShowSampleForm(false);await reload()}} />}
     {showReceiptForm && <ReceiptForm receipt={editingReceipt} suppliers={suppliers} branches={branches} staff={staff} samples={metaSamples} products={workspaceMeta.products || []} boards={workspaceMeta.boards || []} canFabricBoardLink={can("fabric_receipt.fabric_board_link")} canSupplierIdentity={can("fabric_receipt.supplier_identity.view")} canCostView={can("fabric_receipt.cost.view") || can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setShowReceiptForm(false)} onSaved={async()=>{setShowReceiptForm(false);await reload()}} />}
-    {measurementEdit && <MeasurementEditor initial={measurementEdit} onClose={()=>setMeasurementEdit(null)} onSave={row=>{const next=[...measurementTemplates.filter(x=>x.id!==row.id),{...row,updatedAt:new Date().toISOString()}].sort((a,b)=>a.name.localeCompare(b.name,"vi"));saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementEdit(null)}}/>}
+    {measurementEdit && <MeasurementEditor initial={measurementEdit} categories={productGroups} onClose={()=>setMeasurementEdit(null)} onSave={row=>{const next=[...measurementTemplates.filter(x=>x.id!==row.id),{...row,updatedAt:new Date().toISOString()}].sort((a,b)=>a.name.localeCompare(b.name,"vi"));saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementEdit(null)}}/>}
+    {measurementImportMode&&<MeasurementImportModal mode={measurementImportMode} categories={productGroups} category={measurementCategory} setCategory={setMeasurementCategory} name={measurementName} setName={setMeasurementName} preview={measurementPreview} setPreview={setMeasurementPreview} importing={measurementImporting} onClose={()=>{setMeasurementImportMode(null);setMeasurementPreview(null)}} onImport={async(file)=>{
+      try{
+        setMeasurementImporting(true);
+        if(measurementImportMode==="EXCEL"){
+          const parsed=parseMeasurementWorkbook(file.name,await file.arrayBuffer(),measurementCategory);
+          if(!parsed.length)throw new Error("Không tìm thấy bảng có dòng SIZE trong file Excel.");
+          const next=[...measurementTemplates,...parsed].sort((a,b)=>a.name.localeCompare(b.name,"vi"));
+          saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementImportMode(null);
+          window.alert(`Đã nhập ${parsed.length} bảng thông số từ ${file.name}.`);
+        }else{
+          if(!measurementName.trim())throw new Error("Nhập tên bảng thông số.");
+          const uploaded=await uploadWorkspaceFile("/sample-fabric/samples/upload",file);
+          const row:MeasurementTemplate={...newMeasurementTemplate(detectMeasurementProductType(measurementCategory)),name:measurementName.trim(),category:measurementCategory||null,sourceImageUrl:uploaded.url,sourceFileName:file.name};
+          const next=[...measurementTemplates,row].sort((a,b)=>a.name.localeCompare(b.name,"vi"));
+          saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementImportMode(null);setMeasurementPreview(null);
+        }
+      }catch(e){window.alert(e instanceof Error?e.message:"Không nhập được bảng thông số.")}finally{setMeasurementImporting(false)}
+    }}/>}
     {measureReceipt && <MeasurementForm receipt={measureReceipt} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setMeasureReceipt(null)} onSaved={async()=>{setMeasureReceipt(null);await reload()}} />}
   </div>;
 }
@@ -937,11 +1065,76 @@ function FabricView({ rows, can, onEdit, onMeasure, onChanged }: { rows: FabricR
 }
 
 function MeasurementGrid({value,onChange,editable=true}:{value:MeasurementTemplate;onChange?:(x:MeasurementTemplate)=>void;editable?:boolean}){const patch=(x:MeasurementTemplate)=>onChange?.(x);return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-max border-collapse text-sm"><thead><tr className="bg-neutral-950 text-white"><th className="sticky left-0 z-10 min-w-56 bg-neutral-950 p-3 text-left">Thông số</th>{value.sizes.map((sz,i)=><th key={`${sz}-${i}`} className="min-w-24 border-l border-white/20 p-2">{editable?<input className="w-16 rounded bg-white/10 px-1 py-1 text-center text-white" value={sz} onChange={e=>patch({...value,sizes:value.sizes.map((x,j)=>j===i?e.target.value:x)})}/>:sz}</th>)}</tr></thead><tbody>{value.rows.map((r,ri)=><tr key={r.id} className="border-t"><td className="sticky left-0 z-10 bg-white p-2"><div className="flex gap-2">{editable?<input className="min-w-44 flex-1 rounded-xl border px-2 py-2" value={r.name} onChange={e=>patch({...value,rows:value.rows.map((x,j)=>j===ri?{...x,name:e.target.value}:x)})}/>:<b>{r.name}</b>}{editable&&<button className="text-red-600" onClick={()=>patch({...value,rows:value.rows.filter((_,j)=>j!==ri)})}>×</button>}</div></td>{value.sizes.map(sz=><td key={sz} className="border-l p-2">{editable?<input inputMode="decimal" className="w-20 rounded-xl border px-2 py-2 text-center" value={r.values[sz]||""} onChange={e=>patch({...value,rows:value.rows.map((x,j)=>j===ri?{...x,values:{...x.values,[sz]:e.target.value.replace(",",".")}}:x)})}/>:r.values[sz]||"—"}</td>)}</tr>)}</tbody></table></div>}
-function MeasurementEditor({initial,onClose,onSave}:{initial:MeasurementTemplate;onClose:()=>void;onSave:(x:MeasurementTemplate)=>void}){const [f,setF]=useState<MeasurementTemplate>(JSON.parse(JSON.stringify(initial)));function kind(k:"SHIRT"|"PANTS"|"CUSTOM"){const sizes=k==="SHIRT"?[...SHIRT_SIZES]:k==="PANTS"?[...PANTS_SIZES]:f.sizes;setF({...f,productType:k,sizes,rows:f.rows.map(r=>({...r,values:Object.fromEntries(sizes.map(s=>[s,r.values[s]||""]))}))})}return <Modal title="Bảng thông số" onClose={onClose} wide><div className="space-y-4 p-5"><div className="grid gap-3 md:grid-cols-3"><Field label="Tên bảng"><input className={inputClass} value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="VD: Quần short kaki relaxed"/></Field><Field label="Loại"><select className={inputClass} value={f.productType} onChange={e=>kind(e.target.value as any)}><option value="SHIRT">Áo</option><option value="PANTS">Quần</option><option value="CUSTOM">Tuỳ chỉnh</option></select></Field><Field label="Đơn vị"><input className={inputClass} value={f.unit} onChange={e=>setF({...f,unit:e.target.value})}/></Field></div><div className="flex flex-wrap gap-2"><button className="rounded-xl border px-3 py-2 text-sm font-semibold" onClick={()=>setF({...f,sizes:[...f.sizes,""]})}>+ Size</button><button className="rounded-xl border px-3 py-2 text-sm font-semibold" onClick={()=>setF({...f,rows:[...f.rows,{id:`mr-${Date.now()}`,name:"",unit:f.unit||"cm",values:Object.fromEntries(f.sizes.map(s=>[s,""]))}]})}>+ Dòng thông số</button></div><MeasurementGrid value={f} onChange={setF}/><div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-2xl border px-4 py-2.5">Đóng</button><button disabled={!f.name.trim()} onClick={()=>onSave(f)} className="rounded-2xl bg-neutral-950 px-5 py-2.5 font-semibold text-white disabled:opacity-40">Lưu bảng</button></div></div></Modal>}
-function MeasurementLibrary({rows,onEdit,onChanged}:{rows:MeasurementTemplate[];onEdit:(x:MeasurementTemplate)=>void;onChanged:(x:MeasurementTemplate[])=>void}){return <div className="grid gap-4 lg:grid-cols-2">{rows.map(x=><Card key={x.id} className="p-5"><div className="flex items-start justify-between gap-3"><div><div className="text-xs font-semibold uppercase text-neutral-400">{x.productType==="PANTS"?"Quần":x.productType==="SHIRT"?"Áo":"Tuỳ chỉnh"} · {x.sizes.join(" / ")}</div><h3 className="mt-1 text-lg font-semibold">{x.name}</h3><div className="mt-1 text-sm text-neutral-500">{x.rows.length} thông số · {x.unit}</div></div><div className="flex gap-2"><button onClick={()=>onEdit(JSON.parse(JSON.stringify(x)))} className="rounded-xl border px-3 py-2 text-sm">Sửa</button><button onClick={()=>{if(confirm(`Xoá ${x.name}?`))onChanged(rows.filter(r=>r.id!==x.id))}} className="rounded-xl border px-3 py-2 text-sm text-red-600">Xoá</button></div></div></Card>)}{!rows.length&&<Card className="p-10 text-center text-sm text-neutral-500">Chưa có bảng thông số. Tạo bảng đầu tiên rồi dùng lại cho các mẫu sau.</Card>}</div>}
-function SampleMeasurementBlock({value,templates,productCategory,onChange}:{value:MeasurementTemplate|null;templates:MeasurementTemplate[];productCategory:string;onChange:(x:MeasurementTemplate|null)=>void}){const [pick,setPick]=useState("");function choose(id:string){setPick(id);const t=templates.find(x=>x.id===id);if(t)onChange({...JSON.parse(JSON.stringify(t)),id:`snapshot-${Date.now()}`})}function fresh(){const pants=/quần|short/i.test(productCategory||"");onChange(newMeasurementTemplate(pants?"PANTS":"SHIRT"))}return <div className="space-y-3 rounded-2xl border p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><b>Bảng thông số</b><div className="text-xs text-neutral-500">Lấy từ thư viện hoặc tạo riêng cho mẫu. Bản gắn vào mẫu là snapshot độc lập.</div></div><div className="flex gap-2"><select className="rounded-xl border px-3 py-2 text-sm" value={pick} onChange={e=>choose(e.target.value)}><option value="">Chọn từ thư viện</option>{templates.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button onClick={fresh} className="rounded-xl border px-3 py-2 text-sm font-semibold">Tạo mới</button></div></div>{value&&<><div className="flex items-center gap-2"><input className="flex-1 rounded-xl border px-3 py-2 font-semibold" value={value.name} onChange={e=>onChange({...value,name:e.target.value})}/><button onClick={()=>onChange({...value,rows:[...value.rows,{id:`mr-${Date.now()}`,name:"",unit:value.unit||"cm",values:Object.fromEntries(value.sizes.map(s=>[s,""]))}]})} className="rounded-xl border px-3 py-2 text-sm">+ Thông số</button></div><MeasurementGrid value={value} onChange={onChange}/><button onClick={()=>onChange(null)} className="text-sm font-semibold text-red-600">Bỏ bảng khỏi mẫu</button></>}</div>}
-
-function Modal({ title, children, onClose, wide=false }: { title:string; children:React.ReactNode; onClose:()=>void; wide?:boolean }) { return <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 md:p-8"><div className={`my-auto w-full ${wide?"max-w-5xl":"max-w-2xl"} rounded-3xl bg-white shadow-2xl`}><div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="h-9 w-9 rounded-xl border border-neutral-200 text-neutral-500">×</button></div>{children}</div></div>; }
+function MeasurementEditor({initial,categories,onClose,onSave}:{initial:MeasurementTemplate;categories:string[];onClose:()=>void;onSave:(x:MeasurementTemplate)=>void}){
+ const [f,setF]=useState<MeasurementTemplate>(JSON.parse(JSON.stringify(initial)));
+ function kind(k:"SHIRT"|"PANTS"|"CUSTOM"){const sizes=k==="SHIRT"?[...SHIRT_SIZES]:k==="PANTS"?[...PANTS_SIZES]:f.sizes;setF({...f,productType:k,sizes,rows:f.rows.map(r=>({...r,values:Object.fromEntries(sizes.map(s=>[s,r.values[s]||""]))}))})}
+ return <Modal title="Bảng thông số" onClose={onClose} wide><div className="space-y-4 p-5">
+  <div className="grid gap-3 md:grid-cols-4">
+   <Field label="Tên bảng"><input className={inputClass} value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="VD: Jacket da lộn trần bông 2 lớp"/></Field>
+   <Field label="Danh mục sản phẩm"><select className={inputClass} value={f.category||""} onChange={e=>setF({...f,category:e.target.value||null,productType:detectMeasurementProductType(e.target.value)})}><option value="">Chưa phân loại</option>{categories.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
+   <Field label="Kiểu size"><select className={inputClass} value={f.productType} onChange={e=>kind(e.target.value as any)}><option value="SHIRT">Áo</option><option value="PANTS">Quần</option><option value="CUSTOM">Tuỳ chỉnh</option></select></Field>
+   <Field label="Đơn vị"><input className={inputClass} value={f.unit} onChange={e=>setF({...f,unit:e.target.value})}/></Field>
+  </div>
+  {f.sourceImageUrl&&<div className="rounded-2xl border bg-neutral-50 p-3"><div className="mb-2 text-xs font-semibold text-neutral-500">Ảnh bảng thông số gốc</div><a href={assetUrl(f.sourceImageUrl)} target="_blank" rel="noreferrer"><img src={assetUrl(f.sourceImageUrl)} className="max-h-[420px] rounded-xl object-contain"/></a></div>}
+  <div className="flex flex-wrap gap-2"><button className="rounded-xl border px-3 py-2 text-sm font-semibold" onClick={()=>setF({...f,sizes:[...f.sizes,""]})}>+ Size</button><button className="rounded-xl border px-3 py-2 text-sm font-semibold" onClick={()=>setF({...f,rows:[...f.rows,{id:`mr-${Date.now()}`,name:"",unit:f.unit||"cm",values:Object.fromEntries(f.sizes.map(s=>[s,""]))}]})}>+ Dòng thông số</button></div>
+  <MeasurementGrid value={f} onChange={setF}/>
+  <div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-2xl border px-4 py-2.5">Đóng</button><button disabled={!f.name.trim()} onClick={()=>onSave(f)} className="rounded-2xl bg-neutral-950 px-5 py-2.5 font-semibold text-white disabled:opacity-40">Lưu bảng</button></div>
+ </div></Modal>
+}
+function MeasurementLibrary({rows,onEdit,onChanged}:{rows:MeasurementTemplate[];onEdit:(x:MeasurementTemplate)=>void;onChanged:(x:MeasurementTemplate[])=>void}){
+ return <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{rows.map(x=><Card key={x.id} className="overflow-hidden">
+  {x.sourceImageUrl&&<button type="button" onClick={()=>window.open(assetUrl(x.sourceImageUrl||""),"_blank","noopener,noreferrer")} className="block w-full bg-neutral-100"><img src={assetUrl(x.sourceImageUrl)} className="h-56 w-full object-contain"/></button>}
+  <div className="p-5">
+   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap gap-1.5">{x.category&&<span className="rounded-full bg-neutral-950 px-2 py-1 text-[10px] font-semibold text-white">{x.category}</span>}<span className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-semibold text-neutral-500">{x.productType==="PANTS"?"Quần":x.productType==="SHIRT"?"Áo":"Tuỳ chỉnh"}</span></div><h3 className="mt-2 text-lg font-semibold">{x.name}</h3><div className="mt-1 text-sm text-neutral-500">{x.sizes.length?x.sizes.join(" / "):"Ảnh tham khảo"} · {x.rows.length} thông số</div>{x.sourceFileName&&<div className="mt-1 truncate text-xs text-neutral-400">Nguồn: {x.sourceFileName}</div>}</div></div>
+   <div className="mt-4 flex flex-wrap gap-2">{x.sourceImageUrl&&<button onClick={()=>window.open(assetUrl(x.sourceImageUrl||""),"_blank","noopener,noreferrer")} className="rounded-xl border px-3 py-2 text-sm">Xem ảnh</button>}<button onClick={()=>onEdit(JSON.parse(JSON.stringify(x)))} className="rounded-xl border px-3 py-2 text-sm">Sửa</button><button onClick={()=>{if(confirm(`Xoá ${x.name}?`))onChanged(rows.filter(r=>r.id!==x.id))}} className="rounded-xl border px-3 py-2 text-sm text-red-600">Xoá</button></div>
+  </div>
+ </Card>)}{!rows.length&&<Card className="p-10 text-center text-sm text-neutral-500">Chưa có bảng thông số. Có thể tạo tay, nhập Excel hoặc tải ảnh bảng thông số lên.</Card>}</div>
+}
+function MeasurementImportModal({mode,categories,category,setCategory,name,setName,preview,setPreview,importing,onClose,onImport}:{mode:"EXCEL"|"IMAGE";categories:string[];category:string;setCategory:(x:string)=>void;name:string;setName:(x:string)=>void;preview:string|null;setPreview:(x:string|null)=>void;importing:boolean;onClose:()=>void;onImport:(file:File)=>Promise<void>}){
+ const [file,setFile]=useState<File|null>(null);
+ function choose(next:File|null){setFile(next);if(preview)URL.revokeObjectURL(preview);setPreview(next&&mode==="IMAGE"?URL.createObjectURL(next):null)}
+ return <Modal title={mode==="EXCEL"?"Nhập bảng thông số từ Excel":"Thêm bảng thông số từ ảnh"} onClose={onClose} wide><div className="space-y-4 p-5">
+  <div className="rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-600">{mode==="EXCEL"?"Hệ thống tự dò từng bảng bắt đầu bằng dòng SIZE. Một file có nhiều bảng nằm cạnh nhau hoặc phía dưới vẫn có thể tách thành nhiều bảng.":"Dùng khi chỉ có ảnh bảng size. Đặt tên và danh mục để tra cứu, sau này có thể nhập số liệu thủ công nếu cần."}</div>
+  <div className="grid gap-3 md:grid-cols-2">
+   <Field label="Danh mục sản phẩm"><select className={inputClass} value={category} onChange={e=>setCategory(e.target.value)}><option value="">Chưa phân loại</option>{categories.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
+   {mode==="IMAGE"&&<Field label="Tên bảng thông số"><input className={inputClass} value={name} onChange={e=>setName(e.target.value)} placeholder="VD: Jacket da lộn trần bông 2 lớp"/></Field>}
+  </div>
+  <div className="rounded-2xl border-2 border-dashed p-5"><input type="file" accept={mode==="EXCEL"?".xlsx,.xls,.xlsm":"image/*"} onChange={e=>choose(e.target.files?.[0]||null)} className="block w-full text-sm"/>{file&&<div className="mt-2 text-sm font-semibold">{file.name}</div>}{preview&&<img src={preview} className="mt-4 max-h-[480px] rounded-xl object-contain"/>}</div>
+  <div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-2xl border px-4 py-2.5">Đóng</button><button disabled={!file||importing||(mode==="IMAGE"&&!name.trim())} onClick={()=>file&&void onImport(file)} className="rounded-2xl bg-neutral-950 px-5 py-2.5 font-semibold text-white disabled:opacity-40">{importing?"Đang xử lý...":mode==="EXCEL"?"Nhập Excel":"Tải ảnh & lưu"}</button></div>
+ </div></Modal>
+}
+function SampleMeasurementBlock({value,templates,productCategory,onChange}:{value:MeasurementTemplate|null;templates:MeasurementTemplate[];productCategory:string;onChange:(x:MeasurementTemplate|null)=>void}){
+ const [pick,setPick]=useState("");
+ function choose(id:string){
+  setPick(id);
+  const t=templates.find(x=>x.id===id);
+  if(t)onChange({...JSON.parse(JSON.stringify(t)),id:`snapshot-${Date.now()}`});
+ }
+ function fresh(){
+  const kind=detectMeasurementProductType(productCategory);
+  onChange(newMeasurementTemplate(kind==="PANTS"?"PANTS":kind==="SHIRT"?"SHIRT":"CUSTOM"));
+ }
+ return <div className="space-y-3 rounded-2xl border p-4">
+  <div className="flex flex-wrap items-center justify-between gap-2">
+   <div><b>Bảng thông số</b><div className="text-xs text-neutral-500">Lấy từ thư viện hoặc tạo riêng cho mẫu. Bản gắn vào mẫu là snapshot độc lập.</div></div>
+   <div className="flex flex-wrap gap-2">
+    <select className="rounded-xl border px-3 py-2 text-sm" value={pick} onChange={e=>choose(e.target.value)}>
+     <option value="">Chọn từ thư viện</option>
+     {templates.filter(x=>!productCategory||!x.category||x.category===productCategory).map(x=><option key={x.id} value={x.id}>{x.name}{x.category?` · ${x.category}`:""}</option>)}
+    </select>
+    <button type="button" onClick={fresh} className="rounded-xl border px-3 py-2 text-sm font-semibold">Tạo mới</button>
+   </div>
+  </div>
+  {value&&<>
+   <div className="flex items-center gap-2">
+    <input className="flex-1 rounded-xl border px-3 py-2 font-semibold" value={value.name} onChange={e=>onChange({...value,name:e.target.value})}/>
+    <button type="button" onClick={()=>onChange({...value,rows:[...value.rows,{id:`mr-${Date.now()}`,name:"",unit:value.unit||"cm",values:Object.fromEntries(value.sizes.map(sz=>[sz,""]))}]})} className="rounded-xl border px-3 py-2 text-sm">+ Thông số</button>
+   </div>
+   <MeasurementGrid value={value} onChange={onChange}/>
+   <button type="button" onClick={()=>onChange(null)} className="text-sm font-semibold text-red-600">Bỏ bảng khỏi mẫu</button>
+  </>}
+ </div>;
+}
 
 function SampleForm({ sample, measurementTemplates, boards, staff, seasons, productGroups, factories, canUpload, canViewFabricLink, onClose, onSaved }: { sample: Sample | null; measurementTemplates:MeasurementTemplate[]; boards: FabricBoard[]; staff: Staff[]; seasons: string[]; productGroups: string[]; factories: Factory[]; canUpload: boolean; canViewFabricLink: boolean; onClose: () => void; onSaved: () => void }) {
   const [form,setForm]=useState<any>({name:sample?.name||"",code:sample?.code||"",year:sample?.year||new Date().getFullYear(),season:sample?.season||"",category:sample?.category||"",fabricBoardId:sample?.fabricBoardId||"",fabricColorId:sample?.fabricColorId||"",fabricColorName:sample?.fabricColorName||sample?.fabricColor?.name||"",fabricColorCode:sample?.fabricColorCode||sample?.fabricColor?.code||"",sampleFactoryId:sample?.sampleFactoryId||"",sampleFactoryName:sample?.sampleFactoryName||"",status:sample?.status||"IDEA",assigneeStaffId:sample?.assigneeStaffId||"",assigneeName:sample?.assigneeName||"",nextAction:sample?.nextAction||"",dueDate:sample?.dueDate?sample.dueDate.slice(0,10):"",note:sample?.note||"",technicalNote:sample?.technicalNote||"",coverImageUrl:sample?.coverImageUrl||""});

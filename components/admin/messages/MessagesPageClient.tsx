@@ -43,6 +43,8 @@ import { useAuth } from "@/components/admin/auth/AuthProvider";
 import {
   assignOmniConversation,
   createOmniConversationNote,
+  updateOmniConversationNote,
+  deleteOmniConversationNote,
   listOmniNoteTemplates,
   createOmniNoteTemplate,
   updateOmniNoteTemplate,
@@ -2458,6 +2460,44 @@ export default function MessagesPageClient({
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được ghi chú.");
+    }
+  }
+
+  async function handleEditNote(noteId: string, currentNote: string) {
+    if (!activeConversation?.id) return;
+    const nextNote = window.prompt("Sửa ghi chú", currentNote)?.trim();
+    if (!nextNote || nextNote === currentNote) return;
+
+    try {
+      const updated = await updateOmniConversationNote(activeConversation.id, noteId, { note: nextNote });
+      setActiveConversation((prev) =>
+        prev
+          ? {
+              ...prev,
+              notes: (prev.notes || []).map((item) =>
+                item.id === noteId ? { ...item, ...updated } : item,
+              ),
+            }
+          : prev,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không sửa được ghi chú.");
+    }
+  }
+
+  async function handleDeleteNote(noteId: string) {
+    if (!activeConversation?.id) return;
+    if (!window.confirm("Xóa ghi chú này?")) return;
+
+    try {
+      await deleteOmniConversationNote(activeConversation.id, noteId);
+      setActiveConversation((prev) =>
+        prev
+          ? { ...prev, notes: (prev.notes || []).filter((item) => item.id !== noteId) }
+          : prev,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xóa được ghi chú.");
     }
   }
 
@@ -4888,10 +4928,28 @@ export default function MessagesPageClient({
                                   <p className="text-sm text-neutral-700">
                                     {note.note}
                                   </p>
-                                  <p className="mt-1 text-xs text-neutral-400">
-                                    {note.staffName || "-"} ·{" "}
-                                    {formatDateTime(note.createdAt)}
-                                  </p>
+                                  <div className="mt-2 flex items-center justify-between gap-2">
+                                    <p className="text-xs text-neutral-400">
+                                      {note.staffName || "-"} ·{" "}
+                                      {formatDateTime(note.createdAt)}
+                                    </p>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleEditNote(note.id, note.note)}
+                                        className="rounded-lg px-2 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50"
+                                      >
+                                        Sửa
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleDeleteNote(note.id)}
+                                        className="rounded-lg px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50"
+                                      >
+                                        Xóa
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>

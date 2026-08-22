@@ -254,6 +254,20 @@ export function createOmniConversationNote(id: string, body: { note: string; tem
   });
 }
 
+export function updateOmniConversationNote(conversationId: string, noteId: string, body: { note: string }) {
+  return apiJson<OmniNote>(`/omni-inbox/conversations/${conversationId}/notes/${noteId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteOmniConversationNote(conversationId: string, noteId: string) {
+  return apiJson<{ success: boolean; id: string; conversationId: string }>(
+    `/omni-inbox/conversations/${conversationId}/notes/${noteId}`,
+    { method: "DELETE" },
+  );
+}
+
 export function markOmniConversationRead(id: string) {
   return apiJson<OmniConversation>(`/omni-inbox/conversations/${id}/read`, {
     method: "PATCH",
@@ -389,6 +403,8 @@ export function openOmniInboxEventSource(onEvent: (event: MessageEvent) => void)
     "conversation.assigned",
     "conversation.tagged",
     "conversation.note_created",
+    "conversation.note_updated",
+    "conversation.note_deleted",
     "conversation.quick_order_created",
     "conversation.quick_order_updated",
     "conversation.quick_order_cancelled",
