@@ -1568,20 +1568,23 @@ export default function MessagesPageClient({
       items: Array.isArray(order?.items) ? order.items : [],
     } as OmniQuickOrder);
 
-    const mergeOrders = (rows: OmniQuickOrder[]) => {
+    const replaceOrders = (rows: OmniQuickOrder[]) => {
       if (requestSeq !== orderHistoryRequestSeqRef.current) return;
       setCustomerOrderHistory((prev) => {
+        // Response của endpoint lịch sử là nguồn dữ liệu authoritative.
+        // Tuyệt đối không cộng activeConversation.orders hoặc các row cũ vào đây,
+        // vì detail conversation có thể chứa dữ liệu legacy/polluted từ bản cũ.
+        // Chỉ kế thừa thông tin shipment của CHÍNH CÙNG order id nếu response mới thiếu.
+        const previousById = new Map(prev.map((order) => [order.id, order]));
         const map = new Map<string, OmniQuickOrder>();
-        [...rows, ...(activeConversation.orders || []), ...prev].forEach((order) => {
+        rows.forEach((order) => {
           if (!order?.id) return;
-          const existed = map.get(order.id) as any;
+          const previous = previousById.get(order.id) as any;
           map.set(order.id, {
-            ...(existed || {}),
             ...(order as any),
-            // Không cho response thiếu shipment ghi đè mất mã đã lấy được trước đó.
-            trackingCode: (order as any)?.trackingCode || existed?.trackingCode || null,
-            carrier: (order as any)?.carrier || existed?.carrier || null,
-            shippingStatus: (order as any)?.shippingStatus || existed?.shippingStatus || null,
+            trackingCode: (order as any)?.trackingCode || previous?.trackingCode || null,
+            carrier: (order as any)?.carrier || previous?.carrier || null,
+            shippingStatus: (order as any)?.shippingStatus || previous?.shippingStatus || null,
           } as OmniQuickOrder);
         });
         return Array.from(map.values()).sort((a, b) => {
@@ -1591,11 +1594,6 @@ export default function MessagesPageClient({
         });
       });
     };
-
-    // Hiện ngay các đơn đã nằm trong detail hiện tại.
-    if ((activeConversation.orders || []).length) {
-      mergeOrders((activeConversation.orders || []).map(normalizeOrderForHistory));
-    }
 
     setLoadingCustomerOrders(true);
     try {
@@ -1703,7 +1701,7 @@ export default function MessagesPageClient({
         });
       }
 
-      mergeOrders(enriched);
+      replaceOrders(enriched);
     } finally {
       if (requestSeq === orderHistoryRequestSeqRef.current) {
         setLoadingCustomerOrders(false);
