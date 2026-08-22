@@ -165,6 +165,7 @@ type SendQueueJob = {
   optimisticPrefix: string;
   isCommentReply: boolean;
   imageOffset?: number;
+  traversalIndex?: number | null;
 };
 
 type MetaConnectionStatus = {
@@ -251,8 +252,9 @@ function loadQuickReplyImageForResize(file: File): Promise<HTMLImageElement> {
 async function resizeQuickReplyImageBeforeUpload(file: File) {
   if (!file.type.startsWith("image/")) return file;
 
-  const maxBytes = 2.8 * 1024 * 1024;
-  const maxSide = 1600;
+  // Chat không cần ảnh nguyên bản quá lớn. Giảm dữ liệu trước upload để phản hồi nhanh hơn.
+  const maxBytes = 1.6 * 1024 * 1024;
+  const maxSide = 1280;
 
   if (file.size <= maxBytes && !file.type.includes("png")) {
     return file;
@@ -279,7 +281,7 @@ async function resizeQuickReplyImageBeforeUpload(file: File) {
       canvas.toBlob(resolve, "image/jpeg", quality),
     );
 
-  let quality = 0.82;
+  let quality = 0.78;
   let blob = await toBlob(quality);
   while (blob && blob.size > maxBytes && quality > 0.5) {
     quality -= 0.08;
@@ -1071,6 +1073,9 @@ export default function MessagesPageClient({
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const [omniNavCollapsed, setOmniNavCollapsed] = useState(true);
   const replyTraversalRef = useRef<{ conversationId: string; index: number } | null>(null);
+  // Giữ hội thoại hiện tại ổn định trong lúc text/ảnh đang gửi nền.
+  // Không để status SSE hoặc lỗi ảnh tự nhảy sang khách khác.
+  const [pendingReplyConversationIds, setPendingReplyConversationIds] = useState<string[]>([]);
   const [imagePreview, setImagePreview] = useState<{
     src: string;
     alt: string;
@@ -1343,7 +1348,9 @@ export default function MessagesPageClient({
       setHasMoreConversations(Boolean(data?.hasNext));
 
       setActiveId((currentId) => {
-        if (items.some((item) => item.id === currentId)) return currentId;
+        // Không tự đổi khách chỉ vì current conversation nằm ngoài page 1 / filter hiện tại.
+        // Chỉ chọn dòng đầu khi chưa có hội thoại nào đang mở.
+        if (currentId) return currentId;
         return items[0]?.id || "";
       });
 
@@ -1731,7 +1738,11 @@ export default function MessagesPageClient({
     // Đợi phản hồi phải là OPEN cả ở client. Khi nhân viên vừa gửi xong,
     // hội thoại rời danh sách ngay tại chỗ, không chờ lần reload API kế tiếp.
     if (inboxFilter === "WAITING") {
-      return items.filter((item) => item.status === "OPEN");
+      return items.filter(
+        (item) =>
+          item.status === "OPEN" ||
+          pendingReplyConversationIds.includes(item.id),
+      );
     }
 
     // Chưa đọc là bộ lọc theo unreadCount, không phụ thuộc status nghiệp vụ.
@@ -1740,7 +1751,7 @@ export default function MessagesPageClient({
     }
 
     return items;
-  }, [conversations, inboxFilter, workspace]);
+  }, [conversations, inboxFilter, pendingReplyConversationIds, workspace]);
 
   useEffect(() => {
     const isConversationWorkspace =
@@ -1775,7 +1786,10 @@ export default function MessagesPageClient({
           el?.scrollIntoView({ block: "nearest" });
         });
       } else {
-        setActiveId(visibleConversations[0].id);
+        // Không tự nhảy sang khách đầu danh sách khi current conversation biến khỏi
+        // filter/page do SSE, ảnh gửi lỗi hoặc khách mới vừa nhắn. Nhân viên vẫn được
+        // quyền bấm sang khách khác ngay cả khi job ảnh đang chạy nền.
+        return;
       }
     }
   }, [activeId, visibleConversations, workspace]);
@@ -1936,6 +1950,7 @@ export default function MessagesPageClient({
     }
 
     const allowed = selected.slice(0, 6);
+    const conversationId = activeConversation.id;
     setUploadingChatAttachment(true);
     setError("");
 
@@ -1961,7 +1976,6 @@ export default function MessagesPageClient({
       const valid = uploaded.filter((item) => item.url);
       if (!valid.length) throw new Error("Upload xong nhưng không có URL tệp.");
 
-      const conversationId = activeConversation.id;
       const nowIso = new Date().toISOString();
       const optimisticIds = valid.map(
         (_, index) => `optimistic-upload-${Date.now()}-${index}`,
@@ -2054,6 +2068,7 @@ export default function MessagesPageClient({
         const job = sendQueueRef.current.shift()!;
         setPendingSendCount(sendQueueRef.current.length + 1);
 
+        let jobFailed = false;
         try {
           // Ưu tiên gửi text trước để nhân viên có thể tư vấn liên tục,
           // ảnh còn lại được đưa về cuối hàng đợi và gửi nền từng đợt.
@@ -2128,6 +2143,7 @@ export default function MessagesPageClient({
             }
 
             if (failedImageUrls.length) {
+              jobFailed = true;
               setError(`Có ${failedImageUrls.length} ảnh gửi lỗi, đã giữ lại để gửi lại.`);
               setDraftImageUrls((current) => [
                 ...current,
@@ -2136,8 +2152,30 @@ export default function MessagesPageClient({
             }
           }
         } catch (err) {
+          jobFailed = true;
           setError(err instanceof Error ? err.message : "Không gửi được tin nhắn.");
         } finally {
+          const stillQueuedForThisSend = sendQueueRef.current.some(
+            (queued) => queued.optimisticPrefix === job.optimisticPrefix,
+          );
+
+          if (!stillQueuedForThisSend) {
+            setPendingReplyConversationIds((current) =>
+              current.filter((id) => id !== job.conversationId),
+            );
+
+            // Chỉ auto đi tiếp khi job hoàn tất KHÔNG lỗi. Nếu ảnh lỗi thì giữ nguyên
+            // khách hiện tại để nhân viên nhìn thấy và gửi lại, tuyệt đối không nhảy.
+            if (!jobFailed && job.traversalIndex != null) {
+              replyTraversalRef.current = {
+                conversationId: job.conversationId,
+                index: job.traversalIndex,
+              };
+            } else if (jobFailed) {
+              replyTraversalRef.current = null;
+            }
+          }
+
           setPendingSendCount(sendQueueRef.current.length);
           // Nhường một nhịp cho UI để ô nhập và thao tác tiếp theo luôn phản hồi ngay.
           await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
@@ -2164,17 +2202,20 @@ export default function MessagesPageClient({
     }
 
     const conversationId = activeConversation.id;
-    // Trong tab Đợi phản hồi, sau khi gửi tin conversation sẽ OPEN -> PROCESSING
-    // và biến khỏi danh sách. Ghi nhớ đúng vị trí hiện tại để chuyển sang khách
-    // kế tiếp ở ngay chỗ đó, không bật ngược lên đầu danh sách.
-    if (inboxFilter === "WAITING") {
-      replyTraversalRef.current = {
-        conversationId,
-        index: Math.max(0, visibleConversations.findIndex((item) => item.id === conversationId)),
-      };
-    } else {
-      replyTraversalRef.current = null;
-    }
+    // Chỉ chuyển sang khách kế tiếp SAU KHI toàn bộ job gửi thành công.
+    // Trước đây set traversal ngay tại đây nên text gửi xong làm status OPEN -> PROCESSING
+    // trong khi ảnh còn đang gửi, khiến UI tự nhảy sang khách khác.
+    const traversalIndex =
+      inboxFilter === "WAITING"
+        ? Math.max(
+            0,
+            visibleConversations.findIndex((item) => item.id === conversationId),
+          )
+        : null;
+    replyTraversalRef.current = null;
+    setPendingReplyConversationIds((current) =>
+      current.includes(conversationId) ? current : [...current, conversationId],
+    );
 
     const optimisticPrefix = `optimistic-${Date.now()}-${Math.random()
       .toString(36)
@@ -2255,6 +2296,7 @@ export default function MessagesPageClient({
       optimisticPrefix,
       isCommentReply,
       imageOffset: 0,
+      traversalIndex,
     });
     setPendingSendCount(sendQueueRef.current.length);
     void processSendQueue();
@@ -4310,7 +4352,6 @@ export default function MessagesPageClient({
                               />
                               <button
                                 type="button"
-                                disabled={uploadingChatAttachment}
                                 onClick={() => imageInputRef.current?.click()}
                                 className="rounded-full p-2 hover:bg-neutral-100 disabled:opacity-40"
                                 title="Gửi ảnh từ máy"
@@ -4319,7 +4360,6 @@ export default function MessagesPageClient({
                               </button>
                               <button
                                 type="button"
-                                disabled={uploadingChatAttachment}
                                 onClick={() => fileInputRef.current?.click()}
                                 className="rounded-full p-2 hover:bg-neutral-100 disabled:opacity-40"
                                 title="Gửi tệp từ máy"
