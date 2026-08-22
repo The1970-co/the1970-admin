@@ -3,22 +3,30 @@ import MobileBottomNav from "@/components/mobile/MobileBottomNav";import {apiJso
 type Item=any;type Supplier=any;const TYPES=['Cúc','Mác Cổ','Mác Gáy','Mác Sườn','Mác Size','Mác Quần','Khóa Kéo','Chun','Dây Rút','Mex','Túi Nylon','Tem Barcode','Thùng Carton','Chỉ May','Khác'];const UNITS=[['PIECE','Cái'],['METER','Mét'],['ROLL','Cuộn'],['SET','Bộ'],['KG','Kg'],['PACK','Gói'],['BOX','Hộp'],['OTHER','Khác']];async function api<T=any>(p:string,i:RequestInit={}){return apiJson<T>(p,{...i,redirectOnUnauthorized:false} as any)}async function upload(file:File){const fd=new FormData();fd.append('file',file);return api<{url:string}>('/production/accessories/upload',{method:'POST',body:fd})}function asset(u?:string|null){if(!u)return '';return /^https?:\/\//.test(u)?u:`${API_BASE}${u.startsWith('/')?'':'/'}${u}`}
 function safeImageFilename(v:string){return String(v||'anh-npl').replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim()||'anh-npl'}
 function filenameWithMime(filename:string,mime?:string){const clean=safeImageFilename(filename);if(/\.[a-z0-9]{2,6}$/i.test(clean))return clean;return `${clean}${String(mime||'').includes('png')?'.png':String(mime||'').includes('webp')?'.webp':'.jpg'}`}
+function isIosDevice(){
+ if(typeof navigator==="undefined")return false;
+ return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+}
 async function saveImageToPhone(url:string,filename:string){
  const resolved=asset(url);if(!resolved)return;
+
+ // iPhone: mở ảnh gốc để iOS nhận đây là ảnh, không phải file đính kèm.
+ // Giữ ảnh vừa mở -> "Lưu vào Ảnh".
+ if(isIosDevice()){
+  const opened=window.open(resolved,'_blank','noopener,noreferrer');
+  if(!opened)window.location.href=resolved;
+  return;
+ }
+
  try{
   const res=await fetch(resolved,{mode:'cors',credentials:'omit',cache:'no-store'});
   if(!res.ok)throw new Error('Không tải được ảnh');
   const blob=await res.blob();
   const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||'image/jpeg'});
-  const nav=navigator as Navigator&{canShare?:(data:ShareData)=>boolean};
-  if(typeof navigator.share==='function'&&(!nav.canShare||nav.canShare({files:[file]}))){
-   await navigator.share({files:[file],title:file.name});
-   return;
-  }
   const objectUrl=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=objectUrl;a.download=file.name;a.rel='noopener';
-  document.body.appendChild(a);a.click();a.remove();
+  const link=document.createElement('a');
+  link.href=objectUrl;link.download=file.name;link.rel='noopener';
+  document.body.appendChild(link);link.click();link.remove();
   setTimeout(()=>URL.revokeObjectURL(objectUrl),1500);
  }catch{
   window.open(resolved,'_blank','noopener,noreferrer');
@@ -56,7 +64,8 @@ function Detail({item,supplier,can,onClose,onEdit,onStock}:{item:any;supplier:an
    </div>
    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-3"><img src={image} className="max-h-full max-w-full object-contain" alt=""/></div>
    <div className="p-4 pb-[max(18px,env(safe-area-inset-bottom))]">
-    <button type="button" onClick={()=>void saveImageToPhone(image,`${item.code}-${item.name}`)} className="w-full rounded-2xl bg-white py-3 font-black text-black"><Download className="mr-2 inline h-5 w-5"/>Lưu ảnh vào điện thoại</button>
+    <button type="button" onClick={()=>void saveImageToPhone(image,`${item.code}-${item.name}`)} className="w-full rounded-2xl bg-white py-3 font-black text-black"><Download className="mr-2 inline h-5 w-5"/>Lưu ảnh</button>
+    <div className="mt-2 text-center text-[11px] font-semibold text-white/60">iPhone: bấm Lưu ảnh → giữ ảnh vừa mở → Lưu vào Ảnh</div>
    </div>
   </div>}
  </>;

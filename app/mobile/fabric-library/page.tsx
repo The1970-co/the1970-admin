@@ -64,13 +64,23 @@ function asset(url?: string | null) { if (!url)
     return ""; return /^https?:\/\//.test(url) ? url : `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`; }
 function safeImageFilename(v:string){return String(v||"anh-vai").replace(/[\\/:*?"<>|]+/g,"-").replace(/\s+/g," ").trim()||"anh-vai"}
 function filenameWithMime(filename:string,mime?:string){const clean=safeImageFilename(filename);if(/\.[a-z0-9]{2,6}$/i.test(clean))return clean;return `${clean}${String(mime||"").includes("png")?".png":String(mime||"").includes("webp")?".webp":".jpg"}`}
+function isIosDevice(){
+  if(typeof navigator==="undefined")return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+}
 async function saveImageToPhone(url:string,filename:string){
   const resolved=asset(url);if(!resolved)return;
+
+  // Trên iPhone mở ảnh gốc trực tiếp. Sau đó giữ ảnh -> "Lưu vào Ảnh".
+  if(isIosDevice()){
+    const opened=window.open(resolved,"_blank","noopener,noreferrer");
+    if(!opened)window.location.href=resolved;
+    return;
+  }
+
   try{
     const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});if(!res.ok)throw new Error("download");
     const blob=await res.blob();const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||"image/jpeg"});
-    const nav=navigator as Navigator & {canShare?:(data:ShareData)=>boolean};
-    if(typeof navigator.share==="function"&&(!nav.canShare||nav.canShare({files:[file]}))){await navigator.share({files:[file],title:file.name});return}
     const objectUrl=URL.createObjectURL(blob);const a=document.createElement("a");a.href=objectUrl;a.download=file.name;a.rel="noopener";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),1500);
   }catch{window.open(resolved,"_blank","noopener,noreferrer")}
 }
@@ -160,7 +170,7 @@ function BoardDetail({ board, can, onClose, onEdit, onDelete }: {
  {viewerIndex!==null&&activeImage&&<div className="fixed inset-0 z-[80] flex flex-col bg-black text-white">
    <div className="flex items-center justify-between px-4 pb-3 pt-[max(18px,env(safe-area-inset-top))]"><div className="min-w-0"><div className="text-xs font-black text-white/60">{board.boardCode}</div><div className="truncate font-black">{viewerIndex+1}/{gallery.length} · {board.name||"Bảng vải"}</div></div><div className="flex gap-2"><button type="button" onClick={()=>void saveImageToPhone(activeImage,`${board.boardCode}-${viewerIndex+1}`)} className="grid h-11 w-11 place-items-center rounded-full bg-white text-black"><Download className="h-5 w-5"/></button><button type="button" onClick={()=>setViewerIndex(null)} className="grid h-11 w-11 place-items-center rounded-full bg-white text-black"><X className="h-5 w-5"/></button></div></div>
    <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3"><img src={activeImage} className="max-h-full max-w-full object-contain" alt=""/>{gallery.length>1&&<><button type="button" onClick={prev} className="absolute left-3 grid h-11 w-11 place-items-center rounded-full bg-black/60"><ChevronLeft/></button><button type="button" onClick={next} className="absolute right-3 grid h-11 w-11 place-items-center rounded-full bg-black/60"><ChevronRight/></button></>}</div>
-   <div className="p-4 pb-[max(18px,env(safe-area-inset-bottom))]"><button type="button" onClick={()=>void saveImageToPhone(activeImage,`${board.boardCode}-${viewerIndex+1}`)} className="w-full rounded-2xl bg-white py-3 font-black text-black"><Download className="mr-2 inline h-5 w-5"/>Lưu ảnh vào điện thoại</button></div>
+   <div className="p-4 pb-[max(18px,env(safe-area-inset-bottom))]"><button type="button" onClick={()=>void saveImageToPhone(activeImage,`${board.boardCode}-${viewerIndex+1}`)} className="w-full rounded-2xl bg-white py-3 font-black text-black"><Download className="mr-2 inline h-5 w-5"/>Lưu ảnh</button><div className="mt-2 text-center text-[11px] font-semibold text-white/60">iPhone: bấm Lưu ảnh → giữ ảnh vừa mở → Lưu vào Ảnh</div></div>
  </div>}
  </>;
 }

@@ -148,14 +148,28 @@ function cloudinaryAttachmentUrl(raw:string,filename:string){
   const base=safeFilename(filename).replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]+/g,"-")||"download";
   return url.replace("/upload/",`/upload/fl_attachment:${encodeURIComponent(base)}/`);
 }
+function isIosDevice(){
+  if(typeof navigator==="undefined")return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+}
+function isImageFilename(filename:string){return /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(String(filename||""))}
 async function downloadUrl(url:string,filename:string){
   const resolved=asset(url);
   if(!resolved)return;
+
+  // iOS Safari/PWA không cho web ghi thẳng vào Photos.
+  // Với ảnh, mở URL ảnh thật để người dùng giữ ảnh -> "Lưu vào Ảnh".
+  if(isIosDevice()&&isImageFilename(filename)){
+    const opened=window.open(resolved,"_blank","noopener,noreferrer");
+    if(!opened)window.location.href=resolved;
+    return;
+  }
+
   try{
     const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
     if(!res.ok)throw new Error("download");
     const blob=await res.blob();
-    const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||"image/jpeg"});
+    const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||"application/octet-stream"});
     const nav=navigator as Navigator & {canShare?:(data:ShareData)=>boolean};
     if(typeof navigator.share==="function"&&(!nav.canShare||nav.canShare({files:[file]}))){
       await navigator.share({files:[file],title:file.name});
@@ -821,9 +835,12 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
 
         <div className="flex shrink-0 items-center justify-between gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]">
           <div className="flex gap-2">
-            <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="rounded-full bg-white/95 px-4 py-2 text-xs font-black text-black">
-              <Download className="mr-1 inline h-4 w-4"/>Tải ảnh
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="rounded-full bg-white/95 px-4 py-2 text-xs font-black text-black">
+                <Download className="mr-1 inline h-4 w-4"/>Lưu ảnh
+              </button>
+              <div className="text-[10px] font-semibold text-white/60">iPhone: bấm rồi giữ ảnh → Lưu vào Ảnh</div>
+            </div>
             {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>setEditMode(true)} className="rounded-full bg-amber-300 px-4 py-2 text-xs font-black text-black">
               <Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh
             </button>}

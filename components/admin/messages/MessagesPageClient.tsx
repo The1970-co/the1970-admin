@@ -1583,10 +1583,47 @@ export default function MessagesPageClient({
         items: Array.isArray(order.items) ? order.items : [],
       })) as OmniQuickOrder[];
 
+      // API danh sách /orders hiện có lúc không include relation Shipment, nên
+      // trackingCode bị mất dù DB Shipment vẫn có mã GHN. Bổ sung từ endpoint
+      // timeline nội bộ (chỉ đọc DB, không gọi live GHN) cho những đơn thiếu mã.
+      const enriched = [...normalized];
+      const missingShipmentIndexes = enriched
+        .map((order, index) => ({ order, index }))
+        .filter(({ order }) => Boolean(order?.id) && !String((order as any)?.trackingCode || "").trim());
+
+      const SHIPMENT_LOOKUP_CONCURRENCY = 6;
+      for (let start = 0; start < missingShipmentIndexes.length; start += SHIPMENT_LOOKUP_CONCURRENCY) {
+        const batch = missingShipmentIndexes.slice(start, start + SHIPMENT_LOOKUP_CONCURRENCY);
+        const shipmentResults = await Promise.allSettled(
+          batch.map(({ order }) =>
+            apiJson(`/shipments/order/${encodeURIComponent(String(order.id))}/timeline`, {
+              redirectOnUnauthorized: false,
+              timeoutMs: 8000,
+            } as any),
+          ),
+        );
+
+        shipmentResults.forEach((result, batchIndex) => {
+          if (result.status !== "fulfilled") return;
+          const shipment = (result.value as any)?.shipment;
+          if (!shipment) return;
+          const targetIndex = batch[batchIndex]?.index;
+          if (typeof targetIndex !== "number") return;
+          enriched[targetIndex] = {
+            ...(enriched[targetIndex] as any),
+            carrier: shipment.carrier || (enriched[targetIndex] as any)?.carrier || null,
+            trackingCode:
+              shipment.trackingCode || (enriched[targetIndex] as any)?.trackingCode || null,
+            shippingStatus:
+              shipment.shippingStatus || (enriched[targetIndex] as any)?.shippingStatus || null,
+          } as OmniQuickOrder;
+        });
+      }
+
       setCustomerOrderHistory((prev) => {
         const map = new Map<string, OmniQuickOrder>();
         [
-          ...normalized,
+          ...enriched,
           ...(activeConversation.orders || []),
           ...prev,
         ].forEach((order) => {
