@@ -3841,7 +3841,20 @@ export default function MessagesPageClient({
                           key={item.id}
                           item={item}
                           active={activeId === item.id}
-                          onClick={() => setActiveId(item.id)}
+                          onClick={() => {
+                            // Đổi khung bên phải NGAY khi click, không chờ API detail.
+                            // Request detail sau đó chỉ bổ sung messages/orders đầy đủ.
+                            detailRequestSeqRef.current += 1;
+                            orderHistoryRequestSeqRef.current += 1;
+                            setActiveId(item.id);
+                            setActiveConversation((prev) =>
+                              prev?.id === item.id
+                                ? prev
+                                : ({ ...item, messages: [], orders: [], notes: [] } as OmniConversation),
+                            );
+                            setCustomerOrderHistory([]);
+                            setLoadingDetail(true);
+                          }}
                         />
                       ))}
 
