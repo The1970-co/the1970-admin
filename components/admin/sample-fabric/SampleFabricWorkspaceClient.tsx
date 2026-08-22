@@ -751,8 +751,8 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
   function SampleImageStack({row,large=false}:{row:Sample;large?:boolean}){
     const images=sampleVisuals(row);
     const primary=images[0];
-    return <button type="button" onClick={()=>primary&&setViewer({sample:row,index:0})} className={`relative shrink-0 overflow-hidden rounded-2xl bg-neutral-100 text-left ${large?"h-[420px] w-full":"h-28 w-28"}`}>
-      {primary?<img src={assetUrl(primary)} className="h-full w-full object-cover"/>:<div className="flex h-full items-center justify-center text-2xl text-neutral-300">✦</div>}
+    return <button type="button" onClick={()=>primary&&setViewer({sample:row,index:0})} className={`relative shrink-0 overflow-hidden rounded-2xl bg-neutral-100 text-left ${large?"w-full":"h-28 w-28"}`}>
+      {primary?<img src={assetUrl(primary)} className={large?"block h-auto max-h-[72vh] w-full object-contain":"h-full w-full object-cover"}/>:<div className={`flex items-center justify-center text-2xl text-neutral-300 ${large?"min-h-64 w-full":"h-full"}`}>✦</div>}
       {images.length>1&&<div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-xl bg-black/70 p-1">
         {images.slice(1,3).map((url,i)=><img key={url} src={assetUrl(url)} className="h-8 w-8 rounded-lg border border-white/40 object-cover"/>)}
         {images.length>3&&<span className="px-1 text-[10px] font-bold text-white">+{images.length-3}</span>}
@@ -784,7 +784,8 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
         <div className="mt-3 flex items-center justify-between gap-3">
           <div className="min-w-0 text-xs text-neutral-500">{row.nextAction?<>Tiếp theo: <b>{row.nextAction}</b></>:"Chưa ghi việc tiếp theo"}</div>
           <div className="flex shrink-0 flex-wrap gap-2">
-            {can("design_sample.edit")&&<button onClick={()=>void moveSample(row,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">{tab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}</button>}
+            {sampleVisuals(row).length>0&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Xem mẫu</button>}
+            {can("design_sample.edit")&&<button type="button" onClick={()=>void moveSample(row,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">{tab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}</button>}
             {can("sample_dispatch.create")&&row.fabricBoard&&tab==="DEPLOY"&&<button onClick={()=>onDispatch(row)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Gửi / gửi lại</button>}
             {can("design_sample.edit")&&<button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
             {can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await onChanged()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}
@@ -799,8 +800,8 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
 
     <Card className="overflow-hidden">
       <div className="grid grid-cols-2 border-b bg-neutral-50 p-1">
-        <button type="button" onClick={()=>setTab("IDEA")} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {stats.idea}</button>
-        <button type="button" onClick={()=>setTab("DEPLOY")} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {stats.deploy}</button>
+        <button type="button" onClick={()=>{setTab("IDEA");setFeaturedId("")}} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {stats.idea}</button>
+        <button type="button" onClick={()=>{setTab("DEPLOY");setFeaturedId("")}} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {stats.deploy}</button>
       </div>
       <div className="grid gap-3 p-4 xl:grid-cols-[1fr_1fr_auto]">
         <div className="grid gap-2 sm:grid-cols-2">
@@ -831,10 +832,20 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
           <div className="mt-1 text-xl font-semibold">{featured.name}</div>
           <div className="mt-2 text-sm text-neutral-500">{sampleParentCategory(featured.category)} · {featured.category||"Chưa phân loại"} · {statusLabel(featured.status,SAMPLE_STATUSES)}</div>
           {featuredImages.length>1&&<div className="mt-3 flex gap-2 overflow-x-auto">{featuredImages.slice(0,8).map((url,i)=><button key={url} onClick={()=>setViewer({sample:featured,index:i})}><img src={assetUrl(url)} className="h-16 w-16 rounded-xl object-cover"/></button>)}</div>}
-          <div className="mt-4 flex flex-wrap gap-2">{can("design_sample.edit")&&<button onClick={()=>onEdit(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}{can("design_sample.edit")&&<button onClick={()=>void moveSample(featured,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">{tab==="IDEA"?"Chuyển sang triển khai":"Đưa về ý tưởng"}</button>}</div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {featuredImages.length>0&&<button type="button" onClick={()=>setViewer({sample:featured,index:0})} className="rounded-xl border px-3 py-2 text-xs font-semibold">Xem đầy đủ ảnh</button>}
+            {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
+            {can("design_sample.edit")&&<button type="button" onClick={()=>void moveSample(featured,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">{tab==="IDEA"?"Chuyển sang triển khai":"Đưa về ý tưởng"}</button>}
+          </div>
         </div></>:<div className="p-12 text-center text-sm text-neutral-400">Chưa có mẫu.</div>}
       </Card>
-      <div className="columns-2 gap-3 2xl:columns-3">{visible.map(row=>{const images=sampleVisuals(row);const image=images[0];return <button type="button" key={row.id} onClick={()=>setFeaturedId(row.id)} className="mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">{image?<img src={assetUrl(image)} className="max-h-[460px] w-full object-cover"/>:<div className="grid h-40 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}<div className="p-3"><div className="line-clamp-2 text-sm font-semibold">{row.name}</div><div className="mt-1 text-[11px] text-neutral-400">{row.code} · {row.category||"Chưa phân loại"} · {sampleCreatedLabel(row.createdAt)}</div>{images.length>1&&<div className="mt-2 text-[10px] font-semibold text-blue-600">{images.length} ảnh</div>}</div></button>})}</div>
+      <div className="columns-2 gap-3 2xl:columns-3">{visible.map(row=>{const images=sampleVisuals(row);const image=images[0];return <div key={row.id} className="mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+        <button type="button" onClick={()=>setFeaturedId(row.id)} className="block w-full text-left">
+          {image?<img src={assetUrl(image)} className="block h-auto w-full object-contain"/>:<div className="grid h-40 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}
+          <div className="p-3"><div className="line-clamp-2 text-sm font-semibold">{row.name}</div><div className="mt-1 text-[11px] text-neutral-400">{row.code} · {row.category||"Chưa phân loại"} · {sampleCreatedLabel(row.createdAt)}</div>{images.length>1&&<div className="mt-2 text-[10px] font-semibold text-blue-600">{images.length} ảnh</div>}</div>
+        </button>
+        {image&&<div className="border-t px-3 py-2"><button type="button" onClick={()=>setViewer({sample:row,index:0})} className="w-full rounded-lg border px-2 py-1.5 text-[11px] font-semibold">Xem mẫu</button></div>}
+      </div>})}</div>
     </div>}
 
     {!visible.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu phù hợp với bộ lọc.</Card>}

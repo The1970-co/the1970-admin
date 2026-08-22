@@ -1019,6 +1019,9 @@ export default function MessagesPageClient({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conversationListRef = useRef<HTMLDivElement | null>(null);
+  // Chặn response cũ ghi đè hội thoại vừa được người dùng chọn.
+  const detailRequestSeqRef = useRef(0);
+  const orderHistoryRequestSeqRef = useRef(0);
   const [uploadingChatAttachment, setUploadingChatAttachment] = useState(false);
   const [quickReplySuggestionIndex, setQuickReplySuggestionIndex] = useState(0);
   const [noteDraft, setNoteDraft] = useState("");
@@ -1445,8 +1448,11 @@ export default function MessagesPageClient({
   );
 
   const loadDetail = useCallback(async (id: string) => {
+    const requestSeq = ++detailRequestSeqRef.current;
+
     if (!id) {
       setActiveConversation(null);
+      setLoadingDetail(false);
       return;
     }
 
@@ -1455,6 +1461,9 @@ export default function MessagesPageClient({
 
     try {
       const data = await getOmniConversation(id);
+      // Người dùng có thể bấm khách khác trước khi request cũ xong.
+      // Chỉ request mới nhất được phép thay nội dung ô chat.
+      if (requestSeq !== detailRequestSeqRef.current) return;
       setActiveConversation(data);
       void markOmniConversationRead(id).catch(() => undefined);
       setConversations((prev) =>
@@ -1463,11 +1472,14 @@ export default function MessagesPageClient({
         ),
       );
     } catch (err) {
+      if (requestSeq !== detailRequestSeqRef.current) return;
       setError(
         err instanceof Error ? err.message : "Không tải được hội thoại.",
       );
     } finally {
-      setLoadingDetail(false);
+      if (requestSeq === detailRequestSeqRef.current) {
+        setLoadingDetail(false);
+      }
     }
   }, []);
 
@@ -1505,6 +1517,8 @@ export default function MessagesPageClient({
   ]);
 
   useEffect(() => {
+    // Hủy quyền cập nhật của request lịch sử đơn của khách trước.
+    orderHistoryRequestSeqRef.current += 1;
     setRightPanelTab("info");
     setQuickOrderSuccess("");
     setCustomerOrderHistory([]);
@@ -1514,6 +1528,8 @@ export default function MessagesPageClient({
 
   const loadCustomerOrderHistory = useCallback(async () => {
     if (!activeConversation) return;
+    const targetConversationId = activeConversation.id;
+    const requestSeq = ++orderHistoryRequestSeqRef.current;
 
     const normalizeOrderForHistory = (order: any): OmniQuickOrder => ({
       id: String(order?.id || ""),
@@ -1553,6 +1569,7 @@ export default function MessagesPageClient({
     } as OmniQuickOrder);
 
     const mergeOrders = (rows: OmniQuickOrder[]) => {
+      if (requestSeq !== orderHistoryRequestSeqRef.current) return;
       setCustomerOrderHistory((prev) => {
         const map = new Map<string, OmniQuickOrder>();
         [...rows, ...(activeConversation.orders || []), ...prev].forEach((order) => {
@@ -1585,7 +1602,7 @@ export default function MessagesPageClient({
       // Nguồn chính: order được liên kết trực tiếp bằng omniConversationId.
       // Không phụ thuộc SĐT, nên khách Facebook chưa lưu phone vẫn xem được đơn + mã GHN.
       const linkedRequest = apiJson(
-        `/omni-inbox/conversations/${encodeURIComponent(activeConversation.id)}/quick-orders`,
+        `/omni-inbox/conversations/${encodeURIComponent(targetConversationId)}/quick-orders`,
         { redirectOnUnauthorized: false, timeoutMs: 10000 } as any,
       ).catch(() => [] as any[]);
 
@@ -1663,7 +1680,9 @@ export default function MessagesPageClient({
 
       mergeOrders(enriched);
     } finally {
-      setLoadingCustomerOrders(false);
+      if (requestSeq === orderHistoryRequestSeqRef.current) {
+        setLoadingCustomerOrders(false);
+      }
     }
   }, [activeConversation]);
 

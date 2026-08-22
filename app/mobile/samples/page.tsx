@@ -157,9 +157,9 @@ async function downloadUrl(url:string,filename:string){
   const resolved=asset(url);
   if(!resolved)return;
 
-  // iPhone/iPad: mở ảnh gốc trực tiếp.
-  // Không share dưới dạng File vì iOS coi đó là tệp đính kèm.
-  if(isIosDevice()){
+  // iOS Safari/PWA không cho web ghi thẳng vào Photos.
+  // Với ảnh, mở URL ảnh thật để người dùng giữ ảnh -> "Lưu vào Ảnh".
+  if(isIosDevice()&&isImageFilename(filename)){
     const opened=window.open(resolved,"_blank","noopener,noreferrer");
     if(!opened)window.location.href=resolved;
     return;
@@ -169,17 +169,15 @@ async function downloadUrl(url:string,filename:string){
     const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
     if(!res.ok)throw new Error("download");
     const blob=await res.blob();
-    const objectUrl=URL.createObjectURL(blob);
-    const a=document.createElement("a");
-    a.href=objectUrl;
-    a.download=filename||"image.jpg";
-    a.rel="noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(()=>URL.revokeObjectURL(objectUrl),1500);
+    const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||"application/octet-stream"});
+    const nav=navigator as Navigator & {canShare?:(data:ShareData)=>boolean};
+    if(typeof navigator.share==="function"&&(!nav.canShare||nav.canShare({files:[file]}))){
+      await navigator.share({files:[file],title:file.name});
+      return;
+    }
+    saveAs(blob,file.name);
   }catch{
-    window.open(resolved,"_blank","noopener,noreferrer");
+    saveAs(cloudinaryAttachmentUrl(resolved,filename),safeFilename(filename));
   }
 }
 
@@ -279,6 +277,7 @@ export default function Page(){
   const [subFilter,setSubFilter]=useState("");
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
   const [filtersOpen,setFiltersOpen]=useState(false);
+  const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST">("LIST");
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
@@ -395,13 +394,17 @@ export default function Page(){
           <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
           <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
         </div>}
+        <div className="mt-2 grid grid-cols-2 rounded-2xl border bg-white p-1">
+          <button type="button" onClick={()=>setViewMode("LIST")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${viewMode==="LIST"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Danh sách</button>
+          <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Pinterest</button>
+        </div>
       </header>
 
       <div className="space-y-3 p-4">
         {error&&<Err x={error}/>}
         {loading&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Đang tải...</div>}
 
-        {!loading&&filtered.map(r=>{
+        {!loading&&viewMode==="LIST"&&filtered.map(r=>{
           const visuals=sampleVisualUrlsMobile(r);
           const image=visuals[0]?asset(visuals[0]):"";
           return <div key={r.id} className="rounded-[28px] bg-white p-4 shadow-sm">
@@ -429,6 +432,32 @@ export default function Page(){
             </div>}
           </div>
         })}
+
+        {!loading&&viewMode==="PINTEREST"&&<div className="columns-2 gap-2">
+          {filtered.map(r=>{
+            const visuals=sampleVisualUrlsMobile(r);
+            const image=visuals[0]?asset(visuals[0]):"";
+            return <div key={r.id} className="mb-2 break-inside-avoid overflow-hidden rounded-2xl bg-white shadow-sm">
+              <button type="button" onClick={()=>setDetail(r)} className="block w-full text-left active:opacity-80">
+                {image?<img src={image} className="block h-auto w-full object-contain" alt=""/>:<div className="grid h-36 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}
+                <div className="p-2.5">
+                  <div className="line-clamp-2 text-xs font-black">{r.name}</div>
+                  <div className="mt-1 text-[10px] font-bold text-neutral-400">{r.code} · {sampleCreatedLabelMobile(r.createdAt)}</div>
+                  <div className="mt-1 text-[10px] text-neutral-500">{r.category||"Chưa phân loại"}</div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <Badge>{statusLabel(r.status)}</Badge>
+                    {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
+                  </div>
+                </div>
+              </button>
+              {can("design_sample.edit")&&<div className="border-t p-2">
+                <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className="w-full rounded-xl border px-2 py-2 text-[10px] font-black">
+                  {sampleTab==="IDEA"?"→ Triển khai":"← Ý tưởng"}
+                </button>
+              </div>}
+            </div>
+          })}
+        </div>}
         {!loading&&!filtered.length&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Chưa có mẫu phù hợp.</div>}
       </div>
     </div>
@@ -891,7 +920,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
               <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="rounded-full bg-white/95 px-4 py-2 text-xs font-black text-black">
                 <Download className="mr-1 inline h-4 w-4"/>Lưu ảnh
               </button>
-              <div className="text-[10px] font-semibold text-white/60">iPhone: bấm Lưu ảnh → sang ảnh gốc → giữ ảnh → Lưu vào Ảnh</div>
+              <div className="text-[10px] font-semibold text-white/60">iPhone: bấm rồi giữ ảnh → Lưu vào Ảnh</div>
             </div>
             {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>setEditMode(true)} className="rounded-full bg-amber-300 px-4 py-2 text-xs font-black text-black">
               <Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh
@@ -902,7 +931,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
 
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-x pan-y pinch-zoom"}}>
           {gallery.length>1&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">‹</button>}
-          <img src={gallery[viewerIndex]} draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} style={{WebkitTouchCallout:"none",WebkitUserSelect:"none",userSelect:"none"}} className="max-h-full max-w-full object-contain" alt=""/>
+          <img src={gallery[viewerIndex]} className="max-h-full max-w-full object-contain" alt=""/>
           {gallery.length>1&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">›</button>}
         </div>
 
