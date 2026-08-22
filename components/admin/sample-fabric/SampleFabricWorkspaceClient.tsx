@@ -45,7 +45,7 @@ type Sample = {
 type Roll = { id?: string; sortOrder?: number | null; fabricCode?: string | null; rollCode?: string | null; images?: Array<{id:string;url:string;caption?:string|null}>; imageUrl?: string | null; colorName?: string | null; colorCode?: string | null; supplierDeclaredM?: number | string | null; supplierDeclaredKg?: number | string | null; actualM?: number | string | null; actualKg?: number | string | null; measuredGsm?: number|string|null; unitPriceCny?: number|string|null; priceUnit?: "METER"|"KG"|"ROLL"|null; lineAmountCny?:number|null; lineAmountVnd?:number|null; defectNote?: string | null; passed?: boolean };
 type FabricCostGroup={id?:string;fabricCode:string;chinaShippingCny?:number|string|null;vietnamShippingRateVndPerKg?:number|string|null;vietnamShippingVnd?:number|string|null;note?:string|null};
 type FabricColorMap={id?:string;fabricCode:string;colorName:string;colorCode?:string|null};
-type FabricConfig={id?:string;fabricCode:string;materialName?:string|null;productId?:string|null;designSampleId?:string|null;product?:{id:string;name:string;slug:string;imageUrl?:string|null}|null;designSample?:Pick<Sample,"id"|"code"|"name"|"year">|null};
+type FabricConfig={id?:string;fabricCode:string;materialName?:string|null;supplierId?:string|null;fabricBoardCode?:string|null;fabricWidthCm?:any;productId?:string|null;designSampleId?:string|null;supplier?:Supplier|null;product?:{id:string;name:string;slug:string;imageUrl?:string|null}|null;designSample?:Pick<Sample,"id"|"code"|"name"|"year">|null};
 type ReceiptCostSummary={exchangeRateToVnd:number;goodsCny:number;goodsVnd:number;chinaShippingCny:number;chinaShippingVnd:number;vietnamShippingVnd:number;totalShippingVnd:number;grandTotalVnd:number};
 type Measurement = { id: string; areaCm2: number; weightGrams: number; gsm: number; positionLabel?: string | null; imageUrl?: string | null; measuredByName?: string | null; createdAt: string };
 type FabricReceipt = {
@@ -74,10 +74,19 @@ function measurementSnapshotKey(sampleCode:string){return `the1970.sample-measur
 function loadMeasurementSnapshot(sampleCode:string):MeasurementTemplate|null{if(typeof window==="undefined")return null;try{return JSON.parse(localStorage.getItem(measurementSnapshotKey(sampleCode))||"null")}catch{return null}}
 function saveMeasurementSnapshot(sampleCode:string,row:MeasurementTemplate|null){if(typeof window==="undefined")return;const k=measurementSnapshotKey(sampleCode);if(row)localStorage.setItem(k,JSON.stringify(row));else localStorage.removeItem(k)}
 
-function cleanMeasurementCell(v:any){return String(v??"").replace(/\s+/g," ").trim()}
+function cleanMeasurementCell(v:any){return String(v??"").replace(/\u00a0/g," ").replace(/\s+/g," ").trim()}
+function normalizeMeasurementText(v:any){
+  return cleanMeasurementCell(v)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toUpperCase().replace(/[：:]/g,"").replace(/\s+/g," ").trim();
+}
+function isMeasurementHeader(v:any){
+  const x=normalizeMeasurementText(v);
+  return x==="SIZE"||x==="CO"||x==="KICH CO"||x==="SIZE AO"||x==="SIZE QUAN"||x.startsWith("SIZE ");
+}
 function isMeasurementSize(v:any){
-  const x=cleanMeasurementCell(v).toUpperCase();
-  return /^(XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[.,]\d+)?)$/.test(x);
+  const x=cleanMeasurementCell(v).toUpperCase().replace(/\s+/g,"");
+  return /^(XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|\d{1,3}(?:[.,]\d+)?)$/.test(x);
 }
 function detectMeasurementProductType(category?:string|null):"SHIRT"|"PANTS"|"CUSTOM"{
   const x=String(category||"").toLocaleLowerCase("vi-VN");
@@ -85,45 +94,99 @@ function detectMeasurementProductType(category?:string|null):"SHIRT"|"PANTS"|"CU
   if(/áo|shirt|jacket|coat|blazer|polo|sơ mi|len|sweater|hoodie|parka|tee/.test(x))return "SHIRT";
   return "CUSTOM";
 }
+function worksheetGrid(sheet:XLSX.WorkSheet){
+  if(!sheet["!ref"])return [] as any[][];
+  const range=XLSX.utils.decode_range(sheet["!ref"]);
+  const grid:any[][]=[];
+  for(let r=range.s.r;r<=range.e.r;r++){
+    const row:any[]=[];
+    for(let c=range.s.c;c<=range.e.c;c++){
+      const cell=sheet[XLSX.utils.encode_cell({r,c})] as XLSX.CellObject|undefined;
+      row[c-range.s.c]=cell?XLSX.utils.format_cell(cell):"";
+    }
+    grid[r-range.s.r]=row;
+  }
+  return grid;
+}
 function parseMeasurementWorkbook(fileName:string,buffer:ArrayBuffer,category:string):MeasurementTemplate[]{
-  const wb=XLSX.read(buffer,{type:"array"});
+  const wb=XLSX.read(buffer,{type:"array",cellDates:false,cellText:true});
   const result:MeasurementTemplate[]=[];
+  let headerCount=0;
+  let headerWithSizesCount=0;
+
   wb.SheetNames.forEach((sheetName,sheetIndex)=>{
     const sheet=wb.Sheets[sheetName];
-    const grid=XLSX.utils.sheet_to_json<any[]>(sheet,{header:1,raw:false,defval:""});
+    const grid=worksheetGrid(sheet);
+
     grid.forEach((row:any[],r:number)=>{
-      row.forEach((cell:any,c:number)=>{
-        if(cleanMeasurementCell(cell).toUpperCase()!=="SIZE")return;
+      (row||[]).forEach((cell:any,c:number)=>{
+        if(!isMeasurementHeader(cell))return;
+        headerCount++;
+
         const sizes:string[]=[];
-        for(let cc=c+1;cc<Math.min((row||[]).length,c+12);cc++){
+        const sizeCols:number[]=[];
+        let started=false;
+        let blanksAfterStart=0;
+
+        for(let cc=c+1;cc<Math.min((row||[]).length,c+20);cc++){
           const value=cleanMeasurementCell(row[cc]);
-          if(!value){if(sizes.length)break;continue}
-          if(!isMeasurementSize(value)){if(sizes.length)break;continue}
-          sizes.push(value.replace(",","."));
-        }
-        if(!sizes.length)return;
-
-        let title="";
-        for(let rr=r-1;rr>=Math.max(0,r-3)&&!title;rr--){
-          const candidates=(grid[rr]||[]).slice(Math.max(0,c-1),c+sizes.length+2).map(cleanMeasurementCell).filter(Boolean);
-          title=candidates.sort((a,b)=>b.length-a.length)[0]||"";
-        }
-        if(!title||title.toUpperCase()==="SIZE")title=`${sheetName} ${result.length+1}`;
-
-        const rows:MeasurementTemplate["rows"]=[];
-        let blankCount=0;
-        for(let rr=r+1;rr<Math.min(grid.length,r+80);rr++){
-          const name=cleanMeasurementCell(grid[rr]?.[c]);
-          if(!name){
-            blankCount++;
-            if(blankCount>=2)break;
+          if(!value){
+            if(started){
+              blanksAfterStart++;
+              if(blanksAfterStart>=2)break;
+            }
             continue;
           }
-          blankCount=0;
-          if(name.toUpperCase()==="SIZE")break;
-          const vals=sizes.map((_,i)=>cleanMeasurementCell(grid[rr]?.[c+1+i]).replace(",","."));
-          if(vals.every(v=>!v)&&/THÔNG SỐ/i.test(name))break;
+          blanksAfterStart=0;
+          if(isMeasurementSize(value)){
+            started=true;
+            const normalized=value.toUpperCase().replace(/\s+/g,"").replace(",",".")
+              .replace(/^2XL$/,"XXL").replace(/^3XL$/,"XXXL");
+            sizes.push(normalized);
+            sizeCols.push(cc);
+            continue;
+          }
+          if(started)break;
+        }
+        if(!sizes.length)return;
+        headerWithSizesCount++;
+
+        let title="";
+        for(let rr=r-1;rr>=Math.max(0,r-4)&&!title;rr--){
+          const lastCol=(sizeCols[sizeCols.length-1]??c)+2;
+          const candidates=(grid[rr]||[])
+            .slice(Math.max(0,c-1),Math.min((grid[rr]||[]).length,lastCol))
+            .map(cleanMeasurementCell)
+            .filter(v=>v&&!isMeasurementHeader(v)&&!isMeasurementSize(v));
+          title=candidates.sort((a,b)=>b.length-a.length)[0]||"";
+        }
+        if(!title)title=`${sheetName} ${result.length+1}`;
+
+        const rows:MeasurementTemplate["rows"]=[];
+        let consecutiveBlankNames=0;
+
+        for(let rr=r+1;rr<Math.min(grid.length,r+100);rr++){
+          const firstCell=cleanMeasurementCell(grid[rr]?.[c]);
+
+          if(isMeasurementHeader(firstCell))break;
+
+          if(!firstCell){
+            const hasValues=sizeCols.some(col=>cleanMeasurementCell(grid[rr]?.[col]));
+            if(!hasValues){
+              consecutiveBlankNames++;
+              if(consecutiveBlankNames>=2)break;
+              continue;
+            }
+          }else{
+            consecutiveBlankNames=0;
+          }
+
+          const name=firstCell;
+          if(!name)continue;
+
+          const vals=sizeCols.map(col=>cleanMeasurementCell(grid[rr]?.[col]).replace(",","."));
           if(vals.every(v=>!v))continue;
+
           rows.push({
             id:`mr-${Date.now()}-${sheetIndex}-${r}-${rr}-${Math.random().toString(36).slice(2,5)}`,
             name,
@@ -132,6 +195,7 @@ function parseMeasurementWorkbook(fileName:string,buffer:ArrayBuffer,category:st
           });
         }
         if(!rows.length)return;
+
         result.push({
           id:`mt-${Date.now()}-${sheetIndex}-${r}-${c}-${Math.random().toString(36).slice(2,6)}`,
           name:title,
@@ -147,11 +211,21 @@ function parseMeasurementWorkbook(fileName:string,buffer:ArrayBuffer,category:st
       });
     });
   });
+
   const seen=new Set<string>();
-  return result.filter(x=>{
+  const unique=result.filter(x=>{
     const key=`${x.name}|${x.sizes.join("|")}|${x.rows.map(r=>r.name).join("|")}`.toLowerCase();
-    if(seen.has(key))return false;seen.add(key);return true;
+    if(seen.has(key))return false;
+    seen.add(key);
+    return true;
   });
+
+  if(!unique.length){
+    if(headerCount===0)throw new Error("Không nhận diện được dòng SIZE/CỠ trong file Excel.");
+    if(headerWithSizesCount===0)throw new Error(`Đã thấy ${headerCount} dòng SIZE/CỠ nhưng không đọc được các cột size bên cạnh.`);
+    throw new Error(`Đã thấy ${headerWithSizesCount} bảng có size nhưng không đọc được các dòng thông số bên dưới.`);
+  }
+  return unique;
 }
 
 const SAMPLE_STATUSES = [
@@ -179,7 +253,10 @@ function assetUrl(url?: string | null) {
   if (/^https?:\/\//i.test(url)) return url;
   return `${API_BASE.replace(/\/$/, "")}${url.startsWith("/") ? "" : "/"}${url}`;
 }
-function num(v: any) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function num(v:any){const n=Number(String(v??"").trim().replace(/\s/g,"").replace(",","."));return Number.isFinite(n)?n:0}
+function estimatedFabricMeters(weightKg:any,gsm:any,widthCm:any){const kg=num(weightKg),g=num(gsm),widthM=num(widthCm)/100;return kg>0&&g>0&&widthM>0?kg*1000/(g*widthM):0}
+function decimalText(v:any){return String(v??"").replace(".",",")}
+function decimalRaw(v:string){return v.replace(/[^0-9,.-]/g,"")}
 function fmt(v: any, digits = 2) { return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: digits }).format(num(v)); }
 function money(v: any) { return new Intl.NumberFormat("vi-VN").format(num(v)) + "đ"; }
 function rollCostQty(r:Roll){const u=r.priceUnit||"METER";if(u==="ROLL")return 1;if(u==="KG")return num(r.actualKg)||num(r.supplierDeclaredKg);return num(r.actualM)||num(r.supplierDeclaredM);}
@@ -473,7 +550,6 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
         setMeasurementImporting(true);
         if(measurementImportMode==="EXCEL"){
           const parsed=parseMeasurementWorkbook(file.name,await file.arrayBuffer(),measurementCategory);
-          if(!parsed.length)throw new Error("Không tìm thấy bảng có dòng SIZE trong file Excel.");
           const next=[...measurementTemplates,...parsed].sort((a,b)=>a.name.localeCompare(b.name,"vi"));
           saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementImportMode(null);
           window.alert(`Đã nhập ${parsed.length} bảng thông số từ ${file.name}.`);
@@ -1157,13 +1233,15 @@ function SampleForm({ sample, measurementTemplates, boards, staff, seasons, prod
 
 function ReceiptForm({ receipt, suppliers, branches, staff, samples, products, boards, canFabricBoardLink, canSupplierIdentity, canCostView, canCostEdit, canUpload, onClose, onSaved }: { receipt:FabricReceipt|null; suppliers:Supplier[]; branches:Branch[]; staff:Staff[]; samples:any[]; products:Array<{id:string;name:string;slug:string;imageUrl?:string|null}>; boards:FabricBoard[]; canFabricBoardLink:boolean; canSupplierIdentity:boolean; canCostView:boolean; canCostEdit:boolean; canUpload:boolean; onClose:()=>void; onSaved:()=>void }) {
   const legacyConfigCodes=parseFabricCodes(receipt?.fabricCode);
-  const initialFabricConfigs:FabricConfig[]=receipt?.fabricConfigs?.length?receipt.fabricConfigs:legacyConfigCodes.map((code,i)=>({fabricCode:code,materialName:i===0?(receipt?.fabricName||""):"",productId:i===0?(receipt?.productId||null):null,designSampleId:i===0?(receipt?.designSampleId||null):null}));
+  const initialFabricConfigs:FabricConfig[]=receipt?.fabricConfigs?.length?receipt.fabricConfigs:legacyConfigCodes.map((code,i)=>({fabricCode:code,materialName:i===0?(receipt?.fabricName||""):"",supplierId:i===0?(receipt?.supplierId||null):null,fabricBoardCode:i===0?(receipt?.fabricBoardCode||null):null,fabricWidthCm:"",productId:i===0?(receipt?.productId||null):null,designSampleId:i===0?(receipt?.designSampleId||null):null}));
   const [form,setForm]=useState<any>({receiptCode:receipt?.receiptCode||"",designSampleId:receipt?.designSampleId||"",productId:receipt?.productId||"",fabricBoardId:receipt?.fabricBoardId||"",supplierId:receipt?.supplierId||"",branchId:receipt?.branchId||"",fabricBoardCode:receipt?.fabricBoardCode||"",fabricCode:receipt?.fabricCode||"",fabricName:receipt?.fabricName||"",colorName:receipt?.colorName||"",colorCode:receipt?.colorCode||"",lotCode:receipt?.lotCode||"",supplierDeclaredM:receipt?.supplierDeclaredM??"",supplierDeclaredKg:receipt?.supplierDeclaredKg??"",actualM:receipt?.actualM??"",actualKg:receipt?.actualKg??"",unitPrice:receipt?.unitPrice??"",priceUnit:receipt?.priceUnit||"METER",priceCurrency:receipt?.priceCurrency||"VND",exchangeRateToVnd:receipt?.exchangeRateToVnd??"",expectedGsm:receipt?.expectedGsm??"",status:receipt?.status||"RECEIVING",receivedAt:receipt?.receivedAt?receipt.receivedAt.slice(0,10):new Date().toISOString().slice(0,10),receivedByStaffId:receipt?.receivedByStaffId||"",receivedByName:receipt?.receivedByName||"",note:receipt?.note||""});
   const [rolls,setRolls]=useState<Roll[]>(receipt?.rolls?.length?receipt.rolls.map((r,i)=>({...r,sortOrder:r.sortOrder??i+1,fabricCode:r.fabricCode||receipt.fabricCode||""})):[{sortOrder:1,fabricCode:receipt?.fabricCode||"",rollCode:"",colorName:"",colorCode:"",supplierDeclaredM:"",supplierDeclaredKg:"",actualM:"",actualKg:"",measuredGsm:"",unitPriceCny:"",priceUnit:"METER",defectNote:"",passed:true}]);
   const [rollFiles,setRollFiles]=useState<Record<number,File[]>>({});
   const [manualRollColor,setManualRollColor]=useState<Record<number,boolean>>({});
   const [fabricCosts,setFabricCosts]=useState<FabricCostGroup[]>(receipt?.fabricCosts||[]);
   const [fabricConfigs,setFabricConfigs]=useState<FabricConfig[]>(initialFabricConfigs);
+  const [configSource,setConfigSource]=useState<Record<number,"PRODUCT"|"DESIGN">>(()=>Object.fromEntries(initialFabricConfigs.map((x,i)=>[i,x.productId?"PRODUCT":"DESIGN"])));
+  const [rollView,setRollView]=useState<"CARDS"|"TABLE">("CARDS");
   const [colorMaps,setColorMaps]=useState<FabricColorMap[]>(receipt?.colorMaps||[]);
   const [saving,setSaving]=useState(false);const [error,setError]=useState("");const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
   useEffect(()=>{if(receipt)return;const params=new URLSearchParams();if(form.receivedAt)params.set("receivedAt",form.receivedAt);api<{code:string}>(`/sample-fabric/fabric-receipts/next-code?${params}`).then(r=>patch("receiptCode",r.code)).catch(()=>{})},[form.receivedAt,receipt?.id]);
@@ -1175,7 +1253,7 @@ function ReceiptForm({ receipt, suppliers, branches, staff, samples, products, b
     const fromRolls=rolls.map(x=>String(x.fabricCode||"").trim().toUpperCase()).filter(Boolean);
     return Array.from(new Set([...fromConfigs,...fromMaps,...fromRolls]));
   },[fabricConfigs,colorMaps,rolls]);
-  function addFabricConfig(){setFabricConfigs(rows=>[...rows,{fabricCode:"",materialName:"",productId:null,designSampleId:null}])}
+  function addFabricConfig(){setFabricConfigs(rows=>[...rows,{fabricCode:"",materialName:"",supplierId:null,fabricBoardCode:"",fabricWidthCm:"",productId:null,designSampleId:null}]);setConfigSource(x=>({...x,[fabricConfigs.length]:"DESIGN"}))}
   function patchFabricConfig(i:number,key:keyof FabricConfig,value:any){
     setFabricConfigs(rows=>rows.map((row,j)=>{
       if(j!==i)return row;
@@ -1304,43 +1382,36 @@ function ReceiptForm({ receipt, suppliers, branches, staff, samples, products, b
     setRollFiles(current=>shiftIndexedRecord(current,1));
     setManualRollColor(current=>shiftIndexedRecord(current,1));
   }
-  async function save(){try{setSaving(true);setError("");const receiver=staff.find(x=>x.id===form.receivedByStaffId);const normalizedFabricConfigs=fabricConfigs.map(x=>({id:x.id,fabricCode:String(x.fabricCode||"").replace(/\s+/g,"").toUpperCase(),materialName:String(x.materialName||"").trim()||null,productId:x.productId||null,designSampleId:x.designSampleId||null})).filter(x=>x.fabricCode);const normalizedColorMaps=colorMaps.map(x=>({id:x.id,fabricCode:String(x.fabricCode||"").trim().toUpperCase(),colorName:String(x.colorName||"").trim(),colorCode:normalizeColorCode(String(x.colorCode||""))||null})).filter(x=>x.fabricCode&&x.colorName);const normalizedRolls=rolls.map((r,i)=>({...r,sortOrder:i+1,fabricCode:String(r.fabricCode||"").trim().toUpperCase()||null,colorCode:normalizeColorCode(String(r.colorCode||""))||null,unitPriceCny:canCostEdit?r.unitPriceCny:undefined,priceUnit:canCostEdit?(r.priceUnit||"METER"):undefined,defectNote:String(r.defectNote||"").trim()||null}));const normalizedFabricCosts=fabricCodes.map(code=>{const c=fabricCostFor(code),calc=codeCost(code);return{...c,fabricCode:code,chinaShippingCny:num(c.chinaShippingCny),vietnamShippingRateVndPerKg:num(c.vietnamShippingRateVndPerKg),vietnamShippingVnd:calc.vietnamShippingVnd}});const saved=await api<FabricReceipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...form,designSampleId:null,productId:null,fabricBoardCode:String(form.fabricBoardCode||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase()||null,fabricCode:joinFabricCodes(normalizedFabricConfigs.map(x=>x.fabricCode))||null,fabricName:Array.from(new Set(normalizedFabricConfigs.map(x=>x.materialName).filter(Boolean))).join(", ")||null,colorName:Array.from(new Set(normalizedColorMaps.map(x=>x.colorName).filter(Boolean))).join(", ")||null,colorCode:Array.from(new Set(normalizedColorMaps.map(x=>x.colorCode).filter(Boolean))).join(", ")||null,lotCode:null,receivedByStaffId:form.receivedByStaffId||null,receivedByName:receiver?.name||form.receivedByName||null,unitPrice:undefined,priceUnit:undefined,priceCurrency:undefined,exchangeRateToVnd:undefined,rollCount:normalizedRolls.length,rolls:normalizedRolls,fabricConfigs:normalizedFabricConfigs,colorMaps:normalizedColorMaps,fabricCosts:canCostEdit?normalizedFabricCosts:undefined})});if(canCostEdit&&form.exchangeRateToVnd!=="")await api(`/sample-fabric/fabric-receipts/${saved.id}/cost`,{method:"PATCH",body:JSON.stringify({unitPrice:null,priceUnit:"METER",priceCurrency:"CNY",exchangeRateToVnd:form.exchangeRateToVnd})});for(const [indexText,files] of Object.entries(rollFiles)){const index=Number(indexText);const serverRoll=saved.rolls?.[index];if(!serverRoll?.id)continue;for(const file of files){const uploaded=await uploadWorkspaceFile("/sample-fabric/fabric-receipts/upload",file);await api(`/sample-fabric/fabric-receipts/${saved.id}/images`,{method:"POST",body:JSON.stringify({rollId:serverRoll.id,type:"FABRIC",url:uploaded.url,caption:`Ảnh ${serverRoll.rollCode||`cây ${index+1}`}`})})}}onSaved();}catch(e){setError(e instanceof Error?e.message:"Không lưu được phiếu.")}finally{setSaving(false)}}
+  async function save(){try{setSaving(true);setError("");const receiver=staff.find(x=>x.id===form.receivedByStaffId);const normalizedFabricConfigs=fabricConfigs.map(x=>({id:x.id,fabricCode:String(x.fabricCode||"").replace(/\s+/g,"").toUpperCase(),materialName:String(x.materialName||"").trim()||null,supplierId:x.supplierId||null,fabricBoardCode:String(x.fabricBoardCode||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase()||null,fabricWidthCm:num(x.fabricWidthCm)||null,productId:x.productId||null,designSampleId:x.designSampleId||null})).filter(x=>x.fabricCode);const normalizedColorMaps=colorMaps.map(x=>({id:x.id,fabricCode:String(x.fabricCode||"").trim().toUpperCase(),colorName:String(x.colorName||"").trim(),colorCode:normalizeColorCode(String(x.colorCode||""))||null})).filter(x=>x.fabricCode&&x.colorName);const normalizedRolls=rolls.map((r,i)=>({...r,sortOrder:i+1,fabricCode:String(r.fabricCode||"").trim().toUpperCase()||null,colorCode:normalizeColorCode(String(r.colorCode||""))||null,unitPriceCny:canCostEdit?num(r.unitPriceCny):undefined,priceUnit:canCostEdit?(r.priceUnit||"METER"):undefined,defectNote:String(r.defectNote||"").trim()||null}));const normalizedFabricCosts=fabricCodes.map(code=>{const c=fabricCostFor(code),calc=codeCost(code);return{...c,fabricCode:code,chinaShippingCny:num(c.chinaShippingCny),vietnamShippingRateVndPerKg:num(c.vietnamShippingRateVndPerKg),vietnamShippingVnd:calc.vietnamShippingVnd}});const saved=await api<FabricReceipt>(receipt?`/sample-fabric/fabric-receipts/${receipt.id}`:"/sample-fabric/fabric-receipts",{method:receipt?"PATCH":"POST",body:JSON.stringify({...form,designSampleId:null,productId:null,supplierId:Array.from(new Set(normalizedFabricConfigs.map(x=>x.supplierId).filter(Boolean))).length===1?(normalizedFabricConfigs.find(x=>x.supplierId)?.supplierId||null):null,fabricBoardId:null,fabricBoardCode:Array.from(new Set(normalizedFabricConfigs.map(x=>x.fabricBoardCode).filter(Boolean))).length===1?(normalizedFabricConfigs.find(x=>x.fabricBoardCode)?.fabricBoardCode||null):null,fabricCode:joinFabricCodes(normalizedFabricConfigs.map(x=>x.fabricCode))||null,fabricName:Array.from(new Set(normalizedFabricConfigs.map(x=>x.materialName).filter(Boolean))).join(", ")||null,colorName:Array.from(new Set(normalizedColorMaps.map(x=>x.colorName).filter(Boolean))).join(", ")||null,colorCode:Array.from(new Set(normalizedColorMaps.map(x=>x.colorCode).filter(Boolean))).join(", ")||null,lotCode:null,receivedByStaffId:form.receivedByStaffId||null,receivedByName:receiver?.name||form.receivedByName||null,unitPrice:undefined,priceUnit:undefined,priceCurrency:undefined,exchangeRateToVnd:undefined,rollCount:normalizedRolls.length,rolls:normalizedRolls,fabricConfigs:normalizedFabricConfigs,colorMaps:normalizedColorMaps,fabricCosts:canCostEdit?normalizedFabricCosts:undefined})});if(canCostEdit&&form.exchangeRateToVnd!=="")await api(`/sample-fabric/fabric-receipts/${saved.id}/cost`,{method:"PATCH",body:JSON.stringify({unitPrice:null,priceUnit:"METER",priceCurrency:"CNY",exchangeRateToVnd:form.exchangeRateToVnd})});for(const [indexText,files] of Object.entries(rollFiles)){const index=Number(indexText);const serverRoll=saved.rolls?.[index];if(!serverRoll?.id)continue;for(const file of files){const uploaded=await uploadWorkspaceFile("/sample-fabric/fabric-receipts/upload",file);await api(`/sample-fabric/fabric-receipts/${saved.id}/images`,{method:"POST",body:JSON.stringify({rollId:serverRoll.id,type:"FABRIC",url:uploaded.url,caption:`Ảnh ${serverRoll.rollCode||`cây ${index+1}`}`})})}}onSaved();}catch(e){setError(e instanceof Error?e.message:"Không lưu được phiếu.")}finally{setSaving(false)}}
   const convertedVnd=form.priceCurrency==="CNY"&&num(form.unitPrice)>0&&num(form.exchangeRateToVnd)>0?num(form.unitPrice)*num(form.exchangeRateToVnd):0;
 
   return <Modal title={receipt?`Sửa ${receipt.receiptCode}`:"Tạo phiếu vải về"} onClose={onClose} wide><div className="space-y-5 p-5">{error&&<div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-    <div className="grid gap-4 md:grid-cols-3">
-      <Field label="Mã phiếu"><input className={inputClass} readOnly value={form.receiptCode} placeholder="NV-001-ddmmyyyy"/></Field>
-      <Field label="Nhà cung cấp"><select className={inputClass} value={form.supplierId} onChange={e=>patch("supplierId",e.target.value)}><option value="">Chưa chọn</option>{suppliers.map(x=><option key={x.id} value={x.id}>{canSupplierIdentity?`${x.code||"NCC"} · ${x.name||""}`.trim():(x.code||"NCC")}</option>)}</select></Field>
-      <Field label="Kho nhận"><select className={inputClass} value={form.branchId} onChange={e=>patch("branchId",e.target.value)}><option value="">Không gắn chi nhánh</option>{branches.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-      {canFabricBoardLink&&<Field label="Bảng vải"><select className={inputClass} value={form.fabricBoardId||selectedBoard?.id||""} onChange={e=>chooseBoard(e.target.value)}><option value="">Chưa liên kết bảng vải</option>{boards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.fabricCode?` · ${b.fabricCode}`:""}{b.name?` · ${b.name}`:""}</option>)}</select></Field>}
-      <Field label="Mã bảng vải"><input className={inputClass} value={form.fabricBoardCode} onChange={e=>patch("fabricBoardCode",e.target.value.replace(/[^A-Za-z0-9]/g,"").toUpperCase())} placeholder="VD: AB888" autoCapitalize="characters"/><div className="mt-1 text-[11px] text-neutral-400">Chỉ chữ và số, viết liền, không khoảng trắng.</div></Field>
-      <Field label="NCC báo (m)"><input type="number" step="0.001" className={inputClass} value={form.supplierDeclaredM} onChange={e=>patch("supplierDeclaredM",e.target.value)}/></Field>
-      <Field label="NCC báo (kg)"><input type="number" step="0.001" className={inputClass} value={form.supplierDeclaredKg} onChange={e=>patch("supplierDeclaredKg",e.target.value)}/></Field>
-      <Field label="Thực nhận (m)"><input type="number" step="0.001" className={inputClass} value={form.actualM} onChange={e=>patch("actualM",e.target.value)}/></Field>
-      <Field label="Thực nhận (kg)"><input type="number" step="0.001" className={inputClass} value={form.actualKg} onChange={e=>patch("actualKg",e.target.value)}/></Field>
-      <Field label="GSM NCC"><input type="number" step="0.1" className={inputClass} value={form.expectedGsm} onChange={e=>patch("expectedGsm",e.target.value)}/></Field>
+    <div className="grid gap-4 md:grid-cols-4">
+      <Field label="Mã phiếu"><input className={inputClass} readOnly value={form.receiptCode}/></Field>
       <Field label="Ngày nhận"><input type="date" className={inputClass} value={form.receivedAt} onChange={e=>patch("receivedAt",e.target.value)}/></Field>
-      <Field label="Nhân viên nhận vải"><select className={inputClass} value={form.receivedByStaffId} onChange={e=>{const id=e.target.value;const st=staff.find(x=>x.id===id);patch("receivedByStaffId",id);patch("receivedByName",st?.name||"")}}><option value="">Chưa chọn nhân viên</option>{staff.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
+      <Field label="Kho nhận"><select className={inputClass} value={form.branchId} onChange={e=>patch("branchId",e.target.value)}><option value="">Không gắn chi nhánh</option>{branches.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Nhân viên nhận vải"><select className={inputClass} value={form.receivedByStaffId} onChange={e=>{const id=e.target.value,st=staff.find(x=>x.id===id);patch("receivedByStaffId",id);patch("receivedByName",st?.name||"")}}><option value="">Chưa chọn nhân viên</option>{staff.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
     </div>
-
 
     {canCostView&&<div className="rounded-3xl bg-amber-50 p-4"><div className="grid gap-4 md:grid-cols-3"><Field label="Tỷ giá lúc nhập"><div className="relative"><input disabled={!canCostEdit} inputMode="decimal" className={`${inputClass} pr-12 disabled:bg-neutral-100`} value={moneyInput(form.exchangeRateToVnd)} onChange={e=>patch("exchangeRateToVnd",moneyRaw(e.target.value))} placeholder="VD: 3.920"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">VND/CNY</span></div></Field><div className="rounded-2xl bg-white p-3 text-sm"><div className="text-[10px] font-semibold uppercase text-neutral-400">Tiền vải</div><div className="mt-1 text-lg font-semibold">{fmt(liveCostSummary.goodsCny,2)} CNY</div><div className="text-xs text-neutral-500">{money(liveCostSummary.goodsVnd)}</div></div><div className="rounded-2xl bg-white p-3 text-sm"><div className="text-[10px] font-semibold uppercase text-neutral-400">Tổng đơn</div><div className="mt-1 text-lg font-semibold">{money(liveCostSummary.grandTotalVnd)}</div><div className="text-xs text-neutral-500">Đã gồm vận chuyển</div></div></div></div>}
 
     <div className="rounded-3xl border p-4">
-      <div className="flex items-start justify-between gap-3"><div><b className="text-sm">Cấu hình vải</b><div className="mt-1 text-xs text-neutral-400">Mỗi mã vải khai báo một lần: mã vải, tên chất liệu, mẫu sử dụng và các màu thuộc mã đó.</div></div><button type="button" onClick={addFabricConfig} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Thêm mã vải</button></div>
-      <div className="mt-4 space-y-3">{fabricConfigs.map((cfg,ci)=>{const code=String(cfg.fabricCode||"").trim().toUpperCase();const source=cfg.productId?"PRODUCT":"DESIGN";const colors=colorMaps.map((x,index)=>({x,index})).filter(({x})=>String(x.fabricCode||"").trim().toUpperCase()===code);return <div key={cfg.id||ci} className="rounded-2xl bg-neutral-50 p-3">
-        <div className="flex items-center justify-between gap-3"><b className="text-sm">Mã vải {code||ci+1}</b><button type="button" onClick={()=>removeFabricConfig(ci)} className="text-xs font-semibold text-red-600">Xoá mã</button></div>
-        <div className="mt-3 grid gap-2 md:grid-cols-[170px_1fr_1.35fr]">
-          <Field label="Mã vải"><input className={inputClass} value={cfg.fabricCode||""} onChange={e=>patchFabricConfig(ci,"fabricCode",e.target.value)} placeholder="VD: AB99"/></Field>
-          <Field label="Tên chất liệu"><input className={inputClass} value={cfg.materialName||""} onChange={e=>patchFabricConfig(ci,"materialName",e.target.value)} placeholder="VD: Kaki co giãn"/></Field>
-          <Field label="Mẫu sử dụng"><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",cfg.productId||"");patchFabricConfig(ci,"designSampleId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",null);patchFabricConfig(ci,"designSampleId",cfg.designSampleId||"")}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<select className={`${inputClass} mt-2`} value={cfg.productId||""} onChange={e=>patchFabricConfig(ci,"productId",e.target.value||null)}><option value="">Chưa chọn sản phẩm</option>{products.map(x=><option key={x.id} value={x.id}>{x.name} · {x.slug}</option>)}</select>:<select className={`${inputClass} mt-2`} value={cfg.designSampleId||""} onChange={e=>patchFabricConfig(ci,"designSampleId",e.target.value||null)}><option value="">Chưa chọn mẫu triển khai</option>{samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select>}</Field>
+      <div className="flex items-start justify-between gap-3"><div><b className="text-sm">Cấu hình theo mã vải</b><div className="mt-1 text-xs text-neutral-400">NCC, mã bảng vải, tên chất liệu, khổ vải, mẫu sử dụng và màu đều theo từng mã vải.</div></div><button type="button" onClick={addFabricConfig} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Thêm mã vải</button></div>
+      <div className="mt-4 space-y-3">{fabricConfigs.map((cfg,ci)=>{const code=String(cfg.fabricCode||"").trim().toUpperCase();const source=configSource[ci]||(cfg.productId?"PRODUCT":"DESIGN");const colors=colorMaps.map((x,index)=>({x,index})).filter(({x})=>String(x.fabricCode||"").trim().toUpperCase()===code);return <div key={cfg.id||ci} className="rounded-2xl bg-neutral-50 p-3">
+        <div className="flex items-center justify-between"><b className="text-sm">{code?`Mã vải ${code}`:`Mã vải ${ci+1}`}</b><button type="button" onClick={()=>removeFabricConfig(ci)} className="text-xs font-semibold text-red-600">Xoá mã</button></div>
+        <div className="mt-3 grid gap-2 md:grid-cols-5">
+          <Field label="Mã vải"><input className={inputClass} value={cfg.fabricCode||""} onChange={e=>patchFabricConfig(ci,"fabricCode",e.target.value.replace(/\s+/g,"").toUpperCase())} placeholder="A2309"/></Field>
+          <Field label="Mã bảng vải"><input className={inputClass} value={cfg.fabricBoardCode||""} onChange={e=>patchFabricConfig(ci,"fabricBoardCode",e.target.value.replace(/[^A-Za-z0-9]/g,"").toUpperCase())}/></Field>
+          <Field label="Tên chất liệu vải"><input className={inputClass} value={cfg.materialName||""} onChange={e=>patchFabricConfig(ci,"materialName",e.target.value)}/></Field>
+          <Field label="Nhà cung cấp"><select className={inputClass} value={cfg.supplierId||""} onChange={e=>patchFabricConfig(ci,"supplierId",e.target.value||null)}><option value="">Chưa chọn</option>{suppliers.map(x=><option key={x.id} value={x.id}>{canSupplierIdentity?`${x.code||"NCC"} · ${x.name||""}`:(x.code||"NCC")}</option>)}</select></Field>
+          <Field label="Khổ vải (cm)"><input inputMode="decimal" className={inputClass} value={decimalText(cfg.fabricWidthCm)} onChange={e=>patchFabricConfig(ci,"fabricWidthCm",decimalRaw(e.target.value))} placeholder="150"/></Field>
         </div>
-        <div className="mt-3 rounded-2xl border bg-white p-3"><div className="flex items-center justify-between"><div><b className="text-xs">Màu của {code||"mã vải này"}</b><div className="text-[11px] text-neutral-400">Tên màu bắt buộc; mã màu có thể để trống.</div></div><button type="button" disabled={!code} onClick={()=>addColorMap(code)} className="rounded-xl border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">+ Thêm màu</button></div><div className="mt-2 space-y-2">{colors.map(({x,index})=><div key={x.id||index} className="grid gap-2 md:grid-cols-[1fr_160px_auto]"><input className={inputClass} value={x.colorName||""} onChange={e=>patchColorMap(index,"colorName",e.target.value)} placeholder="Tên màu · VD Đen"/><input className={inputClass} value={x.colorCode||""} onChange={e=>patchColorMap(index,"colorCode",e.target.value)} onBlur={()=>patchColorMap(index,"colorCode",normalizeColorCode(String(x.colorCode||"")))} placeholder="#20 · không bắt buộc"/><button type="button" onClick={()=>removeColorMap(index)} className="rounded-xl border px-3 text-xs font-semibold text-red-600">Xoá</button></div>)}</div>{!colors.length&&<div className="mt-2 text-xs text-neutral-400">Chưa có màu. Có thể để trống và nhập màu trực tiếp khi kiểm cây.</div>}</div>
-      </div>})}{!fabricConfigs.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-500">Chưa có mã vải. Bấm “+ Thêm mã vải” để bắt đầu.</div>}</div>
+        <div className="mt-3"><Field label="Mẫu sử dụng"><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{setConfigSource(x=>({...x,[ci]:"PRODUCT"}));patchFabricConfig(ci,"designSampleId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{setConfigSource(x=>({...x,[ci]:"DESIGN"}));patchFabricConfig(ci,"productId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<select className={`${inputClass} mt-2`} value={cfg.productId||""} onChange={e=>patchFabricConfig(ci,"productId",e.target.value||null)}><option value="">Chưa chọn sản phẩm</option>{products.map(x=><option key={x.id} value={x.id}>{x.name} · {x.slug}</option>)}</select>:<select className={`${inputClass} mt-2`} value={cfg.designSampleId||""} onChange={e=>patchFabricConfig(ci,"designSampleId",e.target.value||null)}><option value="">Chưa chọn mẫu triển khai</option>{samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select>}</Field></div>
+        <div className="mt-3 rounded-2xl border bg-white p-3"><div className="mb-2 flex items-center justify-between"><b className="text-xs">Màu của {code||"mã này"}</b><button type="button" onClick={()=>setColorMaps(x=>[...x,{fabricCode:code,colorName:"",colorCode:""}])} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Thêm màu</button></div><div className="space-y-2">{colors.map(({x,index})=><div key={x.id||index} className="grid gap-2 md:grid-cols-[1fr_140px_auto]"><input className={inputClass} value={x.colorName||""} onChange={e=>patchColorMap(index,"colorName",e.target.value)} placeholder="Tên màu"/><input className={inputClass} value={x.colorCode||""} onChange={e=>patchColorMap(index,"colorCode",e.target.value)} placeholder="#20"/><button type="button" onClick={()=>setColorMaps(c=>c.filter((_,j)=>j!==index))} className="rounded-xl border px-3 text-xs text-red-600">Xoá</button></div>)}</div></div>
+      </div>})}</div>
       {!!fabricConfigs.length&&<button type="button" onClick={applyColorMapsToRolls} className="mt-3 rounded-xl border px-3 py-2 text-xs font-semibold">Áp cấu hình màu cho cây đã tạo</button>}
     </div>
-
-    <div><div className="mb-2 flex items-center justify-between gap-3"><div><b className="text-sm">Chi tiết từng cây vải</b><div className="text-xs text-neutral-400">Nhập theo thứ tự kiểm thực tế. Xong có thể nhóm lại theo mã vải.</div></div><div className="flex gap-2"><button type="button" onClick={sortRollsByFabricCode} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">Sắp xếp theo mã vải</button><button type="button" onClick={addRoll} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Thêm cây</button></div></div><div className="space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-2xl bg-neutral-50 p-3"><div className="mb-2 flex items-center justify-between"><b className="text-xs uppercase tracking-wide text-neutral-500">STT {i+1}</b><span className="text-[11px] text-neutral-400">{r.fabricCode?`Mã vải ${r.fabricCode}`:"Chưa có mã vải"}</span></div><div className="grid gap-2 md:grid-cols-5">{receiptFabricCodes.length?<select className={inputClass} value={r.fabricCode||""} onChange={e=>{const fc=e.target.value,opts=mapsForFabric(fc),only=opts.length===1?opts[0]:null;setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:fc,colorName:only?.name||"",colorCode:only?.code||""}:v))}}><option value="">Chọn mã vải</option>{receiptFabricCodes.map(code=><option key={code} value={code}>{code}</option>)}</select>:<input className={inputClass} placeholder="Tạo mã vải ở phần Cấu hình vải trước" value={r.fabricCode||""} readOnly/>}<input className={inputClass} placeholder={`Mã cây ${i+1} (nếu có)`} value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))}/>{mapsForFabric(r.fabricCode).length>0&&!manualRollColor[i]?<><select className={inputClass} value={r.colorCode||""} onChange={e=>{const c=mapsForFabric(r.fabricCode).find(x=>x.code===normalizeColorCode(e.target.value));setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:c?.code||"",colorName:c?.name||""}:v))}}><option value="">Chọn màu đã cấu hình</option>{mapsForFabric(r.fabricCode).map((c,ix)=><option key={`${c.code}-${c.name}-${ix}`} value={c.code||""}>{c.name||"Không tên"}{c.code?` · ${c.code}`:""}</option>)}</select><button type="button" className="rounded-2xl border bg-white px-3 text-xs font-semibold" onClick={()=>setManualRollColor(x=>({...x,[i]:true}))}>Nhập màu tay</button></>:<><input className={inputClass} placeholder="Tên màu · có thể chỉ điền ô này" value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const hit=mapsForFabric(v.fabricCode).find(c=>c.name.toLowerCase()===String(v.colorName||"").trim().toLowerCase());return hit?{...v,colorName:hit.name,colorCode:hit.code||v.colorCode}:v}))}/><input className={inputClass} placeholder="# Mã màu · không bắt buộc" value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const cc=normalizeColorCode(String(v.colorCode||""));const hit=mapsForFabric(v.fabricCode).find(c=>c.code===cc);return hit?{...v,colorCode:hit.code,colorName:hit.name||v.colorName}:{...v,colorCode:cc}}))}/></>}</div><div className="mt-2 grid gap-2 md:grid-cols-5"><input type="number" step="0.001" className={inputClass} placeholder="NCC m" value={r.supplierDeclaredM??""} onChange={e=>patchRoll(i,"supplierDeclaredM",e.target.value)}/><input type="number" step="0.001" className={inputClass} placeholder="NCC kg" value={r.supplierDeclaredKg??""} onChange={e=>patchRoll(i,"supplierDeclaredKg",e.target.value)}/><input type="number" step="0.001" className={inputClass} placeholder="Thực kg" value={r.actualKg??""} onChange={e=>patchRoll(i,"actualKg",e.target.value)}/><div><input type="number" step="0.001" className={inputClass} placeholder="Thực m" value={r.actualM??""} onChange={e=>patchRoll(i,"actualM",e.target.value)}/><div className="mt-1 text-[10px] text-neutral-400">Tự quy đổi từ kg theo tỷ lệ NCC m/kg.</div></div><div><input type="number" step="0.1" className={inputClass} placeholder="GSM cây" value={r.measuredGsm??""} onChange={e=>patchRoll(i,"measuredGsm",e.target.value)}/><div className="mt-1 text-[10px] text-neutral-400">GSM kiểm thực tế của riêng cây này.</div></div></div>{canCostView&&<div className="mt-2 grid gap-2 md:grid-cols-[1fr_150px_1fr]"><div className="relative"><input disabled={!canCostEdit} inputMode="numeric" className={`${inputClass} pr-12 disabled:bg-neutral-100`} placeholder="Giá cây / màu" value={moneyInput(r.unitPriceCny)} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,unitPriceCny:moneyRaw(e.target.value)}:v))}/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">CNY</span></div><select disabled={!canCostEdit} className={`${inputClass} disabled:bg-neutral-100`} value={r.priceUnit||"METER"} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,priceUnit:e.target.value as any}:v))}><option value="METER">Giá / mét</option><option value="KG">Giá / kg</option><option value="ROLL">Giá / cây</option></select><div className="rounded-2xl border bg-white px-3 py-2 text-xs">{(()=>{const code=String(r.fabricCode||"").trim().toUpperCase(),cc=code?codeCost(code):null,fabricVnd=rollAmountCny(r)*num(form.exchangeRateToVnd),ship=cc?.shippingPerRollVnd||0;return <><div><span className="text-neutral-400">Tiền vải cây: </span><b>{fmt(rollAmountCny(r),0)} CNY</b>{num(form.exchangeRateToVnd)>0?<span className="ml-2 text-neutral-500">≈ {money(fabricVnd)}</span>:null}</div>{cc&&<><div className="mt-1"><span className="text-neutral-400">Ship phân bổ/cây: </span><b>{money(ship)}</b></div><div className="mt-1 text-emerald-700"><span>Giá nhập cây: </span><b>{money(fabricVnd+ship)}</b></div></>}</>})()}</div></div>}<div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto]"><textarea className={`${inputClass} min-h-20`} placeholder="Ghi chú cây: lệch màu, đầu cây bẩn, thiếu mét..." value={r.defectNote||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,defectNote:e.target.value}:v))}/><button onClick={()=>{setRolls(x=>x.filter((_,j)=>j!==i));setRollFiles(current=>{const next={...current};delete next[i];return next})}} className="rounded-xl px-3 text-sm text-red-600">Xoá cây</button></div>{canUpload&&<div className="mt-2 flex flex-wrap items-center gap-2"><label className="cursor-pointer rounded-xl border bg-white px-3 py-2 text-xs font-semibold">Tải nhiều ảnh cây<input type="file" accept="image/*" multiple className="hidden" onChange={e=>{const files=Array.from(e.target.files||[]);if(files.length)setRollFiles(current=>({...current,[i]:[...(current[i]||[]),...files]}))}}/></label><span className="text-xs text-neutral-500">{rollFiles[i]?.length?`Đã chọn thêm ${rollFiles[i].length} ảnh`:(r.images?.length?`${r.images.length} ảnh đã lưu`:"Chưa có ảnh")}</span>{r.images?.slice(0,4).map(img=><img key={img.id} src={assetUrl(img.url)} className="h-10 w-10 rounded-lg object-cover"/>)}</div>}</div>)}</div></div>
+    <div><div className="mb-2 flex flex-wrap items-center justify-between gap-3"><div><b className="text-sm">Chi tiết từng cây vải</b><div className="text-xs text-neutral-400">Khối chi tiết hoặc bảng ngang kiểu Excel.</div></div><div className="flex flex-wrap gap-2"><div className="flex rounded-xl border p-1"><button type="button" onClick={()=>setRollView("CARDS")} className={`rounded-lg px-3 py-1 text-xs ${rollView==="CARDS"?"bg-neutral-950 text-white":""}`}>Khối</button><button type="button" onClick={()=>setRollView("TABLE")} className={`rounded-lg px-3 py-1 text-xs ${rollView==="TABLE"?"bg-neutral-950 text-white":""}`}>Bảng Excel</button></div><button type="button" onClick={sortRollsByFabricCode} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">Sắp xếp theo mã vải</button><button type="button" onClick={addRoll} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Thêm cây</button></div></div>{rollView==="TABLE"?<div className="overflow-x-auto rounded-2xl border"><table className="min-w-[1350px] w-full text-xs"><thead className="bg-neutral-100"><tr>{["STT","Mã vải","Mã cây","Tên màu","Mã màu","NCC m","Thực kg","GSM","Khổ cm","Thực m","Giá CNY","Ghi chú"].map(h=><th key={h} className="px-2 py-2 text-left">{h}</th>)}</tr></thead><tbody>{rolls.map((r,i)=>{const cfg=fabricConfigs.find(c=>String(c.fabricCode||"").toUpperCase()===String(r.fabricCode||"").toUpperCase()),est=estimatedFabricMeters(r.actualKg,r.measuredGsm,cfg?.fabricWidthCm);return <tr key={r.id||i} className="border-t"><td className="px-2">{i+1}</td><td className="p-1"><select className="w-24 rounded-lg border p-2" value={r.fabricCode||""} onChange={e=>patchRoll(i,"fabricCode",e.target.value)}><option value="">—</option>{receiptFabricCodes.map(c=><option key={c} value={c}>{c}</option>)}</select></td><td className="p-1"><input className="w-24 rounded-lg border p-2" value={r.rollCode||""} onChange={e=>patchRoll(i,"rollCode",e.target.value)}/></td><td className="p-1"><input className="w-24 rounded-lg border p-2" value={r.colorName||""} onChange={e=>patchRoll(i,"colorName",e.target.value)}/></td><td className="p-1"><input className="w-20 rounded-lg border p-2" value={r.colorCode||""} onChange={e=>patchRoll(i,"colorCode",e.target.value)}/></td><td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.supplierDeclaredM??""} onChange={e=>patchRoll(i,"supplierDeclaredM",e.target.value)}/></td><td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.actualKg??""} onChange={e=>patchRoll(i,"actualKg",e.target.value)}/></td><td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.measuredGsm??""} onChange={e=>patchRoll(i,"measuredGsm",e.target.value)}/></td><td className="px-2">{cfg?.fabricWidthCm||"—"}</td><td className="p-1"><div className="flex gap-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.actualM??""} onChange={e=>patchRoll(i,"actualM",e.target.value)}/><button type="button" disabled={!est} onClick={()=>patchRoll(i,"actualM",est.toFixed(3))} className="rounded-lg border px-2 disabled:opacity-30">≈m</button></div></td><td className="p-1">{canCostView?<input disabled={!canCostEdit} inputMode="decimal" className="w-20 rounded-lg border p-2" value={decimalText(r.unitPriceCny)} onChange={e=>patchRoll(i,"unitPriceCny",decimalRaw(e.target.value))}/>:null}</td><td className="p-1"><input className="w-40 rounded-lg border p-2" value={r.defectNote||""} onChange={e=>patchRoll(i,"defectNote",e.target.value)}/></td></tr>})}</tbody></table></div>:<div className="space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-2xl bg-neutral-50 p-3"><div className="mb-2 flex items-center justify-between"><b className="text-xs uppercase tracking-wide text-neutral-500">STT {i+1}</b><span className="text-[11px] text-neutral-400">{r.fabricCode?`Mã vải ${r.fabricCode}`:"Chưa có mã vải"}</span></div><div className="grid gap-2 md:grid-cols-5">{receiptFabricCodes.length?<select className={inputClass} value={r.fabricCode||""} onChange={e=>{const fc=e.target.value,opts=mapsForFabric(fc),only=opts.length===1?opts[0]:null;setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:fc,colorName:only?.name||"",colorCode:only?.code||""}:v))}}><option value="">Chọn mã vải</option>{receiptFabricCodes.map(code=><option key={code} value={code}>{code}</option>)}</select>:<input className={inputClass} placeholder="Tạo mã vải ở phần Cấu hình vải trước" value={r.fabricCode||""} readOnly/>}<input className={inputClass} placeholder={`Mã cây ${i+1} (nếu có)`} value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))}/>{mapsForFabric(r.fabricCode).length>0&&!manualRollColor[i]?<><select className={inputClass} value={r.colorCode||""} onChange={e=>{const c=mapsForFabric(r.fabricCode).find(x=>x.code===normalizeColorCode(e.target.value));setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:c?.code||"",colorName:c?.name||""}:v))}}><option value="">Chọn màu đã cấu hình</option>{mapsForFabric(r.fabricCode).map((c,ix)=><option key={`${c.code}-${c.name}-${ix}`} value={c.code||""}>{c.name||"Không tên"}{c.code?` · ${c.code}`:""}</option>)}</select><button type="button" className="rounded-2xl border bg-white px-3 text-xs font-semibold" onClick={()=>setManualRollColor(x=>({...x,[i]:true}))}>Nhập màu tay</button></>:<><input className={inputClass} placeholder="Tên màu · có thể chỉ điền ô này" value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const hit=mapsForFabric(v.fabricCode).find(c=>c.name.toLowerCase()===String(v.colorName||"").trim().toLowerCase());return hit?{...v,colorName:hit.name,colorCode:hit.code||v.colorCode}:v}))}/><input className={inputClass} placeholder="# Mã màu · không bắt buộc" value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))} onBlur={()=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const cc=normalizeColorCode(String(v.colorCode||""));const hit=mapsForFabric(v.fabricCode).find(c=>c.code===cc);return hit?{...v,colorCode:hit.code,colorName:hit.name||v.colorName}:{...v,colorCode:cc}}))}/></>}</div><div className="mt-2 grid gap-2 md:grid-cols-5"><input type="number" step="0.001" className={inputClass} placeholder="NCC m" value={r.supplierDeclaredM??""} onChange={e=>patchRoll(i,"supplierDeclaredM",e.target.value)}/><input type="number" step="0.001" className={inputClass} placeholder="NCC kg" value={r.supplierDeclaredKg??""} onChange={e=>patchRoll(i,"supplierDeclaredKg",e.target.value)}/><input type="number" step="0.001" className={inputClass} placeholder="Thực kg" value={r.actualKg??""} onChange={e=>patchRoll(i,"actualKg",e.target.value)}/><div><input type="number" step="0.001" className={inputClass} placeholder="Thực m" value={r.actualM??""} onChange={e=>patchRoll(i,"actualM",e.target.value)}/><div className="mt-1 text-[10px] text-neutral-400">Công thức chuẩn cần kg + GSM + khổ vải.</div></div><div><input inputMode="decimal" className={inputClass} placeholder="GSM cây" value={r.measuredGsm??""} onChange={e=>patchRoll(i,"measuredGsm",e.target.value)}/><button type="button" className="mt-1 rounded-lg border px-2 py-1 text-[10px]" onClick={()=>{const cfg=fabricConfigs.find(c=>String(c.fabricCode||"").toUpperCase()===String(r.fabricCode||"").toUpperCase()),m=estimatedFabricMeters(r.actualKg,r.measuredGsm,cfg?.fabricWidthCm);if(!m){window.alert("Cần Thực kg + GSM + Khổ vải (cm) trong cấu hình mã vải.");return}patchRoll(i,"actualM",m.toFixed(3))}}>Quy đổi kg + GSM → mét</button></div></div>{canCostView&&<div className="mt-2 grid gap-2 md:grid-cols-[1fr_150px_1fr]"><div className="relative"><input disabled={!canCostEdit} inputMode="decimal" className={`${inputClass} pr-12 disabled:bg-neutral-100`} placeholder="VD 19,5" value={decimalText(r.unitPriceCny)} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,unitPriceCny:decimalRaw(e.target.value)}:v))}/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">CNY</span></div><select disabled={!canCostEdit} className={`${inputClass} disabled:bg-neutral-100`} value={r.priceUnit||"METER"} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,priceUnit:e.target.value as any}:v))}><option value="METER">Giá / mét</option><option value="KG">Giá / kg</option><option value="ROLL">Giá / cây</option></select><div className="rounded-2xl border bg-white px-3 py-2 text-xs">{(()=>{const code=String(r.fabricCode||"").trim().toUpperCase(),cc=code?codeCost(code):null,fabricVnd=rollAmountCny(r)*num(form.exchangeRateToVnd),ship=cc?.shippingPerRollVnd||0;return <><div><span className="text-neutral-400">Tiền vải cây: </span><b>{fmt(rollAmountCny(r),0)} CNY</b>{num(form.exchangeRateToVnd)>0?<span className="ml-2 text-neutral-500">≈ {money(fabricVnd)}</span>:null}</div>{cc&&<><div className="mt-1"><span className="text-neutral-400">Ship phân bổ/cây: </span><b>{money(ship)}</b></div><div className="mt-1 text-emerald-700"><span>Giá nhập cây: </span><b>{money(fabricVnd+ship)}</b></div></>}</>})()}</div></div>}<div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto]"><textarea className={`${inputClass} min-h-20`} placeholder="Ghi chú cây: lệch màu, đầu cây bẩn, thiếu mét..." value={r.defectNote||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,defectNote:e.target.value}:v))}/><button onClick={()=>{setRolls(x=>x.filter((_,j)=>j!==i));setRollFiles(current=>{const next={...current};delete next[i];return next})}} className="rounded-xl px-3 text-sm text-red-600">Xoá cây</button></div>{canUpload&&<div className="mt-2 flex flex-wrap items-center gap-2"><label className="cursor-pointer rounded-xl border bg-white px-3 py-2 text-xs font-semibold">Tải nhiều ảnh cây<input type="file" accept="image/*" multiple className="hidden" onChange={e=>{const files=Array.from(e.target.files||[]);if(files.length)setRollFiles(current=>({...current,[i]:[...(current[i]||[]),...files]}))}}/></label><span className="text-xs text-neutral-500">{rollFiles[i]?.length?`Đã chọn thêm ${rollFiles[i].length} ảnh`:(r.images?.length?`${r.images.length} ảnh đã lưu`:"Chưa có ảnh")}</span>{r.images?.slice(0,4).map(img=><img key={img.id} src={assetUrl(img.url)} className="h-10 w-10 rounded-lg object-cover"/>)}</div>}</div>)}</div>}</div>
 {canCostView&&fabricCodes.length>0&&<div className="space-y-3 rounded-3xl border p-4"><div><b className="text-sm">Phí theo mã vải</b><div className="text-xs text-neutral-400">Ship China nhập CNY. Ship Việt Nam nhập đơn giá VND/kg; hệ thống tự lấy tổng kg của đúng mã vải để tính.</div></div>{fabricCodes.map(code=>{const c=fabricCostFor(code),cc=codeCost(code);return <div key={code} className="rounded-2xl bg-neutral-50 p-3"><div className="grid gap-2 md:grid-cols-[120px_140px_1fr_1fr_1.3fr]"><div><b>{code}</b><div className="text-[11px] text-neutral-400">{cc.rollCount} cây · {fmt(cc.totalKg,3)} kg</div></div><div className="text-xs"><div className="text-neutral-400">Tiền vải/cây</div><b>{money(cc.fabricPerRollVnd)}</b></div><div className="relative"><input disabled={!canCostEdit} inputMode="numeric" className={`${inputClass} pr-12 disabled:bg-neutral-100`} value={moneyInput(c.chinaShippingCny)} onChange={e=>patchFabricCost(code,"chinaShippingCny",moneyRaw(e.target.value))} placeholder="Ship China"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">CNY</span></div><div className="relative"><input disabled={!canCostEdit} inputMode="numeric" className={`${inputClass} pr-16 disabled:bg-neutral-100`} value={moneyInput(c.vietnamShippingRateVndPerKg)} onChange={e=>patchFabricCost(code,"vietnamShippingRateVndPerKg",moneyRaw(e.target.value))} placeholder="VD 20.000"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">đ/kg</span></div><input disabled={!canCostEdit} className={`${inputClass} disabled:bg-neutral-100`} value={c.note||""} onChange={e=>patchFabricCost(code,"note",e.target.value)} placeholder="Ghi chú phí"/></div><div className="mt-2 grid gap-2 md:grid-cols-5"><div className="rounded-xl bg-white p-2 text-xs"><span className="text-neutral-400">Ship China</span><div><b>{fmt(cc.chinaShippingCny,0)} CNY</b></div><div className="text-neutral-400">{money(cc.chinaShippingVnd)}</div></div><div className="rounded-xl bg-white p-2 text-xs"><span className="text-neutral-400">Ship VN</span><div><b>{money(cc.vietnamShippingVnd)}</b></div><div className="text-neutral-400">{fmt(cc.totalKg,3)} kg × {money(cc.vnRate)}/kg</div></div><div className="rounded-xl bg-white p-2 text-xs"><span className="text-neutral-400">Ship/cây</span><div><b>{money(cc.shippingPerRollVnd)}</b></div></div><div className="rounded-xl bg-white p-2 text-xs"><span className="text-neutral-400">Tiền vải/cây</span><div><b>{money(cc.fabricPerRollVnd)}</b></div></div><div className="rounded-xl bg-neutral-950 p-2 text-xs text-white"><span className="text-neutral-400">Giá nhập bình quân/cây</span><div><b>{money(cc.landedPerRollVnd)}</b></div></div></div></div>})}<div className="grid gap-2 border-t pt-3 md:grid-cols-3"><div className="rounded-2xl bg-neutral-50 p-3 text-sm">Phí China <b>{fmt(liveCostSummary.chinaShippingCny,0)} CNY</b><div className="text-xs text-neutral-400">{money(liveCostSummary.chinaShippingVnd)}</div></div><div className="rounded-2xl bg-neutral-50 p-3 text-sm">Phí Việt Nam <b>{money(liveCostSummary.vietnamShippingVnd)}</b></div><div className="rounded-2xl bg-neutral-950 p-3 text-sm text-white">Tổng phí <b>{money(liveCostSummary.totalShippingVnd)}</b></div></div><div className="grid gap-2 md:grid-cols-2"><div className="rounded-2xl bg-emerald-50 p-4"><div className="text-xs font-semibold uppercase text-emerald-700">Tổng tiền vải</div><div className="mt-1 text-xl font-semibold">{money(liveCostSummary.goodsVnd)}</div><div className="text-xs text-emerald-700">{fmt(liveCostSummary.goodsCny,0)} CNY × {moneyInput(form.exchangeRateToVnd)}</div></div><div className="rounded-2xl bg-neutral-950 p-4 text-white"><div className="text-xs font-semibold uppercase text-neutral-400">Tổng đơn nhập vải</div><div className="mt-1 text-2xl font-semibold">{money(liveCostSummary.grandTotalVnd)}</div></div></div></div>}
         <Field label="Ghi chú"><textarea className={`${inputClass} min-h-24`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field><div className="rounded-2xl bg-neutral-50 p-4 text-sm"><b>Chênh lệch hiện tại:</b> {num(form.actualM)-num(form.supplierDeclaredM)>0?"+":""}{fmt(num(form.actualM)-num(form.supplierDeclaredM),3)} m · {num(form.actualKg)-num(form.supplierDeclaredKg)>0?"+":""}{fmt(num(form.actualKg)-num(form.supplierDeclaredKg),3)} kg</div><div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-2xl border px-4 py-2.5 text-sm">Đóng</button><button disabled={saving} onClick={save} className="rounded-2xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu phiếu"}</button></div>
   </div></Modal>;
