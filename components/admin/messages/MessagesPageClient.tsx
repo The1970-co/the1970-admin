@@ -1516,14 +1516,31 @@ export default function MessagesPageClient({
     scrollChatToBottom,
   ]);
 
+  const composerConversationIdRef = useRef("");
+
   useEffect(() => {
+    // Chỉ reset composer khi THỰC SỰ chuyển từ khách A sang khách B.
+    // activeId đôi lúc có thể tạm thành rỗng trong lúc list/filter/SSE refresh;
+    // nếu reset theo mọi thay đổi activeId thì thao tác xoá hết chữ có thể làm
+    // ảnh đính kèm biến mất dù người dùng không hề bấm xoá ảnh.
+    if (!activeId) return;
+
+    const previousConversationId = composerConversationIdRef.current;
+    const didSwitchConversation =
+      Boolean(previousConversationId) && previousConversationId !== activeId;
+
+    composerConversationIdRef.current = activeId;
+
     // Hủy quyền cập nhật của request lịch sử đơn của khách trước.
     orderHistoryRequestSeqRef.current += 1;
     setRightPanelTab("info");
     setQuickOrderSuccess("");
     setCustomerOrderHistory([]);
-    setDraft("");
-    setDraftImageUrls([]);
+
+    if (didSwitchConversation) {
+      setDraft("");
+      setDraftImageUrls([]);
+    }
   }, [activeId]);
 
   const loadCustomerOrderHistory = useCallback(async () => {
@@ -1568,22 +1585,27 @@ export default function MessagesPageClient({
       items: Array.isArray(order?.items) ? order.items : [],
     } as OmniQuickOrder);
 
-    const mergeOrders = (rows: OmniQuickOrder[]) => {
+    // Lịch sử đơn trong Omni chỉ được lấy từ liên kết conversation -> order.
+    // Không merge activeConversation.orders, state cũ hay /orders?q=phone vì các nguồn
+    // đó có thể chứa đơn không thuộc hội thoại hiện tại (đặc biệt đơn do Admin tạo).
+    const replaceLinkedOrders = (rows: OmniQuickOrder[]) => {
       if (requestSeq !== orderHistoryRequestSeqRef.current) return;
       setCustomerOrderHistory((prev) => {
+        const previousById = new Map(prev.map((order) => [String(order.id), order]));
         const map = new Map<string, OmniQuickOrder>();
-        [...rows, ...(activeConversation.orders || []), ...prev].forEach((order) => {
+
+        rows.forEach((order) => {
           if (!order?.id) return;
-          const existed = map.get(order.id) as any;
-          map.set(order.id, {
-            ...(existed || {}),
+          const existed = previousById.get(String(order.id)) as any;
+          map.set(String(order.id), {
             ...(order as any),
-            // Không cho response thiếu shipment ghi đè mất mã đã lấy được trước đó.
+            // Chỉ kế thừa tracking của CHÍNH order này nếu response mới thiếu shipment.
             trackingCode: (order as any)?.trackingCode || existed?.trackingCode || null,
             carrier: (order as any)?.carrier || existed?.carrier || null,
             shippingStatus: (order as any)?.shippingStatus || existed?.shippingStatus || null,
           } as OmniQuickOrder);
         });
+
         return Array.from(map.values()).sort((a, b) => {
           const aa = new Date(a.createdAt || 0).getTime();
           const bb = new Date(b.createdAt || 0).getTime();
@@ -1592,32 +1614,17 @@ export default function MessagesPageClient({
       });
     };
 
-    // Hiện ngay các đơn đã nằm trong detail hiện tại.
-    if ((activeConversation.orders || []).length) {
-      mergeOrders((activeConversation.orders || []).map(normalizeOrderForHistory));
-    }
-
+    // Xóa ngay dữ liệu của hội thoại trước để không giữ đơn cũ trong lúc request mới chạy.
+    setCustomerOrderHistory([]);
     setLoadingCustomerOrders(true);
+
     try {
-      // Nguồn chính: order được liên kết trực tiếp bằng omniConversationId.
-      // Không phụ thuộc SĐT, nên khách Facebook chưa lưu phone vẫn xem được đơn + mã GHN.
-      const linkedRequest = apiJson(
+      const linkedResponse: any = await apiJson(
         `/omni-inbox/conversations/${encodeURIComponent(targetConversationId)}/quick-orders`,
         { redirectOnUnauthorized: false, timeoutMs: 10000 } as any,
-      ).catch(() => [] as any[]);
+      );
 
-      const phone = String(activeConversation.customer?.phone || "").trim();
-      const phoneRequest = phone
-        ? apiJson(`/orders?page=1&pageSize=50&q=${encodeURIComponent(phone)}`, {
-            redirectOnUnauthorized: false,
-            timeoutMs: 15000,
-          } as any)
-        : Promise.resolve([] as any[]);
-
-      const [linkedResponse, phoneResponse]: any[] = await Promise.all([
-        linkedRequest,
-        phoneRequest,
-      ]);
+      if (requestSeq !== orderHistoryRequestSeqRef.current) return;
 
       const linkedRows = Array.isArray(linkedResponse)
         ? linkedResponse
@@ -1626,58 +1633,13 @@ export default function MessagesPageClient({
           : Array.isArray(linkedResponse?.data)
             ? linkedResponse.data
             : [];
-      const phoneRowsRaw = Array.isArray(phoneResponse)
-        ? phoneResponse
-        : Array.isArray(phoneResponse?.items)
-          ? phoneResponse.items
-          : Array.isArray(phoneResponse?.data)
-            ? phoneResponse.data
-            : [];
 
-      // /orders?q=... là search tổng quát, không được merge thẳng toàn bộ kết quả vào
-      // lịch sử Omni. Chỉ dùng nó làm fallback cho đơn cũ chưa có omniConversationId
-      // và bắt buộc SĐT của order phải khớp chính xác SĐT khách đang mở.
-      const normalizePhone = (value: unknown) =>
-        String(value || "").replace(/\D/g, "").replace(/^84(?=\d{9,10}$)/, "0");
-      const customerPhone = normalizePhone(phone);
-      const phoneRows = customerPhone
-        ? phoneRowsRaw.filter((order: any) => {
-            const linkedConversationId = String(order?.omniConversationId || "").trim();
-            if (linkedConversationId && linkedConversationId !== targetConversationId) {
-              return false;
-            }
-            const candidatePhones = [
-              order?.customerPhone,
-              order?.shippingPhone,
-              order?.phone,
-              order?.receiverPhone,
-              order?.recipientPhone,
-            ]
-              .map(normalizePhone)
-              .filter(Boolean);
-            return candidatePhones.includes(customerPhone);
-          })
-        : [];
-
-      const byId = new Map<string, OmniQuickOrder>();
-      [...linkedRows, ...phoneRows].map(normalizeOrderForHistory).forEach((order) => {
-        if (!order.id) return;
-        const old = byId.get(order.id) as any;
-        byId.set(order.id, {
-          ...(old || {}),
-          ...(order as any),
-          trackingCode: (order as any).trackingCode || old?.trackingCode || null,
-          carrier: (order as any).carrier || old?.carrier || null,
-          shippingStatus: (order as any).shippingStatus || old?.shippingStatus || null,
-        } as OmniQuickOrder);
-      });
-
-      const enriched = Array.from(byId.values());
+      const enriched = linkedRows.map(normalizeOrderForHistory);
       const missing = enriched
         .map((order, index) => ({ order, index }))
         .filter(({ order }) => Boolean(order.id) && !String((order as any).trackingCode || "").trim());
 
-      // Fallback chỉ cho đơn nào backend chưa include Shipment.
+      // Chỉ fallback timeline cho đúng các order đã được backend xác nhận thuộc conversation này.
       const CONCURRENCY = 6;
       for (let start = 0; start < missing.length; start += CONCURRENCY) {
         const batch = missing.slice(start, start + CONCURRENCY);
@@ -1689,6 +1651,7 @@ export default function MessagesPageClient({
             } as any),
           ),
         );
+
         results.forEach((result, i) => {
           if (result.status !== "fulfilled") return;
           const shipment = (result.value as any)?.shipment;
@@ -1703,7 +1666,12 @@ export default function MessagesPageClient({
         });
       }
 
-      mergeOrders(enriched);
+      replaceLinkedOrders(enriched);
+    } catch (error) {
+      if (requestSeq === orderHistoryRequestSeqRef.current) {
+        setCustomerOrderHistory([]);
+      }
+      throw error;
     } finally {
       if (requestSeq === orderHistoryRequestSeqRef.current) {
         setLoadingCustomerOrders(false);
