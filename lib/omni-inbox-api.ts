@@ -343,6 +343,13 @@ export type CreateOmniQuickOrderPayload = {
   items: Array<{ variantId: string; qty: number }>;
 };
 
+export function listOmniConversationQuickOrders(id: string) {
+  return apiJson<OmniQuickOrder[]>(
+    `/omni-inbox/conversations/${encodeURIComponent(id)}/quick-orders`,
+    { redirectOnUnauthorized: false, timeoutMs: 10000 } as any,
+  );
+}
+
 export function createOmniQuickOrder(
   id: string,
   body: CreateOmniQuickOrderPayload,

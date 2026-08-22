@@ -48,6 +48,7 @@ import {
   updateOmniNoteTemplate,
   deleteOmniNoteTemplate,
   createOmniQuickOrder,
+  listOmniConversationQuickOrders,
   cancelOmniQuickOrder,
   deleteOmniQuickOrder,
   getOmniConversation,
@@ -1601,10 +1602,9 @@ export default function MessagesPageClient({
     try {
       // Nguồn chính: order được liên kết trực tiếp bằng omniConversationId.
       // Không phụ thuộc SĐT, nên khách Facebook chưa lưu phone vẫn xem được đơn + mã GHN.
-      const linkedRequest = apiJson(
-        `/omni-inbox/conversations/${encodeURIComponent(targetConversationId)}/quick-orders`,
-        { redirectOnUnauthorized: false, timeoutMs: 10000 } as any,
-      ).catch(() => [] as any[]);
+      const linkedRequest = listOmniConversationQuickOrders(targetConversationId).catch(
+        () => [] as OmniQuickOrder[],
+      );
 
       const phone = String(activeConversation.customer?.phone || "").trim();
       const phoneRequest = phone
