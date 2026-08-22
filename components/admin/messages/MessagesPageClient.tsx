@@ -48,7 +48,6 @@ import {
   updateOmniNoteTemplate,
   deleteOmniNoteTemplate,
   createOmniQuickOrder,
-  listOmniConversationQuickOrders,
   cancelOmniQuickOrder,
   deleteOmniQuickOrder,
   getOmniConversation,
@@ -1602,9 +1601,10 @@ export default function MessagesPageClient({
     try {
       // Nguồn chính: order được liên kết trực tiếp bằng omniConversationId.
       // Không phụ thuộc SĐT, nên khách Facebook chưa lưu phone vẫn xem được đơn + mã GHN.
-      const linkedRequest = listOmniConversationQuickOrders(targetConversationId).catch(
-        () => [] as OmniQuickOrder[],
-      );
+      const linkedRequest = apiJson(
+        `/omni-inbox/conversations/${encodeURIComponent(targetConversationId)}/quick-orders`,
+        { redirectOnUnauthorized: false, timeoutMs: 10000 } as any,
+      ).catch(() => [] as any[]);
 
       const phone = String(activeConversation.customer?.phone || "").trim();
       const phoneRequest = phone
@@ -1626,13 +1626,38 @@ export default function MessagesPageClient({
           : Array.isArray(linkedResponse?.data)
             ? linkedResponse.data
             : [];
-      const phoneRows = Array.isArray(phoneResponse)
+      const phoneRowsRaw = Array.isArray(phoneResponse)
         ? phoneResponse
         : Array.isArray(phoneResponse?.items)
           ? phoneResponse.items
           : Array.isArray(phoneResponse?.data)
             ? phoneResponse.data
             : [];
+
+      // /orders?q=... là search tổng quát, không được merge thẳng toàn bộ kết quả vào
+      // lịch sử Omni. Chỉ dùng nó làm fallback cho đơn cũ chưa có omniConversationId
+      // và bắt buộc SĐT của order phải khớp chính xác SĐT khách đang mở.
+      const normalizePhone = (value: unknown) =>
+        String(value || "").replace(/\D/g, "").replace(/^84(?=\d{9,10}$)/, "0");
+      const customerPhone = normalizePhone(phone);
+      const phoneRows = customerPhone
+        ? phoneRowsRaw.filter((order: any) => {
+            const linkedConversationId = String(order?.omniConversationId || "").trim();
+            if (linkedConversationId && linkedConversationId !== targetConversationId) {
+              return false;
+            }
+            const candidatePhones = [
+              order?.customerPhone,
+              order?.shippingPhone,
+              order?.phone,
+              order?.receiverPhone,
+              order?.recipientPhone,
+            ]
+              .map(normalizePhone)
+              .filter(Boolean);
+            return candidatePhones.includes(customerPhone);
+          })
+        : [];
 
       const byId = new Map<string, OmniQuickOrder>();
       [...linkedRows, ...phoneRows].map(normalizeOrderForHistory).forEach((order) => {
@@ -1729,7 +1754,13 @@ export default function MessagesPageClient({
           const conversation = payload as OmniConversation;
           setConversations((prev) => {
             const existed = prev.some((item) => item.id === conversation.id);
+
+            // Khi đang tìm kiếm, giữ nguyên tập kết quả hiện tại.
+            // Tin nhắn/hội thoại mới từ SSE không được chen vào danh sách search.
+            // Nếu hội thoại đã nằm trong kết quả thì vẫn cập nhật unread/tên/avatar/nội dung mới.
+            if (!existed && debouncedSearch.trim()) return prev;
             if (!existed) return [conversation, ...prev];
+
             return prev.map((item) =>
               item.id === conversation.id ? { ...item, ...conversation } : item,
             );
@@ -1754,7 +1785,7 @@ export default function MessagesPageClient({
     return () => {
       source?.close();
     };
-  }, [activeId, loadList]);
+  }, [activeId, debouncedSearch, loadList]);
 
   const visibleConversations = useMemo(() => {
     // Bình luận Facebook dùng chung channel FACEBOOK ở backend, nên phải
@@ -4676,7 +4707,7 @@ export default function MessagesPageClient({
                                 Lịch sử đơn hàng
                               </h3>
                               <p className="mt-1 text-xs text-neutral-500">
-                                Các đơn của khách theo số điện thoại, mới nhất trước.
+                                Ưu tiên đơn liên kết trực tiếp với hội thoại; đơn cũ chỉ được ghép khi SĐT khớp chính xác.
                               </p>
                             </div>
                             <button
@@ -4794,6 +4825,8 @@ export default function MessagesPageClient({
                                   <div className="mt-3 flex flex-wrap gap-2">
                                     <a
                                       href={`/orders/${order.id}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
                                       className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold"
                                     >
                                       Mở đơn
