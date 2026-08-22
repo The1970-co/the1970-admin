@@ -1515,15 +1515,53 @@ export default function MessagesPageClient({
   const loadCustomerOrderHistory = useCallback(async () => {
     if (!activeConversation) return;
 
-    const conversationOrders = activeConversation.orders || [];
+    const normalizeOrderForHistory = (order: any): OmniQuickOrder => ({
+      id: String(order?.id || ""),
+      orderCode: String(order?.orderCode || ""),
+      status: String(order?.status || ""),
+      source: order?.source || order?.salesChannel || null,
+      customerName: order?.customerName || null,
+      customerPhone: order?.customerPhone || order?.shippingPhone || null,
+      shippingAddressLine1: order?.shippingAddressLine1 || null,
+      shippingAddressLine2: order?.shippingAddressLine2 || null,
+      shippingProvince: order?.shippingProvince || null,
+      shippingDistrict: order?.shippingDistrict || null,
+      shippingWard: order?.shippingWard || null,
+      carrier:
+        order?.shipment?.carrier ||
+        (Array.isArray(order?.shipments) ? order.shipments[0]?.carrier : null) ||
+        order?.carrier ||
+        null,
+      trackingCode:
+        order?.shipment?.trackingCode ||
+        (Array.isArray(order?.shipments) ? order.shipments[0]?.trackingCode : null) ||
+        order?.trackingCode ||
+        order?.ghnTrackingCode ||
+        null,
+      shippingStatus:
+        order?.shipment?.shippingStatus ||
+        (Array.isArray(order?.shipments) ? order.shipments[0]?.shippingStatus : null) ||
+        order?.shippingStatus ||
+        null,
+      finalAmount: Number(order?.finalAmount || 0),
+      createdAt: order?.createdAt || null,
+      items: Array.isArray(order?.items) ? order.items : [],
+    } as OmniQuickOrder);
 
-    // Luôn giữ đơn vừa tạo trong state trước khi gọi API lịch sử.
-    // Tránh request chậm/response rỗng ghi đè làm giao diện báo không có đơn.
-    if (conversationOrders.length) {
+    const mergeOrders = (rows: OmniQuickOrder[]) => {
       setCustomerOrderHistory((prev) => {
         const map = new Map<string, OmniQuickOrder>();
-        [...conversationOrders, ...prev].forEach((order) => {
-          if (order?.id) map.set(order.id, order);
+        [...rows, ...(activeConversation.orders || []), ...prev].forEach((order) => {
+          if (!order?.id) return;
+          const existed = map.get(order.id) as any;
+          map.set(order.id, {
+            ...(existed || {}),
+            ...(order as any),
+            // Không cho response thiếu shipment ghi đè mất mã đã lấy được trước đó.
+            trackingCode: (order as any)?.trackingCode || existed?.trackingCode || null,
+            carrier: (order as any)?.carrier || existed?.carrier || null,
+            shippingStatus: (order as any)?.shippingStatus || existed?.shippingStatus || null,
+          } as OmniQuickOrder);
         });
         return Array.from(map.values()).sort((a, b) => {
           const aa = new Date(a.createdAt || 0).getTime();
@@ -1531,77 +1569,73 @@ export default function MessagesPageClient({
           return bb - aa;
         });
       });
+    };
+
+    // Hiện ngay các đơn đã nằm trong detail hiện tại.
+    if ((activeConversation.orders || []).length) {
+      mergeOrders((activeConversation.orders || []).map(normalizeOrderForHistory));
     }
-
-    const phone = String(
-      activeConversation.customer?.phone || "",
-    ).trim();
-
-    if (!phone) return;
 
     setLoadingCustomerOrders(true);
     try {
-      const response: any = await apiJson(
-        `/orders?page=1&pageSize=50&q=${encodeURIComponent(phone)}`,
-        {
-          redirectOnUnauthorized: false,
-          timeoutMs: 15000,
-        } as any,
-      );
+      // Nguồn chính: order được liên kết trực tiếp bằng omniConversationId.
+      // Không phụ thuộc SĐT, nên khách Facebook chưa lưu phone vẫn xem được đơn + mã GHN.
+      const linkedRequest = apiJson(
+        `/omni-inbox/conversations/${encodeURIComponent(activeConversation.id)}/quick-orders`,
+        { redirectOnUnauthorized: false, timeoutMs: 10000 } as any,
+      ).catch(() => [] as any[]);
 
-      const rows = Array.isArray(response)
-        ? response
-        : Array.isArray(response?.items)
-          ? response.items
-          : Array.isArray(response?.data)
-            ? response.data
+      const phone = String(activeConversation.customer?.phone || "").trim();
+      const phoneRequest = phone
+        ? apiJson(`/orders?page=1&pageSize=50&q=${encodeURIComponent(phone)}`, {
+            redirectOnUnauthorized: false,
+            timeoutMs: 15000,
+          } as any).catch(() => [] as any)
+        : Promise.resolve([] as any[]);
+
+      const [linkedResponse, phoneResponse]: any[] = await Promise.all([
+        linkedRequest,
+        phoneRequest,
+      ]);
+
+      const linkedRows = Array.isArray(linkedResponse)
+        ? linkedResponse
+        : Array.isArray(linkedResponse?.items)
+          ? linkedResponse.items
+          : Array.isArray(linkedResponse?.data)
+            ? linkedResponse.data
+            : [];
+      const phoneRows = Array.isArray(phoneResponse)
+        ? phoneResponse
+        : Array.isArray(phoneResponse?.items)
+          ? phoneResponse.items
+          : Array.isArray(phoneResponse?.data)
+            ? phoneResponse.data
             : [];
 
-      const normalized = rows.map((order: any) => ({
-        id: String(order.id || ""),
-        orderCode: String(order.orderCode || ""),
-        status: String(order.status || ""),
-        source: order.source || order.salesChannel || null,
-        customerName: order.customerName || null,
-        customerPhone: order.customerPhone || order.shippingPhone || null,
-        shippingAddressLine1: order.shippingAddressLine1 || null,
-        shippingAddressLine2: order.shippingAddressLine2 || null,
-        shippingProvince: order.shippingProvince || null,
-        shippingDistrict: order.shippingDistrict || null,
-        shippingWard: order.shippingWard || null,
-        carrier:
-          order.shipment?.carrier ||
-          (Array.isArray(order.shipments) ? order.shipments[0]?.carrier : null) ||
-          order.carrier ||
-          null,
-        trackingCode:
-          order.shipment?.trackingCode ||
-          (Array.isArray(order.shipments) ? order.shipments[0]?.trackingCode : null) ||
-          order.trackingCode ||
-          order.ghnTrackingCode ||
-          null,
-        shippingStatus:
-          order.shipment?.shippingStatus ||
-          (Array.isArray(order.shipments) ? order.shipments[0]?.shippingStatus : null) ||
-          order.shippingStatus ||
-          null,
-        finalAmount: Number(order.finalAmount || 0),
-        createdAt: order.createdAt || null,
-        items: Array.isArray(order.items) ? order.items : [],
-      })) as OmniQuickOrder[];
+      const byId = new Map<string, OmniQuickOrder>();
+      [...linkedRows, ...phoneRows].map(normalizeOrderForHistory).forEach((order) => {
+        if (!order.id) return;
+        const old = byId.get(order.id) as any;
+        byId.set(order.id, {
+          ...(old || {}),
+          ...(order as any),
+          trackingCode: (order as any).trackingCode || old?.trackingCode || null,
+          carrier: (order as any).carrier || old?.carrier || null,
+          shippingStatus: (order as any).shippingStatus || old?.shippingStatus || null,
+        } as OmniQuickOrder);
+      });
 
-      // API danh sách /orders hiện có lúc không include relation Shipment, nên
-      // trackingCode bị mất dù DB Shipment vẫn có mã GHN. Bổ sung từ endpoint
-      // timeline nội bộ (chỉ đọc DB, không gọi live GHN) cho những đơn thiếu mã.
-      const enriched = [...normalized];
-      const missingShipmentIndexes = enriched
+      const enriched = Array.from(byId.values());
+      const missing = enriched
         .map((order, index) => ({ order, index }))
-        .filter(({ order }) => Boolean(order?.id) && !String((order as any)?.trackingCode || "").trim());
+        .filter(({ order }) => Boolean(order.id) && !String((order as any).trackingCode || "").trim());
 
-      const SHIPMENT_LOOKUP_CONCURRENCY = 6;
-      for (let start = 0; start < missingShipmentIndexes.length; start += SHIPMENT_LOOKUP_CONCURRENCY) {
-        const batch = missingShipmentIndexes.slice(start, start + SHIPMENT_LOOKUP_CONCURRENCY);
-        const shipmentResults = await Promise.allSettled(
+      // Fallback chỉ cho đơn nào backend chưa include Shipment.
+      const CONCURRENCY = 6;
+      for (let start = 0; start < missing.length; start += CONCURRENCY) {
+        const batch = missing.slice(start, start + CONCURRENCY);
+        const results = await Promise.allSettled(
           batch.map(({ order }) =>
             apiJson(`/shipments/order/${encodeURIComponent(String(order.id))}/timeline`, {
               redirectOnUnauthorized: false,
@@ -1609,43 +1643,21 @@ export default function MessagesPageClient({
             } as any),
           ),
         );
-
-        shipmentResults.forEach((result, batchIndex) => {
+        results.forEach((result, i) => {
           if (result.status !== "fulfilled") return;
           const shipment = (result.value as any)?.shipment;
-          if (!shipment) return;
-          const targetIndex = batch[batchIndex]?.index;
-          if (typeof targetIndex !== "number") return;
-          enriched[targetIndex] = {
-            ...(enriched[targetIndex] as any),
-            carrier: shipment.carrier || (enriched[targetIndex] as any)?.carrier || null,
-            trackingCode:
-              shipment.trackingCode || (enriched[targetIndex] as any)?.trackingCode || null,
-            shippingStatus:
-              shipment.shippingStatus || (enriched[targetIndex] as any)?.shippingStatus || null,
+          const target = batch[i]?.index;
+          if (!shipment || typeof target !== "number") return;
+          enriched[target] = {
+            ...(enriched[target] as any),
+            carrier: shipment.carrier || (enriched[target] as any)?.carrier || null,
+            trackingCode: shipment.trackingCode || (enriched[target] as any)?.trackingCode || null,
+            shippingStatus: shipment.shippingStatus || (enriched[target] as any)?.shippingStatus || null,
           } as OmniQuickOrder;
         });
       }
 
-      setCustomerOrderHistory((prev) => {
-        const map = new Map<string, OmniQuickOrder>();
-        [
-          ...enriched,
-          ...(activeConversation.orders || []),
-          ...prev,
-        ].forEach((order) => {
-          if (order?.id) map.set(order.id, order);
-        });
-
-        return Array.from(map.values()).sort((a, b) => {
-          const aa = new Date(a.createdAt || 0).getTime();
-          const bb = new Date(b.createdAt || 0).getTime();
-          return bb - aa;
-        });
-      });
-    } catch {
-      // Giữ nguyên đơn đã có trong state; không để lỗi tìm kiếm/xử lý chậm
-      // làm giao diện quay về trạng thái "không có đơn hàng".
+      mergeOrders(enriched);
     } finally {
       setLoadingCustomerOrders(false);
     }

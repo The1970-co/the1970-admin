@@ -5,13 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 import { hasPermission, type AppRole } from "@/lib/authz";
-import { getProducts } from "@/lib/products-api";
 
 type Section = "library" | "samples" | "fabric" | "measurements";
 type Supplier = { id: string; code: string; name: string; phone?: string | null; email?: string | null; address?: string | null; note?: string | null };
 type Branch = { id: string; name: string };
 type Staff = { id: string; code: string; name: string; branchId?: string | null };
-type ProductOption = { id:string; name:string; slug:string; imageUrl?:string|null; status?:string|null };
 type Factory = { id: string; code: string; name: string; contactName?: string | null; phone?: string | null };
 
 type BoardColor = { id?: string; name: string; code?: string | null; imageUrl?: string | null; note?: string | null };
@@ -37,7 +35,7 @@ type Sample = {
   sampleDispatches?: Dispatch[]; matchedProduct?: { id:string; name:string; slug:string; imageUrl?:string|null } | null; producedProduct?: { id:string; name:string; slug:string; imageUrl?:string|null } | null;
   supplierId?: string | null; supplier?: Supplier | null; fabricBoardCode?: string | null; fabricCode?: string | null; fabricComposition?: string | null;
   status: string; assigneeStaffId?: string | null; assigneeName?: string | null; nextAction?: string | null;
-  dueDate?: string | null; coverImageUrl?: string | null; note?: string | null; technicalNote?: string | null;
+  dueDate?: string | null; coverImageUrl?: string | null; note?: string | null; technicalNote?: string | null; createdAt?: string | null; updatedAt?: string | null;
   colors: SampleColor[]; images?: Array<{ id?: string; url: string; caption?: string | null }>;
   progressLogs?: Array<{ id: string; fromStatus?: string | null; toStatus: string; note?: string | null; actorName?: string | null; createdAt: string }>;
   _count?: { fabricReceipts: number };
@@ -185,6 +183,32 @@ type WorkspaceMeta = {
   products?: Array<{id:string;name:string;slug:string;imageUrl?:string|null;status?:string|null}>;
 };
 
+
+function sampleParentCategory(category?:string|null){
+  const raw=String(category||"").trim();
+  const x=raw.toLocaleLowerCase("vi-VN");
+  if(!x)return "Chưa phân loại";
+  if(/\b(quần|short|jean|denim pants|pants|chino)\b/.test(x))return "Quần";
+  if(/\b(áo|shirt|jacket|coat|blazer|polo|sơ mi|sweater|len|hoodie|parka|tee|t-shirt)\b/.test(x))return "Áo";
+  if(/\b(mũ|nón|túi|thắt lưng|belt|phụ kiện|ví|giày|dép)\b/.test(x))return "Phụ kiện";
+  return "Khác";
+}
+function sampleVisuals(row:Sample){
+  const urls=[
+    row.coverImageUrl,
+    ...(row.images||[]).map(x=>x?.url),
+    row.matchedProduct?.imageUrl,
+    row.producedProduct?.imageUrl,
+  ].filter(Boolean).map(String);
+  return Array.from(new Set(urls));
+}
+function sampleCreatedLabel(value?:string|null){
+  if(!value)return "Chưa có ngày tạo";
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return "Chưa có ngày tạo";
+  return d.toLocaleDateString("vi-VN",{day:"2-digit",month:"2-digit",year:"numeric"});
+}
+
 function usePermissions() {
   const user = getCurrentUserFromStorage() as any;
   const role = String(user?.role || "").toLowerCase() as AppRole;
@@ -217,7 +241,6 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
   const [productGroups, setProductGroups] = useState<string[]>([]);
   const [fabricCompositions, setFabricCompositions] = useState<string[]>([]);
   const [metaSamples, setMetaSamples] = useState<Array<Pick<Sample,"id"|"code"|"name"|"year"|"fabricBoardCode"|"fabricCode">>>([]);
-  const [catalogProducts, setCatalogProducts] = useState<ProductOption[]>([]);
   const [workspaceMeta, setWorkspaceMeta] = useState<WorkspaceMeta>({ suppliers: [], staff: [], seasons: [], productGroups: [], fabricCompositions: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -261,24 +284,11 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     const params = new URLSearchParams();
     if (receiptStatus) params.set("status", receiptStatus);
     if (q.trim()) params.set("q", q.trim());
-    const [rows, meta, productResult] = await Promise.all([
+    const [rows, meta] = await Promise.all([
       api<FabricReceipt[]>(`/sample-fabric/fabric-receipts${params.toString() ? `?${params}` : ""}`),
       api<WorkspaceMeta>("/sample-fabric/fabric-receipts/meta"),
-      (getProducts as any)({ page: 1, limit: 2000 }).catch(() => ({ data: [] })),
     ]);
-    const productRows = Array.isArray(productResult) ? productResult : (productResult?.data || []);
-    const normalizedProducts:ProductOption[] = (Array.isArray(productRows) ? productRows : [])
-      .map((p:any)=>({
-        id:String(p?.id||""),
-        name:String(p?.name||"").trim(),
-        slug:String(p?.slug||p?.skuCode||p?.code||"").trim(),
-        imageUrl:p?.imageUrl||null,
-        status:p?.status||null,
-      }))
-      .filter((p:ProductOption)=>p.id&&p.name)
-      .sort((a:ProductOption,b:ProductOption)=>a.name.localeCompare(b.name,"vi",{numeric:true,sensitivity:"base"}));
-    setCatalogProducts(normalizedProducts);
-    setReceipts(rows); setWorkspaceMeta({ ...meta, products: normalizedProducts }); setSuppliers(meta.suppliers || []); setBranches(meta.branches || []); setStaff(meta.staff || []);
+    setReceipts(rows); setWorkspaceMeta(meta); setSuppliers(meta.suppliers || []); setBranches(meta.branches || []); setStaff(meta.staff || []);
     setMetaSamples((meta.samples || []).map((s:any)=>({ ...s, fabricBoardCode: (s as any).fabricBoardCode, fabricCode: (s as any).fabricCode })));
   }
   async function reload() {
@@ -346,7 +356,7 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
     {boardDetail && <BoardDetail board={boardDetail} can={can} onClose={()=>setBoardDetail(null)}/>}
     {dispatchSample && dispatchSample.fabricBoard && <DispatchForm board={dispatchSample.fabricBoard} sample={dispatchSample} meta={workspaceMeta} onClose={()=>setDispatchSample(null)} onSaved={async()=>{setDispatchSample(null);await reload()}}/>}
     {showSampleForm && <SampleForm sample={editingSample} measurementTemplates={measurementTemplates} boards={workspaceMeta.boards || []} staff={staff} seasons={seasons} productGroups={productGroups} canUpload={can("design_sample.upload_images")} canViewFabricLink={owner} factories={workspaceMeta.factories || []} onClose={()=>setShowSampleForm(false)} onSaved={async()=>{setShowSampleForm(false);await reload()}} />}
-    {showReceiptForm && <ReceiptForm receipt={editingReceipt} suppliers={suppliers} branches={branches} staff={staff} samples={metaSamples} products={catalogProducts} boards={workspaceMeta.boards || []} canFabricBoardLink={can("fabric_receipt.fabric_board_link")} canSupplierIdentity={can("fabric_receipt.supplier_identity.view")} canCostView={can("fabric_receipt.cost.view") || can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setShowReceiptForm(false)} onSaved={async()=>{setShowReceiptForm(false);await reload()}} />}
+    {showReceiptForm && <ReceiptForm receipt={editingReceipt} suppliers={suppliers} branches={branches} staff={staff} samples={metaSamples} products={workspaceMeta.products || []} boards={workspaceMeta.boards || []} canFabricBoardLink={can("fabric_receipt.fabric_board_link")} canSupplierIdentity={can("fabric_receipt.supplier_identity.view")} canCostView={can("fabric_receipt.cost.view") || can("fabric_receipt.cost.edit")} canCostEdit={can("fabric_receipt.cost.edit")} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setShowReceiptForm(false)} onSaved={async()=>{setShowReceiptForm(false);await reload()}} />}
     {measurementEdit && <MeasurementEditor initial={measurementEdit} onClose={()=>setMeasurementEdit(null)} onSave={row=>{const next=[...measurementTemplates.filter(x=>x.id!==row.id),{...row,updatedAt:new Date().toISOString()}].sort((a,b)=>a.name.localeCompare(b.name,"vi"));saveMeasurementTemplates(next);setMeasurementTemplates(next);setMeasurementEdit(null)}}/>}
     {measureReceipt && <MeasurementForm receipt={measureReceipt} canUpload={can("fabric_receipt.upload_images")} onClose={()=>setMeasureReceipt(null)} onSaved={async()=>{setMeasureReceipt(null);await reload()}} />}
   </div>;
@@ -681,16 +691,159 @@ function DispatchForm({board,sample,meta,onClose,onSaved}:{board:FabricBoard;sam
 }
 
 function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sample[]; can: (k:string)=>boolean; onEdit:(x:Sample)=>void; onDispatch:(x:Sample)=>void; onChanged:()=>Promise<void> }) {
-  const stats = useMemo(()=>({ total: rows.length, active: rows.filter(x=>!["COMPLETED","ON_HOLD"].includes(x.status)).length, approved: rows.filter(x=>["APPROVED_FOR_PRODUCTION","IN_PRODUCTION","COMPLETED"].includes(x.status)).length, late: rows.filter(x=>x.dueDate && !["COMPLETED","ON_HOLD"].includes(x.status) && new Date(x.dueDate).getTime() < Date.now()).length }),[rows]);
-  return <>
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Tổng mẫu",stats.total],["Đang triển khai",stats.active],["Đã duyệt SX",stats.approved],["Chậm tiến độ",stats.late]].map(([l,v])=><Card key={l} className="p-4"><div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{l}</div><div className="mt-2 text-2xl font-semibold">{v}</div></Card>)}</div>
-    <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{rows.map(row=>{const latest=row.sampleDispatches?.[0];return <Card key={row.id} className="overflow-hidden">
-      <div className="flex gap-4 p-4"><div className="h-28 w-24 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{row.coverImageUrl?<img src={assetUrl(row.coverImageUrl)} className="h-full w-full object-cover"/>:<div className="flex h-full items-center justify-center text-2xl text-neutral-300">✦</div>}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div><div className="mt-1 text-lg font-semibold">{row.name}</div></div><Badge status={row.status}>{statusLabel(row.status,SAMPLE_STATUSES)}</Badge></div><div className="mt-3 grid gap-y-1 text-xs text-neutral-600">{can("fabric_library.view")&&<div>Bảng vải: <b>{row.fabricBoard?.boardCode||row.fabricBoardCode||"—"}</b>{row.fabricColor&&<> · <b>{row.fabricColor.name}{row.fabricColor.code?` · ${row.fabricColor.code}`:""}</b></>}</div>}<div>Nhóm: <b>{row.category||"—"}</b> · Phụ trách: <b>{row.assigneeName||"—"}</b></div></div></div></div>
-      <div className="border-t border-neutral-100 px-4 py-3">{latest?<div className="rounded-2xl bg-neutral-50 p-3 text-xs"><div className="flex items-center justify-between gap-2"><b>Gửi gần nhất: {latest.recipientName}</b><Badge tone={latest.status==="APPROVED"?"green":latest.status==="REVISING"?"amber":"blue"}>{statusLabel(latest.status,DISPATCH_STATUSES)}</Badge></div><div className="mt-1 text-neutral-500">Ngày gửi {date(latest.sentAt)} · Hạn {date(latest.dueDate)} · Người gửi {latest.sentByName||"—"}</div></div>:<div className="text-xs text-neutral-400">Chưa ghi nhận lần gửi mẫu nào.</div>}
-        <div className="mt-3 flex items-center justify-between gap-3"><div className="min-w-0 text-xs text-neutral-500">{row.nextAction?<>Tiếp theo: <b>{row.nextAction}</b></>:"Chưa ghi việc tiếp theo"}</div><div className="flex shrink-0 flex-wrap gap-2">{can("sample_dispatch.create")&&can("fabric_library.view")&&row.fabricBoard&&<button onClick={()=>onDispatch(row)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Gửi / gửi lại</button>}{can("design_sample.edit")&&<button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}{can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await onChanged()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}</div></div>
+  const [tab,setTab]=useState<"IDEA"|"DEPLOY">("IDEA");
+  const [parentFilter,setParentFilter]=useState("");
+  const [subFilter,setSubFilter]=useState("");
+  const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
+  const [groupByCategory,setGroupByCategory]=useState(true);
+  const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST">("CARDS");
+  const [featuredId,setFeaturedId]=useState<string>("");
+  const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
+
+  const stats = useMemo(()=>({
+    total: rows.length,
+    idea: rows.filter(x=>String(x.status||"IDEA")==="IDEA").length,
+    deploy: rows.filter(x=>String(x.status||"IDEA")!=="IDEA").length,
+    approved: rows.filter(x=>["APPROVED_FOR_PRODUCTION","IN_PRODUCTION","COMPLETED"].includes(x.status)).length,
+  }),[rows]);
+
+  const parentOptions=useMemo(()=>Array.from(new Set(rows.map(x=>sampleParentCategory(x.category)))).sort((a,b)=>a.localeCompare(b,"vi")),[rows]);
+  const subOptions=useMemo(()=>Array.from(new Set(rows.filter(x=>!parentFilter||sampleParentCategory(x.category)===parentFilter).map(x=>String(x.category||"Chưa phân loại").trim()||"Chưa phân loại"))).sort((a,b)=>a.localeCompare(b,"vi")),[rows,parentFilter]);
+
+  const visible=useMemo(()=>{
+    const next=rows.filter(row=>{
+      const inTab=tab==="IDEA"?String(row.status||"IDEA")==="IDEA":String(row.status||"IDEA")!=="IDEA";
+      if(!inTab)return false;
+      if(parentFilter&&sampleParentCategory(row.category)!==parentFilter)return false;
+      if(subFilter&&String(row.category||"Chưa phân loại").trim()!==subFilter)return false;
+      return true;
+    });
+    return [...next].sort((a,b)=>{
+      if(sortMode==="AZ")return String(a.name||a.code).localeCompare(String(b.name||b.code),"vi",{numeric:true,sensitivity:"base"});
+      const bt=new Date(b.createdAt||b.updatedAt||`${b.year}-01-01`).getTime()||0;
+      const at=new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0;
+      return bt-at;
+    });
+  },[rows,tab,parentFilter,subFilter,sortMode]);
+
+  const grouped=useMemo(()=>{
+    if(!groupByCategory)return [{name:"Tất cả mẫu",rows:visible}];
+    const map=new Map<string,Sample[]>();
+    visible.forEach(row=>{
+      const name=String(row.category||"Chưa phân loại").trim()||"Chưa phân loại";
+      map.set(name,[...(map.get(name)||[]),row]);
+    });
+    return Array.from(map.entries()).sort(([a],[b])=>a.localeCompare(b,"vi")).map(([name,items])=>({name,rows:items}));
+  },[visible,groupByCategory]);
+
+  const featured=visible.find(x=>x.id===featuredId)||visible[0]||null;
+  const featuredImages=featured?sampleVisuals(featured):[];
+
+  async function moveSample(row:Sample,target:"IDEA"|"DEPLOY"){
+    if(!can("design_sample.edit"))return;
+    try{
+      await api(`/sample-fabric/samples/${row.id}`,{method:"PATCH",body:JSON.stringify({status:target==="IDEA"?"IDEA":"FABRIC_SELECTED"})});
+      setTab(target);
+      await onChanged();
+    }catch(e){window.alert(e instanceof Error?e.message:"Không chuyển được mẫu.")}
+  }
+
+  function SampleImageStack({row,large=false}:{row:Sample;large?:boolean}){
+    const images=sampleVisuals(row);
+    const primary=images[0];
+    return <button type="button" onClick={()=>primary&&setViewer({sample:row,index:0})} className={`relative shrink-0 overflow-hidden rounded-2xl bg-neutral-100 text-left ${large?"h-[420px] w-full":"h-28 w-28"}`}>
+      {primary?<img src={assetUrl(primary)} className="h-full w-full object-cover"/>:<div className="flex h-full items-center justify-center text-2xl text-neutral-300">✦</div>}
+      {images.length>1&&<div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-xl bg-black/70 p-1">
+        {images.slice(1,3).map((url,i)=><img key={url} src={assetUrl(url)} className="h-8 w-8 rounded-lg border border-white/40 object-cover"/>)}
+        {images.length>3&&<span className="px-1 text-[10px] font-bold text-white">+{images.length-3}</span>}
+      </div>}
+    </button>;
+  }
+
+  function SampleCard({row}:{row:Sample}){
+    const latest=row.sampleDispatches?.[0];
+    return <Card className="overflow-hidden">
+      <div className="flex gap-4 p-4">
+        <SampleImageStack row={row}/>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div>
+              <div className="mt-1 text-lg font-semibold">{row.name}</div>
+            </div>
+            <Badge status={row.status}>{statusLabel(row.status,SAMPLE_STATUSES)}</Badge>
+          </div>
+          <div className="mt-3 grid gap-y-1 text-xs text-neutral-600">
+            <div>Tạo: <b>{sampleCreatedLabel(row.createdAt)}</b> · {sampleParentCategory(row.category)} / <b>{row.category||"Chưa phân loại"}</b></div>
+            <div>Bảng vải: <b>{row.fabricBoard?.boardCode||row.fabricBoardCode||"—"}</b> · Phụ trách: <b>{row.assigneeName||"—"}</b></div>
+          </div>
+        </div>
       </div>
-    </Card>})}</div>
-    {!rows.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu nào.</Card>}
+      <div className="border-t border-neutral-100 px-4 py-3">
+        {latest?<div className="rounded-2xl bg-neutral-50 p-3 text-xs"><div className="flex items-center justify-between gap-2"><b>Gửi gần nhất: {latest.recipientName}</b><Badge tone={latest.status==="APPROVED"?"green":latest.status==="REVISING"?"amber":"blue"}>{statusLabel(latest.status,DISPATCH_STATUSES)}</Badge></div><div className="mt-1 text-neutral-500">Ngày gửi {date(latest.sentAt)} · Hạn {date(latest.dueDate)} · Người gửi {latest.sentByName||"—"}</div></div>:<div className="text-xs text-neutral-400">Chưa ghi nhận lần gửi mẫu nào.</div>}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="min-w-0 text-xs text-neutral-500">{row.nextAction?<>Tiếp theo: <b>{row.nextAction}</b></>:"Chưa ghi việc tiếp theo"}</div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {can("design_sample.edit")&&<button onClick={()=>void moveSample(row,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">{tab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}</button>}
+            {can("sample_dispatch.create")&&row.fabricBoard&&tab==="DEPLOY"&&<button onClick={()=>onDispatch(row)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Gửi / gửi lại</button>}
+            {can("design_sample.edit")&&<button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
+            {can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await onChanged()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}
+          </div>
+        </div>
+      </div>
+    </Card>;
+  }
+
+  return <>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Tổng mẫu",stats.total],["Ý tưởng",stats.idea],["Đang triển khai",stats.deploy],["Đã duyệt SX",stats.approved]].map(([l,v])=><Card key={l} className="p-4"><div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{l}</div><div className="mt-2 text-2xl font-semibold">{v}</div></Card>)}</div>
+
+    <Card className="overflow-hidden">
+      <div className="grid grid-cols-2 border-b bg-neutral-50 p-1">
+        <button type="button" onClick={()=>setTab("IDEA")} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {stats.idea}</button>
+        <button type="button" onClick={()=>setTab("DEPLOY")} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {stats.deploy}</button>
+      </div>
+      <div className="grid gap-3 p-4 xl:grid-cols-[1fr_1fr_auto]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <select className={inputClass} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+          <select className={inputClass} value={subFilter} onChange={e=>setSubFilter(e.target.value)}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><input type="checkbox" checked={groupByCategory} onChange={e=>setGroupByCategory(e.target.checked)}/> Nhóm theo loại</label>
+          <select className={`${inputClass} w-auto`} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
+        </div>
+        <div className="flex rounded-xl border p-1">
+          <button type="button" onClick={()=>setViewMode("CARDS")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${viewMode==="CARDS"?"bg-neutral-950 text-white":""}`}>Danh sách</button>
+          <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
+        </div>
+      </div>
+      <div className="border-t px-4 py-2 text-xs text-neutral-500">Đang hiển thị <b>{visible.length}</b> mẫu · Có thể kết hợp lọc danh mục + loại mẫu + cách sắp xếp.</div>
+    </Card>
+
+    {viewMode==="CARDS"?<div className="space-y-5">
+      {grouped.map(group=><section key={group.name}>
+        {groupByCategory&&<div className="mb-2 flex items-center gap-2"><h3 className="font-semibold">{group.name}</h3><span className="rounded-full bg-neutral-100 px-2 py-1 text-xs text-neutral-500">{group.rows.length} mẫu</span></div>}
+        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{group.rows.map(row=><SampleCard key={row.id} row={row}/>)}</div>
+      </section>)}
+    </div>:<div className="grid gap-4 xl:grid-cols-[minmax(360px,.9fr)_1.6fr]">
+      <Card className="h-fit overflow-hidden xl:sticky xl:top-4">
+        {featured?<><SampleImageStack row={featured} large/><div className="p-4">
+          <div className="text-xs font-semibold text-neutral-400">{featured.code} · Tạo {sampleCreatedLabel(featured.createdAt)}</div>
+          <div className="mt-1 text-xl font-semibold">{featured.name}</div>
+          <div className="mt-2 text-sm text-neutral-500">{sampleParentCategory(featured.category)} · {featured.category||"Chưa phân loại"} · {statusLabel(featured.status,SAMPLE_STATUSES)}</div>
+          {featuredImages.length>1&&<div className="mt-3 flex gap-2 overflow-x-auto">{featuredImages.slice(0,8).map((url,i)=><button key={url} onClick={()=>setViewer({sample:featured,index:i})}><img src={assetUrl(url)} className="h-16 w-16 rounded-xl object-cover"/></button>)}</div>}
+          <div className="mt-4 flex flex-wrap gap-2">{can("design_sample.edit")&&<button onClick={()=>onEdit(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}{can("design_sample.edit")&&<button onClick={()=>void moveSample(featured,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">{tab==="IDEA"?"Chuyển sang triển khai":"Đưa về ý tưởng"}</button>}</div>
+        </div></>:<div className="p-12 text-center text-sm text-neutral-400">Chưa có mẫu.</div>}
+      </Card>
+      <div className="columns-2 gap-3 2xl:columns-3">{visible.map(row=>{const images=sampleVisuals(row);const image=images[0];return <button type="button" key={row.id} onClick={()=>setFeaturedId(row.id)} className="mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">{image?<img src={assetUrl(image)} className="max-h-[460px] w-full object-cover"/>:<div className="grid h-40 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}<div className="p-3"><div className="line-clamp-2 text-sm font-semibold">{row.name}</div><div className="mt-1 text-[11px] text-neutral-400">{row.code} · {row.category||"Chưa phân loại"} · {sampleCreatedLabel(row.createdAt)}</div>{images.length>1&&<div className="mt-2 text-[10px] font-semibold text-blue-600">{images.length} ảnh</div>}</div></button>})}</div>
+    </div>}
+
+    {!visible.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu phù hợp với bộ lọc.</Card>}
+
+    {viewer&&(()=>{const images=sampleVisuals(viewer.sample);const current=images[viewer.index]||images[0];if(!current)return null;return <div className="fixed inset-0 z-[90] flex flex-col bg-black/95 text-white">
+      <div className="flex items-center justify-between border-b border-white/10 p-4"><div><div className="text-xs text-white/50">{viewer.sample.code} · {viewer.index+1}/{images.length}</div><div className="font-semibold">{viewer.sample.name}</div></div><button type="button" onClick={()=>setViewer(null)} className="h-10 w-10 rounded-full bg-white text-xl text-black">×</button></div>
+      <div className="flex min-h-0 flex-1 items-center justify-center p-4"><img src={assetUrl(current)} className="max-h-full max-w-full object-contain"/></div>
+      {images.length>1&&<div className="flex justify-center gap-2 overflow-x-auto p-4">{images.map((url,i)=><button key={url} onClick={()=>setViewer({sample:viewer.sample,index:i})} className={`${i===viewer.index?"ring-2 ring-white":""} rounded-xl`}><img src={assetUrl(url)} className="h-16 w-16 rounded-xl object-cover"/></button>)}</div>}
+    </div>})()}
   </>;
 }
 
@@ -976,7 +1129,7 @@ function ReceiptForm({ receipt, suppliers, branches, staff, samples, products, b
         <div className="mt-3 grid gap-2 md:grid-cols-[170px_1fr_1.35fr]">
           <Field label="Mã vải"><input className={inputClass} value={cfg.fabricCode||""} onChange={e=>patchFabricConfig(ci,"fabricCode",e.target.value)} placeholder="VD: AB99"/></Field>
           <Field label="Tên chất liệu"><input className={inputClass} value={cfg.materialName||""} onChange={e=>patchFabricConfig(ci,"materialName",e.target.value)} placeholder="VD: Kaki co giãn"/></Field>
-          <Field label="Mẫu sử dụng"><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",cfg.productId||"");patchFabricConfig(ci,"designSampleId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",null);patchFabricConfig(ci,"designSampleId",cfg.designSampleId||"")}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<div className="mt-2 space-y-2"><select className={inputClass} value={cfg.productId||""} onChange={e=>patchFabricConfig(ci,"productId",e.target.value||null)}><option value="">{products.length?"Chọn từ danh sách sản phẩm":"Không tải được danh sách sản phẩm"}</option>{products.map(x=><option key={x.id} value={x.id}>{x.name}{x.slug?` · ${x.slug}`:""}</option>)}</select>{cfg.productId&&<div className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-xs"><span className="truncate text-neutral-500">{(()=>{const p=products.find(x=>x.id===cfg.productId);return p?p.name:"Sản phẩm đã chọn"})()}</span><Link href={`/products/${encodeURIComponent(String(cfg.productId))}`} target="_blank" className="ml-3 shrink-0 font-semibold underline underline-offset-2">Mở sản phẩm ↗</Link></div>}</div>:<select className={`${inputClass} mt-2`} value={cfg.designSampleId||""} onChange={e=>patchFabricConfig(ci,"designSampleId",e.target.value||null)}><option value="">Chưa chọn mẫu triển khai</option>{samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select>}</Field>
+          <Field label="Mẫu sử dụng"><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",cfg.productId||"");patchFabricConfig(ci,"designSampleId",null)}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{patchFabricConfig(ci,"productId",null);patchFabricConfig(ci,"designSampleId",cfg.designSampleId||"")}} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<select className={`${inputClass} mt-2`} value={cfg.productId||""} onChange={e=>patchFabricConfig(ci,"productId",e.target.value||null)}><option value="">Chưa chọn sản phẩm</option>{products.map(x=><option key={x.id} value={x.id}>{x.name} · {x.slug}</option>)}</select>:<select className={`${inputClass} mt-2`} value={cfg.designSampleId||""} onChange={e=>patchFabricConfig(ci,"designSampleId",e.target.value||null)}><option value="">Chưa chọn mẫu triển khai</option>{samples.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select>}</Field>
         </div>
         <div className="mt-3 rounded-2xl border bg-white p-3"><div className="flex items-center justify-between"><div><b className="text-xs">Màu của {code||"mã vải này"}</b><div className="text-[11px] text-neutral-400">Tên màu bắt buộc; mã màu có thể để trống.</div></div><button type="button" disabled={!code} onClick={()=>addColorMap(code)} className="rounded-xl border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">+ Thêm màu</button></div><div className="mt-2 space-y-2">{colors.map(({x,index})=><div key={x.id||index} className="grid gap-2 md:grid-cols-[1fr_160px_auto]"><input className={inputClass} value={x.colorName||""} onChange={e=>patchColorMap(index,"colorName",e.target.value)} placeholder="Tên màu · VD Đen"/><input className={inputClass} value={x.colorCode||""} onChange={e=>patchColorMap(index,"colorCode",e.target.value)} onBlur={()=>patchColorMap(index,"colorCode",normalizeColorCode(String(x.colorCode||"")))} placeholder="#20 · không bắt buộc"/><button type="button" onClick={()=>removeColorMap(index)} className="rounded-xl border px-3 text-xs font-semibold text-red-600">Xoá</button></div>)}</div>{!colors.length&&<div className="mt-2 text-xs text-neutral-400">Chưa có màu. Có thể để trống và nhập màu trực tiếp khi kiểm cây.</div>}</div>
       </div>})}{!fabricConfigs.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-500">Chưa có mã vải. Bấm “+ Thêm mã vải” để bắt đầu.</div>}</div>

@@ -157,9 +157,9 @@ async function downloadUrl(url:string,filename:string){
   const resolved=asset(url);
   if(!resolved)return;
 
-  // iOS Safari/PWA không cho web ghi thẳng vào Photos.
-  // Với ảnh, mở URL ảnh thật để người dùng giữ ảnh -> "Lưu vào Ảnh".
-  if(isIosDevice()&&isImageFilename(filename)){
+  // iPhone/iPad: mở ảnh gốc trực tiếp.
+  // Không share dưới dạng File vì iOS coi đó là tệp đính kèm.
+  if(isIosDevice()){
     const opened=window.open(resolved,"_blank","noopener,noreferrer");
     if(!opened)window.location.href=resolved;
     return;
@@ -169,15 +169,17 @@ async function downloadUrl(url:string,filename:string){
     const res=await fetch(resolved,{mode:"cors",credentials:"omit",cache:"no-store"});
     if(!res.ok)throw new Error("download");
     const blob=await res.blob();
-    const file=new File([blob],filenameWithMime(filename,blob.type),{type:blob.type||"application/octet-stream"});
-    const nav=navigator as Navigator & {canShare?:(data:ShareData)=>boolean};
-    if(typeof navigator.share==="function"&&(!nav.canShare||nav.canShare({files:[file]}))){
-      await navigator.share({files:[file],title:file.name});
-      return;
-    }
-    saveAs(blob,file.name);
+    const objectUrl=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=objectUrl;
+    a.download=filename||"image.jpg";
+    a.rel="noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(objectUrl),1500);
   }catch{
-    saveAs(cloudinaryAttachmentUrl(resolved,filename),safeFilename(filename));
+    window.open(resolved,"_blank","noopener,noreferrer");
   }
 }
 
@@ -237,6 +239,31 @@ function closeWithZoomReset(fn:()=>void){
   window.setTimeout(resetIosZoom,250);
 }
 
+
+function sampleParentCategoryMobile(category:any){
+  const raw=String(category||"").trim();
+  const x=raw.toLocaleLowerCase("vi-VN");
+  if(!x)return "Chưa phân loại";
+  if(/\b(quần|short|jean|pants|chino)\b/.test(x))return "Quần";
+  if(/\b(áo|shirt|jacket|coat|blazer|polo|sơ mi|sweater|len|hoodie|parka|tee|t-shirt)\b/.test(x))return "Áo";
+  if(/\b(mũ|nón|túi|thắt lưng|belt|phụ kiện|ví|giày|dép)\b/.test(x))return "Phụ kiện";
+  return "Khác";
+}
+function sampleCreatedLabelMobile(value:any){
+  if(!value)return "Chưa có ngày";
+  const d=new Date(value);if(Number.isNaN(d.getTime()))return "Chưa có ngày";
+  return d.toLocaleDateString("vi-VN",{day:"2-digit",month:"2-digit",year:"numeric"});
+}
+function sampleVisualUrlsMobile(row:any){
+  const urls=[
+    row?.coverImageUrl,
+    ...(Array.isArray(row?.images)?row.images.filter((x:any)=>!isPatternAsset(x)).map((x:any)=>x?.url):[]),
+    row?.matchedProduct?.imageUrl,
+    row?.producedProduct?.imageUrl,
+  ].filter(Boolean).map(String);
+  return Array.from(new Set(urls));
+}
+
 export default function Page(){
   const [rows,setRows]=useState<Sample[]>([]);
   const [meta,setMeta]=useState<Meta>({staff:[],boards:[],factories:[],seasons:[],productGroups:[]});
@@ -248,6 +275,10 @@ export default function Page(){
   const [dispatching,setDispatching]=useState<Sample|null>(null);
   const [user,setUser]=useState<any>(null);
   const [sampleTab,setSampleTab]=useState<"IDEA"|"DEPLOY">("IDEA");
+  const [parentFilter,setParentFilter]=useState("");
+  const [subFilter,setSubFilter]=useState("");
+  const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
+  const [filtersOpen,setFiltersOpen]=useState(false);
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
@@ -294,18 +325,27 @@ export default function Page(){
     };
   },[]);
 
+  const parentOptions=useMemo(()=>Array.from(new Set(rows.map(r=>sampleParentCategoryMobile(r.category)))).sort((a,b)=>a.localeCompare(b,"vi")),[rows]);
+  const subOptions=useMemo(()=>Array.from(new Set(rows.filter(r=>!parentFilter||sampleParentCategoryMobile(r.category)===parentFilter).map(r=>String(r.category||"Chưa phân loại").trim()||"Chưa phân loại"))).sort((a,b)=>a.localeCompare(b,"vi")),[rows,parentFilter]);
+
   const filtered=useMemo(()=>{
     const k=q.trim().toLowerCase();
-    return rows.filter(r=>{
+    const list=rows.filter(r=>{
       const inTab=sampleTab==="IDEA"?String(r.status||"IDEA")==="IDEA":String(r.status||"IDEA")!=="IDEA";
       if(!inTab)return false;
+      if(parentFilter&&sampleParentCategoryMobile(r.category)!==parentFilter)return false;
+      if(subFilter&&String(r.category||"Chưa phân loại").trim()!==subFilter)return false;
       if(!k)return true;
       return [
         r.code,r.name,r.season,r.category,r.fabricBoard?.boardCode,
         r.fabricColorName,r.fabricColorCode,r.sampleFactoryName,r.assigneeName
       ].some(v=>String(v||"").toLowerCase().includes(k));
     });
-  },[rows,q,sampleTab]);
+    return [...list].sort((a,b)=>{
+      if(sortMode==="AZ")return String(a.name||a.code).localeCompare(String(b.name||b.code),"vi",{numeric:true,sensitivity:"base"});
+      return (new Date(b.createdAt||b.updatedAt||`${b.year}-01-01`).getTime()||0)-(new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0);
+    });
+  },[rows,q,sampleTab,parentFilter,subFilter,sortMode]);
 
   async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
     if(!can("design_sample.edit"))return;
@@ -347,6 +387,14 @@ export default function Page(){
           <button type="button" onClick={()=>setSampleTab("IDEA")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {rows.filter(x=>String(x.status||"IDEA")==="IDEA").length}</button>
           <button type="button" onClick={()=>setSampleTab("DEPLOY")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {rows.filter(x=>String(x.status||"IDEA")!=="IDEA").length}</button>
         </div>
+        <button type="button" onClick={()=>setFiltersOpen(x=>!x)} className="mt-2 w-full rounded-2xl border bg-white px-3 py-2.5 text-xs font-black">
+          Bộ lọc & sắp xếp {parentFilter||subFilter||sortMode!=="NEWEST"?"· đang áp dụng":""}
+        </button>
+        {filtersOpen&&<div className="mt-2 grid gap-2 rounded-2xl bg-neutral-50 p-2">
+          <select className={input} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}} onBlur={resetIosZoom}><option value="">Tất cả danh mục</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+          <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+          <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
+        </div>}
       </header>
 
       <div className="space-y-3 p-4">
@@ -354,19 +402,23 @@ export default function Page(){
         {loading&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Đang tải...</div>}
 
         {!loading&&filtered.map(r=>{
-          const firstVisual=(r.images||[]).find((x:any)=>!isPatternAsset(x))?.url;
-          const image=asset(r.coverImageUrl||firstVisual||r.matchedProduct?.imageUrl);
+          const visuals=sampleVisualUrlsMobile(r);
+          const image=visuals[0]?asset(visuals[0]):"";
           return <div key={r.id} className="rounded-[28px] bg-white p-4 shadow-sm">
             <button type="button" onClick={()=>setDetail(r)} className="flex w-full gap-4 text-left active:scale-[.995]">
-              <div className="h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-2xl text-neutral-300">✦</div>}</div>
+              <div className="relative h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">
+                {image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-2xl text-neutral-300">✦</div>}
+                {visuals.length>1&&<div className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded-lg bg-black/70 p-0.5">{visuals.slice(1,3).map((url:string,i:number)=><img key={`${url}-${i}`} src={asset(url)} className="h-5 w-5 rounded object-cover"/>)}{visuals.length>3&&<span className="px-0.5 text-[8px] font-black text-white">+{visuals.length-3}</span>}</div>}
+              </div>
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-black text-neutral-400">{r.code} · {r.year}</div>
                 <div className="mt-1 text-base font-black">{r.name}</div>
-                <div className="mt-2 text-xs text-neutral-500">{r.season||"—"} · {r.category||"—"}</div>
+                <div className="mt-1 text-[11px] font-bold text-neutral-400">Tạo {sampleCreatedLabelMobile(r.createdAt)}</div>
+                <div className="mt-1 text-xs text-neutral-500">{sampleParentCategoryMobile(r.category)} · {r.category||"Chưa phân loại"}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge>{statusLabel(r.status)}</Badge>
+                  {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
-                  {r.sampleFactoryName&&<Badge>{r.sampleFactoryName}</Badge>}
                 </div>
               </div>
             </button>
@@ -839,7 +891,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
               <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="rounded-full bg-white/95 px-4 py-2 text-xs font-black text-black">
                 <Download className="mr-1 inline h-4 w-4"/>Lưu ảnh
               </button>
-              <div className="text-[10px] font-semibold text-white/60">iPhone: bấm rồi giữ ảnh → Lưu vào Ảnh</div>
+              <div className="text-[10px] font-semibold text-white/60">iPhone: bấm Lưu ảnh → sang ảnh gốc → giữ ảnh → Lưu vào Ảnh</div>
             </div>
             {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>setEditMode(true)} className="rounded-full bg-amber-300 px-4 py-2 text-xs font-black text-black">
               <Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh
@@ -850,7 +902,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
 
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-x pan-y pinch-zoom"}}>
           {gallery.length>1&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">‹</button>}
-          <img src={gallery[viewerIndex]} className="max-h-full max-w-full object-contain" alt=""/>
+          <img src={gallery[viewerIndex]} draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} style={{WebkitTouchCallout:"none",WebkitUserSelect:"none",userSelect:"none"}} className="max-h-full max-w-full object-contain" alt=""/>
           {gallery.length>1&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">›</button>}
         </div>
 
