@@ -215,6 +215,7 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
   return rows.length?rows:[{fabricCode:"",materialName:"",supplierId:null,fabricBoardCode:"",fabricWidthCm:"",productId:null,designSampleId:null}];
  });
  const [configSource,setConfigSource]=useState<Record<number,"PRODUCT"|"DESIGN">>(()=>Object.fromEntries((receipt?.fabricConfigs?.length?receipt.fabricConfigs:[{productId:null}]).map((x:any,i:number)=>[i,x.productId?"PRODUCT":"DESIGN"])));
+ const [productSearch,setProductSearch]=useState<Record<number,string>>({});
  const [rollView,setRollView]=useState<"CARDS"|"TABLE">("CARDS");
  const [colorMaps,setColorMaps]=useState<FabricColorMap[]>(receipt?.colorMaps||[]);
  const [saving,setSaving]=useState(false),[error,setError]=useState("");
@@ -309,7 +310,20 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
      <Field l="Nhà cung cấp"><select className={input} value={cfg.supplierId||""} onChange={e=>setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,supplierId:e.target.value||null}:v))}><option value="">Chưa chọn NCC</option>{meta.suppliers.map(sp=><option key={sp.id} value={sp.id}>{canSupplierIdentity?`${sp.code||"NCC"} · ${sp.name||""}`:(sp.code||"NCC")}</option>)}</select></Field>
     </div>
     <div className="mt-2"><Field l="Khổ vải (cm)"><div className="relative"><input inputMode="decimal" className={`${input} pr-14`} value={decimalText(cfg.fabricWidthCm)} onChange={e=>setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,fabricWidthCm:decimalRaw(e.target.value)}:v))} placeholder="VD: 150"/><span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-neutral-400">cm</span></div></Field><div className="mt-1 text-[10px] text-neutral-400">Khổ này dùng cùng GSM + kg thực tế để quy đổi số mét cây vải.</div></div>
-    <div className="mt-3"><div className="mb-1 text-[10px] font-black uppercase tracking-wide text-neutral-400">Mẫu sử dụng</div><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{setConfigSource(x=>({...x,[ci]:"PRODUCT"}));setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,designSampleId:null}:v))}} className={`rounded-2xl border py-3 text-xs font-black ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{setConfigSource(x=>({...x,[ci]:"DESIGN"}));setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,productId:null}:v))}} className={`rounded-2xl border py-3 text-xs font-black ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<select className={`${input} mt-2`} value={cfg.productId||""} onChange={e=>setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,productId:e.target.value||null}:v))}><option value="">Chưa chọn sản phẩm</option>{meta.products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>:<select className={`${input} mt-2`} value={cfg.designSampleId||""} onChange={e=>setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,designSampleId:e.target.value||null}:v))}><option value="">Chưa chọn mẫu triển khai</option>{meta.samples.map(sm=><option key={sm.id} value={sm.id}>{sm.code} · {sm.name}</option>)}</select>}</div>
+    <div className="mt-3"><div className="mb-1 text-[10px] font-black uppercase tracking-wide text-neutral-400">Mẫu sử dụng</div><div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{setConfigSource(x=>({...x,[ci]:"PRODUCT"}));setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,designSampleId:null}:v))}} className={`rounded-2xl border py-3 text-xs font-black ${source==="PRODUCT"?"bg-neutral-950 text-white":"bg-white"}`}>Sản phẩm đã có</button><button type="button" onClick={()=>{setConfigSource(x=>({...x,[ci]:"DESIGN"}));setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,productId:null}:v))}} className={`rounded-2xl border py-3 text-xs font-black ${source==="DESIGN"?"bg-neutral-950 text-white":"bg-white"}`}>Mẫu triển khai</button></div>{source==="PRODUCT"?<div className="mt-2">
+       {cfg.productId&&meta.products.find(p=>p.id===cfg.productId)?<div className="mb-2 flex items-center justify-between gap-2 rounded-2xl border bg-white px-3 py-2">
+        <div className="min-w-0"><div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Sản phẩm đang chọn</div><div className="truncate text-sm font-black">{meta.products.find(p=>p.id===cfg.productId)?.name}</div><div className="truncate text-[11px] text-neutral-400">{meta.products.find(p=>p.id===cfg.productId)?.slug}</div></div>
+        <button type="button" onClick={()=>{setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,productId:null}:v));setProductSearch(x=>({...x,[ci]:""}))}} className="rounded-xl border px-3 py-2 text-xs font-black text-red-500">Bỏ chọn</button>
+       </div>:null}
+       <div className="relative"><span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">⌕</span><input className={`${input} pl-10`} value={productSearch[ci]||""} onChange={e=>setProductSearch(x=>({...x,[ci]:e.target.value}))} placeholder="Tìm tên sản phẩm, mã/slug..."/></div>
+       {(productSearch[ci]||"").trim().length>0&&<div className="mt-2 max-h-72 overflow-y-auto rounded-2xl border bg-white p-1">
+        {meta.products.filter(p=>{const q=(productSearch[ci]||"").trim().toLocaleLowerCase("vi-VN");return p.name.toLocaleLowerCase("vi-VN").includes(q)||String(p.slug||"").toLocaleLowerCase("vi-VN").includes(q)}).slice(0,12).map(p=><button key={p.id} type="button" onClick={()=>{setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,productId:p.id}:v));setProductSearch(x=>({...x,[ci]:""}))}} className="block w-full rounded-xl px-3 py-3 text-left active:bg-neutral-100">
+         <div className="text-sm font-black">{p.name}</div><div className="mt-0.5 text-[11px] text-neutral-400">{p.slug}</div>
+        </button>)}
+        {meta.products.filter(p=>{const q=(productSearch[ci]||"").trim().toLocaleLowerCase("vi-VN");return p.name.toLocaleLowerCase("vi-VN").includes(q)||String(p.slug||"").toLocaleLowerCase("vi-VN").includes(q)}).length===0&&<div className="px-3 py-4 text-center text-xs text-neutral-400">Không tìm thấy sản phẩm phù hợp.</div>}
+       </div>}
+       {!cfg.productId&&!(productSearch[ci]||"").trim()&&<div className="mt-1 text-[10px] text-neutral-400">Gõ để tìm, không xổ toàn bộ danh sách sản phẩm.</div>}
+      </div>:<select className={`${input} mt-2`} value={cfg.designSampleId||""} onChange={e=>setFabricConfigs(x=>x.map((v,j)=>j===ci?{...v,designSampleId:e.target.value||null}:v))}><option value="">Chưa chọn mẫu triển khai</option>{meta.samples.map(sm=><option key={sm.id} value={sm.id}>{sm.code} · {sm.name}</option>)}</select>}</div>
     <div className="mt-3 rounded-2xl border bg-white p-2"><div className="flex items-center justify-between gap-2"><div><b className="text-xs">Màu của {code||"mã vải này"}</b><div className="text-[10px] text-neutral-400">Tên màu bắt buộc; mã màu có thể để trống.</div></div><button type="button" disabled={!code} onClick={()=>setColorMaps(x=>[...x,{fabricCode:code,colorName:"",colorCode:""}])} className={`${smallBtn} disabled:opacity-30`}>+ Màu</button></div><div className="mt-2 space-y-2">{colors.map(({x,index})=><div key={x.id||index} className="grid grid-cols-[1fr_105px_auto] gap-2"><input className={input} value={x.colorName||""} onChange={e=>patchColorMap(index,"colorName",e.target.value)} placeholder="Tên màu"/><input className={input} value={x.colorCode||""} onChange={e=>patchColorMap(index,"colorCode",e.target.value)} onBlur={()=>patchColorMap(index,"colorCode",colorCode(x.colorCode))} placeholder="#20"/><button type="button" onClick={()=>removeColorMap(index)} className="rounded-2xl border px-2 text-xs font-black text-red-500">Xoá</button></div>)}</div></div>
    </div>})}</div>
    <button type="button" onClick={applyConfiguredColorsToRolls} className="mt-3 w-full rounded-2xl border py-3 text-xs font-black">Áp cấu hình cho cây đã tạo</button>
@@ -317,7 +331,59 @@ function ReceiptForm({receipt,meta,canFabricBoardLink,canSupplierIdentity,canCos
 
   <section className="rounded-3xl border p-3">
    <div><div><b className="text-sm">Chi tiết từng cây vải</b><div className="text-[11px] text-neutral-400">Điền theo thứ tự kiểm thực tế; xong có thể gom theo mã vải.</div></div><div className="mt-2 grid grid-cols-2 rounded-2xl border p-1"><button type="button" onClick={()=>setRollView("CARDS")} className={`rounded-xl py-2 text-xs font-black ${rollView==="CARDS"?"bg-neutral-950 text-white":""}`}>Khối</button><button type="button" onClick={()=>setRollView("TABLE")} className={`rounded-xl py-2 text-xs font-black ${rollView==="TABLE"?"bg-neutral-950 text-white":""}`}>Bảng Excel</button></div><div className="mt-2 flex gap-2"><button type="button" onClick={sortRollsByFabricCode} className={smallBtn}>Sắp xếp mã</button><button type="button" onClick={addRoll} className={smallBtn}>+ Cây</button></div></div>
-   {rollView==="TABLE"?<div className="mt-3 overflow-x-auto rounded-2xl border"><table className="min-w-[1180px] w-full text-[11px]"><thead className="bg-neutral-100"><tr>{["STT","Mã vải","Mã cây","Tên màu","Mã màu","NCC m","Thực kg","GSM","Khổ","Thực m","Giá CNY","Ghi chú"].map(h=><th key={h} className="px-2 py-2 text-left">{h}</th>)}</tr></thead><tbody>{rolls.map((r,i)=>{const cfg=fabricConfigs.find(c=>String(c.fabricCode||"").toUpperCase()===String(r.fabricCode||"").toUpperCase()),est=estimatedFabricMeters(r.actualKg,r.measuredGsm,cfg?.fabricWidthCm);return <tr key={r.id||i} className="border-t"><td className="px-2">{i+1}</td><td className="p-1"><select className="w-24 rounded-lg border p-2" value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:e.target.value}:v))}><option value="">—</option>{configuredFabricCodes.map(c=><option key={c} value={c}>{c}</option>)}</select></td><td className="p-1"><input className="w-24 rounded-lg border p-2" value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))}/></td><td className="p-1"><input className="w-24 rounded-lg border p-2" value={r.colorName||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:e.target.value}:v))}/></td><td className="p-1"><input className="w-20 rounded-lg border p-2" value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))}/></td><td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.supplierDeclaredM??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,supplierDeclaredM:e.target.value}:v))}/></td><td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.actualKg??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,actualKg:e.target.value}:v))}/></td><td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.measuredGsm??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,measuredGsm:e.target.value}:v))}/></td><td className="px-2">{cfg?.fabricWidthCm||"—"}</td><td className="p-1"><div className="flex gap-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.actualM??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,actualM:e.target.value}:v))}/><button type="button" disabled={!est} onClick={()=>setRolls(x=>x.map((v,j)=>j===i?{...v,actualM:est.toFixed(3)}:v))} className="rounded-lg border px-2 disabled:opacity-30">≈m</button></div></td><td className="p-1">{canCostView?<input disabled={!canCostEdit} inputMode="decimal" className="w-20 rounded-lg border p-2" value={decimalText(r.unitPriceCny)} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,unitPriceCny:decimalRaw(e.target.value)}:v))}/>:null}</td><td className="p-1"><input className="w-40 rounded-lg border p-2" value={r.defectNote||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,defectNote:e.target.value}:v))}/></td></tr>})}</tbody></table></div>:<div className="mt-3 space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-3xl bg-neutral-50 p-3">
+   {rollView==="TABLE"?<div className="mt-3 overflow-x-auto rounded-2xl border">
+    <table className="min-w-[1320px] w-full text-[11px]">
+     <thead className="bg-neutral-100">
+      <tr>{["STT","Mã vải","Mã cây","Màu đã cấu hình","Mã màu","NCC m","Thực kg","GSM","Khổ","Thực m","Quy đổi","Giá CNY","Ghi chú"].map(h=><th key={h} className="px-2 py-2 text-left">{h}</th>)}</tr>
+     </thead>
+     <tbody>{rolls.map((r,i)=>{
+      const cfg=fabricConfigs.find(c=>String(c.fabricCode||"").trim().toUpperCase()===String(r.fabricCode||"").trim().toUpperCase());
+      const est=estimatedFabricMeters(r.actualKg,r.measuredGsm,cfg?.fabricWidthCm);
+      const colorOptions=mapsForFabric(r.fabricCode||"");
+      const selectedColorKey=`${String(r.colorName||"").trim()}|||${String(r.colorCode||"").trim()}`;
+      return <tr key={r.id||i} className="border-t align-top">
+       <td className="px-2 py-2 font-black">{i+1}</td>
+       <td className="p-1">
+        <select className="w-24 rounded-lg border p-2" value={r.fabricCode||""} onChange={e=>{
+         const fc=e.target.value;
+         const opts=mapsForFabric(fc);
+         const only=opts.length===1?opts[0]:null;
+         setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:fc,colorName:only?.name||"",colorCode:only?.code||""}:v))
+        }}>
+         <option value="">—</option>{configuredFabricCodes.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+       </td>
+       <td className="p-1"><input className="w-24 rounded-lg border p-2" value={r.rollCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,rollCode:e.target.value}:v))}/></td>
+       <td className="p-1">
+        <select className="w-36 rounded-lg border p-2" value={selectedColorKey} onChange={e=>{
+         const [name="",code=""]=e.target.value.split("|||");
+         setRolls(x=>x.map((v,j)=>j===i?{...v,colorName:name,colorCode:code}:v))
+        }}>
+         <option value="">Chọn màu</option>
+         {colorOptions.map((c,idx)=><option key={`${c.name}-${c.code}-${idx}`} value={`${c.name}|||${c.code||""}`}>{c.name}{c.code?` · ${c.code}`:""}</option>)}
+        </select>
+       </td>
+       <td className="p-1"><input className="w-20 rounded-lg border p-2" value={r.colorCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,colorCode:e.target.value}:v))}/></td>
+       <td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.supplierDeclaredM??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,supplierDeclaredM:e.target.value}:v))}/></td>
+       <td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.actualKg??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,actualKg:e.target.value}:v))}/></td>
+       <td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.measuredGsm??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,measuredGsm:e.target.value}:v))}/></td>
+       <td className="px-2 py-3">{cfg?.fabricWidthCm||"—"}</td>
+       <td className="p-1"><input inputMode="decimal" className="w-20 rounded-lg border p-2" value={r.actualM??""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,actualM:e.target.value}:v))}/></td>
+       <td className="p-1">
+        <button type="button" disabled={!est} onClick={()=>{
+         if(!num(cfg?.fabricWidthCm)){alert(`Mã ${r.fabricCode||"vải này"} chưa có Khổ vải (cm). Điền ở phần Cấu hình theo mã vải phía trên.`);return}
+         if(!num(r.actualKg)||!num(r.measuredGsm)){alert("Cần điền kg thực tế và GSM của cây.");return}
+         setRolls(x=>x.map((v,j)=>j===i?{...v,actualM:est.toFixed(3)}:v))
+        }} className="whitespace-nowrap rounded-lg border px-2 py-2 font-black disabled:opacity-30">
+         {est?`≈ ${fmt(est,3)}m`:"Quy đổi"}
+        </button>
+       </td>
+       <td className="p-1">{canCostView?<input disabled={!canCostEdit} inputMode="decimal" className="w-20 rounded-lg border p-2 disabled:bg-neutral-100" value={decimalText(r.unitPriceCny)} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,unitPriceCny:decimalRaw(e.target.value)}:v))}/>:null}</td>
+       <td className="p-1"><input className="w-40 rounded-lg border p-2" value={r.defectNote||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,defectNote:e.target.value}:v))}/></td>
+      </tr>
+     })}</tbody>
+    </table>
+   </div>:<div className="mt-3 space-y-3">{rolls.map((r,i)=><div key={r.id||i} className="rounded-3xl bg-neutral-50 p-3">
     <div className="flex items-center justify-between"><b>STT {i+1}</b><button onClick={()=>{setRolls(x=>x.filter((_,j)=>j!==i));setFiles(c=>{const n={...c};delete n[i];return n})}} className="text-xs font-black text-red-600">Xoá</button></div>
     <div className="mt-2 grid grid-cols-2 gap-2">
      {configuredFabricCodes.length?<select className={input} value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>{if(j!==i)return v;const fc=e.target.value,opts=mapsForFabric(fc),only=opts.length===1?opts[0]:null;return {...v,fabricCode:fc,colorName:only?.name||"",colorCode:only?.code||""}}))}><option value="">Chọn mã vải</option>{configuredFabricCodes.map(code=><option key={code} value={code}>{code}</option>)}</select>:<input className={input} value={r.fabricCode||""} onChange={e=>setRolls(x=>x.map((v,j)=>j===i?{...v,fabricCode:e.target.value.toUpperCase()}:v))} placeholder="Mã vải · AB99"/>}
