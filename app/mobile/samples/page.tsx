@@ -39,6 +39,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type Staff = { id:string; code?:string|null; name:string };
 type Factory = { id:string; code:string; name:string; contactName?:string|null; phone?:string|null };
+type SamplePerson = { id:string; name:string; role:"SAMPLE_MAKER"|"PATTERN_MAKER"|"BOTH"; phone?:string|null; note?:string|null };
 type Board = { id:string; boardCode:string; name?:string|null; fabricCode?:string|null };
 type Meta = {
   staff:Staff[];
@@ -46,6 +47,7 @@ type Meta = {
   factories:Factory[];
   seasons:string[];
   productGroups:string[];
+  samplePeople:SamplePerson[];
 };
 type Sample = any;
 
@@ -136,6 +138,8 @@ function parsePatternCaption(caption?:string|null):{name:string;mimetype?:string
 }
 function isPatternAsset(x:any){return String(x?.type||"")==="OTHER"&&!!parsePatternCaption(x?.caption)}
 function safeFilename(v:string){return String(v||"file").replace(/[\\/:*?"<>|]+/g,"-").replace(/\s+/g," ").trim()}
+const PATTERN_EXTENSIONS=new Set(["pdf","dxf","dwg","ai","plt","zip","rar","7z","astm","aama","rul","mdl","pds","hpgl","hpg","mrk","pat","cut","nc","svg"]);
+function patternExt(name:string){const m=String(name||"").toLowerCase().match(/\.([a-z0-9]+)$/);return m?.[1]||""}
 function filenameWithMime(filename:string,mime?:string){
   const clean=safeFilename(filename||"anh-mau");
   if(/\.[a-z0-9]{2,6}$/i.test(clean))return clean;
@@ -264,7 +268,7 @@ function sampleVisualUrlsMobile(row:any){
 
 export default function Page(){
   const [rows,setRows]=useState<Sample[]>([]);
-  const [meta,setMeta]=useState<Meta>({staff:[],boards:[],factories:[],seasons:[],productGroups:[]});
+  const [meta,setMeta]=useState<Meta>({staff:[],boards:[],factories:[],seasons:[],productGroups:[],samplePeople:[]});
   const [q,setQ]=useState("");
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
@@ -296,6 +300,7 @@ export default function Page(){
         factories:Array.isArray(m.factories)?m.factories:[],
         seasons:Array.isArray(m.seasons)?m.seasons:[],
         productGroups:Array.isArray(m.productGroups)?m.productGroups:[],
+        samplePeople:Array.isArray((m as any).samplePeople)?(m as any).samplePeople:[],
       });
       if(detail){
         const next=(samples||[]).find((x:any)=>x.id===detail.id);
@@ -370,7 +375,7 @@ export default function Page(){
 
   return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
     <div className="mx-auto max-w-md">
-      <header className="border-b bg-white px-4 pb-4 pt-[54px]">
+      <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[calc(16px+env(safe-area-inset-top))] backdrop-blur">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
@@ -987,6 +992,10 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
     fabricColorName:sample?.fabricColorName||"",
     fabricColorCode:sample?.fabricColorCode||"",
     sampleFactoryId:sample?.sampleFactoryId||"",
+    sampleMakerId:sample?.sampleMakerId||"",
+    sampleMakerName:sample?.sampleMakerName||"",
+    patternMakerId:sample?.patternMakerId||"",
+    patternMakerName:sample?.patternMakerName||"",
     status:sample?.status||"IDEA",
     assigneeStaffId:sample?.assigneeStaffId||"",
     nextAction:sample?.nextAction||"",
@@ -1000,6 +1009,11 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       ? sample!.images!.filter((x:any)=>!isPatternAsset(x)).map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||"Ảnh mẫu / ảnh tham khảo"}))
       : (sample?.coverImageUrl ? [{type:"SAMPLE",url:sample.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}] : [])
   );
+  const [people,setPeople]=useState<SamplePerson[]>(meta.samplePeople||[]);
+  const [creatingRole,setCreatingRole]=useState<"SAMPLE_MAKER"|"PATTERN_MAKER"|null>(null);
+  const [newPersonName,setNewPersonName]=useState("");
+  const [newPersonPhone,setNewPersonPhone]=useState("");
+  const [creatingPerson,setCreatingPerson]=useState(false);
   const [patternFiles,setPatternFiles]=useState<PatternAttachment[]>(
     Array.isArray(sample?.images)
       ? sample!.images!.filter((x:any)=>isPatternAsset(x)).map((x:any)=>{
@@ -1067,12 +1081,28 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
     try{
       const uploaded:PatternAttachment[]=[];
       for(const file of list){
+        const ext=patternExt(file.name);
+        if(!PATTERN_EXTENSIONS.has(ext))throw new Error(`File ${file.name} chưa được hỗ trợ.`);
         const r=await uploadPatternFile(file);
         const name=r.filename||file.name;
         uploaded.push({type:"OTHER",url:r.url,caption:patternCaption(name,r.mimetype||file.type,r.size||file.size),name,mimetype:r.mimetype||file.type,size:r.size||file.size});
       }
       setPatternFiles(current=>[...current,...uploaded]);
     }catch(e){setError(e instanceof Error?e.message:"Không tải được file rập.")}
+  }
+
+  async function createPerson(role:"SAMPLE_MAKER"|"PATTERN_MAKER"){
+    const name=newPersonName.trim();if(!name)return;
+    try{
+      setCreatingPerson(true);setError("");
+      const row=await api<SamplePerson>("/sample-fabric/samples/people",{method:"POST",body:JSON.stringify({name,role,phone:newPersonPhone.trim()||null})});
+      const next=[...people.filter(x=>x.id!==row.id),row].sort((a,b)=>a.name.localeCompare(b.name,"vi"));
+      setPeople(next);
+      if(role==="SAMPLE_MAKER"){patch("sampleMakerId",row.id);patch("sampleMakerName",row.name)}
+      else{patch("patternMakerId",row.id);patch("patternMakerName",row.name)}
+      setCreatingRole(null);setNewPersonName("");setNewPersonPhone("");
+    }catch(e){setError(e instanceof Error?e.message:"Không tạo được người.")}
+    finally{setCreatingPerson(false)}
   }
 
   async function save(){
@@ -1083,6 +1113,8 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       if(normalizedCode && codeAvailable!==true)throw new Error(codeMessage||"Mã mẫu chưa hợp lệ.");
       const staff=meta.staff.find(x=>x.id===form.assigneeStaffId);
       const factory=meta.factories.find(x=>x.id===form.sampleFactoryId);
+      const sampleMaker=people.find(x=>x.id===form.sampleMakerId);
+      const patternMaker=people.find(x=>x.id===form.patternMakerId);
       const board=meta.boards.find(x=>x.id===form.fabricBoardId);
 
       const visualImages=sampleImages.filter(x=>!!x.url);
@@ -1107,6 +1139,10 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
           fabricColorCode:canViewFabricLink?(normalizeColor(form.fabricColorCode)||null):undefined,
           sampleFactoryId:form.sampleFactoryId||null,
           sampleFactoryName:factory?.name||null,
+          sampleMakerId:form.sampleMakerId||null,
+          sampleMakerName:sampleMaker?.name||form.sampleMakerName||null,
+          patternMakerId:form.patternMakerId||null,
+          patternMakerName:patternMaker?.name||form.patternMakerName||null,
           status:form.status,
           assigneeStaffId:form.assigneeStaffId||null,
           assigneeName:staff?.name||null,
@@ -1184,6 +1220,13 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       <Field l="Nhà may làm mẫu"><select className={input} value={form.sampleFactoryId} onChange={e=>patch("sampleFactoryId",e.target.value)}><option value="">Chưa chọn nhà may</option>{meta.factories.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
 
       <div className="grid grid-cols-2 gap-3">
+        <Field l="Người ra mẫu"><div className="space-y-2"><select className={input} value={form.sampleMakerId} onChange={e=>{const p=people.find(x=>x.id===e.target.value);patch("sampleMakerId",e.target.value);patch("sampleMakerName",p?.name||"")}}><option value="">Chưa chọn</option>{people.filter(x=>x.role==="SAMPLE_MAKER"||x.role==="BOTH").map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button type="button" onClick={()=>{setCreatingRole("SAMPLE_MAKER");setNewPersonName("");setNewPersonPhone("")}} className="w-full rounded-2xl border py-2 text-xs font-black">+ Tạo người ra mẫu</button></div></Field>
+        <Field l="Người thiết kế rập"><div className="space-y-2"><select className={input} value={form.patternMakerId} onChange={e=>{const p=people.find(x=>x.id===e.target.value);patch("patternMakerId",e.target.value);patch("patternMakerName",p?.name||"")}}><option value="">Chưa chọn</option>{people.filter(x=>x.role==="PATTERN_MAKER"||x.role==="BOTH").map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button type="button" onClick={()=>{setCreatingRole("PATTERN_MAKER");setNewPersonName("");setNewPersonPhone("")}} className="w-full rounded-2xl border py-2 text-xs font-black">+ Tạo người thiết kế rập</button></div></Field>
+      </div>
+
+      {creatingRole&&<section className="rounded-3xl border bg-neutral-50 p-3"><div className="mb-2 flex justify-between"><b className="text-sm">{creatingRole==="SAMPLE_MAKER"?"Tạo người ra mẫu":"Tạo người thiết kế rập"}</b><button type="button" onClick={()=>setCreatingRole(null)}><X className="h-4 w-4"/></button></div><div className="space-y-2"><input autoFocus className={input} value={newPersonName} onChange={e=>setNewPersonName(e.target.value)} placeholder="Họ tên"/><input className={input} value={newPersonPhone} onChange={e=>setNewPersonPhone(e.target.value)} placeholder="Số điện thoại (nếu có)"/><button type="button" disabled={creatingPerson||!newPersonName.trim()} onClick={()=>void createPerson(creatingRole)} className="w-full rounded-2xl bg-neutral-950 py-3 text-xs font-black text-white disabled:opacity-40">{creatingPerson?"Đang tạo...":"Tạo & chọn"}</button></div></section>}
+
+      <div className="grid grid-cols-2 gap-3">
         <Field l="Tiến độ"><select className={input} value={form.status} onChange={e=>patch("status",e.target.value)}>{SAMPLE_STATUSES.map(x=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select></Field>
         <Field l="Người phụ trách"><select className={input} value={form.assigneeStaffId} onChange={e=>patch("assigneeStaffId",e.target.value)}><option value="">Chưa gán</option>{meta.staff.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
       </div>
@@ -1192,8 +1235,8 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       <Field l="Hạn dự kiến"><input type="date" className={input} value={form.dueDate} onChange={e=>patch("dueDate",e.target.value)}/></Field>
       <section className="rounded-3xl border border-neutral-200 p-3">
         <div className="flex items-start justify-between gap-3">
-          <div><div className="text-sm font-black">File rập / tài liệu kỹ thuật</div><div className="mt-1 text-[11px] text-neutral-400">PDF, DXF, DWG, AI, PLT, ZIP… lưu theo từng mẫu.</div></div>
-          {canUpload&&<label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white"><FileUp className="mr-1 inline h-4 w-4"/>Tải file<input type="file" multiple className="hidden" accept=".pdf,.dxf,.dwg,.ai,.plt,.zip,.rar,.7z,.astm,.aama,.rul,.mdl,.pds,.hpgl,.svg" onChange={e=>void changePatternFiles(e.target.files||undefined)}/></label>}
+          <div><div className="text-sm font-black">File rập / tài liệu kỹ thuật</div><div className="mt-1 text-[11px] text-neutral-400">HPGL, MRK, PLT, DXF, DWG, ASTM, AAMA, PDF, ZIP…</div></div>
+          {canUpload&&<label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white"><FileUp className="mr-1 inline h-4 w-4"/>Tải file<input type="file" multiple className="hidden" onChange={e=>void changePatternFiles(e.target.files||undefined)}/></label>}
         </div>
         <div className="mt-3 space-y-2">
           {patternFiles.map((f,i)=><div key={`${f.url}-${i}`} className="flex items-center gap-2 rounded-2xl bg-neutral-50 p-3">
