@@ -89,6 +89,28 @@ type MaterialSpec = {
   note?: string | null;
 };
 
+type SavedAccessoryTemplateItem = {
+  id: string;
+  accessoryItemId?: string | null;
+  accessoryCodeSnapshot?: string | null;
+  accessoryNameSnapshot?: string | null;
+  qtyPerProduct: number | string;
+  wastePercent: number | string;
+  sizeScoped: boolean;
+  note?: string | null;
+  sortOrder?: number;
+};
+
+type SavedAccessoryTemplate = {
+  id: string;
+  name: string;
+  productKind: "SHIRT" | "PANTS" | "OTHER";
+  sourceType?: string | null;
+  sourceFileName?: string | null;
+  createdByName?: string | null;
+  items: SavedAccessoryTemplateItem[];
+};
+
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
 const PANTS_SIZES = ["29", "30", "31", "32", "34", "36"];
 const STATUS_LABEL: Record<string, string> = {
@@ -304,6 +326,10 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
   const [accessoryQ, setAccessoryQ] = useState("");
   const [accessoryType, setAccessoryType] = useState("ALL");
   const [importingNpl, setImportingNpl] = useState(false);
+  const [savedTemplates, setSavedTemplates] = useState<SavedAccessoryTemplate[]>([]);
+  const [selectedSavedTemplateId, setSelectedSavedTemplateId] = useState("");
+  const [lastExcelName, setLastExcelName] = useState("");
+  const [templateBusy, setTemplateBusy] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [allocated, setAllocated] = useState<Record<string, string>>({});
   const [sizeSet, setSizeSet] = useState<string[]>([]);
@@ -316,11 +342,13 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
   async function load() {
     try {
       setError("");
-      const [o, rollOptions] = await Promise.all([
+      const [o, rollOptions, templateOptions] = await Promise.all([
         productionApi<any>(`/production/orders/${id}`),
         productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}`),
+        productionApi<SavedAccessoryTemplate[]>(`/production/accessory-templates`),
       ]);
       setOrder(o);
+      setSavedTemplates(templateOptions || []);
       setMaterials((o.accessorySpecs || []).map((x: any) => {
         const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
         return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, note: x.note || null };
@@ -383,24 +411,106 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
     setAccessoryType("ALL");
   }
 
+  async function readAccessoryExcel(file: File) {
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: "array" });
+    const firstSheet = workbook.SheetNames[0];
+    if (!firstSheet) throw new Error("File Excel không có sheet dữ liệu.");
+    const matrix = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[firstSheet], { header: 1, defval: "", raw: false });
+    const rows = excelAccessoryMaterials(matrix, meta.accessories);
+    if (!rows.length) throw new Error("Không đọc được dòng NPL nào. File cần có cột Mã SKU/Tên sản phẩm và Số lượng cho 1 SP.");
+    return rows;
+  }
+
   async function importAccessoryExcel(file: File) {
     try {
       setImportingNpl(true);
       setError("");
-      const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data, { type: "array" });
-      const firstSheet = workbook.SheetNames[0];
-      if (!firstSheet) throw new Error("File Excel không có sheet dữ liệu.");
-      const matrix = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[firstSheet], { header: 1, defval: "", raw: false });
-      const imported = excelAccessoryMaterials(matrix, meta.accessories);
-      if (!imported.length) throw new Error("Không đọc được dòng NPL nào. File cần có cột Mã SKU/Tên sản phẩm và Số lượng cho 1 SP.");
+      const imported = await readAccessoryExcel(file);
       if (materials.length && !window.confirm("Nhập Excel sẽ thay danh sách NPL hiện tại. Tiếp tục?")) return;
       setMaterials(imported);
+      setLastExcelName(file.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không đọc được file Excel NPL.");
     } finally {
       setImportingNpl(false);
     }
+  }
+
+  function templatePayloadItems(rows: MaterialSpec[]) {
+    return rows.map((row) => {
+      const selectedAccessory = meta.accessories.find((a) => a.id === row.accessoryItemId);
+      const source = excelSourceSnapshot(row.note);
+      return {
+        accessoryItemId: selectedAccessory?.id || row.accessoryItemId || null,
+        accessoryCodeSnapshot: selectedAccessory?.code || source.code || null,
+        accessoryNameSnapshot: selectedAccessory?.name || source.name || null,
+        qtyPerProduct: Number(viNumber(row.qtyPerProduct) || 0),
+        wastePercent: Number(viNumber(row.wastePercent) || 0),
+        sizeScoped: selectedAccessory ? (isSizeLabelAccessory(selectedAccessory) ? true : row.sizeScoped) : row.sizeScoped,
+        note: row.note || null,
+      };
+    });
+  }
+
+  async function saveRowsAsTemplate(rows: MaterialSpec[], sourceType: "CURRENT" | "EXCEL", sourceFileName?: string) {
+    if (!rows.length) throw new Error("Chưa có NPL để lưu thành mẫu.");
+    const suggested = sourceFileName ? sourceFileName.replace(/\.(xlsx|xls|csv)$/i, "") : "";
+    const name = window.prompt("Đặt tên file NPL mẫu:", suggested);
+    if (name === null) return;
+    if (!name.trim()) throw new Error("Tên mẫu NPL không được để trống.");
+    setTemplateBusy(true);
+    try {
+      const created = await productionApi<SavedAccessoryTemplate>("/production/accessory-templates", {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          productKind: order.productKind || "OTHER",
+          sourceType,
+          sourceFileName: sourceFileName || null,
+          items: templatePayloadItems(rows),
+        }),
+      });
+      setSavedTemplates((old) => [created, ...old.filter((x) => x.id !== created.id)]);
+      setSelectedSavedTemplateId(created.id);
+      setLastExcelName("");
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
+  async function createTemplateFromExcel(file: File) {
+    try {
+      setImportingNpl(true);
+      setError("");
+      const rows = await readAccessoryExcel(file);
+      await saveRowsAsTemplate(rows, "EXCEL", file.name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tạo được mẫu NPL từ Excel.");
+    } finally {
+      setImportingNpl(false);
+    }
+  }
+
+  function applySavedTemplate(templateId: string) {
+    const template = savedTemplates.find((x) => x.id === templateId);
+    if (!template) return;
+    if (materials.length && !window.confirm(`Áp dụng mẫu “${template.name}” sẽ thay danh sách NPL hiện tại. Tiếp tục?`)) return;
+    const rows: MaterialSpec[] = (template.items || []).map((item) => {
+      const byId = item.accessoryItemId ? meta.accessories.find((a) => a.id === item.accessoryItemId) : undefined;
+      const accessory = byId || matchImportedAccessory(meta.accessories, item.accessoryCodeSnapshot || "", item.accessoryNameSnapshot || "");
+      return {
+        accessoryItemId: accessory?.id || "",
+        qtyPerProduct: Number(item.qtyPerProduct || 0),
+        wastePercent: Number(item.wastePercent || 0),
+        sizeScoped: accessory ? (isSizeLabelAccessory(accessory) ? true : !!item.sizeScoped) : !!item.sizeScoped,
+        note: item.note || `[Mẫu đã lưu] ${template.name} · ${[item.accessoryCodeSnapshot, item.accessoryNameSnapshot].filter(Boolean).join(" · ")}`,
+      };
+    });
+    setMaterials(rows);
+    setOrder((current: any) => ({ ...current, productKind: template.productKind || current.productKind }));
+    setAccessoryQ("");
+    setAccessoryType("ALL");
   }
 
   function validateMaterialRows() {
@@ -610,25 +720,43 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
                 <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className={`${input} pl-10`} value={accessoryQ} onChange={(e) => setAccessoryQ(e.target.value)} placeholder="Tìm mã, tên, quy cách NPL..." /></div>
                 <select className={input} value={accessoryType} onChange={(e) => setAccessoryType(e.target.value)}><option value="ALL">Tất cả phân loại NPL</option>{accessoryTypeOptions(meta.accessories).map((type) => <option key={type} value={type}>{type}</option>)}</select>
                 <label className={`flex cursor-pointer items-center justify-center rounded-2xl border px-3 py-2.5 text-sm font-semibold ${importingNpl ? "opacity-50" : ""}`}>{importingNpl ? "Đang đọc Excel..." : "↑ Nhập Excel"}<input type="file" accept=".xlsx,.xls,.csv" disabled={importingNpl} className="hidden" onChange={(e) => { const file = e.target.files?.[0]; e.currentTarget.value = ""; if (file) void importAccessoryExcel(file); }} /></label>
-                <select className={input} value="" onChange={(e) => { const value = e.target.value as "JEANS" | "JACKET" | ""; if (value) applyAccessoryTemplate(value); }}><option value="">Chọn mẫu NPL</option><option value="JEANS">Mẫu · Quần jean</option><option value="JACKET">Mẫu · Áo khoác</option></select>
+                <select className={input} value="" onChange={(e) => { const value = e.target.value as "JEANS" | "JACKET" | ""; if (value) applyAccessoryTemplate(value); }}><option value="">Mẫu hệ thống</option><option value="JEANS">Mẫu · Quần jean</option><option value="JACKET">Mẫu · Áo khoác</option></select>
               </div>
-              <div className="mt-2 text-[11px] text-neutral-400">Excel đọc theo các cột kiểu file mẫu: Mã SKU, Tên sản phẩm, Số lượng cho 1 SP. Dòng chưa khớp kho NPL sẽ được giữ lại để nhân viên chọn mã.</div>
+              <div className="mt-2 text-[11px] text-neutral-400">Excel sẽ tự dò kho NPL theo mã SKU trước, sau đó mới dò theo tên. Dòng chưa khớp vẫn được giữ lại để nhân viên chọn đúng mã.</div>
+
+              {lastExcelName && <div className="mt-3 flex flex-col gap-2 rounded-2xl bg-blue-50 p-3 text-sm text-blue-900 sm:flex-row sm:items-center sm:justify-between"><div>Đã nhập <b>{lastExcelName}</b>. Có thể lưu luôn danh sách này thành file NPL mẫu.</div><button disabled={templateBusy} onClick={() => void saveRowsAsTemplate(materials, "EXCEL", lastExcelName).catch((e) => setError(e instanceof Error ? e.message : "Không lưu được mẫu NPL."))} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Lưu file này thành mẫu</button></div>}
+
+              <div className="mt-3 rounded-2xl border bg-neutral-50 p-3">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                  <div><b>File NPL mẫu</b><div className="text-xs text-neutral-400">Lưu một bộ phụ kiện để lần sau chỉ chọn mẫu là nạp lại toàn bộ NPL và định mức.</div></div>
+                  <div className="flex flex-wrap gap-2">
+                    <button disabled={templateBusy || !materials.length} onClick={() => void saveRowsAsTemplate(materials, "CURRENT").catch((e) => setError(e instanceof Error ? e.message : "Không lưu được mẫu NPL."))} className="rounded-xl border bg-white px-3 py-2 text-xs font-semibold disabled:opacity-40">+ Lưu danh sách hiện tại</button>
+                    <label className={`cursor-pointer rounded-xl border bg-white px-3 py-2 text-xs font-semibold ${importingNpl || templateBusy ? "pointer-events-none opacity-40" : ""}`}>↑ Tạo mẫu từ Excel<input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; e.currentTarget.value = ""; if (file) void createTemplateFromExcel(file); }} /></label>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-[minmax(240px,1fr)_150px]">
+                  <select className={input} value={selectedSavedTemplateId} onChange={(e) => setSelectedSavedTemplateId(e.target.value)}><option value="">Chọn file NPL mẫu đã lưu</option>{savedTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}{t.sourceType === "EXCEL" ? " · Excel" : ""}</option>)}</select>
+                  <button disabled={!selectedSavedTemplateId} onClick={() => applySavedTemplate(selectedSavedTemplateId)} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Áp dụng mẫu</button>
+                </div>
+              </div>
 
               <div className="mt-3 space-y-2">
                 {materials.map((m, i) => {
                   const selectedAccessory = meta.accessories.find((a) => a.id === m.accessoryItemId);
                   const qtySuffix = selectedAccessory ? `${accessoryUnitLabel(selectedAccessory.unit)}/SP` : "/SP";
                   const sizeTag = accessoryTaggedSize(selectedAccessory);
-                  const options = filteredAccessories(meta.accessories, accessoryQ, accessoryType, m.accessoryItemId);
                   const sourceLabel = materialSourceLabel(m.note);
                   return (
                     <div key={i} className="rounded-2xl bg-neutral-50 p-3">
                       {sourceLabel && <div className="mb-2 text-xs font-semibold text-neutral-500">{sourceLabel}</div>}
                       <div className="grid gap-2 md:grid-cols-[2fr_1fr_1fr_140px_auto]">
-                        <select className={input} value={m.accessoryItemId} onChange={(e) => setMaterialAccessory(i, e.target.value)}>
-                          <option value="">Chọn NPL trong kho</option>
-                          {options.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}{accessorySpecShort(a) ? ` · ${accessorySpecShort(a)}` : ""}</option>)}
-                        </select>
+                        <AccessoryCombobox
+                          accessories={meta.accessories}
+                          value={m.accessoryItemId}
+                          onChange={(value) => setMaterialAccessory(i, value)}
+                          typeName={accessoryType}
+                          globalQuery={accessoryQ}
+                        />
                         <ViNumberInput value={m.qtyPerProduct} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: v } : x))} suffix={qtySuffix} decimals={4} placeholder="VD: 1 hoặc 0,75" />
                         <ViNumberInput value={m.wastePercent} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: v } : x))} suffix="%" decimals={3} placeholder="Hao hụt" />
                         {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={m.sizeScoped} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, sizeScoped: e.target.checked } : x))} />Theo size</label>}
@@ -677,13 +805,13 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
         {step === 5 && (
           <div className="space-y-5">
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải và tỷ lệ size. Sau khi cắt, sửa các ô màu xanh rồi lưu để tính lại NPL theo số thực tế.</div></div></div><button disabled={busy||!canCalculate} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Tính lại số lượng dự kiến" : "Tính sản lượng dự kiến & NPL"}</button></div>
-            {calc && <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!canEdit} history={order.cutHistory || []} />}
+            {calc && <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!canEdit} history={order.cutHistory || []} selectedMaterialCount={materials.length} />}
           </div>
         )}
 
         {step === 6 && (
           <div className="space-y-5">
-            {calc ? <Results c={calc} history={order.cutHistory || []} /> : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại bước 5 để tính sản lượng.</div>}
+            {calc ? <Results c={calc} history={order.cutHistory || []} selectedMaterialCount={materials.length} /> : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại bước 5 để tính sản lượng.</div>}
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !canManage || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
           </div>
         )}
@@ -768,7 +896,7 @@ function groupSizes(rows: any[]) {
   return [...m.values()];
 }
 
-function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [] }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[] }) {
+function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [], selectedMaterialCount = 0 }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[]; selectedMaterialCount?:number }) {
   const sizes = Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[];
   const totalPlanned = Number(c.totalPlannedQty ?? c.totalQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0));
   const persistedActual = Number(c.totalActualQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number((x.actualQty ?? x.plannedQty) || 0),0));
@@ -798,7 +926,8 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
 
       {editable && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="text-sm text-blue-900"><b>Ô xanh = số lượng cắt thực tế.</b> Sửa xong bấm lưu; hệ thống chỉ cập nhật TT, giữ nguyên DK và tính lại toàn bộ NPL.</div><button disabled={busy} onClick={onSaveActual} className="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu thực tế & tính lại NPL</button></div>}
 
-      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b></td><td className="text-center">{m.sizeLabel || "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500"><span>Đã chọn <b className="text-neutral-900">{selectedMaterialCount}</b> NPL · Bảng tính hiển thị <b className="text-neutral-900">{(c.materials || []).length}</b> dòng.</span><span>Mác size không có sản lượng ở size hiện tại vẫn được giữ và hiển thị 0.</span></div>
+      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b>{m.sizeLabel && Number(m.requiredQty||0)===0 ? <div className="mt-0.5 text-[11px] font-medium text-amber-600">Size này hiện không có trong sản lượng cắt thực tế</div> : null}</td><td className="text-center">{m.sizeLabel || "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
 
       {!!history.length && <details className="rounded-2xl border bg-white" open={false}><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Lịch sử thay đổi số lượng cắt ({history.length})</summary><div className="max-h-80 overflow-auto border-t"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-neutral-50"><tr><th className="p-2 text-left">Thời gian</th><th>Màu</th><th>Size</th><th>DK</th><th>TT trước</th><th>TT sau</th><th>Thao tác</th><th>Người sửa</th></tr></thead><tbody>{history.map((h:any)=><tr key={h.id} className="border-t"><td className="p-2">{h.createdAt?new Date(h.createdAt).toLocaleString("vi-VN"):"—"}</td><td className="text-center">{h.colorName}</td><td className="text-center font-semibold">{h.size}</td><td className="text-center">{h.plannedQty}</td><td className="text-center">{h.previousActualQty ?? "—"}</td><td className="bg-blue-50 text-center font-semibold text-blue-800">{h.actualQty ?? "—"}</td><td className="text-center">{h.changeType==="ACTUAL_UPDATE"?"Sửa thực tế":h.changeType==="INITIAL_CALCULATE"?"Tính lần đầu":"Tính lại dự kiến"}</td><td className="text-center">{h.createdByName || "Hệ thống"}</td></tr>)}</tbody></table></div></details>}
     </div>
@@ -972,11 +1101,99 @@ function filteredAccessories(accessories: Accessory[], query: string, typeName: 
   });
 }
 
+function accessoryOptionLabel(a?: Accessory | null) {
+  if (!a) return "";
+  const spec = accessorySpecShort(a);
+  return `${a.code} · ${a.name}${spec ? ` · ${spec}` : ""}`;
+}
+
+function AccessoryCombobox({ accessories, value, onChange, typeName = "ALL", globalQuery = "" }: {
+  accessories: Accessory[];
+  value: string;
+  onChange: (value: string) => void;
+  typeName?: string;
+  globalQuery?: string;
+}) {
+  const selected = accessories.find((a) => a.id === value);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const global = normalizeSearchText(globalQuery);
+  const local = normalizeSearchText(query);
+  const options = accessories
+    .filter((a) => {
+      if (a.id === value) return true;
+      if (typeName !== "ALL" && a.typeName !== typeName) return false;
+      const haystack = accessoryHaystack(a);
+      if (global && !haystack.includes(global)) return false;
+      if (local && !haystack.includes(local)) return false;
+      return true;
+    })
+    .slice(0, 80);
+
+  return (
+    <div className="relative min-w-0">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-neutral-400" />
+        <input
+          className={`${input} pl-10 pr-9`}
+          value={open ? query : accessoryOptionLabel(selected)}
+          onFocus={() => { setQuery(""); setOpen(true); }}
+          onClick={() => setOpen(true)}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          placeholder="Gõ mã / tên NPL để tìm..."
+          autoComplete="off"
+        />
+        {value ? (
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { onChange(""); setQuery(""); setOpen(true); }}
+            title="Bỏ chọn NPL"
+          >×</button>
+        ) : null}
+      </div>
+      {open && (
+        <div className="absolute z-[90] mt-1 max-h-72 w-full min-w-[520px] overflow-y-auto rounded-2xl border bg-white p-1 shadow-2xl">
+          {options.length ? options.map((a) => {
+            const active = a.id === value;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { onChange(a.id); setQuery(""); setOpen(false); }}
+                className={`block w-full rounded-xl px-3 py-2.5 text-left text-sm ${active ? "bg-neutral-950 text-white" : "hover:bg-neutral-100"}`}
+              >
+                <div className="font-semibold">{a.code} · {a.name}</div>
+                <div className={`mt-0.5 text-[11px] ${active ? "text-neutral-300" : "text-neutral-500"}`}>
+                  {a.typeName || "NPL"}{accessorySpecShort(a) ? ` · ${accessorySpecShort(a)}` : ""}
+                  {Number(a.stockQty || 0) >= 0 ? ` · Tồn ${fmt(a.stockQty || 0)} ${accessoryUnitLabel(a.unit)}` : ""}
+                </div>
+              </button>
+            );
+          }) : (
+            <div className="px-3 py-5 text-center text-xs text-neutral-400">Không tìm thấy NPL phù hợp.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function materialSourceLabel(note?: string | null) {
   const raw = String(note || "").trim();
   if (raw.startsWith("[Mẫu]")) return raw;
   if (raw.startsWith("[Excel]")) return raw;
   return "";
+}
+
+function excelSourceSnapshot(note?: string | null) {
+  const raw = String(note || "").trim();
+  const text = raw.replace(/^\[(Excel|Mẫu|Mẫu đã lưu)\]\s*/i, "");
+  const parts = text.split(" · ").map((x) => x.trim()).filter(Boolean);
+  return { code: parts[0] || "", name: parts.slice(1).join(" · ") || "" };
 }
 
 function matchTemplateAccessory(accessories: Accessory[], slot: AccessoryTemplateSlot, size?: string) {
