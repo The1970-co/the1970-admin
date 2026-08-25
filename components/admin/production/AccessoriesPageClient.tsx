@@ -1,106 +1,309 @@
 "use client";
-import { useEffect,useMemo,useState } from "react";
-import { ImagePlus,Plus,Search,Settings2 } from "lucide-react";
-import { asset,money,productionApi,uploadProductionImage } from "./production-api";
-import { getCurrentUserFromStorage,getCurrentUserPermissions } from "@/lib/current-user";
 
-type Supplier={id:string;code:string;name:string;phone?:string|null};
-type Item={id:string;code:string;name:string;typeName:string;imageUrl?:string|null;unit:string;stockQty:number;unitPrice?:number|null;supplierId?:string|null;specifications?:Record<string,any>|null;note?:string|null};
-const TYPES=["Cúc","Mác Cổ","Mác Gáy","Mác Sườn","Mác Size","Mác Quần","Khóa Kéo","Chun","Dây Rút","Mex","Túi Nylon","Tem Barcode","Thùng Carton","Chỉ May","Khác"];
-const UNITS=[["PIECE","Cái"],["METER","Mét"],["ROLL","Cuộn"],["SET","Bộ"],["KG","Kg"],["PACK","Gói"],["BOX","Hộp"],["OTHER","Khác"]];
+import { useEffect, useMemo, useState } from "react";
+import { ImagePlus, Plus, Search, Settings2 } from "lucide-react";
+import { asset, money, productionApi, uploadProductionImage } from "./production-api";
+import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 
-function useAccessoryPermissions(){const user=getCurrentUserFromStorage() as any;const roles=[...(Array.isArray(user?.roles)?user.roles:[]),user?.role,user?.roleCode,user?.staffRole].map(x=>String(x||"").toLowerCase());const root=roles.includes("owner")||roles.includes("admin");const keys=new Set(getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId));const can=(key:string)=>root||keys.has("*")||keys.has(key);return {user,can,root}}
-function accessoryGroup(typeName:string){
- const t=String(typeName||"").trim();
- if(t==="Cúc")return "Cúc";
- if(t.startsWith("Mác"))return "Mác";
- if(t.includes("Khóa"))return "Khóa";
- if(t.includes("Chun"))return "Chun";
- if(t.includes("Dây"))return "Dây / Rút";
- if(["Túi Nylon","Tem Barcode","Thùng Carton"].includes(t))return "Bao bì";
- if(t==="Chỉ May")return "Chỉ may";
- if(t==="Mex")return "Mex";
- return "Khác";
+type Supplier = { id: string; code: string; name: string; phone?: string | null };
+type Item = {
+  id: string;
+  code: string;
+  name: string;
+  typeName: string;
+  imageUrl?: string | null;
+  unit: string;
+  stockQty: number;
+  unitPrice?: number | null;
+  supplierId?: string | null;
+  specifications?: Record<string, any> | null;
+  note?: string | null;
+};
+
+const TYPES = ["Cúc", "Mác Cổ", "Mác Gáy", "Mác Sườn", "Mác Size", "Mác Quần", "Khóa Kéo", "Chun", "Dây Rút", "Mex", "Túi Nylon", "Tem Barcode", "Thùng Carton", "Chỉ May", "Khác"];
+const UNITS = [["PIECE", "Cái"], ["METER", "Mét"], ["ROLL", "Cuộn"], ["SET", "Bộ"], ["KG", "Kg"], ["PACK", "Gói"], ["BOX", "Hộp"], ["OTHER", "Khác"]];
+const SHIRT_LABEL_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
+const PANTS_LABEL_SIZES = ["29", "30", "31", "32", "34", "36"];
+
+function useAccessoryPermissions() {
+  const user = getCurrentUserFromStorage() as any;
+  const roles = [...(Array.isArray(user?.roles) ? user.roles : []), user?.role, user?.roleCode, user?.staffRole].map((x) => String(x || "").toLowerCase());
+  const root = roles.includes("owner") || roles.includes("admin");
+  const keys = new Set(getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId));
+  const can = (key: string) => root || keys.has("*") || keys.has(key);
+  return { user, can, root };
 }
-const ACCESSORY_GROUP_ORDER=["Cúc","Mác","Khóa","Chun","Dây / Rút","Mex","Chỉ may","Bao bì","Khác"];
-function fmtQty(v:any){return Number(v||0).toLocaleString("vi-VN",{maximumFractionDigits:3})}
 
-export default function AccessoriesPageClient(){
- const {user,can,root}=useAccessoryPermissions();
- const canView=can("accessories.view"),canManage=can("accessories.manage"),canStock=can("accessories.stock"),canCostView=can("accessories.cost.view"),canSupplierIdentity=can("accessories.supplier_identity.view");
- const [items,setItems]=useState<Item[]>([]),[suppliers,setSuppliers]=useState<Supplier[]>([]);
- const [q,setQ]=useState(""),[groupFilter,setGroupFilter]=useState("ALL");
- const [editing,setEditing]=useState<Item|null|undefined>(undefined),[supplierOpen,setSupplierOpen]=useState(false),[error,setError]=useState("");
- async function load(){try{setError("");const [a,s]=await Promise.all([productionApi<Item[]>("/production/accessories"),productionApi<Supplier[]>("/production/accessory-suppliers")]);setItems(a);setSuppliers(s)}catch(e){setError(e instanceof Error?e.message:"Không tải được NPL.")}}
- useEffect(()=>{void load()},[]);
- const availableGroups=useMemo(()=>ACCESSORY_GROUP_ORDER.filter(g=>items.some(x=>accessoryGroup(x.typeName)===g)),[items]);
- const rows=useMemo(()=>{const k=q.trim().toLowerCase();return items.filter(x=>(groupFilter==="ALL"||accessoryGroup(x.typeName)===groupFilter)&&(!k||[x.code,x.name,x.typeName,specSummary(x)].some(v=>String(v||"").toLowerCase().includes(k))))},[items,q,groupFilter]);
- const grouped=useMemo(()=>ACCESSORY_GROUP_ORDER.map(group=>({group,rows:rows.filter(x=>accessoryGroup(x.typeName)===group)})).filter(x=>x.rows.length),[rows]);
- const report=useMemo(()=>{const totalValue=items.reduce((sum,x)=>sum+Number(x.stockQty||0)*Number(x.unitPrice||0),0);return {sku:items.length,inStock:items.filter(x=>Number(x.stockQty||0)>0).length,outStock:items.filter(x=>Number(x.stockQty||0)<=0).length,totalValue,groups:ACCESSORY_GROUP_ORDER.map(group=>{const rs=items.filter(x=>accessoryGroup(x.typeName)===group);return {group,count:rs.length,stock:rs.reduce((sum,x)=>sum+Number(x.stockQty||0),0),value:rs.reduce((sum,x)=>sum+Number(x.stockQty||0)*Number(x.unitPrice||0),0)}}).filter(x=>x.count)}} ,[items]);
- if(user&&!canView)return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Nguyên phụ liệu.</div>;
- return <div className="space-y-4">
-   <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"><div><div className="text-xs font-semibold uppercase tracking-[.16em] text-neutral-400">Sản xuất</div><h1 className="mt-1 text-2xl font-semibold">Nguyên phụ liệu</h1><p className="mt-1 text-sm text-neutral-500">Quản lý cúc, mác, khóa, chun, bao bì, tồn và NCC NPL.</p></div><div className="flex gap-2">{canManage&&<button onClick={()=>setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4"/>NCC NPL</button>}{canManage&&<button onClick={()=>setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4"/>Thêm NPL</button>}</div></div>
-   {error&&<Err x={error}/>}
-
-   {root&&<section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-     <div className="bg-neutral-950 px-5 py-4 text-white"><div className="text-base font-semibold">Báo cáo nhanh tồn NPL</div><div className="mt-1 text-xs text-neutral-400">Giá trị tồn = số lượng tồn hiện tại × đơn giá NPL. Chỉ Admin / Owner nhìn thấy.</div></div>
-     <div className="grid gap-3 p-4 md:grid-cols-4">
-       <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">Tổng mã NPL</div><div className="mt-2 text-2xl font-semibold">{report.sku}</div></div>
-       <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">Đang có tồn</div><div className="mt-2 text-2xl font-semibold">{report.inStock}</div></div>
-       <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">Hết tồn</div><div className="mt-2 text-2xl font-semibold">{report.outStock}</div></div>
-       <div className="rounded-2xl bg-neutral-950 p-4 text-white"><div className="text-xs font-semibold uppercase text-neutral-400">Giá trị tồn NPL</div><div className="mt-2 text-2xl font-semibold">{money(report.totalValue)}</div></div>
-     </div>
-     <div className="border-t px-4 pb-4"><div className="grid gap-2 pt-4 md:grid-cols-2 xl:grid-cols-4">{report.groups.map(g=><div key={g.group} className="rounded-2xl border p-3"><div className="flex items-center justify-between"><b>{g.group}</b><span className="text-xs text-neutral-400">{g.count} mã</span></div><div className="mt-2 text-sm">Tổng tồn: <b>{fmtQty(g.stock)}</b></div><div className="mt-1 text-xs text-neutral-500">Giá trị: <b>{money(g.value)}</b></div></div>)}</div></div>
-   </section>}
-
-   <div className="rounded-3xl border bg-white p-4 shadow-sm">
-     <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-       <div className="relative max-w-md flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className="w-full rounded-2xl border py-2.5 pl-10 pr-3 text-sm" value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã, tên, loại, quy cách..."/></div>
-       <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>setGroupFilter("ALL")} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter==="ALL"?"bg-neutral-950 text-white":"bg-white"}`}>Tất cả · {items.length}</button>{availableGroups.map(g=><button type="button" key={g} onClick={()=>setGroupFilter(g)} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter===g?"bg-neutral-950 text-white":"bg-white"}`}>{g} · {items.filter(x=>accessoryGroup(x.typeName)===g).length}</button>)}</div>
-     </div>
-   </div>
-
-   <div className="space-y-4">{grouped.map(section=>{
-     const stock=section.rows.reduce((sum,x)=>sum+Number(x.stockQty||0),0);
-     const value=section.rows.reduce((sum,x)=>sum+Number(x.stockQty||0)*Number(x.unitPrice||0),0);
-     return <section key={section.group} className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-50 px-4 py-3"><div><b className="text-base">{section.group}</b><span className="ml-2 text-xs text-neutral-400">{section.rows.length} mã</span></div><div className="flex gap-4 text-xs text-neutral-500"><span>Tồn: <b className="text-neutral-900">{fmtQty(stock)}</b></span>{canCostView&&<span>Giá trị: <b className="text-neutral-900">{money(value)}</b></span>}</div></div>
-       <div className="divide-y">{section.rows.map(x=><div key={x.id} className="grid items-center gap-3 px-4 py-3 md:grid-cols-[56px_120px_minmax(240px,1fr)_150px_180px_auto]">
-         <div className="h-12 w-12 overflow-hidden rounded-xl bg-neutral-100">{x.imageUrl?<img src={asset(x.imageUrl)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}</div>
-         <div><div className="text-xs font-semibold text-neutral-400">{x.code}</div><div className="mt-0.5 text-xs text-neutral-500">{x.typeName}</div></div>
-         <div className="min-w-0"><div className="truncate font-semibold">{x.name}</div>{specSummary(x)&&<div className="mt-1 truncate text-xs text-neutral-500">{specSummary(x)}</div>}</div>
-         <div className="text-sm">Tồn <b>{fmtQty(x.stockQty)}</b><div className="text-xs text-neutral-400">{UNITS.find(u=>u[0]===x.unit)?.[1]||x.unit}</div></div>
-         <div className="text-sm">{canCostView?<><b>{x.unitPrice?money(x.unitPrice):"Chưa có giá"}</b><div className="text-xs text-neutral-400">Giá trị {money(Number(x.stockQty||0)*Number(x.unitPrice||0))}</div></>:<span className="text-neutral-400">Ẩn giá</span>}</div>
-         <button onClick={()=>setEditing(x)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>
-       </div>)}</div>
-     </section>
-   })}</div>
-   {!rows.length&&<div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
-   {editing!==undefined&&<ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await load()}}/>}
-   {supplierOpen&&<SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={()=>setSupplierOpen(false)} onSaved={load}/>}
- </div>
+function accessoryGroup(typeName: string) {
+  const t = String(typeName || "").trim();
+  if (t === "Cúc") return "Cúc";
+  if (t.startsWith("Mác")) return "Mác";
+  if (t.includes("Khóa")) return "Khóa";
+  if (t.includes("Chun")) return "Chun";
+  if (t.includes("Dây")) return "Dây / Rút";
+  if (["Túi Nylon", "Tem Barcode", "Thùng Carton"].includes(t)) return "Bao bì";
+  if (t === "Chỉ May") return "Chỉ may";
+  if (t === "Mex") return "Mex";
+  return "Khác";
 }
-function ItemModal({item,suppliers,canManage,canStock,canCostView,canSupplierIdentity,onClose,onSaved}:{item:Item|null;suppliers:Supplier[];canManage:boolean;canStock:boolean;canCostView:boolean;canSupplierIdentity:boolean;onClose:()=>void;onSaved:()=>void}){
- const [f,setF]=useState<any>({code:item?.code||"",name:item?.name||"",typeName:item?.typeName||"Cúc",imageUrl:item?.imageUrl||"",unit:item?.unit||"PIECE",stockQty:item?.stockQty??0,unitPrice:item?.unitPrice??"",supplierId:item?.supplierId||"",specifications:item?.specifications||{},note:item?.note||""});const [error,setError]=useState(""),[saving,setSaving]=useState(false);const setSpec=(k:string,v:any)=>setF((x:any)=>({...x,specifications:{...(x.specifications||{}),[k]:v}}));
- async function up(file:File){try{const r=await uploadProductionImage(file);setF({...f,imageUrl:r.url})}catch(e){setError(e instanceof Error?e.message:"Upload lỗi")}}
- async function save(){try{setSaving(true);setError("");if(!canManage&&!canStock)throw new Error("Bạn không có quyền sửa NPL.");const payload={...f,...(!canCostView?{unitPrice:undefined}:{}),...(!canManage?{name:item?.name,code:item?.code,typeName:item?.typeName,imageUrl:item?.imageUrl,unit:item?.unit,supplierId:item?.supplierId,specifications:item?.specifications,note:item?.note}:{}),...(!canStock?{stockQty:item?.stockQty}: {})};await productionApi(item?`/production/accessories/${item.id}`:"/production/accessories",{method:item?"PATCH":"POST",body:JSON.stringify(payload)});onSaved()}catch(e){setError(e instanceof Error?e.message:"Không lưu được.")}finally{setSaving(false)}}
- return <Modal title={item?`Sửa ${item.code}`:"Thêm nguyên phụ liệu"} onClose={onClose}><div className="space-y-4 p-5">{error&&<Err x={error}/>}<div className="grid gap-4 md:grid-cols-2"><Field l="Mã NPL"><input className={input} value={f.code} onChange={e=>setF({...f,code:e.target.value})} placeholder="Tự sinh nếu trống"/></Field><Field l="Tên NPL"><input className={input} value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></Field><Field l="Loại"><select className={input} value={f.typeName} onChange={e=>setF({...f,typeName:e.target.value})}>{TYPES.map(x=><option key={x}>{x}</option>)}</select></Field><Field l="Đơn vị"><select className={input} value={f.unit} onChange={e=>setF({...f,unit:e.target.value})}>{UNITS.map(x=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select></Field>{(canStock||canManage)&&<Field l="Tồn"><input disabled={!canStock&&!canManage} type="number" className={input} value={f.stockQty} onChange={e=>setF({...f,stockQty:e.target.value})}/></Field>}{canCostView&&<Field l="Đơn giá"><input disabled={!canManage} type="number" className={input} value={f.unitPrice} onChange={e=>setF({...f,unitPrice:e.target.value})}/></Field>}{canManage&&<Field l="NCC NPL"><select className={input} value={f.supplierId} onChange={e=>setF({...f,supplierId:e.target.value})}><option value="">Chưa chọn</option>{suppliers.map(s=><option key={s.id} value={s.id}>{canSupplierIdentity?`${s.code} · ${s.name||""}`.trim():(s.code||"NCC")}</option>)}</select></Field>}</div>{canManage&&<AccessorySpecs typeName={f.typeName} specs={f.specifications||{}} setSpec={setSpec}/>}<div className="rounded-2xl border border-dashed p-4"><div className="flex justify-between"><b className="text-sm">Ảnh đại diện</b><label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải ảnh<input type="file" accept="image/*" className="hidden" onChange={e=>e.target.files?.[0]&&void up(e.target.files[0])}/></label></div>{f.imageUrl&&<img src={asset(f.imageUrl)} className="mt-3 h-36 rounded-2xl object-cover"/>}</div><Field l="Ghi chú"><textarea className={`${input} min-h-20`} value={f.note} onChange={e=>setF({...f,note:e.target.value})}/></Field><button disabled={saving} onClick={()=>void save()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white">{saving?"Đang lưu...":"Lưu NPL"}</button></div></Modal>
-}
-function SupplierModal({rows,canSupplierIdentity,onClose,onSaved}:{rows:Supplier[];canSupplierIdentity:boolean;onClose:()=>void;onSaved:()=>void}){const [f,setF]=useState<any>({name:"",code:"",phone:""}),[error,setError]=useState("");async function save(){try{await productionApi("/production/accessory-suppliers",{method:"POST",body:JSON.stringify(f)});setF({name:"",code:"",phone:""});await onSaved()}catch(e){setError(e instanceof Error?e.message:"Không tạo được NCC.")}}return <Modal title="NCC nguyên phụ liệu" onClose={onClose}><div className="grid gap-5 p-5 md:grid-cols-2"><div className="max-h-96 overflow-y-auto rounded-2xl border">{rows.map(s=><div key={s.id} className="border-b p-3 text-sm"><b>{canSupplierIdentity?`${s.code} · ${s.name||""}`.trim():(s.code||"NCC")}</b>{canSupplierIdentity&&<div className="text-xs text-neutral-400">{s.phone||""}</div>}</div>)}</div><div className="space-y-3">{error&&<Err x={error}/>}<Field l="Tên NCC"><input className={input} value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></Field><Field l="Mã"><input className={input} value={f.code} onChange={e=>setF({...f,code:e.target.value})} placeholder="Tự sinh nếu trống"/></Field><Field l="SĐT"><input className={input} value={f.phone} onChange={e=>setF({...f,phone:e.target.value})}/></Field><button onClick={()=>void save()} className="w-full rounded-xl bg-neutral-950 py-2.5 font-semibold text-white">Tạo NCC</button></div></div></Modal>}
 
-function AccessorySpecs({typeName,specs,setSpec}:{typeName:string;specs:any;setSpec:(k:string,v:any)=>void}){
- const isZip=typeName==="Khóa Kéo",isButton=typeName==="Cúc",isLabel=typeName.startsWith("Mác");
- const attrs=Array.isArray(specs.customAttributes)?specs.customAttributes:[];
- const setAttrs=(rows:any[])=>setSpec("customAttributes",rows);
- return <div className="space-y-4 rounded-2xl border bg-neutral-50 p-4"><div className="text-sm font-semibold">Thông số kỹ thuật</div><div className="grid gap-4 md:grid-cols-2">
-  {isZip&&<><Field l="Loại răng khóa"><select className={input} value={specs.teethMaterial||""} onChange={e=>setSpec("teethMaterial",e.target.value)}><option value="">Chưa chọn</option><option>Răng Đồng</option><option>Răng Nhựa</option><option>Răng Nylon</option><option>Răng Kim Loại</option></select></Field><Field l="Chất liệu răng"><input className={input} value={specs.material||""} onChange={e=>setSpec("material",e.target.value)} placeholder="VD: Đồng thau, hợp kim"/></Field><Field l="Hoàn thiện bề mặt"><input className={input} value={specs.finish||""} onChange={e=>setSpec("finish",e.target.value)} placeholder="VD: Antique Brass, Nickel, Gunmetal"/></Field><Field l="Cỡ khóa"><input className={input} value={specs.zipperGauge||""} onChange={e=>setSpec("zipperGauge",e.target.value)} placeholder="#3 / #5 / #8"/></Field><Field l="Chiều dài khóa (cm)"><input inputMode="decimal" className={input} value={specs.lengthCm||""} onChange={e=>setSpec("lengthCm",e.target.value)}/></Field><Field l="Màu răng"><input className={input} value={specs.teethColor||""} onChange={e=>setSpec("teethColor",e.target.value)}/></Field><Field l="Màu tape / vải khóa"><input className={input} value={specs.tapeColor||""} onChange={e=>setSpec("tapeColor",e.target.value)}/></Field><Field l="Kiểu khóa"><select className={input} value={specs.zipperStyle||""} onChange={e=>setSpec("zipperStyle",e.target.value)}><option value="">Chưa chọn</option><option>1 đầu</option><option>2 đầu</option><option>Khóa kín</option><option>Khóa mở</option></select></Field></>}
-  {isButton&&<><Field l="Chất liệu cúc"><input className={input} value={specs.material||""} onChange={e=>setSpec("material",e.target.value)} placeholder="Kim loại / Nhựa / Sừng / Gỗ / Xà cừ"/></Field><Field l="Kiểu cúc"><input className={input} value={specs.buttonStyle||""} onChange={e=>setSpec("buttonStyle",e.target.value)}/></Field><Field l="Đường kính (mm)"><input inputMode="decimal" className={input} value={specs.diameterMm||""} onChange={e=>setSpec("diameterMm",e.target.value)}/></Field><Field l="Số lỗ"><select className={input} value={specs.holes||""} onChange={e=>setSpec("holes",e.target.value)}><option value="">—</option><option value="2">2</option><option value="4">4</option></select></Field><Field l="Màu / hoàn thiện"><input className={input} value={specs.finish||""} onChange={e=>setSpec("finish",e.target.value)} placeholder="Antique / bóng / mờ..."/></Field></>}
-  {isLabel&&<><Field l="Loại mác"><input className={input} value={specs.labelType||typeName} onChange={e=>setSpec("labelType",e.target.value)} placeholder="Mác cổ / sườn / size / quần..."/></Field><Field l="Chất liệu mác"><input className={input} value={specs.material||""} onChange={e=>setSpec("material",e.target.value)} placeholder="Da / Giả da / Vải dệt / Cotton / Satin"/></Field><Field l="Ngang (cm)"><input inputMode="decimal" className={input} value={specs.widthCm||""} onChange={e=>setSpec("widthCm",e.target.value)}/></Field><Field l="Dọc (cm)"><input inputMode="decimal" className={input} value={specs.heightCm||""} onChange={e=>setSpec("heightCm",e.target.value)}/></Field><Field l="Kiểu gấp"><select className={input} value={specs.foldStyle||""} onChange={e=>setSpec("foldStyle",e.target.value)}><option value="">Chưa chọn</option><option>Thẳng</option><option>Gấp đôi</option><option>Gấp mép</option></select></Field><Field l="Màu nền / màu chữ"><input className={input} value={specs.color||""} onChange={e=>setSpec("color",e.target.value)}/></Field></>}
-  {!isZip&&!isButton&&!isLabel&&<Field l="Quy cách / thông số"><input className={input} value={specs.customSpec||""} onChange={e=>setSpec("customSpec",e.target.value)} placeholder="VD: bản 2cm, màu đen..."/></Field>}
- </div><div className="rounded-2xl border bg-white p-3"><div className="mb-2 flex items-center justify-between"><div><b className="text-sm">Thuộc tính bổ sung</b><div className="text-xs text-neutral-400">Dùng cho quy cách lạ mà không cần sửa schema.</div></div><button type="button" onClick={()=>setAttrs([...attrs,{key:"",value:""}])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm thuộc tính</button></div><div className="space-y-2">{attrs.map((row:any,i:number)=><div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2"><input className={input} value={row.key||""} onChange={e=>setAttrs(attrs.map((x:any,j:number)=>j===i?{...x,key:e.target.value}:x))} placeholder="VD: Độ dày"/><input className={input} value={row.value||""} onChange={e=>setAttrs(attrs.map((x:any,j:number)=>j===i?{...x,value:e.target.value}:x))} placeholder="VD: 1,2 mm"/><button type="button" className="text-xs text-red-600" onClick={()=>setAttrs(attrs.filter((_:any,j:number)=>j!==i))}>Xoá</button></div>)}</div></div></div>
+const ACCESSORY_GROUP_ORDER = ["Cúc", "Mác", "Khóa", "Chun", "Dây / Rút", "Mex", "Chỉ may", "Bao bì", "Khác"];
+const fmtQty = (v: any) => Number(v || 0).toLocaleString("vi-VN", { maximumFractionDigits: 3 });
+
+export default function AccessoriesPageClient() {
+  const { user, can, root } = useAccessoryPermissions();
+  const canView = can("accessories.view");
+  const canManage = can("accessories.manage");
+  const canStock = can("accessories.stock");
+  const canCostView = can("accessories.cost.view");
+  const canSupplierIdentity = can("accessories.supplier_identity.view");
+  const [items, setItems] = useState<Item[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [q, setQ] = useState("");
+  const [groupFilter, setGroupFilter] = useState("ALL");
+  const [editing, setEditing] = useState<Item | null | undefined>(undefined);
+  const [supplierOpen, setSupplierOpen] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load() {
+    try {
+      setError("");
+      const [a, s] = await Promise.all([
+        productionApi<Item[]>("/production/accessories"),
+        productionApi<Supplier[]>("/production/accessory-suppliers"),
+      ]);
+      setItems(a);
+      setSuppliers(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tải được NPL.");
+    }
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  const availableGroups = useMemo(() => ACCESSORY_GROUP_ORDER.filter((g) => items.some((x) => accessoryGroup(x.typeName) === g)), [items]);
+  const rows = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    return items.filter((x) =>
+      (groupFilter === "ALL" || accessoryGroup(x.typeName) === groupFilter) &&
+      (!k || [x.code, x.name, x.typeName, specSummary(x)].some((v) => String(v || "").toLowerCase().includes(k)))
+    );
+  }, [items, q, groupFilter]);
+  const grouped = useMemo(() => ACCESSORY_GROUP_ORDER.map((group) => ({ group, rows: rows.filter((x) => accessoryGroup(x.typeName) === group) })).filter((x) => x.rows.length), [rows]);
+  const report = useMemo(() => {
+    const totalValue = items.reduce((sum, x) => sum + Number(x.stockQty || 0) * Number(x.unitPrice || 0), 0);
+    return {
+      sku: items.length,
+      inStock: items.filter((x) => Number(x.stockQty || 0) > 0).length,
+      outStock: items.filter((x) => Number(x.stockQty || 0) <= 0).length,
+      totalValue,
+      groups: ACCESSORY_GROUP_ORDER.map((group) => {
+        const rs = items.filter((x) => accessoryGroup(x.typeName) === group);
+        return {
+          group,
+          count: rs.length,
+          stock: rs.reduce((sum, x) => sum + Number(x.stockQty || 0), 0),
+          value: rs.reduce((sum, x) => sum + Number(x.stockQty || 0) * Number(x.unitPrice || 0), 0),
+        };
+      }).filter((x) => x.count),
+    };
+  }, [items]);
+
+  if (user && !canView) return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Nguyên phụ liệu.</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[.16em] text-neutral-400">Sản xuất</div>
+          <h1 className="mt-1 text-2xl font-semibold">Nguyên phụ liệu</h1>
+          <p className="mt-1 text-sm text-neutral-500">Quản lý cúc, mác, khóa, chun, bao bì, tồn và NCC NPL.</p>
+        </div>
+        <div className="flex gap-2">
+          {canManage && <button onClick={() => setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4" />NCC NPL</button>}
+          {canManage && <button onClick={() => setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" />Thêm NPL</button>}
+        </div>
+      </div>
+
+      {error && <Err x={error} />}
+
+      {root && (
+        <section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+          <div className="bg-neutral-950 px-5 py-4 text-white">
+            <div className="text-base font-semibold">Báo cáo nhanh tồn NPL</div>
+            <div className="mt-1 text-xs text-neutral-400">Giá trị tồn = số lượng tồn hiện tại × đơn giá NPL. Chỉ Admin / Owner nhìn thấy.</div>
+          </div>
+          <div className="grid gap-3 p-4 md:grid-cols-4">
+            <Stat label="Tổng mã NPL" value={report.sku} />
+            <Stat label="Đang có tồn" value={report.inStock} />
+            <Stat label="Hết tồn" value={report.outStock} />
+            <div className="rounded-2xl bg-neutral-950 p-4 text-white"><div className="text-xs font-semibold uppercase text-neutral-400">Giá trị tồn NPL</div><div className="mt-2 text-2xl font-semibold">{money(report.totalValue)}</div></div>
+          </div>
+          <div className="border-t px-4 pb-4">
+            <div className="grid gap-2 pt-4 md:grid-cols-2 xl:grid-cols-4">
+              {report.groups.map((g) => <div key={g.group} className="rounded-2xl border p-3"><div className="flex items-center justify-between"><b>{g.group}</b><span className="text-xs text-neutral-400">{g.count} mã</span></div><div className="mt-2 text-sm">Tổng tồn: <b>{fmtQty(g.stock)}</b></div><div className="mt-1 text-xs text-neutral-500">Giá trị: <b>{money(g.value)}</b></div></div>)}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <div className="rounded-3xl border bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <div className="relative max-w-md flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className="w-full rounded-2xl border py-2.5 pl-10 pr-3 text-sm" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã, tên, loại, quy cách, size..." /></div>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setGroupFilter("ALL")} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter === "ALL" ? "bg-neutral-950 text-white" : "bg-white"}`}>Tất cả · {items.length}</button>{availableGroups.map((g) => <button type="button" key={g} onClick={() => setGroupFilter(g)} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter === g ? "bg-neutral-950 text-white" : "bg-white"}`}>{g} · {items.filter((x) => accessoryGroup(x.typeName) === g).length}</button>)}</div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {grouped.map((section) => {
+          const stock = section.rows.reduce((sum, x) => sum + Number(x.stockQty || 0), 0);
+          const value = section.rows.reduce((sum, x) => sum + Number(x.stockQty || 0) * Number(x.unitPrice || 0), 0);
+          return (
+            <section key={section.group} className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-50 px-4 py-3"><div><b className="text-base">{section.group}</b><span className="ml-2 text-xs text-neutral-400">{section.rows.length} mã</span></div><div className="flex gap-4 text-xs text-neutral-500"><span>Tồn: <b className="text-neutral-900">{fmtQty(stock)}</b></span>{canCostView && <span>Giá trị: <b className="text-neutral-900">{money(value)}</b></span>}</div></div>
+              <div className="divide-y">
+                {section.rows.map((x) => <div key={x.id} className="grid items-center gap-3 px-4 py-3 md:grid-cols-[56px_120px_minmax(240px,1fr)_150px_180px_auto]">
+                  <div className="h-12 w-12 overflow-hidden rounded-xl bg-neutral-100">{x.imageUrl ? <img src={asset(x.imageUrl)} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-neutral-300">✦</div>}</div>
+                  <div><div className="text-xs font-semibold text-neutral-400">{x.code}</div><div className="mt-0.5 text-xs text-neutral-500">{x.typeName}</div></div>
+                  <div className="min-w-0"><div className="truncate font-semibold">{x.name}</div>{specSummary(x) && <div className="mt-1 truncate text-xs text-neutral-500">{specSummary(x)}</div>}</div>
+                  <div className="text-sm">Tồn <b>{fmtQty(x.stockQty)}</b><div className="text-xs text-neutral-400">{UNITS.find((u) => u[0] === x.unit)?.[1] || x.unit}</div></div>
+                  <div className="text-sm">{canCostView ? <><b>{x.unitPrice ? money(x.unitPrice) : "Chưa có giá"}</b><div className="text-xs text-neutral-400">Giá trị {money(Number(x.stockQty || 0) * Number(x.unitPrice || 0))}</div></> : <span className="text-neutral-400">Ẩn giá</span>}</div>
+                  <button onClick={() => setEditing(x)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>
+                </div>)}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {!rows.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
+      {editing !== undefined && <ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await load(); }} />}
+      {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}
+    </div>
+  );
 }
-function specSummary(x:Item){const s=x.specifications||{};if(x.typeName==="Khóa Kéo")return [s.teethMaterial,s.zipperGauge,s.lengthCm?`${s.lengthCm}cm`:""].filter(Boolean).join(" · ");if(x.typeName==="Cúc")return [s.material,s.diameterMm?`Ø${s.diameterMm}mm`:""].filter(Boolean).join(" · ");if(x.typeName.startsWith("Mác"))return [s.material,s.widthCm&&s.heightCm?`${s.widthCm}×${s.heightCm}cm`:""].filter(Boolean).join(" · ");return s.customSpec||""}
-const input="w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900";
-function Field({l,children}:{l:string;children:any}){return <label className="block"><span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{l}</span>{children}</label>}
-function Err({x}:{x:string}){return <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{x}</div>}
-function Modal({title,children,onClose}:{title:string;children:any;onClose:()=>void}){return <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"><div className="w-full max-w-4xl rounded-3xl bg-white shadow-2xl"><div className="flex justify-between border-b px-5 py-4"><h2 className="font-semibold">{title}</h2><button onClick={onClose} className="h-9 w-9 rounded-xl border">×</button></div>{children}</div></div>}
+
+function Stat({ label, value }: { label: string; value: any }) {
+  return <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">{label}</div><div className="mt-2 text-2xl font-semibold">{value}</div></div>;
+}
+
+function ItemModal({ item, suppliers, canManage, canStock, canCostView, canSupplierIdentity, onClose, onSaved }: { item: Item | null; suppliers: Supplier[]; canManage: boolean; canStock: boolean; canCostView: boolean; canSupplierIdentity: boolean; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState<any>({ code: item?.code || "", name: item?.name || "", typeName: item?.typeName || "Cúc", imageUrl: item?.imageUrl || "", unit: item?.unit || "PIECE", stockQty: item?.stockQty ?? 0, unitPrice: item?.unitPrice ?? "", supplierId: item?.supplierId || "", specifications: item?.specifications || {}, note: item?.note || "" });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const setSpec = (k: string, v: any) => setF((x: any) => ({ ...x, specifications: { ...(x.specifications || {}), [k]: v } }));
+
+  async function up(file: File) {
+    try {
+      const r = await uploadProductionImage(file);
+      setF((x: any) => ({ ...x, imageUrl: r.url }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload lỗi");
+    }
+  }
+
+  async function save() {
+    try {
+      setSaving(true);
+      setError("");
+      if (!canManage && !canStock) throw new Error("Bạn không có quyền sửa NPL.");
+      if (f.typeName === "Mác Size" && canManage) {
+        if (!f.specifications?.sizeKind) throw new Error("Mác Size phải chọn loại size Áo hoặc Quần.");
+        if (!f.specifications?.size) throw new Error("Mác Size phải chọn size cụ thể.");
+      }
+      const payload = {
+        ...f,
+        ...(!canCostView ? { unitPrice: undefined } : {}),
+        ...(!canManage ? { name: item?.name, code: item?.code, typeName: item?.typeName, imageUrl: item?.imageUrl, unit: item?.unit, supplierId: item?.supplierId, specifications: item?.specifications, note: item?.note } : {}),
+        ...(!canStock ? { stockQty: item?.stockQty } : {}),
+      };
+      await productionApi(item ? `/production/accessories/${item.id}` : "/production/accessories", { method: item ? "PATCH" : "POST", body: JSON.stringify(payload) });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={item ? `Sửa ${item.code}` : "Thêm nguyên phụ liệu"} onClose={onClose}>
+      <div className="space-y-4 p-5">
+        {error && <Err x={error} />}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field l="Mã NPL"><input className={input} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="Tự sinh nếu trống" /></Field>
+          <Field l="Tên NPL"><input className={input} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+          <Field l="Loại"><select className={input} value={f.typeName} onChange={(e) => setF({ ...f, typeName: e.target.value })}>{TYPES.map((x) => <option key={x}>{x}</option>)}</select></Field>
+          <Field l="Đơn vị"><select className={input} value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })}>{UNITS.map((x) => <option key={x[0]} value={x[0]}>{x[1]}</option>)}</select></Field>
+          {(canStock || canManage) && <Field l="Tồn"><input disabled={!canStock && !canManage} type="number" className={input} value={f.stockQty} onChange={(e) => setF({ ...f, stockQty: e.target.value })} /></Field>}
+          {canCostView && <Field l="Đơn giá"><input disabled={!canManage} type="number" className={input} value={f.unitPrice} onChange={(e) => setF({ ...f, unitPrice: e.target.value })} /></Field>}
+          {canManage && <Field l="NCC NPL"><select className={input} value={f.supplierId} onChange={(e) => setF({ ...f, supplierId: e.target.value })}><option value="">Chưa chọn</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{canSupplierIdentity ? `${s.code} · ${s.name || ""}`.trim() : (s.code || "NCC")}</option>)}</select></Field>}
+        </div>
+        {canManage && <AccessorySpecs typeName={f.typeName} specs={f.specifications || {}} setSpec={setSpec} />}
+        <div className="rounded-2xl border border-dashed p-4"><div className="flex justify-between"><b className="text-sm">Ảnh đại diện</b><label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"><ImagePlus className="mr-1 inline h-4 w-4" />Tải ảnh<input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && void up(e.target.files[0])} /></label></div>{f.imageUrl && <img src={asset(f.imageUrl)} className="mt-3 h-36 rounded-2xl object-cover" />}</div>
+        <Field l="Ghi chú"><textarea className={`${input} min-h-20`} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+        <button disabled={saving} onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white">{saving ? "Đang lưu..." : "Lưu NPL"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function SupplierModal({ rows, canSupplierIdentity, onClose, onSaved }: { rows: Supplier[]; canSupplierIdentity: boolean; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState<any>({ name: "", code: "", phone: "" });
+  const [error, setError] = useState("");
+  async function save() {
+    try {
+      await productionApi("/production/accessory-suppliers", { method: "POST", body: JSON.stringify(f) });
+      setF({ name: "", code: "", phone: "" });
+      await onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không tạo được NCC.");
+    }
+  }
+  return <Modal title="NCC nguyên phụ liệu" onClose={onClose}><div className="grid gap-5 p-5 md:grid-cols-2"><div className="max-h-96 overflow-y-auto rounded-2xl border">{rows.map((s) => <div key={s.id} className="border-b p-3 text-sm"><b>{canSupplierIdentity ? `${s.code} · ${s.name || ""}`.trim() : (s.code || "NCC")}</b>{canSupplierIdentity && <div className="text-xs text-neutral-400">{s.phone || ""}</div>}</div>)}</div><div className="space-y-3">{error && <Err x={error} />}<Field l="Tên NCC"><input className={input} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field l="Mã"><input className={input} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="Tự sinh nếu trống" /></Field><Field l="SĐT"><input className={input} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field><button onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-2.5 font-semibold text-white">Tạo NCC</button></div></div></Modal>;
+}
+
+function AccessorySpecs({ typeName, specs, setSpec }: { typeName: string; specs: any; setSpec: (k: string, v: any) => void }) {
+  const isZip = typeName === "Khóa Kéo";
+  const isButton = typeName === "Cúc";
+  const isLabel = typeName.startsWith("Mác");
+  const isSizeLabel = typeName === "Mác Size";
+  const attrs = Array.isArray(specs.customAttributes) ? specs.customAttributes : [];
+  const setAttrs = (rows: any[]) => setSpec("customAttributes", rows);
+  const sizeOptions = specs.sizeKind === "PANTS" ? PANTS_LABEL_SIZES : SHIRT_LABEL_SIZES;
+
+  function changeSizeKind(value: string) {
+    setSpec("sizeKind", value);
+    const allowed = value === "PANTS" ? PANTS_LABEL_SIZES : SHIRT_LABEL_SIZES;
+    if (!allowed.includes(String(specs.size || "").toUpperCase())) setSpec("size", "");
+  }
+
+  return (
+    <div className="space-y-4 rounded-2xl border bg-neutral-50 p-4">
+      <div className="text-sm font-semibold">Thông số kỹ thuật</div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {isSizeLabel && <><Field l="Nhóm size"><select className={input} value={specs.sizeKind || ""} onChange={(e) => changeSizeKind(e.target.value)}><option value="">Chọn nhóm size</option><option value="SHIRT">Size áo · XS, S, M, L, XL, XXL</option><option value="PANTS">Size quần · 29, 30, 31, 32, 34, 36</option></select></Field><Field l="Size của mác"><select className={input} disabled={!specs.sizeKind} value={specs.size || ""} onChange={(e) => setSpec("size", e.target.value)}><option value="">Chọn size</option>{sizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></Field></>}
+        {isZip && <><Field l="Loại răng khóa"><select className={input} value={specs.teethMaterial || ""} onChange={(e) => setSpec("teethMaterial", e.target.value)}><option value="">Chưa chọn</option><option>Răng Đồng</option><option>Răng Nhựa</option><option>Răng Nylon</option><option>Răng Kim Loại</option></select></Field><Field l="Chất liệu răng"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="VD: Đồng thau, hợp kim" /></Field><Field l="Hoàn thiện bề mặt"><input className={input} value={specs.finish || ""} onChange={(e) => setSpec("finish", e.target.value)} placeholder="VD: Antique Brass, Nickel, Gunmetal" /></Field><Field l="Cỡ khóa"><input className={input} value={specs.zipperGauge || ""} onChange={(e) => setSpec("zipperGauge", e.target.value)} placeholder="#3 / #5 / #8" /></Field><Field l="Chiều dài khóa (cm)"><input inputMode="decimal" className={input} value={specs.lengthCm || ""} onChange={(e) => setSpec("lengthCm", e.target.value)} /></Field><Field l="Màu răng"><input className={input} value={specs.teethColor || ""} onChange={(e) => setSpec("teethColor", e.target.value)} /></Field><Field l="Màu tape / vải khóa"><input className={input} value={specs.tapeColor || ""} onChange={(e) => setSpec("tapeColor", e.target.value)} /></Field><Field l="Kiểu khóa"><select className={input} value={specs.zipperStyle || ""} onChange={(e) => setSpec("zipperStyle", e.target.value)}><option value="">Chưa chọn</option><option>1 đầu</option><option>2 đầu</option><option>Khóa kín</option><option>Khóa mở</option></select></Field></>}
+        {isButton && <><Field l="Chất liệu cúc"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="Kim loại / Nhựa / Sừng / Gỗ / Xà cừ" /></Field><Field l="Kiểu cúc"><input className={input} value={specs.buttonStyle || ""} onChange={(e) => setSpec("buttonStyle", e.target.value)} /></Field><Field l="Đường kính (mm)"><input inputMode="decimal" className={input} value={specs.diameterMm || ""} onChange={(e) => setSpec("diameterMm", e.target.value)} /></Field><Field l="Số lỗ"><select className={input} value={specs.holes || ""} onChange={(e) => setSpec("holes", e.target.value)}><option value="">—</option><option value="2">2</option><option value="4">4</option></select></Field><Field l="Màu / hoàn thiện"><input className={input} value={specs.finish || ""} onChange={(e) => setSpec("finish", e.target.value)} placeholder="Antique / bóng / mờ..." /></Field></>}
+        {isLabel && <><Field l="Loại mác"><input className={input} value={specs.labelType || typeName} onChange={(e) => setSpec("labelType", e.target.value)} placeholder="Mác cổ / sườn / size / quần..." /></Field><Field l="Chất liệu mác"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="Da / Giả da / Vải dệt / Cotton / Satin" /></Field><Field l="Ngang (cm)"><input inputMode="decimal" className={input} value={specs.widthCm || ""} onChange={(e) => setSpec("widthCm", e.target.value)} /></Field><Field l="Dọc (cm)"><input inputMode="decimal" className={input} value={specs.heightCm || ""} onChange={(e) => setSpec("heightCm", e.target.value)} /></Field><Field l="Kiểu gấp"><select className={input} value={specs.foldStyle || ""} onChange={(e) => setSpec("foldStyle", e.target.value)}><option value="">Chưa chọn</option><option>Thẳng</option><option>Gấp đôi</option><option>Gấp mép</option></select></Field><Field l="Màu nền / màu chữ"><input className={input} value={specs.color || ""} onChange={(e) => setSpec("color", e.target.value)} /></Field></>}
+        {!isZip && !isButton && !isLabel && <Field l="Quy cách / thông số"><input className={input} value={specs.customSpec || ""} onChange={(e) => setSpec("customSpec", e.target.value)} placeholder="VD: bản 2cm, màu đen..." /></Field>}
+      </div>
+      {isSizeLabel && <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">Mác size sau khi chọn size sẽ tự lấy đúng số lượng cắt của size đó trong lệnh sản xuất. Không cần chọn “Theo size” thủ công.</div>}
+      <div className="rounded-2xl border bg-white p-3"><div className="mb-2 flex items-center justify-between"><div><b className="text-sm">Thuộc tính bổ sung</b><div className="text-xs text-neutral-400">Dùng cho quy cách lạ mà không cần sửa schema.</div></div><button type="button" onClick={() => setAttrs([...attrs, { key: "", value: "" }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm thuộc tính</button></div><div className="space-y-2">{attrs.map((row: any, i: number) => <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2"><input className={input} value={row.key || ""} onChange={(e) => setAttrs(attrs.map((x: any, j: number) => j === i ? { ...x, key: e.target.value } : x))} placeholder="VD: Độ dày" /><input className={input} value={row.value || ""} onChange={(e) => setAttrs(attrs.map((x: any, j: number) => j === i ? { ...x, value: e.target.value } : x))} placeholder="VD: 1,2 mm" /><button type="button" className="text-xs text-red-600" onClick={() => setAttrs(attrs.filter((_: any, j: number) => j !== i))}>Xoá</button></div>)}</div></div>
+    </div>
+  );
+}
+
+function specSummary(x: Item) {
+  const s = x.specifications || {};
+  if (x.typeName === "Khóa Kéo") return [s.teethMaterial, s.zipperGauge, s.lengthCm ? `${s.lengthCm}cm` : ""].filter(Boolean).join(" · ");
+  if (x.typeName === "Cúc") return [s.material, s.diameterMm ? `Ø${s.diameterMm}mm` : ""].filter(Boolean).join(" · ");
+  if (x.typeName === "Mác Size") return [s.sizeKind === "PANTS" ? "Size quần" : s.sizeKind === "SHIRT" ? "Size áo" : "", s.size ? `Size ${s.size}` : "", s.material, s.widthCm && s.heightCm ? `${s.widthCm}×${s.heightCm}cm` : ""].filter(Boolean).join(" · ");
+  if (x.typeName.startsWith("Mác")) return [s.material, s.widthCm && s.heightCm ? `${s.widthCm}×${s.heightCm}cm` : ""].filter(Boolean).join(" · ");
+  return s.customSpec || "";
+}
+
+const input = "w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900";
+function Field({ l, children }: { l: string; children: any }) { return <label className="block"><span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{l}</span>{children}</label>; }
+function Err({ x }: { x: string }) { return <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{x}</div>; }
+function Modal({ title, children, onClose }: { title: string; children: any; onClose: () => void }) { return <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"><div className="w-full max-w-4xl rounded-3xl bg-white shadow-2xl"><div className="flex justify-between border-b px-5 py-4"><h2 className="font-semibold">{title}</h2><button onClick={onClose} className="h-9 w-9 rounded-xl border">×</button></div>{children}</div></div>; }

@@ -1,4 +1,64 @@
 "use client";
-import { useEffect,useState } from "react";
-import { productionApi,fmt } from "./production-api";
-export default function ProductionPrintClient({id}:{id:string}){const [d,setD]=useState<any>(null);useEffect(()=>{productionApi(`/production/orders/${id}/print`).then(setD)},[id]);if(!d)return <div className="p-10">Đang tải phiếu...</div>;const sizes=Array.from(new Set((d.sizes||[]).map((x:any)=>x.size))) as string[];const colors=Array.from(new Set((d.sizes||[]).map((x:any)=>x.colorName))) as string[];return <main className="mx-auto max-w-5xl bg-white p-8 text-sm text-black"><div className="flex justify-between"><div><h1 className="text-2xl font-bold">THE 1970 · PHIẾU SẢN XUẤT</h1><div className="mt-2">Mã lệnh: <b>{d.code}</b></div></div><button onClick={()=>window.print()} className="print:hidden rounded border px-4 py-2">In phiếu</button></div><div className="mt-6 grid grid-cols-2 gap-3 border-y py-4"><div>Mã SX: <b>{d.source?.code || d.sourceCode} · {d.source?.name || d.sourceName}</b></div><div>Nhà may: <b>{d.factory?.code} · {d.factory?.name}</b></div><div>Định mức vải: <b>{fmt(d.fabricConsumptionM)} m/sp</b></div><div>Khổ vải: <b>{fmt(d.fabricWidthCm,1)} cm</b></div></div><h2 className="mt-6 font-bold">CÂY VẢI GIAO SẢN XUẤT</h2><table className="mt-2 w-full border-collapse"><thead><tr>{["Cây","Màu","Mét giao","Kg giao"].map(x=><th key={x} className="border p-2 text-left">{x}</th>)}</tr></thead><tbody>{d.rolls.map((r:any)=><tr key={r.id}><td className="border p-2">{r.rollCode||"—"}</td><td className="border p-2">{r.colorName||"—"} {r.colorCode||""}</td><td className="border p-2">{fmt(r.allocatedM)} m</td><td className="border p-2">{fmt(r.allocatedKg)} kg</td></tr>)}</tbody></table><h2 className="mt-6 font-bold">KẾ HOẠCH CẮT / SIZE</h2><table className="mt-2 w-full border-collapse"><thead><tr><th className="border p-2 text-left">Màu</th>{sizes.map(s=><th key={s} className="border p-2">{s}</th>)}<th className="border p-2">Tổng</th></tr></thead><tbody>{colors.map(c=>{const rows=d.sizes.filter((x:any)=>x.colorName===c);return <tr key={c}><td className="border p-2 font-bold">{c}</td>{sizes.map(s=><td key={s} className="border p-2 text-center">{rows.find((x:any)=>x.size===s)?.plannedQty||0}</td>)}<td className="border p-2 text-center font-bold">{rows.reduce((a:number,x:any)=>a+x.plannedQty,0)}</td></tr>})}</tbody></table><h2 className="mt-6 font-bold">NGUYÊN PHỤ LIỆU</h2><table className="mt-2 w-full border-collapse"><thead><tr>{["NPL","Size","Định mức","Hao hụt","Cần xuất"].map(x=><th key={x} className="border p-2 text-left">{x}</th>)}</tr></thead><tbody>{d.materials.map((x:any)=><tr key={x.id}><td className="border p-2">{x.accessoryCode} · {x.accessoryName}</td><td className="border p-2">{x.sizeLabel||"—"}</td><td className="border p-2">{fmt(x.qtyPerProduct)}</td><td className="border p-2">{fmt(x.wastePercent)}%</td><td className="border p-2 font-bold">{fmt(x.requiredQty)} {x.unit}</td></tr>)}</tbody></table><div className="mt-16 grid grid-cols-2 gap-24 text-center"><div><div className="border-t pt-2 font-bold">THE 1970 XÁC NHẬN</div></div><div><div className="border-t pt-2 font-bold">NHÀ MAY / XƯỞNG XÁC NHẬN</div></div></div></main>}
+
+import { useEffect, useState } from "react";
+import { productionApi, fmt } from "./production-api";
+
+export default function ProductionPrintClient({ id }: { id: string }) {
+  const [d, setD] = useState<any>(null);
+
+  useEffect(() => {
+    productionApi(`/production/orders/${id}/print`).then(setD);
+  }, [id]);
+
+  if (!d) return <div className="p-10">Đang tải phiếu...</div>;
+
+  const sizes = Array.from(new Set((d.sizes || []).map((x: any) => x.size))) as string[];
+  const colors = Array.from(new Set((d.sizes || []).map((x: any) => x.colorName))) as string[];
+
+  return (
+    <main className="mx-auto max-w-5xl bg-white p-8 text-sm text-black">
+      <div className="flex justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">THE 1970 · PHIẾU SẢN XUẤT</h1>
+          <div className="mt-2">Mã lệnh: <b>{d.code}</b></div>
+        </div>
+        <button onClick={() => window.print()} className="print:hidden rounded border px-4 py-2">In phiếu</button>
+      </div>
+
+      <div className="mt-6 grid grid-cols-2 gap-3 border-y py-4">
+        <div>Mã SX: <b>{d.source?.code || d.sourceCode} · {d.source?.name || d.sourceName}</b></div>
+        <div>Nhà may: <b>{d.factory?.code} · {d.factory?.name}</b></div>
+      </div>
+
+      <h2 className="mt-6 font-bold">CÂY VẢI GIAO SẢN XUẤT</h2>
+      <table className="mt-2 w-full border-collapse">
+        <thead><tr>{["Cây", "Màu", "Mét giao", "Kg giao"].map((x) => <th key={x} className="border p-2 text-left">{x}</th>)}</tr></thead>
+        <tbody>{(d.rolls || []).map((r: any) => <tr key={r.id}><td className="border p-2">{r.rollCode || "—"}</td><td className="border p-2">{r.colorName || "—"} {r.colorCode || ""}</td><td className="border p-2">{fmt(r.allocatedM)} m</td><td className="border p-2">{fmt(r.allocatedKg)} kg</td></tr>)}</tbody>
+      </table>
+
+      <h2 className="mt-6 font-bold">KẾ HOẠCH CẮT / SIZE</h2>
+      <table className="mt-2 w-full border-collapse">
+        <thead><tr><th rowSpan={2} className="border p-2 text-left">Màu</th>{sizes.map((s) => <th key={s} colSpan={2} className="border p-2">{s}</th>)}<th colSpan={2} className="border p-2">Tổng</th></tr><tr>{sizes.flatMap((s) => [<th key={`${s}-dk`} className="border p-1">DK</th>, <th key={`${s}-tt`} className="border p-1">TT</th>])}<th className="border p-1">DK</th><th className="border p-1">TT</th></tr></thead>
+        <tbody>
+          {colors.map((c) => {
+            const rows = (d.sizes || []).filter((x: any) => x.colorName === c);
+            const plannedTotal = rows.reduce((a: number, x: any) => a + Number(x.plannedQty || 0), 0);
+            const actualTotal = rows.reduce((a: number, x: any) => a + Number(x.actualQty ?? x.plannedQty ?? 0), 0);
+            return <tr key={c}><td className="border p-2 font-bold">{c}</td>{sizes.flatMap((s) => { const row = rows.find((x: any) => x.size === s); return [<td key={`${s}-p`} className="border p-2 text-center">{row?.plannedQty || 0}</td>, <td key={`${s}-a`} className="border p-2 text-center font-bold">{row?.actualQty ?? row?.plannedQty ?? 0}</td>]; })}<td className="border p-2 text-center font-bold">{plannedTotal}</td><td className="border p-2 text-center font-bold">{actualTotal}</td></tr>;
+          })}
+        </tbody>
+      </table>
+
+      <h2 className="mt-6 font-bold">NGUYÊN PHỤ LIỆU</h2>
+      <table className="mt-2 w-full border-collapse">
+        <thead><tr>{["NPL", "Size", "Định mức", "Hao hụt", "Cần xuất"].map((x) => <th key={x} className="border p-2 text-left">{x}</th>)}</tr></thead>
+        <tbody>{(d.materials || []).map((x: any) => <tr key={x.id}><td className="border p-2">{x.accessoryCode} · {x.accessoryName}</td><td className="border p-2">{x.sizeLabel || "—"}</td><td className="border p-2">{fmt(x.qtyPerProduct)}</td><td className="border p-2">{fmt(x.wastePercent)}%</td><td className="border p-2 font-bold">{fmt(x.requiredQty)} {x.unit}</td></tr>)}</tbody>
+      </table>
+
+      <div className="mt-16 grid grid-cols-2 gap-24 text-center">
+        <div><div className="border-t pt-2 font-bold">THE 1970 XÁC NHẬN</div></div>
+        <div><div className="border-t pt-2 font-bold">NHÀ MAY / XƯỞNG XÁC NHẬN</div></div>
+      </div>
+    </main>
+  );
+}

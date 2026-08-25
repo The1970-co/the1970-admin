@@ -1,19 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Calculator,
   Check,
   Factory,
-  PackageCheck,
   Plus,
   Search,
   Send,
-  Shirt,
-  SlidersHorizontal,
 } from "lucide-react";
 import { asset, fmt, productionApi } from "./production-api";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
+import * as XLSX from "xlsx";
 
 type Sample = {
   id: string;
@@ -91,8 +89,8 @@ type MaterialSpec = {
   note?: string | null;
 };
 
-const SHIRT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"];
-const PANTS_SIZES = ["28", "29", "30", "31", "32", "33", "34", "36", "38"];
+const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
+const PANTS_SIZES = ["29", "30", "31", "32", "34", "36"];
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Chưa triển khai",
   PLANNING: "Đang lên kế hoạch",
@@ -303,11 +301,15 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
   const [materials, setMaterials] = useState<MaterialSpec[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [rollQ, setRollQ] = useState("");
+  const [accessoryQ, setAccessoryQ] = useState("");
+  const [accessoryType, setAccessoryType] = useState("ALL");
+  const [importingNpl, setImportingNpl] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [allocated, setAllocated] = useState<Record<string, string>>({});
   const [sizeSet, setSizeSet] = useState<string[]>([]);
   const [ratio, setRatio] = useState<Record<string, number>>({});
   const [calc, setCalc] = useState<any>(null);
+  const [actualCut, setActualCut] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -319,17 +321,30 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
         productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}`),
       ]);
       setOrder(o);
-      setMaterials((o.accessorySpecs || []).map((x: any) => ({ accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: !!x.sizeScoped, note: x.note || null })));
+      setMaterials((o.accessorySpecs || []).map((x: any) => {
+        const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
+        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, note: x.note || null };
+      }));
       setRolls(rollOptions);
       const sel: Record<string, boolean> = {};
       const meters: Record<string, string> = {};
       (o.rolls || []).forEach((x: any) => { sel[x.fabricReceiptRollId] = true; meters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); });
       setSelected(sel);
       setAllocated(meters);
-      const ss = Array.isArray(o.sizeSet) && o.sizeSet.length ? o.sizeSet : o.productKind === "PANTS" ? ["29", "30", "31", "32", "34", "36"] : ["S", "M", "L", "XL"];
+      const ss = Array.isArray(o.sizeSet) && o.sizeSet.length ? o.sizeSet : o.productKind === "PANTS" ? PANTS_SIZES : SHIRT_SIZES;
       setSizeSet(ss);
       setRatio(o.sizeRatio && typeof o.sizeRatio === "object" ? o.sizeRatio : Object.fromEntries(ss.map((x: string) => [x, 1])));
-      if (o.sizes?.length) setCalc({ totalQty: o.sizes.reduce((sum: number, x: any) => sum + Number(x.plannedQty || 0), 0), colors: groupSizes(o.sizes), materials: o.materials || [] });
+      if (o.sizes?.length) {
+        const actualDraft: Record<string, string> = {};
+        (o.sizes || []).forEach((x: any) => { actualDraft[cutKey(x.colorName, x.size)] = String(x.actualQty ?? x.plannedQty ?? 0); });
+        setActualCut(actualDraft);
+        const totalPlannedQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.plannedQty || 0), 0);
+        const totalActualQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.actualQty ?? x.plannedQty ?? 0), 0);
+        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [] });
+      } else {
+        setCalc(null);
+        setActualCut({});
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được lệnh.");
     }
@@ -345,11 +360,74 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
     } catch {}
   }
 
+  function setMaterialAccessory(index: number, accessoryItemId: string) {
+    const accessory = meta.accessories.find((a) => a.id === accessoryItemId);
+    const defaultQty = accessory?.specifications?.defaultQtyPerProduct;
+    setMaterials((rows) => rows.map((row, i) => i === index ? {
+      ...row,
+      accessoryItemId,
+      sizeScoped: isSizeLabelAccessory(accessory) ? true : row.sizeScoped,
+      qtyPerProduct: defaultQty !== null && defaultQty !== undefined && defaultQty !== "" ? viDisplay(defaultQty, 4) : row.qtyPerProduct,
+    } : row));
+  }
+
+  function applyAccessoryTemplate(key: "JEANS" | "JACKET") {
+    const template = ACCESSORY_TEMPLATES[key];
+    if (materials.length && !window.confirm("Áp dụng mẫu sẽ thay danh sách NPL hiện tại. Tiếp tục?")) return;
+    const rows = buildTemplateMaterials(template, meta.accessories);
+    setMaterials(rows);
+    setOrder((current: any) => ({ ...current, productKind: template.productKind }));
+    setSizeSet([...template.sizes]);
+    setRatio(Object.fromEntries(template.sizes.map((size) => [size, 1])));
+    setAccessoryQ("");
+    setAccessoryType("ALL");
+  }
+
+  async function importAccessoryExcel(file: File) {
+    try {
+      setImportingNpl(true);
+      setError("");
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheet = workbook.SheetNames[0];
+      if (!firstSheet) throw new Error("File Excel không có sheet dữ liệu.");
+      const matrix = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[firstSheet], { header: 1, defval: "", raw: false });
+      const imported = excelAccessoryMaterials(matrix, meta.accessories);
+      if (!imported.length) throw new Error("Không đọc được dòng NPL nào. File cần có cột Mã SKU/Tên sản phẩm và Số lượng cho 1 SP.");
+      if (materials.length && !window.confirm("Nhập Excel sẽ thay danh sách NPL hiện tại. Tiếp tục?")) return;
+      setMaterials(imported);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không đọc được file Excel NPL.");
+    } finally {
+      setImportingNpl(false);
+    }
+  }
+
+  function validateMaterialRows() {
+    const unresolved = materials.filter((m) => !m.accessoryItemId);
+    if (unresolved.length) throw new Error(`Còn ${unresolved.length} dòng NPL từ mẫu/Excel chưa chọn đúng mã trong kho NPL.`);
+    const selectedIds = materials.map((m) => m.accessoryItemId).filter(Boolean);
+    const duplicateId = selectedIds.find((id, index) => selectedIds.indexOf(id) !== index);
+    if (duplicateId) {
+      const duplicate = meta.accessories.find((a) => a.id === duplicateId);
+      throw new Error(`NPL ${duplicate?.code || ""} · ${duplicate?.name || ""} đang được chọn lặp trong lệnh.`);
+    }
+    const badSize = materials.find((m) => {
+      const a = meta.accessories.find((x) => x.id === m.accessoryItemId);
+      return isSizeLabelAccessory(a) && !accessoryTaggedSize(a);
+    });
+    if (badSize) {
+      const a = meta.accessories.find((x) => x.id === badSize.accessoryItemId);
+      throw new Error(`Mác Size ${a?.code || ""} · ${a?.name || ""} chưa được gán size trong kho NPL.`);
+    }
+  }
+
   async function saveSpec() {
     try {
       setBusy(true);
       setError("");
       if(!canEdit)throw new Error("Bạn không có quyền sửa lệnh sản xuất.");
+      validateMaterialRows();
       await productionApi(`/production/orders/${id}/spec`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -398,6 +476,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
       setBusy(true);
       setError("");
       if(!canEdit)throw new Error("Bạn không có quyền sửa lệnh sản xuất.");
+      validateMaterialRows();
       await productionApi(`/production/orders/${id}/spec`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -428,9 +507,29 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
       const c = await productionApi<any>(`/production/orders/${id}/calculate`, { method: "POST" });
       setCalc(c);
       await load();
-      setStep(6);
+      setStep(5);
       onChanged();
     } catch (e) { setError(e instanceof Error ? e.message : "Không tính được sản lượng."); }
+    finally { setBusy(false); }
+  }
+
+  async function saveActualCuts() {
+    try {
+      setBusy(true);
+      setError("");
+      if (!canEdit) throw new Error("Bạn không có quyền sửa số lượng cắt thực tế.");
+      if (!order?.sizes?.length) throw new Error("Chưa có bảng sản lượng dự kiến.");
+      const rows = (order.sizes || []).map((x: any) => {
+        const raw = actualCut[cutKey(x.colorName, x.size)] ?? String(x.actualQty ?? x.plannedQty ?? 0);
+        const value = Number(String(raw).replace(",", "."));
+        if (!Number.isInteger(value) || value < 0) throw new Error(`Số cắt thực tế ${x.colorName} · size ${x.size} phải là số nguyên từ 0 trở lên.`);
+        return { colorName: x.colorName, size: x.size, actualQty: value };
+      });
+      const result = await productionApi<any>(`/production/orders/${id}/cut-actual`, { method: "PATCH", body: JSON.stringify({ rows }) });
+      setCalc(result);
+      await load();
+      onChanged();
+    } catch (e) { setError(e instanceof Error ? e.message : "Không lưu được số lượng cắt thực tế."); }
     finally { setBusy(false); }
   }
 
@@ -458,7 +557,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
     if (step === 2) { await saveSpec(); return; }
     if (step === 3) { await saveRolls(); return; }
     if (step === 4) { await saveSizes(); return; }
-    if (step === 5) { await calculate(); return; }
+    if (step === 5) { if (!calc) await calculate(); else setStep(6); return; }
   }
 
   function goBack() {
@@ -502,105 +601,48 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
             </div>
 
             <div className="rounded-3xl border p-4">
-              <div className="flex items-center justify-between"><div><b>Nguyên phụ liệu của lệnh này</b><div className="text-xs text-neutral-400">Chọn NPL đã tạo sẵn và nhập định mức / sản phẩm.</div></div><button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button></div>
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                <div><b>Nguyên phụ liệu của lệnh này</b><div className="text-xs text-neutral-400">Có thể chọn thủ công, nhập Excel hoặc áp dụng mẫu NPL có sẵn.</div></div>
+                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
+              </div>
+
+              <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_220px_170px_190px]">
+                <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className={`${input} pl-10`} value={accessoryQ} onChange={(e) => setAccessoryQ(e.target.value)} placeholder="Tìm mã, tên, quy cách NPL..." /></div>
+                <select className={input} value={accessoryType} onChange={(e) => setAccessoryType(e.target.value)}><option value="ALL">Tất cả phân loại NPL</option>{accessoryTypeOptions(meta.accessories).map((type) => <option key={type} value={type}>{type}</option>)}</select>
+                <label className={`flex cursor-pointer items-center justify-center rounded-2xl border px-3 py-2.5 text-sm font-semibold ${importingNpl ? "opacity-50" : ""}`}>{importingNpl ? "Đang đọc Excel..." : "↑ Nhập Excel"}<input type="file" accept=".xlsx,.xls,.csv" disabled={importingNpl} className="hidden" onChange={(e) => { const file = e.target.files?.[0]; e.currentTarget.value = ""; if (file) void importAccessoryExcel(file); }} /></label>
+                <select className={input} value="" onChange={(e) => { const value = e.target.value as "JEANS" | "JACKET" | ""; if (value) applyAccessoryTemplate(value); }}><option value="">Chọn mẫu NPL</option><option value="JEANS">Mẫu · Quần jean</option><option value="JACKET">Mẫu · Áo khoác</option></select>
+              </div>
+              <div className="mt-2 text-[11px] text-neutral-400">Excel đọc theo các cột kiểu file mẫu: Mã SKU, Tên sản phẩm, Số lượng cho 1 SP. Dòng chưa khớp kho NPL sẽ được giữ lại để nhân viên chọn mã.</div>
+
               <div className="mt-3 space-y-2">
                 {materials.map((m, i) => {
                   const selectedAccessory = meta.accessories.find((a) => a.id === m.accessoryItemId);
                   const qtySuffix = selectedAccessory ? `${accessoryUnitLabel(selectedAccessory.unit)}/SP` : "/SP";
+                  const sizeTag = accessoryTaggedSize(selectedAccessory);
+                  const options = filteredAccessories(meta.accessories, accessoryQ, accessoryType, m.accessoryItemId);
+                  const sourceLabel = materialSourceLabel(m.note);
                   return (
                     <div key={i} className="rounded-2xl bg-neutral-50 p-3">
-                      <div className="grid gap-2 md:grid-cols-[2fr_1fr_1fr_120px_auto]">
-                        <select
-                          className={input}
-                          value={m.accessoryItemId}
-                          onChange={(e) => {
-                            const accessoryItemId = e.target.value;
-                            const accessory = meta.accessories.find((a) => a.id === accessoryItemId);
-                            const defaultQty = accessory?.specifications?.defaultQtyPerProduct;
-                            setMaterials((rows) =>
-                              rows.map((x, j) =>
-                                j === i
-                                  ? {
-                                      ...x,
-                                      accessoryItemId,
-                                      qtyPerProduct:
-                                        defaultQty !== null && defaultQty !== undefined && defaultQty !== ""
-                                          ? viDisplay(defaultQty, 4)
-                                          : x.qtyPerProduct,
-                                    }
-                                  : x,
-                              ),
-                            );
-                          }}
-                        >
-                          <option value="">Chọn NPL</option>
-                          {meta.accessories.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.code} · {a.name}{accessorySpecShort(a) ? ` · ${accessorySpecShort(a)}` : ""}
-                            </option>
-                          ))}
+                      {sourceLabel && <div className="mb-2 text-xs font-semibold text-neutral-500">{sourceLabel}</div>}
+                      <div className="grid gap-2 md:grid-cols-[2fr_1fr_1fr_140px_auto]">
+                        <select className={input} value={m.accessoryItemId} onChange={(e) => setMaterialAccessory(i, e.target.value)}>
+                          <option value="">Chọn NPL trong kho</option>
+                          {options.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}{accessorySpecShort(a) ? ` · ${accessorySpecShort(a)}` : ""}</option>)}
                         </select>
-                        <ViNumberInput
-                          value={m.qtyPerProduct}
-                          onChange={(v) =>
-                            setMaterials((rows) =>
-                              rows.map((x, j) => (j === i ? { ...x, qtyPerProduct: v } : x)),
-                            )
-                          }
-                          suffix={qtySuffix}
-                          decimals={4}
-                          placeholder="VD: 1 hoặc 0,75"
-                        />
-                        <ViNumberInput
-                          value={m.wastePercent}
-                          onChange={(v) =>
-                            setMaterials((rows) =>
-                              rows.map((x, j) => (j === i ? { ...x, wastePercent: v } : x)),
-                            )
-                          }
-                          suffix="%"
-                          decimals={3}
-                          placeholder="Hao hụt"
-                        />
-                        <label className="flex items-center gap-2 text-xs font-semibold">
-                          <input
-                            type="checkbox"
-                            checked={m.sizeScoped}
-                            onChange={(e) =>
-                              setMaterials((rows) =>
-                                rows.map((x, j) =>
-                                  j === i ? { ...x, sizeScoped: e.target.checked } : x,
-                                ),
-                              )
-                            }
-                          />
-                          Theo size
-                        </label>
-                        <button
-                          onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))}
-                          className="text-xs font-semibold text-red-600"
-                        >
-                          Xoá
-                        </button>
+                        <ViNumberInput value={m.qtyPerProduct} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: v } : x))} suffix={qtySuffix} decimals={4} placeholder="VD: 1 hoặc 0,75" />
+                        <ViNumberInput value={m.wastePercent} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: v } : x))} suffix="%" decimals={3} placeholder="Hao hụt" />
+                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={m.sizeScoped} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, sizeScoped: e.target.checked } : x))} />Theo size</label>}
+                        <button onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))} className="text-xs font-semibold text-red-600">Xoá</button>
                       </div>
-                      {selectedAccessory && (
-                        <div className="mt-2 text-xs text-neutral-500">
-                          <b>{selectedAccessory.typeName || "NPL"}</b>
-                          {accessorySpecShort(selectedAccessory) ? ` · ${accessorySpecShort(selectedAccessory)}` : ""}
-                          {selectedAccessory.specifications?.defaultQtyPerProduct !== null &&
-                          selectedAccessory.specifications?.defaultQtyPerProduct !== undefined &&
-                          selectedAccessory.specifications?.defaultQtyPerProduct !== ""
-                            ? ` · Mặc định ${viDisplay(selectedAccessory.specifications.defaultQtyPerProduct, 4)} ${accessoryUnitLabel(selectedAccessory.unit)}/SP`
-                            : ""}
-                        </div>
-                      )}
+                      {selectedAccessory && <div className="mt-2 text-xs text-neutral-500"><b>{selectedAccessory.typeName || "NPL"}</b>{accessorySpecShort(selectedAccessory) ? ` · ${accessorySpecShort(selectedAccessory)}` : ""}{selectedAccessory.specifications?.defaultQtyPerProduct !== null && selectedAccessory.specifications?.defaultQtyPerProduct !== undefined && selectedAccessory.specifications?.defaultQtyPerProduct !== "" ? ` · Mặc định ${viDisplay(selectedAccessory.specifications.defaultQtyPerProduct, 4)} ${accessoryUnitLabel(selectedAccessory.unit)}/SP` : ""}</div>}
+                      {!selectedAccessory && sourceLabel && <div className="mt-2 text-xs text-amber-700">Chưa khớp mã NPL. Dùng ô tìm kiếm/phân loại rồi chọn đúng NPL trong kho.</div>}
                     </div>
                   );
                 })}
                 {!materials.length && <div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa gắn nguyên phụ liệu.</div>}
               </div>
             </div>
-            <div className="flex justify-end"><button disabled={busy||!canEdit} onClick={() => void saveSpec()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu định mức → Chọn cây vải</button></div>
+            <div className="flex justify-end"><button disabled={busy || !canEdit} onClick={() => void saveSpec()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu định mức → Chọn cây vải</button></div>
           </div>
         )}
 
@@ -634,14 +676,14 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, onClose, onCh
 
         {step === 5 && (
           <div className="space-y-5">
-            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Tính sản lượng cắt và nguyên phụ liệu</b><div className="text-xs text-neutral-400">Dựa trên cây vải đã chọn, định mức, hao hụt và tỷ lệ size.</div></div></div><button disabled={busy||!canCalculate} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">Tính sản lượng & NPL</button></div>
-            {calc && <Results c={calc} />}
+            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải và tỷ lệ size. Sau khi cắt, sửa các ô màu xanh rồi lưu để tính lại NPL theo số thực tế.</div></div></div><button disabled={busy||!canCalculate} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Tính lại số lượng dự kiến" : "Tính sản lượng dự kiến & NPL"}</button></div>
+            {calc && <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!canEdit} history={order.cutHistory || []} />}
           </div>
         )}
 
         {step === 6 && (
           <div className="space-y-5">
-            {calc ? <Results c={calc} /> : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại bước 5 để tính sản lượng.</div>}
+            {calc ? <Results c={calc} history={order.cutHistory || []} /> : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại bước 5 để tính sản lượng.</div>}
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !canManage || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
           </div>
         )}
@@ -698,7 +740,7 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
   }
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap gap-2"><button onClick={() => { const next=["S","M","L","XL"]; setOrder({ ...order, productKind: "SHIRT" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "SHIRT" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size áo</button><button onClick={() => { const next=["29","30","31","32","34","36"]; setOrder({ ...order, productKind: "PANTS" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "PANTS" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size quần</button></div>
+      <div className="flex flex-wrap gap-2"><button onClick={() => { const next=[...SHIRT_SIZES]; setOrder({ ...order, productKind: "SHIRT" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "SHIRT" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size áo</button><button onClick={() => { const next=[...PANTS_SIZES]; setOrder({ ...order, productKind: "PANTS" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "PANTS" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size quần</button></div>
       <div><b>Chọn dải size</b><div className="mt-3 flex flex-wrap gap-2">{preset.map((size) => { const active = sizeSet.includes(size); return <button key={size} onClick={() => toggle(size)} className={`min-w-14 rounded-2xl border px-4 py-3 text-base font-black ${active ? "border-neutral-950 bg-neutral-950 text-white" : "bg-white text-neutral-400"}`}>{size}</button>; })}</div></div>
       <div><b>Tỷ lệ từng size</b><div className="mt-3 grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">{sizeSet.map((size: string) => <div key={size} className="rounded-2xl border bg-neutral-50 p-3 text-center"><div className="text-lg font-black">{size}</div><input type="number" min="0" className={`${input} mt-2 text-center font-bold`} value={ratio[size] ?? 1} onChange={(e) => setRatio({ ...ratio, [size]: Number(e.target.value || 0) })} /></div>)}</div></div>
       <div className="rounded-2xl bg-neutral-50 p-4 text-sm">Tỷ lệ hiện tại: <b>{sizeSet.map((s: string) => `${s}:${ratio[s] || 0}`).join(" · ") || "Chưa chọn"}</b></div>
@@ -707,25 +749,58 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
   );
 }
 
+function cutKey(colorName: string, size: string) {
+  return `${String(colorName || "").trim()}|||${normalizeProductionSize(size)}`;
+}
+
 function groupSizes(rows: any[]) {
   const m = new Map<string, any>();
   rows.forEach((r) => {
     const key = `${r.colorName}|||${r.colorCode || ""}`;
-    const x = m.get(key) || { colorName: r.colorName, colorCode: r.colorCode, plannedQty: 0, sizes: {} };
-    x.sizes[r.size] = r.plannedQty;
-    x.plannedQty += Number(r.plannedQty || 0);
+    const x = m.get(key) || { colorName: r.colorName, colorCode: r.colorCode, plannedQty: 0, actualQty: 0, sizes: {} };
+    const plannedQty = Number(r.plannedQty || 0);
+    const actualQty = Number(r.actualQty ?? r.plannedQty ?? 0);
+    x.sizes[r.size] = { plannedQty, actualQty };
+    x.plannedQty += plannedQty;
+    x.actualQty += actualQty;
     m.set(key, x);
   });
   return [...m.values()];
 }
 
-function Results({ c }: { c: any }) {
+function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [] }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[] }) {
   const sizes = Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[];
+  const totalPlanned = Number(c.totalPlannedQty ?? c.totalQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0));
+  const persistedActual = Number(c.totalActualQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number((x.actualQty ?? x.plannedQty) || 0),0));
+  const draftActual = editable
+    ? (c.colors || []).reduce((sum:number,x:any)=>sum+sizes.reduce((s:number,size:string)=>s+Number(String(actualCut[cutKey(x.colorName,size)] ?? x.sizes?.[size]?.actualQty ?? x.sizes?.[size]?.plannedQty ?? 0).replace(",","."))||0,0),0)
+    : persistedActual;
+  const diff = draftActual - totalPlanned;
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-emerald-50 p-4 text-emerald-900">Sản lượng cắt dự kiến: <b className="text-xl">{c.totalQty}</b> sp</div>
-      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[650px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">Màu</th><th>Tổng</th>{sizes.map((s) => <th key={s}>{s}</th>)}</tr></thead><tbody>{(c.colors || []).map((x: any) => <tr key={`${x.colorName}-${x.colorCode || ""}`} className="border-t"><td className="p-3 font-semibold">{x.colorName} {x.colorCode || ""}</td><td className="text-center font-semibold">{x.plannedQty}</td>{sizes.map((s) => <td key={s} className="text-center">{x.sizes?.[s] || 0}</td>)}</tr>)}</tbody></table></div>
-      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b></td><td className="text-center">{m.sizeLabel || "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl bg-neutral-100 p-4"><div className="text-xs font-semibold uppercase text-neutral-500">Cắt dự kiến</div><b className="mt-1 block text-2xl">{totalPlanned}</b></div>
+        <div className="rounded-2xl bg-blue-50 p-4 text-blue-900"><div className="text-xs font-semibold uppercase text-blue-600">Cắt thực tế</div><b className="mt-1 block text-2xl">{draftActual}</b></div>
+        <div className={`rounded-2xl p-4 ${diff===0?"bg-neutral-100 text-neutral-700":diff>0?"bg-emerald-50 text-emerald-800":"bg-red-50 text-red-800"}`}><div className="text-xs font-semibold uppercase">Chênh lệch TT / DK</div><b className="mt-1 block text-2xl">{diff>0?"+":""}{diff}</b></div>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border">
+        <table className="min-w-[980px] w-full text-sm">
+          <thead className="bg-neutral-50">
+            <tr><th rowSpan={2} className="border-r p-3 text-left">Màu</th><th colSpan={2} className="border-r p-2">Tổng</th>{sizes.map((s)=><th key={s} colSpan={2} className="border-r p-2">{s}</th>)}</tr>
+            <tr><th className="border-r p-2 text-neutral-700">DK</th><th className="border-r bg-blue-50 p-2 text-blue-700">TT</th>{sizes.flatMap((s)=><Fragment key={s}><th className="border-r p-2 text-neutral-700">DK</th><th className="border-r bg-blue-50 p-2 text-blue-700">TT</th></Fragment>)}</tr>
+          </thead>
+          <tbody>{(c.colors || []).map((x:any)=>{
+            const actualTotal=sizes.reduce((sum:number,size:string)=>sum+Number(String(actualCut[cutKey(x.colorName,size)] ?? x.sizes?.[size]?.actualQty ?? x.sizes?.[size]?.plannedQty ?? 0).replace(",","."))||0,0);
+            return <tr key={`${x.colorName}-${x.colorCode || ""}`} className="border-t"><td className="border-r p-3 font-semibold">{x.colorName} {x.colorCode || ""}</td><td className="border-r text-center font-semibold">{x.plannedQty}</td><td className="border-r bg-blue-50 text-center font-bold text-blue-800">{actualTotal}</td>{sizes.flatMap((size)=>{const cell=x.sizes?.[size]||{plannedQty:0,actualQty:0};const key=cutKey(x.colorName,size);return [<td key={`${size}-p`} className="border-r p-2 text-center">{cell.plannedQty||0}</td>,<td key={`${size}-a`} className="border-r bg-blue-50 p-1 text-center">{editable?<input type="number" min="0" step="1" className="w-20 rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-center font-bold text-blue-900 outline-none focus:border-blue-600" value={actualCut[key] ?? String(cell.actualQty ?? cell.plannedQty ?? 0)} onChange={(e)=>setActualCut?.({...actualCut,[key]:e.target.value})}/>:<b className="text-blue-800">{cell.actualQty ?? cell.plannedQty ?? 0}</b>}</td>]})}</tr>})}</tbody>
+        </table>
+      </div>
+
+      {editable && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="text-sm text-blue-900"><b>Ô xanh = số lượng cắt thực tế.</b> Sửa xong bấm lưu; hệ thống chỉ cập nhật TT, giữ nguyên DK và tính lại toàn bộ NPL.</div><button disabled={busy} onClick={onSaveActual} className="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu thực tế & tính lại NPL</button></div>}
+
+      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b></td><td className="text-center">{m.sizeLabel || "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
+
+      {!!history.length && <details className="rounded-2xl border bg-white" open={false}><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Lịch sử thay đổi số lượng cắt ({history.length})</summary><div className="max-h-80 overflow-auto border-t"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-neutral-50"><tr><th className="p-2 text-left">Thời gian</th><th>Màu</th><th>Size</th><th>DK</th><th>TT trước</th><th>TT sau</th><th>Thao tác</th><th>Người sửa</th></tr></thead><tbody>{history.map((h:any)=><tr key={h.id} className="border-t"><td className="p-2">{h.createdAt?new Date(h.createdAt).toLocaleString("vi-VN"):"—"}</td><td className="text-center">{h.colorName}</td><td className="text-center font-semibold">{h.size}</td><td className="text-center">{h.plannedQty}</td><td className="text-center">{h.previousActualQty ?? "—"}</td><td className="bg-blue-50 text-center font-semibold text-blue-800">{h.actualQty ?? "—"}</td><td className="text-center">{h.changeType==="ACTUAL_UPDATE"?"Sửa thực tế":h.changeType==="INITIAL_CALCULATE"?"Tính lần đầu":"Tính lại dự kiến"}</td><td className="text-center">{h.createdByName || "Hệ thống"}</td></tr>)}</tbody></table></div></details>}
     </div>
   );
 }
@@ -781,14 +856,220 @@ function accessorySpecShort(a: Accessory) {
   }
   if (String(a.typeName || "").startsWith("Mác")) {
     return [
+      a.typeName === "Mác Size" && s.sizeKind ? (s.sizeKind === "PANTS" ? "Size quần" : "Size áo") : "",
+      a.typeName === "Mác Size" && s.size ? `Size ${normalizeProductionSize(s.size)}` : "",
       s.material,
       s.widthCm && s.heightCm ? `${viDisplay(s.widthCm, 3)}×${viDisplay(s.heightCm, 3)}cm` : "",
-      s.foldType,
+      s.foldStyle || s.foldType,
     ]
       .filter(Boolean)
       .join(" · ");
   }
   return [s.material, s.color, s.customSpec].filter(Boolean).join(" · ");
+}
+
+type AccessoryTemplateSlot = {
+  label: string;
+  qty: number;
+  typeName?: string;
+  keywords?: string[];
+  sizeKind?: "SHIRT" | "PANTS";
+  expandSizes?: boolean;
+};
+
+const ACCESSORY_TEMPLATES: Record<"JEANS" | "JACKET", { label: string; productKind: "SHIRT" | "PANTS"; sizes: string[]; slots: AccessoryTemplateSlot[] }> = {
+  JEANS: {
+    label: "Quần jean",
+    productKind: "PANTS",
+    sizes: PANTS_SIZES,
+    slots: [
+      { label: "Thẻ bài", qty: 1, keywords: ["thẻ bài"] },
+      { label: "Dây treo thẻ bài", qty: 1, keywords: ["dây", "thẻ bài"] },
+      { label: "Tem mã vạch", qty: 2, keywords: ["tem", "mã vạch"] },
+      { label: "Mác vải hướng dẫn sử dụng", qty: 1, keywords: ["hướng dẫn", "sử dụng"] },
+      { label: "Mác da", qty: 1, keywords: ["mác da"] },
+      { label: "Khuy quần jean", qty: 1, typeName: "Cúc", keywords: ["quần", "jean"] },
+      { label: "Chân đinh xoáy", qty: 1, keywords: ["chân", "đinh", "xoáy"] },
+      { label: "Mác size quần", qty: 1, typeName: "Mác Size", sizeKind: "PANTS", expandSizes: true },
+      { label: "Chân đinh thẳng", qty: 1, keywords: ["chân", "đinh", "thẳng"] },
+      { label: "Đinh tán", qty: 1, keywords: ["đinh", "tán"] },
+    ],
+  },
+  JACKET: {
+    label: "Áo khoác",
+    productKind: "SHIRT",
+    sizes: SHIRT_SIZES,
+    slots: [
+      { label: "Dây treo thẻ bài", qty: 1, keywords: ["dây", "thẻ bài"] },
+      { label: "Thẻ bài", qty: 1, keywords: ["thẻ bài"] },
+      { label: "Mác vải hướng dẫn sử dụng", qty: 1, keywords: ["hướng dẫn", "sử dụng"] },
+      { label: "Mác size áo", qty: 1, typeName: "Mác Size", sizeKind: "SHIRT", expandSizes: true },
+      { label: "Tem mã vạch", qty: 2, keywords: ["tem", "mã vạch"] },
+      { label: "Khóa áo thân trước", qty: 1, typeName: "Khóa Kéo", keywords: ["thân"] },
+      { label: "Khóa túi", qty: 2, typeName: "Khóa Kéo", keywords: ["túi"] },
+      { label: "Cúc áo", qty: 1, typeName: "Cúc", keywords: ["cúc", "áo"] },
+      { label: "Cúc cài", qty: 1, typeName: "Cúc", keywords: ["cài"] },
+      { label: "Cúc bấm", qty: 1, typeName: "Cúc", keywords: ["bấm"] },
+      { label: "Chun gấu áo", qty: 1, typeName: "Chun", keywords: ["gấu"] },
+      { label: "Dây rút", qty: 1, typeName: "Dây Rút" },
+    ],
+  },
+};
+
+function normalizeSearchText(value: any) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeProductionSize(value: any) {
+  const size = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  return size === "2XL" ? "XXL" : size;
+}
+
+function isSizeLabelAccessory(a?: Accessory | null) {
+  return String(a?.typeName || "").trim() === "Mác Size";
+}
+
+function accessoryTaggedSize(a?: Accessory | null) {
+  if (!isSizeLabelAccessory(a)) return "";
+  const explicit = normalizeProductionSize(a?.specifications?.size || a?.specifications?.sizeLabel);
+  if (explicit) return explicit;
+  const name = String(a?.name || "").trim().toUpperCase();
+  const matched = name.match(/(?:^|[-–—\s])((?:2?X?XL)|XS|S|M|L|29|30|31|32|34|36)\s*$/i);
+  return matched?.[1] ? normalizeProductionSize(matched[1]) : "";
+}
+
+function accessorySizeKind(a?: Accessory | null) {
+  const explicit = String(a?.specifications?.sizeKind || "").toUpperCase();
+  if (explicit === "SHIRT" || explicit === "PANTS") return explicit;
+  const size = accessoryTaggedSize(a);
+  if (PANTS_SIZES.includes(size)) return "PANTS";
+  if (SHIRT_SIZES.includes(size)) return "SHIRT";
+  return "";
+}
+
+function accessoryTypeOptions(accessories: Accessory[]) {
+  return Array.from(new Set(accessories.map((a) => String(a.typeName || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi"));
+}
+
+function accessoryHaystack(a: Accessory) {
+  return normalizeSearchText([a.code, a.name, a.typeName, accessorySpecShort(a)].filter(Boolean).join(" "));
+}
+
+function filteredAccessories(accessories: Accessory[], query: string, typeName: string, selectedId?: string) {
+  const q = normalizeSearchText(query);
+  return accessories.filter((a) => {
+    if (a.id === selectedId) return true;
+    if (typeName !== "ALL" && a.typeName !== typeName) return false;
+    if (q && !accessoryHaystack(a).includes(q)) return false;
+    return true;
+  });
+}
+
+function materialSourceLabel(note?: string | null) {
+  const raw = String(note || "").trim();
+  if (raw.startsWith("[Mẫu]")) return raw;
+  if (raw.startsWith("[Excel]")) return raw;
+  return "";
+}
+
+function matchTemplateAccessory(accessories: Accessory[], slot: AccessoryTemplateSlot, size?: string) {
+  let candidates = accessories.filter((a) => !slot.typeName || a.typeName === slot.typeName);
+  if (slot.sizeKind && size) {
+    candidates = candidates.filter((a) => {
+      const specs = a.specifications || {};
+      return isSizeLabelAccessory(a) && accessorySizeKind(a) === slot.sizeKind && accessoryTaggedSize(a) === normalizeProductionSize(size);
+    });
+    return candidates.length === 1 ? candidates[0] : undefined;
+  }
+  const keywords = (slot.keywords || []).map(normalizeSearchText).filter(Boolean);
+  if (!keywords.length) return candidates.length === 1 ? candidates[0] : undefined;
+  const strong = candidates.filter((a) => { const h = accessoryHaystack(a); return keywords.every((k) => h.includes(k)); });
+  return strong.length === 1 ? strong[0] : undefined;
+}
+
+function buildTemplateMaterials(template: { label: string; productKind: "SHIRT" | "PANTS"; sizes: string[]; slots: AccessoryTemplateSlot[] }, accessories: Accessory[]): MaterialSpec[] {
+  const rows: MaterialSpec[] = [];
+  for (const slot of template.slots) {
+    if (slot.expandSizes && slot.sizeKind) {
+      for (const size of template.sizes) {
+        const accessory = matchTemplateAccessory(accessories, slot, size);
+        rows.push({ accessoryItemId: accessory?.id || "", qtyPerProduct: slot.qty, wastePercent: 0, sizeScoped: true, note: `[Mẫu] ${template.label} · ${slot.label} ${size}` });
+      }
+      continue;
+    }
+    const accessory = matchTemplateAccessory(accessories, slot);
+    rows.push({ accessoryItemId: accessory?.id || "", qtyPerProduct: slot.qty, wastePercent: 0, sizeScoped: false, note: `[Mẫu] ${template.label} · ${slot.label}` });
+  }
+  return rows;
+}
+
+function findHeaderColumn(headers: any[], variants: string[]) {
+  const normalized = headers.map(normalizeSearchText);
+  for (const variant of variants) {
+    const key = normalizeSearchText(variant);
+    const exact = normalized.findIndex((x) => x === key);
+    if (exact >= 0) return exact;
+  }
+  for (const variant of variants) {
+    const key = normalizeSearchText(variant);
+    const fuzzy = normalized.findIndex((x) => !!x && (x.includes(key) || key.includes(x)));
+    if (fuzzy >= 0) return fuzzy;
+  }
+  return -1;
+}
+
+function matchImportedAccessory(accessories: Accessory[], code: string, name: string) {
+  const codeKey = String(code || "").trim().toUpperCase();
+  if (codeKey) {
+    const exactCode = accessories.find((a) => String(a.code || "").trim().toUpperCase() === codeKey);
+    if (exactCode) return exactCode;
+  }
+  const nameKey = normalizeSearchText(name);
+  if (!nameKey) return undefined;
+  const exactName = accessories.filter((a) => normalizeSearchText(a.name) === nameKey);
+  if (exactName.length === 1) return exactName[0];
+  const contained = accessories.filter((a) => { const n = normalizeSearchText(a.name); return n.includes(nameKey) || nameKey.includes(n); });
+  return contained.length === 1 ? contained[0] : undefined;
+}
+
+function excelAccessoryMaterials(matrix: any[][], accessories: Accessory[]): MaterialSpec[] {
+  let headerRow = -1;
+  let codeCol = -1;
+  let nameCol = -1;
+  let qtyCol = -1;
+  for (let i = 0; i < Math.min(matrix.length, 20); i += 1) {
+    const row = Array.isArray(matrix[i]) ? matrix[i] : [];
+    const c = findHeaderColumn(row, ["Mã SKU", "SKU", "Mã NPL"]);
+    const n = findHeaderColumn(row, ["Tên sản phẩm", "Tên NPL", "Tên phụ kiện"]);
+    const q = findHeaderColumn(row, ["Số lượng cho 1 SP", "Số lượng 1 SP", "Định mức", "SL 1 SP"]);
+    if ((c >= 0 || n >= 0) && q >= 0) { headerRow = i; codeCol = c; nameCol = n; qtyCol = q; break; }
+  }
+  if (headerRow < 0 || qtyCol < 0) return [];
+
+  const out: MaterialSpec[] = [];
+  for (let i = headerRow + 1; i < matrix.length; i += 1) {
+    const row = Array.isArray(matrix[i]) ? matrix[i] : [];
+    const code = codeCol >= 0 ? String(row[codeCol] || "").trim() : "";
+    const name = nameCol >= 0 ? String(row[nameCol] || "").trim() : "";
+    const qty = viNumber(row[qtyCol]);
+    if ((!code && !name) || qty === null || qty <= 0) continue;
+    const accessory = matchImportedAccessory(accessories, code, name);
+    out.push({
+      accessoryItemId: accessory?.id || "",
+      qtyPerProduct: qty,
+      wastePercent: 0,
+      sizeScoped: isSizeLabelAccessory(accessory),
+      note: `[Excel] ${[code, name].filter(Boolean).join(" · ")}`,
+    });
+  }
+  return out;
 }
 
 function numberOrNull(v: any) {
