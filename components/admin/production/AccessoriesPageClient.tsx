@@ -6,6 +6,7 @@ import { asset, money, productionApi, uploadProductionImage } from "./production
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 
 type Supplier = { id: string; code: string; name: string; phone?: string | null };
+type AccessoryReceipt={id:string;code:string;supplierId?:string|null;receivedAt:string;receivedByName?:string|null;note?:string|null;createdByName?:string|null;items:Array<{id:string;accessoryItemId:string;accessoryCodeSnapshot:string;accessoryNameSnapshot:string;unit:string;qty:number|string;unitPrice?:number|string|null;note?:string|null}>};
 type Item = {
   id: string;
   code: string;
@@ -63,6 +64,7 @@ export default function AccessoriesPageClient() {
   const [groupFilter, setGroupFilter] = useState("ALL");
   const [editing, setEditing] = useState<Item | null | undefined>(undefined);
   const [supplierOpen, setSupplierOpen] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
@@ -120,7 +122,7 @@ export default function AccessoriesPageClient() {
           <p className="mt-1 text-sm text-neutral-500">Quản lý cúc, mác, khóa, chun, bao bì, tồn và NCC NPL.</p>
         </div>
         <div className="flex gap-2">
-          {canManage && <button onClick={() => setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4" />NCC NPL</button>}
+          {canManage && <button onClick={() => setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4" />NCC NPL</button>}{canStock && <button onClick={() => setReceiptOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">+ Phiếu nhập NPL</button>}
           {canManage && <button onClick={() => setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" />Thêm NPL</button>}
         </div>
       </div>
@@ -178,7 +180,7 @@ export default function AccessoriesPageClient() {
 
       {!rows.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
       {editing !== undefined && <ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await load(); }} />}
-      {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}
+      {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}{receiptOpen && <AccessoryReceiptModal items={items} suppliers={suppliers} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={()=>setReceiptOpen(false)} onSaved={async()=>{setReceiptOpen(false);await load();}} />}
     </div>
   );
 }
@@ -246,6 +248,39 @@ function ItemModal({ item, suppliers, canManage, canStock, canCostView, canSuppl
       </div>
     </Modal>
   );
+}
+
+
+function receiptEsc(v:any){return String(v??"").replace(/[&<>"']/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"} as any)[m]);}
+function printAccessoryReceipt(r:AccessoryReceipt,suppliers:Supplier[]){
+  const supplier=suppliers.find(x=>x.id===r.supplierId);
+  const rows=(r.items||[]).map((x,i)=>`<tr><td>${i+1}</td><td>${receiptEsc(x.accessoryCodeSnapshot)}</td><td>${receiptEsc(x.accessoryNameSnapshot)}</td><td>${Number(x.qty||0).toLocaleString("vi-VN",{maximumFractionDigits:3})}</td><td>${receiptEsc(UNITS.find(u=>u[0]===x.unit)?.[1]||x.unit)}</td><td>${x.unitPrice?Number(x.unitPrice).toLocaleString("vi-VN"):"—"}</td></tr>`).join("");
+  const w=window.open("","_blank","noopener,noreferrer,width=1000,height=760");if(!w){window.alert("Trình duyệt đang chặn cửa sổ in.");return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${receiptEsc(r.code)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;font-size:12px;color:#111}h1{font-size:20px;margin:0 0 5px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0}table{width:100%;border-collapse:collapse}th,td{border:1px solid #222;padding:7px}th{background:#f3f3f3}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px;text-align:center;margin-top:55px}.sign div{padding-top:7px;border-top:1px solid #222}@media print{button{display:none}}</style></head><body><button onclick="window.print()">In phiếu</button><h1>THE 1970 · PHIẾU NHẬP NPL</h1><div>Mã phiếu: <b>${receiptEsc(r.code)}</b></div><div class="grid"><div>Ngày nhận: <b>${new Date(r.receivedAt).toLocaleDateString("vi-VN")}</b></div><div>Người nhận: <b>${receiptEsc(r.receivedByName||"—")}</b></div><div>Nhà cung cấp: <b>${receiptEsc(supplier?.name||supplier?.code||"—")}</b></div><div>Người tạo phiếu: <b>${receiptEsc(r.createdByName||"—")}</b></div></div><table><thead><tr><th>STT</th><th>Mã NPL</th><th>Tên NPL</th><th>Số lượng</th><th>Đơn vị</th><th>Đơn giá</th></tr></thead><tbody>${rows}</tbody></table><div class="grid"><div>Ghi chú: <b>${receiptEsc(r.note||"—")}</b></div></div><div class="sign"><div>NGƯỜI GIAO</div><div>NGƯỜI NHẬN</div><div>THỦ KHO / XÁC NHẬN</div></div></body></html>`);
+  w.document.close();w.focus();setTimeout(()=>w.print(),250);
+}
+
+function AccessoryReceiptModal({items,suppliers,defaultReceiver,onClose,onSaved}:{items:Item[];suppliers:Supplier[];defaultReceiver:string;onClose:()=>void;onSaved:()=>void}){
+  const [f,setF]=useState<any>({supplierId:"",receivedAt:new Date().toISOString().slice(0,10),receivedByName:defaultReceiver,note:""});
+  const [q,setQ]=useState("");
+  const [rows,setRows]=useState<Array<{accessoryItemId:string;qty:string;unitPrice:string}>>([]);
+  const [saving,setSaving]=useState(false),[error,setError]=useState("");
+  const matches=useMemo(()=>{const k=q.trim().toLowerCase();if(!k)return[];return items.filter(x=>[x.code,x.name,x.typeName,specSummary(x)].some(v=>String(v||"").toLowerCase().includes(k))).slice(0,10)},[q,items]);
+  function add(item:Item){if(rows.some(x=>x.accessoryItemId===item.id)){setQ("");return;}setRows(x=>[...x,{accessoryItemId:item.id,qty:"1",unitPrice:item.unitPrice?String(item.unitPrice):""}]);setQ("");}
+  async function save(){
+    try{
+      setSaving(true);setError("");
+      if(!f.receivedByName.trim())throw new Error("Phải nhập tên người nhận.");
+      if(!rows.length)throw new Error("Chưa có NPL trong phiếu.");
+      const saved=await productionApi<AccessoryReceipt>("/production/accessory-receipts",{
+        method:"POST",
+        body:JSON.stringify({...f,items:rows.map(x=>({...x,qty:Number(String(x.qty).replace(",","."))||0,unitPrice:x.unitPrice===""?null:Number(String(x.unitPrice).replace(",","."))||0}))})
+      });
+      printAccessoryReceipt(saved,suppliers);onSaved();
+    }catch(e){setError(e instanceof Error?e.message:"Không tạo được phiếu nhập NPL.");}
+    finally{setSaving(false);}
+  }
+  return <Modal title="Tạo phiếu nhập NPL" onClose={onClose}><div className="space-y-4 p-5">{error&&<Err x={error}/>}<div className="grid gap-4 md:grid-cols-2"><Field l="Ngày nhận"><input type="date" className={input} value={f.receivedAt} onChange={e=>setF({...f,receivedAt:e.target.value})}/></Field><Field l="Người nhận"><input className={input} value={f.receivedByName} onChange={e=>setF({...f,receivedByName:e.target.value})} placeholder="Tên nhân viên nhận"/></Field><Field l="NCC NPL"><select className={input} value={f.supplierId} onChange={e=>setF({...f,supplierId:e.target.value})}><option value="">Chưa chọn NCC</option>{suppliers.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name||""}</option>)}</select></Field></div><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className={`${input} pl-10`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã / tên NPL để thêm..."/>{matches.length>0&&<div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border bg-white p-1 shadow-xl">{matches.map(x=><button type="button" key={x.id} onClick={()=>add(x)} className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-neutral-50"><b>{x.code}</b> · {x.name}<div className="text-xs text-neutral-400">{x.typeName} · tồn {fmtQty(x.stockQty)}</div></button>)}</div>}</div><div className="space-y-2">{rows.map((r,i)=>{const item=items.find(x=>x.id===r.accessoryItemId)!;return <div key={r.accessoryItemId} className="grid items-end gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[2fr_1fr_1fr_auto]"><div><div className="text-xs text-neutral-400">{item.code}</div><b className="text-sm">{item.name}</b></div><Field l="Số lượng"><input inputMode="decimal" className={input} value={r.qty} onChange={e=>setRows(xs=>xs.map((x,j)=>j===i?{...x,qty:e.target.value}:x))}/></Field><Field l="Đơn giá"><input inputMode="decimal" className={input} value={r.unitPrice} onChange={e=>setRows(xs=>xs.map((x,j)=>j===i?{...x,unitPrice:e.target.value}:x))}/></Field><button onClick={()=>setRows(xs=>xs.filter((_,j)=>j!==i))} className="pb-3 text-xs font-semibold text-red-600">Xoá</button></div>})}</div><Field l="Ghi chú"><textarea className={`${input} min-h-20`} value={f.note} onChange={e=>setF({...f,note:e.target.value})}/></Field><button disabled={saving} onClick={()=>void save()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white">{saving?"Đang lưu...":"Lưu phiếu + nhập kho + in"}</button></div></Modal>;
 }
 
 function SupplierModal({ rows, canSupplierIdentity, onClose, onSaved }: { rows: Supplier[]; canSupplierIdentity: boolean; onClose: () => void; onSaved: () => void }) {
