@@ -6,7 +6,7 @@ import { asset, money, productionApi, uploadProductionImage } from "./production
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 
 type Supplier = { id: string; code: string; name: string; phone?: string | null };
-type AccessoryReceipt={id:string;code:string;supplierId?:string|null;receivedAt:string;receivedByName?:string|null;note?:string|null;createdByName?:string|null;items:Array<{id:string;accessoryItemId:string;accessoryCodeSnapshot:string;accessoryNameSnapshot:string;unit:string;qty:number|string;unitPrice?:number|string|null;note?:string|null}>};
+type AccessoryReceipt={id:string;code:string;supplierId?:string|null;receivedAt:string;receivedByName?:string|null;note?:string|null;createdByName?:string|null;status?:string;postedAt?:string|null;postedByName?:string|null;items:Array<{id:string;accessoryItemId:string;accessoryCodeSnapshot:string;accessoryNameSnapshot:string;unit:string;qty:number|string;unitPrice?:number|string|null;note?:string|null}>};
 type Item = {
   id: string;
   code: string;
@@ -264,23 +264,40 @@ function AccessoryReceiptModal({items,suppliers,defaultReceiver,onClose,onSaved}
   const [f,setF]=useState<any>({supplierId:"",receivedAt:new Date().toISOString().slice(0,10),receivedByName:defaultReceiver,note:""});
   const [q,setQ]=useState("");
   const [rows,setRows]=useState<Array<{accessoryItemId:string;qty:string;unitPrice:string}>>([]);
-  const [saving,setSaving]=useState(false),[error,setError]=useState("");
-  const matches=useMemo(()=>{const k=q.trim().toLowerCase();if(!k)return[];return items.filter(x=>[x.code,x.name,x.typeName,specSummary(x)].some(v=>String(v||"").toLowerCase().includes(k))).slice(0,10)},[q,items]);
-  function add(item:Item){if(rows.some(x=>x.accessoryItemId===item.id)){setQ("");return;}setRows(x=>[...x,{accessoryItemId:item.id,qty:"1",unitPrice:item.unitPrice?String(item.unitPrice):""}]);setQ("");}
-  async function save(){
+  const [saved,setSaved]=useState<AccessoryReceipt|null>(null);
+  const [saving,setSaving]=useState(false),[posting,setPosting]=useState(false),[error,setError]=useState("");
+  const posted=String(saved?.status||"")==="POSTED";
+  const locked=!!saved;
+  const matches=useMemo(()=>{const k=q.trim().toLowerCase();if(!k||locked)return[];return items.filter(x=>[x.code,x.name,x.typeName,specSummary(x)].some(v=>String(v||"").toLowerCase().includes(k))).slice(0,10)},[q,items,locked]);
+  function add(item:Item){if(locked)return;if(rows.some(x=>x.accessoryItemId===item.id)){setQ("");return;}setRows(x=>[...x,{accessoryItemId:item.id,qty:"1",unitPrice:item.unitPrice?String(item.unitPrice):""}]);setQ("");}
+  async function saveDraft(){
     try{
       setSaving(true);setError("");
       if(!f.receivedByName.trim())throw new Error("Phải nhập tên người nhận.");
       if(!rows.length)throw new Error("Chưa có NPL trong phiếu.");
-      const saved=await productionApi<AccessoryReceipt>("/production/accessory-receipts",{
-        method:"POST",
-        body:JSON.stringify({...f,items:rows.map(x=>({...x,qty:Number(String(x.qty).replace(",","."))||0,unitPrice:x.unitPrice===""?null:Number(String(x.unitPrice).replace(",","."))||0}))})
-      });
-      printAccessoryReceipt(saved,suppliers);onSaved();
-    }catch(e){setError(e instanceof Error?e.message:"Không tạo được phiếu nhập NPL.");}
+      const receipt=await productionApi<AccessoryReceipt>("/production/accessory-receipts",{method:"POST",body:JSON.stringify({...f,items:rows.map(x=>({...x,qty:Number(String(x.qty).replace(",","."))||0,unitPrice:x.unitPrice===""?null:Number(String(x.unitPrice).replace(",","."))||0}))})});
+      setSaved(receipt);
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được phiếu nhập NPL.");}
     finally{setSaving(false);}
   }
-  return <Modal title="Tạo phiếu nhập NPL" onClose={onClose}><div className="space-y-4 p-5">{error&&<Err x={error}/>}<div className="grid gap-4 md:grid-cols-2"><Field l="Ngày nhận"><input type="date" className={input} value={f.receivedAt} onChange={e=>setF({...f,receivedAt:e.target.value})}/></Field><Field l="Người nhận"><input className={input} value={f.receivedByName} onChange={e=>setF({...f,receivedByName:e.target.value})} placeholder="Tên nhân viên nhận"/></Field><Field l="NCC NPL"><select className={input} value={f.supplierId} onChange={e=>setF({...f,supplierId:e.target.value})}><option value="">Chưa chọn NCC</option>{suppliers.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name||""}</option>)}</select></Field></div><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className={`${input} pl-10`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã / tên NPL để thêm..."/>{matches.length>0&&<div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border bg-white p-1 shadow-xl">{matches.map(x=><button type="button" key={x.id} onClick={()=>add(x)} className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-neutral-50"><b>{x.code}</b> · {x.name}<div className="text-xs text-neutral-400">{x.typeName} · tồn {fmtQty(x.stockQty)}</div></button>)}</div>}</div><div className="space-y-2">{rows.map((r,i)=>{const item=items.find(x=>x.id===r.accessoryItemId)!;return <div key={r.accessoryItemId} className="grid items-end gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[2fr_1fr_1fr_auto]"><div><div className="text-xs text-neutral-400">{item.code}</div><b className="text-sm">{item.name}</b></div><Field l="Số lượng"><input inputMode="decimal" className={input} value={r.qty} onChange={e=>setRows(xs=>xs.map((x,j)=>j===i?{...x,qty:e.target.value}:x))}/></Field><Field l="Đơn giá"><input inputMode="decimal" className={input} value={r.unitPrice} onChange={e=>setRows(xs=>xs.map((x,j)=>j===i?{...x,unitPrice:e.target.value}:x))}/></Field><button onClick={()=>setRows(xs=>xs.filter((_,j)=>j!==i))} className="pb-3 text-xs font-semibold text-red-600">Xoá</button></div>})}</div><Field l="Ghi chú"><textarea className={`${input} min-h-20`} value={f.note} onChange={e=>setF({...f,note:e.target.value})}/></Field><button disabled={saving} onClick={()=>void save()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white">{saving?"Đang lưu...":"Lưu phiếu + nhập kho + in"}</button></div></Modal>;
+  async function postStock(){
+    if(!saved)return;
+    try{
+      setPosting(true);setError("");
+      const receipt=await productionApi<AccessoryReceipt>(`/production/accessory-receipts/${saved.id}/post`,{method:"POST"});
+      setSaved(receipt);await onSaved();
+    }catch(e){setError(e instanceof Error?e.message:"Không nhập được NPL vào kho.");}
+    finally{setPosting(false);}
+  }
+  return <Modal title={saved?`${saved.code} · Phiếu nhập NPL`:"Tạo phiếu nhập NPL"} onClose={onClose}><div className="space-y-4 p-5">
+    {error&&<Err x={error}/>} 
+    {saved&&<div className={`rounded-2xl border px-4 py-3 text-sm ${posted?"border-emerald-200 bg-emerald-50 text-emerald-800":"border-amber-200 bg-amber-50 text-amber-800"}`}><b>{posted?"Đã nhập kho":"Phiếu nháp – chưa cộng tồn kho"}</b>{posted&&saved.postedByName?<span> · {saved.postedByName}</span>:null}</div>}
+    <div className="grid gap-4 md:grid-cols-2"><Field l="Ngày nhận"><input disabled={locked} type="date" className={input} value={f.receivedAt} onChange={e=>setF({...f,receivedAt:e.target.value})}/></Field><Field l="Người nhận"><input disabled={locked} className={input} value={f.receivedByName} onChange={e=>setF({...f,receivedByName:e.target.value})} placeholder="Tên nhân viên nhận"/></Field><Field l="NCC NPL"><select disabled={locked} className={input} value={f.supplierId} onChange={e=>setF({...f,supplierId:e.target.value})}><option value="">Chưa chọn NCC</option>{suppliers.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name||""}</option>)}</select></Field></div>
+    {!locked&&<div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className={`${input} pl-10`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã / tên NPL để thêm..."/>{matches.length>0&&<div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border bg-white p-1 shadow-xl">{matches.map(x=><button type="button" key={x.id} onClick={()=>add(x)} className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-neutral-50"><b>{x.code}</b> · {x.name}<div className="text-xs text-neutral-400">{x.typeName} · tồn {fmtQty(x.stockQty)}</div></button>)}</div>}</div>}
+    <div className="space-y-2">{rows.map((r,i)=>{const item=items.find(x=>x.id===r.accessoryItemId)!;return <div key={r.accessoryItemId} className="grid items-end gap-2 rounded-2xl bg-neutral-50 p-3 md:grid-cols-[2fr_1fr_1fr_auto]"><div><div className="text-xs text-neutral-400">{item.code}</div><b className="text-sm">{item.name}</b></div><Field l="Số lượng"><input disabled={locked} inputMode="decimal" className={input} value={r.qty} onChange={e=>setRows(xs=>xs.map((x,j)=>j===i?{...x,qty:e.target.value}:x))}/></Field><Field l="Đơn giá"><input disabled={locked} inputMode="decimal" className={input} value={r.unitPrice} onChange={e=>setRows(xs=>xs.map((x,j)=>j===i?{...x,unitPrice:e.target.value}:x))}/></Field>{!locked&&<button onClick={()=>setRows(xs=>xs.filter((_,j)=>j!==i))} className="pb-3 text-xs font-semibold text-red-600">Xoá</button>}</div>})}</div>
+    <Field l="Ghi chú"><textarea disabled={locked} className={`${input} min-h-20`} value={f.note} onChange={e=>setF({...f,note:e.target.value})}/></Field>
+    {!saved?<button disabled={saving} onClick={()=>void saveDraft()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu phiếu"}</button>:<div className="grid gap-2 md:grid-cols-2"><button disabled={posting||posted} onClick={()=>void postStock()} className="rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{posted?"Đã nhập kho":posting?"Đang nhập kho...":"Nhập kho"}</button><button onClick={()=>printAccessoryReceipt(saved,suppliers)} className="rounded-xl border border-neutral-300 bg-white py-3 font-semibold">In phiếu</button></div>}
+  </div></Modal>;
 }
 
 function SupplierModal({ rows, canSupplierIdentity, onClose, onSaved }: { rows: Supplier[]; canSupplierIdentity: boolean; onClose: () => void; onSaved: () => void }) {
