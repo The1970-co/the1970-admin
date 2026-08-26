@@ -77,8 +77,27 @@ type Order = {
   sourceImageUrl?: string | null;
   status: string;
   productionPartnerId: string;
+  productKind?: "SHIRT" | "PANTS" | "OTHER";
+  sizeSet?: string[] | null;
+  sizeRatio?: Record<string, number> | null;
+  dueDate?: string | null;
+  updatedAt?: string | null;
   factory?: FactoryItem | null;
   source?: { type: string; id?: string; code: string; name?: string | null; imageUrl?: string | null };
+  progress?: {
+    nplDone?: boolean;
+    fabricDone?: boolean;
+    sizeDone?: boolean;
+    calculationDone?: boolean;
+    sent?: boolean;
+    rollCount?: number;
+    allocatedM?: number;
+    nplCount?: number;
+    materialCalcCount?: number;
+    totalPlannedQty?: number;
+    totalActualQty?: number;
+    sizeRatioText?: string;
+  };
 };
 
 type MaterialSpec = {
@@ -128,6 +147,24 @@ const STATUS_LABEL: Record<string, string> = {
 const input =
   "w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900";
 
+function productionStatusTone(status: string) {
+  if (status === "COMPLETED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (["CUTTING", "SEWING"].includes(status)) return "border-blue-200 bg-blue-50 text-blue-800";
+  if (["READY", "SENT", "QC"].includes(status)) return "border-amber-200 bg-amber-50 text-amber-800";
+  if (status === "CANCELLED") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-neutral-200 bg-neutral-50 text-neutral-700";
+}
+
+function progressTone(done?: boolean) {
+  return done ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-neutral-200 bg-neutral-50 text-neutral-400";
+}
+
+function fmtDateShort(v?: string | null) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("vi-VN");
+}
+
 function useProductionPermissions(){
   const user=getCurrentUserFromStorage() as any;
   const roles=[...(Array.isArray(user?.roles)?user.roles:[]),user?.role,user?.roleCode,user?.staffRole].map(x=>String(x||"").toLowerCase());
@@ -150,6 +187,7 @@ export default function ProductionPageClient() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [factoryOpen, setFactoryOpen] = useState(false);
   const [error, setError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
 
   async function load() {
     try {
@@ -168,6 +206,37 @@ export default function ProductionPageClient() {
   useEffect(() => {
     void load();
   }, []);
+
+  async function cancelOrder(row: Order) {
+    if (!canEdit) return;
+    if (!window.confirm(`Huỷ lệnh ${row.code}? Lệnh vẫn được giữ để tra cứu, vải đang giữ sẽ được trả lại khả dụng.`)) return;
+    try {
+      setBusyAction(`${row.id}:cancel`);
+      setError("");
+      await productionApi(`/production/orders/${row.id}/cancel`, { method: "POST" });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không huỷ được lệnh sản xuất.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function deleteOrder(row: Order) {
+    if (!canManage) return;
+    if (!window.confirm(`XOÁ HẲN lệnh ${row.code}? Dữ liệu NPL, cây vải, size và lịch sử cắt của lệnh này sẽ bị xoá.`)) return;
+    try {
+      setBusyAction(`${row.id}:delete`);
+      setError("");
+      await productionApi(`/production/orders/${row.id}`, { method: "DELETE" });
+      if (detailId === row.id) setDetailId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không xoá được lệnh sản xuất.");
+    } finally {
+      setBusyAction("");
+    }
+  }
 
   if(user&&!canView)return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Lệnh sản xuất.</div>;
   return (
@@ -189,29 +258,102 @@ export default function ProductionPageClient() {
       {error && <Err x={error} />}
 
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {orders.map((o) => (
-          <div key={o.id} className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-            <div className="flex gap-4 p-4">
-              <div className="h-24 w-20 overflow-hidden rounded-2xl bg-neutral-100">
-                {(o.source?.imageUrl || o.sourceImageUrl) && (
-                  <img src={asset(o.source?.imageUrl || o.sourceImageUrl)} className="h-full w-full object-cover" />
+        {orders.map((o) => {
+          const p = o.progress || {};
+          const ratioText = p.sizeRatioText || (Array.isArray(o.sizeSet) ? o.sizeSet.map((s) => `${s}:${Number(o.sizeRatio?.[s] || 0)}`).join(" · ") : "");
+          const actualTotal = Number(p.totalActualQty || 0);
+          const plannedTotal = Number(p.totalPlannedQty || 0);
+          return (
+            <div key={o.id} className={`overflow-hidden rounded-3xl border bg-white shadow-sm ${o.status === "CANCELLED" ? "opacity-75" : ""}`}>
+              <div className="flex gap-4 p-4">
+                <div className="h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">
+                  {(o.source?.imageUrl || o.sourceImageUrl) && (
+                    <img src={asset(o.source?.imageUrl || o.sourceImageUrl)} className="h-full w-full object-cover" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-xs font-semibold text-neutral-400">{o.code} · {o.sourceType === "PRODUCT" ? "Mã cũ" : "Mẫu mới"}</div>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${productionStatusTone(o.status)}`}>
+                      {STATUS_LABEL[o.status] || o.status}
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate text-lg font-semibold">{o.sourceCode} · {o.sourceName || o.source?.name}</div>
+                  <div className="mt-2 grid gap-1 text-xs text-neutral-600 sm:grid-cols-2">
+                    <div>Nhà may: <b className="text-neutral-900">{o.factory?.name || "—"}</b></div>
+                    <div>Hạn: <b className="text-neutral-900">{fmtDateShort(o.dueDate)}</b></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t bg-neutral-50/70 p-3">
+                <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.nplDone)}`}>
+                    {p.nplDone ? "✓" : "○"} NPL {p.nplCount ? `(${p.nplCount})` : ""}
+                  </div>
+                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.fabricDone)}`}>
+                    {p.fabricDone ? "✓" : "○"} Vải {p.rollCount ? `(${p.rollCount} cây)` : ""}
+                  </div>
+                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.sizeDone)}`}>
+                    {p.sizeDone ? "✓" : "○"} Size & tỷ lệ
+                  </div>
+                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.calculationDone)}`}>
+                    {p.calculationDone ? "✓" : "○"} Sản lượng
+                  </div>
+                </div>
+
+                <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                  <div className="rounded-xl border bg-white p-2.5">
+                    <div className="text-[10px] font-semibold uppercase text-neutral-400">Tỷ lệ size</div>
+                    <div className="mt-1 line-clamp-2 font-semibold text-neutral-800">{ratioText || "Chưa thiết lập"}</div>
+                  </div>
+                  <div className="rounded-xl border bg-white p-2.5">
+                    <div className="text-[10px] font-semibold uppercase text-neutral-400">Cắt thực tế / dự kiến</div>
+                    <div className="mt-1 text-base font-black text-neutral-950">
+                      {p.calculationDone ? `${actualTotal} / ${plannedTotal}` : "Chưa tính"}
+                      {p.calculationDone && <span className="ml-1 text-xs font-semibold text-neutral-400">sp</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-2 text-[11px] text-neutral-500">
+                  {p.fabricDone ? `Đã bàn giao ${fmt(p.allocatedM || 0)} m vải` : "Chưa bàn giao vải"}
+                  {" · "}
+                  {p.nplDone ? "NPL đã khai báo" : "NPL chưa xong"}
+                  {" · "}
+                  {p.sent ? "Đã gửi lệnh" : "Chưa gửi lệnh"}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t p-3">
+                <button
+                  onClick={() => setDetailId(o.id)}
+                  className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"
+                >
+                  Sửa / Mở quy trình
+                </button>
+                {canEdit && o.status !== "CANCELLED" && o.status !== "COMPLETED" && (
+                  <button
+                    disabled={busyAction === `${o.id}:cancel`}
+                    onClick={() => void cancelOrder(o)}
+                    className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-40"
+                  >
+                    Huỷ lệnh
+                  </button>
+                )}
+                {canManage && ["DRAFT", "PLANNING", "CANCELLED"].includes(o.status) && (
+                  <button
+                    disabled={busyAction === `${o.id}:delete`}
+                    onClick={() => void deleteOrder(o)}
+                    className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40"
+                  >
+                    Xoá
+                  </button>
                 )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold text-neutral-400">{o.code} · {o.sourceType === "PRODUCT" ? "Mã cũ" : "Mẫu mới"}</div>
-                <div className="mt-1 text-lg font-semibold">{o.sourceCode} · {o.sourceName || o.source?.name}</div>
-                <div className="mt-2 text-sm">Nhà may: <b>{o.factory?.name || "—"}</b></div>
-                <div className="mt-1 text-xs font-semibold text-neutral-500">{STATUS_LABEL[o.status] || o.status}</div>
-              </div>
             </div>
-            <div className="flex items-center justify-between border-t p-3">
-              <span className="text-xs text-neutral-400">Định mức, NPL, vải và size nằm trong lệnh này</span>
-              <button onClick={() => setDetailId(o.id)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">
-                Mở quy trình
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {!orders.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có lệnh sản xuất.</div>}
