@@ -452,6 +452,38 @@ function reconcileOmniMessage(
   });
 }
 
+function promoteUnreadConversation(
+  rows: OmniConversation[],
+  incoming: OmniConversation,
+) {
+  const next = rows.filter((item) => item.id !== incoming.id);
+
+  // Hội thoại đang có tin chưa đọc luôn đứng đầu danh sách.
+  // Trong nhóm chưa đọc, tin mới nhất đứng trước để tin vừa nhảy vào không bị
+  // nằm lại ở vị trí cũ khi nhân viên đang kiểm tra các hội thoại cũ phía dưới.
+  if (Number(incoming.unreadCount || 0) > 0) {
+    const unreadRows = next.filter((item) => Number(item.unreadCount || 0) > 0);
+    const readRows = next.filter((item) => Number(item.unreadCount || 0) <= 0);
+
+    const byNewest = (a: OmniConversation, b: OmniConversation) => {
+      const aa = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
+      const bb = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || 0).getTime();
+      return bb - aa;
+    };
+
+    return [incoming, ...unreadRows.sort(byNewest), ...readRows];
+  }
+
+  // Event không tạo unread (profile/tag/assign/read...) chỉ cập nhật đúng vị trí,
+  // không làm xáo trộn danh sách nhân viên đang kiểm tra.
+  const oldIndex = rows.findIndex((item) => item.id === incoming.id);
+  if (oldIndex < 0) return [incoming, ...rows];
+
+  const result = [...rows];
+  result[oldIndex] = incoming;
+  return result;
+}
+
 function normalizeApiList(data: any): any[] {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.items)) return data.items;
@@ -1723,16 +1755,29 @@ export default function MessagesPageClient({
         ) {
           const conversation = payload as OmniConversation;
           setConversations((prev) => {
-            const existed = prev.some((item) => item.id === conversation.id);
+            const existedRow = prev.find((item) => item.id === conversation.id);
+            const existed = Boolean(existedRow);
 
             // Khi đang tìm kiếm, giữ nguyên tập kết quả hiện tại.
             // Tin nhắn/hội thoại mới từ SSE không được chen vào danh sách search.
             // Nếu hội thoại đã nằm trong kết quả thì vẫn cập nhật unread/tên/avatar/nội dung mới.
             if (!existed && debouncedSearch.trim()) return prev;
-            if (!existed) return [conversation, ...prev];
 
+            const merged = existedRow
+              ? { ...existedRow, ...conversation }
+              : conversation;
+
+            // Tin chưa đọc phải nhảy lên đầu NGAY CẢ KHI conversation này đã có sẵn
+            // ở rất sâu trong list. Đây là case nhân viên đang check tin cũ từ dưới lên:
+            // khách vừa nhắn lại sẽ không nằm nguyên ở vị trí cũ nữa.
+            if (Number(merged.unreadCount || 0) > 0) {
+              return promoteUnreadConversation(prev, merged);
+            }
+
+            // Event không có unread chỉ update tại chỗ để không phá vị trí đang check.
+            if (!existed) return [merged, ...prev];
             return prev.map((item) =>
-              item.id === conversation.id ? { ...item, ...conversation } : item,
+              item.id === merged.id ? merged : item,
             );
           });
 
@@ -2350,9 +2395,16 @@ export default function MessagesPageClient({
       setActiveConversation((prev) =>
         prev?.id === updated.id ? { ...prev, ...updated, messages: prev.messages } : prev,
       );
-      setConversations((prev) =>
-        prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
-      );
+      setConversations((prev) => {
+        const existedRow = prev.find((item) => item.id === updated.id);
+        const merged = existedRow ? { ...existedRow, ...updated } : updated;
+        if (Number(merged.unreadCount || 0) > 0) {
+          return promoteUnreadConversation(prev, merged);
+        }
+        return prev.map((item) =>
+          item.id === updated.id ? merged : item,
+        );
+      });
     } catch (err) {
       setError(
         err instanceof Error
