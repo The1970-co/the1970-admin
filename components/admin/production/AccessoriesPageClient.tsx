@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ImagePlus, Plus, Search, Settings2 } from "lucide-react";
+import { FileSpreadsheet, ImagePlus, Plus, Search, Settings2 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { asset, money, productionApi, uploadProductionImage } from "./production-api";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 
@@ -25,6 +26,124 @@ const TYPES = ["Cúc", "Mác Cổ", "Mác Gáy", "Mác Sườn", "Mác Size", "M
 const UNITS = [["PIECE", "Cái"], ["METER", "Mét"], ["ROLL", "Cuộn"], ["SET", "Bộ"], ["KG", "Kg"], ["PACK", "Gói"], ["BOX", "Hộp"], ["OTHER", "Khác"]];
 const SHIRT_LABEL_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
 const PANTS_LABEL_SIZES = ["29", "30", "31", "32", "34", "36"];
+
+type ImportAccessoryRow = {
+  rowNo: number;
+  code: string;
+  name: string;
+  typeName: string;
+  unit: string;
+  stockQty: number | null;
+  unitPrice: number | null;
+  supplierText: string;
+  specifications: Record<string, any>;
+  note: string;
+  error?: string;
+};
+
+const normalizeText = (v: any) => String(v ?? "").trim();
+const normalizedKey = (v: any) =>
+  normalizeText(v)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+
+function pickExcel(row: Record<string, any>, aliases: string[]) {
+  const byKey = new Map(Object.entries(row).map(([k, v]) => [normalizedKey(k), v]));
+  for (const alias of aliases) {
+    const found = byKey.get(normalizedKey(alias));
+    if (found !== undefined && found !== null && String(found).trim() !== "") return found;
+  }
+  return "";
+}
+
+function excelNumber(v: any) {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  let raw = String(v).trim().replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+  if (!raw) return null;
+  if (raw.includes(",") && raw.includes(".")) {
+    if (raw.lastIndexOf(",") > raw.lastIndexOf(".")) raw = raw.replace(/\./g, "").replace(",", ".");
+    else raw = raw.replace(/,/g, "");
+  } else if (raw.includes(",")) {
+    raw = raw.replace(",", ".");
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function inferTypeName(nameInput: any, typeInput?: any) {
+  const supplied = normalizeText(typeInput);
+  const suppliedMatch = TYPES.find((x) => normalizedKey(x) === normalizedKey(supplied));
+  if (suppliedMatch) return suppliedMatch;
+  const name = normalizeText(nameInput).toUpperCase();
+  if (/KH[ÓO]A|KHOA/.test(name)) return "Khóa Kéo";
+  if (/C[ÚU]C|KHUY/.test(name)) return "Cúc";
+  if (/M[ÁA]C.*SIZE|SIZE.*M[ÁA]C/.test(name)) return "Mác Size";
+  if (/M[ÁA]C.*C[ỔO]|M[ÁA]C.*G[ÁA]Y/.test(name)) return "Mác Cổ";
+  if (/M[ÁA]C.*S[ƯU][ỜO]N/.test(name)) return "Mác Sườn";
+  if (/M[ÁA]C.*QU[ẦA]N/.test(name)) return "Mác Quần";
+  if (/M[ÁA]C/.test(name)) return "Mác Gáy";
+  if (/CHUN/.test(name)) return "Chun";
+  if (/D[ÂA]Y.*R[ÚU]T|D[ÂA]Y/.test(name)) return "Dây Rút";
+  if (/MEX/.test(name)) return "Mex";
+  if (/BARCODE|M[ÃA] V[ẠA]CH|TEM/.test(name)) return "Tem Barcode";
+  if (/TH[ÙU]NG|CARTON/.test(name)) return "Thùng Carton";
+  if (/NYLON|T[ÚU]I/.test(name)) return "Túi Nylon";
+  if (/CH[ỈI]/.test(name)) return "Chỉ May";
+  return supplied || "Khác";
+}
+
+function normalizeUnit(v: any) {
+  const raw = normalizedKey(v);
+  if (!raw) return "PIECE";
+  if (["cai", "pcs", "piece", "pieces"].includes(raw)) return "PIECE";
+  if (["m", "met", "meter", "metre"].includes(raw)) return "METER";
+  if (["cuon", "roll"].includes(raw)) return "ROLL";
+  if (["bo", "set"].includes(raw)) return "SET";
+  if (["kg", "kilogram"].includes(raw)) return "KG";
+  if (["goi", "pack"].includes(raw)) return "PACK";
+  if (["hop", "box"].includes(raw)) return "BOX";
+  const known = UNITS.find(([code, label]) => normalizedKey(code) === raw || normalizedKey(label) === raw);
+  return known?.[0] || "OTHER";
+}
+
+function normalizeGauge(v: any) {
+  const raw = normalizeText(v);
+  if (!raw) return "";
+  const m = raw.match(/(\d+(?:[.,]\d+)?)/);
+  return m ? `#${m[1].replace(",", ".")}` : raw;
+}
+
+function itemMaterial(x: Item) {
+  const s = x.specifications || {};
+  return normalizeText(s.material || s.teethMaterial || "");
+}
+function itemGauge(x: Item) {
+  const s = x.specifications || {};
+  return normalizeGauge(s.zipperGauge || "");
+}
+function itemColor(x: Item) {
+  const s = x.specifications || {};
+  return normalizeText(s.teethColor || s.tapeColor || s.color || s.finish || "");
+}
+function itemSubgroup(x: Item) {
+  const group = accessoryGroup(x.typeName);
+  const s = x.specifications || {};
+  if (group === "Khóa") return `Khóa · ${itemGauge(x) ? `Răng ${itemGauge(x).replace("#", "#")}` : "Chưa rõ cỡ răng"}`;
+  if (group === "Mác") {
+    if (x.typeName === "Mác Size") {
+      const kind = s.sizeKind === "PANTS" ? "Quần" : s.sizeKind === "SHIRT" ? "Áo" : "";
+      return `Mác Size${kind ? ` · ${kind}` : ""}`;
+    }
+    return x.typeName;
+  }
+  if (group === "Cúc") return `Cúc${s.material ? ` · ${s.material}` : ""}`;
+  return x.typeName || group;
+}
 
 function useAccessoryPermissions() {
   const user = getCurrentUserFromStorage() as any;
@@ -62,6 +181,12 @@ export default function AccessoriesPageClient() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [q, setQ] = useState("");
   const [groupFilter, setGroupFilter] = useState("ALL");
+  const [typeFilter, setTypeFilter] = useState("ALL");
+  const [materialFilter, setMaterialFilter] = useState("ALL");
+  const [gaugeFilter, setGaugeFilter] = useState("ALL");
+  const [colorFilter, setColorFilter] = useState("ALL");
+  const [stockFilter, setStockFilter] = useState<"ALL" | "IN" | "OUT">("ALL");
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<Item | null | undefined>(undefined);
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -84,14 +209,52 @@ export default function AccessoriesPageClient() {
   useEffect(() => { void load(); }, []);
 
   const availableGroups = useMemo(() => ACCESSORY_GROUP_ORDER.filter((g) => items.some((x) => accessoryGroup(x.typeName) === g)), [items]);
+  const availableTypes = useMemo(() => TYPES.filter((t) => items.some((x) => x.typeName === t)), [items]);
+  const availableMaterials = useMemo(() => Array.from(new Set(items.map(itemMaterial).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi")), [items]);
+  const availableGauges = useMemo(() => Array.from(new Set(items.map(itemGauge).filter(Boolean))).sort((a, b) => Number(a.replace(/\D/g, "")) - Number(b.replace(/\D/g, ""))), [items]);
+  const availableColors = useMemo(() => Array.from(new Set(items.map(itemColor).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi")), [items]);
   const rows = useMemo(() => {
     const k = q.trim().toLowerCase();
     return items.filter((x) =>
       (groupFilter === "ALL" || accessoryGroup(x.typeName) === groupFilter) &&
-      (!k || [x.code, x.name, x.typeName, specSummary(x)].some((v) => String(v || "").toLowerCase().includes(k)))
+      (typeFilter === "ALL" || x.typeName === typeFilter) &&
+      (materialFilter === "ALL" || itemMaterial(x) === materialFilter) &&
+      (gaugeFilter === "ALL" || itemGauge(x) === gaugeFilter) &&
+      (colorFilter === "ALL" || itemColor(x) === colorFilter) &&
+      (stockFilter === "ALL" || (stockFilter === "IN" ? Number(x.stockQty || 0) > 0 : Number(x.stockQty || 0) <= 0)) &&
+      (!k || [x.code, x.name, x.typeName, specSummary(x), itemMaterial(x), itemGauge(x), itemColor(x)].some((v) => String(v || "").toLowerCase().includes(k)))
     );
-  }, [items, q, groupFilter]);
-  const grouped = useMemo(() => ACCESSORY_GROUP_ORDER.map((group) => ({ group, rows: rows.filter((x) => accessoryGroup(x.typeName) === group) })).filter((x) => x.rows.length), [rows]);
+  }, [items, q, groupFilter, typeFilter, materialFilter, gaugeFilter, colorFilter, stockFilter]);
+  const grouped = useMemo(() => {
+    const map = new Map<string, Item[]>();
+    for (const row of rows) {
+      const key = itemSubgroup(row);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(row);
+    }
+    return Array.from(map.entries())
+      .map(([group, rs]) => ({
+        group,
+        rows: [...rs].sort((a, b) => {
+          const ga = Number(itemGauge(a).replace(/\D/g, "")) || 999;
+          const gb = Number(itemGauge(b).replace(/\D/g, "")) || 999;
+          if (ga !== gb) return ga - gb;
+          const la = Number((a.specifications || {}).lengthCm || 0);
+          const lb = Number((b.specifications || {}).lengthCm || 0);
+          if (la !== lb) return la - lb;
+          return String(a.name || "").localeCompare(String(b.name || ""), "vi");
+        }),
+      }))
+      .sort((a, b) => {
+        const aa = ACCESSORY_GROUP_ORDER.indexOf(accessoryGroup(a.rows[0]?.typeName));
+        const bb = ACCESSORY_GROUP_ORDER.indexOf(accessoryGroup(b.rows[0]?.typeName));
+        if (aa !== bb) return aa - bb;
+        const ga = Number(itemGauge(a.rows[0]).replace(/\D/g, "")) || 999;
+        const gb = Number(itemGauge(b.rows[0]).replace(/\D/g, "")) || 999;
+        if (ga !== gb) return ga - gb;
+        return a.group.localeCompare(b.group, "vi");
+      });
+  }, [rows]);
   const report = useMemo(() => {
     const totalValue = items.reduce((sum, x) => sum + Number(x.stockQty || 0) * Number(x.unitPrice || 0), 0);
     return {
@@ -122,7 +285,9 @@ export default function AccessoriesPageClient() {
           <p className="mt-1 text-sm text-neutral-500">Quản lý cúc, mác, khóa, chun, bao bì, tồn và NCC NPL.</p>
         </div>
         <div className="flex gap-2">
-          {canManage && <button onClick={() => setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4" />NCC NPL</button>}{canStock && <button onClick={() => setReceiptOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">+ Phiếu nhập NPL</button>}
+          {canManage && <button onClick={() => setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4" />NCC NPL</button>}
+          {canManage && <button onClick={() => setImportOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><FileSpreadsheet className="mr-2 inline h-4 w-4" />Nhập Excel NPL</button>}
+          {canStock && <button onClick={() => setReceiptOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">+ Phiếu nhập NPL</button>}
           {canManage && <button onClick={() => setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" />Thêm NPL</button>}
         </div>
       </div>
@@ -150,9 +315,20 @@ export default function AccessoriesPageClient() {
       )}
 
       <div className="rounded-3xl border bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="relative max-w-md flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className="w-full rounded-2xl border py-2.5 pl-10 pr-3 text-sm" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã, tên, loại, quy cách, size..." /></div>
-          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setGroupFilter("ALL")} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter === "ALL" ? "bg-neutral-950 text-white" : "bg-white"}`}>Tất cả · {items.length}</button>{availableGroups.map((g) => <button type="button" key={g} onClick={() => setGroupFilter(g)} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter === g ? "bg-neutral-950 text-white" : "bg-white"}`}>{g} · {items.filter((x) => accessoryGroup(x.typeName) === g).length}</button>)}</div>
+        <div className="space-y-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            <div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className="w-full rounded-2xl border py-2.5 pl-10 pr-3 text-sm" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã, tên, chất liệu, răng, màu, quy cách..." /></div>
+            <button type="button" onClick={() => { setGroupFilter("ALL"); setTypeFilter("ALL"); setMaterialFilter("ALL"); setGaugeFilter("ALL"); setColorFilter("ALL"); setStockFilter("ALL"); setQ(""); }} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">Xoá bộ lọc</button>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+            <select className={input} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option value="ALL">Tất cả loại NPL</option>{availableTypes.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+            <select className={input} value={materialFilter} onChange={(e) => setMaterialFilter(e.target.value)}><option value="ALL">Tất cả chất liệu</option>{availableMaterials.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+            <select className={input} value={gaugeFilter} onChange={(e) => setGaugeFilter(e.target.value)}><option value="ALL">Tất cả cỡ răng</option>{availableGauges.map((x) => <option key={x} value={x}>Răng {x}</option>)}</select>
+            <select className={input} value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}><option value="ALL">Tất cả màu</option>{availableColors.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+            <select className={input} value={stockFilter} onChange={(e) => setStockFilter(e.target.value as "ALL" | "IN" | "OUT")}><option value="ALL">Tất cả tồn kho</option><option value="IN">Còn hàng</option><option value="OUT">Hết hàng</option></select>
+          </div>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setGroupFilter("ALL")} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter === "ALL" ? "bg-neutral-950 text-white" : "bg-white"}`}>Tất cả nhóm · {items.length}</button>{availableGroups.map((g) => <button type="button" key={g} onClick={() => setGroupFilter(g)} className={`rounded-full border px-3 py-2 text-xs font-semibold ${groupFilter === g ? "bg-neutral-950 text-white" : "bg-white"}`}>{g} · {items.filter((x) => accessoryGroup(x.typeName) === g).length}</button>)}</div>
+          <div className="text-xs text-neutral-400">Đang hiển thị <b className="text-neutral-700">{rows.length}</b> / {items.length} mã. Danh sách Khóa được tự chia theo cỡ răng #3, #5, #8... rồi sắp tiếp theo chiều dài.</div>
         </div>
       </div>
 
@@ -180,6 +356,7 @@ export default function AccessoriesPageClient() {
 
       {!rows.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
       {editing !== undefined && <ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await load(); }} />}
+      {importOpen && <AccessoryExcelImportModal items={items} suppliers={suppliers} canCostView={canCostView} onClose={() => setImportOpen(false)} onImported={async () => { setImportOpen(false); await load(); }} />}
       {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}{receiptOpen && <AccessoryReceiptModal items={items} suppliers={suppliers} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={()=>setReceiptOpen(false)} onSaved={async()=>{setReceiptOpen(false);await load();}} />}
     </div>
   );
@@ -187,6 +364,158 @@ export default function AccessoriesPageClient() {
 
 function Stat({ label, value }: { label: string; value: any }) {
   return <div className="rounded-2xl bg-neutral-50 p-4"><div className="text-xs font-semibold uppercase text-neutral-400">{label}</div><div className="mt-2 text-2xl font-semibold">{value}</div></div>;
+}
+
+
+function AccessoryExcelImportModal({ items, suppliers, canCostView, onClose, onImported }: { items: Item[]; suppliers: Supplier[]; canCostView: boolean; onClose: () => void; onImported: () => void }) {
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<ImportAccessoryRow[]>([]);
+  const [useStock, setUseStock] = useState(false);
+  const [usePrice, setUsePrice] = useState(canCostView);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState("");
+
+  async function readExcel(file: File) {
+    try {
+      setError("");
+      setResult("");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!sheet) throw new Error("File Excel không có sheet dữ liệu.");
+      const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+      const parsed: ImportAccessoryRow[] = raw.map((r, index) => {
+        const code = normalizeText(pickExcel(r, ["Mã NPL", "Mã SKU", "SKU", "Code", "Mã"])).toUpperCase();
+        const name = normalizeText(pickExcel(r, ["Tên NPL", "Tên sản phẩm", "Tên", "Name"]));
+        const typeName = inferTypeName(name, pickExcel(r, ["Loại", "Phân loại", "Loại NPL", "Type"]));
+        const material = normalizeText(pickExcel(r, ["Chất liệu", "Material", "Chất liệu răng"]));
+        const teethMaterial = normalizeText(pickExcel(r, ["Loại răng", "Răng chất liệu", "Teeth material"]));
+        const zipperGauge = normalizeGauge(pickExcel(r, ["Răng", "Cỡ răng", "Cỡ khóa", "Zipper gauge", "Gauge"]));
+        const color = normalizeText(pickExcel(r, ["Màu", "Color", "Màu nền / màu chữ"]));
+        const teethColor = normalizeText(pickExcel(r, ["Màu răng", "Teeth color"]));
+        const tapeColor = normalizeText(pickExcel(r, ["Màu tape", "Màu vải khóa", "Tape color"]));
+        const lengthCm = excelNumber(pickExcel(r, ["Chiều dài", "Chiều dài khóa", "Dài (cm)", "Length cm"]));
+        const diameterMm = excelNumber(pickExcel(r, ["Đường kính", "Đường kính (mm)", "Diameter mm"]));
+        const widthCm = excelNumber(pickExcel(r, ["Ngang", "Ngang (cm)", "Width cm"]));
+        const heightCm = excelNumber(pickExcel(r, ["Dọc", "Dọc (cm)", "Height cm"]));
+        let size = normalizeText(pickExcel(r, ["Size", "Size mác", "Cỡ size"])).toUpperCase();
+        if (!size && typeName === "Mác Size") size = (name.toUpperCase().match(/(?:^|[-–—\s])(XS|S|M|L|XL|XXL|29|30|31|32|34|36)\s*$/)?.[1] || "").toUpperCase();
+        const sizeKindRaw = normalizeText(pickExcel(r, ["Nhóm size", "Loại size", "Size kind"])).toUpperCase();
+        const sizeKind = typeName === "Mác Size" ? (sizeKindRaw.includes("QUẦN") || sizeKindRaw.includes("PANT") || PANTS_LABEL_SIZES.includes(size) ? "PANTS" : "SHIRT") : "";
+        const specifications: Record<string, any> = {};
+        if (material) specifications.material = material;
+        if (teethMaterial) specifications.teethMaterial = teethMaterial;
+        else if (typeName === "Khóa Kéo" && material) specifications.teethMaterial = material;
+        if (zipperGauge) specifications.zipperGauge = zipperGauge;
+        if (color) specifications.color = color;
+        if (teethColor) specifications.teethColor = teethColor;
+        else if (typeName === "Khóa Kéo" && color) specifications.teethColor = color;
+        if (tapeColor) specifications.tapeColor = tapeColor;
+        if (lengthCm !== null) specifications.lengthCm = lengthCm;
+        if (diameterMm !== null) specifications.diameterMm = diameterMm;
+        if (widthCm !== null) specifications.widthCm = widthCm;
+        if (heightCm !== null) specifications.heightCm = heightCm;
+        if (typeName === "Mác Size") {
+          specifications.sizeKind = sizeKind;
+          specifications.size = size;
+        }
+        const error = !name ? "Thiếu tên NPL" : typeName === "Mác Size" && !size ? "Mác Size chưa có size" : undefined;
+        return {
+          rowNo: index + 2,
+          code,
+          name,
+          typeName,
+          unit: normalizeUnit(pickExcel(r, ["Đơn vị", "Unit", "ĐVT"])),
+          stockQty: excelNumber(pickExcel(r, ["Tồn", "Tồn kho", "Số lượng", "Stock", "Quantity"])),
+          unitPrice: excelNumber(pickExcel(r, ["Đơn giá", "Giá", "Unit price", "Price"])),
+          supplierText: normalizeText(pickExcel(r, ["NCC", "Nhà cung cấp", "Mã NCC", "Supplier"])),
+          specifications,
+          note: normalizeText(pickExcel(r, ["Ghi chú", "Note"])),
+          error,
+        };
+      }).filter((r) => r.code || r.name);
+      setRows(parsed);
+      setFileName(file.name);
+      if (!parsed.length) throw new Error("Không đọc được dòng NPL nào. Kiểm tra hàng tiêu đề trong Excel.");
+    } catch (e) {
+      setRows([]);
+      setFileName("");
+      setError(e instanceof Error ? e.message : "Không đọc được Excel.");
+    }
+  }
+
+  async function importRows() {
+    try {
+      setBusy(true);
+      setError("");
+      setResult("");
+      const valid = rows.filter((r) => !r.error);
+      if (!valid.length) throw new Error("Không có dòng hợp lệ để nhập.");
+      let created = 0;
+      let updated = 0;
+      let failed = 0;
+      const failures: string[] = [];
+      for (const row of valid) {
+        try {
+          const current = row.code ? items.find((x) => String(x.code || "").trim().toUpperCase() === row.code) : undefined;
+          const supplier = row.supplierText
+            ? suppliers.find((s) => [s.code, s.name].some((v) => normalizedKey(v) === normalizedKey(row.supplierText)))
+            : undefined;
+          const payload: any = {
+            ...(row.code ? { code: row.code } : {}),
+            name: row.name,
+            typeName: row.typeName,
+            unit: row.unit,
+            specifications: row.specifications,
+            note: row.note || null,
+            ...(supplier ? { supplierId: supplier.id } : {}),
+            ...(useStock && row.stockQty !== null ? { stockQty: row.stockQty } : {}),
+            ...(usePrice && canCostView && row.unitPrice !== null ? { unitPrice: row.unitPrice } : {}),
+          };
+          await productionApi(current ? `/production/accessories/${current.id}` : "/production/accessories", {
+            method: current ? "PATCH" : "POST",
+            body: JSON.stringify(payload),
+          });
+          if (current) updated += 1;
+          else created += 1;
+        } catch (e) {
+          failed += 1;
+          failures.push(`Dòng ${row.rowNo} ${row.code || row.name}: ${e instanceof Error ? e.message : "Lỗi"}`);
+        }
+      }
+      setResult(`Hoàn tất: tạo mới ${created}, cập nhật ${updated}${failed ? `, lỗi ${failed}` : ""}.`);
+      if (failures.length) setError(failures.slice(0, 8).join(" · "));
+      if (!failed) await onImported();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <Modal title="Nhập danh mục NPL từ Excel" onClose={onClose}>
+    <div className="space-y-4 p-5">
+      {error && <Err x={error} />}
+      {result && <div className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{result}</div>}
+      <div className="rounded-2xl border border-dashed p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><b className="text-sm">{fileName || "Chọn file Excel danh mục NPL"}</b><div className="mt-1 text-xs text-neutral-400">Hỗ trợ .xlsx / .xls. Trùng Mã NPL sẽ cập nhật, mã mới sẽ tạo mới.</div></div>
+          <label className="cursor-pointer rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><FileSpreadsheet className="mr-2 inline h-4 w-4" />Chọn Excel<input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => e.target.files?.[0] && void readExcel(e.target.files[0])}/></label>
+        </div>
+        <div className="mt-3 text-xs text-neutral-500">Cột nhận tự động: Mã NPL/SKU, Tên NPL, Loại, Đơn vị, Tồn, Đơn giá, NCC, Chất liệu, Loại răng, Răng/Cỡ khóa, Màu, Chiều dài, Size, Ghi chú.</div>
+      </div>
+      <div className="flex flex-wrap gap-4 rounded-2xl bg-neutral-50 p-3 text-sm">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={useStock} onChange={(e) => setUseStock(e.target.checked)}/>Cập nhật tồn từ Excel</label>
+        {canCostView && <label className="flex items-center gap-2"><input type="checkbox" checked={usePrice} onChange={(e) => setUsePrice(e.target.checked)}/>Cập nhật đơn giá</label>}
+        <span className="text-neutral-400">Mặc định không ghi đè tồn để tránh lệch với Phiếu nhập NPL.</span>
+      </div>
+      {rows.length > 0 && <div className="max-h-[420px] overflow-auto rounded-2xl border">
+        <table className="w-full min-w-[900px] text-left text-xs">
+          <thead className="sticky top-0 bg-neutral-100"><tr><th className="p-2">Dòng</th><th>Mã</th><th>Tên NPL</th><th>Loại</th><th>Chất liệu</th><th>Răng</th><th>Màu</th><th>Tồn</th><th>Trạng thái</th></tr></thead>
+          <tbody className="divide-y">{rows.map((r) => <tr key={`${r.rowNo}-${r.code}`} className={r.error ? "bg-red-50" : ""}><td className="p-2">{r.rowNo}</td><td className="font-semibold">{r.code || "Tự sinh"}</td><td>{r.name || "—"}</td><td>{r.typeName}</td><td>{r.specifications.material || r.specifications.teethMaterial || "—"}</td><td>{r.specifications.zipperGauge || "—"}</td><td>{r.specifications.teethColor || r.specifications.color || r.specifications.tapeColor || "—"}</td><td>{r.stockQty ?? "—"}</td><td>{r.error ? <span className="font-semibold text-red-600">{r.error}</span> : <span className="text-emerald-700">{r.code && items.some((x) => x.code.toUpperCase() === r.code) ? "Cập nhật" : "Tạo mới"}</span>}</td></tr>)}</tbody>
+        </table>
+      </div>}
+      <button disabled={busy || !rows.some((r) => !r.error)} onClick={() => void importRows()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{busy ? "Đang nhập..." : `Nhập ${rows.filter((r) => !r.error).length} dòng NPL`}</button>
+    </div>
+  </Modal>;
 }
 
 function ItemModal({ item, suppliers, canManage, canStock, canCostView, canSupplierIdentity, onClose, onSaved }: { item: Item | null; suppliers: Supplier[]; canManage: boolean; canStock: boolean; canCostView: boolean; canSupplierIdentity: boolean; onClose: () => void; onSaved: () => void }) {
@@ -336,9 +665,9 @@ function AccessorySpecs({ typeName, specs, setSpec }: { typeName: string; specs:
       <div className="grid gap-4 md:grid-cols-2">
         {isSizeLabel && <><Field l="Nhóm size"><select className={input} value={specs.sizeKind || ""} onChange={(e) => changeSizeKind(e.target.value)}><option value="">Chọn nhóm size</option><option value="SHIRT">Size áo · XS, S, M, L, XL, XXL</option><option value="PANTS">Size quần · 29, 30, 31, 32, 34, 36</option></select></Field><Field l="Size của mác"><select className={input} disabled={!specs.sizeKind} value={specs.size || ""} onChange={(e) => setSpec("size", e.target.value)}><option value="">Chọn size</option>{sizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></Field></>}
         {isZip && <><Field l="Loại răng khóa"><select className={input} value={specs.teethMaterial || ""} onChange={(e) => setSpec("teethMaterial", e.target.value)}><option value="">Chưa chọn</option><option>Răng Đồng</option><option>Răng Nhựa</option><option>Răng Nylon</option><option>Răng Kim Loại</option></select></Field><Field l="Chất liệu răng"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="VD: Đồng thau, hợp kim" /></Field><Field l="Hoàn thiện bề mặt"><input className={input} value={specs.finish || ""} onChange={(e) => setSpec("finish", e.target.value)} placeholder="VD: Antique Brass, Nickel, Gunmetal" /></Field><Field l="Cỡ khóa"><input className={input} value={specs.zipperGauge || ""} onChange={(e) => setSpec("zipperGauge", e.target.value)} placeholder="#3 / #5 / #8" /></Field><Field l="Chiều dài khóa (cm)"><input inputMode="decimal" className={input} value={specs.lengthCm || ""} onChange={(e) => setSpec("lengthCm", e.target.value)} /></Field><Field l="Màu răng"><input className={input} value={specs.teethColor || ""} onChange={(e) => setSpec("teethColor", e.target.value)} /></Field><Field l="Màu tape / vải khóa"><input className={input} value={specs.tapeColor || ""} onChange={(e) => setSpec("tapeColor", e.target.value)} /></Field><Field l="Kiểu khóa"><select className={input} value={specs.zipperStyle || ""} onChange={(e) => setSpec("zipperStyle", e.target.value)}><option value="">Chưa chọn</option><option>1 đầu</option><option>2 đầu</option><option>Khóa kín</option><option>Khóa mở</option></select></Field></>}
-        {isButton && <><Field l="Chất liệu cúc"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="Kim loại / Nhựa / Sừng / Gỗ / Xà cừ" /></Field><Field l="Kiểu cúc"><input className={input} value={specs.buttonStyle || ""} onChange={(e) => setSpec("buttonStyle", e.target.value)} /></Field><Field l="Đường kính (mm)"><input inputMode="decimal" className={input} value={specs.diameterMm || ""} onChange={(e) => setSpec("diameterMm", e.target.value)} /></Field><Field l="Số lỗ"><select className={input} value={specs.holes || ""} onChange={(e) => setSpec("holes", e.target.value)}><option value="">—</option><option value="2">2</option><option value="4">4</option></select></Field><Field l="Màu / hoàn thiện"><input className={input} value={specs.finish || ""} onChange={(e) => setSpec("finish", e.target.value)} placeholder="Antique / bóng / mờ..." /></Field></>}
+        {isButton && <><Field l="Chất liệu cúc"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="Kim loại / Nhựa / Sừng / Gỗ / Xà cừ" /></Field><Field l="Màu"><input className={input} value={specs.color || ""} onChange={(e) => setSpec("color", e.target.value)} placeholder="Đen / nâu / bạc..." /></Field><Field l="Kiểu cúc"><input className={input} value={specs.buttonStyle || ""} onChange={(e) => setSpec("buttonStyle", e.target.value)} /></Field><Field l="Đường kính (mm)"><input inputMode="decimal" className={input} value={specs.diameterMm || ""} onChange={(e) => setSpec("diameterMm", e.target.value)} /></Field><Field l="Số lỗ"><select className={input} value={specs.holes || ""} onChange={(e) => setSpec("holes", e.target.value)}><option value="">—</option><option value="2">2</option><option value="4">4</option></select></Field><Field l="Hoàn thiện"><input className={input} value={specs.finish || ""} onChange={(e) => setSpec("finish", e.target.value)} placeholder="Antique / bóng / mờ..." /></Field></>}
         {isLabel && <><Field l="Loại mác"><input className={input} value={specs.labelType || typeName} onChange={(e) => setSpec("labelType", e.target.value)} placeholder="Mác cổ / sườn / size / quần..." /></Field><Field l="Chất liệu mác"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="Da / Giả da / Vải dệt / Cotton / Satin" /></Field><Field l="Ngang (cm)"><input inputMode="decimal" className={input} value={specs.widthCm || ""} onChange={(e) => setSpec("widthCm", e.target.value)} /></Field><Field l="Dọc (cm)"><input inputMode="decimal" className={input} value={specs.heightCm || ""} onChange={(e) => setSpec("heightCm", e.target.value)} /></Field><Field l="Kiểu gấp"><select className={input} value={specs.foldStyle || ""} onChange={(e) => setSpec("foldStyle", e.target.value)}><option value="">Chưa chọn</option><option>Thẳng</option><option>Gấp đôi</option><option>Gấp mép</option></select></Field><Field l="Màu nền / màu chữ"><input className={input} value={specs.color || ""} onChange={(e) => setSpec("color", e.target.value)} /></Field></>}
-        {!isZip && !isButton && !isLabel && <Field l="Quy cách / thông số"><input className={input} value={specs.customSpec || ""} onChange={(e) => setSpec("customSpec", e.target.value)} placeholder="VD: bản 2cm, màu đen..." /></Field>}
+        {!isZip && !isButton && !isLabel && <><Field l="Chất liệu"><input className={input} value={specs.material || ""} onChange={(e) => setSpec("material", e.target.value)} placeholder="VD: Nylon / Cotton / Kim loại..." /></Field><Field l="Màu"><input className={input} value={specs.color || ""} onChange={(e) => setSpec("color", e.target.value)} placeholder="VD: Đen / trắng / nâu..." /></Field><Field l="Quy cách / thông số"><input className={input} value={specs.customSpec || ""} onChange={(e) => setSpec("customSpec", e.target.value)} placeholder="VD: bản 2cm, dày 1mm..." /></Field></>}
       </div>
       {isSizeLabel && <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">Mác size sau khi chọn size sẽ tự lấy đúng số lượng cắt của size đó trong lệnh sản xuất. Không cần chọn “Theo size” thủ công.</div>}
       <div className="rounded-2xl border bg-white p-3"><div className="mb-2 flex items-center justify-between"><div><b className="text-sm">Thuộc tính bổ sung</b><div className="text-xs text-neutral-400">Dùng cho quy cách lạ mà không cần sửa schema.</div></div><button type="button" onClick={() => setAttrs([...attrs, { key: "", value: "" }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm thuộc tính</button></div><div className="space-y-2">{attrs.map((row: any, i: number) => <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2"><input className={input} value={row.key || ""} onChange={(e) => setAttrs(attrs.map((x: any, j: number) => j === i ? { ...x, key: e.target.value } : x))} placeholder="VD: Độ dày" /><input className={input} value={row.value || ""} onChange={(e) => setAttrs(attrs.map((x: any, j: number) => j === i ? { ...x, value: e.target.value } : x))} placeholder="VD: 1,2 mm" /><button type="button" className="text-xs text-red-600" onClick={() => setAttrs(attrs.filter((_: any, j: number) => j !== i))}>Xoá</button></div>)}</div></div>
@@ -349,10 +678,10 @@ function AccessorySpecs({ typeName, specs, setSpec }: { typeName: string; specs:
 function specSummary(x: Item) {
   const s = x.specifications || {};
   if (x.typeName === "Khóa Kéo") return [s.teethMaterial, s.zipperGauge, s.lengthCm ? `${s.lengthCm}cm` : ""].filter(Boolean).join(" · ");
-  if (x.typeName === "Cúc") return [s.material, s.diameterMm ? `Ø${s.diameterMm}mm` : ""].filter(Boolean).join(" · ");
+  if (x.typeName === "Cúc") return [s.material, s.color, s.diameterMm ? `Ø${s.diameterMm}mm` : "", s.finish].filter(Boolean).join(" · ");
   if (x.typeName === "Mác Size") return [s.sizeKind === "PANTS" ? "Size quần" : s.sizeKind === "SHIRT" ? "Size áo" : "", s.size ? `Size ${s.size}` : "", s.material, s.widthCm && s.heightCm ? `${s.widthCm}×${s.heightCm}cm` : ""].filter(Boolean).join(" · ");
   if (x.typeName.startsWith("Mác")) return [s.material, s.widthCm && s.heightCm ? `${s.widthCm}×${s.heightCm}cm` : ""].filter(Boolean).join(" · ");
-  return s.customSpec || "";
+  return [s.material, s.color, s.customSpec].filter(Boolean).join(" · ");
 }
 
 const input = "w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900";
