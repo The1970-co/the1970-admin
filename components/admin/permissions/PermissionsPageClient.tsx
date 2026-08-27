@@ -457,11 +457,18 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "fabric_receipt.delete", label: "Vải về · Xoá phiếu", risk: "critical" },
 
       // ===== SẢN XUẤT =====
-      { key: "production.view", label: "Sản xuất · Xem lệnh", risk: "low" },
+      { key: "production.view", label: "Sản xuất · Xem danh sách lệnh", risk: "low" },
       { key: "production.create", label: "Sản xuất · Tạo lệnh", risk: "medium" },
-      { key: "production.edit", label: "Sản xuất · Sửa lệnh / cây vải / size", risk: "high" },
-      { key: "production.calculate", label: "Sản xuất · Tính sản lượng & NPL", risk: "medium" },
-      { key: "production.manage", label: "Sản xuất · Quản lý nhà may / định mức", risk: "high" },
+      { key: "production.source.sample.view", label: "Sản xuất · Được thấy Mẫu mới / Triển khai mẫu", risk: "high", desc: "Tắt quyền này: khi tạo lệnh chỉ thấy Mã cũ / Danh sách sản phẩm; nguồn mẫu mới cũng được ẩn trên danh sách lệnh." },
+      { key: "production.step1", label: "Sản xuất · Bước 1 · Chọn mã", risk: "medium", desc: "Bật/tắt quyền nhìn và thao tác bước Chọn mã." },
+      { key: "production.step2", label: "Sản xuất · Bước 2 · Nguyên phụ liệu", risk: "high", desc: "Bật/tắt quyền vào phần NPL, Excel và file NPL mẫu." },
+      { key: "production.step3", label: "Sản xuất · Bước 3 · Chọn / xuất cây vải", risk: "high", desc: "Bật/tắt quyền chọn cây, nhập mét xuất và in phiếu xuất vải." },
+      { key: "production.step4", label: "Sản xuất · Bước 4 · Size, tỷ lệ & định mức vải", risk: "high", desc: "Bật/tắt quyền chỉnh dải size, tỷ lệ, định mức vải/SP và hao hụt vải." },
+      { key: "production.step5", label: "Sản xuất · Bước 5 · Tính sản lượng / cắt thực tế", risk: "high", desc: "Bật/tắt quyền tính sản lượng và cập nhật số lượng cắt thực tế." },
+      { key: "production.step6", label: "Sản xuất · Bước 6 · Xem / gửi lệnh SX", risk: "critical", desc: "Bật/tắt quyền xem phiếu cuối và gửi lệnh sang nhà may/xưởng." },
+      { key: "production.edit", label: "Sản xuất · Quyền sửa chung (tương thích cũ)", risk: "high", desc: "Giữ để tương thích API cũ. Nên dùng quyền từng bước ở trên để giới hạn nhân viên." },
+      { key: "production.calculate", label: "Sản xuất · Quyền tính chung (tương thích cũ)", risk: "medium" },
+      { key: "production.manage", label: "Sản xuất · Quản lý nhà may / thao tác quản trị", risk: "high" },
 
       // ===== NGUYÊN PHỤ LIỆU — granular because staff will use it =====
       { key: "accessories.view", label: "NPL · Xem danh sách / chi tiết", risk: "low" },
