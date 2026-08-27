@@ -7774,6 +7774,7 @@ function MessageBubble({
           )}
           {message.attachmentUrl && message.type !== "FILE" && (
             <MessageImage
+              messageId={message.id}
               src={message.attachmentUrl}
               isOut={isOut}
             />
@@ -7799,22 +7800,70 @@ function MessageBubble({
 }
 
 
-function MessageImage({ src, isOut }: { src: string; isOut: boolean }) {
+function MessageImage({
+  messageId,
+  src,
+  isOut,
+}: {
+  messageId: string;
+  src: string;
+  isOut: boolean;
+}) {
+  const [currentSrc, setCurrentSrc] = useState(src);
   const [failed, setFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    setCurrentSrc(src);
+    setFailed(false);
+    setRefreshing(false);
+    refreshAttemptedRef.current = false;
+  }, [messageId, src]);
+
+  const refreshAttachmentUrl = useCallback(async () => {
+    if (!messageId || String(messageId).startsWith("optimistic-")) {
+      setFailed(true);
+      return;
+    }
+    if (refreshing) return;
+
+    setRefreshing(true);
+    try {
+      const result: any = await apiJson(
+        `/omni-inbox/messages/${encodeURIComponent(messageId)}/refresh-attachment`,
+        { method: "POST" },
+      );
+      const nextUrl = String(result?.attachmentUrl || "").trim();
+      if (!nextUrl) throw new Error("Meta không trả URL ảnh mới.");
+
+      setCurrentSrc(nextUrl);
+      setFailed(false);
+      refreshAttemptedRef.current = true;
+    } catch {
+      setFailed(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [messageId, refreshing]);
 
   if (failed) {
     return (
       <button
         type="button"
-        onClick={() => openOmniImagePreview(src)}
+        onClick={() => void refreshAttachmentUrl()}
+        disabled={refreshing}
         className={cx(
           "mt-2 block w-full rounded-xl border px-3 py-2 text-left text-xs font-semibold underline",
           isOut
             ? "border-white/30 text-white"
             : "border-neutral-200 text-blue-600",
+          refreshing && "opacity-60",
         )}
       >
-        Không tải được ảnh — bấm để thử xem nhanh
+        {refreshing
+          ? "Đang tải lại ảnh từ Meta..."
+          : "Không tải được ảnh — bấm để tải lại từ Meta"}
       </button>
     );
   }
@@ -7822,17 +7871,26 @@ function MessageImage({ src, isOut }: { src: string; isOut: boolean }) {
   return (
     <button
       type="button"
-      onClick={() => openOmniImagePreview(src)}
+      onClick={() => openOmniImagePreview(currentSrc)}
       className="mt-2 block max-w-full overflow-hidden rounded-2xl text-left"
       title="Bấm để xem nhanh ảnh"
     >
       <img
-        src={src}
+        src={currentSrc}
         alt="Ảnh trong hội thoại"
         className="max-h-80 max-w-full rounded-2xl object-contain"
         loading="eager"
         referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
+        onError={() => {
+          // URL ảnh Messenger/Facebook CDN có thời hạn. Lần lỗi đầu tiên tự xin URL
+          // mới từ Graph API; chỉ hiện nút lỗi nếu Meta cũng không refresh được.
+          if (!refreshAttemptedRef.current) {
+            refreshAttemptedRef.current = true;
+            void refreshAttachmentUrl();
+            return;
+          }
+          setFailed(true);
+        }}
       />
     </button>
   );
