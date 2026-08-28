@@ -591,6 +591,7 @@ function ItemModal({ item, suppliers, canManage, canStock, canCostView, canSuppl
   const [f, setF] = useState<any>({ code: item?.code || "", name: item?.name || "", typeName: item?.typeName || "Cúc", imageUrl: item?.imageUrl || "", unit: item?.unit || "PIECE", stockQty: item?.stockQty ?? 0, unitPrice: item?.unitPrice ?? "", supplierId: item?.supplierId || "", specifications: item?.specifications || {}, note: item?.note || "" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const setSpec = (k: string, v: any) => setF((x: any) => ({ ...x, specifications: { ...(x.specifications || {}), [k]: v } }));
 
   async function up(file: File) {
@@ -626,6 +627,26 @@ function ItemModal({ item, suppliers, canManage, canStock, canCostView, canSuppl
     }
   }
 
+
+  async function removeItem() {
+    if (!item || !canManage || deleting) return;
+    const stock = Number(item.stockQty || 0);
+    const warning = stock > 0
+      ? `NPL ${item.code} đang còn ${fmtQty(stock)} trong kho. Xoá sẽ ẩn mã này khỏi danh sách chọn mới nhưng không xoá lịch sử đã dùng. Vẫn xoá?`
+      : `Xoá NPL ${item.code} · ${item.name}? Mã sẽ bị ẩn khỏi danh sách mới nhưng lịch sử cũ vẫn giữ.`;
+    if (!window.confirm(warning)) return;
+    try {
+      setDeleting(true);
+      setError("");
+      await productionApi(`/production/accessories/${item.id}`, { method: "DELETE" });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không xoá được NPL.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <Modal title={item ? `Sửa ${item.code}` : "Thêm nguyên phụ liệu"} onClose={onClose}>
       <div className="space-y-4 p-5">
@@ -642,7 +663,7 @@ function ItemModal({ item, suppliers, canManage, canStock, canCostView, canSuppl
         {canManage && <AccessorySpecs typeName={f.typeName} specs={f.specifications || {}} setSpec={setSpec} />}
         <div className="rounded-2xl border border-dashed p-4"><div className="flex justify-between"><b className="text-sm">Ảnh đại diện</b><label className="cursor-pointer rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"><ImagePlus className="mr-1 inline h-4 w-4" />Tải ảnh<input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && void up(e.target.files[0])} /></label></div>{f.imageUrl && <img src={asset(f.imageUrl)} className="mt-3 h-36 rounded-2xl object-cover" />}</div>
         <Field l="Ghi chú"><textarea className={`${input} min-h-20`} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
-        <button disabled={saving} onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white">{saving ? "Đang lưu..." : "Lưu NPL"}</button>
+        <div className={`grid gap-2 ${item && canManage ? "md:grid-cols-[1fr_auto]" : ""}`}><button disabled={saving || deleting} onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{saving ? "Đang lưu..." : "Lưu NPL"}</button>{item && canManage && <button disabled={saving || deleting} onClick={() => void removeItem()} className="rounded-xl border border-red-300 bg-red-50 px-5 py-3 font-semibold text-red-700 disabled:opacity-40">{deleting ? "Đang xoá..." : "Xoá cứng NPL"}</button>}</div>
       </div>
     </Modal>
   );
