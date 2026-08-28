@@ -837,6 +837,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             liningFabricConsumptionM: numberOrNull(order.liningFabricConsumptionM),
             liningFabricWastePercent: numberOrZero(order.liningFabricWastePercent),
             liningFabricComponents: normalizeLiningComponentsClient(order.liningFabricComponents).map((x)=>({ ...x, consumption:numberOrZero(x.consumption), wastePercent:numberOrZero(x.wastePercent) })),
+            liningFabricAssignments: normalizeLiningAssignmentsClient(order.liningFabricAssignments),
           } : {}),
           sizeSet,
           sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
@@ -886,16 +887,12 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
               liningFabricConsumptionM: numberOrNull(order.liningFabricConsumptionM),
               liningFabricWastePercent: numberOrZero(order.liningFabricWastePercent),
               liningFabricComponents: normalizeLiningComponentsClient(order.liningFabricComponents).map((x)=>({ ...x, consumption:numberOrZero(x.consumption), wastePercent:numberOrZero(x.wastePercent) })),
+            liningFabricAssignments: normalizeLiningAssignmentsClient(order.liningFabricAssignments),
             } : {}),
             sizeSet,
             sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
           }),
         });
-      }
-
-      const enabledLiningParts = normalizeLiningComponentsClient(order.liningFabricComponents).filter((x)=>x.enabled && numberOrZero(x.consumption)>0);
-      if (enabledLiningParts.length) {
-        await productionApi(`/production/orders/${id}/spec`, { method: "PATCH", body: JSON.stringify({ liningFabricAssignments: normalizeLiningAssignmentsClient(order.liningFabricAssignments) }) });
       }
       const c = await productionApi<any>(`/production/orders/${id}/calculate`, { method: "POST" });
       setCalc(c);
@@ -1117,20 +1114,12 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         )}
 
         {step === 4 && (
-          <SizeRatioEditor order={order} setOrder={setOrder} sizeSet={sizeSet} setSizeSet={setSizeSet} ratio={ratio} setRatio={setRatio} onNext={() => void saveSizes()} busy={busy||!stepAccess[4]} isAdmin={isAdmin} />
+          <SizeRatioEditor order={order} setOrder={setOrder} sizeSet={sizeSet} setSizeSet={setSizeSet} ratio={ratio} setRatio={setRatio} onNext={() => void saveSizes()} busy={busy||!stepAccess[4]} isAdmin={isAdmin} liningRollOptions={liningRollOptions} />
         )}
 
         {step === 5 && (
           <div className="space-y-5">
-            {enabledLiningComponents.length > 0 && (
-              <div className="rounded-3xl border border-blue-200 bg-blue-50/20 p-5">
-                <div><b>Gán cây vải lót cho từng phần</b><div className="mt-1 text-xs text-neutral-500">Chọn từ các cây đã đưa vào nhóm <b>Vải lót</b> ở Bước 3. Một cây có thể dùng cho nhiều phần, ví dụ cùng một cây bông dùng cả lót thân và lót tay.</div></div>
-                {!liningRollOptions.length ? <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-sm text-amber-800">Chưa có cây Vải lót ở Bước 3.</div> : <div className="mt-4 space-y-3">
-                  {enabledLiningComponents.map((part)=>{const assigned=liningAssignments[part.key]||[];return <div key={part.key} className="rounded-2xl border bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><b>{part.name}</b><div className="text-xs text-neutral-500">Định mức <b>{fmt(numberOrZero(part.consumption))}{part.unit==="G"?" g":" m"}/SP</b> · hao hụt {fmt(numberOrZero(part.wastePercent))}%</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-bold">Đã gán {assigned.length} cây</span></div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{liningRollOptions.map((r:any)=>{const active=assigned.includes(r.id);return <label key={r.id} className={`flex cursor-pointer items-start gap-2 rounded-xl border p-3 text-xs ${active?"border-blue-500 bg-blue-50":"bg-white"}`}><input type="checkbox" checked={active} onChange={(e)=>{const old=liningAssignments[part.key]||[];const next=e.target.checked?Array.from(new Set([...old,r.id])):old.filter((rid)=>rid!==r.id);setOrder({...order,liningFabricAssignments:{...liningAssignments,[part.key]:next}})}}/><span><b>{r.rollCode}</b> · {r.fabricName}<br/><span className="text-neutral-500">{r.colorName} · {fmt(r.allocatedM)}m · {fmt(r.allocatedKg)}kg</span></span></label>})}</div></div>})}
-                </div>}
-              </div>
-            )}
-            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải chính. Vải lót kiểm tra riêng theo từng phần và đúng cây đã gán.</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Lưu gán cây & tính lại" : "Lưu gán cây & tính sản lượng"}</button></div>
+            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải chính. Vải lót chỉ kiểm tra đủ/thiếu theo cấu hình và cây đã gán ở Bước 4.</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Tính lại sản lượng" : "Tính sản lượng"}</button></div>
             {calc && <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!stepAccess[5]} history={order.cutHistory || []} selectedMaterialCount={materials.length} />}
             <div className="flex justify-end"><button type="button" onClick={() => window.open(`/production/print/${id}`, "_blank")} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">Xem / In phiếu sản xuất</button></div>
           </div>
@@ -1195,8 +1184,11 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   );
 }
 
-function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio, onNext, busy, isAdmin }: any) {
+function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio, onNext, busy, isAdmin, liningRollOptions = [] }: any) {
   const preset = order.productKind === "PANTS" ? PANTS_SIZES : SHIRT_SIZES;
+  const components = normalizeLiningComponentsClient(order.liningFabricComponents);
+  const assignments = normalizeLiningAssignmentsClient(order.liningFabricAssignments);
+
   function toggle(size: string) {
     if (sizeSet.includes(size)) {
       setSizeSet(sizeSet.filter((x: string) => x !== size));
@@ -1206,29 +1198,95 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
       setRatio({ ...ratio, [size]: ratio[size] || 1 });
     }
   }
+
+  function updatePart(key: string, patch: Record<string, any>) {
+    setOrder({ ...order, liningFabricComponents: components.map((x: any) => x.key === key ? { ...x, ...patch } : x) });
+  }
+
+  function toggleAssignedRoll(partKey: string, rollId: string, checked: boolean) {
+    const current = assignments[partKey] || [];
+    const next = checked ? Array.from(new Set([...current, rollId])) : current.filter((id: string) => id !== rollId);
+    setOrder({ ...order, liningFabricAssignments: { ...assignments, [partKey]: next } });
+  }
+
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       {isAdmin && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-3xl border p-4">
-            <div className="mb-3"><b>Vải chính · định mức riêng</b><div className="text-xs text-neutral-400">Dùng để tính số lượng sản phẩm cắt được.</div></div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field l="Định mức vải chính / sp"><ViNumberInput value={order.fabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, fabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 1,5" /></Field>
-              <Field l="Hao hụt vải chính"><ViNumberInput value={order.fabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, fabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field>
+        <div className="min-w-0 space-y-4">
+          <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
+            <div className="min-w-0 rounded-3xl border bg-white p-4">
+              <div className="mb-3"><b>Vải chính · định mức riêng</b><div className="text-xs text-neutral-400">Dùng để tính số lượng sản phẩm cắt được.</div></div>
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <div className="min-w-0"><Field l="Định mức vải chính / SP"><ViNumberInput value={order.fabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, fabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 1,5" /></Field></div>
+                <div className="min-w-0"><Field l="Hao hụt vải chính"><ViNumberInput value={order.fabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, fabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field></div>
+              </div>
+            </div>
+
+            <div className="min-w-0 rounded-3xl border border-blue-200 bg-blue-50/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0"><b>Vải lót · định mức & cây sử dụng</b><div className="mt-1 text-xs text-neutral-500">Khai báo định mức rồi gán ngay cây đã chọn ở Bước 3. Một cây có thể dùng cho nhiều phần lót.</div></div>
+                <button type="button" onClick={() => setOrder({ ...order, liningFabricComponents: [...components, { key: `CUSTOM_${Date.now()}`, name: "Lót khác", enabled: true, consumption: "", unit: "M", wastePercent: 0, preset: false }] })} className="shrink-0 rounded-xl border bg-white px-3 py-2 text-xs font-semibold">+ Phần lót khác</button>
+              </div>
+
+              <div className="mt-4 min-w-0 space-y-3">
+                {components.map((part: any) => {
+                  const assigned = assignments[part.key] || [];
+                  return (
+                    <div key={part.key} className={`min-w-0 rounded-2xl border p-3 ${part.enabled ? "bg-white" : "bg-neutral-50 opacity-70"}`}>
+                      <div className="flex min-w-0 flex-col gap-3">
+                        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                          <label className="flex min-w-0 items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={!!part.enabled} onChange={(e) => updatePart(part.key, { enabled: e.target.checked })} /><span className="truncate">{part.name}</span></label>
+                          {part.enabled && <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">Đã gán {assigned.length} cây</span>}
+                        </div>
+
+                        {part.enabled && (
+                          <>
+                            <div className="grid min-w-0 gap-3 sm:grid-cols-2 2xl:grid-cols-[minmax(0,1.15fr)_minmax(125px,.85fr)_minmax(125px,.8fr)_minmax(105px,.65fr)]">
+                              <div className="min-w-0"><Field l="Tên phần lót"><input disabled={part.preset} className={`${input} min-w-0`} value={part.name} onChange={(e) => updatePart(part.key, { name: e.target.value })} /></Field></div>
+                              <div className="min-w-0"><Field l="Định mức / SP"><ViNumberInput value={part.consumption ?? ""} onChange={(v) => updatePart(part.key, { consumption: v })} suffix={part.unit === "G" ? "g" : "m"} decimals={part.unit === "G" ? 1 : 4} placeholder={part.unit === "G" ? "VD: 120" : "VD: 0,35"} /></Field></div>
+                              <div className="min-w-0"><Field l="Đơn vị"><select className={`${input} min-w-0`} value={part.unit} onChange={(e) => updatePart(part.key, { unit: e.target.value === "G" ? "G" : "M" })}><option value="G">Gram / SP</option><option value="M">Mét / SP</option></select></Field></div>
+                              <div className="min-w-0"><Field l="Hao hụt"><ViNumberInput value={part.wastePercent ?? 0} onChange={(v) => updatePart(part.key, { wastePercent: v })} suffix="%" decimals={2} /></Field></div>
+                            </div>
+
+                            <div className="min-w-0 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div className="text-xs font-bold text-neutral-700">Cây vải lót dùng cho {part.name}</div><div className="text-[11px] text-neutral-400">Chọn nhiều cây · một cây có thể dùng cho nhiều phần</div></div>
+                              {!liningRollOptions.length ? (
+                                <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">Chưa có cây Vải lót ở Bước 3.</div>
+                              ) : (
+                                <div className="grid min-w-0 gap-2 sm:grid-cols-2 2xl:grid-cols-3">
+                                  {liningRollOptions.map((r: any) => {
+                                    const active = assigned.includes(r.id);
+                                    return (
+                                      <label key={r.id} className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-xl border p-2.5 text-xs ${active ? "border-blue-500 bg-white ring-1 ring-blue-100" : "bg-white"}`}>
+                                        <input className="mt-0.5 shrink-0" type="checkbox" checked={active} onChange={(e) => toggleAssignedRoll(part.key, r.id, e.target.checked)} />
+                                        <span className="min-w-0"><span className="block truncate font-bold">{r.rollCode} · {r.fabricName}</span><span className="mt-0.5 block truncate text-neutral-500">{r.colorName} · {fmt(r.allocatedM)}m · {fmt(r.allocatedKg)}kg</span></span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+
+                        {!part.preset && <div className="flex justify-end"><button type="button" className="text-xs font-semibold text-red-600" onClick={() => setOrder({ ...order, liningFabricComponents: components.filter((x: any) => x.key !== part.key), liningFabricAssignments: Object.fromEntries(Object.entries(assignments).filter(([key]) => key !== part.key)) })}>Xoá phần này</button></div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
-          <div className="rounded-3xl border border-blue-200 bg-blue-50/30 p-4">
-            <div className="flex items-start justify-between gap-3"><div><b>Vải lót · định mức theo từng phần</b><div className="text-xs text-neutral-400">Tạo sẵn lót thân, tay, túi, cổ. Mỗi phần có định mức riêng bằng g/SP hoặc m/SP.</div></div><button type="button" onClick={()=>{const rows=normalizeLiningComponentsClient(order.liningFabricComponents);setOrder({...order,liningFabricComponents:[...rows,{key:`CUSTOM_${Date.now()}`,name:"Lót khác",enabled:true,consumption:"",unit:"M",wastePercent:0,preset:false}]})}} className="rounded-xl border bg-white px-3 py-2 text-xs font-semibold">+ Phần lót khác</button></div>
-            <div className="mt-4 space-y-3">{normalizeLiningComponentsClient(order.liningFabricComponents).map((part,_index,all)=><div key={part.key} className={`rounded-2xl border p-3 ${part.enabled?"bg-white":"bg-neutral-50 opacity-70"}`}><div className="grid gap-3 xl:grid-cols-[150px_minmax(140px,1fr)_150px_150px_110px] xl:items-end"><label className="flex items-center gap-2 pb-2 text-sm font-semibold"><input type="checkbox" checked={!!part.enabled} onChange={(e)=>{const next=all.map(x=>x.key===part.key?{...x,enabled:e.target.checked}:x);setOrder({...order,liningFabricComponents:next})}}/>{part.name}</label><Field l="Tên phần lót"><input disabled={part.preset} className={input} value={part.name} onChange={(e)=>{const next=all.map(x=>x.key===part.key?{...x,name:e.target.value}:x);setOrder({...order,liningFabricComponents:next})}} /></Field><Field l="Định mức / SP"><ViNumberInput value={part.consumption ?? ""} onChange={(v)=>{const next=all.map(x=>x.key===part.key?{...x,consumption:v}:x);setOrder({...order,liningFabricComponents:next})}} suffix={part.unit==="G"?"g":"m"} decimals={part.unit==="G"?1:4} placeholder={part.unit==="G"?"VD: 120":"VD: 0,35"}/></Field><Field l="Đơn vị"><select className={input} value={part.unit} onChange={(e)=>{const unit=e.target.value==="G"?"G":"M";const next=all.map(x=>x.key===part.key?{...x,unit}:x);setOrder({...order,liningFabricComponents:next})}}><option value="G">Gram / SP</option><option value="M">Mét / SP</option></select></Field><Field l="Hao hụt"><ViNumberInput value={part.wastePercent ?? 0} onChange={(v)=>{const next=all.map(x=>x.key===part.key?{...x,wastePercent:v}:x);setOrder({...order,liningFabricComponents:next})}} suffix="%" decimals={2}/></Field></div>{!part.preset&&<div className="mt-2 flex justify-end"><button type="button" className="text-xs font-semibold text-red-600" onClick={()=>setOrder({...order,liningFabricComponents:all.filter(x=>x.key!==part.key)})}>Xoá phần này</button></div>}</div>)}</div>
-          </div>
-          <div className="lg:col-span-2 text-[11px] text-neutral-400">Chỉ Admin / Owner nhìn thấy và cấu hình định mức. Ví dụ: <b>lót thân 120g/SP</b>, <b>lót tay 80g/SP</b>, lót túi 0,25m/SP. Bước 3 chọn pool cây lót; Bước 5 gán cây cho từng phần. Một cây được phép dùng cho nhiều phần.</div>
+
+          <div className="text-[11px] text-neutral-400">Chỉ Admin / Owner nhìn thấy và cấu hình định mức. Vải chính quyết định sản lượng; vải lót kiểm tra riêng theo từng phần. Bước 3 chỉ chọn pool cây lót, <b>Bước 4 gán cây cho từng phần</b>, Bước 5 chỉ hiển thị kiểm tra đủ/thiếu.</div>
         </div>
       )}
+
       <div className="flex flex-wrap gap-2"><button onClick={() => { const next=[...SHIRT_SIZES]; setOrder({ ...order, productKind: "SHIRT" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "SHIRT" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size áo</button><button onClick={() => { const next=[...PANTS_SIZES]; setOrder({ ...order, productKind: "PANTS" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "PANTS" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size quần</button></div>
       <div><b>Chọn dải size</b><div className="mt-3 flex flex-wrap gap-2">{preset.map((size) => { const active = sizeSet.includes(size); return <button key={size} onClick={() => toggle(size)} className={`min-w-14 rounded-2xl border px-4 py-3 text-base font-black ${active ? "border-neutral-950 bg-neutral-950 text-white" : "bg-white text-neutral-400"}`}>{size}</button>; })}</div></div>
       <div><b>Tỷ lệ từng size</b><div className="mt-3 grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">{sizeSet.map((size: string) => <div key={size} className="rounded-2xl border bg-neutral-50 p-3 text-center"><div className="text-lg font-black">{size}</div><input type="number" min="0" className={`${input} mt-2 text-center font-bold`} value={ratio[size] ?? 1} onChange={(e) => setRatio({ ...ratio, [size]: Number(e.target.value || 0) })} /></div>)}</div></div>
       <div className="rounded-2xl bg-neutral-50 p-4 text-sm">Tỷ lệ hiện tại: <b>{sizeSet.map((s: string) => `${s}:${ratio[s] || 0}`).join(" · ") || "Chưa chọn"}</b></div>
-      <div className="flex justify-end"><button disabled={busy || !sizeSet.length} onClick={onNext} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu size</button></div>
+      <div className="flex justify-end"><button disabled={busy || !sizeSet.length} onClick={onNext} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu size + vải lót</button></div>
     </div>
   );
 }
