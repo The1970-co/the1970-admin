@@ -566,7 +566,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         setActualCut(actualDraft);
         const totalPlannedQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.plannedQty || 0), 0);
         const totalActualQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.actualQty ?? x.plannedQty ?? 0), 0);
-        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [], lining: o.lining || null, costSummary: o.costSummary || null });
+        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [], lining: o.lining || null, costSummary: o.costSummary || null, nplIssueHistory: o.nplIssueHistory || [], nextNplIssueRound: o.nextNplIssueRound || 1 });
       } else {
         setCalc(null);
         setActualCut({});
@@ -1111,7 +1111,10 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         {step === 5 && (
           <div className="space-y-3">
             <div className="rounded-2xl border p-3"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải chính. Vải lót chỉ kiểm tra đủ/thiếu theo cấu hình và cây đã gán ở Bước 4.</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Tính lại sản lượng" : "Tính sản lượng"}</button></div>
-            {calc && <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!stepAccess[5]} history={order.cutHistory || []} selectedMaterialCount={materials.length} />}
+            {calc && <>
+              <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!stepAccess[5]} history={order.cutHistory || []} selectedMaterialCount={materials.length} hideMaterials />
+              <NplIssuePanel orderId={id} materials={calc.materials||[]} history={order.nplIssueHistory||calc.nplIssueHistory||[]} onChanged={load}/>
+            </>}
             <div className="flex justify-end"><button type="button" onClick={() => window.open(`/production/print/${id}`, "_blank")} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">Xem / In phiếu sản xuất</button></div>
           </div>
         )}
@@ -1313,7 +1316,7 @@ function groupSizes(rows: any[]) {
   return [...m.values()];
 }
 
-function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [], selectedMaterialCount = 0 }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[]; selectedMaterialCount?:number }) {
+function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [], selectedMaterialCount = 0, hideMaterials = false }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[]; selectedMaterialCount?:number; hideMaterials?:boolean }) {
   const sizes = Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[];
   const totalPlanned = Number(c.totalPlannedQty ?? c.totalQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0));
   const persistedActual = Number(c.totalActualQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number((x.actualQty ?? x.plannedQty) || 0),0));
@@ -1353,7 +1356,7 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
 
     {editable&&<button disabled={busy} onClick={onSaveActual} className="w-full rounded-xl bg-blue-700 px-4 py-3 text-xs font-black text-white disabled:opacity-40">Lưu thực tế & tính lại NPL</button>}
 
-    <div className="rounded-2xl border bg-white">
+    {!hideMaterials&&<>    <div className="rounded-2xl border bg-white">
       <div className="flex items-center justify-between border-b px-3 py-2.5"><div className="text-xs font-black">NPL cần xuất</div><div className="text-[10px] text-neutral-400">{selectedMaterialCount} NPL · {(c.materials||[]).length} dòng</div></div>
       <div>{(c.materials||[]).map((m:any,i:number)=><div key={i} className="border-b p-3 last:border-b-0">
         <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-xs"><span className="text-neutral-400">{m.accessoryCode}</span> · <b>{m.accessoryName}</b></div>{m.sizeLabel&&<span className="mt-1 inline-flex rounded-md bg-neutral-950 px-1.5 py-0.5 text-[9px] font-black text-white">SIZE {m.sizeLabel}</span>}</div><div className="shrink-0 text-right"><div className="text-xs font-black">{fmt(m.requiredQty)}</div><div className={`text-[9px] font-bold ${Number(m.shortageQty)>0?"text-red-600":"text-emerald-600"}`}>{Number(m.shortageQty)>0?`Thiếu ${fmt(m.shortageQty)}`:"Đủ"}</div></div></div>
@@ -1361,10 +1364,137 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
       </div>)}</div>
     </div>
 
+</>}
     {!!history.length&&<details className="rounded-2xl border bg-white"><summary className="cursor-pointer px-3 py-2.5 text-xs font-black">Lịch sử thay đổi cắt ({history.length})</summary><div className="max-h-64 overflow-y-auto border-t">{history.map((h:any)=><div key={h.id} className="border-b p-2.5 text-[10px] last:border-b-0"><b>{h.colorName} · {h.size}</b> · DK {h.plannedQty} · TT {h.previousActualQty??"—"} → <b className="text-blue-700">{h.actualQty??"—"}</b><div className="mt-0.5 text-neutral-400">{h.createdAt?new Date(h.createdAt).toLocaleString("vi-VN"):"—"} · {h.createdByName||"Hệ thống"}</div></div>)}</div></details>}
   </div>;
 }
 
+
+
+function nplLineKey(m:any){return `${String(m.accessoryItemId||"")}|||${String(m.sizeLabel||"").trim().toUpperCase()}`}
+
+function NplIssuePanel({orderId,materials,history,onChanged}:{orderId:string;materials:any[];history:any[];onChanged:()=>Promise<any>|any}) {
+  const [tab,setTab]=useState<"ISSUE"|"HISTORY">("ISSUE");
+  const [qty,setQty]=useState<Record<string,string>>({});
+  const [notes,setNotes]=useState<Record<string,string>>({});
+  const [roundNote,setRoundNote]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+
+  const rounds=Array.isArray(history)?history:[];
+  const nextRound=rounds.length?Math.max(...rounds.map((x:any)=>Number(x.roundNo||0)))+1:1;
+
+  useEffect(()=>{
+    const q:Record<string,string>={};
+    const n:Record<string,string>={};
+    for(const m of materials||[]){
+      const key=nplLineKey(m);
+      const canIssue=Math.min(Number(m.remainingToIssue??m.requiredQty??0),Number(m.stockQtyCurrent??m.stockQtySnapshot??0));
+      q[key]=canIssue>0?String(Math.round(canIssue*1000)/1000):"";
+      n[key]=String(m.issueNote||"");
+    }
+    setQty(q);
+    setNotes(n);
+  },[materials]);
+
+  async function saveNotesOnly(){
+    try{
+      setBusy(true);setError("");
+      await productionApi(`/production/orders/${orderId}/npl-notes`,{
+        method:"PATCH",
+        body:JSON.stringify({rows:(materials||[]).map((m:any)=>({accessoryItemId:m.accessoryItemId,sizeLabel:m.sizeLabel||null,note:notes[nplLineKey(m)]||""}))}),
+      });
+      await onChanged();
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được ghi chú NPL.");}
+    finally{setBusy(false)}
+  }
+
+  async function issue(){
+    try{
+      setBusy(true);setError("");
+      const rows=(materials||[]).map((m:any)=>{
+        const key=nplLineKey(m);
+        return {accessoryItemId:m.accessoryItemId,sizeLabel:m.sizeLabel||null,qty:Number(String(qty[key]||0).replace(",","."))||0,note:notes[key]||""};
+      }).filter((x:any)=>x.qty>0);
+      if(!rows.length)throw new Error("Chưa có NPL nào nhập số lượng cấp lần này.");
+      await productionApi(`/production/orders/${orderId}/npl-issues`,{method:"POST",body:JSON.stringify({rows,note:roundNote})});
+      setRoundNote("");
+      setTab("HISTORY");
+      await onChanged();
+    }catch(e){setError(e instanceof Error?e.message:"Không xuất được NPL.");}
+    finally{setBusy(false)}
+  }
+
+  const remainingLines=(materials||[]).filter((m:any)=>Number(m.remainingToIssue??m.requiredQty??0)>0);
+  const doneLines=(materials||[]).length-remainingLines.length;
+
+  return <div className="rounded-3xl border-2 border-neutral-900 bg-white">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+      <div>
+        <div className="text-sm font-black">Cấp nguyên phụ liệu</div>
+        <div className="mt-1 text-xs text-neutral-500">Hệ thống nhớ từng lần đã cấp và tự tính phần còn phải bổ sung.</div>
+      </div>
+      <div className="flex rounded-xl bg-neutral-100 p-1">
+        <button onClick={()=>setTab("ISSUE")} className={`rounded-lg px-3 py-2 text-xs font-black ${tab==="ISSUE"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Cấp NPL</button>
+        <button onClick={()=>setTab("HISTORY")} className={`rounded-lg px-3 py-2 text-xs font-black ${tab==="HISTORY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Lịch sử ({rounds.length})</button>
+      </div>
+    </div>
+
+    {error&&<div className="m-4 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div>}
+
+    {tab==="ISSUE"?<div className="p-4">
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        <div className="rounded-xl bg-neutral-100 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Tổng dòng</div><b className="text-lg">{materials.length}</b></div>
+        <div className="rounded-xl bg-emerald-50 p-3"><div className="text-[10px] font-black uppercase text-emerald-600">Đã đủ</div><b className="text-lg text-emerald-700">{doneLines}</b></div>
+        <div className="rounded-xl bg-amber-50 p-3"><div className="text-[10px] font-black uppercase text-amber-600">Còn bổ sung</div><b className="text-lg text-amber-700">{remainingLines.length}</b></div>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border">
+        <table className="min-w-[1160px] w-full text-sm">
+          <thead className="bg-neutral-50">
+            <tr>
+              <th className="p-3 text-left">NPL</th><th>Size</th><th>Cần theo TT</th><th>Đã cấp</th><th>Còn phải cấp</th><th>Tồn hiện tại</th><th className="bg-blue-50 text-blue-800">Cấp lần {nextRound}</th><th className="min-w-[260px] text-left">Ghi chú</th>
+            </tr>
+          </thead>
+          <tbody>{(materials||[]).map((m:any)=>{
+            const key=nplLineKey(m);
+            const remain=Number(m.remainingToIssue??m.requiredQty??0);
+            const stock=Number(m.stockQtyCurrent??m.stockQtySnapshot??0);
+            const done=remain<=0.0001;
+            return <tr key={key} className="border-t">
+              <td className="p-3"><span className="text-neutral-500">{m.accessoryCode}</span> · <b>{m.accessoryName}</b></td>
+              <td className="text-center">{m.sizeLabel?<span className="rounded-lg bg-neutral-950 px-2 py-1 text-[10px] font-black text-white">SIZE {m.sizeLabel}</span>:"—"}</td>
+              <td className="text-center font-semibold">{fmt(m.requiredQty)}</td>
+              <td className="text-center font-semibold text-blue-700">{fmt(m.issuedQty||0)}</td>
+              <td className={`text-center font-black ${done?"text-emerald-700":"text-amber-700"}`}>{fmt(remain)}</td>
+              <td className={`text-center font-semibold ${stock+0.0001<remain?"text-red-700":"text-neutral-700"}`}>{fmt(stock)}</td>
+              <td className="bg-blue-50 p-2 text-center">
+                <input disabled={done||busy} inputMode="decimal" className="w-24 rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-center font-black text-blue-900 disabled:bg-neutral-100 disabled:text-neutral-400" value={qty[key]||""} onChange={e=>setQty({...qty,[key]:e.target.value.replace(/[^\d.,]/g,"")})} placeholder={done?"Đủ":"0"}/>
+              </td>
+              <td className="p-2"><input className="w-full rounded-lg border px-3 py-1.5 text-xs" value={notes[key]||""} onChange={e=>setNotes({...notes,[key]:e.target.value})} placeholder="VD: Khoá 80 chưa cắt xuống 72..."/></td>
+            </tr>
+          })}</tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end justify-between gap-3 rounded-2xl bg-neutral-50 p-3">
+        <label className="min-w-[260px] flex-1"><span className="mb-1 block text-[10px] font-black uppercase text-neutral-400">Ghi chú chung lần cấp {nextRound}</span><input className="w-full rounded-xl border bg-white px-3 py-2 text-sm" value={roundNote} onChange={e=>setRoundNote(e.target.value)} placeholder={nextRound===1?"VD: Cấp NPL lần đầu":"VD: Bổ sung phần còn thiếu lần trước"}/></label>
+        <div className="flex gap-2">
+          <button disabled={busy} onClick={()=>void saveNotesOnly()} className="rounded-xl border bg-white px-4 py-2.5 text-xs font-black disabled:opacity-40">Lưu ghi chú</button>
+          <button disabled={busy||!remainingLines.length} onClick={()=>void issue()} className="rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">{nextRound===1?`Xuất NPL lần 1`:`Xuất NPL lần ${nextRound} · Bổ sung`}</button>
+        </div>
+      </div>
+      <div className="mt-2 text-[11px] text-neutral-400">Số lượng “Cấp lần này” mặc định lấy tối đa phần còn thiếu nhưng không vượt tồn kho hiện tại. Có thể sửa xuống nếu thực tế chỉ cấp một phần.</div>
+    </div>:<div className="p-4">
+      {!rounds.length?<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa có lần cấp NPL nào.</div>:<div className="space-y-3">{rounds.map((r:any)=><details key={r.id} className="rounded-2xl border bg-white" open={Number(r.roundNo)===Math.max(...rounds.map((x:any)=>Number(x.roundNo||0)))}>
+        <summary className="cursor-pointer list-none p-4">
+          <div className="flex items-center justify-between gap-3"><div><b>Lần {r.roundNo}{Number(r.roundNo)>1?" · Bổ sung":""}</b><div className="mt-1 text-[11px] text-neutral-400">{r.createdAt?new Date(r.createdAt).toLocaleString("vi-VN"):"—"} · {r.createdByName||"—"}{r.note?` · ${r.note}`:""}</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-black">{(r.items||[]).length} NPL</span></div>
+        </summary>
+        <div className="overflow-x-auto border-t"><table className="min-w-[780px] w-full text-xs"><thead className="bg-neutral-50"><tr><th className="p-2 text-left">NPL</th><th>Size</th><th>Đã cấp trước</th><th>Cấp lần này</th><th>Còn thiếu sau cấp</th><th className="text-left">Ghi chú</th></tr></thead><tbody>{(r.items||[]).map((x:any)=><tr key={x.id} className="border-t"><td className="p-2">{x.accessoryCode} · <b>{x.accessoryName}</b></td><td className="text-center">{x.sizeLabel||"—"}</td><td className="text-center">{fmt(x.issuedBeforeQty)}</td><td className="text-center font-black text-blue-700">{fmt(x.issuedQty)}</td><td className={`text-center font-black ${Number(x.remainingAfterQty)>0?"text-amber-700":"text-emerald-700"}`}>{fmt(x.remainingAfterQty)}</td><td className="p-2">{x.note||"—"}</td></tr>)}</tbody></table></div>
+      </details>)}</div>}
+    </div>}
+  </div>
+}
 
 function moneyVnd(value:any) {
   const n=Number(value||0);
