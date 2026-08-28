@@ -599,7 +599,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         setActualCut(actualDraft);
         const totalPlannedQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.plannedQty || 0), 0);
         const totalActualQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.actualQty ?? x.plannedQty ?? 0), 0);
-        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [], lining: o.lining || null });
+        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [], lining: o.lining || null, costSummary: o.costSummary || null });
       } else {
         setCalc(null);
         setActualCut({});
@@ -1128,6 +1128,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         {step === 6 && (
           <div className="space-y-5">
             {calc ? <Results c={calc} history={order.cutHistory || []} selectedMaterialCount={materials.length} /> : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại bước 5 để tính sản lượng.</div>}
+            {calc&&<ProductionCostCard cost={calc.costSummary || order.costSummary}/>}
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Send className="h-6 w-6" /><div><b>Gửi lệnh sản xuất</b><div className="text-xs text-neutral-400">Sau khi gửi, cây vải và kế hoạch size/NPL được dùng làm snapshot cho lệnh này.</div></div></div><div className="mt-4 flex gap-2"><button onClick={() => window.open(`/production/print/${id}`, "_blank")} className="flex-1 rounded-2xl border px-4 py-3 font-semibold">Xem / In phiếu</button><button disabled={busy || !stepAccess[6] || !calc || order.status === "SENT"} onClick={() => void sendOrder()} className="flex-1 rounded-2xl bg-neutral-950 px-4 py-3 font-semibold text-white disabled:opacity-40">{order.status === "SENT" ? "Đã gửi nhà may" : "Gửi lệnh SX"}</button></div></div>
           </div>
         )}
@@ -1348,6 +1349,42 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
       {!!history.length && <details className="rounded-2xl border bg-white" open={false}><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Lịch sử thay đổi số lượng cắt ({history.length})</summary><div className="max-h-80 overflow-auto border-t"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-neutral-50"><tr><th className="p-2 text-left">Thời gian</th><th>Màu</th><th>Size</th><th>DK</th><th>TT trước</th><th>TT sau</th><th>Thao tác</th><th>Người sửa</th></tr></thead><tbody>{history.map((h:any)=><tr key={h.id} className="border-t"><td className="p-2">{h.createdAt?new Date(h.createdAt).toLocaleString("vi-VN"):"—"}</td><td className="text-center">{h.colorName}</td><td className="text-center font-semibold">{h.size}</td><td className="text-center">{h.plannedQty}</td><td className="text-center">{h.previousActualQty ?? "—"}</td><td className="bg-blue-50 text-center font-semibold text-blue-800">{h.actualQty ?? "—"}</td><td className="text-center">{h.changeType==="ACTUAL_UPDATE"?"Sửa thực tế":h.changeType==="INITIAL_CALCULATE"?"Tính lần đầu":"Tính lại dự kiến"}</td><td className="text-center">{h.createdByName || "Hệ thống"}</td></tr>)}</tbody></table></div></details>}
     </div>
   );
+}
+
+
+function moneyVnd(value:any) {
+  const n=Number(value||0);
+  return `${new Intl.NumberFormat("vi-VN",{maximumFractionDigits:0}).format(Number.isFinite(n)?n:0)}đ`;
+}
+
+function ProductionCostCard({cost}:{cost:any}) {
+  if(!cost) return <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">Chưa có dữ liệu giá sản xuất.</div>;
+  if(cost.canView===false) return <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">Tài khoản chưa có đủ quyền xem giá vải và giá NPL.</div>;
+  const missing=Number(cost.missingPriceCount||0);
+  return <div className="rounded-3xl border bg-white p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <div className="text-xs font-black uppercase tracking-[.12em] text-neutral-400">Giá nguyên liệu sản xuất</div>
+        <div className="mt-1 text-sm text-neutral-500">Tính theo <b>{cost.totalActualQty||0}</b> sản phẩm cắt thực tế.</div>
+      </div>
+      <div className={`rounded-full px-3 py-1 text-xs font-black ${missing?"bg-amber-100 text-amber-800":"bg-emerald-100 text-emerald-700"}`}>{missing?`Thiếu giá ${missing} mục`:"Đủ giá"}</div>
+    </div>
+    <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Vải chính</div><div className="mt-1 text-lg font-black">{moneyVnd(cost.mainFabricCostVnd)}</div></div>
+      <div className="rounded-2xl bg-blue-50 p-3"><div className="text-[10px] font-black uppercase text-blue-500">Vải lót</div><div className="mt-1 text-lg font-black">{moneyVnd(cost.liningFabricCostVnd)}</div></div>
+      <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Tất cả NPL</div><div className="mt-1 text-lg font-black">{moneyVnd(cost.accessoryCostVnd)}</div></div>
+      <div className="rounded-2xl bg-neutral-950 p-3 text-white"><div className="text-[10px] font-black uppercase text-white/60">Giá nguyên liệu / SP</div><div className="mt-1 text-xl font-black">{cost.materialCostPerProductVnd!==null&&cost.materialCostPerProductVnd!==undefined?moneyVnd(cost.materialCostPerProductVnd):"—"}</div></div>
+    </div>
+    <div className="mt-3 flex items-center justify-between rounded-2xl border p-3"><span className="text-sm font-semibold">Tổng giá vải + lót + NPL</span><b>{moneyVnd(cost.totalMaterialCostVnd)}</b></div>
+    {missing>0&&<div className="mt-3 rounded-2xl bg-amber-50 p-3 text-xs text-amber-800">Giá/SP hiện là <b>tạm tính</b> vì còn {missing} mục chưa có đơn giá. Điền đủ giá vải/NPL để ra giá gốc chính xác.</div>}
+    <details className="mt-3 rounded-2xl border">
+      <summary className="cursor-pointer px-3 py-3 text-xs font-black">Chi tiết cấu thành giá</summary>
+      <div className="border-t">
+        {(cost.fabricLines||[]).map((x:any,i:number)=><div key={`f-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.role==="LINING"?"Vải lót":"Vải chính"} · {x.fabricName||x.fabricCode||"Vải"}</b><div className="mt-0.5 text-neutral-400">{x.rollCode||x.receiptCode||"Cây"} · {fmt(x.usedM)}m · {fmt(x.usedKg)}kg</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
+        {(cost.accessoryLines||[]).map((x:any,i:number)=><div key={`a-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.accessoryCode} · {x.accessoryName}</b>{x.sizeLabel&&<span className="ml-1 rounded bg-neutral-950 px-1.5 py-0.5 text-[9px] text-white">SIZE {x.sizeLabel}</span>}<div className="mt-0.5 text-neutral-400">{fmt(x.requiredQty)} × {x.unitPriceVnd==null?"chưa có giá":moneyVnd(x.unitPriceVnd)}</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
+      </div>
+    </details>
+  </div>;
 }
 
 function FactoryModal({ factories, onClose, onSaved }: { factories: FactoryItem[]; onClose: () => void; onSaved: () => void }) {
