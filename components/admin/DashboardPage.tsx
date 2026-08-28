@@ -1241,12 +1241,49 @@ function normalizeOrdersPayload(payload: any): DashboardOrderRow[] {
   );
 }
 
+function getOrdersPagination(payload: any) {
+  const pagination =
+    payload?.pagination ||
+    payload?.data?.pagination ||
+    payload?.meta?.pagination ||
+    payload?.meta ||
+    null;
+
+  const page = toNumber(pagination?.page || payload?.page || 1) || 1;
+  const pageSize =
+    toNumber(
+      pagination?.pageSize ||
+        pagination?.limit ||
+        payload?.pageSize ||
+        payload?.limit,
+    ) || 0;
+  const total =
+    toNumber(
+      pagination?.total ||
+        pagination?.totalItems ||
+        payload?.total ||
+        payload?.totalItems,
+    ) || 0;
+  const totalPages =
+    toNumber(
+      pagination?.totalPages ||
+        pagination?.pages ||
+        payload?.totalPages ||
+        payload?.pages,
+    ) || (pageSize > 0 && total > 0 ? Math.ceil(total / pageSize) : 0);
+
+  return { page, pageSize, total, totalPages };
+}
+
 async function fetchOrdersForDashboardReport(params: {
   range: DashboardRange;
   fromDate: string;
   toDate: string;
   fulfillment?: ProductFulfillmentFilter;
 }) {
+  // /orders hiện clamp pageSize tối đa 100. Báo cáo sản phẩm phải lấy HẾT
+  // các trang trong khoảng ngày, nếu không range dài sẽ chỉ aggregate 100 đơn mới nhất.
+  const requestedPageSize = 100;
   const baseParams = new URLSearchParams({
     range: params.range,
     fromDate: params.fromDate,
@@ -1255,26 +1292,64 @@ async function fetchOrdersForDashboardReport(params: {
     dateTo: params.toDate,
     startDate: params.fromDate,
     endDate: params.toDate,
-    limit: "1000",
-    pageSize: "1000",
+    limit: String(requestedPageSize),
+    pageSize: String(requestedPageSize),
     includeItems: "true",
     withItems: "true",
   });
 
-  const candidates = [
-    `/orders?${baseParams.toString()}`,
-    `/orders/list?${baseParams.toString()}`,
-    `/orders/admin?${baseParams.toString()}`,
-  ];
+  const candidateBases = ["/orders", "/orders/list", "/orders/admin"];
 
-  for (const path of candidates) {
-    const payload = await dashboardFetchJson<any>(path);
-    const rows = normalizeOrdersPayload(payload).filter(
+  for (const basePath of candidateBases) {
+    const allRows: DashboardOrderRow[] = [];
+    const seenOrderKeys = new Set<string>();
+    let page = 1;
+    let endpointWorked = false;
+
+    // Safety cap để tránh loop vô hạn nếu backend trả pagination lỗi.
+    for (let guard = 0; guard < 100; guard += 1) {
+      const query = new URLSearchParams(baseParams);
+      query.set("page", String(page));
+      const payload = await dashboardFetchJson<any>(
+        `${basePath}?${query.toString()}`,
+      );
+
+      if (!payload) break;
+      endpointWorked = true;
+
+      const pageRows = normalizeOrdersPayload(payload);
+      for (const order of pageRows) {
+        const orderKey = String(
+          order.id || order.orderCode || order.code || "",
+        ).trim();
+        if (orderKey) {
+          if (seenOrderKeys.has(orderKey)) continue;
+          seenOrderKeys.add(orderKey);
+        }
+        allRows.push(order);
+      }
+
+      const pagination = getOrdersPagination(payload);
+      if (pagination.totalPages > 0) {
+        if (page >= pagination.totalPages) break;
+      } else if (pageRows.length < requestedPageSize) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    if (!endpointWorked) continue;
+
+    const rows = allRows.filter(
       (order) =>
         isOrderInDateRange(order, params.fromDate, params.toDate) &&
         !isCancelledOrder(order),
     );
-    if (rows.length) return rows;
+
+    // Nếu endpoint chạy được thì dùng chính dataset đầy đủ của endpoint đó,
+    // kể cả khoảng lọc hợp lệ nhưng không có đơn. Không fall-through sang endpoint khác.
+    return rows;
   }
 
   return [];
