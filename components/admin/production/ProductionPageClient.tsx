@@ -107,6 +107,7 @@ type MaterialSpec = {
   qtyPerProduct: number | string;
   wastePercent: number | string;
   sizeScoped: boolean;
+  fixedSize?: string | null;
   note?: string | null;
 };
 
@@ -545,7 +546,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setSavedTemplates(templateOptions || []);
       setMaterials((o.accessorySpecs || []).map((x: any) => {
         const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
-        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, note: x.note || null };
+        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, fixedSize: fixedSizeFromNote(x.note), note: stripFixedSizeNote(x.note) || null };
       }));
       setRolls(rollOptions);
       const sel: Record<string, boolean> = {};
@@ -589,6 +590,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       ...row,
       accessoryItemId,
       sizeScoped: isSizeLabelAccessory(accessory) ? true : row.sizeScoped,
+      fixedSize: isSizeLabelAccessory(accessory) ? null : row.fixedSize,
       qtyPerProduct: defaultQty !== null && defaultQty !== undefined && defaultQty !== "" ? viDisplay(defaultQty, 4) : row.qtyPerProduct,
     } : row));
   }
@@ -642,7 +644,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         qtyPerProduct: Number(viNumber(row.qtyPerProduct) || 0),
         wastePercent: Number(viNumber(row.wastePercent) || 0),
         sizeScoped: selectedAccessory ? (isSizeLabelAccessory(selectedAccessory) ? true : row.sizeScoped) : row.sizeScoped,
-        note: row.note || null,
+        note: withFixedSizeNote(row.note, row.fixedSize),
       };
     });
   }
@@ -698,7 +700,8 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         qtyPerProduct: Number(item.qtyPerProduct || 0),
         wastePercent: Number(item.wastePercent || 0),
         sizeScoped: accessory ? (isSizeLabelAccessory(accessory) ? true : !!item.sizeScoped) : !!item.sizeScoped,
-        note: item.note || `[Mẫu đã lưu] ${template.name} · ${[item.accessoryCodeSnapshot, item.accessoryNameSnapshot].filter(Boolean).join(" · ")}`,
+        fixedSize: fixedSizeFromNote(item.note),
+        note: stripFixedSizeNote(item.note) || `[Mẫu đã lưu] ${template.name} · ${[item.accessoryCodeSnapshot, item.accessoryNameSnapshot].filter(Boolean).join(" · ")}`,
       };
     });
     setMaterials(rows);
@@ -715,6 +718,11 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
     if (duplicateId) {
       const duplicate = meta.accessories.find((a) => a.id === duplicateId);
       throw new Error(`NPL ${duplicate?.code || ""} · ${duplicate?.name || ""} đang được chọn lặp trong lệnh.`);
+    }
+    const badFixedSize = materials.find((m) => m.fixedSize && !sizeSet.map(normalizeProductionSize).includes(normalizeProductionSize(m.fixedSize)));
+    if (badFixedSize) {
+      const a = meta.accessories.find((x) => x.id === badFixedSize.accessoryItemId);
+      throw new Error(`NPL ${a?.code || ""} · ${a?.name || ""} đang cố định size ${badFixedSize.fixedSize} nhưng size này không có trong dải size của lệnh.`);
     }
     const badSize = materials.find((m) => {
       const a = meta.accessories.find((x) => x.id === m.accessoryItemId);
@@ -738,6 +746,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           productKind: order.productKind,
           materials: materials.map((m) => ({
             ...m,
+            note: withFixedSizeNote(m.note, m.fixedSize),
             qtyPerProduct: numberOrZero(m.qtyPerProduct),
             wastePercent: numberOrZero(m.wastePercent),
           })),
@@ -798,6 +807,43 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setBusy(true);
       setError("");
       if(!stepAccess[5])throw new Error("Bạn không có quyền thao tác bước 5 · Tính sản lượng.");
+
+      // Luôn đồng bộ lại cấu hình hiện tại trước khi tính.
+      // Như vậy nếu vừa quay về Bước 2 xoá/sửa NPL rồi bấm thẳng Bước 5,
+      // backend sẽ RESET danh sách NPL theo đúng những gì đang thấy ở Bước 2,
+      // không dùng lại các NPL cũ từ lần tính trước.
+      if (stepAccess[2]) {
+        validateMaterialRows();
+        await productionApi(`/production/orders/${id}/spec`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            productKind: order.productKind,
+            materials: materials.map((m) => ({
+              ...m,
+              qtyPerProduct: numberOrZero(m.qtyPerProduct),
+              wastePercent: numberOrZero(m.wastePercent),
+            })),
+          }),
+        });
+      }
+
+      // Nếu tài khoản được sửa Bước 4 thì cũng đồng bộ size/tỷ lệ đang hiển thị
+      // trước khi tính lại. Định mức vải/hao hụt chỉ Admin/Owner mới được gửi.
+      if (stepAccess[4]) {
+        await productionApi(`/production/orders/${id}/spec`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            productKind: order.productKind,
+            ...(isAdmin ? {
+              fabricConsumptionM: numberOrNull(order.fabricConsumptionM),
+              fabricWastePercent: numberOrZero(order.fabricWastePercent),
+            } : {}),
+            sizeSet,
+            sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
+          }),
+        });
+      }
+
       const c = await productionApi<any>(`/production/orders/${id}/calculate`, { method: "POST" });
       setCalc(c);
       await load();
@@ -913,7 +959,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             <div className="rounded-3xl border p-4">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                 <div><b>Nguyên phụ liệu của lệnh này</b><div className="text-xs text-neutral-400">Có thể chọn thủ công, nhập Excel hoặc áp dụng mẫu NPL có sẵn.</div></div>
-                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
+                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false, fixedSize: null }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
               </div>
 
               <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_220px_170px_190px]">
@@ -949,7 +995,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
                   return (
                     <div key={i} className="rounded-2xl bg-neutral-50 p-3">
                       {sourceLabel && <div className="mb-2 text-xs font-semibold text-neutral-500">{sourceLabel}</div>}
-                      <div className="grid gap-2 md:grid-cols-[2fr_1fr_1fr_140px_auto]">
+                      <div className="grid gap-2 md:grid-cols-[2fr_1fr_1fr_230px_auto]">
                         <AccessoryCombobox
                           accessories={meta.accessories}
                           value={m.accessoryItemId}
@@ -959,7 +1005,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
                         />
                         <ViNumberInput value={m.qtyPerProduct} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: v } : x))} suffix={qtySuffix} decimals={4} placeholder="VD: 1 hoặc 0,75" />
                         <ViNumberInput value={m.wastePercent} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: v } : x))} suffix="%" decimals={3} placeholder="Hao hụt" />
-                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={m.sizeScoped} onChange={(e) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, sizeScoped: e.target.checked } : x))} />Theo size</label>}
+                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <div className="space-y-1.5"><select className={`${input} py-2 text-xs font-semibold`} value={m.fixedSize ? "FIXED" : m.sizeScoped ? "BY_SIZE" : "ALL"} onChange={(e) => { const mode=e.target.value; setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,sizeScoped:mode==="BY_SIZE",fixedSize:mode==="FIXED"?(x.fixedSize || sizeSet[0] || null):null}:x)); }}><option value="ALL">Không theo size</option><option value="BY_SIZE">Theo tất cả size</option><option value="FIXED">Cố định 1 size</option></select>{m.fixedSize && <select className={`${input} py-2 text-xs font-black`} value={m.fixedSize} onChange={(e)=>setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,fixedSize:e.target.value}:x))}>{sizeSet.map((size)=><option key={size} value={size}>Dùng cho size {size}</option>)}</select>}</div>}
                         <button onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))} className="text-xs font-semibold text-red-600">Xoá</button>
                       </div>
                       {selectedAccessory && <div className="mt-2 text-xs text-neutral-500"><b>{selectedAccessory.typeName || "NPL"}</b>{accessorySpecShort(selectedAccessory) ? ` · ${accessorySpecShort(selectedAccessory)}` : ""}{selectedAccessory.specifications?.defaultQtyPerProduct !== null && selectedAccessory.specifications?.defaultQtyPerProduct !== undefined && selectedAccessory.specifications?.defaultQtyPerProduct !== "" ? ` · Mặc định ${viDisplay(selectedAccessory.specifications.defaultQtyPerProduct, 4)} ${accessoryUnitLabel(selectedAccessory.unit)}/SP` : ""}</div>}
@@ -1157,7 +1203,7 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
       {editable && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="text-sm text-blue-900"><b>Ô xanh = số lượng cắt thực tế.</b> Sửa xong bấm lưu; hệ thống chỉ cập nhật TT, giữ nguyên DK và tính lại toàn bộ NPL.</div><button disabled={busy} onClick={onSaveActual} className="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu thực tế & tính lại NPL</button></div>}
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500"><span>Đã chọn <b className="text-neutral-900">{selectedMaterialCount}</b> NPL · Bảng tính hiển thị <b className="text-neutral-900">{(c.materials || []).length}</b> dòng.</span><span>Mác size không có sản lượng ở size hiện tại vẫn được giữ và hiển thị 0.</span></div>
-      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b>{m.sizeLabel && Number(m.requiredQty||0)===0 ? <div className="mt-0.5 text-[11px] font-medium text-amber-600">Size này hiện không có trong sản lượng cắt thực tế</div> : null}</td><td className="text-center">{m.sizeLabel || "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b>{m.sizeLabel && Number(m.requiredQty||0)===0 ? <div className="mt-0.5 text-[11px] font-medium text-amber-600">Size này hiện không có trong sản lượng cắt thực tế</div> : null}</td><td className="text-center">{m.sizeLabel ? <span className="inline-flex rounded-lg bg-neutral-950 px-2.5 py-1 text-xs font-black text-white">SIZE {m.sizeLabel}</span> : "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
 
       {!!history.length && <details className="rounded-2xl border bg-white" open={false}><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Lịch sử thay đổi số lượng cắt ({history.length})</summary><div className="max-h-80 overflow-auto border-t"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-neutral-50"><tr><th className="p-2 text-left">Thời gian</th><th>Màu</th><th>Size</th><th>DK</th><th>TT trước</th><th>TT sau</th><th>Thao tác</th><th>Người sửa</th></tr></thead><tbody>{history.map((h:any)=><tr key={h.id} className="border-t"><td className="p-2">{h.createdAt?new Date(h.createdAt).toLocaleString("vi-VN"):"—"}</td><td className="text-center">{h.colorName}</td><td className="text-center font-semibold">{h.size}</td><td className="text-center">{h.plannedQty}</td><td className="text-center">{h.previousActualQty ?? "—"}</td><td className="bg-blue-50 text-center font-semibold text-blue-800">{h.actualQty ?? "—"}</td><td className="text-center">{h.changeType==="ACTUAL_UPDATE"?"Sửa thực tế":h.changeType==="INITIAL_CALCULATE"?"Tính lần đầu":"Tính lại dự kiến"}</td><td className="text-center">{h.createdByName || "Hệ thống"}</td></tr>)}</tbody></table></div></details>}
     </div>
@@ -1412,15 +1458,29 @@ function AccessoryCombobox({ accessories, value, onChange, typeName = "ALL", glo
   );
 }
 
+const FIXED_SIZE_NOTE_RE = /\[\[FIXED_SIZE:([^\]]+)\]\]/i;
+function fixedSizeFromNote(note?: string | null) {
+  const matched=String(note||"").match(FIXED_SIZE_NOTE_RE);
+  return matched?.[1] ? normalizeProductionSize(matched[1]) : null;
+}
+function stripFixedSizeNote(note?: string | null) {
+  return String(note||"").replace(FIXED_SIZE_NOTE_RE, "").replace(/\s{2,}/g," ").trim();
+}
+function withFixedSizeNote(note?: string | null, fixedSize?: string | null) {
+  const clean=stripFixedSizeNote(note);
+  const size=fixedSize ? normalizeProductionSize(fixedSize) : "";
+  return [size ? `[[FIXED_SIZE:${size}]]` : "", clean].filter(Boolean).join(" ") || null;
+}
+
 function materialSourceLabel(note?: string | null) {
-  const raw = String(note || "").trim();
+  const raw = stripFixedSizeNote(note);
   if (raw.startsWith("[Mẫu]")) return raw;
   if (raw.startsWith("[Excel]")) return raw;
   return "";
 }
 
 function excelSourceSnapshot(note?: string | null) {
-  const raw = String(note || "").trim();
+  const raw = stripFixedSizeNote(note);
   const text = raw.replace(/^\[(Excel|Mẫu|Mẫu đã lưu)\]\s*/i, "");
   const parts = text.split(" · ").map((x) => x.trim()).filter(Boolean);
   return { code: parts[0] || "", name: parts.slice(1).join(" · ") || "" };
@@ -1447,12 +1507,12 @@ function buildTemplateMaterials(template: { label: string; productKind: "SHIRT" 
     if (slot.expandSizes && slot.sizeKind) {
       for (const size of template.sizes) {
         const accessory = matchTemplateAccessory(accessories, slot, size);
-        rows.push({ accessoryItemId: accessory?.id || "", qtyPerProduct: slot.qty, wastePercent: 0, sizeScoped: true, note: `[Mẫu] ${template.label} · ${slot.label} ${size}` });
+        rows.push({ accessoryItemId: accessory?.id || "", qtyPerProduct: slot.qty, wastePercent: 0, sizeScoped: true, fixedSize: null, note: `[Mẫu] ${template.label} · ${slot.label} ${size}` });
       }
       continue;
     }
     const accessory = matchTemplateAccessory(accessories, slot);
-    rows.push({ accessoryItemId: accessory?.id || "", qtyPerProduct: slot.qty, wastePercent: 0, sizeScoped: false, note: `[Mẫu] ${template.label} · ${slot.label}` });
+    rows.push({ accessoryItemId: accessory?.id || "", qtyPerProduct: slot.qty, wastePercent: 0, sizeScoped: false, fixedSize: null, note: `[Mẫu] ${template.label} · ${slot.label}` });
   }
   return rows;
 }
@@ -1513,6 +1573,7 @@ function excelAccessoryMaterials(matrix: any[][], accessories: Accessory[]): Mat
       qtyPerProduct: qty,
       wastePercent: 0,
       sizeScoped: isSizeLabelAccessory(accessory),
+      fixedSize: null,
       note: `[Excel] ${[code, name].filter(Boolean).join(" · ")}`,
     });
   }
