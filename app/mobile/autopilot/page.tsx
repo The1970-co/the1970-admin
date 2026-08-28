@@ -127,6 +127,10 @@ export default function MobileAutopilotPage() {
   const [productSearchByAd, setProductSearchByAd] = useState<Record<string, string>>({});
   const [productSearchOpenByAd, setProductSearchOpenByAd] = useState<Record<string, boolean>>({});
   const [savedMappingByAd, setSavedMappingByAd] = useState<Record<string, { productCode: string; color: string | null; savedAt: string }>>({});
+  const [budgetAdjustOpenByAd, setBudgetAdjustOpenByAd] = useState<Record<string, boolean>>({});
+  const [budgetAdjustModeByAd, setBudgetAdjustModeByAd] = useState<Record<string, "percent" | "amount">>({});
+  const [budgetAdjustPercentByAd, setBudgetAdjustPercentByAd] = useState<Record<string, number>>({});
+  const [targetBudgetByAd, setTargetBudgetByAd] = useState<Record<string, number>>({});
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -581,15 +585,59 @@ export default function MobileAutopilotPage() {
     finally { setBusy(false); }
   }
 
-  async function scaleAd(row: AnyRow, percent: number) {
-    const adSetId = String(row.metaAdSetId || row.adSetId || ""); if (!adSetId) return;
-    setBusy(true); setError("");
+  async function scaleAd(row: AnyRow, percent: number, targetBudget?: number) {
+    const adSetId = String(row.metaAdSetId || row.adSetId || "");
+    if (!adSetId) return;
+
+    const requestedPercent = Number(percent || 0);
+    const requestedTargetBudget = Number(targetBudget || 0);
+
+    if (!requestedPercent && !requestedTargetBudget) {
+      setError("Nhập % hoặc số tiền ngân sách mới.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+
     try {
-      const result = await apiJson("/meta-ads/actions/scale-adset", { method: "POST", body: JSON.stringify({ metaAdSetId: adSetId, percent, dryRun, metaAdId: row.metaAdId || row.id, source: "mobile_manual" }) });
-      setMessage(dryRun ? `DRY RUN: ${money(result?.oldBudget)} → ${money(result?.newBudget)}` : `Đã scale +${percent}%: ${money(result?.oldBudget)} → ${money(result?.newBudget)}`);
+      const result = await apiJson("/meta-ads/actions/scale-adset", {
+        method: "POST",
+        body: JSON.stringify({
+          metaAdSetId: adSetId,
+          percent: requestedPercent || undefined,
+          targetBudget: requestedTargetBudget > 0 ? Math.round(requestedTargetBudget) : undefined,
+          dryRun,
+          metaAdId: row.metaAdId || row.id,
+          source: "mobile_manual",
+        }),
+      });
+
+      const oldBudget = num(result?.oldBudget);
+      const newBudget = num(result?.newBudget);
+      const actualPercent = num(result?.percent);
+
+      const actionLabel = requestedTargetBudget > 0
+        ? `Đặt ngân sách ${money(newBudget || requestedTargetBudget)}`
+        : actualPercent < 0 || requestedPercent < 0
+          ? `Đã giảm ${Math.abs(actualPercent || requestedPercent)}%`
+          : `Đã tăng +${actualPercent || requestedPercent}%`;
+
+      setMessage(
+        dryRun
+          ? `DRY RUN · ${actionLabel}: ${money(oldBudget)} → ${money(newBudget)}`
+          : `${actionLabel}: ${money(oldBudget)} → ${money(newBudget)}`,
+      );
+
+      const id = String(row.metaAdId || row.id || "");
+      setBudgetAdjustOpenByAd((prev) => ({ ...prev, [id]: false }));
       await loadAll(false);
-    } catch (e: any) { setError(e?.message || "Không scale được"); }
-    finally { setBusy(false); }
+    } catch (e: any) {
+      setError(e?.message || "Không điều chỉnh được ngân sách");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function runPerformanceNow() {
@@ -1401,16 +1449,127 @@ export default function MobileAutopilotPage() {
                   <div className="space-y-2">
                     {scaleHistory.filter((x) => String(x.metaAdSetId || x?.errorJson?.metaAdSetId || "") === String(row.metaAdSetId || row.adSetId || "")).slice(0,5).map((x,idx) => (
                       <div key={String(x.id || idx)} className="rounded-xl bg-neutral-50 px-3 py-2 text-[11px]">
-                        <div className="font-black">+{num(x.percent || x?.errorJson?.percent)}% · {String(x.budgetLevel || x?.errorJson?.budgetLevel || "ADSET")}</div>
+                        {(() => {
+                          const p = num(x.percent ?? x?.errorJson?.percent);
+                          return <div className="font-black">{p >= 0 ? `Tăng +${p}%` : `Giảm ${p}%`} · {String(x.budgetLevel || x?.errorJson?.budgetLevel || "ADSET")}</div>;
+                        })()}
                         <div className="mt-0.5 text-neutral-500">{money(x.oldBudget || x?.errorJson?.oldBudget)} → {money(x.newBudget || x?.errorJson?.newBudget)} · {x.source || x?.errorJson?.source || "manual"}</div>
                       </div>
                     ))}
                   </div>
                 </div> : null}
-                <div className="grid grid-cols-2 gap-2">
-                  <button disabled={busy || status !== "ACTIVE"} onClick={() => void scaleAd(row, 20)} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">+20%</button>
-                  <button disabled={busy || status !== "ACTIVE"} onClick={() => void scaleAd(row, 30)} className="h-11 rounded-2xl bg-neutral-800 text-xs font-black text-white disabled:opacity-40">+30%</button>
-                  {status === "ACTIVE" ? <button disabled={busy} onClick={() => void setAdStatus(row, "PAUSED")} className="col-span-2 h-11 rounded-2xl bg-rose-600 text-xs font-black text-white"><Pause className="mr-1 inline h-4 w-4" /> Pause Ad</button> : <button disabled={busy || status !== "PAUSED"} onClick={() => void setAdStatus(row, "ACTIVE")} className="col-span-2 h-11 rounded-2xl bg-emerald-700 text-xs font-black text-white disabled:opacity-40"><Play className="mr-1 inline h-4 w-4" /> Bật lại / Duyệt Ad</button>}
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button disabled={busy || status !== "ACTIVE"} onClick={() => void scaleAd(row, 20)} className="h-11 rounded-2xl bg-neutral-950 text-xs font-black text-white disabled:opacity-40">+20%</button>
+                    <button disabled={busy || status !== "ACTIVE"} onClick={() => void scaleAd(row, 30)} className="h-11 rounded-2xl bg-neutral-800 text-xs font-black text-white disabled:opacity-40">+30%</button>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={busy || status !== "ACTIVE"}
+                    onClick={() => setBudgetAdjustOpenByAd((prev) => ({ ...prev, [id]: !prev[id] }))}
+                    className="h-11 w-full rounded-2xl border border-rose-200 bg-rose-50 text-xs font-black text-rose-700 disabled:opacity-40"
+                  >
+                    Điều chỉnh / giảm ngân sách
+                  </button>
+
+                  {budgetAdjustOpenByAd[id] ? (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3">
+                      <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/70 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setBudgetAdjustModeByAd((prev) => ({ ...prev, [id]: "percent" }))}
+                          className={`h-9 rounded-lg text-[10px] font-black ${
+                            (budgetAdjustModeByAd[id] || "percent") === "percent"
+                              ? "bg-rose-600 text-white"
+                              : "text-rose-700"
+                          }`}
+                        >
+                          Theo %
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBudgetAdjustModeByAd((prev) => ({ ...prev, [id]: "amount" }))}
+                          className={`h-9 rounded-lg text-[10px] font-black ${
+                            budgetAdjustModeByAd[id] === "amount"
+                              ? "bg-rose-600 text-white"
+                              : "text-rose-700"
+                          }`}
+                        >
+                          Theo số tiền
+                        </button>
+                      </div>
+
+                      {(budgetAdjustModeByAd[id] || "percent") === "percent" ? (
+                        <div className="mt-3">
+                          <div className="text-[10px] font-bold text-rose-700">Giảm theo % ngân sách hiện tại</div>
+                          <div className="mt-2 flex gap-2">
+                            <div className="relative flex-1">
+                              <input
+                                type="number"
+                                min="1"
+                                max="90"
+                                step="1"
+                                value={budgetAdjustPercentByAd[id] ?? 20}
+                                onChange={(e) => setBudgetAdjustPercentByAd((prev) => ({
+                                  ...prev,
+                                  [id]: Math.min(90, Math.max(1, Number(e.target.value || 1))),
+                                }))}
+                                className="h-11 w-full rounded-xl border border-rose-200 bg-white px-3 pr-9 text-sm font-black outline-none"
+                              />
+                              <span className="pointer-events-none absolute right-3 top-3 text-xs font-black text-neutral-400">%</span>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void scaleAd(row, -Math.min(90, Math.max(1, Number(budgetAdjustPercentByAd[id] ?? 20))))}
+                              className="h-11 rounded-xl bg-rose-600 px-4 text-xs font-black text-white disabled:opacity-40"
+                            >
+                              Giảm
+                            </button>
+                          </div>
+                          <div className="mt-2 text-[10px] leading-4 text-rose-600">Ví dụ 20 = giảm 20% ngân sách hiện tại.</div>
+                        </div>
+                      ) : (
+                        <div className="mt-3">
+                          <div className="text-[10px] font-bold text-rose-700">Đặt ngân sách mới theo số tiền/ngày</div>
+                          <div className="mt-2 flex gap-2">
+                            <div className="relative flex-1">
+                              <input
+                                type="number"
+                                min="1"
+                                step="10000"
+                                value={targetBudgetByAd[id] ?? Math.max(1, Math.round(num(budget.value) * 0.8))}
+                                onChange={(e) => setTargetBudgetByAd((prev) => ({
+                                  ...prev,
+                                  [id]: Math.max(1, Number(e.target.value || 1)),
+                                }))}
+                                className="h-11 w-full rounded-xl border border-rose-200 bg-white px-3 pr-8 text-sm font-black outline-none"
+                              />
+                              <span className="pointer-events-none absolute right-3 top-3 text-xs font-black text-neutral-400">đ</span>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void scaleAd(
+                                row,
+                                0,
+                                Math.max(1, Number(targetBudgetByAd[id] ?? Math.round(num(budget.value) * 0.8))),
+                              )}
+                              className="h-11 rounded-xl bg-rose-600 px-4 text-xs font-black text-white disabled:opacity-40"
+                            >
+                              Đặt
+                            </button>
+                          </div>
+                          <div className="mt-2 text-[10px] leading-4 text-rose-600">
+                            Ví dụ nhập 1.500.000 = đặt ngân sách mới thành 1.500.000đ/ngày. Hệ thống tự nhận Campaign/Ad Set.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {status === "ACTIVE" ? <button disabled={busy} onClick={() => void setAdStatus(row, "PAUSED")} className="h-11 w-full rounded-2xl bg-rose-600 text-xs font-black text-white"><Pause className="mr-1 inline h-4 w-4" /> Pause Ad</button> : <button disabled={busy || status !== "PAUSED"} onClick={() => void setAdStatus(row, "ACTIVE")} className="h-11 w-full rounded-2xl bg-emerald-700 text-xs font-black text-white disabled:opacity-40"><Play className="mr-1 inline h-4 w-4" /> Bật lại / Duyệt Ad</button>}
                 </div>
               </div> : null}
             </article>;

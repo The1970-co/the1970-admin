@@ -207,6 +207,10 @@ export default function AutopilotPage({
   }>>({});
   const [scaleHistory, setScaleHistory] = useState<ScaleHistoryItem[]>([]);
   const [scaleCountByEntity, setScaleCountByEntity] = useState<Record<string, number>>({});
+  const [reduceOpenByAd, setReduceOpenByAd] = useState<Record<string, boolean>>({});
+  const [reducePercentByAd, setReducePercentByAd] = useState<Record<string, number>>({});
+  const [reduceModeByAd, setReduceModeByAd] = useState<Record<string, "percent" | "amount">>({});
+  const [targetBudgetByAd, setTargetBudgetByAd] = useState<Record<string, number>>({});
   const [historyPopupAdId, setHistoryPopupAdId] = useState<string | null>(null);
   const [adsBusy, setAdsBusy] = useState(false);
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
@@ -772,9 +776,24 @@ export default function AutopilotPage({
     }
   };
 
-  const scaleLiveAdSet = async (row: LiveAdControlRow, percent: number) => {
+  const scaleLiveAdSet = async (
+    row: LiveAdControlRow,
+    percent: number,
+    targetBudget?: number,
+  ) => {
     if (!row.adSetId) return;
-    const safePercent = Math.min(50, Math.max(1, Number(percent || 0)));
+
+    const requestedPercent = Number(percent || 0);
+    const requestedTargetBudget = Number(targetBudget || 0);
+
+    if (!requestedPercent && !requestedTargetBudget) return;
+
+    const safePercent = requestedPercent
+      ? requestedPercent > 0
+        ? Math.min(50, Math.max(1, requestedPercent))
+        : Math.max(-90, Math.min(-1, requestedPercent))
+      : 0;
+
     setBackendBusy(true);
     try {
       const data = await apiJson("/meta-ads/actions/scale-adset", {
@@ -782,7 +801,8 @@ export default function AutopilotPage({
         body: JSON.stringify({
           metaAdSetId: row.adSetId,
           metaAdId: row.metaAdId,
-          percent: safePercent,
+          percent: safePercent || undefined,
+          targetBudget: requestedTargetBudget > 0 ? Math.round(requestedTargetBudget) : undefined,
           dryRun,
         }),
       });
@@ -794,7 +814,7 @@ export default function AutopilotPage({
           [row.metaAdId]: {
             oldBudget: Number(data.oldBudget),
             newBudget: Number(data.newBudget),
-            percent: Number(data.percent || safePercent),
+            percent: Number(data.percent ?? safePercent),
             budgetLevel: (data?.budgetLevel || row.budgetLevel || null) as "ADSET" | "CAMPAIGN" | null,
             budgetEntityId: String(data?.budgetEntityId || row.budgetEntityId || "") || null,
             dryRun: Boolean(data?.dryRun),
@@ -803,7 +823,14 @@ export default function AutopilotPage({
         }));
       }
 
-      pushActivity(`${dryRun ? "DRY RUN" : "LIVE"}: scale ${row.adSetName || row.adSetId} +${safePercent}%.`);
+      const actionText = requestedTargetBudget > 0
+        ? `đặt ngân sách ${compactMoney(requestedTargetBudget)}`
+        : safePercent > 0
+          ? `tăng +${safePercent}%`
+          : `giảm ${safePercent}%`;
+
+      pushActivity(`${dryRun ? "DRY RUN" : "LIVE"}: ${actionText} ${row.adSetName || row.adSetId}.`);
+      setReduceOpenByAd((prev) => ({ ...prev, [row.metaAdId]: false }));
       await Promise.all([loadControlCenter(), loadBackendStatus(), loadScaleHistory()]);
     } catch (error) {
       setExecutionOutput(String(error));
@@ -995,9 +1022,125 @@ export default function AutopilotPage({
                       <td className="px-3 py-4">
                         <div className="flex min-w-[190px] flex-col gap-2">
                           <div className="grid grid-cols-2 gap-2">
-                            <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => scaleLiveAdSet(row, 20)}>+20%</ActionButton>
-                            <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => scaleLiveAdSet(row, 30)}>+30%</ActionButton>
+                            <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => void scaleLiveAdSet(row, 20)}>+20%</ActionButton>
+                            <ActionButton variant="soft" disabled={backendBusy || !row.adSetId || status !== "ACTIVE"} onClick={() => void scaleLiveAdSet(row, 30)}>+30%</ActionButton>
                           </div>
+                          <button
+                            type="button"
+                            disabled={backendBusy || !row.adSetId || status !== "ACTIVE"}
+                            onClick={() => setReduceOpenByAd((prev) => ({ ...prev, [row.metaAdId]: !prev[row.metaAdId] }))}
+                            className="h-9 rounded-xl border border-rose-200 bg-rose-50 px-3 text-[11px] font-semibold text-rose-700 disabled:opacity-40"
+                          >
+                            Giảm ngân sách tùy chỉnh
+                          </button>
+                          {reduceOpenByAd[row.metaAdId] ? (
+                            <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5">
+                              <div className="grid grid-cols-2 gap-1 rounded-lg bg-white/70 p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setReduceModeByAd((prev) => ({ ...prev, [row.metaAdId]: "percent" }))}
+                                  className={`h-8 rounded-md text-[10px] font-semibold ${
+                                    (reduceModeByAd[row.metaAdId] || "percent") === "percent"
+                                      ? "bg-rose-600 text-white"
+                                      : "text-rose-700"
+                                  }`}
+                                >
+                                  Theo %
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReduceModeByAd((prev) => ({ ...prev, [row.metaAdId]: "amount" }))}
+                                  className={`h-8 rounded-md text-[10px] font-semibold ${
+                                    reduceModeByAd[row.metaAdId] === "amount"
+                                      ? "bg-rose-600 text-white"
+                                      : "text-rose-700"
+                                  }`}
+                                >
+                                  Theo số tiền
+                                </button>
+                              </div>
+
+                              {(reduceModeByAd[row.metaAdId] || "percent") === "percent" ? (
+                                <>
+                                  <div className="mt-2 text-[10px] font-medium text-rose-700">Giảm theo % ngân sách hiện tại</div>
+                                  <div className="mt-2 flex gap-2">
+                                    <div className="relative flex-1">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="90"
+                                        step="1"
+                                        value={reducePercentByAd[row.metaAdId] ?? 20}
+                                        onChange={(e) =>
+                                          setReducePercentByAd((prev) => ({
+                                            ...prev,
+                                            [row.metaAdId]: Math.min(90, Math.max(1, Number(e.target.value || 1))),
+                                          }))
+                                        }
+                                        className="h-9 w-full rounded-lg border border-rose-200 bg-white px-3 pr-8 text-[11px] font-semibold text-neutral-800 outline-none"
+                                      />
+                                      <span className="pointer-events-none absolute right-3 top-2 text-[11px] font-semibold text-neutral-400">%</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={backendBusy}
+                                      onClick={() =>
+                                        void scaleLiveAdSet(
+                                          row,
+                                          -Math.min(90, Math.max(1, Number(reducePercentByAd[row.metaAdId] ?? 20))),
+                                        )
+                                      }
+                                      className="h-9 rounded-lg bg-rose-600 px-3 text-[11px] font-semibold text-white disabled:opacity-40"
+                                    >
+                                      Giảm
+                                    </button>
+                                  </div>
+                                  <div className="mt-1.5 text-[9px] leading-4 text-rose-600">
+                                    Ví dụ nhập 20 = giảm ngân sách hiện tại 20%.
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="mt-2 text-[10px] font-medium text-rose-700">Đặt ngân sách mới theo số tiền/ngày</div>
+                                  <div className="mt-2 flex gap-2">
+                                    <div className="relative flex-1">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step="10000"
+                                        value={targetBudgetByAd[row.metaAdId] ?? Math.max(1, Math.round(row.budgetDaily * 0.8))}
+                                        onChange={(e) =>
+                                          setTargetBudgetByAd((prev) => ({
+                                            ...prev,
+                                            [row.metaAdId]: Math.max(1, Number(e.target.value || 1)),
+                                          }))
+                                        }
+                                        className="h-9 w-full rounded-lg border border-rose-200 bg-white px-3 pr-8 text-[11px] font-semibold text-neutral-800 outline-none"
+                                      />
+                                      <span className="pointer-events-none absolute right-3 top-2 text-[11px] font-semibold text-neutral-400">đ</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={backendBusy}
+                                      onClick={() =>
+                                        void scaleLiveAdSet(
+                                          row,
+                                          0,
+                                          Math.max(1, Number(targetBudgetByAd[row.metaAdId] ?? Math.round(row.budgetDaily * 0.8))),
+                                        )
+                                      }
+                                      className="h-9 rounded-lg bg-rose-600 px-3 text-[11px] font-semibold text-white disabled:opacity-40"
+                                    >
+                                      Đặt
+                                    </button>
+                                  </div>
+                                  <div className="mt-1.5 text-[9px] leading-4 text-rose-600">
+                                    Ví dụ nhập 1.500.000 = đặt ngân sách mới thành 1.500.000đ/ngày. Hệ thống vẫn tự nhận Campaign/Ad Set.
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ) : null}
                           <div className="flex items-center justify-between gap-2">
                             {scaleCountForRow(row) > 0 ? (
                               <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold text-emerald-700" title={`${scaleCountForRow(row)} lần scale thật`}>✓ {scaleCountForRow(row)}</span>
@@ -1009,7 +1152,7 @@ export default function AutopilotPage({
                             return (
                               <div className={`rounded-xl border px-3 py-2 text-[10px] leading-4 ${preview.dryRun ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
                                 <div className="font-semibold">{preview.dryRun ? "DRY RUN · Chưa đổi Meta" : "ĐÃ SCALE TRÊN META"}</div>
-                                <div className="mt-1">{compactMoney(preview.oldBudget)} → <span className="font-semibold">{compactMoney(preview.newBudget)}</span> (+{preview.percent}%)</div>
+                                <div className="mt-1">{compactMoney(preview.oldBudget)} → <span className="font-semibold">{compactMoney(preview.newBudget)}</span> ({preview.percent >= 0 ? `+${preview.percent}%` : `${preview.percent}%`})</div>
                                 <div className="mt-0.5 opacity-70">Cấp: {preview.budgetLevel === "CAMPAIGN" ? "Campaign" : preview.budgetLevel === "ADSET" ? "Ad Set" : "—"}</div>
                               </div>
                             );
@@ -1038,8 +1181,8 @@ export default function AutopilotPage({
             <div className="max-h-[70vh] w-full max-w-[560px] overflow-hidden rounded-[22px] border border-neutral-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between border-b border-neutral-100 px-5 py-4">
                 <div>
-                  <div className="text-[13px] font-semibold text-neutral-900">Lịch sử scale · {row.adName}</div>
-                  <div className="mt-1 text-[11px] text-neutral-400">Đã scale thật {items.length} lần · {row.budgetLevel === 'CAMPAIGN' ? 'Campaign budget' : row.budgetLevel === 'ADSET' ? 'Ad Set budget' : 'Budget'}</div>
+                  <div className="text-[13px] font-semibold text-neutral-900">Lịch sử ngân sách · {row.adName}</div>
+                  <div className="mt-1 text-[11px] text-neutral-400">Đã điều chỉnh thật {items.length} lần · {row.budgetLevel === 'CAMPAIGN' ? 'Campaign budget' : row.budgetLevel === 'ADSET' ? 'Ad Set budget' : 'Budget'}</div>
                 </div>
                 <button type="button" onClick={() => setHistoryPopupAdId(null)} className="rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-500">Đóng</button>
               </div>
@@ -1049,7 +1192,7 @@ export default function AutopilotPage({
                     {items.map((item, index) => (
                       <div key={item.id || `${item.at}-${index}`} className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-[11px] font-semibold text-neutral-800">✓ Lần {items.length - index} · +{Number(item.percent || 0)}%</div>
+                          <div className="text-[11px] font-semibold text-neutral-800">✓ Lần {items.length - index} · {Number(item.percent || 0) >= 0 ? `Tăng +${Number(item.percent || 0)}%` : `Giảm ${Number(item.percent || 0)}%`}</div>
                           <div className="text-[10px] text-neutral-400">{item.at ? new Date(item.at).toLocaleString('vi-VN') : '—'}</div>
                         </div>
                         <div className="mt-2 text-[12px] text-neutral-700">{compactMoney(item.oldBudget)} → <span className="font-semibold text-neutral-900">{compactMoney(item.newBudget)}</span></div>
