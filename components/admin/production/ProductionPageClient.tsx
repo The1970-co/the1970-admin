@@ -528,6 +528,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   const [calc, setCalc] = useState<any>(null);
   const [actualCut, setActualCut] = useState<Record<string, string>>({});
   const [extraCosts, setExtraCosts] = useState<ProductionExtraCost[]>([]);
+  const [priceMultiplier, setPriceMultiplier] = useState<number | string>(2.2);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [fabricPrintOpen, setFabricPrintOpen] = useState(false);
@@ -571,6 +572,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       ]);
       setOrder({ ...o, liningFabricComponents: normalizeLiningComponentsClient(o.liningFabricComponents), liningFabricAssignments: normalizeLiningAssignmentsClient(o.liningFabricAssignments) });
       setExtraCosts(normalizeExtraCosts(o.productionExtraCosts));
+      setPriceMultiplier(o.productionPriceMultiplier ?? 2.2);
       setSavedTemplates(templateOptions || []);
       setMaterials((o.accessorySpecs || []).map((x: any) => {
         const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
@@ -932,10 +934,14 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       if(!isAdmin) throw new Error("Chỉ Admin / Owner được cấu hình chi phí Bước 6.");
       const saved=await productionApi<any>(`/production/orders/${id}/costs`,{
         method:"PATCH",
-        body:JSON.stringify({items:extraCosts.map(x=>({...x,amountVnd:numberOrZero(x.amountVnd)}))}),
+        body:JSON.stringify({
+          items:extraCosts.map(x=>({...x,amountVnd:numberOrZero(x.amountVnd)})),
+          priceMultiplier:numberOrZero(priceMultiplier)||2.2,
+        }),
       });
       setOrder(saved);
       setExtraCosts(normalizeExtraCosts(saved.productionExtraCosts));
+      setPriceMultiplier(saved.productionPriceMultiplier ?? 2.2);
       if(saved?.sizes?.length){
         const totalPlannedQty=(saved.sizes||[]).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0);
         const totalActualQty=(saved.sizes||[]).reduce((sum:number,x:any)=>sum+Number(x.actualQty??x.plannedQty??0),0);
@@ -1151,7 +1157,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           <div className="space-y-4">
             {calc ? (
               <>
-                <ProductionCostCard cost={calc.costSummary || order.costSummary} extraCosts={extraCosts} onExtraCostsChange={setExtraCosts} onSaveExtras={()=>void saveExtraCosts()} busy={busy}/>
+                <ProductionCostCard cost={calc.costSummary || order.costSummary} extraCosts={extraCosts} onExtraCostsChange={setExtraCosts} onSaveExtras={()=>void saveExtraCosts()} priceMultiplier={priceMultiplier} onPriceMultiplierChange={setPriceMultiplier} busy={busy}/>
                 <Step6CompactReview calc={calc} order={order}/>
               </>
             ) : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại Bước 5 để tính sản lượng trước.</div>}
@@ -1407,13 +1413,17 @@ const EXTRA_COST_PRESETS = [
 ];
 
 function normalizeExtraCosts(value:any): ProductionExtraCost[] {
-  return (Array.isArray(value)?value:[]).map((x:any,index:number)=>({
+  const rows=(Array.isArray(value)?value:[]).map((x:any,index:number)=>({
     id:String(x?.id||`EXTRA_${index+1}`),
-    type:String(x?.type||"OTHER"),
+    type:String(x?.type||"OTHER").toUpperCase(),
     label:String(x?.label||"Phụ phí khác"),
     amountVnd:x?.amountVnd??0,
     note:x?.note||null,
   }));
+  if(!rows.some(x=>x.type==="FACTORY_LABOR")){
+    rows.unshift({id:"FACTORY_LABOR",type:"FACTORY_LABOR",label:"Gia công nhà may / SP",amountVnd:"",note:null});
+  }
+  return rows;
 }
 
 function compactNplSummary(calc:any) {
@@ -1423,15 +1433,22 @@ function compactNplSummary(calc:any) {
 }
 
 
-function ProductionCostCard({cost,extraCosts,onExtraCostsChange,onSaveExtras,busy=false}:{cost:any;extraCosts?:ProductionExtraCost[];onExtraCostsChange?:(x:ProductionExtraCost[])=>void;onSaveExtras?:()=>void;busy?:boolean}) {
+function ProductionCostCard({cost,extraCosts,onExtraCostsChange,onSaveExtras,priceMultiplier=2.2,onPriceMultiplierChange,busy=false}:{cost:any;extraCosts?:ProductionExtraCost[];onExtraCostsChange?:(x:ProductionExtraCost[])=>void;onSaveExtras?:()=>void;priceMultiplier?:number|string;onPriceMultiplierChange?:(x:number|string)=>void;busy?:boolean}) {
   if(!cost) return <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">Chưa có dữ liệu giá sản xuất.</div>;
   if(cost.canView===false) return <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">Chỉ Admin / Owner có quyền xem giá sản xuất.</div>;
 
   const extras=extraCosts??normalizeExtraCosts(cost.extraCosts);
-  const extraTotal=extras.reduce((s,x)=>s+Number(String(x.amountVnd||0).replace(/[.,](?=\d{3}\b)/g,"").replace(",","."))||0,0);
+  const laborRow=extras.find(x=>x.type==="FACTORY_LABOR");
+  const laborPerProduct=Number(String(laborRow?.amountVnd||0).replace(/[^\d.]/g,""))||0;
+  const otherExtras=extras.filter(x=>x.type!=="FACTORY_LABOR");
+  const otherExtraTotal=otherExtras.reduce((s,x)=>s+(Number(String(x.amountVnd||0).replace(/[^\d.]/g,""))||0),0);
+  const qty=Number(cost.totalActualQty||0);
+  const laborTotal=laborPerProduct*qty;
   const base=Number(cost.baseMaterialCostVnd??(Number(cost.mainFabricCostVnd||0)+Number(cost.liningFabricCostVnd||0)+Number(cost.accessoryCostVnd||0)));
-  const total=base+extraTotal;
-  const perProduct=Number(cost.totalActualQty||0)>0?total/Number(cost.totalActualQty):null;
+  const total=base+laborTotal+otherExtraTotal;
+  const perProduct=qty>0?total/qty:null;
+  const multiplier=Math.max(0.1,Number(String(priceMultiplier||2.2).replace(",","."))||2.2);
+  const estimatedSalePrice=perProduct===null?null:perProduct*multiplier;
   const missing=Number(cost.missingPriceCount||0);
 
   function patchRow(id:string,patch:Partial<ProductionExtraCost>){
@@ -1455,24 +1472,50 @@ function ProductionCostCard({cost,extraCosts,onExtraCostsChange,onSaveExtras,bus
       <div className="rounded-2xl bg-neutral-100 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">Vải chính</div><div className="mt-1 text-base font-black">{moneyVnd(cost.mainFabricCostVnd)}</div></div>
       <div className="rounded-2xl bg-blue-50 p-3"><div className="text-[10px] font-black uppercase text-blue-500">Vải lót</div><div className="mt-1 text-base font-black">{moneyVnd(cost.liningFabricCostVnd)}</div></div>
       <div className="rounded-2xl bg-neutral-100 p-3"><div className="text-[10px] font-black uppercase text-neutral-400">NPL</div><div className="mt-1 text-base font-black">{moneyVnd(cost.accessoryCostVnd)}</div></div>
-      <div className="rounded-2xl bg-amber-50 p-3"><div className="text-[10px] font-black uppercase text-amber-600">Phụ phí</div><div className="mt-1 text-base font-black">{moneyVnd(extraTotal)}</div></div>
+      <div className="rounded-2xl bg-amber-50 p-3"><div className="text-[10px] font-black uppercase text-amber-600">Gia công + phụ phí</div><div className="mt-1 text-base font-black">{moneyVnd(laborTotal+otherExtraTotal)}</div></div>
     </div>
 
     <div className="mt-3 rounded-2xl bg-neutral-950 p-4 text-white">
-      <div className="flex items-center justify-between gap-3"><span className="text-sm font-bold text-white/70">TỔNG CHI PHÍ NGUYÊN LIỆU + PHỤ PHÍ</span><b className="text-xl">{moneyVnd(total)}</b></div>
+      <div className="flex items-center justify-between gap-3"><span className="text-sm font-bold text-white/70">TỔNG GIÁ GỐC SẢN XUẤT</span><b className="text-xl">{moneyVnd(total)}</b></div>
+    </div>
+
+    <div className="mt-3 rounded-2xl border-2 border-emerald-600 bg-emerald-50 p-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-[.12em] text-emerald-700">Giá bán ước tính</div>
+          <div className="mt-1 text-2xl font-black text-emerald-900">{estimatedSalePrice===null?"—":moneyVnd(estimatedSalePrice)} <span className="text-xs font-bold text-emerald-700">/ SP</span></div>
+          <div className="mt-1 text-[11px] text-emerald-800">Giá gốc/SP × hệ số</div>
+        </div>
+        <label className="text-right">
+          <span className="block text-[10px] font-black uppercase text-emerald-700">Hệ số giá bán</span>
+          <div className="mt-1 flex items-center gap-1">
+            <button type="button" onClick={()=>onPriceMultiplierChange?.(Math.max(0.1,Math.round((multiplier-0.1)*10)/10))} className="grid h-9 w-9 place-items-center rounded-xl border border-emerald-300 bg-white font-black">−</button>
+            <input inputMode="decimal" className="h-9 w-20 rounded-xl border border-emerald-300 bg-white px-2 text-center text-sm font-black" value={priceMultiplier} onChange={e=>onPriceMultiplierChange?.(e.target.value)} onBlur={()=>onPriceMultiplierChange?.(Math.max(0.1,Math.round(multiplier*10)/10))}/>
+            <button type="button" onClick={()=>onPriceMultiplierChange?.(Math.round((multiplier+0.1)*10)/10)} className="grid h-9 w-9 place-items-center rounded-xl border border-emerald-300 bg-white font-black">+</button>
+          </div>
+        </label>
+      </div>
     </div>
 
     {onExtraCostsChange&&<div className="mt-4 rounded-2xl border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><b>Phụ phí / phát sinh</b><div className="text-[11px] text-neutral-400">Mex xưởng mua hộ, xe giao vải, phụ liệu phát sinh, khoản thanh toán hộ...</div></div>
+      <div className="rounded-2xl bg-blue-50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><b>Gia công nhà may / SP</b><div className="text-[11px] text-neutral-500">Mặc định có sẵn. Nhập đơn giá gia công cho 1 sản phẩm.</div></div>
+          <div className="relative w-44"><input inputMode="numeric" className="w-full rounded-xl border border-blue-200 bg-white px-3 py-2 pr-8 text-right text-base font-black" value={laborRow?.amountVnd??""} onChange={e=>laborRow&&patchRow(laborRow.id,{amountVnd:e.target.value.replace(/[^\d]/g,"")})} placeholder="0"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">đ</span></div>
+        </div>
+        <div className="mt-2 text-right text-[11px] text-blue-700">Tổng gia công: <b>{moneyVnd(laborTotal)}</b> / {qty||0} SP</div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+        <div><b>Phụ phí / phát sinh khác</b><div className="text-[11px] text-neutral-400">Mex xưởng mua hộ, xe giao vải, phụ liệu phát sinh, khoản thanh toán hộ...</div></div>
         <select className="rounded-xl border bg-white px-3 py-2 text-xs font-bold" defaultValue="" onChange={(e)=>{const p=EXTRA_COST_PRESETS.find(x=>x.type===e.target.value);if(p)addPreset(p);e.currentTarget.value=""}}>
           <option value="">+ Thêm phụ phí</option>
           {EXTRA_COST_PRESETS.map(x=><option key={x.type} value={x.type}>{x.label}</option>)}
         </select>
       </div>
       <div className="mt-3 space-y-2">
-        {!extras.length&&<div className="rounded-xl bg-neutral-50 p-3 text-xs text-neutral-400">Chưa có phụ phí phát sinh.</div>}
-        {extras.map(row=><div key={row.id} className="grid gap-2 rounded-xl bg-neutral-50 p-2.5 sm:grid-cols-[minmax(180px,1fr)_160px_minmax(160px,1fr)_auto]">
+        {!otherExtras.length&&<div className="rounded-xl bg-neutral-50 p-3 text-xs text-neutral-400">Chưa có phụ phí phát sinh khác.</div>}
+        {otherExtras.map(row=><div key={row.id} className="grid gap-2 rounded-xl bg-neutral-50 p-2.5 sm:grid-cols-[minmax(180px,1fr)_160px_minmax(160px,1fr)_auto]">
           <input className="min-w-0 rounded-xl border bg-white px-3 py-2 text-sm font-semibold" value={row.label} onChange={e=>patchRow(row.id,{label:e.target.value})} placeholder="Tên khoản phí"/>
           <div className="relative"><input inputMode="numeric" className="w-full rounded-xl border bg-white px-3 py-2 pr-8 text-sm font-black" value={row.amountVnd} onChange={e=>patchRow(row.id,{amountVnd:e.target.value.replace(/[^\d]/g,"")})} placeholder="0"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400">đ</span></div>
           <input className="min-w-0 rounded-xl border bg-white px-3 py-2 text-sm" value={row.note||""} onChange={e=>patchRow(row.id,{note:e.target.value})} placeholder="Ghi chú / ai mua hộ..."/>
