@@ -121,6 +121,56 @@ async function upload(file:File) {
   return api<{url:string}>("/sample-fabric/samples/upload",{method:"POST",body:fd});
 }
 
+const SAMPLE_IMAGE_TARGET_BYTES = 9 * 1024 * 1024;
+
+async function sampleImageUnder10MB(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.size <= SAMPLE_IMAGE_TARGET_BYTES) return file;
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error(`Không đọc được ảnh ${file.name}.`));
+      el.src = objectUrl;
+    });
+
+    const naturalW = Math.max(1, img.naturalWidth || img.width || 1);
+    const naturalH = Math.max(1, img.naturalHeight || img.height || 1);
+    let scale = Math.min(1, 3200 / Math.max(naturalW, naturalH));
+    let quality = 0.9;
+    let blob: Blob | null = null;
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const width = Math.max(1, Math.round(naturalW * scale));
+      const height = Math.max(1, Math.round(naturalH * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Không thể xử lý ảnh.");
+
+      ctx.drawImage(img, 0, 0, width, height);
+      blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+
+      if (blob && blob.size <= SAMPLE_IMAGE_TARGET_BYTES) break;
+
+      if (quality > 0.62) quality -= 0.08;
+      else scale *= 0.82;
+    }
+
+    if (!blob) throw new Error(`Không thể giảm dung lượng ảnh ${file.name}.`);
+    if (blob.size > SAMPLE_IMAGE_TARGET_BYTES) {
+      throw new Error(`Ảnh ${file.name} vẫn lớn hơn 10MB sau khi tối ưu.`);
+    }
+
+    const base = file.name.replace(/\.[^.]+$/, "") || "anh-mau";
+    return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function uploadPatternFile(file:File) {
   const fd=new FormData();
   fd.append("file",file);
@@ -426,7 +476,7 @@ export default function Page(){
 
   return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
     <div className="mx-auto max-w-md">
-      <header className="relative z-10 border-b bg-white px-3 pb-2 pt-[calc(8px+env(safe-area-inset-top))]">
+      <header className="relative z-10 border-b bg-white px-3 pb-2" style={{paddingTop:"max(44px, calc(env(safe-area-inset-top) + 8px))"}}>
         <div className="flex min-h-11 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
@@ -549,6 +599,7 @@ export default function Page(){
     {editing!==undefined&&<SampleForm
       sample={editing}
       meta={meta}
+      ideaBoards={ideaBoards}
       canViewFabricLink={can("fabric_library.view")}
       canUpload={can("design_sample.upload_images")}
       onClose={()=>setEditing(undefined)}
@@ -1124,7 +1175,7 @@ function DispatchRow({dispatch,can,onChanged}:{dispatch:any;can:(k:string)=>bool
   </div>
 }
 
-function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{sample:Sample|null;meta:Meta;canViewFabricLink:boolean;canUpload:boolean;onClose:()=>void;onSaved:()=>void}){
+function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,onSaved}:{sample:Sample|null;meta:Meta;ideaBoards:IdeaBoard[];canViewFabricLink:boolean;canUpload:boolean;onClose:()=>void;onSaved:()=>void}){
   const [form,setForm]=useState<any>({
     name:sample?.name||"",
     code:sample?.code||"",
@@ -1165,6 +1216,11 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
         })
       : []
   );
+  const [selectedIdeaBoardIds,setSelectedIdeaBoardIds]=useState<string[]>(
+    Array.isArray(sample?.ideaBoards)
+      ? sample!.ideaBoards!.map((x:any)=>String(x?.boardId||x?.board?.id||"")).filter(Boolean)
+      : []
+  );
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState("");
   const [codeMessage,setCodeMessage]=useState("");
@@ -1198,7 +1254,8 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
     try{
       const uploaded:Array<{type:string;url:string;caption:string}>=[];
       for(const file of list){
-        const r=await upload(file);
+        const optimized=await sampleImageUnder10MB(file);
+        const r=await upload(optimized);
         uploaded.push({type:"SAMPLE",url:r.url,caption:"Ảnh mẫu / ảnh tham khảo"});
       }
       setSampleImages(current=>{
@@ -1300,6 +1357,13 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
           ],
         })
       });
+      const savedId=String(saved?.id||sample?.id||"");
+      if(savedId){
+        await api(`/sample-fabric/samples/${savedId}/idea-boards`,{
+          method:"PATCH",
+          body:JSON.stringify({boardIds:selectedIdeaBoardIds}),
+        });
+      }
       if(measurement)saveSampleMeasurement({id:saved?.id||sample?.id,code:saved?.code||form.code},measurement);
       if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
       requestAnimationFrame(()=>{resetIosZoom();onSaved()});
@@ -1329,7 +1393,7 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
               }} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button>}
             </div>
           })}</div>}
-          <div className="mb-2 text-[11px] text-neutral-400">Upload nhiều ảnh: ảnh đầu tiên tự làm đại diện. Bấm “Đặt đại diện” để đổi sang ảnh khác.</div>
+          <div className="mb-2 text-[11px] text-neutral-400">Upload nhiều ảnh: ảnh trên 10MB sẽ tự giảm kích thước/dung lượng trước khi tải. Ảnh đầu tiên tự làm đại diện.</div>
           {canUpload&&<div className="grid grid-cols-2 gap-2">
             <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
             <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
@@ -1350,6 +1414,30 @@ function SampleForm({sample,meta,canViewFabricLink,canUpload,onClose,onSaved}:{s
       <Field l="Nhóm sản phẩm">
         <input list="mobile-sample-groups" className={input} value={form.category} onChange={e=>patch("category",e.target.value)} onBlur={()=>patch("category",titleCase(form.category))} placeholder="VD: Áo Khoác"/>
         <datalist id="mobile-sample-groups">{meta.productGroups.map(x=><option key={x} value={x}/>)}</datalist>
+      </Field>
+
+      <Field l="Bảng ý tưởng">
+        <div className="rounded-2xl border p-3">
+          <div className="mb-2 text-[11px] text-neutral-400">Chọn ngay bảng cho mẫu này. Có thể chọn nhiều bảng; không chọn thì mẫu nằm ở “Chưa phân bảng”.</div>
+          {ideaBoards.length ? (
+            <div className="grid grid-cols-2 gap-2">
+              {ideaBoards.map(board=>{
+                const checked=selectedIdeaBoardIds.includes(board.id);
+                return <label key={board.id} className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 ${checked?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={()=>setSelectedIdeaBoardIds(ids=>checked?ids.filter(id=>id!==board.id):[...ids,board.id])}
+                    className="h-4 w-4 shrink-0"
+                  />
+                  <span className="min-w-0 truncate text-xs font-black">{board.name}</span>
+                </label>
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-neutral-50 px-3 py-3 text-xs font-bold text-neutral-400">Chưa có bảng ý tưởng. Có thể tạo bảng từ màn Ý tưởng mẫu.</div>
+          )}
+        </div>
       </Field>
 
       {canViewFabricLink&&<>
