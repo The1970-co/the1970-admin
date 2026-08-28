@@ -497,6 +497,8 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   const [templateBusy, setTemplateBusy] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [allocated, setAllocated] = useState<Record<string, string>>({});
+  const [liningSelected, setLiningSelected] = useState<Record<string, boolean>>({});
+  const [liningAllocated, setLiningAllocated] = useState<Record<string, string>>({});
   const [sizeSet, setSizeSet] = useState<string[]>([]);
   const [ratio, setRatio] = useState<Record<string, number>>({});
   const [calc, setCalc] = useState<any>(null);
@@ -551,9 +553,17 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setRolls(rollOptions);
       const sel: Record<string, boolean> = {};
       const meters: Record<string, string> = {};
-      (o.rolls || []).forEach((x: any) => { sel[x.fabricReceiptRollId] = true; meters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); });
+      const liningSel: Record<string, boolean> = {};
+      const liningMeters: Record<string, string> = {};
+      (o.rolls || []).forEach((x: any) => {
+        const role = String(x.fabricRole || "MAIN").toUpperCase();
+        if (role === "LINING") { liningSel[x.fabricReceiptRollId] = true; liningMeters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); }
+        else { sel[x.fabricReceiptRollId] = true; meters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); }
+      });
       setSelected(sel);
       setAllocated(meters);
+      setLiningSelected(liningSel);
+      setLiningAllocated(liningMeters);
       const ss = Array.isArray(o.sizeSet) && o.sizeSet.length ? o.sizeSet : o.productKind === "PANTS" ? PANTS_SIZES : SHIRT_SIZES;
       setSizeSet(ss);
       setRatio(o.sizeRatio && typeof o.sizeRatio === "object" ? o.sizeRatio : Object.fromEntries(ss.map((x: string) => [x, 1])));
@@ -563,7 +573,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         setActualCut(actualDraft);
         const totalPlannedQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.plannedQty || 0), 0);
         const totalActualQty = o.sizes.reduce((sum: number, x: any) => sum + Number(x.actualQty ?? x.plannedQty ?? 0), 0);
-        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [] });
+        setCalc({ totalQty: totalPlannedQty, totalPlannedQty, totalActualQty, colors: groupSizes(o.sizes), materials: o.materials || [], lining: o.lining || null });
       } else {
         setCalc(null);
         setActualCut({});
@@ -764,14 +774,17 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setError("");
       if(!stepAccess[3]) throw new Error("Bạn không có quyền thao tác bước 3 · Cây vải.");
       const allRolls = await productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}`);
-      const selectedRows = allRolls.filter((r) => selected[r.id]);
-      const payload=selectedRows.map((r)=>{
+      const duplicate = allRolls.find((r) => selected[r.id] && liningSelected[r.id]);
+      if (duplicate) throw new Error(`Cây ${duplicate.rollCode || duplicate.id} đang được chọn đồng thời là vải chính và vải lót.`);
+      const buildRows=(picked:Record<string,boolean>,metersMap:Record<string,string>,fabricRole:"MAIN"|"LINING")=>allRolls.filter((r)=>picked[r.id]).map((r)=>{
         const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
-        const meters=Number(String(allocated[r.id]||availableM).replace(",","."));
+        const meters=Number(String(metersMap[r.id]||availableM).replace(",","."));
         if(!meters||meters<=0)throw new Error(`Nhập số mét xuất cho cây ${r.rollCode||r.id}.`);
         if(meters>availableM+0.0001)throw new Error(`Cây ${r.rollCode||r.id} chỉ còn ${fmt(availableM)}m.`);
-        return {fabricReceiptRollId:r.id,allocatedM:meters,allocatedKg:r.remainingKg};
+        return {fabricReceiptRollId:r.id,allocatedM:meters,allocatedKg:r.remainingKg,fabricRole};
       });
+      const payload=[...buildRows(selected,allocated,"MAIN"),...buildRows(liningSelected,liningAllocated,"LINING")];
+      if (!payload.some((x)=>x.fabricRole==="MAIN")) throw new Error("Phải chọn ít nhất 1 cây vải chính.");
       await productionApi(`/production/orders/${id}/rolls`, {method:"PATCH",body:JSON.stringify({rolls:payload})});
       await load();
       goToNextPermitted(3);
@@ -791,6 +804,8 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           ...(isAdmin ? {
             fabricConsumptionM: numberOrNull(order.fabricConsumptionM),
             fabricWastePercent: numberOrZero(order.fabricWastePercent),
+            liningFabricConsumptionM: numberOrNull(order.liningFabricConsumptionM),
+            liningFabricWastePercent: numberOrZero(order.liningFabricWastePercent),
           } : {}),
           sizeSet,
           sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
@@ -837,6 +852,8 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             ...(isAdmin ? {
               fabricConsumptionM: numberOrNull(order.fabricConsumptionM),
               fabricWastePercent: numberOrZero(order.fabricWastePercent),
+              liningFabricConsumptionM: numberOrNull(order.liningFabricConsumptionM),
+              liningFabricWastePercent: numberOrZero(order.liningFabricWastePercent),
             } : {}),
             sizeSet,
             sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
@@ -1027,26 +1044,33 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
               <select className={input} value={rollSort} onChange={(e) => setRollSort(e.target.value as "NEWEST" | "CODE")}><option value="NEWEST">Mới nhập lên đầu</option><option value="CODE">Theo mã cây</option></select>
               <label className="flex items-center gap-2 rounded-2xl border bg-white px-4 py-2 text-sm font-semibold"><input type="checkbox" checked={showUnavailableRolls} onChange={(e) => setShowUnavailableRolls(e.target.checked)} /> Hiện cây hết / đã xuất</label>
             </div>
-            <div className="text-xs text-neutral-400">Mặc định ẩn cây đã hết hoặc không còn mét khả dụng. Danh sách API hiện đã trả cây mới nhập trước.</div>
-            <div className="max-h-[460px] space-y-2 overflow-y-auto rounded-2xl border p-2">
-              {visibleRolls.map((r) => {
-                const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
-                const disabled=!!r.isDepleted||availableM<=0;
-                const active=!!selected[r.id];
-                const exportM=Number(String(allocated[r.id]??"").replace(",","."))||0;
-                const afterM=Math.max(0,availableM-exportM);
-                return (
-                  <div key={r.id} className={`grid items-center gap-3 rounded-2xl border p-3 md:grid-cols-[auto_1fr_170px_150px] ${disabled ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
-                    <input type="checkbox" disabled={disabled||!stepAccess[3]} checked={active} onChange={(e) => setSelected({ ...selected, [r.id]: e.target.checked })} />
-                    <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${r.isDepleted?"text-red-600":r.usingSupplierDeclaredM?"text-amber-600":"text-emerald-700"}`}>{r.isDepleted?"Đã xuất hết":availableM<=0?"Cây chưa có số mét":`Còn ${fmt(availableM)}m${r.usingSupplierDeclaredM?" · dùng mét NCC báo":""}`}</div></div>
-                    <div><div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">Xuất cây này</div><input disabled={!active||disabled||!stepAccess[3]} inputMode="decimal" className={input} value={allocated[r.id] ?? (active?String(availableM):"")} onChange={(e) => setAllocated({ ...allocated, [r.id]: e.target.value })} placeholder="Mét xuất" /></div>
-                    <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[10px] font-semibold uppercase text-neutral-400">Còn sau xuất</div><div className="mt-1 font-semibold">{active?fmt(afterM):fmt(availableM)} m</div></div>
-                  </div>
-                );
-              })}
-              {!visibleRolls.length && <div className="p-8 text-center text-sm text-neutral-400">Không có cây vải phù hợp bộ lọc.</div>}
-            </div>
-            <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={openFabricPrintForm} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">In phiếu xuất vải</button><button disabled={busy||!stepAccess[3]} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">{nextStep(3) ? "Lưu cây vải → Bước tiếp" : "Lưu cây vải"}</button></div>
+            <div className="text-xs text-neutral-400">Một cây chỉ được chọn cho một vai trò trong lệnh: <b>Vải chính</b> hoặc <b>Vải lót</b>. Vải lót được tính định mức riêng ở Bước 4.</div>
+
+            {[{role:"MAIN" as const,title:"Vải chính",selectedMap:selected,setSelectedMap:setSelected,allocatedMap:allocated,setAllocatedMap:setAllocated},{role:"LINING" as const,title:"Vải lót",selectedMap:liningSelected,setSelectedMap:setLiningSelected,allocatedMap:liningAllocated,setAllocatedMap:setLiningAllocated}].map((section)=> (
+              <div key={section.role} className={`rounded-3xl border p-3 ${section.role==="LINING"?"border-blue-200 bg-blue-50/30":"bg-white"}`}>
+                <div className="mb-2 flex items-center justify-between gap-3 px-1"><div><b>{section.title}</b><div className="text-[11px] text-neutral-400">{section.role==="MAIN"?"Quyết định số lượng sản phẩm cắt được.":"Đối chiếu đủ/thiếu theo sản lượng của vải chính."}</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold">{Object.values(section.selectedMap).filter(Boolean).length} cây</span></div>
+                <div className="max-h-[330px] space-y-2 overflow-y-auto rounded-2xl border bg-white p-2">
+                  {visibleRolls.map((r) => {
+                    const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
+                    const disabled=!!r.isDepleted||availableM<=0;
+                    const active=!!section.selectedMap[r.id];
+                    const usedByOtherRole=section.role==="MAIN"?!!liningSelected[r.id]:!!selected[r.id];
+                    const exportM=Number(String(section.allocatedMap[r.id]??"").replace(",","."))||0;
+                    const afterM=Math.max(0,availableM-exportM);
+                    return (
+                      <div key={`${section.role}-${r.id}`} className={`grid items-center gap-3 rounded-2xl border p-3 md:grid-cols-[auto_1fr_170px_150px] ${disabled||usedByOtherRole ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
+                        <input type="checkbox" disabled={disabled||usedByOtherRole||!stepAccess[3]} checked={active} onChange={(e) => section.setSelectedMap({ ...section.selectedMap, [r.id]: e.target.checked })} />
+                        <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${usedByOtherRole?"text-amber-600":r.isDepleted?"text-red-600":r.usingSupplierDeclaredM?"text-amber-600":"text-emerald-700"}`}>{usedByOtherRole?`Đã chọn ở ${section.role==="MAIN"?"Vải lót":"Vải chính"}`:r.isDepleted?"Đã xuất hết":availableM<=0?"Cây chưa có số mét":`Còn ${fmt(availableM)}m${r.usingSupplierDeclaredM?" · dùng mét NCC báo":""}`}</div></div>
+                        <div><div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">Xuất cây này</div><input disabled={!active||disabled||usedByOtherRole||!stepAccess[3]} inputMode="decimal" className={input} value={section.allocatedMap[r.id] ?? (active?String(availableM):"")} onChange={(e) => section.setAllocatedMap({ ...section.allocatedMap, [r.id]: e.target.value })} placeholder="Mét xuất" /></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[10px] font-semibold uppercase text-neutral-400">Còn sau xuất</div><div className="mt-1 font-semibold">{active?fmt(afterM):fmt(availableM)} m</div></div>
+                      </div>
+                    );
+                  })}
+                  {!visibleRolls.length && <div className="p-8 text-center text-sm text-neutral-400">Không có cây vải phù hợp bộ lọc.</div>}
+                </div>
+              </div>
+            ))}
+            <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={openFabricPrintForm} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">In phiếu xuất vải chính</button><button disabled={busy||!stepAccess[3]} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">{nextStep(3) ? "Lưu vải chính + vải lót → Bước tiếp" : "Lưu vải chính + vải lót"}</button></div>
           </div>
         )}
 
@@ -1135,13 +1159,22 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
   return (
     <div className="space-y-5">
       {isAdmin && (
-        <div className="rounded-3xl border p-4">
-          <div className="mb-3"><b>Định mức vải dùng để tính sản lượng</b></div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Field l="Định mức vải / sp"><ViNumberInput value={order.fabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, fabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 1,5" /></Field>
-            <Field l="Hao hụt vải"><ViNumberInput value={order.fabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, fabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-3xl border p-4">
+            <div className="mb-3"><b>Vải chính · định mức riêng</b><div className="text-xs text-neutral-400">Dùng để tính số lượng sản phẩm cắt được.</div></div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field l="Định mức vải chính / sp"><ViNumberInput value={order.fabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, fabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 1,5" /></Field>
+              <Field l="Hao hụt vải chính"><ViNumberInput value={order.fabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, fabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field>
+            </div>
           </div>
-          <div className="mt-3 text-[11px] text-neutral-400">Chỉ Admin / Owner nhìn thấy và được cấu hình định mức vải, hao hụt vải. Khổ vải lấy theo cây/mã vải đã khai báo ở Vải về.</div>
+          <div className="rounded-3xl border border-blue-200 bg-blue-50/30 p-4">
+            <div className="mb-3"><b>Vải lót · định mức riêng</b><div className="text-xs text-neutral-400">Không cộng vào định mức vải chính; dùng để kiểm tra đủ/thiếu lót theo số áo cắt được.</div></div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field l="Định mức vải lót / sp"><ViNumberInput value={order.liningFabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, liningFabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 0,8" /></Field>
+              <Field l="Hao hụt vải lót"><ViNumberInput value={order.liningFabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, liningFabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field>
+            </div>
+          </div>
+          <div className="lg:col-span-2 text-[11px] text-neutral-400">Chỉ Admin / Owner nhìn thấy và cấu hình định mức. Tỷ lệ size bên dưới là tỷ lệ thành phẩm và được dùng chung để đối chiếu nhu cầu vải chính/vải lót; hai định mức mét được tính hoàn toàn riêng.</div>
         </div>
       )}
       <div className="flex flex-wrap gap-2"><button onClick={() => { const next=[...SHIRT_SIZES]; setOrder({ ...order, productKind: "SHIRT" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "SHIRT" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size áo</button><button onClick={() => { const next=[...PANTS_SIZES]; setOrder({ ...order, productKind: "PANTS" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "PANTS" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size quần</button></div>
@@ -1187,6 +1220,15 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
         <div className="rounded-2xl bg-blue-50 p-4 text-blue-900"><div className="text-xs font-semibold uppercase text-blue-600">Cắt thực tế</div><b className="mt-1 block text-2xl">{draftActual}</b></div>
         <div className={`rounded-2xl p-4 ${diff===0?"bg-neutral-100 text-neutral-700":diff>0?"bg-emerald-50 text-emerald-800":"bg-red-50 text-red-800"}`}><div className="text-xs font-semibold uppercase">Chênh lệch TT / DK</div><b className="mt-1 block text-2xl">{diff>0?"+":""}{diff}</b></div>
       </div>
+
+      {c.lining?.enabled && <div className={`rounded-2xl border p-4 ${Number(c.lining.shortageActualM)>0?"border-red-200 bg-red-50":"border-emerald-200 bg-emerald-50"}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><div className="text-xs font-black uppercase tracking-wide text-neutral-500">Vải lót</div><div className="mt-1 text-lg font-black">{fmt(c.lining.allocatedM)} m đang cấp · đủ cho {c.lining.possibleQty} sp</div></div>
+          <span className={`rounded-full px-3 py-1 text-xs font-black ${Number(c.lining.shortageActualM)>0?"bg-red-600 text-white":"bg-emerald-700 text-white"}`}>{Number(c.lining.shortageActualM)>0?`THIẾU ${fmt(c.lining.shortageActualM)} m`:"ĐỦ VẢI LÓT"}</span>
+        </div>
+        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4"><div><span className="text-neutral-500">Định mức:</span> <b>{fmt(c.lining.consumptionM)} m/sp</b></div><div><span className="text-neutral-500">Hao hụt:</span> <b>{fmt(c.lining.wastePercent)}%</b></div><div><span className="text-neutral-500">Cần theo TT:</span> <b>{fmt(c.lining.requiredActualM)} m</b></div><div><span className="text-neutral-500">Thiếu tương đương:</span> <b>{c.lining.shortageActualQty} sp</b></div></div>
+        <div className="mt-2 text-xs text-neutral-500">Số áo chính hiện tại: <b>{draftActual}</b>. Vải lót được tính độc lập, không làm thay đổi sản lượng vải chính.</div>
+      </div>}
 
       <div className="overflow-x-auto rounded-2xl border">
         <table className="min-w-[980px] w-full text-sm">

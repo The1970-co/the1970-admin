@@ -50,6 +50,7 @@ type Meta = {
   samplePeople:SamplePerson[];
 };
 type Sample = any;
+type IdeaBoard={id:string;name:string;description?:string|null;createdByName?:string|null;updatedAt?:string|null;samples?:Array<{id:string;boardId:string;designSampleId:string;sortOrder?:number;designSample:any}>};
 
 const SampleImageEditorKonva=dynamic(()=>import("@/components/mobile/SampleImageEditorKonva"),{ssr:false});
 
@@ -282,6 +283,12 @@ export default function Page(){
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST">("LIST");
+  const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
+  const [boardFilter,setBoardFilter]=useState("");
+  const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
+  const [assignSample,setAssignSample]=useState<Sample|null>(null);
+  const [assignBoardIds,setAssignBoardIds]=useState<string[]>([]);
+  const [boardBusy,setBoardBusy]=useState(false);
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
@@ -289,11 +296,13 @@ export default function Page(){
   async function load(){
     try{
       setLoading(true);setError("");
-      const [samples,m]=await Promise.all([
+      const [samples,m,boards]=await Promise.all([
         api<Sample[]>("/sample-fabric/samples"),
         api<Meta>("/sample-fabric/samples/meta"),
+        api<IdeaBoard[]>("/sample-fabric/samples/idea-boards"),
       ]);
       setRows(Array.isArray(samples)?samples:[]);
+      setIdeaBoards(Array.isArray(boards)?boards:[]);
       setMeta({
         staff:Array.isArray(m.staff)?m.staff:[],
         boards:Array.isArray(m.boards)?m.boards:[],
@@ -329,6 +338,45 @@ export default function Page(){
     };
   },[]);
 
+  function rowBoardIds(row:any){return (Array.isArray(row?.ideaBoards)?row.ideaBoards:[]).map((x:any)=>String(x?.boardId||x?.board?.id||"")).filter(Boolean)}
+  function rowBoardNames(row:any){return (Array.isArray(row?.ideaBoards)?row.ideaBoards:[]).map((x:any)=>x?.board?.name).filter(Boolean)}
+  const unassignedIdeaCount=rows.filter(r=>String(r.status||"IDEA")==="IDEA"&&!rowBoardIds(r).length).length;
+
+  async function saveIdeaBoard(){
+    if(!boardForm?.name.trim())return;
+    try{
+      setBoardBusy(true);setError("");
+      await api(boardForm.id?`/sample-fabric/samples/idea-boards/${boardForm.id}`:"/sample-fabric/samples/idea-boards",{
+        method:boardForm.id?"PATCH":"POST",
+        body:JSON.stringify({name:boardForm.name.trim(),description:boardForm.description.trim()||null}),
+      });
+      setBoardForm(null);await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được bảng ý tưởng.")}
+    finally{setBoardBusy(false)}
+  }
+
+  async function deleteIdeaBoard(board:IdeaBoard){
+    if(!window.confirm(`Xoá bảng "${board.name}"? Mẫu bên trong không bị xoá.`))return;
+    try{
+      setBoardBusy(true);setError("");
+      await api(`/sample-fabric/samples/idea-boards/${board.id}`,{method:"DELETE"});
+      if(boardFilter===board.id)setBoardFilter("");
+      await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không xoá được bảng ý tưởng.")}
+    finally{setBoardBusy(false)}
+  }
+
+  function openBoardAssign(row:any){setAssignSample(row);setAssignBoardIds(rowBoardIds(row))}
+  async function saveBoardAssign(){
+    if(!assignSample)return;
+    try{
+      setBoardBusy(true);setError("");
+      await api(`/sample-fabric/samples/${assignSample.id}/idea-boards`,{method:"PATCH",body:JSON.stringify({boardIds:assignBoardIds})});
+      setAssignSample(null);await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được bảng cho mẫu.")}
+    finally{setBoardBusy(false)}
+  }
+
   const parentOptions=useMemo(()=>Array.from(new Set(rows.map(r=>sampleParentCategoryMobile(r.category)))).sort((a,b)=>a.localeCompare(b,"vi")),[rows]);
   const subOptions=useMemo(()=>Array.from(new Set(rows.filter(r=>!parentFilter||sampleParentCategoryMobile(r.category)===parentFilter).map(r=>String(r.category||"Chưa phân loại").trim()||"Chưa phân loại"))).sort((a,b)=>a.localeCompare(b,"vi")),[rows,parentFilter]);
 
@@ -337,6 +385,8 @@ export default function Page(){
     const list=rows.filter(r=>{
       const inTab=sampleTab==="IDEA"?String(r.status||"IDEA")==="IDEA":String(r.status||"IDEA")!=="IDEA";
       if(!inTab)return false;
+      if(sampleTab==="IDEA"&&boardFilter==="__UNASSIGNED__"&&rowBoardIds(r).length)return false;
+      if(sampleTab==="IDEA"&&boardFilter&&boardFilter!=="__UNASSIGNED__"&&!rowBoardIds(r).includes(boardFilter))return false;
       if(parentFilter&&sampleParentCategoryMobile(r.category)!==parentFilter)return false;
       if(subFilter&&String(r.category||"Chưa phân loại").trim()!==subFilter)return false;
       if(!k)return true;
@@ -349,7 +399,7 @@ export default function Page(){
       if(sortMode==="AZ")return String(a.name||a.code).localeCompare(String(b.name||b.code),"vi",{numeric:true,sensitivity:"base"});
       return (new Date(b.createdAt||b.updatedAt||`${b.year}-01-01`).getTime()||0)-(new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0);
     });
-  },[rows,q,sampleTab,parentFilter,subFilter,sortMode]);
+  },[rows,q,sampleTab,parentFilter,subFilter,sortMode,boardFilter]);
 
   async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
     if(!can("design_sample.edit"))return;
@@ -358,7 +408,7 @@ export default function Page(){
       setError("");
       await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({status})});
       if(detail?.id===sample.id)setDetail({...detail,status});
-      setSampleTab(target);
+      setSampleTab(target);setBoardFilter("");
       await load();
     }catch(e){setError(e instanceof Error?e.message:"Không chuyển được mẫu.")}
   }
@@ -391,6 +441,14 @@ export default function Page(){
           <button type="button" onClick={()=>setSampleTab("IDEA")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {rows.filter(x=>String(x.status||"IDEA")==="IDEA").length}</button>
           <button type="button" onClick={()=>setSampleTab("DEPLOY")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {rows.filter(x=>String(x.status||"IDEA")!=="IDEA").length}</button>
         </div>
+        {sampleTab==="IDEA"&&<div className="mt-2">
+          <div className="flex items-center justify-between gap-2"><div className="text-[11px] font-black uppercase tracking-wide text-neutral-400">Bảng ý tưởng</div>{can("design_sample.edit")&&<button type="button" onClick={()=>setBoardForm({name:"",description:""})} className="rounded-xl border bg-white px-3 py-2 text-[11px] font-black">+ Tạo bảng</button>}</div>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+            <button type="button" onClick={()=>setBoardFilter("")} className={`min-w-32 rounded-2xl border px-3 py-3 text-left ${boardFilter===""?"bg-neutral-950 text-white":"bg-white"}`}><div className="text-xs font-black">Tất cả</div><div className={`mt-1 text-[10px] ${boardFilter===""?"text-white/60":"text-neutral-400"}`}>{rows.filter(x=>String(x.status||"IDEA")==="IDEA").length} mẫu</div></button>
+            <button type="button" onClick={()=>setBoardFilter("__UNASSIGNED__")} className={`min-w-32 rounded-2xl border px-3 py-3 text-left ${boardFilter==="__UNASSIGNED__"?"bg-neutral-950 text-white":"bg-white"}`}><div className="text-xs font-black">Chưa phân bảng</div><div className={`mt-1 text-[10px] ${boardFilter==="__UNASSIGNED__"?"text-white/60":"text-neutral-400"}`}>{unassignedIdeaCount} mẫu</div></button>
+            {ideaBoards.map(board=>{const linked=(board.samples||[]).map(x=>x.designSample).filter(Boolean);const ideas=linked.filter(x=>String(x.status||"IDEA")==="IDEA").length;return <div key={board.id} className={`min-w-40 overflow-hidden rounded-2xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}><button type="button" onClick={()=>setBoardFilter(board.id)} className="w-full px-3 py-3 text-left"><div className="truncate text-xs font-black">{board.name}</div><div className="mt-1 text-[10px] text-neutral-400">{ideas} ý tưởng</div></button>{can("design_sample.edit")&&<div className="flex border-t p-1"><button type="button" onClick={()=>setBoardForm({id:board.id,name:board.name,description:board.description||""})} className="flex-1 rounded-lg px-2 py-1.5 text-[10px] font-black">Sửa</button><button type="button" onClick={()=>void deleteIdeaBoard(board)} className="rounded-lg px-2 py-1.5 text-[10px] font-black text-red-600">Xoá</button></div>}</div>})}
+          </div>
+        </div>}
         <button type="button" onClick={()=>setFiltersOpen(x=>!x)} className="mt-2 w-full rounded-2xl border bg-white px-3 py-2.5 text-xs font-black">
           Bộ lọc & sắp xếp {parentFilter||subFilter||sortMode!=="NEWEST"?"· đang áp dụng":""}
         </button>
@@ -427,10 +485,12 @@ export default function Page(){
                   <Badge>{statusLabel(r.status)}</Badge>
                   {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
+                  {sampleTab==="IDEA"&&rowBoardNames(r).slice(0,2).map((name:string)=><Badge key={name}>{name}</Badge>)}
                 </div>
               </div>
             </button>
-            {can("design_sample.edit")&&<div className="mt-3 flex justify-end border-t pt-3">
+            {can("design_sample.edit")&&<div className="mt-3 flex flex-wrap justify-end gap-2 border-t pt-3">
+              {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-3 py-2 text-xs font-black">Bảng ý tưởng</button>}
               <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">
                 {sampleTab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}
               </button>
@@ -455,8 +515,9 @@ export default function Page(){
                   </div>
                 </div>
               </button>
-              {can("design_sample.edit")&&<div className="border-t p-2">
-                <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className="w-full rounded-xl border px-2 py-2 text-[10px] font-black">
+              {can("design_sample.edit")&&<div className="grid grid-cols-2 gap-1 border-t p-2">
+                {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button>}
+                <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className={`rounded-xl border px-2 py-2 text-[10px] font-black ${sampleTab==="DEPLOY"?"col-span-2":""}`}>
                   {sampleTab==="IDEA"?"→ Triển khai":"← Ý tưởng"}
                 </button>
               </div>}
@@ -494,6 +555,22 @@ export default function Page(){
     />}
 
     
+    {boardForm&&<Modal title={boardForm.id?"Sửa bảng ý tưởng":"Tạo bảng ý tưởng"} onClose={()=>setBoardForm(null)}>
+      <div className="space-y-4 p-4">
+        <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Tên bảng</div><input autoFocus className={input} value={boardForm.name} onChange={e=>setBoardForm({...boardForm,name:e.target.value})} placeholder="VD: Mẫu trẻ em" onBlur={resetIosZoom}/></label>
+        <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Mô tả</div><textarea className={`${input} min-h-28`} value={boardForm.description} onChange={e=>setBoardForm({...boardForm,description:e.target.value})} placeholder="Ghi chú ngắn..." onBlur={resetIosZoom}/></label>
+        <div className="flex justify-end gap-2 border-t pt-4"><button type="button" onClick={()=>setBoardForm(null)} className="rounded-2xl border px-4 py-3 text-sm font-black">Huỷ</button><button type="button" disabled={boardBusy||!boardForm.name.trim()} onClick={()=>void saveIdeaBoard()} className="rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40">{boardBusy?"Đang lưu...":"Lưu bảng"}</button></div>
+      </div>
+    </Modal>}
+
+    {assignSample&&<Modal title={`Bảng ý tưởng · ${assignSample.code}`} onClose={()=>setAssignSample(null)}>
+      <div className="space-y-4 p-4">
+        <div><div className="font-black">{assignSample.name}</div><div className="text-xs text-neutral-400">Có thể chọn nhiều bảng.</div></div>
+        <div className="space-y-2">{ideaBoards.map(board=>{const checked=assignBoardIds.includes(board.id);return <label key={board.id} className="flex items-start gap-3 rounded-2xl border p-3"><input type="checkbox" checked={checked} onChange={()=>setAssignBoardIds(x=>checked?x.filter(id=>id!==board.id):[...x,board.id])} className="mt-1 h-5 w-5"/><div className="min-w-0"><div className="font-black">{board.name}</div>{board.description&&<div className="mt-1 text-xs text-neutral-400">{board.description}</div>}</div></label>})}{!ideaBoards.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm font-bold text-neutral-400">Chưa có bảng ý tưởng.</div>}</div>
+        <div className="flex items-center justify-between gap-2 border-t pt-4"><button type="button" onClick={()=>{setAssignSample(null);setBoardForm({name:"",description:""})}} className="rounded-2xl border px-3 py-3 text-xs font-black">+ Tạo bảng</button><button type="button" disabled={boardBusy} onClick={()=>void saveBoardAssign()} className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white disabled:opacity-40">Lưu</button></div>
+      </div>
+    </Modal>}
+
   </main>
 }
 
