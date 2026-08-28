@@ -356,7 +356,7 @@ export default function AccessoriesPageClient() {
 
       {!rows.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
       {editing !== undefined && <ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await load(); }} />}
-      {importOpen && <AccessoryExcelImportModal items={items} suppliers={suppliers} canCostView={canCostView} onClose={() => setImportOpen(false)} onImported={async () => { setImportOpen(false); await load(); }} />}
+      {importOpen && <AccessoryExcelImportModal items={items} suppliers={suppliers} canCostView={canCostView} canStock={canStock} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={() => setImportOpen(false)} onImported={async () => { setImportOpen(false); await load(); }} />}
       {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}{receiptOpen && <AccessoryReceiptModal items={items} suppliers={suppliers} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={()=>setReceiptOpen(false)} onSaved={async()=>{setReceiptOpen(false);await load();}} />}
     </div>
   );
@@ -367,14 +367,28 @@ function Stat({ label, value }: { label: string; value: any }) {
 }
 
 
-function AccessoryExcelImportModal({ items, suppliers, canCostView, onClose, onImported }: { items: Item[]; suppliers: Supplier[]; canCostView: boolean; onClose: () => void; onImported: () => void }) {
+function AccessoryExcelImportModal({ items, suppliers, canCostView, canStock, defaultReceiver, onClose, onImported }: { items: Item[]; suppliers: Supplier[]; canCostView: boolean; canStock: boolean; defaultReceiver: string; onClose: () => void; onImported: () => void }) {
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<ImportAccessoryRow[]>([]);
-  const [useStock, setUseStock] = useState(false);
   const [usePrice, setUsePrice] = useState(canCostView);
+  const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedByName, setReceivedByName] = useState(defaultReceiver);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
+
+  function currentForRow(row: ImportAccessoryRow) {
+    if (row.code) return items.find((x) => String(x.code || "").trim().toUpperCase() === row.code);
+    return items.find((x) => normalizedKey(x.name) === normalizedKey(row.name));
+  }
+
+  function clearFile() {
+    if (busy) return;
+    setFileName("");
+    setRows([]);
+    setError("");
+    setResult("");
+  }
 
   async function readExcel(file: File) {
     try {
@@ -384,6 +398,7 @@ function AccessoryExcelImportModal({ items, suppliers, canCostView, onClose, onI
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       if (!sheet) throw new Error("File Excel không có sheet dữ liệu.");
       const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+      const seen = new Set<string>();
       const parsed: ImportAccessoryRow[] = raw.map((r, index) => {
         const code = normalizeText(pickExcel(r, ["Mã NPL", "Mã SKU", "SKU", "Code", "Mã"])).toUpperCase();
         const name = normalizeText(pickExcel(r, ["Tên NPL", "Tên sản phẩm", "Tên", "Name"]));
@@ -419,29 +434,37 @@ function AccessoryExcelImportModal({ items, suppliers, canCostView, onClose, onI
           specifications.sizeKind = sizeKind;
           specifications.size = size;
         }
-        const error = !name ? "Thiếu tên NPL" : typeName === "Mác Size" && !size ? "Mác Size chưa có size" : undefined;
+        const duplicateKey = code ? `code:${code}` : `name:${normalizedKey(name)}`;
+        let rowError = !name ? "Thiếu tên NPL" : typeName === "Mác Size" && !size ? "Mác Size chưa có size" : undefined;
+        if (!rowError && duplicateKey && seen.has(duplicateKey)) rowError = "Trùng NPL trong chính file Excel";
+        if (duplicateKey) seen.add(duplicateKey);
         return {
           rowNo: index + 2,
           code,
           name,
           typeName,
           unit: normalizeUnit(pickExcel(r, ["Đơn vị", "Unit", "ĐVT"])),
-          stockQty: excelNumber(pickExcel(r, ["Tồn", "Tồn kho", "Số lượng", "Stock", "Quantity"])),
+          stockQty: excelNumber(pickExcel(r, ["SL nhập", "Số lượng nhập", "Tồn", "Tồn kho", "Số lượng", "Stock", "Quantity"])),
           unitPrice: excelNumber(pickExcel(r, ["Đơn giá", "Giá", "Unit price", "Price"])),
           supplierText: normalizeText(pickExcel(r, ["NCC", "Nhà cung cấp", "Mã NCC", "Supplier"])),
           specifications,
           note: normalizeText(pickExcel(r, ["Ghi chú", "Note"])),
-          error,
+          error: rowError,
         };
       }).filter((r) => r.code || r.name);
+      if (!parsed.length) throw new Error("Không đọc được dòng NPL nào. Kiểm tra hàng tiêu đề trong Excel.");
       setRows(parsed);
       setFileName(file.name);
-      if (!parsed.length) throw new Error("Không đọc được dòng NPL nào. Kiểm tra hàng tiêu đề trong Excel.");
     } catch (e) {
       setRows([]);
       setFileName("");
       setError(e instanceof Error ? e.message : "Không đọc được Excel.");
     }
+  }
+
+  function setImportQty(index: number, value: string) {
+    const n = value.trim() === "" ? null : excelNumber(value);
+    setRows((old) => old.map((row, i) => i === index ? { ...row, stockQty: n } : row));
   }
 
   async function importRows() {
@@ -450,70 +473,116 @@ function AccessoryExcelImportModal({ items, suppliers, canCostView, onClose, onI
       setError("");
       setResult("");
       const valid = rows.filter((r) => !r.error);
-      if (!valid.length) throw new Error("Không có dòng hợp lệ để nhập.");
+      if (!fileName || !valid.length) throw new Error("Chưa có file Excel hợp lệ để xác nhận.");
+      if (!receivedByName.trim()) throw new Error("Phải nhập tên người nhận NPL.");
+      const hasIncoming = valid.some((r) => Number(r.stockQty || 0) > 0);
+      if (hasIncoming && !canStock) throw new Error("Bạn không có quyền nhập tồn NPL.");
+      if (!window.confirm(`Xác nhận file “${fileName}” với ${valid.length} dòng? Tồn kho hiện tại chỉ thay đổi sau lần xác nhận này.`)) return;
+
       let created = 0;
       let updated = 0;
-      let failed = 0;
-      const failures: string[] = [];
+      const resolved = new Map<string, Item>();
+      items.forEach((item) => {
+        if (item.code) resolved.set(`code:${String(item.code).trim().toUpperCase()}`, item);
+        resolved.set(`name:${normalizedKey(item.name)}`, item);
+      });
+      const receiptItems: Array<{ accessoryItemId: string; qty: number; unitPrice?: number | null; note?: string | null }> = [];
+
       for (const row of valid) {
-        try {
-          const current = row.code ? items.find((x) => String(x.code || "").trim().toUpperCase() === row.code) : undefined;
-          const supplier = row.supplierText
-            ? suppliers.find((s) => [s.code, s.name].some((v) => normalizedKey(v) === normalizedKey(row.supplierText)))
-            : undefined;
-          const payload: any = {
-            ...(row.code ? { code: row.code } : {}),
-            name: row.name,
-            typeName: row.typeName,
-            unit: row.unit,
-            specifications: row.specifications,
-            note: row.note || null,
-            ...(supplier ? { supplierId: supplier.id } : {}),
-            ...(useStock && row.stockQty !== null ? { stockQty: row.stockQty } : {}),
-            ...(usePrice && canCostView && row.unitPrice !== null ? { unitPrice: row.unitPrice } : {}),
-          };
-          await productionApi(current ? `/production/accessories/${current.id}` : "/production/accessories", {
-            method: current ? "PATCH" : "POST",
-            body: JSON.stringify(payload),
-          });
-          if (current) updated += 1;
-          else created += 1;
-        } catch (e) {
-          failed += 1;
-          failures.push(`Dòng ${row.rowNo} ${row.code || row.name}: ${e instanceof Error ? e.message : "Lỗi"}`);
-        }
+        const key = row.code ? `code:${row.code}` : `name:${normalizedKey(row.name)}`;
+        let current = resolved.get(key);
+        const supplier = row.supplierText
+          ? suppliers.find((s) => [s.code, s.name].some((v) => normalizedKey(v) === normalizedKey(row.supplierText)))
+          : undefined;
+        const payload: any = {
+          ...(row.code ? { code: row.code } : {}),
+          name: row.name,
+          typeName: row.typeName,
+          unit: row.unit,
+          specifications: row.specifications,
+          note: row.note || null,
+          ...(supplier ? { supplierId: supplier.id } : {}),
+          ...(usePrice && canCostView && row.unitPrice !== null ? { unitPrice: row.unitPrice } : {}),
+          ...(!current ? { stockQty: 0 } : {}),
+        };
+        const saved = await productionApi<Item>(current ? `/production/accessories/${current.id}` : "/production/accessories", {
+          method: current ? "PATCH" : "POST",
+          body: JSON.stringify(payload),
+        });
+        current = saved;
+        resolved.set(key, saved);
+        if (saved.code) resolved.set(`code:${String(saved.code).trim().toUpperCase()}`, saved);
+        resolved.set(`name:${normalizedKey(saved.name)}`, saved);
+        if (current && items.some((x) => x.id === current!.id)) updated += 1;
+        else created += 1;
+        const qty = Number(row.stockQty || 0);
+        if (qty > 0) receiptItems.push({ accessoryItemId: saved.id, qty, unitPrice: usePrice && canCostView ? row.unitPrice : null, note: row.note || null });
       }
-      setResult(`Hoàn tất: tạo mới ${created}, cập nhật ${updated}${failed ? `, lỗi ${failed}` : ""}.`);
-      if (failures.length) setError(failures.slice(0, 8).join(" · "));
-      if (!failed) await onImported();
+
+      let receiptCode = "";
+      if (receiptItems.length) {
+        const receipt = await productionApi<AccessoryReceipt>("/production/accessory-receipts", {
+          method: "POST",
+          body: JSON.stringify({
+            receivedAt,
+            receivedByName: receivedByName.trim(),
+            note: `Nhập từ Excel: ${fileName}`,
+            items: receiptItems,
+          }),
+        });
+        const posted = await productionApi<AccessoryReceipt>(`/production/accessory-receipts/${receipt.id}/post`, { method: "POST" });
+        receiptCode = posted.code || receipt.code;
+      }
+      setResult(`Đã xác nhận ${fileName}: tạo mới ${created}, cập nhật ${updated}${receiptCode ? ` · nhập kho theo phiếu ${receiptCode}` : " · không có số lượng nhập kho"}.`);
+      await onImported();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không nhập được file Excel NPL.");
     } finally {
       setBusy(false);
     }
   }
 
-  return <Modal title="Nhập danh mục NPL từ Excel" onClose={onClose}>
+  const validCount = rows.filter((r) => !r.error).length;
+  const totalIncoming = rows.reduce((sum, r) => sum + Math.max(0, Number(r.stockQty || 0)), 0);
+
+  return <Modal title="Nhập NPL từ Excel · kiểm tra trước khi xác nhận" onClose={onClose}>
     <div className="space-y-4 p-5">
       {error && <Err x={error} />}
       {result && <div className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{result}</div>}
       <div className="rounded-2xl border border-dashed p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><b className="text-sm">{fileName || "Chọn file Excel danh mục NPL"}</b><div className="mt-1 text-xs text-neutral-400">Hỗ trợ .xlsx / .xls. Trùng Mã NPL sẽ cập nhật, mã mới sẽ tạo mới.</div></div>
-          <label className="cursor-pointer rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><FileSpreadsheet className="mr-2 inline h-4 w-4" />Chọn Excel<input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => e.target.files?.[0] && void readExcel(e.target.files[0])}/></label>
+          <div><b className="text-sm">{fileName || "Chọn file Excel NPL"}</b><div className="mt-1 text-xs text-neutral-400">File chỉ được đưa vào vùng chờ. Chưa thay đổi danh mục hay tồn kho cho đến khi bấm Xác nhận.</div></div>
+          <div className="flex gap-2">
+            {fileName && <button type="button" disabled={busy} onClick={clearFile} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700">Xoá file đã tải</button>}
+            <label className="cursor-pointer rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><FileSpreadsheet className="mr-2 inline h-4 w-4" />{fileName ? "Đổi file" : "Chọn Excel"}<input type="file" accept=".xlsx,.xls,.csv" className="hidden" onClick={(e) => { e.currentTarget.value = ""; }} onChange={(e) => e.target.files?.[0] && void readExcel(e.target.files[0])}/></label>
+          </div>
         </div>
-        <div className="mt-3 text-xs text-neutral-500">Cột nhận tự động: Mã NPL/SKU, Tên NPL, Loại, Đơn vị, Tồn, Đơn giá, NCC, Chất liệu, Loại răng, Răng/Cỡ khóa, Màu, Chiều dài, Size, Ghi chú.</div>
+        <div className="mt-3 text-xs text-neutral-500">Cột số lượng trong Excel được hiểu là <b>SL nhập lần này</b>, không phải tồn mới. Tồn gốc trong kho luôn được giữ nguyên cho đến khi xác nhận.</div>
       </div>
-      <div className="flex flex-wrap gap-4 rounded-2xl bg-neutral-50 p-3 text-sm">
-        <label className="flex items-center gap-2"><input type="checkbox" checked={useStock} onChange={(e) => setUseStock(e.target.checked)}/>Cập nhật tồn từ Excel</label>
-        {canCostView && <label className="flex items-center gap-2"><input type="checkbox" checked={usePrice} onChange={(e) => setUsePrice(e.target.checked)}/>Cập nhật đơn giá</label>}
-        <span className="text-neutral-400">Mặc định không ghi đè tồn để tránh lệch với Phiếu nhập NPL.</span>
-      </div>
-      {rows.length > 0 && <div className="max-h-[420px] overflow-auto rounded-2xl border">
-        <table className="w-full min-w-[900px] text-left text-xs">
-          <thead className="sticky top-0 bg-neutral-100"><tr><th className="p-2">Dòng</th><th>Mã</th><th>Tên NPL</th><th>Loại</th><th>Chất liệu</th><th>Răng</th><th>Màu</th><th>Tồn</th><th>Trạng thái</th></tr></thead>
-          <tbody className="divide-y">{rows.map((r) => <tr key={`${r.rowNo}-${r.code}`} className={r.error ? "bg-red-50" : ""}><td className="p-2">{r.rowNo}</td><td className="font-semibold">{r.code || "Tự sinh"}</td><td>{r.name || "—"}</td><td>{r.typeName}</td><td>{r.specifications.material || r.specifications.teethMaterial || "—"}</td><td>{r.specifications.zipperGauge || "—"}</td><td>{r.specifications.teethColor || r.specifications.color || r.specifications.tapeColor || "—"}</td><td>{r.stockQty ?? "—"}</td><td>{r.error ? <span className="font-semibold text-red-600">{r.error}</span> : <span className="text-emerald-700">{r.code && items.some((x) => x.code.toUpperCase() === r.code) ? "Cập nhật" : "Tạo mới"}</span>}</td></tr>)}</tbody>
+
+      {fileName && <div className="grid gap-3 rounded-2xl bg-neutral-50 p-3 md:grid-cols-3">
+        <Field l="Ngày nhận"><input type="date" className={input} value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} /></Field>
+        <Field l="Người nhận"><input className={input} value={receivedByName} onChange={(e) => setReceivedByName(e.target.value)} /></Field>
+        <div className="rounded-xl bg-white p-3 text-sm"><div className="text-xs font-semibold uppercase text-neutral-400">Tổng SL nhập</div><div className="mt-1 text-xl font-semibold">{fmtQty(totalIncoming)}</div></div>
+      </div>}
+
+      {canCostView && fileName && <label className="flex items-center gap-2 rounded-2xl bg-neutral-50 p-3 text-sm"><input type="checkbox" checked={usePrice} onChange={(e) => setUsePrice(e.target.checked)}/>Cập nhật đơn giá từ Excel <span className="text-neutral-400">· không ảnh hưởng tồn gốc</span></label>}
+
+      {rows.length > 0 && <div className="max-h-[460px] overflow-auto rounded-2xl border">
+        <table className="w-full min-w-[1120px] text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-neutral-100"><tr><th className="p-2">Dòng</th><th>Mã</th><th>Tên NPL</th><th>Loại</th><th>Quy cách</th><th className="text-right">Tồn gốc</th><th className="w-32">SL nhập</th><th className="text-right">Sau nhập</th><th>Trạng thái</th><th></th></tr></thead>
+          <tbody className="divide-y">{rows.map((r, index) => { const current = currentForRow(r); const original = Number(current?.stockQty || 0); const incoming = Math.max(0, Number(r.stockQty || 0)); return <tr key={`${r.rowNo}-${r.code}-${index}`} className={r.error ? "bg-red-50" : ""}>
+            <td className="p-2">{r.rowNo}</td><td className="font-semibold">{r.code || "Tự sinh"}</td><td>{r.name || "—"}</td><td>{r.typeName}</td><td>{specSummary({ ...(current || {}), typeName: r.typeName, specifications: r.specifications } as Item) || "—"}</td>
+            <td className="text-right font-semibold">{fmtQty(original)}</td>
+            <td><input disabled={busy || !!r.error} inputMode="decimal" className="w-28 rounded-xl border px-2 py-1.5 text-right font-semibold" value={r.stockQty ?? ""} onChange={(e) => setImportQty(index, e.target.value)} /></td>
+            <td className="text-right font-semibold text-emerald-700">{fmtQty(original + incoming)}</td>
+            <td>{r.error ? <span className="font-semibold text-red-600">{r.error}</span> : <span className="text-emerald-700">{current ? "Cập nhật mã có sẵn" : "Tạo mã mới"}</span>}</td>
+            <td><button type="button" disabled={busy} onClick={() => setRows((old) => old.filter((_, i) => i !== index))} className="text-xs font-semibold text-red-600">Bỏ dòng</button></td>
+          </tr>; })}</tbody>
         </table>
       </div>}
-      <button disabled={busy || !rows.some((r) => !r.error)} onClick={() => void importRows()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{busy ? "Đang nhập..." : `Nhập ${rows.filter((r) => !r.error).length} dòng NPL`}</button>
+
+      <button disabled={busy || !fileName || !validCount} onClick={() => void importRows()} className="w-full rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{busy ? "Đang xác nhận..." : `Xác nhận ${validCount} dòng · nhập ${fmtQty(totalIncoming)}`}</button>
     </div>
   </Modal>;
 }

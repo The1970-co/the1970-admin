@@ -475,6 +475,44 @@ export default function MobileAutopilotPage() {
       : "Đã scale hôm nay";
   }
 
+  function autoScaleStatus(row: AnyRow) {
+    const reasons = Array.isArray(row?.autoScaleReasons)
+      ? row.autoScaleReasons.map((x: any) => String(x || "").trim()).filter(Boolean)
+      : [];
+
+    if (row?.autoScaleEligible) {
+      if (level !== "auto") {
+        return {
+          eligible: true,
+          title: "ĐỦ ĐIỀU KIỆN · CHỜ AUTO",
+          reason: level === "semi"
+            ? "Đang ở Mức 2 Semi nên hệ thống chỉ đề xuất, chưa tự tăng ngân sách."
+            : "Đang ở Mức 1 Manual nên hệ thống chỉ theo dõi, chưa tự tăng ngân sách.",
+        };
+      }
+
+      if (dryRun) {
+        return {
+          eligible: true,
+          title: "ĐỦ ĐIỀU KIỆN · DRY RUN",
+          reason: "Đang bật DRY RUN nên chưa ghi thay đổi ngân sách lên Meta.",
+        };
+      }
+
+      return {
+        eligible: true,
+        title: "ĐỦ ĐIỀU KIỆN AUTO SCALE",
+        reason: `ROAS 24h ${pct(row?.roas24h)} · Spend ${money(row?.spend24h)} · tồn an toàn.`,
+      };
+    }
+
+    return {
+      eligible: false,
+      title: "CHƯA SCALE",
+      reason: reasons.length ? reasons.join(" · ") : "Chưa đủ điều kiện Auto Scale.",
+    };
+  }
+
   function budgetOf(row: AnyRow) {
     const directCurrent = num(row.currentBudget);
     if (directCurrent > 0) {
@@ -932,6 +970,7 @@ export default function MobileAutopilotPage() {
             const expanded = expandedId === id;
             const historyCount = scaleCount(row);
             const todayScaleText = scaleBadgeText(row);
+            const autoScale = autoScaleStatus(row);
             return <article
               id={`autopilot-ad-card-${id}`}
               key={id}
@@ -981,6 +1020,18 @@ export default function MobileAutopilotPage() {
                 });
               }} className="flex w-full items-center justify-between px-4 py-3 text-xs font-black"><span>Chi tiết & thao tác</span>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
               {expanded ? <div className="space-y-3 border-t border-neutral-100 p-4">
+                <div className={`rounded-2xl border p-3 ${autoScale.eligible ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-0.5 h-3 w-3 shrink-0 rounded-[3px] ${autoScale.eligible ? "bg-emerald-500" : "bg-amber-500"}`} />
+                    <div className="min-w-0">
+                      <div className={`text-[10px] font-black uppercase tracking-[.12em] ${autoScale.eligible ? "text-emerald-700" : "text-amber-700"}`}>
+                        Auto Scale
+                      </div>
+                      <div className="mt-1 text-xs font-black text-neutral-950">{autoScale.title}</div>
+                      <div className="mt-1 text-[11px] font-semibold leading-5 text-neutral-600">{autoScale.reason}</div>
+                    </div>
+                  </div>
+                </div>
                 {(() => {
                   const currentCode = String(
                     manualProductByAd[id] ??

@@ -475,7 +475,7 @@ function CreateOrderModal({ meta, canViewSampleSource, onClose, onSaved }: { met
 
 
 function printEsc(v:any){return String(v??"").replace(/[&<>"']/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"} as any)[m]);}
-function printWindow(title:string,body:string){const w=window.open("","_blank","noopener,noreferrer,width=1000,height=760");if(!w){window.alert("Trình duyệt đang chặn cửa sổ in.");return;}w.document.write(`<!doctype html><html><head><meta charset="utf-8"/><title>${printEsc(title)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;font-size:12px;color:#111}h1{font-size:20px;margin:0 0 5px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0}table{width:100%;border-collapse:collapse}th,td{border:1px solid #222;padding:7px}th{background:#f3f3f3}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px;text-align:center;margin-top:55px}.sign div{padding-top:7px;border-top:1px solid #222}@media print{button{display:none}}</style></head><body><button onclick="window.print()">In phiếu</button>${body}</body></html>`);w.document.close();w.focus();setTimeout(()=>w.print(),250);}
+function printWindow(title:string,body:string){const w=window.open("","_blank","width=1000,height=760");if(!w){window.alert("Trình duyệt đang chặn cửa sổ in.");return;}w.document.write(`<!doctype html><html><head><meta charset="utf-8"/><title>${printEsc(title)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;font-size:12px;color:#111}h1{font-size:20px;margin:0 0 5px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0}table{width:100%;border-collapse:collapse}th,td{border:1px solid #222;padding:7px}th{background:#f3f3f3}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px;text-align:center;margin-top:55px}.sign div{padding-top:7px;border-top:1px solid #222}@media print{button{display:none}}</style></head><body><button onclick="window.print()">In phiếu</button>${body}</body></html>`);w.document.close();w.focus();setTimeout(()=>w.print(),250);}
 function printFabricIssue(order:any,rolls:Roll[],selected:Record<string,boolean>,allocated:Record<string,string>){const picked=rolls.filter(r=>selected[r.id]);if(!picked.length){window.alert("Chưa chọn cây vải để xuất.");return;}const receiver=window.prompt("Tên người nhận vải",order?.factory?.contactName||order?.factory?.name||"")||"—";const issueDate=window.prompt("Ngày xuất/nhận vải (dd/mm/yyyy)",new Date().toLocaleDateString("vi-VN"))||new Date().toLocaleDateString("vi-VN");const rows=picked.map((r,i)=>{const m=Number(String(allocated[r.id]??r.remainingM??r.actualM??0).replace(",","."))||0;return `<tr><td>${i+1}</td><td>${printEsc(r.receiptCode||"—")}</td><td>${printEsc(r.fabricCode||r.fabricName||"—")}</td><td>${printEsc(r.rollCode||"—")}</td><td>${printEsc(r.colorName||"—")}</td><td>${fmt(m)} m</td><td>${fmt(r.remainingKg||r.actualKg||0)} kg</td></tr>`}).join("");const totalM=picked.reduce((sum,r)=>sum+(Number(String(allocated[r.id]??r.remainingM??r.actualM??0).replace(",","."))||0),0);printWindow(`Phiếu xuất vải ${order?.code||""}`,`<h1>THE 1970 · PHIẾU XUẤT VẢI</h1><div>Mã lệnh SX: <b>${printEsc(order?.code||"—")}</b></div><div class="grid"><div>Ngày xuất: <b>${printEsc(issueDate)}</b></div><div>Người nhận: <b>${printEsc(receiver)}</b></div><div>Mã sản phẩm: <b>${printEsc(order?.sourceCode||order?.source?.code||"—")}</b></div><div>Nhà may / xưởng: <b>${printEsc(order?.factory?.name||"—")}</b></div><div>Tổng mét xuất: <b>${fmt(totalM)} m</b></div><div>Số cây: <b>${picked.length}</b></div></div><table><thead><tr><th>STT</th><th>Phiếu vải</th><th>Mã vải</th><th>Mã cây</th><th>Màu</th><th>Mét xuất</th><th>Kg tham chiếu</th></tr></thead><tbody>${rows}</tbody></table><div class="sign"><div>NGƯỜI XUẤT</div><div>NGƯỜI NHẬN</div><div>THỦ KHO / XÁC NHẬN</div></div>`);}
 function OrderWizard({ id, meta, canEdit, canCalculate, canManage, canViewSampleSource, stepAccess, onClose, onChanged }: { id: string; meta: Meta; canEdit:boolean; canCalculate:boolean; canManage:boolean; canViewSampleSource:boolean; stepAccess: Record<1 | 2 | 3 | 4 | 5 | 6, boolean>; onClose: () => void; onChanged: () => void }) {
   void canEdit; void canCalculate; void canManage;
@@ -942,7 +942,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, canViewSample
                 {!materials.length && <div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa gắn nguyên phụ liệu.</div>}
               </div>
             </div>
-            <div className="flex justify-end"><button disabled={busy || !stepAccess[2]} onClick={() => void saveSpec()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu NPL → Tiếp</button></div>
+            <div className="flex justify-end"><button disabled={busy || !stepAccess[2]} onClick={() => void saveSpec()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">{nextStep(2) ? "Lưu NPL → Bước tiếp" : "Lưu NPL"}</button></div>
           </div>
         )}
 
@@ -972,7 +972,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, canViewSample
               })}
               {!visibleRolls.length && <div className="p-8 text-center text-sm text-neutral-400">Không có cây vải phù hợp bộ lọc.</div>}
             </div>
-            <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={()=>printFabricIssue(order,rolls,selected,allocated)} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">In phiếu xuất vải</button><button disabled={busy||!stepAccess[3]} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Lưu cây vải → Chọn size</button></div>
+            <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={()=>printFabricIssue(order,rolls,selected,allocated)} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">In phiếu xuất vải</button><button disabled={busy||!stepAccess[3]} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">{nextStep(3) ? "Lưu cây vải → Bước tiếp" : "Lưu cây vải"}</button></div>
           </div>
         )}
 
@@ -1014,7 +1014,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, canViewSample
                 onClick={() => void goNext()}
                 className="min-w-28 rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
               >
-                Tiếp →
+                {nextStep(step) ? "Lưu & tiếp →" : "Lưu bước này"}
               </button>
             ) : step === 6 ? (
               <button
@@ -1058,7 +1058,7 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
       <div><b>Chọn dải size</b><div className="mt-3 flex flex-wrap gap-2">{preset.map((size) => { const active = sizeSet.includes(size); return <button key={size} onClick={() => toggle(size)} className={`min-w-14 rounded-2xl border px-4 py-3 text-base font-black ${active ? "border-neutral-950 bg-neutral-950 text-white" : "bg-white text-neutral-400"}`}>{size}</button>; })}</div></div>
       <div><b>Tỷ lệ từng size</b><div className="mt-3 grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">{sizeSet.map((size: string) => <div key={size} className="rounded-2xl border bg-neutral-50 p-3 text-center"><div className="text-lg font-black">{size}</div><input type="number" min="0" className={`${input} mt-2 text-center font-bold`} value={ratio[size] ?? 1} onChange={(e) => setRatio({ ...ratio, [size]: Number(e.target.value || 0) })} /></div>)}</div></div>
       <div className="rounded-2xl bg-neutral-50 p-4 text-sm">Tỷ lệ hiện tại: <b>{sizeSet.map((s: string) => `${s}:${ratio[s] || 0}`).join(" · ") || "Chưa chọn"}</b></div>
-      <div className="flex justify-end"><button disabled={busy || !sizeSet.length} onClick={onNext} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu size → Tính sản lượng</button></div>
+      <div className="flex justify-end"><button disabled={busy || !sizeSet.length} onClick={onNext} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu size</button></div>
     </div>
   );
 }
