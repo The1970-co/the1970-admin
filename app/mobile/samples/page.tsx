@@ -732,8 +732,10 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     sample.matchedProduct?.imageUrl,
   ].filter(Boolean).map((x:any)=>asset(x))));
   const [gallery,setGallery]=useState<string[]>(initialGallery);
-  const image=gallery[0]||"";
-  const [viewerIndex,setViewerIndex]=useState<number|null>(null);
+  const [viewerIndex,setViewerIndex]=useState<number>(0);
+  const image=gallery[viewerIndex]||gallery[0]||"";
+  const [detailExpanded,setDetailExpanded]=useState(false);
+  const swipeStartX=useRef<number|null>(null);
   const [editMode,setEditMode]=useState(false);
   const [rotate,setRotate]=useState(0);
   const [flipX,setFlipX]=useState(false);
@@ -755,9 +757,19 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
   type EditorDragMode="createArrow"|"createShape"|"pen"|"move"|"arrowTarget"|"arrowLabel"|"shapeResize";
   const dragRef=useRef<{id:string;mode:EditorDragMode;start:EditorPoint;original:EditorAnnotation}|null>(null);
   const openViewer=(url:string)=>{const i=gallery.indexOf(url);setViewerIndex(i>=0?i:0);setEditMode(false);setViewerError("")};
-  const closeViewer=()=>{setViewerIndex(null);setEditMode(false);setViewerError("")};
-  const prevImage=()=>setViewerIndex(i=>i===null?null:(i-1+gallery.length)%gallery.length);
-  const nextImage=()=>setViewerIndex(i=>i===null?null:(i+1)%gallery.length);
+  const closeViewer=()=>{setEditMode(false);setViewerError("")};
+  const prevImage=()=>setViewerIndex(i=>(i-1+gallery.length)%gallery.length);
+  const nextImage=()=>setViewerIndex(i=>(i+1)%gallery.length);
+  function galleryTouchStart(e:any){swipeStartX.current=e.touches?.[0]?.clientX??null}
+  function galleryTouchEnd(e:any){
+    const start=swipeStartX.current;
+    const end=e.changedTouches?.[0]?.clientX;
+    swipeStartX.current=null;
+    if(start==null||end==null||gallery.length<2)return;
+    const dx=end-start;
+    if(Math.abs(dx)<45)return;
+    dx<0?nextImage():prevImage();
+  }
   function resetEdit(){
     setRotate(0);setFlipX(false);setCropRatio("original");setBrightness(100);setContrast(100);setViewerError("");
     setTool("select");setAnnotations([]);setSelectedAnnotationId(null);setUndoStack([]);setRedoStack([]);
@@ -1063,89 +1075,112 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     }catch(e){setViewerError(e instanceof Error?e.message:"Không lưu được ảnh chỉnh sửa.")}
     finally{setEditBusy(false)}
   }
-  return <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/45 p-3 pb-[max(16px,env(safe-area-inset-bottom))]" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-y"}}>
-    <div className="mx-auto my-4 max-w-md overflow-hidden rounded-[30px] bg-white shadow-2xl">
-      <div className="flex items-center justify-between border-b p-4">
-        <div><div className="text-xs font-black text-neutral-400">{sample.code}</div><div className="font-black">{sample.name}</div></div>
-        <button onClick={()=>closeWithZoomReset(onClose)} className="grid h-10 w-10 place-items-center rounded-full border"><X className="h-4 w-4"/></button>
-      </div>
+  return <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-white text-neutral-950" style={{WebkitOverflowScrolling:"touch"}}>
+    <div className="mx-auto min-h-[100dvh] max-w-md bg-white pb-[max(24px,env(safe-area-inset-bottom))]">
+      <section className="relative bg-neutral-100">
+        <div
+          className="relative flex min-h-[54dvh] max-h-[74dvh] items-center justify-center overflow-hidden"
+          onTouchStart={galleryTouchStart}
+          onTouchEnd={galleryTouchEnd}
+          style={{touchAction:"pan-y"}}
+        >
+          {image?<img src={image} className="max-h-[74dvh] w-full object-contain" alt=""/>:<div className="grid h-[58dvh] w-full place-items-center text-sm font-bold text-neutral-400">Chưa có ảnh mẫu</div>}
 
-      <div className="space-y-4 p-4">
-        {image&&<button type="button" onClick={()=>openViewer(image)} className="block w-full overflow-hidden rounded-3xl"><img src={image} className="h-64 w-full object-cover" alt=""/><div className="mt-2 text-center text-[11px] font-semibold text-neutral-400">Bấm ảnh để xem lớn</div></button>}
-        {gallery.length>1&&<div className="flex gap-2 overflow-x-auto pb-1">{gallery.map((url:string,i:number)=><div key={`${url}-${i}`} className="relative shrink-0"><button type="button" onClick={()=>setViewerIndex(i)} className="overflow-hidden rounded-2xl border"><img src={url} className="h-20 w-20 object-cover" alt=""/></button><button type="button" onClick={()=>void downloadUrl(url,`${sample.code||"mau"}-${i+1}.jpg`)} className="absolute bottom-1 right-1 grid h-7 w-7 place-items-center rounded-lg bg-white/95 shadow"><Download className="h-3.5 w-3.5"/></button></div>)}</div>}
-        {!!gallery.length&&<button type="button" onClick={()=>void downloadUrl(gallery[0],`${sample.code||"mau"}-anh-dai-dien.jpg`)} className="w-full rounded-2xl border py-2.5 text-xs font-black"><Download className="mr-1 inline h-4 w-4"/>Tải ảnh đại diện</button>}
+          <button
+            type="button"
+            onClick={()=>closeWithZoomReset(onClose)}
+            aria-label="Quay lại"
+            className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] z-20 grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur"
+          >
+            <ArrowLeft className="h-5 w-5"/>
+          </button>
 
-        {!!patternAttachments.length&&<section className="rounded-2xl bg-neutral-50 p-3">
-          <div className="mb-2 text-xs font-black">File rập / tài liệu kỹ thuật</div>
-          <div className="space-y-2">{patternAttachments.map((f:any,i:number)=><div key={f.id||`${f.url}-${i}`} className="flex items-center gap-2 rounded-xl bg-white p-2.5"><div className="min-w-0 flex-1"><div className="truncate text-xs font-black">{f.name||`File rập ${i+1}`}</div><div className="text-[10px] text-neutral-400">{f.size?`${(Number(f.size)/1024/1024).toFixed(2)} MB`:""}</div></div><button onClick={()=>void downloadUrl(f.url,`${sample.code||"mau"}-${f.name||`file-rap-${i+1}`}`)} className="grid h-9 w-9 place-items-center rounded-xl border"><Download className="h-4 w-4"/></button></div>)}</div>
-        </section>}
-
-        <div className="grid grid-cols-2 gap-3">
-          <Info l="Năm" v={sample.year||"—"}/>
-          <Info l="Mùa / BST" v={sample.season||"—"}/>
-          <Info l="Nhóm SP" v={sample.category||"—"}/>
-          <Info l="Tiến độ" v={statusLabel(sample.status)}/>
-          {can("fabric_library.view")&&<Info l="Bảng vải" v={sample.fabricBoard?.boardCode||sample.fabricBoardCode||"—"}/>}
-          {can("fabric_library.view")&&<Info l="Màu" v={`${sample.fabricColorName||"—"} ${sample.fabricColorCode||""}`.trim()}/>}
-          <Info l="Nhà may làm mẫu" v={sample.sampleFactoryName||dispatches?.[0]?.recipientName||"—"}/>
-          <Info l="Phụ trách" v={sample.assigneeName||"—"}/>
-          <Info l="Hạn dự kiến" v={fmtDate(sample.dueDate)}/>
-          <Info l="Việc tiếp theo" v={sample.nextAction||"—"}/>
-        </div>
-
-        {sample.note&&<Info l="Ghi chú mẫu" v={sample.note}/>}
-        {sample.technicalNote&&<Info l="Ghi chú kỹ thuật" v={sample.technicalNote}/>}<MeasurementSummary sample={sample}/>
-
-        <section>
-          <div className="flex items-center justify-between"><b className="text-sm">Lịch sử gửi mẫu</b>{can("sample_dispatch.create")&&<button onClick={onDispatch} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white"><Send className="mr-1 inline h-3.5 w-3.5"/>Gửi / gửi lại</button>}</div>
-          <div className="mt-2 space-y-2">
-            {dispatches.length?dispatches.map((d:any)=><DispatchRow key={d.id} dispatch={d} can={can} onChanged={onChanged}/>):<div className="rounded-2xl bg-neutral-50 p-3 text-xs text-neutral-400">Chưa có lần gửi mẫu.</div>}
+          <div className="absolute right-3 top-[max(12px,env(safe-area-inset-top))] z-20 flex gap-2">
+            {!!image&&<button type="button" onClick={()=>void downloadUrl(image,`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} aria-label="Lưu ảnh" className="grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur"><Download className="h-5 w-5"/></button>}
+            {image&&can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>{setEditMode(true);setViewerError("")}} aria-label="Chỉnh ảnh" className="grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur"><Pencil className="h-5 w-5"/></button>}
           </div>
-        </section>
 
-        <div className="grid grid-cols-2 gap-2 border-t pt-4">
-          {can("design_sample.edit")&&<button onClick={onEdit} className="rounded-2xl border py-3 font-black"><Pencil className="mr-1 inline h-4 w-4"/>Sửa mẫu</button>}
-          {can("design_sample.delete")&&<button onClick={onDelete} className="rounded-2xl border border-red-200 bg-red-50 py-3 font-black text-red-700"><Trash2 className="mr-1 inline h-4 w-4"/>Xoá mẫu</button>}
+          {gallery.length>1&&<>
+            <button type="button" onClick={prevImage} aria-label="Ảnh trước" className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl shadow">‹</button>
+            <button type="button" onClick={nextImage} aria-label="Ảnh sau" className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl shadow">›</button>
+            <span className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/65 px-3 py-1.5 text-[11px] font-black text-white">{viewerIndex+1}/{gallery.length}</span>
+          </>}
         </div>
-      </div>
+      </section>
+
+      <section className="px-4 pb-2 pt-4">
+        <div className="text-[11px] font-black uppercase tracking-[.08em] text-neutral-400">{sample.code}</div>
+        <h2 className="mt-1 text-[22px] font-black leading-tight">{sample.name}</h2>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-neutral-500">
+          <span>{statusLabel(sample.status)}</span>
+          {sample.category&&<><span>·</span><span>{sample.category}</span></>}
+          {sample.year&&<><span>·</span><span>{sample.year}</span></>}
+          {sample.fabricBoard?.boardCode||sample.fabricBoardCode?<><span>·</span><span>{sample.fabricBoard?.boardCode||sample.fabricBoardCode}</span></>:null}
+        </div>
+
+        {(sample.note||sample.technicalNote||sample.nextAction)&&<div className="mt-3 line-clamp-3 text-sm leading-6 text-neutral-700">
+          {sample.note||sample.technicalNote||sample.nextAction}
+        </div>}
+
+        <button
+          type="button"
+          onClick={()=>setDetailExpanded(v=>!v)}
+          className="mt-3 flex w-full items-center justify-between border-y py-3 text-left"
+        >
+          <div>
+            <div className="text-sm font-black">Thông tin mẫu</div>
+            <div className="mt-0.5 text-[11px] text-neutral-400">{detailExpanded?"Thu gọn":"Bấm để xem chi tiết và chỉnh sửa"}</div>
+          </div>
+          <span className={`text-xl transition-transform ${detailExpanded?"rotate-180":""}`}>⌄</span>
+        </button>
+
+        {detailExpanded&&<div className="space-y-4 pt-4">
+          <div className="grid grid-cols-2 gap-2">
+            <Info l="Năm" v={sample.year||"—"}/>
+            <Info l="Mùa / BST" v={sample.season||"—"}/>
+            <Info l="Nhóm SP" v={sample.category||"—"}/>
+            <Info l="Tiến độ" v={statusLabel(sample.status)}/>
+            {can("fabric_library.view")&&<Info l="Bảng vải" v={sample.fabricBoard?.boardCode||sample.fabricBoardCode||"—"}/>}
+            {can("fabric_library.view")&&<Info l="Màu" v={`${sample.fabricColorName||"—"} ${sample.fabricColorCode||""}`.trim()}/>}
+            <Info l="Nhà may làm mẫu" v={sample.sampleFactoryName||dispatches?.[0]?.recipientName||"—"}/>
+            <Info l="Phụ trách" v={sample.assigneeName||"—"}/>
+            <Info l="Hạn dự kiến" v={fmtDate(sample.dueDate)}/>
+            <Info l="Việc tiếp theo" v={sample.nextAction||"—"}/>
+          </div>
+
+          {sample.note&&<Info l="Ghi chú mẫu" v={sample.note}/>}
+          {sample.technicalNote&&<Info l="Ghi chú kỹ thuật" v={sample.technicalNote}/>}
+          <MeasurementSummary sample={sample}/>
+
+          {!!patternAttachments.length&&<section className="rounded-2xl bg-neutral-50 p-3">
+            <div className="mb-2 text-xs font-black">File rập / tài liệu kỹ thuật</div>
+            <div className="space-y-2">{patternAttachments.map((f:any,i:number)=><div key={f.id||`${f.url}-${i}`} className="flex items-center gap-2 rounded-xl bg-white p-2.5"><div className="min-w-0 flex-1"><div className="truncate text-xs font-black">{f.name||`File rập ${i+1}`}</div><div className="text-[10px] text-neutral-400">{f.size?`${(Number(f.size)/1024/1024).toFixed(2)} MB`:""}</div></div><button onClick={()=>void downloadUrl(f.url,`${sample.code||"mau"}-${f.name||`file-rap-${i+1}`}`)} className="grid h-9 w-9 place-items-center rounded-xl border"><Download className="h-4 w-4"/></button></div>)}</div>
+          </section>}
+
+          <section>
+            <div className="flex items-center justify-between"><b className="text-sm">Lịch sử gửi mẫu</b>{can("sample_dispatch.create")&&<button onClick={onDispatch} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-black text-white"><Send className="mr-1 inline h-3.5 w-3.5"/>Gửi / gửi lại</button>}</div>
+            <div className="mt-2 space-y-2">
+              {dispatches.length?dispatches.map((d:any)=><DispatchRow key={d.id} dispatch={d} can={can} onChanged={onChanged}/>):<div className="rounded-2xl bg-neutral-50 p-3 text-xs text-neutral-400">Chưa có lần gửi mẫu.</div>}
+            </div>
+          </section>
+
+          <div className="grid grid-cols-2 gap-2 border-t pt-4">
+            {can("design_sample.edit")&&<button onClick={onEdit} className="rounded-2xl bg-neutral-950 py-3 font-black text-white"><Pencil className="mr-1 inline h-4 w-4"/>Sửa thông tin</button>}
+            {can("design_sample.delete")&&<button onClick={onDelete} className="rounded-2xl border border-red-200 bg-red-50 py-3 font-black text-red-700"><Trash2 className="mr-1 inline h-4 w-4"/>Xoá mẫu</button>}
+          </div>
+        </div>}
+      </section>
     </div>
 
-    {viewerIndex!==null&&gallery[viewerIndex]&&<div className="fixed inset-0 z-[120] flex flex-col bg-black/95">
-      {!editMode?<>
-
-        <div className="flex shrink-0 items-center justify-between gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]">
-          <div className="flex gap-2">
-            <div className="flex flex-col items-end gap-1">
-              <button type="button" onClick={()=>void downloadUrl(gallery[viewerIndex],`${sample.code||"mau"}-${viewerIndex+1}.jpg`)} className="rounded-full bg-white/95 px-4 py-2 text-xs font-black text-black">
-                <Download className="mr-1 inline h-4 w-4"/>Lưu ảnh
-              </button>
-              <div className="text-[10px] font-semibold text-white/60">iPhone: bấm rồi giữ ảnh → Lưu vào Ảnh</div>
-            </div>
-            {can("design_sample.edit")&&can("design_sample.upload_images")&&<button type="button" onClick={()=>setEditMode(true)} className="rounded-full bg-amber-300 px-4 py-2 text-xs font-black text-black">
-              <Pencil className="mr-1 inline h-4 w-4"/>Chỉnh ảnh
-            </button>}
-          </div>
-          <button type="button" onClick={closeViewer} className="grid h-10 w-10 place-items-center rounded-full bg-white/95 text-black"><X className="h-5 w-5"/></button>
-        </div>
-
-        <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto px-3" style={{WebkitOverflowScrolling:"touch",touchAction:"pan-x pan-y pinch-zoom"}}>
-          {gallery.length>1&&<button type="button" onClick={prevImage} className="absolute left-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">‹</button>}
-          <img src={gallery[viewerIndex]} className="max-h-full max-w-full object-contain" alt=""/>
-          {gallery.length>1&&<button type="button" onClick={nextImage} className="absolute right-3 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl text-black">›</button>}
-        </div>
-
-        {gallery.length>1&&<div className="shrink-0 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 text-center">
-          <span className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-black text-black">{viewerIndex+1}/{gallery.length}</span>
-        </div>}
-      </>:(
-        <SampleImageEditorKonva
-          imageUrl={gallery[viewerIndex]}
-          filename={`${sample.code||"mau"}-${viewerIndex+1}-edited.jpg`}
-          busy={editBusy}
-          onCancel={()=>setEditMode(false)}
-          onSave={saveKonvaEditedImage}
-        />
-      )}
+    {editMode&&image&&<div className="fixed inset-0 z-[120] bg-black">
+      <SampleImageEditorKonva
+        imageUrl={image}
+        filename={`${sample.code||"mau"}-${viewerIndex+1}-edited.jpg`}
+        busy={editBusy}
+        onCancel={()=>setEditMode(false)}
+        onSave={saveKonvaEditedImage}
+      />
       {viewerError&&<div className="absolute left-3 right-3 top-[max(64px,env(safe-area-inset-top))] z-[130] rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white">{viewerError}</div>}
     </div>}
   </div>
