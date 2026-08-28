@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Range = "today" | "yesterday" | "7d" | "10d" | "30d" | "month" | "custom";
-type Tab = "overview" | "daily" | "branch" | "staff" | "channel" | "carrier" | "payment" | "orders";
+type Tab = "overview" | "daily" | "branch" | "staff" | "channel" | "carrier" | "payment" | "orders" | "products";
 type Option = { id: string; name: string };
 type MultiValue = string[];
 type Metric = {
@@ -21,6 +21,22 @@ type Metric = {
   grossMargin: number;
 };
 type GroupRow = Partial<Metric> & { id: string; label: string; date?: string };
+type ProductRow = {
+  id: string;
+  productName: string;
+  skuCount: number;
+  skus: string[];
+  orderCount: number;
+  completedOrderCount: number;
+  cancelledOrderCount: number;
+  createdQty: number;
+  completedQty: number;
+  pendingQty: number;
+  cancelledQty: number;
+  completionRate: number;
+  validRevenue: number;
+  completedRevenue: number;
+};
 type OrderRow = {
   id: string;
   code: string;
@@ -85,6 +101,7 @@ type Payload = {
   channelRows?: GroupRow[];
   carrierRows?: GroupRow[];
   paymentRows?: GroupRow[];
+  productRows?: ProductRow[];
   orders?: OrderRow[];
 };
 
@@ -100,6 +117,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "branch", label: "Chi nhánh" }, { id: "staff", label: "Nhân viên" },
   { id: "channel", label: "Nguồn bán" }, { id: "carrier", label: "Vận chuyển" },
   { id: "payment", label: "Thanh toán" }, { id: "orders", label: "Danh sách đơn" },
+  { id: "products", label: "Thống kê sản phẩm" },
 ];
 
 function n(value: unknown) { const parsed = Number(value || 0); return Number.isFinite(parsed) ? parsed : 0; }
@@ -476,8 +494,148 @@ export default function ReportsPage() {
               }}
             />
           ) : null}
+          {tab === "products" ? <ProductStatsTable rows={payload.productRows || []} /> : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ProductStatsTable({ rows }: { rows: ProductRow[] }) {
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"created" | "completed" | "pending" | "rate" | "revenue">("created");
+
+  const filteredRows = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    const base = keyword
+      ? rows.filter((row) =>
+          row.productName.toLowerCase().includes(keyword) ||
+          (row.skus || []).some((sku) => sku.toLowerCase().includes(keyword)),
+        )
+      : [...rows];
+
+    return base.sort((a, b) => {
+      if (sortBy === "completed") return n(b.completedQty) - n(a.completedQty);
+      if (sortBy === "pending") return n(b.pendingQty) - n(a.pendingQty);
+      if (sortBy === "rate") return n(b.completionRate) - n(a.completionRate);
+      if (sortBy === "revenue") return n(b.validRevenue) - n(a.validRevenue);
+      return n(b.createdQty) - n(a.createdQty);
+    });
+  }, [rows, query, sortBy]);
+
+  const totals = useMemo(() => filteredRows.reduce(
+    (acc, row) => {
+      acc.createdQty += n(row.createdQty);
+      acc.completedQty += n(row.completedQty);
+      acc.pendingQty += n(row.pendingQty);
+      acc.cancelledQty += n(row.cancelledQty);
+      acc.validRevenue += n(row.validRevenue);
+      acc.completedRevenue += n(row.completedRevenue);
+      return acc;
+    },
+    { createdQty: 0, completedQty: 0, pendingQty: 0, cancelledQty: 0, validRevenue: 0, completedRevenue: 0 },
+  ), [filteredRows]);
+
+  const rate = totals.createdQty ? (totals.completedQty / totals.createdQty) * 100 : 0;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-extrabold">Thống kê sản phẩm theo khoảng ngày</h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          SL tạo hợp lệ đã loại toàn bộ đơn huỷ. SL hoàn thành chỉ tính sản phẩm nằm trong đơn có trạng thái Hoàn thành.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Mini label="Sản phẩm phát sinh" value={qty(filteredRows.length)} />
+        <Mini label="SL tạo hợp lệ" value={qty(totals.createdQty)} />
+        <Mini label="SL hoàn thành" value={qty(totals.completedQty)} />
+        <Mini label="Đang xử lý" value={qty(totals.pendingQty)} />
+        <Mini label="Tỷ lệ hoàn thành" value={`${rate.toFixed(1)}%`} />
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs font-semibold text-neutral-500">
+          Đơn huỷ bị loại khỏi SL tạo hợp lệ: <span className="font-extrabold text-red-600">{qty(totals.cancelledQty)} SP</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Tìm sản phẩm hoặc SKU..."
+            className="min-w-[240px] rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500"
+          />
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold"
+          >
+            <option value="created">SL tạo nhiều nhất</option>
+            <option value="completed">SL hoàn thành nhiều nhất</option>
+            <option value="pending">Đang xử lý nhiều nhất</option>
+            <option value="rate">Tỷ lệ hoàn thành cao nhất</option>
+            <option value="revenue">Doanh thu cao nhất</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-neutral-200">
+        <table className="min-w-[1180px] w-full text-left text-sm">
+          <thead>
+            <tr className="bg-neutral-950 text-white">
+              <th className="px-4 py-3">#</th>
+              <th className="min-w-[280px] px-4 py-3">Sản phẩm</th>
+              <th className="px-4 py-3 text-right">Số đơn</th>
+              <th className="px-4 py-3 text-right">SL tạo hợp lệ</th>
+              <th className="px-4 py-3 text-right">SL hoàn thành</th>
+              <th className="px-4 py-3 text-right">Đang xử lý</th>
+              <th className="px-4 py-3 text-right">SL huỷ</th>
+              <th className="px-4 py-3 text-right">Hoàn thành</th>
+              <th className="px-4 py-3 text-right">Doanh thu tạo</th>
+              <th className="px-4 py-3 text-right">DT hoàn thành</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map((row, index) => (
+              <tr key={row.id} className="border-b border-neutral-100 hover:bg-neutral-50">
+                <td className="px-4 py-3 text-neutral-400">{index + 1}</td>
+                <td className="px-4 py-3">
+                  <div className="font-bold text-neutral-950">{row.productName}</div>
+                  <div className="mt-1 text-xs text-neutral-400">
+                    {qty(row.skuCount)} SKU · {(row.skus || []).slice(0, 4).join(", ")}{row.skus?.length > 4 ? ` +${row.skus.length - 4}` : ""}
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-right font-semibold">{qty(row.orderCount)}</td>
+                <td className="px-4 py-3 text-right text-base font-extrabold">{qty(row.createdQty)}</td>
+                <td className="px-4 py-3 text-right font-extrabold text-emerald-700">{qty(row.completedQty)}</td>
+                <td className="px-4 py-3 text-right font-bold text-amber-600">{qty(row.pendingQty)}</td>
+                <td className="px-4 py-3 text-right font-semibold text-red-600">{qty(row.cancelledQty)}</td>
+                <td className="px-4 py-3 text-right font-bold">{n(row.completionRate).toFixed(1)}%</td>
+                <td className="px-4 py-3 text-right">{money(row.validRevenue)}</td>
+                <td className="px-4 py-3 text-right font-semibold">{money(row.completedRevenue)}</td>
+              </tr>
+            ))}
+            {!filteredRows.length ? (
+              <tr><td colSpan={10} className="py-12 text-center text-neutral-400">Không có sản phẩm phù hợp.</td></tr>
+            ) : null}
+          </tbody>
+          {filteredRows.length ? (
+            <tfoot>
+              <tr className="border-t-2 border-neutral-300 bg-neutral-50 font-extrabold">
+                <td colSpan={3} className="px-4 py-3">Tổng {qty(filteredRows.length)} sản phẩm</td>
+                <td className="px-4 py-3 text-right">{qty(totals.createdQty)}</td>
+                <td className="px-4 py-3 text-right text-emerald-700">{qty(totals.completedQty)}</td>
+                <td className="px-4 py-3 text-right text-amber-600">{qty(totals.pendingQty)}</td>
+                <td className="px-4 py-3 text-right text-red-600">{qty(totals.cancelledQty)}</td>
+                <td className="px-4 py-3 text-right">{rate.toFixed(1)}%</td>
+                <td className="px-4 py-3 text-right">{money(totals.validRevenue)}</td>
+                <td className="px-4 py-3 text-right">{money(totals.completedRevenue)}</td>
+              </tr>
+            </tfoot>
+          ) : null}
+        </table>
+      </div>
     </div>
   );
 }
