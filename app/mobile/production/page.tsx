@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, ChevronRight, Layers3, PackageOpen, Ruler, Scissors, Shirt } from "lucide-react";
+import { ArrowLeft, Boxes, ChevronRight, Layers3, PackageOpen, Ruler, Scissors, Shirt } from "lucide-react";
 import Link from "next/link";
 
 const cards = [
@@ -46,14 +46,26 @@ export default function MobileProductionHubPage() {
   return (
     <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
       <div className="mx-auto max-w-md">
-        <header className="border-b border-neutral-200 bg-white px-4 pb-5 pt-[calc(18px+env(safe-area-inset-top))]">
-          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-400">
-            Sản xuất / Nguyên liệu
+        <header className="border-b border-neutral-200 bg-white px-4 pb-5 pt-[calc(14px+env(safe-area-inset-top))]">
+          <div className="flex items-start gap-3">
+            <Link
+              href="/mobile"
+              aria-label="Quay lại trang chính"
+              className="mt-0.5 grid h-11 w-11 shrink-0 place-items-center rounded-full bg-neutral-100 active:scale-95"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-400">
+                Sản xuất / Nguyên liệu
+              </div>
+              <h1 className="mt-1 text-2xl font-black">Trung tâm sản xuất</h1>
+              <p className="mt-1 text-sm text-neutral-500">
+                Chọn đúng phần cần làm, mỗi màn chỉ hiển thị nội dung của phần đó.
+              </p>
+            </div>
           </div>
-          <h1 className="mt-1 text-2xl font-black">Trung tâm sản xuất</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Chọn đúng phần cần làm, mỗi màn chỉ hiển thị nội dung của phần đó.
-          </p>
         </header>
 
         <section className="space-y-3 p-4">
