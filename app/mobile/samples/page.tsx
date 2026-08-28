@@ -289,6 +289,7 @@ export default function Page(){
   const [assignSample,setAssignSample]=useState<Sample|null>(null);
   const [assignBoardIds,setAssignBoardIds]=useState<string[]>([]);
   const [boardBusy,setBoardBusy]=useState(false);
+  const [boardHubOpen,setBoardHubOpen]=useState(false);
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
@@ -425,45 +426,52 @@ export default function Page(){
 
   return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
     <div className="mx-auto max-w-md">
-      <header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[calc(16px+env(safe-area-inset-top))] backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
+      <header className="relative z-10 border-b bg-white px-3 pb-2 pt-[calc(8px+env(safe-area-inset-top))]">
+        <div className="flex min-h-11 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
-            <div className="min-w-0"><div className="text-[10px] font-black uppercase tracking-[.18em] text-neutral-400">Sản xuất</div><h1 className="truncate text-xl font-black">Triển khai mẫu</h1></div>
+            <div className="min-w-0">
+              <div className="text-[9px] font-black uppercase tracking-[.16em] text-neutral-400">Sản xuất</div>
+              <h1 className="truncate text-[19px] font-black leading-5">Triển khai mẫu</h1>
+            </div>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 items-center gap-1.5">
             <button onClick={()=>void load()} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><RefreshCw className={`h-4 w-4 ${loading?"animate-spin":""}`}/></button>
-            {can("design_sample.create")&&<button onClick={()=>setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Tạo mẫu</button>}
+            {can("design_sample.create")&&<button onClick={()=>setEditing(null)} className="h-10 rounded-full bg-neutral-950 px-3.5 text-xs font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Tạo mẫu</button>}
           </div>
         </div>
-        <input className={`${input} mt-4`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mã mẫu, tên, bảng vải, màu..." onBlur={resetIosZoom}/>
-        <div className="mt-3 grid grid-cols-2 rounded-2xl bg-neutral-100 p-1">
-          <button type="button" onClick={()=>setSampleTab("IDEA")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {rows.filter(x=>String(x.status||"IDEA")==="IDEA").length}</button>
-          <button type="button" onClick={()=>setSampleTab("DEPLOY")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${sampleTab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {rows.filter(x=>String(x.status||"IDEA")!=="IDEA").length}</button>
+
+        <div className="mt-2 flex items-center gap-1 overflow-x-auto border-b border-neutral-100 pb-1">
+          <button type="button" onClick={()=>{setSampleTab("IDEA");setBoardFilter("")}} className={`shrink-0 rounded-full px-3 py-2 text-xs font-black ${sampleTab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng · {rows.filter(x=>String(x.status||"IDEA")==="IDEA").length}</button>
+          <button type="button" onClick={()=>{setSampleTab("DEPLOY");setBoardFilter("")}} className={`shrink-0 rounded-full px-3 py-2 text-xs font-black ${sampleTab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai · {rows.filter(x=>String(x.status||"IDEA")!=="IDEA").length}</button>
+          {sampleTab==="IDEA"&&boardFilter&&<button type="button" onClick={()=>setBoardHubOpen(true)} className="max-w-40 shrink-0 truncate rounded-full bg-neutral-100 px-3 py-2 text-xs font-black text-neutral-700">{boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(b=>b.id===boardFilter)?.name||"Bảng"}</button>}
         </div>
-        {sampleTab==="IDEA"&&<div className="mt-2">
-          <div className="flex items-center justify-between gap-2"><div className="text-[11px] font-black uppercase tracking-wide text-neutral-400">Bảng ý tưởng</div>{can("design_sample.edit")&&<button type="button" onClick={()=>setBoardForm({name:"",description:""})} className="rounded-xl border bg-white px-3 py-2 text-[11px] font-black">+ Tạo bảng</button>}</div>
-          <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-            <button type="button" onClick={()=>setBoardFilter("")} className={`min-w-32 rounded-2xl border px-3 py-3 text-left ${boardFilter===""?"bg-neutral-950 text-white":"bg-white"}`}><div className="text-xs font-black">Tất cả</div><div className={`mt-1 text-[10px] ${boardFilter===""?"text-white/60":"text-neutral-400"}`}>{rows.filter(x=>String(x.status||"IDEA")==="IDEA").length} mẫu</div></button>
-            <button type="button" onClick={()=>setBoardFilter("__UNASSIGNED__")} className={`min-w-32 rounded-2xl border px-3 py-3 text-left ${boardFilter==="__UNASSIGNED__"?"bg-neutral-950 text-white":"bg-white"}`}><div className="text-xs font-black">Chưa phân bảng</div><div className={`mt-1 text-[10px] ${boardFilter==="__UNASSIGNED__"?"text-white/60":"text-neutral-400"}`}>{unassignedIdeaCount} mẫu</div></button>
-            {ideaBoards.map(board=>{const linked=(board.samples||[]).map(x=>x.designSample).filter(Boolean);const ideas=linked.filter(x=>String(x.status||"IDEA")==="IDEA").length;return <div key={board.id} className={`min-w-40 overflow-hidden rounded-2xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}><button type="button" onClick={()=>setBoardFilter(board.id)} className="w-full px-3 py-3 text-left"><div className="truncate text-xs font-black">{board.name}</div><div className="mt-1 text-[10px] text-neutral-400">{ideas} ý tưởng</div></button>{can("design_sample.edit")&&<div className="flex border-t p-1"><button type="button" onClick={()=>setBoardForm({id:board.id,name:board.name,description:board.description||""})} className="flex-1 rounded-lg px-2 py-1.5 text-[10px] font-black">Sửa</button><button type="button" onClick={()=>void deleteIdeaBoard(board)} className="rounded-lg px-2 py-1.5 text-[10px] font-black text-red-600">Xoá</button></div>}</div>})}
+
+        <div className="mt-2 flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <input className={`${input} h-11 rounded-full py-2.5 pl-4 pr-3 text-[16px]`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mẫu..." onBlur={resetIosZoom}/>
           </div>
-        </div>}
-        <button type="button" onClick={()=>setFiltersOpen(x=>!x)} className="mt-2 w-full rounded-2xl border bg-white px-3 py-2.5 text-xs font-black">
-          Bộ lọc & sắp xếp {parentFilter||subFilter||sortMode!=="NEWEST"?"· đang áp dụng":""}
-        </button>
+
+          <button type="button" onClick={()=>setFiltersOpen(x=>!x)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border ${filtersOpen||parentFilter||subFilter||sortMode!=="NEWEST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`} aria-label="Bộ lọc">
+            <span className="text-[11px] font-black">Lọc</span>
+          </button>
+
+          <button type="button" onClick={()=>setBoardHubOpen(true)} className="grid h-11 w-11 shrink-0 place-items-center rounded-full border bg-white" aria-label="Bảng và kiểu hiển thị">
+            <span className="grid h-5 w-5 grid-cols-2 gap-[2px]">
+              <span className="rounded-[2px] bg-neutral-950"/><span className="rounded-[2px] bg-neutral-950"/>
+              <span className="rounded-[2px] bg-neutral-950"/><span className="rounded-[2px] bg-neutral-950"/>
+            </span>
+          </button>
+        </div>
+
         {filtersOpen&&<div className="mt-2 grid gap-2 rounded-2xl bg-neutral-50 p-2">
           <select className={input} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}} onBlur={resetIosZoom}><option value="">Tất cả danh mục</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
           <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
           <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
         </div>}
-        <div className="mt-2 grid grid-cols-2 rounded-2xl border bg-white p-1">
-          <button type="button" onClick={()=>setViewMode("LIST")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${viewMode==="LIST"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Danh sách</button>
-          <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-xl px-3 py-2.5 text-xs font-black ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Pinterest</button>
-        </div>
       </header>
 
-      <div className="space-y-3 p-4">
+      <div className="space-y-3 px-2 pb-4 pt-2">
         {error&&<Err x={error}/>}
         {loading&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Đang tải...</div>}
 
@@ -498,11 +506,11 @@ export default function Page(){
           </div>
         })}
 
-        {!loading&&viewMode==="PINTEREST"&&<div className="columns-2 gap-2">
+        {!loading&&viewMode==="PINTEREST"&&<div className="columns-2 gap-1.5">
           {filtered.map(r=>{
             const visuals=sampleVisualUrlsMobile(r);
             const image=visuals[0]?asset(visuals[0]):"";
-            return <div key={r.id} className="mb-2 break-inside-avoid overflow-hidden rounded-2xl bg-white shadow-sm">
+            return <div key={r.id} className="mb-1.5 break-inside-avoid overflow-hidden rounded-[18px] bg-white">
               <button type="button" onClick={()=>setDetail(r)} className="block w-full text-left active:opacity-80">
                 {image?<img src={image} className="block h-auto w-full object-contain" alt=""/>:<div className="grid h-36 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}
                 <div className="p-2.5">
@@ -555,6 +563,64 @@ export default function Page(){
     />}
 
     
+    {boardHubOpen&&<Modal title="Bảng & kiểu hiển thị" onClose={()=>setBoardHubOpen(false)}>
+      <div className="space-y-5 p-4">
+        <div>
+          <div className="mb-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Kiểu hiển thị</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={()=>{setViewMode("PINTEREST");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${viewMode==="PINTEREST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="grid h-10 w-10 grid-cols-2 gap-1">
+                <span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/>
+                <span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/>
+              </div>
+              <div className="mt-2 text-sm font-black">Pinterest</div>
+              <div className={`mt-0.5 text-[10px] ${viewMode==="PINTEREST"?"text-white/60":"text-neutral-400"}`}>Ảnh lớn, 2 cột</div>
+            </button>
+            <button type="button" onClick={()=>{setViewMode("LIST");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${viewMode==="LIST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="space-y-1.5 pt-1">
+                <span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/>
+                <span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/>
+                <span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/>
+              </div>
+              <div className="mt-3 text-sm font-black">Danh sách</div>
+              <div className={`mt-0.5 text-[10px] ${viewMode==="LIST"?"text-white/60":"text-neutral-400"}`}>Xem đủ thông tin</div>
+            </button>
+          </div>
+        </div>
+
+        {sampleTab==="IDEA"&&<div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Bảng ý tưởng</div>
+            {can("design_sample.edit")&&<button type="button" onClick={()=>{setBoardHubOpen(false);setBoardForm({name:"",description:""})}} className="rounded-full border px-3 py-2 text-[10px] font-black">+ Tạo bảng</button>}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={()=>{setBoardFilter("");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${boardFilter===""?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="text-sm font-black">Tất cả</div>
+              <div className={`mt-1 text-[10px] ${boardFilter===""?"text-white/60":"text-neutral-400"}`}>{rows.filter(x=>String(x.status||"IDEA")==="IDEA").length} mẫu</div>
+            </button>
+            <button type="button" onClick={()=>{setBoardFilter("__UNASSIGNED__");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${boardFilter==="__UNASSIGNED__"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="text-sm font-black">Chưa phân bảng</div>
+              <div className={`mt-1 text-[10px] ${boardFilter==="__UNASSIGNED__"?"text-white/60":"text-neutral-400"}`}>{unassignedIdeaCount} mẫu</div>
+            </button>
+            {ideaBoards.map(board=>{
+              const linked=(board.samples||[]).map(x=>x.designSample).filter(Boolean);
+              const ideas=linked.filter(x=>String(x.status||"IDEA")==="IDEA");
+              const thumbs=ideas.flatMap((x:any)=>sampleVisualUrlsMobile(x)).slice(0,4);
+              return <div key={board.id} className={`overflow-hidden rounded-2xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
+                <button type="button" onClick={()=>{setBoardFilter(board.id);setBoardHubOpen(false)}} className="w-full text-left">
+                  <div className="grid aspect-[1.7/1] grid-cols-2 gap-[1px] overflow-hidden bg-neutral-100">
+                    {[0,1,2,3].map(i=>thumbs[i]?<img key={i} src={asset(thumbs[i])} className="h-full w-full object-cover" alt=""/>:<div key={i} className="bg-neutral-100"/>)}
+                  </div>
+                  <div className="p-2.5"><div className="truncate text-xs font-black">{board.name}</div><div className="mt-0.5 text-[10px] text-neutral-400">{ideas.length} ý tưởng</div></div>
+                </button>
+                {can("design_sample.edit")&&<div className="flex border-t p-1"><button type="button" onClick={()=>{setBoardHubOpen(false);setBoardForm({id:board.id,name:board.name,description:board.description||""})}} className="flex-1 rounded-lg px-2 py-1.5 text-[10px] font-black">Sửa</button><button type="button" onClick={()=>void deleteIdeaBoard(board)} className="rounded-lg px-2 py-1.5 text-[10px] font-black text-red-600">Xoá</button></div>}
+              </div>
+            })}
+          </div>
+        </div>}
+      </div>
+    </Modal>}
+
     {boardForm&&<Modal title={boardForm.id?"Sửa bảng ý tưởng":"Tạo bảng ý tưởng"} onClose={()=>setBoardForm(null)}>
       <div className="space-y-4 p-4">
         <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Tên bảng</div><input autoFocus className={input} value={boardForm.name} onChange={e=>setBoardForm({...boardForm,name:e.target.value})} placeholder="VD: Mẫu trẻ em" onBlur={resetIosZoom}/></label>
