@@ -40,8 +40,10 @@ type Sample = {
   dueDate?: string | null; coverImageUrl?: string | null; note?: string | null; technicalNote?: string | null; createdAt?: string | null; updatedAt?: string | null;
   colors: SampleColor[]; images?: Array<{ id?: string; type?:string; url: string; caption?: string | null }>;
   progressLogs?: Array<{ id: string; fromStatus?: string | null; toStatus: string; note?: string | null; actorName?: string | null; createdAt: string }>;
+  ideaBoards?: Array<{ id?:string; boardId:string; board: { id:string; name:string; description?:string|null } }>;
   _count?: { fabricReceipts: number };
 };
+type IdeaBoard = { id:string; name:string; description?:string|null; createdByName?:string|null; updatedAt?:string|null; samples?:Array<{id:string;boardId:string;designSampleId:string;sortOrder?:number;designSample:Partial<Sample>}> };
 
 type Roll = { id?: string; sortOrder?: number | null; fabricCode?: string | null; rollCode?: string | null; images?: Array<{id:string;url:string;caption?:string|null}>; imageUrl?: string | null; colorName?: string | null; colorCode?: string | null; supplierDeclaredM?: number | string | null; supplierDeclaredKg?: number | string | null; actualM?: number | string | null; actualKg?: number | string | null; measuredGsm?: number|string|null; unitPriceCny?: number|string|null; priceUnit?: "METER"|"KG"|"ROLL"|null; lineAmountCny?:number|null; lineAmountVnd?:number|null; defectNote?: string | null; passed?: boolean };
 type FabricCostGroup={id?:string;fabricCode:string;chinaShippingCny?:number|string|null;vietnamShippingRateVndPerKg?:number|string|null;vietnamShippingVnd?:number|string|null;note?:string|null};
@@ -905,6 +907,19 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
   const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST">("CARDS");
   const [featuredId,setFeaturedId]=useState<string>("");
   const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
+  const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
+  const [boardFilter,setBoardFilter]=useState("");
+  const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
+  const [assignSample,setAssignSample]=useState<Sample|null>(null);
+  const [assignBoardIds,setAssignBoardIds]=useState<string[]>([]);
+  const [boardBusy,setBoardBusy]=useState(false);
+  const [boardError,setBoardError]=useState("");
+
+  async function loadIdeaBoards(){
+    try{setIdeaBoards(await api<IdeaBoard[]>("/sample-fabric/samples/idea-boards"))}
+    catch(e){setBoardError(e instanceof Error?e.message:"Không tải được bảng ý tưởng.")}
+  }
+  useEffect(()=>{void loadIdeaBoards()},[]);
 
   const stats = useMemo(()=>({
     total: rows.length,
@@ -916,10 +931,16 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
   const parentOptions=useMemo(()=>Array.from(new Set(rows.map(x=>sampleParentCategory(x.category)))).sort((a,b)=>a.localeCompare(b,"vi")),[rows]);
   const subOptions=useMemo(()=>Array.from(new Set(rows.filter(x=>!parentFilter||sampleParentCategory(x.category)===parentFilter).map(x=>String(x.category||"Chưa phân loại").trim()||"Chưa phân loại"))).sort((a,b)=>a.localeCompare(b,"vi")),[rows,parentFilter]);
 
+  function rowBoardIds(row:Sample){return (row.ideaBoards||[]).map(x=>String(x.boardId||x.board?.id||"")).filter(Boolean)}
+  function boardNames(row:Sample){return (row.ideaBoards||[]).map(x=>x.board?.name).filter(Boolean)}
+  const unassignedIdeaCount=rows.filter(x=>String(x.status||"IDEA")==="IDEA"&&!rowBoardIds(x).length).length;
+
   const visible=useMemo(()=>{
     const next=rows.filter(row=>{
       const inTab=tab==="IDEA"?String(row.status||"IDEA")==="IDEA":String(row.status||"IDEA")!=="IDEA";
       if(!inTab)return false;
+      if(tab==="IDEA"&&boardFilter==="__UNASSIGNED__"&&rowBoardIds(row).length)return false;
+      if(tab==="IDEA"&&boardFilter&&boardFilter!=="__UNASSIGNED__"&&!rowBoardIds(row).includes(boardFilter))return false;
       if(parentFilter&&sampleParentCategory(row.category)!==parentFilter)return false;
       if(subFilter&&String(row.category||"Chưa phân loại").trim()!==subFilter)return false;
       return true;
@@ -930,7 +951,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       const at=new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0;
       return bt-at;
     });
-  },[rows,tab,parentFilter,subFilter,sortMode]);
+  },[rows,tab,parentFilter,subFilter,sortMode,boardFilter]);
 
   const grouped=useMemo(()=>{
     if(!groupByCategory)return [{name:"Tất cả mẫu",rows:visible}];
@@ -945,12 +966,54 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
   const featured=visible.find(x=>x.id===featuredId)||visible[0]||null;
   const featuredImages=featured?sampleVisuals(featured):[];
 
+  async function refreshBoardsAndSamples(){await Promise.all([loadIdeaBoards(),onChanged()])}
+
+  async function saveBoard(){
+    if(!boardForm?.name.trim())return;
+    try{
+      setBoardBusy(true);setBoardError("");
+      await api(boardForm.id?`/sample-fabric/samples/idea-boards/${boardForm.id}`:"/sample-fabric/samples/idea-boards",{
+        method:boardForm.id?"PATCH":"POST",
+        body:JSON.stringify({name:boardForm.name.trim(),description:boardForm.description.trim()||null}),
+      });
+      setBoardForm(null);await loadIdeaBoards();
+    }catch(e){setBoardError(e instanceof Error?e.message:"Không lưu được bảng ý tưởng.")}
+    finally{setBoardBusy(false)}
+  }
+
+  async function removeBoard(board:IdeaBoard){
+    if(!window.confirm(`Xoá bảng "${board.name}"? Các mẫu bên trong không bị xoá.`))return;
+    try{
+      setBoardBusy(true);setBoardError("");
+      await api(`/sample-fabric/samples/idea-boards/${board.id}`,{method:"DELETE"});
+      if(boardFilter===board.id)setBoardFilter("");
+      await refreshBoardsAndSamples();
+    }catch(e){setBoardError(e instanceof Error?e.message:"Không xoá được bảng ý tưởng.")}
+    finally{setBoardBusy(false)}
+  }
+
+  function openAssign(row:Sample){
+    setAssignSample(row);
+    setAssignBoardIds(rowBoardIds(row));
+    setBoardError("");
+  }
+
+  async function saveAssignment(){
+    if(!assignSample)return;
+    try{
+      setBoardBusy(true);setBoardError("");
+      await api(`/sample-fabric/samples/${assignSample.id}/idea-boards`,{method:"PATCH",body:JSON.stringify({boardIds:assignBoardIds})});
+      setAssignSample(null);await refreshBoardsAndSamples();
+    }catch(e){setBoardError(e instanceof Error?e.message:"Không lưu được bảng cho mẫu.")}
+    finally{setBoardBusy(false)}
+  }
+
   async function moveSample(row:Sample,target:"IDEA"|"DEPLOY"){
     if(!can("design_sample.edit"))return;
     try{
       await api(`/sample-fabric/samples/${row.id}`,{method:"PATCH",body:JSON.stringify({status:target==="IDEA"?"IDEA":"FABRIC_SELECTED"})});
-      setTab(target);
-      await onChanged();
+      setTab(target);setBoardFilter("");
+      await refreshBoardsAndSamples();
     }catch(e){window.alert(e instanceof Error?e.message:"Không chuyển được mẫu.")}
   }
 
@@ -968,20 +1031,19 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
 
   function SampleCard({row}:{row:Sample}){
     const latest=row.sampleDispatches?.[0];
+    const names=boardNames(row);
     return <Card className="overflow-hidden">
       <div className="flex gap-4 p-4">
         <SampleImageStack row={row}/>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div>
-              <div className="mt-1 text-lg font-semibold">{row.name}</div>
-            </div>
+            <div><div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div><div className="mt-1 text-lg font-semibold">{row.name}</div></div>
             <Badge status={row.status}>{statusLabel(row.status,SAMPLE_STATUSES)}</Badge>
           </div>
           <div className="mt-3 grid gap-y-1 text-xs text-neutral-600">
             <div>Tạo: <b>{sampleCreatedLabel(row.createdAt)}</b> · {sampleParentCategory(row.category)} / <b>{row.category||"Chưa phân loại"}</b></div>
             <div>Bảng vải: <b>{row.fabricBoard?.boardCode||row.fabricBoardCode||"—"}</b> · Phụ trách: <b>{row.assigneeName||"—"}</b></div>
+            {names.length>0&&<div className="flex flex-wrap items-center gap-1 pt-1"><span className="text-neutral-400">Bảng ý tưởng:</span>{names.map(name=><span key={name} className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-semibold">{name}</span>)}</div>}
           </div>
         </div>
       </div>
@@ -991,10 +1053,11 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
           <div className="min-w-0 text-xs text-neutral-500">{row.nextAction?<>Tiếp theo: <b>{row.nextAction}</b></>:"Chưa ghi việc tiếp theo"}</div>
           <div className="flex shrink-0 flex-wrap gap-2">
             {sampleVisuals(row).length>0&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Xem mẫu</button>}
+            {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(row)} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Bảng ý tưởng</button>}
             {can("design_sample.edit")&&<button type="button" onClick={()=>void moveSample(row,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">{tab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}</button>}
             {can("sample_dispatch.create")&&row.fabricBoard&&tab==="DEPLOY"&&<button onClick={()=>onDispatch(row)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Gửi / gửi lại</button>}
             {can("design_sample.edit")&&<button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
-            {can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await onChanged()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}
+            {can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await refreshBoardsAndSamples()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}
           </div>
         </div>
       </div>
@@ -1007,8 +1070,34 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     <Card className="overflow-hidden">
       <div className="grid grid-cols-2 border-b bg-neutral-50 p-1">
         <button type="button" onClick={()=>{setTab("IDEA");setFeaturedId("")}} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="IDEA"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Ý tưởng mẫu · {stats.idea}</button>
-        <button type="button" onClick={()=>{setTab("DEPLOY");setFeaturedId("")}} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {stats.deploy}</button>
+        <button type="button" onClick={()=>{setTab("DEPLOY");setFeaturedId("");setBoardFilter("")}} className={`rounded-xl px-4 py-3 text-sm font-semibold ${tab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {stats.deploy}</button>
       </div>
+
+      {tab==="IDEA"&&<div className="border-b bg-white p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div><div className="font-semibold">Bảng ý tưởng</div><div className="text-xs text-neutral-400">Một mẫu có thể nằm trong nhiều bảng. Chuyển sang triển khai vẫn giữ liên kết bảng.</div></div>
+          {can("design_sample.edit")&&<button type="button" onClick={()=>setBoardForm({name:"",description:""})} className="rounded-xl bg-neutral-950 px-4 py-2 text-xs font-semibold text-white">+ Tạo bảng</button>}
+        </div>
+        {boardError&&<div className="mb-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">{boardError}</div>}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <button type="button" onClick={()=>setBoardFilter("")} className={`rounded-2xl border p-3 text-left ${boardFilter===""?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><div className="font-semibold">Tất cả ý tưởng</div><div className={`mt-1 text-xs ${boardFilter===""?"text-white/60":"text-neutral-400"}`}>{stats.idea} mẫu</div></button>
+          <button type="button" onClick={()=>setBoardFilter("__UNASSIGNED__")} className={`rounded-2xl border p-3 text-left ${boardFilter==="__UNASSIGNED__"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><div className="font-semibold">Chưa phân bảng</div><div className={`mt-1 text-xs ${boardFilter==="__UNASSIGNED__"?"text-white/60":"text-neutral-400"}`}>{unassignedIdeaCount} mẫu</div></button>
+          {ideaBoards.map(board=>{
+            const linked=(board.samples||[]).map(x=>x.designSample).filter(Boolean);
+            const ideaCount=linked.filter((x:any)=>String(x.status||"IDEA")==="IDEA").length;
+            const deployed=linked.length-ideaCount;
+            const covers=linked.flatMap((x:any)=>[x.coverImageUrl,...(x.images||[]).map((i:any)=>i.url)]).filter(Boolean).slice(0,4);
+            return <div key={board.id} className={`overflow-hidden rounded-2xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
+              <button type="button" onClick={()=>setBoardFilter(board.id)} className="block w-full text-left">
+                <div className="grid h-24 grid-cols-2 gap-px bg-neutral-100">{covers.length?covers.map((url,i)=><img key={`${url}-${i}`} src={assetUrl(String(url))} className="h-full w-full object-cover"/>):<div className="col-span-2 grid place-items-center text-2xl text-neutral-300">✦</div>}</div>
+                <div className="p-3"><div className="font-semibold">{board.name}</div><div className="mt-1 text-xs text-neutral-400">{ideaCount} ý tưởng{deployed?` · ${deployed} đã triển khai`:""}</div>{board.description&&<div className="mt-1 line-clamp-2 text-xs text-neutral-500">{board.description}</div>}</div>
+              </button>
+              {can("design_sample.edit")&&<div className="flex gap-1 border-t p-2"><button type="button" onClick={()=>setBoardForm({id:board.id,name:board.name,description:board.description||""})} className="flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold">Sửa</button><button type="button" disabled={boardBusy} onClick={()=>void removeBoard(board)} className="rounded-lg border border-red-200 px-2 py-1.5 text-[11px] font-semibold text-red-600">Xoá</button></div>}
+            </div>
+          })}
+        </div>
+      </div>}
+
       <div className="grid gap-3 p-4 xl:grid-cols-[1fr_1fr_auto]">
         <div className="grid gap-2 sm:grid-cols-2">
           <select className={inputClass} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
@@ -1023,7 +1112,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
           <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
         </div>
       </div>
-      <div className="border-t px-4 py-2 text-xs text-neutral-500">Đang hiển thị <b>{visible.length}</b> mẫu · Có thể kết hợp lọc danh mục + loại mẫu + cách sắp xếp.</div>
+      <div className="border-t px-4 py-2 text-xs text-neutral-500">Đang hiển thị <b>{visible.length}</b> mẫu{tab==="IDEA"&&boardFilter?` trong ${boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(x=>x.id===boardFilter)?.name||"bảng đã chọn"}`:""}.</div>
     </Card>
 
     {viewMode==="CARDS"?<div className="space-y-5">
@@ -1037,9 +1126,11 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
           <div className="text-xs font-semibold text-neutral-400">{featured.code} · Tạo {sampleCreatedLabel(featured.createdAt)}</div>
           <div className="mt-1 text-xl font-semibold">{featured.name}</div>
           <div className="mt-2 text-sm text-neutral-500">{sampleParentCategory(featured.category)} · {featured.category||"Chưa phân loại"} · {statusLabel(featured.status,SAMPLE_STATUSES)}</div>
+          {boardNames(featured).length>0&&<div className="mt-2 flex flex-wrap gap-1">{boardNames(featured).map(x=><span key={x} className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-semibold">{x}</span>)}</div>}
           {featuredImages.length>1&&<div className="mt-3 flex gap-2 overflow-x-auto">{featuredImages.slice(0,8).map((url,i)=><button key={url} onClick={()=>setViewer({sample:featured,index:i})}><img src={assetUrl(url)} className="h-16 w-16 rounded-xl object-cover"/></button>)}</div>}
           <div className="mt-4 flex flex-wrap gap-2">
             {featuredImages.length>0&&<button type="button" onClick={()=>setViewer({sample:featured,index:0})} className="rounded-xl border px-3 py-2 text-xs font-semibold">Xem đầy đủ ảnh</button>}
+            {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Bảng ý tưởng</button>}
             {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
             {can("design_sample.edit")&&<button type="button" onClick={()=>void moveSample(featured,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">{tab==="IDEA"?"Chuyển sang triển khai":"Đưa về ý tưởng"}</button>}
           </div>
@@ -1048,13 +1139,31 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       <div className="columns-2 gap-3 2xl:columns-3">{visible.map(row=>{const images=sampleVisuals(row);const image=images[0];return <div key={row.id} className="mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
         <button type="button" onClick={()=>setFeaturedId(row.id)} className="block w-full text-left">
           {image?<img src={assetUrl(image)} className="block h-auto w-full object-contain"/>:<div className="grid h-40 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}
-          <div className="p-3"><div className="line-clamp-2 text-sm font-semibold">{row.name}</div><div className="mt-1 text-[11px] text-neutral-400">{row.code} · {row.category||"Chưa phân loại"} · {sampleCreatedLabel(row.createdAt)}</div>{images.length>1&&<div className="mt-2 text-[10px] font-semibold text-blue-600">{images.length} ảnh</div>}</div>
+          <div className="p-3"><div className="line-clamp-2 text-sm font-semibold">{row.name}</div><div className="mt-1 text-[11px] text-neutral-400">{row.code} · {row.category||"Chưa phân loại"} · {sampleCreatedLabel(row.createdAt)}</div>{boardNames(row).length>0&&<div className="mt-2 line-clamp-1 text-[10px] font-semibold text-neutral-500">{boardNames(row).join(" · ")}</div>}{images.length>1&&<div className="mt-1 text-[10px] font-semibold text-blue-600">{images.length} ảnh</div>}</div>
         </button>
-        {image&&<div className="border-t px-3 py-2"><button type="button" onClick={()=>setViewer({sample:row,index:0})} className="w-full rounded-lg border px-2 py-1.5 text-[11px] font-semibold">Xem mẫu</button></div>}
+        <div className="flex gap-1 border-t p-2">{image&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold">Xem mẫu</button>}{can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(row)} className="rounded-lg border px-2 py-1.5 text-[11px] font-semibold">+ Bảng</button>}</div>
       </div>})}</div>
     </div>}
 
     {!visible.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu phù hợp với bộ lọc.</Card>}
+
+    {boardForm&&<Modal title={boardForm.id?"Sửa bảng ý tưởng":"Tạo bảng ý tưởng"} onClose={()=>setBoardForm(null)}>
+      <div className="space-y-4 p-5">
+        {boardError&&<div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{boardError}</div>}
+        <Field label="Tên bảng"><input autoFocus className={inputClass} value={boardForm.name} onChange={e=>setBoardForm({...boardForm,name:e.target.value})} placeholder="VD: Mẫu trẻ em"/></Field>
+        <Field label="Mô tả"><textarea className={`${inputClass} min-h-24`} value={boardForm.description} onChange={e=>setBoardForm({...boardForm,description:e.target.value})} placeholder="Ghi chú ngắn về nhóm ý tưởng..."/></Field>
+        <div className="flex justify-end gap-2 border-t pt-4"><button type="button" onClick={()=>setBoardForm(null)} className="rounded-xl border px-4 py-2">Huỷ</button><button type="button" disabled={boardBusy||!boardForm.name.trim()} onClick={()=>void saveBoard()} className="rounded-xl bg-neutral-950 px-4 py-2 font-semibold text-white disabled:opacity-40">{boardBusy?"Đang lưu...":"Lưu bảng"}</button></div>
+      </div>
+    </Modal>}
+
+    {assignSample&&<Modal title={`Bảng ý tưởng · ${assignSample.code}`} onClose={()=>setAssignSample(null)}>
+      <div className="space-y-4 p-5">
+        <div><b>{assignSample.name}</b><div className="mt-1 text-xs text-neutral-400">Có thể chọn nhiều bảng cùng lúc.</div></div>
+        {boardError&&<div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{boardError}</div>}
+        <div className="max-h-72 space-y-2 overflow-y-auto">{ideaBoards.map(board=>{const checked=assignBoardIds.includes(board.id);return <label key={board.id} className="flex cursor-pointer items-start gap-3 rounded-2xl border p-3"><input type="checkbox" className="mt-0.5 h-4 w-4" checked={checked} onChange={()=>setAssignBoardIds(x=>checked?x.filter(id=>id!==board.id):[...x,board.id])}/><div><div className="font-semibold">{board.name}</div>{board.description&&<div className="mt-1 text-xs text-neutral-400">{board.description}</div>}</div></label>})}{!ideaBoards.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa có bảng. Tạo bảng trước rồi thêm mẫu.</div>}</div>
+        <div className="flex items-center justify-between border-t pt-4"><button type="button" onClick={()=>{setAssignSample(null);setBoardForm({name:"",description:""})}} className="rounded-xl border px-3 py-2 text-sm font-semibold">+ Tạo bảng mới</button><div className="flex gap-2"><button type="button" onClick={()=>setAssignSample(null)} className="rounded-xl border px-4 py-2">Huỷ</button><button type="button" disabled={boardBusy} onClick={()=>void saveAssignment()} className="rounded-xl bg-neutral-950 px-4 py-2 font-semibold text-white disabled:opacity-40">Lưu</button></div></div>
+      </div>
+    </Modal>}
 
     {viewer&&(()=>{const images=sampleVisuals(viewer.sample);const current=images[viewer.index]||images[0];if(!current)return null;return <div className="fixed inset-0 z-[90] flex flex-col bg-black/95 text-white">
       <div className="flex items-center justify-between border-b border-white/10 p-4"><div><div className="text-xs text-white/50">{viewer.sample.code} · {viewer.index+1}/{images.length}</div><div className="font-semibold">{viewer.sample.name}</div></div><button type="button" onClick={()=>setViewer(null)} className="h-10 w-10 rounded-full bg-white text-xl text-black">×</button></div>
