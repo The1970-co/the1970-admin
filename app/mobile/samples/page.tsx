@@ -736,6 +736,10 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
   const image=gallery[viewerIndex]||gallery[0]||"";
   const [detailExpanded,setDetailExpanded]=useState(false);
   const swipeStartX=useRef<number|null>(null);
+  const [zoomOpen,setZoomOpen]=useState(false);
+  const [zoomScale,setZoomScale]=useState(1);
+  const [zoomPos,setZoomPos]=useState({x:0,y:0});
+  const zoomGesture=useRef<any>({});
   const [editMode,setEditMode]=useState(false);
   const [rotate,setRotate]=useState(0);
   const [flipX,setFlipX]=useState(false);
@@ -769,6 +773,68 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     const dx=end-start;
     if(Math.abs(dx)<45)return;
     dx<0?nextImage():prevImage();
+  }
+  function openZoom(){
+    if(!image)return;
+    setZoomScale(1);
+    setZoomPos({x:0,y:0});
+    zoomGesture.current={};
+    setZoomOpen(true);
+  }
+  function closeZoom(){
+    setZoomOpen(false);
+    setZoomScale(1);
+    setZoomPos({x:0,y:0});
+    zoomGesture.current={};
+  }
+  function touchDistance(t:any){
+    const dx=t[0].clientX-t[1].clientX;
+    const dy=t[0].clientY-t[1].clientY;
+    return Math.sqrt(dx*dx+dy*dy);
+  }
+  function zoomTouchStart(e:any){
+    const t=e.touches;
+    if(t.length===2){
+      zoomGesture.current={
+        mode:"pinch",
+        startDistance:touchDistance(t),
+        startScale:zoomScale,
+      };
+    }else if(t.length===1&&zoomScale>1){
+      zoomGesture.current={
+        mode:"pan",
+        startX:t[0].clientX,
+        startY:t[0].clientY,
+        originX:zoomPos.x,
+        originY:zoomPos.y,
+      };
+    }
+  }
+  function zoomTouchMove(e:any){
+    const t=e.touches;
+    if(t.length===2){
+      e.preventDefault();
+      const g=zoomGesture.current;
+      const startDistance=g.startDistance||touchDistance(t);
+      const startScale=g.startScale||zoomScale;
+      const next=Math.max(1,Math.min(4,startScale*(touchDistance(t)/Math.max(1,startDistance))));
+      setZoomScale(next);
+      if(next<=1.02)setZoomPos({x:0,y:0});
+    }else if(t.length===1&&zoomScale>1&&zoomGesture.current.mode==="pan"){
+      e.preventDefault();
+      const g=zoomGesture.current;
+      setZoomPos({
+        x:(g.originX||0)+(t[0].clientX-(g.startX||0)),
+        y:(g.originY||0)+(t[0].clientY-(g.startY||0)),
+      });
+    }
+  }
+  function zoomTouchEnd(){
+    zoomGesture.current={};
+    if(zoomScale<1.05){
+      setZoomScale(1);
+      setZoomPos({x:0,y:0});
+    }
   }
   function resetEdit(){
     setRotate(0);setFlipX(false);setCropRatio("original");setBrightness(100);setContrast(100);setViewerError("");
@@ -1084,7 +1150,7 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
           onTouchEnd={galleryTouchEnd}
           style={{touchAction:"pan-y"}}
         >
-          {image?<img src={image} className="max-h-[74dvh] w-full object-contain" alt=""/>:<div className="grid h-[58dvh] w-full place-items-center text-sm font-bold text-neutral-400">Chưa có ảnh mẫu</div>}
+          {image?<button type="button" onClick={openZoom} className="block w-full cursor-zoom-in"><img src={image} className="max-h-[74dvh] w-full object-contain" alt=""/></button>:<div className="grid h-[58dvh] w-full place-items-center text-sm font-bold text-neutral-400">Chưa có ảnh mẫu</div>}
 
           <button
             type="button"
@@ -1172,6 +1238,37 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
         </div>}
       </section>
     </div>
+
+    {zoomOpen&&image&&<div className="fixed inset-0 z-[125] overflow-hidden bg-black" style={{touchAction:"none"}}>
+      <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-3" style={{paddingTop:"max(12px, env(safe-area-inset-top))"}}>
+        <button type="button" onClick={closeZoom} className="grid h-11 w-11 place-items-center rounded-full bg-white/92 text-black shadow backdrop-blur" aria-label="Đóng ảnh"><X className="h-5 w-5"/></button>
+        <div className="rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-black text-white">{Math.round(zoomScale*100)}%</div>
+      </div>
+
+      <div
+        className="flex h-full w-full items-center justify-center"
+        onTouchStart={zoomTouchStart}
+        onTouchMove={zoomTouchMove}
+        onTouchEnd={zoomTouchEnd}
+        onDoubleClick={()=>{if(zoomScale>1){setZoomScale(1);setZoomPos({x:0,y:0})}else setZoomScale(2)}}
+      >
+        <img
+          src={image}
+          alt=""
+          draggable={false}
+          className="max-h-full max-w-full select-none object-contain"
+          style={{
+            transform:`translate3d(${zoomPos.x}px, ${zoomPos.y}px, 0) scale(${zoomScale})`,
+            transformOrigin:"center center",
+            transition:zoomGesture.current?.mode?"none":"transform 120ms ease-out",
+          }}
+        />
+      </div>
+
+      <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 flex justify-center pb-[max(18px,env(safe-area-inset-bottom))]">
+        <div className="rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white/90">Chụm 2 ngón để zoom · kéo để xem</div>
+      </div>
+    </div>}
 
     {editMode&&image&&<div className="fixed inset-0 z-[120] bg-black">
       <SampleImageEditorKonva
