@@ -475,6 +475,29 @@ function CreateOrderModal({ meta, canViewSampleSource, onClose, onSaved }: { met
 }
 
 
+type LiningComponentConfig = {
+  key: string; name: string; enabled: boolean; consumption: number | string; unit: "G" | "M"; wastePercent: number | string; preset?: boolean;
+};
+
+const DEFAULT_LINING_COMPONENTS: LiningComponentConfig[] = [
+  { key: "BODY", name: "Lót thân", enabled: false, consumption: "", unit: "G", wastePercent: 0, preset: true },
+  { key: "SLEEVE", name: "Lót tay", enabled: false, consumption: "", unit: "G", wastePercent: 0, preset: true },
+  { key: "POCKET", name: "Lót túi", enabled: false, consumption: "", unit: "M", wastePercent: 0, preset: true },
+  { key: "COLLAR", name: "Lót cổ", enabled: false, consumption: "", unit: "M", wastePercent: 0, preset: true },
+];
+
+function normalizeLiningComponentsClient(value:any):LiningComponentConfig[]{
+  const saved=Array.isArray(value)?value:[];
+  const byKey=new Map(saved.map((x:any)=>[String(x?.key||x?.id||""),x]));
+  const presets=DEFAULT_LINING_COMPONENTS.map((base)=>{const old:any=byKey.get(base.key)||{};return {...base,...old,key:base.key,name:base.name,preset:true,unit:String(old?.unit||base.unit).toUpperCase()==="G"?"G":"M"} as LiningComponentConfig;});
+  const extras=saved.filter((x:any)=>x?.key&&!DEFAULT_LINING_COMPONENTS.some(p=>p.key===String(x.key))).map((x:any)=>({key:String(x.key),name:String(x.name||"Lót khác"),enabled:x.enabled!==false,consumption:x.consumption??"",unit:String(x.unit||"M").toUpperCase()==="G"?"G":"M",wastePercent:x.wastePercent??0,preset:false} as LiningComponentConfig));
+  return [...presets,...extras];
+}
+function normalizeLiningAssignmentsClient(value:any):Record<string,string[]>{
+  if(!value||typeof value!=="object"||Array.isArray(value))return {};
+  return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,Array.isArray(v)?Array.from(new Set(v.map(x=>String(x)).filter(Boolean))):[]]));
+}
+
 function printEsc(v:any){return String(v??"").replace(/[&<>"']/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"} as any)[m]);}
 function printWindow(title:string,body:string){const w=window.open("","_blank","width=1000,height=760");if(!w){window.alert("Trình duyệt đang chặn cửa sổ in.");return;}w.document.write(`<!doctype html><html><head><meta charset="utf-8"/><title>${printEsc(title)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;font-size:12px;color:#111}h1{font-size:20px;margin:0 0 5px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0}table{width:100%;border-collapse:collapse}th,td{border:1px solid #222;padding:7px}th{background:#f3f3f3}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px;text-align:center;margin-top:55px}.sign div{padding-top:7px;border-top:1px solid #222}@media print{button{display:none}}</style></head><body><button onclick="window.print()">In phiếu</button>${body}</body></html>`);w.document.close();w.focus();setTimeout(()=>w.print(),250);}
 function printFabricIssue(order:any,rolls:Roll[],selected:Record<string,boolean>,allocated:Record<string,string>,receiver:string,issueDate:string){const picked=rolls.filter(r=>selected[r.id]);if(!picked.length)return;const rows=picked.map((r,i)=>{const m=Number(String(allocated[r.id]??r.remainingM??r.actualM??0).replace(",","."))||0;return `<tr><td>${i+1}</td><td>${printEsc(r.receiptCode||"—")}</td><td>${printEsc(r.fabricCode||r.fabricName||"—")}</td><td>${printEsc(r.rollCode||"—")}</td><td>${printEsc(r.colorName||"—")}</td><td>${fmt(m)} m</td><td>${fmt(r.remainingKg||r.actualKg||0)} kg</td></tr>`}).join("");const totalM=picked.reduce((sum,r)=>sum+(Number(String(allocated[r.id]??r.remainingM??r.actualM??0).replace(",","."))||0),0);printWindow(`Phiếu xuất vải ${order?.code||""}`,`<h1>THE 1970 · PHIẾU XUẤT VẢI</h1><div>Mã lệnh SX: <b>${printEsc(order?.code||"—")}</b></div><div class="grid"><div>Ngày xuất: <b>${printEsc(issueDate||new Date().toLocaleDateString("vi-VN"))}</b></div><div>Người nhận: <b>${printEsc(receiver||"—")}</b></div><div>Mã sản phẩm: <b>${printEsc(order?.sourceCode||order?.source?.code||"—")}</b></div><div>Nhà may / xưởng: <b>${printEsc(order?.factory?.name||"—")}</b></div><div>Tổng mét xuất: <b>${fmt(totalM)} m</b></div><div>Số cây: <b>${picked.length}</b></div></div><table><thead><tr><th>STT</th><th>Phiếu vải</th><th>Mã vải</th><th>Mã cây</th><th>Màu</th><th>Mét xuất</th><th>Kg tham chiếu</th></tr></thead><tbody>${rows}</tbody></table><div class="sign"><div>NGƯỜI XUẤT</div><div>NGƯỜI NHẬN</div><div>THỦ KHO / XÁC NHẬN</div></div>`);}
@@ -499,6 +522,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   const [allocated, setAllocated] = useState<Record<string, string>>({});
   const [liningSelected, setLiningSelected] = useState<Record<string, boolean>>({});
   const [liningAllocated, setLiningAllocated] = useState<Record<string, string>>({});
+  const [liningAllocatedKg, setLiningAllocatedKg] = useState<Record<string, string>>({});
   const [sizeSet, setSizeSet] = useState<string[]>([]);
   const [ratio, setRatio] = useState<Record<string, number>>({});
   const [calc, setCalc] = useState<any>(null);
@@ -544,7 +568,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           ? productionApi<SavedAccessoryTemplate[]>(`/production/accessory-templates`)
           : Promise.resolve([] as SavedAccessoryTemplate[]),
       ]);
-      setOrder(o);
+      setOrder({ ...o, liningFabricComponents: normalizeLiningComponentsClient(o.liningFabricComponents), liningFabricAssignments: normalizeLiningAssignmentsClient(o.liningFabricAssignments) });
       setSavedTemplates(templateOptions || []);
       setMaterials((o.accessorySpecs || []).map((x: any) => {
         const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
@@ -555,15 +579,17 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       const meters: Record<string, string> = {};
       const liningSel: Record<string, boolean> = {};
       const liningMeters: Record<string, string> = {};
+      const liningKg: Record<string, string> = {};
       (o.rolls || []).forEach((x: any) => {
         const role = String(x.fabricRole || "MAIN").toUpperCase();
-        if (role === "LINING") { liningSel[x.fabricReceiptRollId] = true; liningMeters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); }
+        if (role === "LINING") { liningSel[x.fabricReceiptRollId] = true; liningMeters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); liningKg[x.fabricReceiptRollId] = String(x.allocatedKg ?? ""); }
         else { sel[x.fabricReceiptRollId] = true; meters[x.fabricReceiptRollId] = String(x.allocatedM ?? ""); }
       });
       setSelected(sel);
       setAllocated(meters);
       setLiningSelected(liningSel);
       setLiningAllocated(liningMeters);
+      setLiningAllocatedKg(liningKg);
       const ss = Array.isArray(o.sizeSet) && o.sizeSet.length ? o.sizeSet : o.productKind === "PANTS" ? PANTS_SIZES : SHIRT_SIZES;
       setSizeSet(ss);
       setRatio(o.sizeRatio && typeof o.sizeRatio === "object" ? o.sizeRatio : Object.fromEntries(ss.map((x: string) => [x, 1])));
@@ -776,14 +802,18 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       const allRolls = await productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}`);
       const duplicate = allRolls.find((r) => selected[r.id] && liningSelected[r.id]);
       if (duplicate) throw new Error(`Cây ${duplicate.rollCode || duplicate.id} đang được chọn đồng thời là vải chính và vải lót.`);
-      const buildRows=(picked:Record<string,boolean>,metersMap:Record<string,string>,fabricRole:"MAIN"|"LINING")=>allRolls.filter((r)=>picked[r.id]).map((r)=>{
+      const buildRows=(picked:Record<string,boolean>,metersMap:Record<string,string>,fabricRole:"MAIN"|"LINING",kgMap?:Record<string,string>)=>allRolls.filter((r)=>picked[r.id]).map((r)=>{
         const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
+        const availableKg=Number(r.remainingKg||r.actualKg||r.supplierDeclaredKg||0);
         const meters=Number(String(metersMap[r.id]||availableM).replace(",","."));
         if(!meters||meters<=0)throw new Error(`Nhập số mét xuất cho cây ${r.rollCode||r.id}.`);
         if(meters>availableM+0.0001)throw new Error(`Cây ${r.rollCode||r.id} chỉ còn ${fmt(availableM)}m.`);
-        return {fabricReceiptRollId:r.id,allocatedM:meters,allocatedKg:r.remainingKg,fabricRole};
+        const kg=fabricRole==="LINING"?Number(String(kgMap?.[r.id]??availableKg).replace(",",".")):Number(r.remainingKg||0);
+        if(fabricRole==="LINING"&&kg<0)throw new Error(`Kg xuất của cây ${r.rollCode||r.id} không hợp lệ.`);
+        if(fabricRole==="LINING"&&availableKg>0&&kg>availableKg+0.0001)throw new Error(`Cây ${r.rollCode||r.id} chỉ còn ${fmt(availableKg)}kg.`);
+        return {fabricReceiptRollId:r.id,allocatedM:meters,allocatedKg:kg,fabricRole};
       });
-      const payload=[...buildRows(selected,allocated,"MAIN"),...buildRows(liningSelected,liningAllocated,"LINING")];
+      const payload=[...buildRows(selected,allocated,"MAIN"),...buildRows(liningSelected,liningAllocated,"LINING",liningAllocatedKg)];
       if (!payload.some((x)=>x.fabricRole==="MAIN")) throw new Error("Phải chọn ít nhất 1 cây vải chính.");
       await productionApi(`/production/orders/${id}/rolls`, {method:"PATCH",body:JSON.stringify({rolls:payload})});
       await load();
@@ -806,6 +836,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             fabricWastePercent: numberOrZero(order.fabricWastePercent),
             liningFabricConsumptionM: numberOrNull(order.liningFabricConsumptionM),
             liningFabricWastePercent: numberOrZero(order.liningFabricWastePercent),
+            liningFabricComponents: normalizeLiningComponentsClient(order.liningFabricComponents).map((x)=>({ ...x, consumption:numberOrZero(x.consumption), wastePercent:numberOrZero(x.wastePercent) })),
           } : {}),
           sizeSet,
           sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
@@ -854,6 +885,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
               fabricWastePercent: numberOrZero(order.fabricWastePercent),
               liningFabricConsumptionM: numberOrNull(order.liningFabricConsumptionM),
               liningFabricWastePercent: numberOrZero(order.liningFabricWastePercent),
+              liningFabricComponents: normalizeLiningComponentsClient(order.liningFabricComponents).map((x)=>({ ...x, consumption:numberOrZero(x.consumption), wastePercent:numberOrZero(x.wastePercent) })),
             } : {}),
             sizeSet,
             sizeRatio: Object.fromEntries(sizeSet.map((s) => [s, numberOrZero(ratio[s])])),
@@ -861,6 +893,10 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         });
       }
 
+      const enabledLiningParts = normalizeLiningComponentsClient(order.liningFabricComponents).filter((x)=>x.enabled && numberOrZero(x.consumption)>0);
+      if (enabledLiningParts.length) {
+        await productionApi(`/production/orders/${id}/spec`, { method: "PATCH", body: JSON.stringify({ liningFabricAssignments: normalizeLiningAssignmentsClient(order.liningFabricAssignments) }) });
+      }
       const c = await productionApi<any>(`/production/orders/${id}/calculate`, { method: "POST" });
       setCalc(c);
       await load();
@@ -943,6 +979,11 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       }
       return `${a.receiptCode || ""} ${a.rollCode || ""}`.localeCompare(`${b.receiptCode || ""} ${b.rollCode || ""}`, "vi", { numeric: true });
     });
+
+  const liningComponents = normalizeLiningComponentsClient(order?.liningFabricComponents);
+  const enabledLiningComponents = liningComponents.filter((x)=>x.enabled && numberOrZero(x.consumption)>0);
+  const liningAssignments = normalizeLiningAssignmentsClient(order?.liningFabricAssignments);
+  const liningRollOptions = (order?.rolls || []).filter((x:any)=>String(x.fabricRole||"MAIN").toUpperCase()==="LINING").map((x:any)=>{const source=rolls.find((r)=>r.id===x.fabricReceiptRollId);return {id:String(x.fabricReceiptRollId),rollCode:x.rollCode||source?.rollCode||"Cây",fabricName:source?.fabricName||source?.fabricCode||"Vải lót",colorName:x.colorName||source?.colorName||"—",allocatedM:Number(x.allocatedM||0),allocatedKg:Number(x.allocatedKg||0)};});
 
   return (
     <Modal title={`${order.code}${order.sourceType === "SAMPLE" && !canViewSampleSource ? "" : ` · ${order.sourceCode}`}`} onClose={onClose} wide>
@@ -1046,7 +1087,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             </div>
             <div className="text-xs text-neutral-400">Một cây chỉ được chọn cho một vai trò trong lệnh: <b>Vải chính</b> hoặc <b>Vải lót</b>. Vải lót được tính định mức riêng ở Bước 4.</div>
 
-            {[{role:"MAIN" as const,title:"Vải chính",selectedMap:selected,setSelectedMap:setSelected,allocatedMap:allocated,setAllocatedMap:setAllocated},{role:"LINING" as const,title:"Vải lót",selectedMap:liningSelected,setSelectedMap:setLiningSelected,allocatedMap:liningAllocated,setAllocatedMap:setLiningAllocated}].map((section)=> (
+            {[{role:"MAIN" as const,title:"Vải chính",selectedMap:selected,setSelectedMap:setSelected,allocatedMap:allocated,setAllocatedMap:setAllocated},{role:"LINING" as const,title:"Vải lót",selectedMap:liningSelected,setSelectedMap:setLiningSelected,allocatedMap:liningAllocated,setAllocatedMap:setLiningAllocated,kgMap:liningAllocatedKg,setKgMap:setLiningAllocatedKg}].map((section)=> (
               <div key={section.role} className={`rounded-3xl border p-3 ${section.role==="LINING"?"border-blue-200 bg-blue-50/30":"bg-white"}`}>
                 <div className="mb-2 flex items-center justify-between gap-3 px-1"><div><b>{section.title}</b><div className="text-[11px] text-neutral-400">{section.role==="MAIN"?"Quyết định số lượng sản phẩm cắt được.":"Đối chiếu đủ/thiếu theo sản lượng của vải chính."}</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold">{Object.values(section.selectedMap).filter(Boolean).length} cây</span></div>
                 <div className="max-h-[330px] space-y-2 overflow-y-auto rounded-2xl border bg-white p-2">
@@ -1058,10 +1099,11 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
                     const exportM=Number(String(section.allocatedMap[r.id]??"").replace(",","."))||0;
                     const afterM=Math.max(0,availableM-exportM);
                     return (
-                      <div key={`${section.role}-${r.id}`} className={`grid items-center gap-3 rounded-2xl border p-3 md:grid-cols-[auto_1fr_170px_150px] ${disabled||usedByOtherRole ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
+                      <div key={`${section.role}-${r.id}`} className={`grid items-center gap-3 rounded-2xl border p-3 ${section.role==="LINING"?"md:grid-cols-[auto_1fr_145px_145px_140px]":"md:grid-cols-[auto_1fr_170px_150px]"} ${disabled||usedByOtherRole ? "bg-neutral-100 opacity-60" : active ? "border-neutral-950 bg-neutral-50" : "bg-white"}`}>
                         <input type="checkbox" disabled={disabled||usedByOtherRole||!stepAccess[3]} checked={active} onChange={(e) => section.setSelectedMap({ ...section.selectedMap, [r.id]: e.target.checked })} />
-                        <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${usedByOtherRole?"text-amber-600":r.isDepleted?"text-red-600":r.usingSupplierDeclaredM?"text-amber-600":"text-emerald-700"}`}>{usedByOtherRole?`Đã chọn ở ${section.role==="MAIN"?"Vải lót":"Vải chính"}`:r.isDepleted?"Đã xuất hết":availableM<=0?"Cây chưa có số mét":`Còn ${fmt(availableM)}m${r.usingSupplierDeclaredM?" · dùng mét NCC báo":""}`}</div></div>
-                        <div><div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">Xuất cây này</div><input disabled={!active||disabled||usedByOtherRole||!stepAccess[3]} inputMode="decimal" className={input} value={section.allocatedMap[r.id] ?? (active?String(availableM):"")} onChange={(e) => section.setAllocatedMap({ ...section.allocatedMap, [r.id]: e.target.value })} placeholder="Mét xuất" /></div>
+                        <div className="min-w-0 text-sm"><b>{r.receiptCode} · {r.rollCode || "Cây"}</b><div className="mt-1 text-xs text-neutral-500">{r.fabricName || r.fabricCode || "Vải"} · {r.colorName || "—"} {r.colorCode || ""}</div><div className={`mt-1 text-xs font-semibold ${usedByOtherRole?"text-amber-600":r.isDepleted?"text-red-600":r.usingSupplierDeclaredM?"text-amber-600":"text-emerald-700"}`}>{usedByOtherRole?`Đã chọn ở ${section.role==="MAIN"?"Vải lót":"Vải chính"}`:r.isDepleted?"Đã xuất hết":availableM<=0?"Cây chưa có số mét":`Còn ${fmt(availableM)}m · ${fmt(Number(r.remainingKg||r.actualKg||0))}kg${r.usingSupplierDeclaredM?" · dùng mét NCC báo":""}`}</div></div>
+                        <div><div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">Mét xuất</div><input disabled={!active||disabled||usedByOtherRole||!stepAccess[3]} inputMode="decimal" className={input} value={section.allocatedMap[r.id] ?? (active?String(availableM):"")} onChange={(e) => section.setAllocatedMap({ ...section.allocatedMap, [r.id]: e.target.value })} placeholder="Mét" /></div>
+                        {section.role==="LINING"&&<div><div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">Kg xuất</div><input disabled={!active||disabled||usedByOtherRole||!stepAccess[3]} inputMode="decimal" className={input} value={section.kgMap?.[r.id] ?? (active?String(Number(r.remainingKg||r.actualKg||0)):"")} onChange={(e) => section.setKgMap?.({ ...(section.kgMap||{}), [r.id]: e.target.value })} placeholder="Kg" /></div>}
                         <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[10px] font-semibold uppercase text-neutral-400">Còn sau xuất</div><div className="mt-1 font-semibold">{active?fmt(afterM):fmt(availableM)} m</div></div>
                       </div>
                     );
@@ -1080,7 +1122,15 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
 
         {step === 5 && (
           <div className="space-y-5">
-            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải và tỷ lệ size. Sau khi cắt, sửa các ô màu xanh rồi lưu để tính lại NPL theo số thực tế.</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Tính lại số lượng dự kiến" : "Tính sản lượng dự kiến & NPL"}</button></div>
+            {enabledLiningComponents.length > 0 && (
+              <div className="rounded-3xl border border-blue-200 bg-blue-50/20 p-5">
+                <div><b>Gán cây vải lót cho từng phần</b><div className="mt-1 text-xs text-neutral-500">Chọn từ các cây đã đưa vào nhóm <b>Vải lót</b> ở Bước 3. Một cây có thể dùng cho nhiều phần, ví dụ cùng một cây bông dùng cả lót thân và lót tay.</div></div>
+                {!liningRollOptions.length ? <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-sm text-amber-800">Chưa có cây Vải lót ở Bước 3.</div> : <div className="mt-4 space-y-3">
+                  {enabledLiningComponents.map((part)=>{const assigned=liningAssignments[part.key]||[];return <div key={part.key} className="rounded-2xl border bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><b>{part.name}</b><div className="text-xs text-neutral-500">Định mức <b>{fmt(numberOrZero(part.consumption))}{part.unit==="G"?" g":" m"}/SP</b> · hao hụt {fmt(numberOrZero(part.wastePercent))}%</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-bold">Đã gán {assigned.length} cây</span></div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{liningRollOptions.map((r:any)=>{const active=assigned.includes(r.id);return <label key={r.id} className={`flex cursor-pointer items-start gap-2 rounded-xl border p-3 text-xs ${active?"border-blue-500 bg-blue-50":"bg-white"}`}><input type="checkbox" checked={active} onChange={(e)=>{const old=liningAssignments[part.key]||[];const next=e.target.checked?Array.from(new Set([...old,r.id])):old.filter((rid)=>rid!==r.id);setOrder({...order,liningFabricAssignments:{...liningAssignments,[part.key]:next}})}}/><span><b>{r.rollCode}</b> · {r.fabricName}<br/><span className="text-neutral-500">{r.colorName} · {fmt(r.allocatedM)}m · {fmt(r.allocatedKg)}kg</span></span></label>})}</div></div>})}
+                </div>}
+              </div>
+            )}
+            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải chính. Vải lót kiểm tra riêng theo từng phần và đúng cây đã gán.</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Lưu gán cây & tính lại" : "Lưu gán cây & tính sản lượng"}</button></div>
             {calc && <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!stepAccess[5]} history={order.cutHistory || []} selectedMaterialCount={materials.length} />}
             <div className="flex justify-end"><button type="button" onClick={() => window.open(`/production/print/${id}`, "_blank")} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">Xem / In phiếu sản xuất</button></div>
           </div>
@@ -1168,13 +1218,10 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
             </div>
           </div>
           <div className="rounded-3xl border border-blue-200 bg-blue-50/30 p-4">
-            <div className="mb-3"><b>Vải lót · định mức riêng</b><div className="text-xs text-neutral-400">Không cộng vào định mức vải chính; dùng để kiểm tra đủ/thiếu lót theo số áo cắt được.</div></div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field l="Định mức vải lót / sp"><ViNumberInput value={order.liningFabricConsumptionM ?? ""} onChange={(v) => setOrder({ ...order, liningFabricConsumptionM: v })} suffix="m" decimals={4} placeholder="VD: 0,8" /></Field>
-              <Field l="Hao hụt vải lót"><ViNumberInput value={order.liningFabricWastePercent ?? 0} onChange={(v) => setOrder({ ...order, liningFabricWastePercent: v })} suffix="%" decimals={3} placeholder="VD: 3" /></Field>
-            </div>
+            <div className="flex items-start justify-between gap-3"><div><b>Vải lót · định mức theo từng phần</b><div className="text-xs text-neutral-400">Tạo sẵn lót thân, tay, túi, cổ. Mỗi phần có định mức riêng bằng g/SP hoặc m/SP.</div></div><button type="button" onClick={()=>{const rows=normalizeLiningComponentsClient(order.liningFabricComponents);setOrder({...order,liningFabricComponents:[...rows,{key:`CUSTOM_${Date.now()}`,name:"Lót khác",enabled:true,consumption:"",unit:"M",wastePercent:0,preset:false}]})}} className="rounded-xl border bg-white px-3 py-2 text-xs font-semibold">+ Phần lót khác</button></div>
+            <div className="mt-4 space-y-3">{normalizeLiningComponentsClient(order.liningFabricComponents).map((part,_index,all)=><div key={part.key} className={`rounded-2xl border p-3 ${part.enabled?"bg-white":"bg-neutral-50 opacity-70"}`}><div className="grid gap-3 xl:grid-cols-[150px_minmax(140px,1fr)_150px_150px_110px] xl:items-end"><label className="flex items-center gap-2 pb-2 text-sm font-semibold"><input type="checkbox" checked={!!part.enabled} onChange={(e)=>{const next=all.map(x=>x.key===part.key?{...x,enabled:e.target.checked}:x);setOrder({...order,liningFabricComponents:next})}}/>{part.name}</label><Field l="Tên phần lót"><input disabled={part.preset} className={input} value={part.name} onChange={(e)=>{const next=all.map(x=>x.key===part.key?{...x,name:e.target.value}:x);setOrder({...order,liningFabricComponents:next})}} /></Field><Field l="Định mức / SP"><ViNumberInput value={part.consumption ?? ""} onChange={(v)=>{const next=all.map(x=>x.key===part.key?{...x,consumption:v}:x);setOrder({...order,liningFabricComponents:next})}} suffix={part.unit==="G"?"g":"m"} decimals={part.unit==="G"?1:4} placeholder={part.unit==="G"?"VD: 120":"VD: 0,35"}/></Field><Field l="Đơn vị"><select className={input} value={part.unit} onChange={(e)=>{const unit=e.target.value==="G"?"G":"M";const next=all.map(x=>x.key===part.key?{...x,unit}:x);setOrder({...order,liningFabricComponents:next})}}><option value="G">Gram / SP</option><option value="M">Mét / SP</option></select></Field><Field l="Hao hụt"><ViNumberInput value={part.wastePercent ?? 0} onChange={(v)=>{const next=all.map(x=>x.key===part.key?{...x,wastePercent:v}:x);setOrder({...order,liningFabricComponents:next})}} suffix="%" decimals={2}/></Field></div>{!part.preset&&<div className="mt-2 flex justify-end"><button type="button" className="text-xs font-semibold text-red-600" onClick={()=>setOrder({...order,liningFabricComponents:all.filter(x=>x.key!==part.key)})}>Xoá phần này</button></div>}</div>)}</div>
           </div>
-          <div className="lg:col-span-2 text-[11px] text-neutral-400">Chỉ Admin / Owner nhìn thấy và cấu hình định mức. Tỷ lệ size bên dưới là tỷ lệ thành phẩm và được dùng chung để đối chiếu nhu cầu vải chính/vải lót; hai định mức mét được tính hoàn toàn riêng.</div>
+          <div className="lg:col-span-2 text-[11px] text-neutral-400">Chỉ Admin / Owner nhìn thấy và cấu hình định mức. Ví dụ: <b>lót thân 120g/SP</b>, <b>lót tay 80g/SP</b>, lót túi 0,25m/SP. Bước 3 chọn pool cây lót; Bước 5 gán cây cho từng phần. Một cây được phép dùng cho nhiều phần.</div>
         </div>
       )}
       <div className="flex flex-wrap gap-2"><button onClick={() => { const next=[...SHIRT_SIZES]; setOrder({ ...order, productKind: "SHIRT" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "SHIRT" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size áo</button><button onClick={() => { const next=[...PANTS_SIZES]; setOrder({ ...order, productKind: "PANTS" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "PANTS" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size quần</button></div>
@@ -1221,14 +1268,7 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
         <div className={`rounded-2xl p-4 ${diff===0?"bg-neutral-100 text-neutral-700":diff>0?"bg-emerald-50 text-emerald-800":"bg-red-50 text-red-800"}`}><div className="text-xs font-semibold uppercase">Chênh lệch TT / DK</div><b className="mt-1 block text-2xl">{diff>0?"+":""}{diff}</b></div>
       </div>
 
-      {c.lining?.enabled && <div className={`rounded-2xl border p-4 ${Number(c.lining.shortageActualM)>0?"border-red-200 bg-red-50":"border-emerald-200 bg-emerald-50"}`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><div className="text-xs font-black uppercase tracking-wide text-neutral-500">Vải lót</div><div className="mt-1 text-lg font-black">{fmt(c.lining.allocatedM)} m đang cấp · đủ cho {c.lining.possibleQty} sp</div></div>
-          <span className={`rounded-full px-3 py-1 text-xs font-black ${Number(c.lining.shortageActualM)>0?"bg-red-600 text-white":"bg-emerald-700 text-white"}`}>{Number(c.lining.shortageActualM)>0?`THIẾU ${fmt(c.lining.shortageActualM)} m`:"ĐỦ VẢI LÓT"}</span>
-        </div>
-        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4"><div><span className="text-neutral-500">Định mức:</span> <b>{fmt(c.lining.consumptionM)} m/sp</b></div><div><span className="text-neutral-500">Hao hụt:</span> <b>{fmt(c.lining.wastePercent)}%</b></div><div><span className="text-neutral-500">Cần theo TT:</span> <b>{fmt(c.lining.requiredActualM)} m</b></div><div><span className="text-neutral-500">Thiếu tương đương:</span> <b>{c.lining.shortageActualQty} sp</b></div></div>
-        <div className="mt-2 text-xs text-neutral-500">Số áo chính hiện tại: <b>{draftActual}</b>. Vải lót được tính độc lập, không làm thay đổi sản lượng vải chính.</div>
-      </div>}
+      {c.lining?.enabled && <div className="rounded-2xl border border-blue-200 bg-blue-50/20 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-xs font-black uppercase tracking-wide text-blue-700">Kiểm tra vải lót theo từng phần</div><div className="mt-1 text-sm text-neutral-600">Nhu cầu theo <b>{draftActual} SP cắt thực tế</b>. Các phần dùng chung cùng nhóm cây được cộng nhu cầu trước khi kiểm tra để không tính trùng vải có sẵn.</div></div><span className={`rounded-full px-3 py-1 text-xs font-black ${c.lining.enoughForActual?"bg-emerald-700 text-white":"bg-red-600 text-white"}`}>{c.lining.enoughForActual?"ĐỦ VẢI LÓT":"CÓ PHẦN THIẾU LÓT"}</span></div><div className="mt-4 space-y-3">{(c.lining.components||[]).map((part:any)=>{const unit=part.unit==="G"?"g":"m";return <div key={part.key} className={`rounded-xl border bg-white p-3 ${!part.assigned?"border-amber-300":Number(part.groupShortageActual)>0?"border-red-300":"border-emerald-200"}`}><div className="flex flex-wrap items-center justify-between gap-2"><div><b>{part.name}</b><div className="text-xs text-neutral-500">{fmt(part.consumption)} {unit}/SP · hao hụt {fmt(part.wastePercent)}% · cần {fmt(part.requiredActual)} {unit}</div></div><span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${!part.assigned?"bg-amber-100 text-amber-800":Number(part.groupShortageActual)>0?"bg-red-100 text-red-700":"bg-emerald-100 text-emerald-700"}`}>{!part.assigned?"CHƯA GÁN CÂY":Number(part.groupShortageActual)>0?`NHÓM THIẾU ${fmt(part.groupShortageActual)} ${unit}`:`ĐỦ CHO ${part.groupPossibleQty} SP`}</span></div><div className="mt-2 text-xs text-neutral-500">Cây dùng: {(part.rolls||[]).length?(part.rolls||[]).map((r:any)=><span key={r.id} className="mr-1 inline-flex rounded-lg bg-neutral-100 px-2 py-1 font-semibold text-neutral-800">{r.rollCode||"Cây"}</span>):"—"}</div></div>})}</div>{(c.lining.groups||[]).some((g:any)=>g.components?.length>1&&g.rollIds?.length)>0&&<div className="mt-3 text-[11px] text-blue-700">Nhóm dùng chung cây được tính trên một lượng vải duy nhất, không nhân đôi tồn cây.</div>}</div>}
 
       <div className="overflow-x-auto rounded-2xl border">
         <table className="min-w-[980px] w-full text-sm">
