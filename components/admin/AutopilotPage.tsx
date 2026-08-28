@@ -362,7 +362,19 @@ export default function AutopilotPage({
       const groups = row?.inventory?.groups || [];
       const critical = groups.filter((g: any) => (g.criticalSizes || []).length > 0);
       const low = groups.filter((g: any) => (g.lowSizes || []).length > 0 && !(g.criticalSizes || []).length);
-      if (critical.length) {
+      const familyMode = String(row?.inventory?.mappingMode || '').toUpperCase() === 'PRODUCT_FAMILY';
+      const familyLowColors = familyMode
+        ? groups.filter((g: any) => Number(g?.totalQty || 0) < pauseTotalQty)
+        : [];
+
+      if (familyLowColors.length) {
+        alerts.push({
+          id: `family-stock-${row.metaAdId}`,
+          level: "critical",
+          title: `${row?.inventory?.productCode || row.productAttribution?.familySku || row.adName}: 1 trong các màu đã gần hết`,
+          desc: `Không tìm được mã màu riêng, đang theo mã chính. ${familyLowColors.map((g: any) => `${g.color || g.colorKey}: tổng ${Number(g.totalQty || 0)}`).join(" · ")} dưới ${pauseTotalQty}. Xem xét tắt Ads hoặc đổi bài.`,
+        });
+      } else if (critical.length) {
         alerts.push({
           id: `stock-${row.metaAdId}`,
           level: "critical",
@@ -453,6 +465,12 @@ export default function AutopilotPage({
             reason: check?.reason || null,
             matchScore: check?.matchScore ?? null,
             ambiguous: Boolean(check?.ambiguous),
+            mappingMode: check?.mappingMode || null,
+            colorSpecific: check?.colorSpecific !== false,
+            productCode: check?.productCode || groups[0]?.productCode || null,
+            availableColors: Array.isArray(check?.availableColors) ? check.availableColors : [],
+            lowTotalColors: Array.isArray(check?.lowTotalColors) ? check.lowTotalColors : [],
+            warningThresholdTotal: Number(check?.warningThresholdTotal || pauseTotalQty),
           },
           productAttribution: row.productAttribution || (groups[0] ? {
             sku: groups[0]?.productCode || null,
@@ -906,23 +924,38 @@ export default function AutopilotPage({
                         </div>
                       </td>
                       <td className="px-3 py-4">
-                        <div className="text-[12px] font-medium text-neutral-800">{groups[0]?.colorKey || row.productAttribution?.familySku || "Chưa map"}</div>
-                        <div className="mt-1 max-w-[180px] text-[11px] text-neutral-400">{row.productAttribution?.productName || row.productAttribution?.label || "—"}</div>
+                        {String(row?.inventory?.mappingMode || '').toUpperCase() === 'PRODUCT_FAMILY' ? (
+                          <div className="max-w-[220px]">
+                            <div className="text-[12px] font-semibold text-neutral-800">{row?.inventory?.productCode || groups[0]?.productCode || row.productAttribution?.familySku || "Chưa map"}</div>
+                            <div className="mt-1"><Badge tone="amber">THEO MÃ CHÍNH · {groups.length} MÀU</Badge></div>
+                            <div className="mt-1 text-[10px] leading-4 text-amber-700">Không tìm được mã màu riêng. Tự động dò tồn tất cả màu của mã chính.</div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-[12px] font-medium text-neutral-800">{groups[0]?.colorKey || row.productAttribution?.familySku || "Chưa map"}</div>
+                            <div className="mt-1 max-w-[180px] text-[11px] text-neutral-400">{row.productAttribution?.productName || row.productAttribution?.label || "—"}</div>
+                          </>
+                        )}
                       </td>
                       <td className="px-3 py-4">
                         <div className="max-w-[220px] text-[11px] text-neutral-700">{row.campaignName || "—"}</div>
                         <div className="mt-1 max-w-[220px] text-[11px] font-medium text-neutral-900">{row.adSetName || "—"}</div>
                       </td>
                       <td className="px-3 py-4">
-                        {groups.length ? groups.map((g: any, gi: number) => (
-                          <div key={`${row.metaAdId}-${gi}`} className={gi ? "mt-2" : ""}>
+                        {groups.length ? groups.map((g: any, gi: number) => {
+                          const groupTotal = Number(g?.totalQty ?? (g?.sizes || []).reduce((sum: number, x: any) => sum + Number(x?.qty || 0), 0));
+                          const familyLow = String(row?.inventory?.mappingMode || '').toUpperCase() === 'PRODUCT_FAMILY' && groupTotal < pauseTotalQty;
+                          return (
+                          <div key={`${row.metaAdId}-${gi}`} className={`${gi ? "mt-2 " : ""}${familyLow ? "rounded-xl border border-rose-200 bg-rose-50 p-2" : ""}`}>
+                            {groups.length > 1 ? <div className={`mb-1.5 text-[10px] font-semibold ${familyLow ? "text-rose-600" : "text-neutral-500"}`}>{g.color || g.colorKey || `Màu ${gi + 1}`} · tổng {groupTotal}{familyLow ? ` · DƯỚI ${pauseTotalQty}` : ""}</div> : null}
                             <div className="flex flex-wrap gap-1.5">
                               {(g.sizes || []).map((sz: any) => (
                                 <span key={sz.size} className={`rounded-lg border px-2 py-1 text-[10px] font-medium ${Number(sz.qty) < pauseThreshold ? "border-rose-200 bg-rose-50 text-rose-600" : Number(sz.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-white text-neutral-600"}`}>{sz.size}: {sz.qty}</span>
                               ))}
                             </div>
                           </div>
-                        )) : <span className="text-[11px] text-neutral-400">Chưa match tồn kho</span>}
+                          );
+                        }) : <span className="text-[11px] text-neutral-400">Chưa match tồn kho</span>}
                       </td>
                       <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.spend24h ?? row.spend)}</td>
                       <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.revenue24h ?? row.revenue)}</td>
@@ -942,8 +975,22 @@ export default function AutopilotPage({
                         })()}
                       </td>
                       <td className="px-3 py-4">
-                        {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : (row.autoScaleEligible ?? row.canScale) ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
-                        {!row.canScale && row.scaleReasons?.length ? <div className="mt-2 max-w-[220px] text-[10px] leading-4 text-neutral-400">{row.scaleReasons.slice(0, 2).join(" · ")}</div> : null}
+                        {String(row?.inventory?.mappingMode || '').toUpperCase() === 'PRODUCT_FAMILY' && (row?.inventory?.lowTotalColors || []).length ? (
+                          <>
+                            <Badge tone="red">MÀU TỒN THẤP</Badge>
+                            <div className="mt-2 max-w-[240px] text-[10px] leading-4 text-rose-600">{row.inventory.reason}</div>
+                          </>
+                        ) : String(row?.inventory?.mappingMode || '').toUpperCase() === 'PRODUCT_FAMILY' ? (
+                          <>
+                            <Badge tone="amber">MAP THEO MÃ CHÍNH</Badge>
+                            <div className="mt-2 max-w-[240px] text-[10px] leading-4 text-amber-700">{row.inventory.reason}</div>
+                          </>
+                        ) : (
+                          <>
+                            {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : (row.autoScaleEligible ?? row.canScale) ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
+                            {!row.canScale && row.scaleReasons?.length ? <div className="mt-2 max-w-[220px] text-[10px] leading-4 text-neutral-400">{row.scaleReasons.slice(0, 2).join(" · ")}</div> : null}
+                          </>
+                        )}
                       </td>
                       <td className="px-3 py-4">
                         <div className="flex min-w-[190px] flex-col gap-2">

@@ -126,6 +126,7 @@ export default function MobileAutopilotPage() {
   const [manualColorByAd, setManualColorByAd] = useState<Record<string, string>>({});
   const [productSearchByAd, setProductSearchByAd] = useState<Record<string, string>>({});
   const [productSearchOpenByAd, setProductSearchOpenByAd] = useState<Record<string, boolean>>({});
+  const [savedMappingByAd, setSavedMappingByAd] = useState<Record<string, { productCode: string; color: string | null; savedAt: string }>>({});
 
   const [performance, setPerformance] = useState<AnyRow>({});
   const [inventory, setInventory] = useState<AnyRow>({});
@@ -418,7 +419,7 @@ export default function MobileAutopilotPage() {
   }
 
   const activeAds = liveAds.filter((x) => String(x.effectiveStatus || x.status || "").toUpperCase() === "ACTIVE" && Boolean(String(x.thumbnailUrl || x.thumbnail_url || "").trim()));
-  const criticalAds = liveAds.filter((x) => String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase().includes("CRITICAL"));
+  const criticalAds = liveAds.filter((x) => ["CRITICAL", "FAMILY_LOW_STOCK"].includes(String(assessments[String(x.metaAdId || x.id || "")]?.level || "").toUpperCase()));
   const readyPosts = launchPosts.filter((x) => ["READY", "CREATED_PAUSED"].includes(String(x.state || "").toUpperCase()));
   const operationalAds = liveAds.filter((row) => {
     const status = String(row.effectiveStatus || row.status || "").toUpperCase();
@@ -430,7 +431,7 @@ export default function MobileAutopilotPage() {
     const stock = assessments[String(row.metaAdId || row.id || "")] || {};
     if (adFilter === "active") return status === "ACTIVE";
     if (adFilter === "paused") return status === "PAUSED";
-    if (adFilter === "stock") return ["LOW_STOCK", "CRITICAL"].includes(String(stock.level || "").toUpperCase());
+    if (adFilter === "stock") return ["LOW_STOCK", "CRITICAL", "FAMILY_LOW_STOCK", "FAMILY_WATCH"].includes(String(stock.level || "").toUpperCase());
     if (adFilter === "scale") {
       const spend = num(row.spend24h ?? row.spend);
       const roas = num(row.roas24h ?? row.roas);
@@ -693,14 +694,82 @@ export default function MobileAutopilotPage() {
         throw new Error(r?.error || "Không lưu được mapping Ads");
       }
 
-      setMessage(
-        `Đã map Ad với ${r?.mapping?.productCode || productCode}${
-          r?.mapping?.color ? ` · ${r.mapping.color}` : ""
-        }.`,
-      );
+      // Chỉ báo thành công khi backend xác nhận mapping đã persist vào nguồn nội bộ.
+      if (r?.persisted !== true) {
+        throw new Error("Backend chưa xác nhận mapping đã được lưu bền vững. Không coi là lưu thành công.");
+      }
 
+      const savedCode = String(r?.mapping?.productCode || productCode).trim().toUpperCase();
+      const savedColor = String(r?.mapping?.color || color || "").trim();
+
+      // Đọc lại qua đúng engine tồn kho để xác nhận luồng khác cũng đã nhận mapping.
+      const verifyPayload = await apiJson("/meta-ads/autopilot/inventory/assess", {
+        method: "POST",
+        body: JSON.stringify({
+          ads: [{
+            ...row,
+            metaAdId,
+            id: metaAdId,
+            manualProductCode: savedCode,
+            manualColor: savedColor || null,
+            manualMapping: r?.mapping || {
+              productCode: savedCode,
+              color: savedColor || null,
+            },
+          }],
+        }),
+      });
+
+      const verifyRows = Array.isArray(verifyPayload)
+        ? verifyPayload
+        : verifyPayload?.items || verifyPayload?.rows || [];
+      const verified = verifyRows.find(
+        (x: AnyRow) => String(x?.metaAdId || x?.id || "") === metaAdId,
+      ) || verifyRows[0];
+
+      if (
+        !verified ||
+        String(verified?.productCode || "").trim().toUpperCase() !== savedCode ||
+        (savedColor && String(verified?.color || "").trim().toLowerCase() !== savedColor.toLowerCase())
+      ) {
+        throw new Error("Đã ghi mapping nhưng kiểm tra lại qua tồn kho chưa nhận đúng mã/màu.");
+      }
+
+      setAssessments((prev) => ({ ...prev, [metaAdId]: verified }));
+      setLiveAds((prev) => prev.map((item) =>
+        String(item?.metaAdId || item?.id || "") === metaAdId
+          ? {
+              ...item,
+              manualProductCode: savedCode,
+              manualColor: savedColor || null,
+              manualMapping: r?.mapping || {
+                productCode: savedCode,
+                color: savedColor || null,
+              },
+            }
+          : item
+      ));
+      setManualProductByAd((prev) => ({ ...prev, [metaAdId]: savedCode }));
+      setManualColorByAd((prev) => ({ ...prev, [metaAdId]: savedColor }));
+      setSavedMappingByAd((prev) => ({
+        ...prev,
+        [metaAdId]: {
+          productCode: savedCode,
+          color: savedColor || null,
+          savedAt: new Date().toISOString(),
+        },
+      }));
+
+      setMessage(`✓ Đã lưu chắc chắn ${savedCode}${savedColor ? ` · ${savedColor}` : ""}. Backend + tồn kho đã xác nhận.`);
+
+      // Refresh toàn bộ sau khi đã xác nhận; badge xanh vẫn giữ để người dùng biết thao tác vừa thành công.
       await loadAll(false);
     } catch (e: any) {
+      setSavedMappingByAd((prev) => {
+        const next = { ...prev };
+        delete next[metaAdId];
+        return next;
+      });
       setError(e?.message || "Không lưu được mapping Ads");
     } finally {
       setBusy(false);
@@ -965,6 +1034,11 @@ export default function MobileAutopilotPage() {
           {filteredAds.map((row) => {
             const id = String(row.metaAdId || row.id || "");
             const stock = assessments[id] || {};
+            const familyMode = String(stock?.mappingMode || "").toUpperCase() === "PRODUCT_FAMILY";
+            const familyGroups = Array.isArray(stock?.groups) ? stock.groups : [];
+            const familyLowGroups = familyMode
+              ? familyGroups.filter((g: AnyRow) => num(g?.totalQty) < pauseTotalQty)
+              : [];
             const budget = budgetOf(row);
             const status = String(row.effectiveStatus || row.status || "—").toUpperCase();
             const expanded = expandedId === id;
@@ -982,7 +1056,7 @@ export default function MobileAutopilotPage() {
                   <div className="line-clamp-2 text-sm font-black leading-5">{row.adName || row.name || row.ad_name || `Ad ${String(row.metaAdId || row.id || "").slice(-6)}`}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     <Badge value={status}>{status}</Badge>
-                    {stock?.level ? <Badge value={stock.level}>{stock.level}</Badge> : null}
+                    {familyLowGroups.length ? <Badge value="CRITICAL">MÀU TỒN THẤP</Badge> : stock?.level ? <Badge value={stock.level}>{familyMode ? "THEO MÃ CHÍNH" : stock.level}</Badge> : null}
                     {todayScaleText ? (
                       <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-black text-white">
                         <span className="h-2 w-2 rounded-[2px] bg-emerald-200" />
@@ -991,12 +1065,30 @@ export default function MobileAutopilotPage() {
                     ) : null}
                     {historyCount ? <Badge value="ACTIVE">✓{historyCount}</Badge> : null}
                   </div>
-                  <div className="mt-2 text-xs font-bold text-neutral-600">{stock?.productCode ? `${stock.productCode} · ${stock.color || ""}` : row.manualProductCode || row.manualMapping?.productCode ? `${row.manualProductCode || row.manualMapping?.productCode} · ${row.manualColor || row.manualMapping?.color || ""}` : "Chưa map mã / màu"}</div>
+                  <div className="mt-2 text-xs font-bold text-neutral-600">
+                    {stock?.productCode
+                      ? familyMode
+                        ? `${stock.productCode} · theo mã chính (${familyGroups.length} màu)`
+                        : `${stock.productCode} · ${stock.color || ""}`
+                      : row.manualProductCode || row.manualMapping?.productCode
+                        ? `${row.manualProductCode || row.manualMapping?.productCode} · ${row.manualColor || row.manualMapping?.color || ""}`
+                        : "Chưa map mã / màu"}
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-3 border-y border-neutral-100 bg-neutral-50">
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Budget</div><div className="mt-1 text-xs font-black">{budget.value ? money(budget.value) : "Chưa lấy được"}</div><div className="text-[9px] text-neutral-400">{budget.value ? budget.level : "Meta chưa trả budget"}</div></div>
-                <div className="p-3"><div className="text-[10px] text-neutral-400">Tồn màu</div><div className="mt-1 text-xs font-black">{stock?.totalQty ?? "—"}</div><div className="text-[9px] text-neutral-400">min size {stock?.minQty ?? "—"}</div></div>
+                <div className="p-3">
+                  <div className="text-[10px] text-neutral-400">{familyMode ? "Tồn mã" : "Tồn màu"}</div>
+                  <div className="mt-1 text-xs font-black">{stock?.totalQty ?? "—"}</div>
+                  <div className={`text-[9px] ${familyLowGroups.length ? "font-black text-rose-600" : "text-neutral-400"}`}>
+                    {familyMode
+                      ? familyLowGroups.length
+                        ? `${familyLowGroups.length} màu dưới ${pauseTotalQty}`
+                        : `${familyGroups.length} màu`
+                      : `min size ${stock?.minQty ?? "—"}`}
+                  </div>
+                </div>
                 <div className="p-3"><div className="text-[10px] text-neutral-400">Ad Set</div><div className="mt-1 truncate text-xs font-black">{row.adSetName || row.metaAdSetId || row.adSetId || "—"}</div><div className="text-[9px] text-neutral-400">{row.campaignName || row.metaCampaignId || row.campaignId || "—"}</div></div>
               </div>
               <button onClick={() => {
@@ -1058,12 +1150,17 @@ export default function MobileAutopilotPage() {
                       <div>
                         <div className="text-[10px] font-black uppercase tracking-wider text-neutral-500">Mapping mã sản phẩm</div>
                         <div className="mt-0.5 text-[11px] text-neutral-500">
-                          {stock?.productCode
-                            ? "Đã match với kho. Có thể đổi mapping thủ công nếu cần."
-                            : "Ads chưa có mã trong tên · chọn mã nội bộ để tồn kho và ROAS tính chính xác."}
+                          {familyMode
+                            ? `Không tìm được màu riêng. Hệ thống đang tự theo mã chính ${stock?.productCode || currentCode} và kiểm tra tất cả ${familyGroups.length} màu.`
+                            : stock?.productCode
+                              ? "Đã match với kho. Có thể đổi mapping thủ công nếu cần."
+                              : "Ads chưa có mã trong tên · chọn mã nội bộ để tồn kho và ROAS tính chính xác."}
                         </div>
                       </div>
-                      {row.manualProductCode || row.manualMapping?.productCode ? <Badge value="ACTIVE">MANUAL</Badge> : null}
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {familyMode ? <Badge value="WAIT">MÃ CHÍNH</Badge> : null}
+                        {savedMappingByAd[id] ? <Badge value="ACTIVE">✓ ĐÃ LƯU</Badge> : row.manualProductCode || row.manualMapping?.productCode ? <Badge value="ACTIVE">MANUAL</Badge> : null}
+                      </div>
                     </div>
 
                     <button
@@ -1196,10 +1293,42 @@ export default function MobileAutopilotPage() {
                         Lưu
                       </button>
                     </div>
+                    {savedMappingByAd[id] ? (
+                      <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-bold leading-4 text-emerald-700">
+                        ✓ Đã lưu chắc chắn {savedMappingByAd[id].productCode}{savedMappingByAd[id].color ? ` · ${savedMappingByAd[id].color}` : ""}. Backend và tồn kho đã đọc lại thành công.
+                      </div>
+                    ) : null}
                   </div>;
                 })()}
-                <div><div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">Tồn từng size</div><div className="flex flex-wrap gap-2">{Array.isArray(stock?.sizes) && stock.sizes.length ? stock.sizes.map((s: AnyRow) => <span key={String(s.size)} className={`rounded-xl border px-2.5 py-1.5 text-xs font-black ${num(s.qty) < pauseThreshold ? "border-rose-200 bg-rose-50 text-rose-700" : num(s.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-neutral-50"}`}>{s.size}: {s.qty}</span>) : <span className="text-xs text-neutral-400">Chưa có dữ liệu tồn.</span>}</div></div>
-                <div className="rounded-2xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">{stock?.reason || "Chưa có đánh giá tồn kho."}</div>
+                <div>
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-wider text-neutral-400">{familyMode ? "Tồn tất cả màu của mã chính" : "Tồn từng size"}</div>
+                  {familyMode && familyGroups.length ? (
+                    <div className="space-y-2">
+                      {familyGroups.map((g: AnyRow, gi: number) => {
+                        const total = num(g?.totalQty);
+                        const lowTotal = total < pauseTotalQty;
+                        return <div key={String(g?.colorKey || `${id}-${gi}`)} className={`rounded-2xl border p-3 ${lowTotal ? "border-rose-200 bg-rose-50" : "border-neutral-200 bg-neutral-50"}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className={`text-xs font-black ${lowTotal ? "text-rose-700" : "text-neutral-800"}`}>{g?.color || g?.colorKey || `Màu ${gi + 1}`}</div>
+                            <div className={`text-[10px] font-black ${lowTotal ? "text-rose-700" : "text-neutral-500"}`}>Tổng {total}{lowTotal ? ` · DƯỚI ${pauseTotalQty}` : ""}</div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {(Array.isArray(g?.sizes) ? g.sizes : []).map((sz: AnyRow) => (
+                              <span key={String(sz.size)} className={`rounded-xl border px-2 py-1 text-[10px] font-black ${num(sz.qty) < pauseThreshold ? "border-rose-300 bg-white text-rose-700" : num(sz.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-white text-neutral-600"}`}>{sz.size}: {sz.qty}</span>
+                            ))}
+                          </div>
+                        </div>;
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">{Array.isArray(stock?.sizes) && stock.sizes.length ? stock.sizes.map((s: AnyRow) => <span key={String(s.size)} className={`rounded-xl border px-2.5 py-1.5 text-xs font-black ${num(s.qty) < pauseThreshold ? "border-rose-200 bg-rose-50 text-rose-700" : num(s.qty) < warnThreshold ? "border-amber-200 bg-amber-50 text-amber-700" : "border-neutral-200 bg-neutral-50"}`}>{s.size}: {s.qty}</span>) : <span className="text-xs text-neutral-400">Chưa có dữ liệu tồn.</span>}</div>
+                  )}
+                </div>
+                <div className={`rounded-2xl p-3 text-xs font-semibold leading-5 ${familyLowGroups.length ? "border border-rose-200 bg-rose-50 text-rose-700" : familyMode ? "border border-amber-200 bg-amber-50 text-amber-800" : "bg-neutral-50 text-neutral-600"}`}>
+                  {familyLowGroups.length
+                    ? `⚠ Có ${familyLowGroups.length} màu tổng tồn dưới ${pauseTotalQty}: ${familyLowGroups.map((g: AnyRow) => `${g?.color || g?.colorKey} ${num(g?.totalQty)}`).join(", ")}. Xem xét tắt Ads hoặc đổi nội dung.`
+                    : stock?.reason || "Chưa có đánh giá tồn kho."}
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Spend 24h</div><div className="mt-1 text-xs font-black">{money(row.spend24h ?? row.spend ?? 0)}</div></div>
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT tổng</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
