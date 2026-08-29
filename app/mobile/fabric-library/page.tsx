@@ -54,6 +54,38 @@ type Meta = {
     fabricCompositions: string[];
     staff?: any[];
 };
+
+type FabricPinterestBoard = {
+    id: string;
+    name: string;
+    description?: string | null;
+    fabricBoardIds: string[];
+    createdAt: string;
+    updatedAt: string;
+};
+
+const FABRIC_PINTEREST_BOARDS_KEY = "the1970.fabricLibraryPinterestBoards.v1";
+const FABRIC_LIBRARY_VIEW_KEY = "the1970.fabricLibraryViewMode.v1";
+
+function loadFabricPinterestBoards(): FabricPinterestBoard[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = JSON.parse(localStorage.getItem(FABRIC_PINTEREST_BOARDS_KEY) || "[]");
+        return Array.isArray(raw) ? raw : [];
+    } catch {
+        return [];
+    }
+}
+function saveFabricPinterestBoards(rows: FabricPinterestBoard[]) {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(FABRIC_PINTEREST_BOARDS_KEY, JSON.stringify(rows));
+}
+function fabricVisualUrls(board: FabricBoard) {
+    return Array.from(new Set([
+        board.coverImageUrl,
+        ...(board.images || []).map(x => x.url),
+    ].filter(Boolean).map(String)));
+}
 const DEFAULT_COMPOSITIONS = ["Cotton", "Linen", "Tencel", "Lyocell", "Viscose", "Rayon", "Polyester", "Nylon", "Spandex", "Elastane", "Wool", "Silk", "Bamboo", "Cashmere", "Acrylic", "Modal"];
 const DEFAULT_SEASONS = ["Xuân Hạ", "Thu Đông", "Đông Xuân", "Xuân Hè"];
 async function api<T = any>(path: string, init: RequestInit = {}) { return apiJson<T>(path, { ...init, redirectOnUnauthorized: false } as any); }
@@ -96,49 +128,337 @@ function parseComposition(value?: string | null): CompositionPart[] { if (!value
 function compositionText(parts: CompositionPart[]) { return parts.filter(x => x.name.trim()).map(x => { const p = String(x.percent || "").trim().replace(",", "."); return p ? `${titleCase(x.name)} ${p}%` : titleCase(x.name); }).join(", "); }
 function dispatchLabel(v: any) { const m: Record<string, string> = { SENT: "Đã gửi", RECEIVED: "Xưởng đã nhận", MAKING: "Đang làm", RETURNED: "Mẫu đã về", REVISING: "Đang sửa", APPROVED: "Đã duyệt", CANCELLED: "Huỷ" }; return m[String(v || "")] || String(v || "—"); }
 export default function Page() {
-    const [rows, setRows] = useState<FabricBoard[]>([]), [meta, setMeta] = useState<Meta>({ suppliers: [], seasons: [], productGroups: [], fabricCompositions: [] }), [q, setQ] = useState(""), [detail, setDetail] = useState<FabricBoard | null>(null), [editing, setEditing] = useState<FabricBoard | null | undefined>(undefined), [loading, setLoading] = useState(true), [detailLoading, setDetailLoading] = useState(false), [error, setError] = useState(""), [user, setUser] = useState<any>(null);
+    const [rows, setRows] = useState<FabricBoard[]>([]);
+    const [meta, setMeta] = useState<Meta>({ suppliers: [], seasons: [], productGroups: [], fabricCompositions: [] });
+    const [q, setQ] = useState("");
+    const [detail, setDetail] = useState<FabricBoard | null>(null);
+    const [editing, setEditing] = useState<FabricBoard | null | undefined>(undefined);
+    const [loading, setLoading] = useState(true);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [user, setUser] = useState<any>(null);
+
+    const [viewMode, setViewMode] = useState<"LIST"|"PINTEREST">("PINTEREST");
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const [supplierFilter, setSupplierFilter] = useState("");
+    const [seasonFilter, setSeasonFilter] = useState("");
+    const [groupFilter, setGroupFilter] = useState("");
+    const [sortMode, setSortMode] = useState<"NEWEST"|"AZ">("NEWEST");
+
+    const [pinBoards, setPinBoards] = useState<FabricPinterestBoard[]>([]);
+    const [boardFilter, setBoardFilter] = useState("");
+    const [boardHubOpen, setBoardHubOpen] = useState(false);
+    const [boardForm, setBoardForm] = useState<{id?:string;name:string;description:string}|null>(null);
+    const [assignFabric, setAssignFabric] = useState<FabricBoard|null>(null);
+    const [assignBoardIds, setAssignBoardIds] = useState<string[]>([]);
+    const [boardBusy, setBoardBusy] = useState(false);
+
     const permissions = useMemo(() => getCurrentUserPermissions(user, user?.activeBranchId || user?.branchId), [user]);
     const can = (key: string) => isAdmin(user) || permissions.includes("*") || permissions.includes(key);
-    async function load() { try {
-        setLoading(true);
-        setError("");
-        const [boards, m, groups] = await Promise.all([api<FabricBoard[]>(`/sample-fabric/library${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`), api<Meta>("/sample-fabric/library/meta"), api<string[]>("/products/category-options").catch(() => [])]);
-        setRows(Array.isArray(boards) ? boards : []);
-        setMeta({ suppliers: Array.isArray(m?.suppliers) ? m.suppliers : [], seasons: unique([...DEFAULT_SEASONS, ...(m?.seasons || [])]), productGroups: unique([...(groups || []), ...(m?.productGroups || [])]), fabricCompositions: unique([...DEFAULT_COMPOSITIONS, ...((m?.fabricCompositions || []).map((x:string)=>String(x||"").replace(/\s+\d+(?:[.,]\d+)?%.*$/,"")))]), staff: m?.staff || [] });
+
+    async function load() {
+        try {
+            setLoading(true);
+            setError("");
+            const [boards, m, groups] = await Promise.all([
+                api<FabricBoard[]>(`/sample-fabric/library${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
+                api<Meta>("/sample-fabric/library/meta"),
+                api<string[]>("/products/category-options").catch(() => []),
+            ]);
+            setRows(Array.isArray(boards) ? boards : []);
+            setMeta({
+                suppliers: Array.isArray(m?.suppliers) ? m.suppliers : [],
+                seasons: unique([...DEFAULT_SEASONS, ...(m?.seasons || [])]),
+                productGroups: unique([...(groups || []), ...(m?.productGroups || [])]),
+                fabricCompositions: unique([...DEFAULT_COMPOSITIONS, ...((m?.fabricCompositions || []).map((x:string)=>String(x||"").replace(/\s+\d+(?:[.,]\d+)?%.*$/,"")))]),
+                staff: m?.staff || [],
+            });
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Không tải được thư viện bảng vải.");
+        } finally {
+            setLoading(false);
+        }
     }
-    catch (e) {
-        setError(e instanceof Error ? e.message : "Không tải được thư viện bảng vải.");
+
+    useEffect(() => {
+        setUser(getCurrentUserFromStorage());
+        setPinBoards(loadFabricPinterestBoards());
+        try {
+            const saved = localStorage.getItem(FABRIC_LIBRARY_VIEW_KEY);
+            if (saved === "LIST" || saved === "PINTEREST") setViewMode(saved);
+        } catch {}
+        void load();
+    }, []);
+
+    function setView(next:"LIST"|"PINTEREST") {
+        setViewMode(next);
+        try { localStorage.setItem(FABRIC_LIBRARY_VIEW_KEY, next); } catch {}
     }
-    finally {
-        setLoading(false);
-    } }
-    useEffect(() => { setUser(getCurrentUserFromStorage()); void load(); }, []);
-    const list = useMemo(() => { const k = q.trim().toLowerCase(); return k ? rows.filter(x => [x.boardCode, x.fabricCode, x.name, x.composition, x.supplier?.name, x.supplier?.code, ...(x.seasons || []), ...(x.productGroups || [])].some(v => String(v || "").toLowerCase().includes(k))) : rows; }, [rows, q]);
-    async function openDetail(board: FabricBoard) { try {
-        setDetailLoading(true);
-        setDetail(await api<FabricBoard>(`/sample-fabric/library/${board.id}`));
+
+    function fabricBoardCollectionIds(fabricBoardId:string) {
+        return pinBoards.filter(x => x.fabricBoardIds.includes(fabricBoardId)).map(x => x.id);
     }
-    catch (e) {
-        setError(e instanceof Error ? e.message : "Không mở được bảng vải.");
+    function fabricBoardCollectionNames(fabricBoardId:string) {
+        return pinBoards.filter(x => x.fabricBoardIds.includes(fabricBoardId)).map(x => x.name);
     }
-    finally {
-        setDetailLoading(false);
-    } }
-    async function removeBoard(board: FabricBoard) { if (!window.confirm(`Xoá bảng vải ${board.boardCode}?`))
-        return; try {
-        await api(`/sample-fabric/library/${board.id}`, { method: "DELETE" });
-        setDetail(null);
-        await load();
+    const unassignedCount = rows.filter(x => !fabricBoardCollectionIds(x.id).length).length;
+
+    function persistPinBoards(next:FabricPinterestBoard[]) {
+        setPinBoards(next);
+        saveFabricPinterestBoards(next);
     }
-    catch (e) {
-        setError(e instanceof Error ? e.message : "Không xoá được bảng vải.");
-    } }
-    return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950"><div className="mx-auto max-w-md"><header className="sticky top-0 z-20 border-b bg-white/95 px-4 pb-4 pt-[max(24px,calc(env(safe-area-inset-top)+8px))] backdrop-blur"><div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link><div><div className="text-[10px] font-black uppercase tracking-[.18em] text-neutral-400">Nguyên liệu</div><h1 className="text-xl font-black">Bảng vải</h1></div></div><div className="flex gap-2"><button onClick={() => void load()} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}/></button>{can("fabric_library.create") && <button onClick={() => setEditing(null)} className="rounded-2xl bg-neutral-950 px-3.5 py-2.5 text-xs font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Thêm</button>}</div></div><div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-neutral-400"/><input className="w-full rounded-2xl border border-neutral-300 bg-white py-3 pl-10 pr-3 text-[16px] outline-none focus:border-neutral-950" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter")
-        void load(); }} placeholder="Tìm NCC, mã bảng, mã vải, thành phần..."/></div></header><div className="space-y-3 p-4">{error && <Err text={error}/>} {loading && <Empty text="Đang tải bảng vải..."/>}{!loading && list.map(board => { const image = asset(board.coverImageUrl || board.images?.[0]?.url); const gsm = board.expectedGsm ?? board.gsm; return <button type="button" key={board.id} onClick={() => void openDetail(board)} className="w-full rounded-[28px] bg-white p-4 text-left shadow-sm active:scale-[.995]"><div className="flex gap-3"><div className="h-24 w-24 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">{image ? <img src={image} className="h-full w-full object-cover" alt=""/> : <div className="grid h-full place-items-center"><Layers3 className="h-8 w-8 text-neutral-300"/></div>}</div><div className="min-w-0 flex-1"><div className="text-xs font-black text-neutral-400">{board.boardCode}{board.fabricCode ? ` · ${board.fabricCode}` : ""}</div><div className="mt-1 text-base font-black">{board.name || "Bảng vải"}</div><div className="mt-2 line-clamp-2 text-xs leading-5 text-neutral-500">{board.composition || "Chưa khai báo thành phần"}</div><div className="mt-2 flex flex-wrap gap-1.5">{gsm !== null && gsm !== undefined && gsm !== "" && <Badge>{gsm} GSM</Badge>}{(board.seasons || []).slice(0, 2).map(x => <Badge key={x}>{x}</Badge>)}{!!board.productGroups?.length && <Badge>{board.productGroups.length} nhóm SP</Badge>}</div></div></div></button>; })}{!loading && !list.length && <Empty text="Chưa có bảng vải phù hợp."/>}</div></div>
- {detailLoading && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"><div className="rounded-3xl bg-white px-6 py-5 text-sm font-black">Đang tải chi tiết...</div></div>}
- {detail && <BoardDetail board={detail} can={can} onClose={() => setDetail(null)} onEdit={() => { setEditing(detail); setDetail(null); }} onDelete={() => void removeBoard(detail)}/>} 
- {editing !== undefined && <BoardForm board={editing} meta={meta} canUpload={can("fabric_library.upload_images")} onClose={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await load(); }} onSupplierCreated={supplier => setMeta(m => ({ ...m, suppliers: [...m.suppliers.filter(x => x.id !== supplier.id), supplier].sort((a, b) => a.name.localeCompare(b.name, "vi")) }))}/>}</main>;
+
+    function savePinterestBoard() {
+        if (!boardForm?.name.trim()) return;
+        setBoardBusy(true);
+        try {
+            const now = new Date().toISOString();
+            if (boardForm.id) {
+                persistPinBoards(pinBoards.map(x => x.id === boardForm.id ? {
+                    ...x,
+                    name: boardForm.name.trim(),
+                    description: boardForm.description.trim() || null,
+                    updatedAt: now,
+                } : x));
+            } else {
+                persistPinBoards([...pinBoards, {
+                    id: `FABPIN_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+                    name: boardForm.name.trim(),
+                    description: boardForm.description.trim() || null,
+                    fabricBoardIds: [],
+                    createdAt: now,
+                    updatedAt: now,
+                }]);
+            }
+            setBoardForm(null);
+        } finally {
+            setBoardBusy(false);
+        }
+    }
+
+    function deletePinterestBoard(board:FabricPinterestBoard) {
+        if (!window.confirm(`Xoá bảng "${board.name}"? Bảng vải bên trong không bị xoá.`)) return;
+        persistPinBoards(pinBoards.filter(x => x.id !== board.id));
+        if (boardFilter === board.id) setBoardFilter("");
+    }
+
+    function openBoardAssign(board:FabricBoard) {
+        setAssignFabric(board);
+        setAssignBoardIds(fabricBoardCollectionIds(board.id));
+    }
+
+    function saveBoardAssign() {
+        if (!assignFabric) return;
+        const now = new Date().toISOString();
+        persistPinBoards(pinBoards.map(board => {
+            const has = assignBoardIds.includes(board.id);
+            const ids = board.fabricBoardIds.filter(id => id !== assignFabric.id);
+            if (has) ids.push(assignFabric.id);
+            return {...board, fabricBoardIds:Array.from(new Set(ids)), updatedAt:now};
+        }));
+        setAssignFabric(null);
+    }
+
+    async function openDetail(board: FabricBoard) {
+        try {
+            setDetailLoading(true);
+            setDetail(await api<FabricBoard>(`/sample-fabric/library/${board.id}`));
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Không mở được bảng vải.");
+        } finally {
+            setDetailLoading(false);
+        }
+    }
+
+    async function removeBoard(board: FabricBoard) {
+        if (!window.confirm(`Xoá bảng vải ${board.boardCode}?`)) return;
+        try {
+            await api(`/sample-fabric/library/${board.id}`, { method: "DELETE" });
+            setDetail(null);
+            persistPinBoards(pinBoards.map(x => ({...x, fabricBoardIds:x.fabricBoardIds.filter(id => id !== board.id)})));
+            await load();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Không xoá được bảng vải.");
+        }
+    }
+
+    const filtered = useMemo(() => {
+        const k = q.trim().toLowerCase();
+        const list = rows.filter(x => {
+            if (supplierFilter && String(x.supplierId || x.supplier?.id || "") !== supplierFilter) return false;
+            if (seasonFilter && !(x.seasons || []).includes(seasonFilter)) return false;
+            if (groupFilter && !(x.productGroups || []).includes(groupFilter)) return false;
+            if (boardFilter === "__UNASSIGNED__" && fabricBoardCollectionIds(x.id).length) return false;
+            if (boardFilter && boardFilter !== "__UNASSIGNED__") {
+                const board = pinBoards.find(b => b.id === boardFilter);
+                if (!board?.fabricBoardIds.includes(x.id)) return false;
+            }
+            if (!k) return true;
+            return [x.boardCode,x.fabricCode,x.name,x.composition,x.supplier?.name,x.supplier?.code,...(x.seasons||[]),...(x.productGroups||[])]
+                .some(v => String(v || "").toLowerCase().includes(k));
+        });
+        return [...list].sort((a,b) => {
+            if (sortMode === "AZ") return String(a.name || a.boardCode).localeCompare(String(b.name || b.boardCode), "vi", {numeric:true,sensitivity:"base"});
+            return (new Date(b.updatedAt || 0).getTime() || 0) - (new Date(a.updatedAt || 0).getTime() || 0);
+        });
+    }, [rows,q,supplierFilter,seasonFilter,groupFilter,sortMode,boardFilter,pinBoards]);
+
+    return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
+      <div className="mx-auto max-w-md">
+        <header className="relative z-10 border-b bg-white px-3 pb-2" style={{paddingTop:"max(44px, calc(env(safe-area-inset-top) + 8px))"}}>
+          <div className="flex min-h-11 items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
+              <div className="min-w-0">
+                <div className="text-[9px] font-black uppercase tracking-[.16em] text-neutral-400">Nguyên liệu</div>
+                <h1 className="truncate text-[19px] font-black leading-5">Bảng vải</h1>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button onClick={()=>void load()} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-100"><RefreshCw className={`h-4 w-4 ${loading?"animate-spin":""}`}/></button>
+              {can("fabric_library.create")&&<button onClick={()=>setEditing(null)} className="h-10 rounded-full bg-neutral-950 px-3.5 text-xs font-black text-white"><Plus className="mr-1 inline h-4 w-4"/>Thêm</button>}
+            </div>
+          </div>
+
+          {boardFilter&&<div className="mt-2 flex"><button type="button" onClick={()=>setBoardHubOpen(true)} className="max-w-56 truncate rounded-full bg-neutral-100 px-3 py-2 text-xs font-black text-neutral-700">{boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":pinBoards.find(b=>b.id===boardFilter)?.name||"Bảng"}</button></div>}
+
+          <div className="mt-2 flex items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-neutral-400"/>
+              <input className="h-11 w-full rounded-full border border-neutral-300 bg-white py-2.5 pl-10 pr-3 text-[16px] outline-none focus:border-neutral-950" value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm bảng vải..."/>
+            </div>
+            <button type="button" onClick={()=>setFiltersOpen(x=>!x)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border ${filtersOpen||supplierFilter||seasonFilter||groupFilter||sortMode!=="NEWEST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><span className="text-[11px] font-black">Lọc</span></button>
+            <button type="button" onClick={()=>setBoardHubOpen(true)} className="grid h-11 w-11 shrink-0 place-items-center rounded-full border bg-white" aria-label="Bảng và kiểu hiển thị">
+              <span className="grid h-5 w-5 grid-cols-2 gap-[2px]"><span className="rounded-[2px] bg-neutral-950"/><span className="rounded-[2px] bg-neutral-950"/><span className="rounded-[2px] bg-neutral-950"/><span className="rounded-[2px] bg-neutral-950"/></span>
+            </button>
+          </div>
+
+          {filtersOpen&&<div className="mt-2 grid gap-2 rounded-2xl bg-neutral-50 p-2">
+            <select className={input} value={supplierFilter} onChange={e=>setSupplierFilter(e.target.value)}><option value="">Tất cả NCC</option>{meta.suppliers.map(s=><option key={s.id} value={s.id}>{s.code||s.publicCode?`${s.code||s.publicCode} · `:""}{s.name}</option>)}</select>
+            <select className={input} value={seasonFilter} onChange={e=>setSeasonFilter(e.target.value)}><option value="">Tất cả mùa</option>{meta.seasons.map(x=><option key={x} value={x}>{x}</option>)}</select>
+            <select className={input} value={groupFilter} onChange={e=>setGroupFilter(e.target.value)}><option value="">Tất cả nhóm SP</option>{meta.productGroups.map(x=><option key={x} value={x}>{x}</option>)}</select>
+            <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới cập nhật trước</option><option value="AZ">Tên A → Z</option></select>
+          </div>}
+        </header>
+
+        <div className="space-y-3 px-2 pb-4 pt-2">
+          {error&&<Err text={error}/>}
+          {loading&&<Empty text="Đang tải bảng vải..."/>}
+
+          {!loading&&viewMode==="LIST"&&filtered.map(board=>{
+            const visuals=fabricVisualUrls(board);
+            const image=visuals[0]?asset(visuals[0]):"";
+            const gsm=board.expectedGsm??board.gsm;
+            return <div key={board.id} className="rounded-[28px] bg-white p-4 shadow-sm">
+              <button type="button" onClick={()=>void openDetail(board)} className="flex w-full gap-4 text-left active:scale-[.995]">
+                <div className="relative h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">
+                  {image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center"><Layers3 className="h-7 w-7 text-neutral-300"/></div>}
+                  {visuals.length>1&&<span className="absolute bottom-1 right-1 rounded-lg bg-black/70 px-1.5 py-0.5 text-[8px] font-black text-white">{visuals.length} ảnh</span>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-black text-neutral-400">{board.boardCode}{board.fabricCode?` · ${board.fabricCode}`:""}</div>
+                  <div className="mt-1 text-base font-black">{board.name||"Bảng vải"}</div>
+                  <div className="mt-1 text-xs text-neutral-500">{board.composition||"Chưa khai báo thành phần"}</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {gsm!==null&&gsm!==undefined&&gsm!==""&&<Badge>{gsm} GSM</Badge>}
+                    {(board.seasons||[]).slice(0,1).map(x=><Badge key={x}>{x}</Badge>)}
+                    {fabricBoardCollectionNames(board.id).slice(0,2).map(name=><Badge key={name}>{name}</Badge>)}
+                  </div>
+                </div>
+              </button>
+              {can("fabric_library.edit")&&<div className="mt-3 flex justify-end border-t pt-3"><button type="button" onClick={()=>openBoardAssign(board)} className="rounded-xl border px-3 py-2 text-xs font-black">+ Bảng Pinterest</button></div>}
+            </div>
+          })}
+
+          {!loading&&viewMode==="PINTEREST"&&<div className="columns-2 gap-1.5">
+            {filtered.map(board=>{
+              const visuals=fabricVisualUrls(board);
+              const image=visuals[0]?asset(visuals[0]):"";
+              const gsm=board.expectedGsm??board.gsm;
+              return <div key={board.id} className="mb-1.5 break-inside-avoid overflow-hidden rounded-[18px] bg-white">
+                <button type="button" onClick={()=>void openDetail(board)} className="block w-full text-left active:opacity-80">
+                  {image?<img src={image} className="block h-auto w-full object-contain" alt=""/>:<div className="grid h-36 place-items-center bg-neutral-100"><Layers3 className="h-7 w-7 text-neutral-300"/></div>}
+                  <div className="p-2.5">
+                    <div className="line-clamp-2 text-xs font-black">{board.name||"Bảng vải"}</div>
+                    <div className="mt-1 text-[10px] font-bold text-neutral-400">{board.boardCode}{board.fabricCode?` · ${board.fabricCode}`:""}</div>
+                    <div className="mt-1 line-clamp-2 text-[10px] text-neutral-500">{board.composition||"Chưa khai báo thành phần"}</div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {gsm!==null&&gsm!==undefined&&gsm!==""&&<Badge>{gsm} GSM</Badge>}
+                      {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
+                    </div>
+                  </div>
+                </button>
+                {can("fabric_library.edit")&&<div className="border-t p-2"><button type="button" onClick={()=>openBoardAssign(board)} className="w-full rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button></div>}
+              </div>
+            })}
+          </div>}
+
+          {!loading&&!filtered.length&&<Empty text="Chưa có bảng vải phù hợp."/>}
+        </div>
+      </div>
+
+      {detailLoading&&<div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"><div className="rounded-3xl bg-white px-6 py-5 text-sm font-black">Đang tải chi tiết...</div></div>}
+      {detail&&<BoardDetail board={detail} can={can} onClose={()=>setDetail(null)} onEdit={()=>{setEditing(detail);setDetail(null)}} onDelete={()=>void removeBoard(detail)}/>}
+      {editing!==undefined&&<BoardForm board={editing} meta={meta} canUpload={can("fabric_library.upload_images")} onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await load()}} onSupplierCreated={supplier=>setMeta(m=>({...m,suppliers:[...m.suppliers.filter(x=>x.id!==supplier.id),supplier].sort((a,b)=>a.name.localeCompare(b.name,"vi"))}))}/>}
+
+      {boardHubOpen&&<Modal title="Bảng & kiểu hiển thị" onClose={()=>setBoardHubOpen(false)}>
+        <div className="space-y-5 p-4">
+          <div>
+            <div className="mb-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Kiểu hiển thị</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={()=>{setView("PINTEREST");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${viewMode==="PINTEREST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+                <div className="grid h-10 w-10 grid-cols-2 gap-1"><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/></div>
+                <div className="mt-2 text-sm font-black">Pinterest</div><div className={`mt-0.5 text-[10px] ${viewMode==="PINTEREST"?"text-white/60":"text-neutral-400"}`}>Ảnh lớn, 2 cột</div>
+              </button>
+              <button type="button" onClick={()=>{setView("LIST");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${viewMode==="LIST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+                <div className="space-y-1.5 pt-1"><span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/><span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/><span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/></div>
+                <div className="mt-3 text-sm font-black">Danh sách</div><div className={`mt-0.5 text-[10px] ${viewMode==="LIST"?"text-white/60":"text-neutral-400"}`}>Xem đủ thông tin</div>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Bảng Pinterest</div>
+              {can("fabric_library.edit")&&<button type="button" onClick={()=>{setBoardHubOpen(false);setBoardForm({name:"",description:""})}} className="rounded-full border px-3 py-2 text-[10px] font-black">+ Tạo bảng</button>}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={()=>{setBoardFilter("");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${boardFilter===""?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><div className="text-sm font-black">Tất cả</div><div className={`mt-1 text-[10px] ${boardFilter===""?"text-white/60":"text-neutral-400"}`}>{rows.length} bảng vải</div></button>
+              <button type="button" onClick={()=>{setBoardFilter("__UNASSIGNED__");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${boardFilter==="__UNASSIGNED__"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><div className="text-sm font-black">Chưa phân bảng</div><div className={`mt-1 text-[10px] ${boardFilter==="__UNASSIGNED__"?"text-white/60":"text-neutral-400"}`}>{unassignedCount} bảng vải</div></button>
+              {pinBoards.map(board=>{
+                const linked=board.fabricBoardIds.map(id=>rows.find(x=>x.id===id)).filter(Boolean) as FabricBoard[];
+                const thumbs=linked.flatMap(x=>fabricVisualUrls(x)).slice(0,4);
+                return <div key={board.id} className={`overflow-hidden rounded-2xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
+                  <button type="button" onClick={()=>{setBoardFilter(board.id);setBoardHubOpen(false)}} className="w-full text-left">
+                    <div className="grid aspect-[1.7/1] grid-cols-2 gap-[1px] overflow-hidden bg-neutral-100">{[0,1,2,3].map(i=>thumbs[i]?<img key={i} src={asset(thumbs[i])} className="h-full w-full object-cover" alt=""/>:<div key={i} className="bg-neutral-100"/>)}</div>
+                    <div className="p-2.5"><div className="truncate text-xs font-black">{board.name}</div><div className="mt-0.5 text-[10px] text-neutral-400">{linked.length} bảng vải</div></div>
+                  </button>
+                  {can("fabric_library.edit")&&<div className="flex border-t p-1"><button type="button" onClick={()=>{setBoardHubOpen(false);setBoardForm({id:board.id,name:board.name,description:board.description||""})}} className="flex-1 rounded-lg px-2 py-1.5 text-[10px] font-black">Sửa</button><button type="button" onClick={()=>deletePinterestBoard(board)} className="rounded-lg px-2 py-1.5 text-[10px] font-black text-red-600">Xoá</button></div>}
+                </div>
+              })}
+            </div>
+          </div>
+        </div>
+      </Modal>}
+
+      {boardForm&&<Modal title={boardForm.id?"Sửa bảng Pinterest":"Tạo bảng Pinterest"} onClose={()=>setBoardForm(null)}>
+        <div className="space-y-4 p-4">
+          <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Tên bảng</div><input autoFocus className={input} value={boardForm.name} onChange={e=>setBoardForm({...boardForm,name:e.target.value})} placeholder="VD: Vải Kids / Vải khoác / Denim"/></label>
+          <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Mô tả</div><textarea className={`${input} min-h-28`} value={boardForm.description} onChange={e=>setBoardForm({...boardForm,description:e.target.value})} placeholder="Ghi chú ngắn..."/></label>
+          <div className="flex justify-end gap-2 border-t pt-4"><button type="button" onClick={()=>setBoardForm(null)} className="rounded-2xl border px-4 py-3 text-sm font-black">Huỷ</button><button type="button" disabled={boardBusy||!boardForm.name.trim()} onClick={savePinterestBoard} className="rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40">{boardBusy?"Đang lưu...":"Lưu bảng"}</button></div>
+        </div>
+      </Modal>}
+
+      {assignFabric&&<Modal title={`Bảng Pinterest · ${assignFabric.boardCode}`} onClose={()=>setAssignFabric(null)}>
+        <div className="space-y-4 p-4">
+          <div><div className="font-black">{assignFabric.name||"Bảng vải"}</div><div className="text-xs text-neutral-400">Có thể cho một bảng vải vào nhiều bảng Pinterest.</div></div>
+          <div className="space-y-2">{pinBoards.map(board=>{const checked=assignBoardIds.includes(board.id);return <label key={board.id} className="flex items-start gap-3 rounded-2xl border p-3"><input type="checkbox" checked={checked} onChange={()=>setAssignBoardIds(x=>checked?x.filter(id=>id!==board.id):[...x,board.id])} className="mt-1 h-5 w-5"/><div className="min-w-0"><div className="font-black">{board.name}</div>{board.description&&<div className="mt-1 text-xs text-neutral-400">{board.description}</div>}</div></label>})}{!pinBoards.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm font-bold text-neutral-400">Chưa có bảng Pinterest.</div>}</div>
+          <div className="flex items-center justify-between gap-2 border-t pt-4"><button type="button" onClick={()=>{setAssignFabric(null);setBoardForm({name:"",description:""})}} className="rounded-2xl border px-3 py-3 text-xs font-black">+ Tạo bảng</button><button type="button" onClick={saveBoardAssign} className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-black text-white">Lưu</button></div>
+        </div>
+      </Modal>}
+    </main>;
 }
+
 function BoardDetail({ board, can, onClose, onEdit, onDelete }: {
     board: FabricBoard;
     can: (key: string) => boolean;
@@ -223,7 +543,7 @@ finally {
     if (g && !form.productGroups.includes(g))
         patch("productGroups", [...form.productGroups, g]);
     setCustomGroup("");
-} }} placeholder="Gõ nhóm mới rồi Enter"/></section><section className="rounded-3xl border p-3"><div className="flex items-center justify-between"><div><div className="text-sm font-black">Màu trên bảng</div><div className="mt-1 text-[11px] text-neutral-400">Không bắt buộc; chỉ thêm khi cần.</div></div><button type="button" onClick={() => setColors(x => [...x, { name: "", code: "" }])} className="rounded-xl border px-3 py-2 text-xs font-black">+ Màu</button></div>{!!colors.length && <div className="mt-3 space-y-2">{colors.map((c, i) => <div key={c.id || i} className="grid grid-cols-[1fr_100px_auto] gap-2"><input className={input} value={c.name} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, name: e.target.value } : p))} placeholder="Tên màu"/><input className={input} value={c.code || ""} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, code: e.target.value ? `#${e.target.value.replace(/^#+/, "")}` : "" } : p))} placeholder="#2"/><button type="button" onClick={() => setColors(x => x.filter((_, n) => n !== i))} className="grid h-12 w-10 place-items-center text-red-600"><Trash2 className="h-4 w-4"/></button></div>)}</div>}</section><Field label="Ghi chú bảng vải"><textarea className={`${input} min-h-24`} value={form.note} onChange={e => patch("note", e.target.value)} placeholder="Ứng dụng, cảm giác tay, lưu ý xử lý..."/></Field><div className="grid grid-cols-2 gap-2 border-t pt-4"><button onClick={onClose} className="rounded-2xl border py-3 text-sm font-black">Đóng</button><button disabled={saving} onClick={() => void save()} className="rounded-2xl bg-neutral-950 py-3 text-sm font-black text-white disabled:opacity-40">{saving ? "Đang lưu..." : "Lưu bảng vải"}</button></div></div></Modal>; }
+} }} placeholder="Gõ nhóm mới rồi Enter"/></section><section className="rounded-3xl border p-3"><div className="flex items-center justify-between"><div><div className="text-sm font-black">Màu trên bảng</div><div className="mt-1 text-[11px] text-neutral-400">Không bắt buộc; chỉ thêm khi cần.</div></div><button type="button" onClick={() => setColors(x => [...x, { name: "", code: "" }])} className="rounded-xl border px-3 py-2 text-xs font-black">+ Màu</button></div>{!!colors.length && <div className="mt-3 space-y-2">{colors.map((c, i) => <div key={c.id || i} className="grid grid-cols-[1fr_100px_auto] gap-2"><input className={input} value={c.name} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, name: e.target.value } : p))} placeholder="Tên màu"/><input className={input} value={c.code || ""} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, code: e.target.value ? `#${e.target.value.replace(/^#+/, "")}` : "" } : p))} placeholder="#2"/><button type="button" onClick={() => setColors(x => x.filter((_, n) => n !== i))} className="grid h-12 w-10 place-items-center text-red-600"><Trash2 className="h-4 w-4"/></button></div>)}</div>}</section><Field label="Ghi chú bảng vải"><textarea className={`${input} min-h-24`} value={form.note} onChange={e => patch("note", e.target.value)} placeholder="Ứng dụng, cảm giác tay, lưu ý xử lý..."/></Field><div className="sticky bottom-0 z-30 -mx-4 border-t bg-white/95 px-4 pt-3 backdrop-blur" style={{paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}><div className="grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-2xl border py-3 text-sm font-black">Đóng</button><button disabled={saving} onClick={() => void save()} className="rounded-2xl bg-neutral-950 py-3 text-sm font-black text-white disabled:opacity-40">{saving ? "Đang lưu..." : "Lưu bảng vải"}</button></div></div></div></Modal>; }
 function Modal({ title, children, onClose }: {
     title: string;
     children: any;
