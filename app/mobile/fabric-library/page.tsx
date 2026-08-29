@@ -4,7 +4,7 @@ import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 import { ArrowLeft, Camera, ChevronDown, ChevronLeft, ChevronRight, Download, ImagePlus, Layers3, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 type Supplier = {
     id: string;
     code?: string | null;
@@ -190,6 +190,39 @@ export default function Page() {
         void load();
     }, []);
 
+    useEffect(() => {
+        // iOS/PWA đôi khi để lộ phần nền của body bên dưới 100dvh sau khi đóng modal.
+        // Giữ nền trang đồng nhất và ép layout reflow sau khi viewport thay đổi.
+        const html = document.documentElement;
+        const body = document.body;
+        const oldHtmlBg = html.style.backgroundColor;
+        const oldBodyBg = body.style.backgroundColor;
+        const oldBodyMinHeight = body.style.minHeight;
+
+        html.style.backgroundColor = "#f5f5f5";
+        body.style.backgroundColor = "#f5f5f5";
+        body.style.minHeight = "100vh";
+
+        const syncViewport = () => {
+            html.style.setProperty("--fabric-page-vh", `${window.innerHeight}px`);
+            requestAnimationFrame(() => window.scrollTo({left:0,top:window.scrollY,behavior:"auto"}));
+        };
+        syncViewport();
+        window.addEventListener("resize", syncViewport);
+        window.addEventListener("orientationchange", syncViewport);
+        window.visualViewport?.addEventListener("resize", syncViewport);
+
+        return () => {
+            window.removeEventListener("resize", syncViewport);
+            window.removeEventListener("orientationchange", syncViewport);
+            window.visualViewport?.removeEventListener("resize", syncViewport);
+            html.style.backgroundColor = oldHtmlBg;
+            body.style.backgroundColor = oldBodyBg;
+            body.style.minHeight = oldBodyMinHeight;
+            html.style.removeProperty("--fabric-page-vh");
+        };
+    }, []);
+
     function setView(next:"LIST"|"PINTEREST") {
         setViewMode(next);
         try { localStorage.setItem(FABRIC_LIBRARY_VIEW_KEY, next); } catch {}
@@ -303,7 +336,11 @@ export default function Page() {
         });
     }, [rows,q,supplierFilter,seasonFilter,groupFilter,sortMode,boardFilter,pinBoards]);
 
-    return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
+    return <main
+      className="relative w-full bg-neutral-100 pb-[calc(24px+env(safe-area-inset-bottom))] text-neutral-950"
+      style={{minHeight:"max(100vh, var(--fabric-page-vh, 100vh))"}}
+    >
+      <div className="fixed inset-0 -z-10 bg-neutral-100" aria-hidden="true"/>
       <div className="mx-auto max-w-md">
         <header className="relative z-10 border-b bg-white px-3 pb-2" style={{paddingTop:"max(44px, calc(env(safe-area-inset-top) + 8px))"}}>
           <div className="flex min-h-11 items-center justify-between gap-2">
@@ -468,31 +505,173 @@ function BoardDetail({ board, can, onClose, onEdit, onDelete }: {
 }) {
  const rawGallery=Array.from(new Set([board.coverImageUrl,...(board.images||[]).map(x=>x.url)].filter(Boolean) as string[]));
  const gallery=rawGallery.map(asset).filter(Boolean);
- const cover=gallery[0]||"";
+ const [viewerIndex,setViewerIndex]=useState(0);
+ const image=gallery[viewerIndex]||"";
  const images=board.images||[],dispatches=board.sampleDispatches||[],samples=board.designSamples||[],receipts=board.fabricReceipts||[];
- const [viewerIndex,setViewerIndex]=useState<number|null>(null);
- const activeImage=viewerIndex===null?"":gallery[viewerIndex]||"";
- const prev=()=>setViewerIndex(i=>i===null?null:(i-1+gallery.length)%gallery.length);
- const next=()=>setViewerIndex(i=>i===null?null:(i+1)%gallery.length);
- return <>
- <Modal title={`${board.boardCode}${board.name ? ` · ${board.name}` : ""}`} onClose={onClose}><div className="space-y-5 p-4">
-  {cover&&<button type="button" onClick={()=>setViewerIndex(0)} className="block w-full"><img src={cover} className="h-64 w-full rounded-3xl object-cover" alt=""/></button>}
-  {gallery.length>1&&<div className="flex gap-2 overflow-x-auto pb-1">{gallery.map((url,i)=><button type="button" key={`${url}-${i}`} onClick={()=>setViewerIndex(i)} className="shrink-0"><img src={url} className="h-20 w-20 rounded-2xl object-cover" alt=""/></button>)}</div>}
-  {!!gallery.length&&<button type="button" onClick={()=>setViewerIndex(0)} className="w-full rounded-2xl border py-3 text-sm font-black">Xem ảnh · {gallery.length} ảnh</button>}
-  <div className="grid grid-cols-2 gap-3"><Info label="Mã bảng vải" value={board.boardCode || "—"}/><Info label="Mã chất vải" value={board.fabricCode || "—"}/><Info label="GSM dự kiến" value={board.expectedGsm != null ? `${board.expectedGsm} GSM` : board.gsm ? `${board.gsm} GSM` : "—"}/><Info label="NCC" value={board.supplier?.code || board.supplier?.publicCode || board.supplier?.name || "—"}/></div>
-  <Info label="Thành phần chất vải" value={board.composition || "Chưa khai báo"}/><ChipSection title="Mùa có thể dùng" values={board.seasons || []}/><ChipSection title="Nhóm sản phẩm phù hợp" values={board.productGroups || []}/>{!!board.colors?.length&&<ChipSection title="Màu đã khai báo" values={board.colors.map(c=>`${c.name}${c.code?` ${String(c.code).startsWith("#")?c.code:`#${c.code}`}`:""}`)}/>}
-  {board.note&&<Info label="Ghi chú bảng vải" value={board.note}/>}
-  <section><div className="flex items-center justify-between"><b className="text-sm">Lịch sử gửi làm mẫu</b><Badge>{dispatches.length} lần</Badge></div><div className="mt-2 space-y-2">{dispatches.length?dispatches.map((d:any)=><div key={d.id} className="rounded-2xl border bg-white p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-black">{d.designSample?.code||"—"} · {d.designSample?.name||"Mẫu"}</div><div className="mt-1 text-xs text-neutral-500">{fmtDate(d.sentAt)} · {d.fabricColor?.name||d.colorName||"—"} {d.fabricColor?.code||d.colorCode||""}</div></div><Badge>{dispatchLabel(d.status)}</Badge></div></div>):<Empty text="Chưa gửi đi làm mẫu."/>}</div></section>
-  <section><div className="flex items-center justify-between"><b className="text-sm">Lịch sử sử dụng / mẫu đã sản xuất</b><Badge>{samples.length} mẫu</Badge></div><div className="mt-2 space-y-2">{samples.length?samples.map((s:any)=><div key={s.id} className="rounded-2xl border bg-white p-3"><div className="font-black">{s.code} · {s.name}</div><div className="mt-1 text-xs text-neutral-500">{s.year||"—"} · {s.season||"—"} · {s.category||"—"}</div>{s.producedProduct&&<div className="mt-2 rounded-xl bg-emerald-50 p-2.5 text-xs font-bold text-emerald-800">Đã sản xuất: {s.producedProduct.name}{s.producedProduct.slug?` · ${s.producedProduct.slug}`:""}</div>}</div>):<Empty text="Chưa có mẫu sử dụng bảng vải này."/>}</div></section>
-  {!!receipts.length&&<section><div className="flex items-center justify-between"><b className="text-sm">Phiếu vải về liên quan</b><Badge>{receipts.length} phiếu</Badge></div><div className="mt-2 space-y-2">{receipts.map((r:any)=><div key={r.id} className="rounded-2xl bg-neutral-50 p-3"><div className="font-black">{r.receiptCode||"Phiếu vải"}</div><div className="mt-1 text-xs text-neutral-500">{r.fabricName||board.name||"—"} · {r.colorName||"—"} {r.colorCode||""}</div></div>)}</div></section>}
-  <div className="grid grid-cols-2 gap-2 border-t pt-4">{can("fabric_library.edit")&&<button onClick={onEdit} className="rounded-2xl border py-3 text-sm font-black"><Pencil className="mr-1 inline h-4 w-4"/>Sửa bảng</button>}{can("fabric_library.delete")&&<button onClick={onDelete} className="rounded-2xl border border-red-200 bg-red-50 py-3 text-sm font-black text-red-700"><Trash2 className="mr-1 inline h-4 w-4"/>Xoá bảng</button>}</div>
- </div></Modal>
- {viewerIndex!==null&&activeImage&&<div className="fixed inset-0 z-[80] flex flex-col bg-black text-white">
-   <div className="flex items-center justify-between px-4 pb-3 pt-[max(18px,env(safe-area-inset-top))]"><div className="min-w-0"><div className="text-xs font-black text-white/60">{board.boardCode}</div><div className="truncate font-black">{viewerIndex+1}/{gallery.length} · {board.name||"Bảng vải"}</div></div><div className="flex gap-2"><button type="button" onClick={()=>void saveImageToPhone(activeImage,`${board.boardCode}-${viewerIndex+1}`)} className="grid h-11 w-11 place-items-center rounded-full bg-white text-black"><Download className="h-5 w-5"/></button><button type="button" onClick={()=>setViewerIndex(null)} className="grid h-11 w-11 place-items-center rounded-full bg-white text-black"><X className="h-5 w-5"/></button></div></div>
-   <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3"><img src={activeImage} className="max-h-full max-w-full object-contain" alt=""/>{gallery.length>1&&<><button type="button" onClick={prev} className="absolute left-3 grid h-11 w-11 place-items-center rounded-full bg-black/60"><ChevronLeft/></button><button type="button" onClick={next} className="absolute right-3 grid h-11 w-11 place-items-center rounded-full bg-black/60"><ChevronRight/></button></>}</div>
-   <div className="p-4 pb-[max(18px,env(safe-area-inset-bottom))]"><button type="button" onClick={()=>void saveImageToPhone(activeImage,`${board.boardCode}-${viewerIndex+1}`)} className="w-full rounded-2xl bg-white py-3 font-black text-black"><Download className="mr-2 inline h-5 w-5"/>Lưu ảnh</button><div className="mt-2 text-center text-[11px] font-semibold text-white/60">iPhone: bấm Lưu ảnh → giữ ảnh vừa mở → Lưu vào Ảnh</div></div>
- </div>}
- </>;
+ const [detailExpanded,setDetailExpanded]=useState(false);
+ const swipeStartX=useRef<number|null>(null);
+
+ const [zoomOpen,setZoomOpen]=useState(false);
+ const [zoomScale,setZoomScale]=useState(1);
+ const [zoomPos,setZoomPos]=useState({x:0,y:0});
+ const zoomGesture=useRef<any>({});
+
+ const prev=()=>setViewerIndex(i=>(i-1+gallery.length)%gallery.length);
+ const next=()=>setViewerIndex(i=>(i+1)%gallery.length);
+
+ function galleryTouchStart(e:any){swipeStartX.current=e.touches?.[0]?.clientX??null}
+ function galleryTouchEnd(e:any){
+   const sx=swipeStartX.current;
+   const ex=e.changedTouches?.[0]?.clientX;
+   swipeStartX.current=null;
+   if(sx==null||ex==null||gallery.length<2)return;
+   const dx=ex-sx;
+   if(Math.abs(dx)<45)return;
+   dx<0?next():prev();
+ }
+
+ function openZoom(){
+   if(!image)return;
+   setZoomScale(1);
+   setZoomPos({x:0,y:0});
+   zoomGesture.current={};
+   setZoomOpen(true);
+ }
+ function closeZoom(){
+   setZoomOpen(false);
+   setZoomScale(1);
+   setZoomPos({x:0,y:0});
+   zoomGesture.current={};
+ }
+ function touchDistance(t:any){
+   const dx=t[0].clientX-t[1].clientX;
+   const dy=t[0].clientY-t[1].clientY;
+   return Math.sqrt(dx*dx+dy*dy);
+ }
+ function zoomTouchStart(e:any){
+   const t=e.touches;
+   if(t.length===2){
+     zoomGesture.current={mode:"pinch",startDistance:touchDistance(t),startScale:zoomScale};
+   }else if(t.length===1&&zoomScale>1){
+     zoomGesture.current={mode:"pan",startX:t[0].clientX,startY:t[0].clientY,originX:zoomPos.x,originY:zoomPos.y};
+   }
+ }
+ function zoomTouchMove(e:any){
+   const t=e.touches;
+   if(t.length===2){
+     e.preventDefault();
+     const g=zoomGesture.current;
+     const nextScale=Math.max(1,Math.min(4,(g.startScale||zoomScale)*(touchDistance(t)/Math.max(1,g.startDistance||touchDistance(t)))));
+     setZoomScale(nextScale);
+     if(nextScale<=1.02)setZoomPos({x:0,y:0});
+   }else if(t.length===1&&zoomScale>1&&zoomGesture.current.mode==="pan"){
+     e.preventDefault();
+     const g=zoomGesture.current;
+     setZoomPos({x:(g.originX||0)+(t[0].clientX-(g.startX||0)),y:(g.originY||0)+(t[0].clientY-(g.startY||0))});
+   }
+ }
+ function zoomTouchEnd(){
+   zoomGesture.current={};
+   if(zoomScale<1.05){setZoomScale(1);setZoomPos({x:0,y:0})}
+ }
+
+ return <div className="fixed inset-0 z-[110] overflow-y-auto overscroll-contain bg-white text-neutral-950" style={{WebkitOverflowScrolling:"touch"}}>
+   <div className="mx-auto min-h-[100svh] max-w-md bg-white pb-[max(24px,env(safe-area-inset-bottom))]">
+     <section className="relative bg-neutral-100">
+       <div
+         className="relative flex min-h-[54svh] max-h-[74svh] items-center justify-center overflow-hidden"
+         onTouchStart={galleryTouchStart}
+         onTouchEnd={galleryTouchEnd}
+         style={{touchAction:"pan-y"}}
+       >
+         {image
+           ? <button type="button" onClick={openZoom} className="block w-full cursor-zoom-in">
+               <img src={image} className="max-h-[74svh] w-full object-contain" alt=""/>
+             </button>
+           : <div className="grid h-[54svh] w-full place-items-center text-sm font-bold text-neutral-400">Chưa có ảnh bảng vải</div>
+         }
+
+         <button type="button" onClick={onClose} aria-label="Quay lại" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] z-20 grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur">
+           <ArrowLeft className="h-5 w-5"/>
+         </button>
+
+         {!!image&&<div className="absolute right-3 top-[max(12px,env(safe-area-inset-top))] z-20 flex gap-2">
+           <button type="button" onClick={(e)=>{e.stopPropagation();void saveImageToPhone(image,`${board.boardCode}-${viewerIndex+1}`)}} aria-label="Lưu ảnh" className="grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur">
+             <Download className="h-5 w-5"/>
+           </button>
+         </div>}
+
+         {gallery.length>1&&<>
+           <button type="button" onClick={(e)=>{e.stopPropagation();prev()}} aria-label="Ảnh trước" className="absolute left-3 top-1/2 z-20 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl shadow">‹</button>
+           <button type="button" onClick={(e)=>{e.stopPropagation();next()}} aria-label="Ảnh sau" className="absolute right-3 top-1/2 z-20 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-2xl shadow">›</button>
+           <span className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/65 px-3 py-1.5 text-[11px] font-black text-white">{viewerIndex+1}/{gallery.length}</span>
+         </>}
+       </div>
+     </section>
+
+     <section className="px-4 pb-2 pt-4">
+       <div className="text-[11px] font-black uppercase tracking-[.08em] text-neutral-400">{board.boardCode}</div>
+       <h2 className="mt-1 text-[22px] font-black leading-tight">{board.name||"Bảng vải"}</h2>
+       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-neutral-500">
+         {board.fabricCode&&<span>{board.fabricCode}</span>}
+         {board.composition&&<><span>·</span><span>{board.composition}</span></>}
+         {(board.expectedGsm??board.gsm)!==null&&(board.expectedGsm??board.gsm)!==undefined&&<><span>·</span><span>{board.expectedGsm??board.gsm} GSM</span></>}
+       </div>
+
+       <button type="button" onClick={()=>setDetailExpanded(v=>!v)} className="mt-3 flex w-full items-center justify-between border-y py-3 text-left">
+         <div>
+           <div className="text-sm font-black">Thông tin bảng vải</div>
+           <div className="mt-0.5 text-[11px] text-neutral-400">{detailExpanded?"Thu gọn":"Bấm để xem chi tiết và chỉnh sửa"}</div>
+         </div>
+         <span className={`text-xl transition-transform ${detailExpanded?"rotate-180":""}`}>⌄</span>
+       </button>
+
+       {detailExpanded&&<div className="space-y-5 pt-4">
+         <div className="grid grid-cols-2 gap-3">
+           <Info label="Mã bảng vải" value={board.boardCode||"—"}/>
+           <Info label="Mã chất vải" value={board.fabricCode||"—"}/>
+           <Info label="GSM dự kiến" value={board.expectedGsm!=null?`${board.expectedGsm} GSM`:board.gsm?`${board.gsm} GSM`:"—"}/>
+           <Info label="NCC" value={board.supplier?.code||board.supplier?.publicCode||board.supplier?.name||"—"}/>
+         </div>
+         <Info label="Thành phần chất vải" value={board.composition||"Chưa khai báo"}/>
+         <ChipSection title="Mùa có thể dùng" values={board.seasons||[]}/>
+         <ChipSection title="Nhóm sản phẩm phù hợp" values={board.productGroups||[]}/>
+         {!!board.colors?.length&&<ChipSection title="Màu đã khai báo" values={board.colors.map(c=>`${c.name}${c.code?` ${String(c.code).startsWith("#")?c.code:`#${c.code}`}`:""}`)}/>}
+         {board.note&&<Info label="Ghi chú bảng vải" value={board.note}/>}
+
+         <section>
+           <div className="flex items-center justify-between"><b className="text-sm">Lịch sử gửi làm mẫu</b><Badge>{dispatches.length} lần</Badge></div>
+           <div className="mt-2 space-y-2">{dispatches.length?dispatches.map((d:any)=><div key={d.id} className="rounded-2xl border bg-white p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-black">{d.designSample?.code||"—"} · {d.designSample?.name||"Mẫu"}</div><div className="mt-1 text-xs text-neutral-500">{fmtDate(d.sentAt)} · {d.fabricColor?.name||d.colorName||"—"} {d.fabricColor?.code||d.colorCode||""}</div></div><Badge>{dispatchLabel(d.status)}</Badge></div></div>):<Empty text="Chưa gửi đi làm mẫu."/>}</div>
+         </section>
+
+         <section>
+           <div className="flex items-center justify-between"><b className="text-sm">Lịch sử sử dụng / mẫu đã sản xuất</b><Badge>{samples.length} mẫu</Badge></div>
+           <div className="mt-2 space-y-2">{samples.length?samples.map((s:any)=><div key={s.id} className="rounded-2xl border bg-white p-3"><div className="font-black">{s.code} · {s.name}</div><div className="mt-1 text-xs text-neutral-500">{s.year||"—"} · {s.season||"—"} · {s.category||"—"}</div>{s.producedProduct&&<div className="mt-2 rounded-xl bg-emerald-50 p-2.5 text-xs font-bold text-emerald-800">Đã sản xuất: {s.producedProduct.name}{s.producedProduct.slug?` · ${s.producedProduct.slug}`:""}</div>}</div>):<Empty text="Chưa có mẫu sử dụng bảng vải này."/>}</div>
+         </section>
+
+         {!!receipts.length&&<section><div className="flex items-center justify-between"><b className="text-sm">Phiếu vải về liên quan</b><Badge>{receipts.length} phiếu</Badge></div><div className="mt-2 space-y-2">{receipts.map((r:any)=><div key={r.id} className="rounded-2xl bg-neutral-50 p-3"><div className="font-black">{r.receiptCode||"Phiếu vải"}</div><div className="mt-1 text-xs text-neutral-500">{r.fabricName||board.name||"—"} · {r.colorName||"—"} {r.colorCode||""}</div></div>)}</div></section>}
+
+         <div className="grid grid-cols-2 gap-2 border-t pt-4">
+           {can("fabric_library.edit")&&<button onClick={onEdit} className="rounded-2xl bg-neutral-950 py-3 text-sm font-black text-white"><Pencil className="mr-1 inline h-4 w-4"/>Sửa bảng</button>}
+           {can("fabric_library.delete")&&<button onClick={onDelete} className="rounded-2xl border border-red-200 bg-red-50 py-3 text-sm font-black text-red-700"><Trash2 className="mr-1 inline h-4 w-4"/>Xoá bảng</button>}
+         </div>
+       </div>}
+     </section>
+   </div>
+
+   {zoomOpen&&image&&<div className="fixed inset-0 z-[140] overflow-hidden bg-black" style={{touchAction:"none"}}>
+     <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-3" style={{paddingTop:"max(12px,env(safe-area-inset-top))"}}>
+       <button type="button" onClick={closeZoom} className="grid h-11 w-11 place-items-center rounded-full bg-white/92 text-black shadow backdrop-blur"><X className="h-5 w-5"/></button>
+       <div className="rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-black text-white">{Math.round(zoomScale*100)}%</div>
+     </div>
+     <div className="flex h-full w-full items-center justify-center" onTouchStart={zoomTouchStart} onTouchMove={zoomTouchMove} onTouchEnd={zoomTouchEnd}>
+       <img src={image} alt="" draggable={false} className="max-h-full max-w-full select-none object-contain" style={{transform:`translate3d(${zoomPos.x}px,${zoomPos.y}px,0) scale(${zoomScale})`,transformOrigin:"center center",transition:zoomGesture.current?.mode?"none":"transform 120ms ease-out"}}/>
+     </div>
+     <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 flex justify-center pb-[max(18px,env(safe-area-inset-bottom))]">
+       <div className="rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white/90">Chụm 2 ngón để zoom · kéo để xem</div>
+     </div>
+   </div>}
+ </div>;
 }
 function BoardForm({ board, meta, canUpload, onClose, onSaved, onSupplierCreated }: {
     board: FabricBoard | null;
@@ -562,14 +741,18 @@ function Modal({ title, children, onClose }: {
 
     function close() {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        window.setTimeout(onClose, 40);
+        window.setTimeout(() => {
+            onClose();
+            window.setTimeout(() => {
+                document.documentElement.style.setProperty("--fabric-page-vh", `${window.innerHeight}px`);
+                window.scrollTo({left:0,top:window.scrollY,behavior:"auto"});
+            }, 60);
+        }, 40);
     }
 
     return <div
         className="fixed inset-0 z-[100] bg-black/45"
         style={{
-            height: "100dvh",
-            minHeight: "-webkit-fill-available",
             overscrollBehavior: "none",
         }}
     >
