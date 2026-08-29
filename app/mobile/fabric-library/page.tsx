@@ -192,38 +192,6 @@ export default function Page() {
         void load();
     }, []);
 
-    useEffect(() => {
-        // iOS/PWA đôi khi để lộ phần nền của body bên dưới 100dvh sau khi đóng modal.
-        // Giữ nền trang đồng nhất và ép layout reflow sau khi viewport thay đổi.
-        const html = document.documentElement;
-        const body = document.body;
-        const oldHtmlBg = html.style.backgroundColor;
-        const oldBodyBg = body.style.backgroundColor;
-        const oldBodyMinHeight = body.style.minHeight;
-
-        html.style.backgroundColor = "#f5f5f5";
-        body.style.backgroundColor = "#f5f5f5";
-        body.style.minHeight = "100vh";
-
-        const syncViewport = () => {
-            html.style.setProperty("--fabric-page-vh", `${window.innerHeight}px`);
-            requestAnimationFrame(() => window.scrollTo({left:0,top:window.scrollY,behavior:"auto"}));
-        };
-        syncViewport();
-        window.addEventListener("resize", syncViewport);
-        window.addEventListener("orientationchange", syncViewport);
-        window.visualViewport?.addEventListener("resize", syncViewport);
-
-        return () => {
-            window.removeEventListener("resize", syncViewport);
-            window.removeEventListener("orientationchange", syncViewport);
-            window.visualViewport?.removeEventListener("resize", syncViewport);
-            html.style.backgroundColor = oldHtmlBg;
-            body.style.backgroundColor = oldBodyBg;
-            body.style.minHeight = oldBodyMinHeight;
-            html.style.removeProperty("--fabric-page-vh");
-        };
-    }, []);
 
     function setView(next:"LIST"|"PINTEREST") {
         setViewMode(next);
@@ -339,10 +307,8 @@ export default function Page() {
     }, [rows,q,supplierFilter,seasonFilter,groupFilter,sortMode,boardFilter,pinBoards]);
 
     return <main
-      className="relative w-full bg-neutral-100 pb-[calc(24px+env(safe-area-inset-bottom))] text-neutral-950"
-      style={{minHeight:"max(100vh, var(--fabric-page-vh, 100vh))"}}
+      className="relative min-h-[100svh] w-full bg-neutral-100 pb-[calc(24px+env(safe-area-inset-bottom))] text-neutral-950"
     >
-      <div className="fixed inset-0 -z-10 bg-neutral-100" aria-hidden="true"/>
       <div className="mx-auto max-w-md">
         <header className="relative z-10 border-b bg-white px-3 pb-2" style={{paddingTop:"max(44px, calc(env(safe-area-inset-top) + 8px))"}}>
           <div className="flex min-h-11 items-center justify-between gap-2">
@@ -723,7 +689,10 @@ catch (e) {
     await api(board ? `/sample-fabric/library/${board.id}` : "/sample-fabric/library", { method: board ? "PATCH" : "POST", body: JSON.stringify({ supplierId: form.supplierId || null, boardCode: normalizeCode(form.boardCode), fabricCode: normalizeCode(form.fabricCode) || null, name: form.name.trim() || null, composition: compositionText(compositionParts) || null, expectedGsm: form.expectedGsm === "" ? null : Number(String(form.expectedGsm).replace(",", ".")), referencePriceVnd: form.referencePriceVnd === "" ? null : Number(String(form.referencePriceVnd).replace(/[^\d]/g, "")), referencePriceUnit: form.referencePriceUnit || "METER", seasons: form.seasons, productGroups: form.productGroups, note: form.note || null, coverImageUrl: form.coverImageUrl || images[0]?.url || null, images, colors: colors.filter(x => x.name.trim() || String(x.code || "").trim()).map(x => ({ ...x, name: titleCase(x.name), code: x.code ? `#${String(x.code).replace(/^#+/, "").trim()}` : null })) }) });
     if (document.activeElement instanceof HTMLElement)
         document.activeElement.blur();
-    requestAnimationFrame(() => onSaved());
+    // Đợi 1 frame để iOS đóng keyboard trước khi unmount modal.
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => onSaved());
+    });
 }
 catch (e) {
     setError(e instanceof Error ? e.message : "Không lưu được bảng vải.");
@@ -761,40 +730,70 @@ function Modal({ title, children, onClose }: {
     children: any;
     onClose: () => void;
 }) {
+    const scrollYRef = useRef(0);
+
     useEffect(() => {
-        const previousOverflow = document.body.style.overflow;
-        const previousOverscroll = document.body.style.overscrollBehavior;
-        document.body.style.overflow = "hidden";
-        document.body.style.overscrollBehavior = "none";
+        const body = document.body;
+        const html = document.documentElement;
+        const y = window.scrollY || html.scrollTop || body.scrollTop || 0;
+        scrollYRef.current = y;
+
+        const previous = {
+            position: body.style.position,
+            top: body.style.top,
+            left: body.style.left,
+            right: body.style.right,
+            width: body.style.width,
+            overflow: body.style.overflow,
+            overscrollBehavior: body.style.overscrollBehavior,
+        };
+
+        // Khóa body theo đúng vị trí hiện tại. Cách này tránh iOS làm lệch visual viewport
+        // sau khi bàn phím đóng hoặc modal bị unmount vì bấm Lưu.
+        body.style.position = "fixed";
+        body.style.top = `-${y}px`;
+        body.style.left = "0";
+        body.style.right = "0";
+        body.style.width = "100%";
+        body.style.overflow = "hidden";
+        body.style.overscrollBehavior = "none";
+        html.style.overscrollBehavior = "none";
+
         return () => {
-            document.body.style.overflow = previousOverflow;
-            document.body.style.overscrollBehavior = previousOverscroll;
+            body.style.position = previous.position;
+            body.style.top = previous.top;
+            body.style.left = previous.left;
+            body.style.right = previous.right;
+            body.style.width = previous.width;
+            body.style.overflow = previous.overflow;
+            body.style.overscrollBehavior = previous.overscrollBehavior;
+            html.style.overscrollBehavior = "";
+
+            const restoreY = scrollYRef.current;
+            requestAnimationFrame(() => {
+                window.scrollTo({ left: 0, top: restoreY, behavior: "auto" });
+                window.setTimeout(() => {
+                    window.scrollTo({ left: 0, top: restoreY, behavior: "auto" });
+                }, 80);
+            });
         };
     }, []);
 
     function close() {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        window.setTimeout(() => {
-            onClose();
-            window.setTimeout(() => {
-                document.documentElement.style.setProperty("--fabric-page-vh", `${window.innerHeight}px`);
-                window.scrollTo({left:0,top:window.scrollY,behavior:"auto"});
-            }, 60);
-        }, 40);
+        onClose();
     }
 
     return <div
         className="fixed inset-0 z-[100] bg-black/45"
-        style={{
-            overscrollBehavior: "none",
-        }}
+        style={{overscrollBehavior:"none"}}
     >
         <div
             className="h-full overflow-y-auto overscroll-contain px-3"
             style={{
-                paddingTop: "max(12px, env(safe-area-inset-top))",
-                paddingBottom: "max(12px, env(safe-area-inset-bottom))",
-                WebkitOverflowScrolling: "touch",
+                paddingTop:"max(12px, env(safe-area-inset-top))",
+                paddingBottom:"max(12px, env(safe-area-inset-bottom))",
+                WebkitOverflowScrolling:"touch",
             }}
         >
             <div className="mx-auto min-h-full w-full max-w-md overflow-visible rounded-[30px] bg-white shadow-2xl">
