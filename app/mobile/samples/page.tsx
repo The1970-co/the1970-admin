@@ -1172,6 +1172,21 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
             <span className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/65 px-3 py-1.5 text-[11px] font-black text-white">{viewerIndex+1}/{gallery.length}</span>
           </>}
         </div>
+
+        {gallery.length>1&&<div className="border-t bg-white px-3 py-3">
+          <div className="flex gap-2 overflow-x-auto pb-1" style={{WebkitOverflowScrolling:"touch"}}>
+            {gallery.map((url,i)=><button
+              type="button"
+              key={`${url}-${i}`}
+              onClick={()=>setViewerIndex(i)}
+              className={`relative h-20 w-16 shrink-0 overflow-hidden rounded-xl border-2 bg-neutral-100 ${viewerIndex===i?"border-neutral-950":"border-transparent"}`}
+              aria-label={`Xem ảnh ${i+1}`}
+            >
+              <img src={url} className="h-full w-full object-cover" alt=""/>
+              <span className={`absolute bottom-1 right-1 rounded-md px-1.5 py-0.5 text-[9px] font-black ${viewerIndex===i?"bg-neutral-950 text-white":"bg-white/90 text-neutral-700"}`}>{i+1}</span>
+            </button>)}
+          </div>
+        </div>}
       </section>
 
       <section className="px-4 pb-2 pt-4">
