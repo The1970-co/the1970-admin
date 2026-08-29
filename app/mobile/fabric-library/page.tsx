@@ -543,30 +543,55 @@ finally {
     if (g && !form.productGroups.includes(g))
         patch("productGroups", [...form.productGroups, g]);
     setCustomGroup("");
-} }} placeholder="Gõ nhóm mới rồi Enter"/></section><section className="rounded-3xl border p-3"><div className="flex items-center justify-between"><div><div className="text-sm font-black">Màu trên bảng</div><div className="mt-1 text-[11px] text-neutral-400">Không bắt buộc; chỉ thêm khi cần.</div></div><button type="button" onClick={() => setColors(x => [...x, { name: "", code: "" }])} className="rounded-xl border px-3 py-2 text-xs font-black">+ Màu</button></div>{!!colors.length && <div className="mt-3 space-y-2">{colors.map((c, i) => <div key={c.id || i} className="grid grid-cols-[1fr_100px_auto] gap-2"><input className={input} value={c.name} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, name: e.target.value } : p))} placeholder="Tên màu"/><input className={input} value={c.code || ""} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, code: e.target.value ? `#${e.target.value.replace(/^#+/, "")}` : "" } : p))} placeholder="#2"/><button type="button" onClick={() => setColors(x => x.filter((_, n) => n !== i))} className="grid h-12 w-10 place-items-center text-red-600"><Trash2 className="h-4 w-4"/></button></div>)}</div>}</section><Field label="Ghi chú bảng vải"><textarea className={`${input} min-h-24`} value={form.note} onChange={e => patch("note", e.target.value)} placeholder="Ứng dụng, cảm giác tay, lưu ý xử lý..."/></Field><div className="sticky bottom-0 z-30 -mx-4 border-t bg-white/95 px-4 pt-3 backdrop-blur" style={{paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}><div className="grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-2xl border py-3 text-sm font-black">Đóng</button><button disabled={saving} onClick={() => void save()} className="rounded-2xl bg-neutral-950 py-3 text-sm font-black text-white disabled:opacity-40">{saving ? "Đang lưu..." : "Lưu bảng vải"}</button></div></div></div></Modal>; }
+} }} placeholder="Gõ nhóm mới rồi Enter"/></section><section className="rounded-3xl border p-3"><div className="flex items-center justify-between"><div><div className="text-sm font-black">Màu trên bảng</div><div className="mt-1 text-[11px] text-neutral-400">Không bắt buộc; chỉ thêm khi cần.</div></div><button type="button" onClick={() => setColors(x => [...x, { name: "", code: "" }])} className="rounded-xl border px-3 py-2 text-xs font-black">+ Màu</button></div>{!!colors.length && <div className="mt-3 space-y-2">{colors.map((c, i) => <div key={c.id || i} className="grid grid-cols-[1fr_100px_auto] gap-2"><input className={input} value={c.name} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, name: e.target.value } : p))} placeholder="Tên màu"/><input className={input} value={c.code || ""} onChange={e => setColors(x => x.map((p, n) => n === i ? { ...p, code: e.target.value ? `#${e.target.value.replace(/^#+/, "")}` : "" } : p))} placeholder="#2"/><button type="button" onClick={() => setColors(x => x.filter((_, n) => n !== i))} className="grid h-12 w-10 place-items-center text-red-600"><Trash2 className="h-4 w-4"/></button></div>)}</div>}</section><Field label="Ghi chú bảng vải"><textarea className={`${input} min-h-24`} value={form.note} onChange={e => patch("note", e.target.value)} placeholder="Ứng dụng, cảm giác tay, lưu ý xử lý..."/></Field><div className="sticky bottom-0 z-50 -mx-4 border-t bg-white/95 px-4 pt-3 backdrop-blur" style={{paddingBottom:"max(18px,env(safe-area-inset-bottom))"}}><div className="grid grid-cols-2 gap-2"><button onClick={onClose} className="rounded-2xl border py-3 text-sm font-black">Đóng</button><button disabled={saving} onClick={() => void save()} className="rounded-2xl bg-neutral-950 py-3 text-sm font-black text-white disabled:opacity-40">{saving ? "Đang lưu..." : "Lưu bảng vải"}</button></div></div></div></Modal>; }
 function Modal({ title, children, onClose }: {
     title: string;
     children: any;
     onClose: () => void;
 }) {
-    const [viewport,setViewport]=useState<{height:number;top:number}>(()=>({height:typeof window==="undefined"?800:window.innerHeight,top:0}));
-    useEffect(()=>{
-        const vv=window.visualViewport;
-        const sync=()=>setViewport({height:vv?.height||window.innerHeight,top:vv?.offsetTop||0});
-        const prevOverflow=document.body.style.overflow;
-        document.body.style.overflow="hidden";
-        sync();
-        vv?.addEventListener("resize",sync);
-        vv?.addEventListener("scroll",sync);
-        window.addEventListener("orientationchange",sync);
-        return()=>{document.body.style.overflow=prevOverflow;vv?.removeEventListener("resize",sync);vv?.removeEventListener("scroll",sync);window.removeEventListener("orientationchange",sync)};
-    },[]);
-    function close(){
-        if(document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        const sync=()=>{const vv=window.visualViewport;setViewport({height:vv?.height||window.innerHeight,top:vv?.offsetTop||0})};
-        requestAnimationFrame(sync);setTimeout(sync,80);setTimeout(()=>onClose(),120);
+    useEffect(() => {
+        const previousOverflow = document.body.style.overflow;
+        const previousOverscroll = document.body.style.overscrollBehavior;
+        document.body.style.overflow = "hidden";
+        document.body.style.overscrollBehavior = "none";
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            document.body.style.overscrollBehavior = previousOverscroll;
+        };
+    }, []);
+
+    function close() {
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        window.setTimeout(onClose, 40);
     }
-    return <div className="fixed left-0 right-0 z-[100] overflow-y-auto overscroll-contain bg-black/45 px-3" style={{top:viewport.top,height:viewport.height,paddingTop:12,paddingBottom:"max(12px, env(safe-area-inset-bottom))",WebkitOverflowScrolling:"touch",touchAction:"pan-y"}}><div className="mx-auto max-w-md overflow-visible rounded-[30px] bg-white shadow-2xl"><div className="sticky top-0 z-20 flex items-center justify-between border-b bg-white p-4"><h2 className="min-w-0 truncate pr-3 font-black">{title}</h2><button onClick={close} className="grid h-10 w-10 shrink-0 place-items-center rounded-full border"><X className="h-4 w-4"/></button></div>{children}</div></div>;
+
+    return <div
+        className="fixed inset-0 z-[100] bg-black/45"
+        style={{
+            height: "100dvh",
+            minHeight: "-webkit-fill-available",
+            overscrollBehavior: "none",
+        }}
+    >
+        <div
+            className="h-full overflow-y-auto overscroll-contain px-3"
+            style={{
+                paddingTop: "max(12px, env(safe-area-inset-top))",
+                paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+                WebkitOverflowScrolling: "touch",
+            }}
+        >
+            <div className="mx-auto min-h-full w-full max-w-md overflow-visible rounded-[30px] bg-white shadow-2xl">
+                <div className="sticky top-0 z-40 flex items-center justify-between border-b bg-white/95 p-4 backdrop-blur">
+                    <h2 className="min-w-0 truncate pr-3 font-black">{title}</h2>
+                    <button onClick={close} className="grid h-10 w-10 shrink-0 place-items-center rounded-full border">
+                        <X className="h-4 w-4"/>
+                    </button>
+                </div>
+                {children}
+            </div>
+        </div>
+    </div>;
 }
 function Field({ label: text, children }: {
     label: string;
