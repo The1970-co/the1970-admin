@@ -63,7 +63,13 @@ function normalizeColorKey(value?: string | null) {
 
 function getProductColorRepresentatives(product: MobileProduct) {
   const seen = new Set<string>();
-  const colorMap = product.colorImages || product.imagesByColor || {};
+  const rawColorMap = product.colorImages || product.imagesByColor || {};
+  const colorMap = Object.fromEntries(
+    Object.entries(rawColorMap).map(([color, image]) => [
+      normalizeColorKey(color),
+      String(image || "").trim(),
+    ]),
+  );
   const output: Array<{ key: string; label: string; image: string }> = [];
 
   for (const variant of product.variants || []) {
@@ -72,12 +78,11 @@ function getProductColorRepresentatives(product: MobileProduct) {
     if (seen.has(key)) continue;
     seen.add(key);
 
+    // Ở API danh sách, variant.imageUrl có thể đang fallback về ảnh chính của sản phẩm
+    // nên nếu ưu tiên nó trước sẽ làm mọi màu hiện cùng một ảnh.
+    // Ảnh map theo màu mới là nguồn đúng; chỉ fallback variant/main khi màu chưa có ảnh riêng.
     const image = absoluteImageUrl(
-      variant.imageUrl ||
-        colorMap[key] ||
-        colorMap[label] ||
-        product.imageUrl ||
-        "",
+      colorMap[key] || variant.imageUrl || product.imageUrl || "",
     );
 
     output.push({ key, label, image });
