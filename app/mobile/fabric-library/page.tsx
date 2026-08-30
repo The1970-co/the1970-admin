@@ -88,6 +88,18 @@ function fabricVisualUrls(board: FabricBoard) {
         ...(board.images || []).map(x => x.url),
     ].filter(Boolean).map(String)));
 }
+
+function FabricVisualDots({visuals,max=5}:{visuals:string[];max?:number}) {
+    if (visuals.length <= 1) return null;
+    const shown = visuals.slice(0,max);
+    const hidden = Math.max(0,visuals.length-shown.length);
+    return <div className="inline-flex items-center gap-1" title={`${visuals.length} ảnh`}>
+        {shown.map((url,i)=><span key={`${url}-${i}`} className="inline-flex h-6 w-6 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-300">
+            <img src={asset(url)} alt={`Ảnh ${i+1}`} className="h-full w-full object-cover"/>
+        </span>)}
+        {hidden>0&&<span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-neutral-950 px-1 text-[8px] font-black text-white">+{hidden}</span>}
+    </div>;
+}
 const DEFAULT_COMPOSITIONS = ["Cotton", "Linen", "Tencel", "Lyocell", "Viscose", "Rayon", "Polyester", "Nylon", "Spandex", "Elastane", "Wool", "Silk", "Bamboo", "Cashmere", "Acrylic", "Modal"];
 const DEFAULT_SEASONS = ["Xuân Hạ", "Thu Đông", "Đông Xuân", "Xuân Hè"];
 async function api<T = any>(path: string, init: RequestInit = {}) { return apiJson<T>(path, { ...init, redirectOnUnauthorized: false } as any); }
@@ -310,7 +322,7 @@ export default function Page() {
       className="relative min-h-[100svh] w-full bg-neutral-100 pb-[calc(24px+env(safe-area-inset-bottom))] text-neutral-950"
     >
       <div className="mx-auto max-w-md">
-        <header className="relative z-10 border-b bg-white px-3 pb-2" style={{paddingTop:"max(44px, calc(env(safe-area-inset-top) + 8px))"}}>
+        <header className="relative z-10 border-b bg-white px-3 pb-2 pt-3">
           <div className="flex min-h-11 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
@@ -358,7 +370,6 @@ export default function Page() {
               <button type="button" onClick={()=>void openDetail(board)} className="flex w-full gap-4 text-left active:scale-[.995]">
                 <div className="relative h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">
                   {image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center"><Layers3 className="h-7 w-7 text-neutral-300"/></div>}
-                  {visuals.length>1&&<span className="absolute bottom-1 right-1 rounded-lg bg-black/70 px-1.5 py-0.5 text-[8px] font-black text-white">{visuals.length} ảnh</span>}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-black text-neutral-400">{board.boardCode}{board.fabricCode?` · ${board.fabricCode}`:""}</div>
@@ -367,6 +378,7 @@ export default function Page() {
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {gsm!==null&&gsm!==undefined&&gsm!==""&&<Badge>{gsm} GSM</Badge>}
                     {(board.seasons||[]).slice(0,1).map(x=><Badge key={x}>{x}</Badge>)}
+                    <FabricVisualDots visuals={visuals}/>
                     {fabricBoardCollectionNames(board.id).slice(0,2).map(name=><Badge key={name}>{name}</Badge>)}
                   </div>
                 </div>
@@ -389,7 +401,7 @@ export default function Page() {
                     <div className="mt-1 line-clamp-2 text-[10px] text-neutral-500">{board.composition||"Chưa khai báo thành phần"}</div>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {gsm!==null&&gsm!==undefined&&gsm!==""&&<Badge>{gsm} GSM</Badge>}
-                      {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
+                      <FabricVisualDots visuals={visuals} max={4}/>
                     </div>
                   </div>
                 </button>
@@ -559,11 +571,11 @@ function BoardDetail({ board, can, onClose, onEdit, onDelete }: {
            : <div className="grid h-[54svh] w-full place-items-center text-sm font-bold text-neutral-400">Chưa có ảnh bảng vải</div>
          }
 
-         <button type="button" onClick={onClose} aria-label="Quay lại" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] z-20 grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur">
+         <button type="button" onClick={onClose} aria-label="Quay lại" className="absolute left-3 top-3 z-20 grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur">
            <ArrowLeft className="h-5 w-5"/>
          </button>
 
-         {!!image&&<div className="absolute right-3 top-[max(12px,env(safe-area-inset-top))] z-20 flex gap-2">
+         {!!image&&<div className="absolute right-3 top-3 z-20 flex gap-2">
            <button type="button" onClick={(e)=>{e.stopPropagation();void saveImageToPhone(image,`${board.boardCode}-${viewerIndex+1}`)}} aria-label="Lưu ảnh" className="grid h-11 w-11 place-items-center rounded-full bg-white/92 shadow backdrop-blur">
              <Download className="h-5 w-5"/>
            </button>
@@ -644,7 +656,7 @@ function BoardDetail({ board, can, onClose, onEdit, onDelete }: {
    </div>
 
    {zoomOpen&&image&&<div className="fixed inset-0 z-[140] overflow-hidden bg-black" style={{touchAction:"none"}}>
-     <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-3" style={{paddingTop:"max(12px,env(safe-area-inset-top))"}}>
+     <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-3" style={{paddingTop:"12px"}}>
        <button type="button" onClick={closeZoom} className="grid h-11 w-11 place-items-center rounded-full bg-white/92 text-black shadow backdrop-blur"><X className="h-5 w-5"/></button>
        <div className="rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-black text-white">{Math.round(zoomScale*100)}%</div>
      </div>
@@ -681,12 +693,32 @@ catch (e) {
 } } async function save() { try {
     setSaving(true);
     setError("");
-    if (!normalizeCode(form.boardCode))
-        throw new Error("Thiếu mã bảng vải.");
+
+    // Tạo nhanh: người dùng không cần nhập mã bảng hay NCC ngay lúc lưu.
+    // Backend hiện vẫn yêu cầu 2 trường này, nên client tự sinh mã và dùng NCC tạm "Chưa xác định".
+    let boardCode = normalizeCode(form.boardCode);
+    if (!boardCode) {
+        const stamp = new Date().toISOString().replace(/\D/g, "").slice(2,14);
+        boardCode = `BV${stamp}`;
+    }
+
+    let supplierId = String(form.supplierId || "").trim();
+    if (!supplierId && !board) {
+        let fallback = meta.suppliers.find(s => String(s.name || "").trim().toLocaleLowerCase("vi-VN") === "chưa xác định");
+        if (!fallback) {
+            fallback = await api<Supplier>("/sample-fabric/fabric-suppliers", {
+                method: "POST",
+                body: JSON.stringify({ name: "Chưa xác định" }),
+            });
+            onSupplierCreated(fallback);
+        }
+        supplierId = fallback.id;
+    }
+
     const total = compositionParts.reduce((s, p) => s + (Number(String(p.percent || "").replace(",", ".")) || 0), 0), has = compositionParts.some(x => String(x.percent).trim());
     if (has && Math.abs(total - 100) > .001)
         throw new Error(`Tổng tỷ lệ thành phần đang là ${total}%, phải bằng 100%.`);
-    await api(board ? `/sample-fabric/library/${board.id}` : "/sample-fabric/library", { method: board ? "PATCH" : "POST", body: JSON.stringify({ supplierId: form.supplierId || null, boardCode: normalizeCode(form.boardCode), fabricCode: normalizeCode(form.fabricCode) || null, name: form.name.trim() || null, composition: compositionText(compositionParts) || null, expectedGsm: form.expectedGsm === "" ? null : Number(String(form.expectedGsm).replace(",", ".")), referencePriceVnd: form.referencePriceVnd === "" ? null : Number(String(form.referencePriceVnd).replace(/[^\d]/g, "")), referencePriceUnit: form.referencePriceUnit || "METER", seasons: form.seasons, productGroups: form.productGroups, note: form.note || null, coverImageUrl: form.coverImageUrl || images[0]?.url || null, images, colors: colors.filter(x => x.name.trim() || String(x.code || "").trim()).map(x => ({ ...x, name: titleCase(x.name), code: x.code ? `#${String(x.code).replace(/^#+/, "").trim()}` : null })) }) });
+    await api(board ? `/sample-fabric/library/${board.id}` : "/sample-fabric/library", { method: board ? "PATCH" : "POST", body: JSON.stringify({ supplierId: supplierId || null, boardCode, fabricCode: normalizeCode(form.fabricCode) || null, name: form.name.trim() || null, composition: compositionText(compositionParts) || null, expectedGsm: form.expectedGsm === "" ? null : Number(String(form.expectedGsm).replace(",", ".")), referencePriceVnd: form.referencePriceVnd === "" ? null : Number(String(form.referencePriceVnd).replace(/[^\d]/g, "")), referencePriceUnit: form.referencePriceUnit || "METER", seasons: form.seasons, productGroups: form.productGroups, note: form.note || null, coverImageUrl: form.coverImageUrl || images[0]?.url || null, images, colors: colors.filter(x => x.name.trim() || String(x.code || "").trim()).map(x => ({ ...x, name: titleCase(x.name), code: x.code ? `#${String(x.code).replace(/^#+/, "").trim()}` : null })) }) });
     if (document.activeElement instanceof HTMLElement)
         document.activeElement.blur();
     // Đợi 1 frame để iOS đóng keyboard trước khi unmount modal.
@@ -700,7 +732,7 @@ catch (e) {
 finally {
     setSaving(false);
 } } const compositionOptions = unique([...DEFAULT_COMPOSITIONS, ...(meta.fabricCompositions || [])]); return <Modal title={board ? `Sửa bảng vải ${board.boardCode}` : "Thêm bảng vải"} onClose={onClose}><div className="space-y-4 p-4">{error && <Err text={error}/>}<Field label="Ảnh bảng vải"><div className="rounded-3xl border border-dashed p-3">{!!images.length && <div className="mb-3 flex gap-2 overflow-x-auto">{images.map((img, i) => <div key={`${img.url}-${i}`} className="relative shrink-0"><img src={asset(img.url)} className="h-24 w-24 rounded-2xl object-cover" alt=""/><button type="button" onClick={() => { const next = images.filter((_, n) => n !== i); setImages(next); if (form.coverImageUrl === img.url)
-    patch("coverImageUrl", next[0]?.url || ""); }} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow"><X className="h-3 w-3"/></button></div>)}</div>}{canUpload ? <div className="grid grid-cols-2 gap-2"><label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp ảnh<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => void pickImages(e.target.files||undefined)}/></label><label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e => void pickImages(e.target.files||undefined)}/></label></div> : <div className="text-xs text-neutral-400">Không có quyền tải ảnh.</div>}</div></Field><div className="grid grid-cols-2 gap-3"><Field label="Mã bảng vải"><input className={input} value={form.boardCode} onChange={e => patch("boardCode", normalizeCode(e.target.value))} placeholder="A2309"/></Field><Field label="Mã chất vải"><input className={input} value={form.fabricCode} onChange={e => patch("fabricCode", normalizeCode(e.target.value))} placeholder="KAKI01"/></Field></div><Field label="Tên bảng vải"><input className={input} value={form.name} onChange={e => patch("name", e.target.value)} onBlur={() => patch("name", titleCase(form.name))} placeholder="Vải Quần Kaki"/></Field><div className="grid grid-cols-[1fr_auto] gap-2"><Field label="Nhà cung cấp vải"><select className={input} value={form.supplierId} onChange={e => patch("supplierId", e.target.value)}><option value="">Chưa chọn NCC</option>{meta.suppliers.map(s => <option key={s.id} value={s.id}>{s.code || s.publicCode ? `${s.code || s.publicCode} · ` : ""}{s.name}</option>)}</select></Field><button type="button" onClick={() => setSupplierCreating(x => !x)} className="mt-[18px] h-[49px] rounded-2xl border px-3 text-xs font-black">+ NCC</button></div>{supplierCreating && <div className="flex gap-2 rounded-2xl bg-neutral-50 p-3"><input className={input} value={supplierName} onChange={e => setSupplierName(e.target.value)} placeholder="Tên NCC vải mới"/><button type="button" onClick={() => void createSupplier()} className="shrink-0 rounded-2xl bg-neutral-950 px-4 text-xs font-black text-white">Tạo</button></div>}<Field label="GSM dự kiến"><UnitInput value={form.expectedGsm} unit="GSM" onChange={v => patch("expectedGsm", v)}/></Field>
+    patch("coverImageUrl", next[0]?.url || ""); }} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow"><X className="h-3 w-3"/></button></div>)}</div>}{canUpload ? <div className="grid grid-cols-2 gap-2"><label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp ảnh<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => void pickImages(e.target.files||undefined)}/></label><label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e => void pickImages(e.target.files||undefined)}/></label></div> : <div className="text-xs text-neutral-400">Không có quyền tải ảnh.</div>}</div></Field><div className="grid grid-cols-2 gap-3"><Field label="Mã bảng vải · không bắt buộc"><input className={input} value={form.boardCode} onChange={e => patch("boardCode", normalizeCode(e.target.value))} placeholder="A2309"/></Field><Field label="Mã chất vải"><input className={input} value={form.fabricCode} onChange={e => patch("fabricCode", normalizeCode(e.target.value))} placeholder="KAKI01"/></Field></div><Field label="Tên bảng vải"><input className={input} value={form.name} onChange={e => patch("name", e.target.value)} onBlur={() => patch("name", titleCase(form.name))} placeholder="Vải Quần Kaki"/></Field><div className="grid grid-cols-[1fr_auto] gap-2"><Field label="Nhà cung cấp vải · có thể bổ sung sau"><select className={input} value={form.supplierId} onChange={e => patch("supplierId", e.target.value)}><option value="">Chưa chọn NCC</option>{meta.suppliers.map(s => <option key={s.id} value={s.id}>{s.code || s.publicCode ? `${s.code || s.publicCode} · ` : ""}{s.name}</option>)}</select></Field><button type="button" onClick={() => setSupplierCreating(x => !x)} className="mt-[18px] h-[49px] rounded-2xl border px-3 text-xs font-black">+ NCC</button></div>{supplierCreating && <div className="flex gap-2 rounded-2xl bg-neutral-50 p-3"><input className={input} value={supplierName} onChange={e => setSupplierName(e.target.value)} placeholder="Tên NCC vải mới"/><button type="button" onClick={() => void createSupplier()} className="shrink-0 rounded-2xl bg-neutral-950 px-4 text-xs font-black text-white">Tạo</button></div>}<Field label="GSM dự kiến"><UnitInput value={form.expectedGsm} unit="GSM" onChange={v => patch("expectedGsm", v)}/></Field>
 <div className="grid grid-cols-[1fr_120px] gap-2">
   <Field label="Giá vải tham khảo">
     <div className="relative">
@@ -791,7 +823,7 @@ function Modal({ title, children, onClose }: {
         <div
             className="h-full overflow-y-auto overscroll-contain px-3"
             style={{
-                paddingTop:"max(12px, env(safe-area-inset-top))",
+                paddingTop:"12px",
                 paddingBottom:"max(12px, env(safe-area-inset-bottom))",
                 WebkitOverflowScrolling:"touch",
             }}

@@ -535,7 +535,7 @@ export default function Page(){
 
   return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
     <div className="mx-auto max-w-md">
-      <header className="relative z-10 -mt-8 border-b bg-white px-3 pb-2 pt-3">
+      <header className="relative z-10 border-b bg-white px-3 pb-2 pt-3">
         <div className="flex min-h-10 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <Link href="/mobile" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
