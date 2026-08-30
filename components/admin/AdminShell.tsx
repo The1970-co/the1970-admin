@@ -15,6 +15,7 @@ type MenuItem = {
   href?: string;
   label: string;
   permission: string;
+  adminOnly?: boolean;
   children?: MenuItem[];
 };
 
@@ -48,6 +49,7 @@ const MENU: MenuItem[] = [
       { href: "/design-samples", label: "Triển khai mẫu", permission: PERMISSIONS.MENU_DESIGN_SAMPLES },
       { href: "/measurement-library", label: "Bảng thông số", permission: PERMISSIONS.MENU_MEASUREMENT_LIBRARY },
       { href: "/fabric-receipts", label: "Vải về", permission: PERMISSIONS.MENU_FABRIC_RECEIPTS },
+      { href: "/fabric-orders", label: "Lệnh đặt vải", permission: PERMISSIONS.MENU_FABRIC_LIBRARY, adminOnly: true },
       { href: "/production", label: "Sản xuất", permission: PERMISSIONS.MENU_PRODUCTION },
       { href: "/accessories", label: "Nguyên phụ liệu", permission: PERMISSIONS.MENU_ACCESSORIES },
     ],
@@ -132,6 +134,11 @@ function userRoles(user: any) {
     .filter(Boolean);
 }
 
+function isAdminUser(user: any) {
+  const roles = userRoles(user);
+  return roles.includes("admin") || roles.includes("owner");
+}
+
 function normalizeDisplayName(value?: string | null) {
   return String(value || "")
     .replace(/\s+-\s+[A-Za-z0-9À-ỹ]+\s*$/i, "")
@@ -165,11 +172,17 @@ function getHeaderStaffName(user: any) {
   return branchCode ? `${name} - ${branchCode}` : name;
 }
 
-function filterMenu(items: MenuItem[], can: (permission?: string | null) => boolean): MenuItem[] {
+function filterMenu(
+  items: MenuItem[],
+  can: (permission?: string | null) => boolean,
+  admin: boolean,
+): MenuItem[] {
   return items
     .map((item) => {
+      if (item.adminOnly && !admin) return null;
+
       if (item.children?.length) {
-        const children = filterMenu(item.children, can);
+        const children = filterMenu(item.children, can, admin);
         if (!children.length) return null;
         return { ...item, children };
       }
@@ -324,9 +337,13 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     };
   }, []);
 
-  const visibleMenu = useMemo(() => filterMenu(MENU, can), [can]);
+  const admin = useMemo(() => isAdminUser(user), [user]);
+  const visibleMenu = useMemo(() => filterMenu(MENU, can, admin), [can, admin]);
   const requiredPermission = useMemo(() => getRequiredPermissionForPath(pathname), [pathname]);
-  const canAccessCurrentRoute = !requiredPermission || can(requiredPermission);
+  const adminOnlyRoute = pathname === "/fabric-orders" || pathname.startsWith("/fabric-orders/");
+  const canAccessCurrentRoute =
+    (!requiredPermission || can(requiredPermission)) &&
+    (!adminOnlyRoute || admin);
 
   useEffect(() => {
     if (!checked || loading || !user || canAccessCurrentRoute) return;
