@@ -5,7 +5,7 @@ import { apiJson } from "@/lib/api";
 import { getMobileToken } from "@/lib/mobile-auth-token";
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type BranchOption = {
   id: string;
@@ -246,6 +246,108 @@ function MobileImagePreviewModal({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+
+function MobileProductColorPreview({
+  product,
+  onOpenImage,
+}: {
+  product: MobileProduct;
+  onOpenImage: (product: MobileProduct, startSrc?: string | null, startLabel?: string) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [previewProduct, setPreviewProduct] = useState<MobileProduct>(product);
+  const [detailLoaded, setDetailLoaded] = useState(false);
+
+  useEffect(() => {
+    setPreviewProduct(product);
+    setDetailLoaded(false);
+  }, [product]);
+
+  useEffect(() => {
+    const node = hostRef.current;
+    if (!node || detailLoaded) return;
+
+    let cancelled = false;
+    let observer: IntersectionObserver | null = null;
+
+    const loadDetail = async () => {
+      try {
+        const detail = await fetchWithAuth<any>(
+          `/products/${encodeURIComponent(product.id)}`,
+        );
+        if (!cancelled && detail?.id) {
+          // Endpoint chi tiết trả map ảnh màu/variant image đầy đủ hơn endpoint list.
+          // Chỉ hydrate khi card sắp đi vào viewport để tránh gọi detail cho toàn bộ danh sách.
+          setPreviewProduct({ ...product, ...detail } as MobileProduct);
+        }
+      } catch {
+        // Giữ dữ liệu list hiện tại nếu detail lỗi; không ảnh hưởng thao tác danh sách.
+      } finally {
+        if (!cancelled) setDetailLoaded(true);
+      }
+    };
+
+    if (typeof IntersectionObserver === "undefined") {
+      void loadDetail();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer?.disconnect();
+        void loadDetail();
+      },
+      { rootMargin: "320px 0px" },
+    );
+    observer.observe(node);
+
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
+  }, [detailLoaded, product]);
+
+  const colors = getProductColorRepresentatives(previewProduct);
+
+  return (
+    <div ref={hostRef} className="mt-2 flex items-center gap-1.5 overflow-hidden">
+      {colors.map((color) => (
+        <div
+          key={color.key}
+          title={`${color.label}${color.image ? " · Bấm để xem ảnh" : ""}`}
+          className={`h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-200 ${color.image ? "cursor-zoom-in" : ""}`}
+          onClick={(event) => {
+            if (!color.image) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenImage(previewProduct, color.image, color.label);
+          }}
+        >
+          {color.image ? (
+            <img
+              src={color.image}
+              alt={color.label}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[9px] font-black text-neutral-500">
+              {color.label.slice(0, 2).toUpperCase()}
+            </div>
+          )}
+        </div>
+      ))}
+      {colors.length > 0 ? (
+        <span className="ml-1 truncate text-xs text-neutral-500">
+          {colors.length} màu
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -539,38 +641,10 @@ export default function MobileProductsPage() {
                           </div>
                         </div>
 
-                        <div className="mt-2 flex items-center gap-1.5 overflow-hidden">
-                          {getProductColorRepresentatives(product).map((color) => (
-                            <div
-                              key={color.key}
-                              title={`${color.label}${color.image ? " · Bấm để xem ảnh" : ""}`}
-                              className={`h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-200 ${color.image ? "cursor-zoom-in" : ""}`}
-                              onClick={(event) => {
-                                if (!color.image) return;
-                                event.preventDefault();
-                                event.stopPropagation();
-                                openImagePreview(product, color.image, color.label);
-                              }}
-                            >
-                              {color.image ? (
-                                <img
-                                  src={color.image}
-                                  alt={color.label}
-                                  className="h-full w-full object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-[9px] font-black text-neutral-500">
-                                  {color.label.slice(0, 2).toUpperCase()}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                          {getProductColorRepresentatives(product).length > 0 ? (
-                            <span className="ml-1 truncate text-xs text-neutral-500">
-                              {getProductColorRepresentatives(product).length} màu
-                            </span>
-                          ) : null}
-                        </div>
+                        <MobileProductColorPreview
+                          product={product}
+                          onOpenImage={openImagePreview}
+                        />
                       </div>
                     </div>
 
