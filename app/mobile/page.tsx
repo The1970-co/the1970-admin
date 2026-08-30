@@ -2,7 +2,7 @@
 
 import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
-import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Layers3, PackageOpen, Ruler, Scissors, Shirt, ShoppingBag, WalletCards } from "lucide-react";
+import { BarChart3, Bot, Boxes, ClipboardCheck, Factory, Layers3, PackageOpen, Ruler, Scissors, Shirt, ShoppingBag, ShoppingCart, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -231,7 +231,8 @@ export default function MobileEntryPage() {
             can("design_sample.view") ||
             can("fabric_receipt.view") ||
             can("production.view") ||
-            can("accessories.view")) && (
+            can("accessories.view") ||
+            isOwnerOrAdmin(user)) && (
             <div className="mt-1">
               <div className="mb-3 flex items-end justify-between">
                 <div>
@@ -239,7 +240,7 @@ export default function MobileEntryPage() {
                     Sản xuất & Nguyên liệu
                   </div>
                   <div className="mt-1 text-sm text-neutral-500">
-                    Bảng vải, mẫu mã, bảng thông số, vải về, sản xuất và nguyên phụ liệu.
+                    Bảng vải, mẫu mã, bảng thông số, đặt vải, vải về, sản xuất và nguyên phụ liệu.
                   </div>
                 </div>
                 <Link
@@ -284,6 +285,15 @@ export default function MobileEntryPage() {
                     title="Vải về"
                     description="Phiếu nhập, cây vải, màu, mét/kg và ảnh."
                     icon={<Scissors className="h-7 w-7" />}
+                  />
+                )}
+
+                {isOwnerOrAdmin(user) && (
+                  <SmallCard
+                    href="/mobile/fabric-orders"
+                    title="Lệnh đặt vải"
+                    description="Theo dõi mã vải, màu, NCC, giá và mẫu triển khai đã đặt."
+                    icon={<ShoppingCart className="h-7 w-7" />}
                   />
                 )}
 

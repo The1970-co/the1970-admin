@@ -279,7 +279,7 @@ export default function Page() {
         >
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100">
+              <Link href="/mobile" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100">
                 <ArrowLeft className="h-5 w-5"/>
               </Link>
               <div className="min-w-0">
