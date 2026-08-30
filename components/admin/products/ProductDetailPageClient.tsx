@@ -1065,6 +1065,110 @@ function ProductInventoryHistoryPanel({
   );
 }
 
+type DetailImagePreviewItem = {
+  src: string;
+  label: string;
+};
+
+function DetailImagePreviewModal({
+  items,
+  index,
+  title,
+  onClose,
+  onIndexChange,
+}: {
+  items: DetailImagePreviewItem[];
+  index: number | null;
+  title: string;
+  onClose: () => void;
+  onIndexChange: (index: number) => void;
+}) {
+  if (index === null || !items.length) return null;
+
+  const safeIndex = Math.max(0, Math.min(index, items.length - 1));
+  const current = items[safeIndex];
+  const hasMany = items.length > 1;
+  const move = (step: number) => {
+    const next = (safeIndex + step + items.length) % items.length;
+    onIndexChange(next);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[140] flex items-center justify-center bg-black/85 p-3 md:p-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[95vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-neutral-950 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 text-white md:px-5">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{title || "Sản phẩm"}</div>
+            <div className="mt-0.5 text-xs text-white/50">
+              {current.label} · {safeIndex + 1}/{items.length}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl leading-none text-white hover:bg-white/20"
+            aria-label="Đóng ảnh"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black p-2 md:p-4">
+          <img
+            src={current.src}
+            alt={`${title || "Sản phẩm"} - ${current.label}`}
+            className="max-h-[74vh] max-w-full select-none object-contain"
+          />
+          {hasMany ? (
+            <>
+              <button
+                type="button"
+                onClick={() => move(-1)}
+                className="absolute left-3 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-2xl text-white backdrop-blur hover:bg-black/75 md:left-5"
+                aria-label="Ảnh trước"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => move(1)}
+                className="absolute right-3 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-2xl text-white backdrop-blur hover:bg-black/75 md:right-5"
+                aria-label="Ảnh sau"
+              >
+                ›
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        {hasMany ? (
+          <div className="flex gap-2 overflow-x-auto border-t border-white/10 px-4 py-3">
+            {items.map((item, itemIndex) => (
+              <button
+                key={`${item.src}-${itemIndex}`}
+                type="button"
+                onClick={() => onIndexChange(itemIndex)}
+                className={`h-14 w-14 shrink-0 overflow-hidden rounded-xl border-2 ${
+                  itemIndex === safeIndex ? "border-white" : "border-transparent opacity-60 hover:opacity-100"
+                }`}
+                title={item.label}
+              >
+                <img src={item.src} alt={item.label} className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function ProductDetailPageClient({
   productId,
 }: {
@@ -1098,6 +1202,7 @@ export default function ProductDetailPageClient({
   const [weight, setWeight] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [colorImages, setColorImages] = useState<ColorImageMap>({});
+  const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
   const [defaultCostPrice, setDefaultCostPrice] = useState("");
@@ -1345,6 +1450,39 @@ export default function ProductDetailPageClient({
     ).map(normalizeColorKey);
     return Array.from(new Set([...fromInput, ...fromVariants].filter(Boolean)));
   }, [colors, product]);
+
+
+  const imagePreviewItems = useMemo(() => {
+    const items: DetailImagePreviewItem[] = [];
+    const seen = new Set<string>();
+    const push = (src?: string | null, label = "Ảnh sản phẩm") => {
+      const raw = String(src || "").trim();
+      if (!raw) return;
+      const absolute = toAbsoluteFileUrl(raw);
+      if (!absolute || seen.has(absolute)) return;
+      seen.add(absolute);
+      items.push({ src: absolute, label });
+    };
+
+    push(imageUrl, "Ảnh chính");
+    colorList.forEach((color) => push(colorImages[color], color));
+    Object.entries(colorImages).forEach(([color, src]) => push(src, color));
+    (product?.variants || []).forEach((variant: any) =>
+      push(
+        variant?.imageUrl || variant?.image,
+        String(variant?.color || variant?.sku || "Ảnh biến thể"),
+      ),
+    );
+
+    return items;
+  }, [imageUrl, colorImages, colorList, product?.variants]);
+
+  const openImagePreview = (src?: string | null) => {
+    const absolute = src ? toAbsoluteFileUrl(src) : "";
+    if (!absolute || !imagePreviewItems.length) return;
+    const found = imagePreviewItems.findIndex((item) => item.src === absolute);
+    setImagePreviewIndex(found >= 0 ? found : 0);
+  };
 
   const catalogValue = useMemo(() => {
     if (!canViewInventoryValue) return 0;
@@ -1920,6 +2058,14 @@ export default function ProductDetailPageClient({
 
   return (
     <>
+      <DetailImagePreviewModal
+        items={imagePreviewItems}
+        index={imagePreviewIndex}
+        title={name || product?.name || "Sản phẩm"}
+        onClose={() => setImagePreviewIndex(null)}
+        onIndexChange={setImagePreviewIndex}
+      />
+
       <div className="space-y-3 p-3 pb-24 md:hidden">
         <Panel className="overflow-hidden">
           <div className="p-4">
@@ -1936,7 +2082,9 @@ export default function ProductDetailPageClient({
                   <img
                     src={toAbsoluteFileUrl(imageUrl)}
                     alt={product.name || "Sản phẩm"}
-                    className="h-full w-full object-cover"
+                    className="h-full w-full cursor-zoom-in object-cover"
+                    onClick={() => openImagePreview(imageUrl)}
+                    title="Bấm để xem nhanh ảnh"
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
@@ -2568,7 +2716,9 @@ export default function ProductDetailPageClient({
                                           <img
                                             src={toAbsoluteFileUrl(groupImageUrl)}
                                             alt={`${product.name || 'Sản phẩm'} ${group.colorLabel}`}
-                                            className="h-full w-full object-cover"
+                                            className="h-full w-full cursor-zoom-in object-cover"
+                                            onClick={() => openImagePreview(groupImageUrl)}
+                                            title="Bấm để xem nhanh ảnh"
                                           />
                                         ) : (
                                           <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
@@ -2804,7 +2954,9 @@ export default function ProductDetailPageClient({
                     <img
                       src={toAbsoluteFileUrl(imageUrl)}
                       alt={name}
-                      className="h-[210px] w-full object-cover"
+                      className="h-[210px] w-full cursor-zoom-in object-cover"
+                      onClick={() => openImagePreview(imageUrl)}
+                      title="Bấm để xem nhanh ảnh"
                     />
                   ) : (
                     <div className="flex h-[210px] items-center justify-center text-sm text-neutral-400">
@@ -2845,14 +2997,7 @@ export default function ProductDetailPageClient({
                     <button
                       type="button"
                       disabled={!imageUrl}
-                      onClick={() =>
-                        imageUrl &&
-                        window.open(
-                          toAbsoluteFileUrl(imageUrl),
-                          "_blank",
-                          "noopener,noreferrer",
-                        )
-                      }
+                      onClick={() => openImagePreview(imageUrl)}
                       className="rounded-2xl border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
                     >
                       Xem lớn
@@ -2911,7 +3056,9 @@ export default function ProductDetailPageClient({
                                   <img
                                     src={toAbsoluteFileUrl(colorImage)}
                                     alt={`${name} ${color}`}
-                                    className="h-full w-full object-cover"
+                                    className="h-full w-full cursor-zoom-in object-cover"
+                                    onClick={() => openImagePreview(colorImage)}
+                                    title="Bấm để xem nhanh ảnh"
                                   />
                                 ) : (
                                   <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">

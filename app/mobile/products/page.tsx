@@ -123,6 +123,128 @@ async function fetchWithAuth<T>(path: string): Promise<T> {
   } as any);
 }
 
+type MobileImagePreviewItem = {
+  src: string;
+  label: string;
+};
+
+type MobileImagePreviewState = {
+  title: string;
+  items: MobileImagePreviewItem[];
+  index: number;
+};
+
+function getMobileProductImageGallery(product: MobileProduct) {
+  const items: MobileImagePreviewItem[] = [];
+  const seen = new Set<string>();
+  const push = (src?: string | null, label = "Ảnh sản phẩm") => {
+    const absolute = absoluteImageUrl(src);
+    if (!absolute || seen.has(absolute)) return;
+    seen.add(absolute);
+    items.push({ src: absolute, label });
+  };
+
+  push(product.imageUrl, "Ảnh chính");
+  getProductColorRepresentatives(product).forEach((item) =>
+    push(item.image, item.label),
+  );
+
+  return items;
+}
+
+function MobileImagePreviewModal({
+  preview,
+  onClose,
+  onIndexChange,
+}: {
+  preview: MobileImagePreviewState | null;
+  onClose: () => void;
+  onIndexChange: (index: number) => void;
+}) {
+  if (!preview || !preview.items.length) return null;
+
+  const safeIndex = Math.max(0, Math.min(preview.index, preview.items.length - 1));
+  const current = preview.items[safeIndex];
+  const hasMany = preview.items.length > 1;
+  const move = (step: number) => {
+    onIndexChange((safeIndex + step + preview.items.length) % preview.items.length);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[150] flex items-center justify-center bg-black/90 p-3"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[96vh] w-full max-w-md flex-col overflow-hidden rounded-[2rem] bg-neutral-950 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 text-white">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-black">{preview.title}</div>
+            <div className="mt-0.5 text-xs text-white/45">
+              {current.label} · {safeIndex + 1}/{preview.items.length}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl leading-none text-white"
+            aria-label="Đóng ảnh"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black p-2">
+          <img
+            src={current.src}
+            alt={`${preview.title} - ${current.label}`}
+            className="max-h-[72vh] max-w-full select-none object-contain"
+          />
+          {hasMany ? (
+            <>
+              <button
+                type="button"
+                onClick={() => move(-1)}
+                className="absolute left-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-3xl text-white"
+                aria-label="Ảnh trước"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => move(1)}
+                className="absolute right-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-3xl text-white"
+                aria-label="Ảnh sau"
+              >
+                ›
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        {hasMany ? (
+          <div className="flex gap-2 overflow-x-auto border-t border-white/10 px-4 py-3">
+            {preview.items.map((item, index) => (
+              <button
+                key={`${item.src}-${index}`}
+                type="button"
+                onClick={() => onIndexChange(index)}
+                className={`h-14 w-14 shrink-0 overflow-hidden rounded-xl border-2 ${
+                  index === safeIndex ? "border-white" : "border-transparent opacity-60"
+                }`}
+              >
+                <img src={item.src} alt={item.label} className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function MobileProductsPage() {
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [products, setProducts] = useState<MobileProduct[]>([]);
@@ -135,6 +257,27 @@ export default function MobileProductsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [imagePreview, setImagePreview] = useState<MobileImagePreviewState | null>(null);
+
+  const openImagePreview = (
+    product: MobileProduct,
+    startSrc?: string | null,
+    startLabel?: string,
+  ) => {
+    const items = getMobileProductImageGallery(product);
+    const absoluteStart = absoluteImageUrl(startSrc);
+    let index = absoluteStart
+      ? items.findIndex((item) => item.src === absoluteStart)
+      : 0;
+
+    if (absoluteStart && index < 0) {
+      items.unshift({ src: absoluteStart, label: startLabel || "Ảnh sản phẩm" });
+      index = 0;
+    }
+
+    if (!items.length) return;
+    setImagePreview({ title: product.name, items, index: Math.max(0, index) });
+  };
 
   async function loadProducts() {
     try {
@@ -355,7 +498,16 @@ export default function MobileProductsPage() {
                     className="block w-full text-left"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
+                      <div
+                        className={`h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 ${absoluteImageUrl(product.imageUrl) ? "cursor-zoom-in" : ""}`}
+                        onClick={(event) => {
+                          if (!absoluteImageUrl(product.imageUrl)) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openImagePreview(product, product.imageUrl, "Ảnh chính");
+                        }}
+                        title={absoluteImageUrl(product.imageUrl) ? "Bấm để xem nhanh ảnh" : undefined}
+                      >
                         {absoluteImageUrl(product.imageUrl) ? (
                           <img
                             src={absoluteImageUrl(product.imageUrl)}
@@ -386,8 +538,14 @@ export default function MobileProductsPage() {
                           {getProductColorRepresentatives(product).map((color) => (
                             <div
                               key={color.key}
-                              title={color.label}
-                              className="h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-200"
+                              title={`${color.label}${color.image ? " · Bấm để xem ảnh" : ""}`}
+                              className={`h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-200 ${color.image ? "cursor-zoom-in" : ""}`}
+                              onClick={(event) => {
+                                if (!color.image) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                openImagePreview(product, color.image, color.label);
+                              }}
                             >
                               {color.image ? (
                                 <img
@@ -475,6 +633,14 @@ export default function MobileProductsPage() {
           </div>
         )}
       </div>
+
+      <MobileImagePreviewModal
+        preview={imagePreview}
+        onClose={() => setImagePreview(null)}
+        onIndexChange={(index) =>
+          setImagePreview((current) => (current ? { ...current, index } : current))
+        }
+      />
 
       <MobileBottomNav />
     </div>

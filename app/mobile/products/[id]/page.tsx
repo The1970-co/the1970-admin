@@ -391,6 +391,108 @@ function Section({
   );
 }
 
+type MobileDetailImageItem = {
+  src: string;
+  label: string;
+};
+
+function MobileDetailImagePreviewModal({
+  items,
+  index,
+  title,
+  onClose,
+  onIndexChange,
+}: {
+  items: MobileDetailImageItem[];
+  index: number | null;
+  title: string;
+  onClose: () => void;
+  onIndexChange: (index: number) => void;
+}) {
+  if (index === null || !items.length) return null;
+
+  const safeIndex = Math.max(0, Math.min(index, items.length - 1));
+  const current = items[safeIndex];
+  const hasMany = items.length > 1;
+  const move = (step: number) =>
+    onIndexChange((safeIndex + step + items.length) % items.length);
+
+  return (
+    <div
+      className="fixed inset-0 z-[160] flex items-center justify-center bg-black/90 p-3"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[96vh] w-full max-w-md flex-col overflow-hidden rounded-[2rem] bg-neutral-950 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 text-white">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-black">{title || "Sản phẩm"}</div>
+            <div className="mt-0.5 text-xs text-white/45">
+              {current.label} · {safeIndex + 1}/{items.length}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl leading-none text-white"
+            aria-label="Đóng ảnh"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black p-2">
+          <img
+            src={current.src}
+            alt={`${title || "Sản phẩm"} - ${current.label}`}
+            className="max-h-[72vh] max-w-full select-none object-contain"
+          />
+          {hasMany ? (
+            <>
+              <button
+                type="button"
+                onClick={() => move(-1)}
+                className="absolute left-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-3xl text-white"
+                aria-label="Ảnh trước"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => move(1)}
+                className="absolute right-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-3xl text-white"
+                aria-label="Ảnh sau"
+              >
+                ›
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        {hasMany ? (
+          <div className="flex gap-2 overflow-x-auto border-t border-white/10 px-4 py-3">
+            {items.map((item, itemIndex) => (
+              <button
+                key={`${item.src}-${itemIndex}`}
+                type="button"
+                onClick={() => onIndexChange(itemIndex)}
+                className={`h-14 w-14 shrink-0 overflow-hidden rounded-xl border-2 ${
+                  itemIndex === safeIndex ? "border-white" : "border-transparent opacity-60"
+                }`}
+                title={item.label}
+              >
+                <img src={item.src} alt={item.label} className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function MobileProductDetailPage() {
   const params = useParams();
   const rawParam = params?.id;
@@ -407,6 +509,7 @@ export default function MobileProductDetailPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
 
   useEffect(() => {
     document.activeElement instanceof HTMLElement && document.activeElement.blur();
@@ -498,6 +601,29 @@ export default function MobileProductDetailPage() {
     }));
   }, [product]);
 
+
+  const productImageItems = useMemo(() => {
+    const items: MobileDetailImageItem[] = [];
+    const seen = new Set<string>();
+    const push = (src?: string | null, label = "Ảnh sản phẩm") => {
+      const absolute = imageUrl(src);
+      if (!absolute || seen.has(absolute)) return;
+      seen.add(absolute);
+      items.push({ src: absolute, label });
+    };
+
+    push(product?.imageUrl, "Ảnh chính");
+    colorGroups.forEach((group) => push(group.image, group.label));
+    return items;
+  }, [product?.imageUrl, colorGroups]);
+
+  const openImagePreview = (src?: string | null) => {
+    const absolute = imageUrl(src);
+    if (!absolute || !productImageItems.length) return;
+    const found = productImageItems.findIndex((item) => item.src === absolute);
+    setImagePreviewIndex(found >= 0 ? found : 0);
+  };
+
   const branches = getVariantBranches(variant);
   const variantCount = product?.variantCount || product?.variants?.length || 0;
   const selectedVariantHistory = history.filter(
@@ -553,7 +679,9 @@ export default function MobileProductDetailPage() {
                   <img
                     src={imageUrl(product.imageUrl)}
                     alt={product.name}
-                    className="h-full w-full object-cover"
+                    className="h-full w-full cursor-zoom-in object-cover"
+                    onClick={() => openImagePreview(product.imageUrl)}
+                    title="Bấm để xem nhanh ảnh"
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-white/35">
@@ -604,7 +732,9 @@ export default function MobileProductDetailPage() {
                           <img
                             src={group.image}
                             alt={group.label}
-                            className="h-full w-full object-cover"
+                            className="h-full w-full cursor-zoom-in object-cover"
+                            onClick={() => openImagePreview(group.image)}
+                            title="Bấm để xem nhanh ảnh"
                           />
                         ) : null}
                       </div>
@@ -819,6 +949,14 @@ export default function MobileProductDetailPage() {
             </Section>
           </div>
         ) : null}
+
+        <MobileDetailImagePreviewModal
+          items={productImageItems}
+          index={imagePreviewIndex}
+          title={product?.name || "Sản phẩm"}
+          onClose={() => setImagePreviewIndex(null)}
+          onIndexChange={setImagePreviewIndex}
+        />
 
         <MobileBottomNav />
       </div>

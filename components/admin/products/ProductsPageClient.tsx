@@ -899,12 +899,143 @@ function getProductColorPreviewItems(product?: ProductItem | null) {
   return Array.from(rows.values());
 }
 
+type ProductImagePreviewItem = {
+  src: string;
+  label: string;
+};
+
+type ProductImagePreviewState = {
+  title: string;
+  items: ProductImagePreviewItem[];
+  index: number;
+};
+
+function getProductImagePreviewGallery(product?: ProductItem | null) {
+  if (!product) return [] as ProductImagePreviewItem[];
+
+  const items: ProductImagePreviewItem[] = [];
+  const seen = new Set<string>();
+  const push = (src?: string | null, label = "Ảnh sản phẩm") => {
+    const raw = String(src || "").trim();
+    if (!raw) return;
+    const absolute = toAbsoluteFileUrl(raw);
+    if (!absolute || seen.has(absolute)) return;
+    seen.add(absolute);
+    items.push({ src: absolute, label });
+  };
+
+  push(product.imageUrl, "Ảnh chính");
+  getProductColorPreviewItems(product).forEach((item) =>
+    push(item.imageUrl, item.color || "Ảnh theo màu"),
+  );
+
+  return items;
+}
+
+function ProductImagePreviewModal({
+  preview,
+  onClose,
+  onIndexChange,
+}: {
+  preview: ProductImagePreviewState | null;
+  onClose: () => void;
+  onIndexChange: (index: number) => void;
+}) {
+  if (!preview || !preview.items.length) return null;
+
+  const safeIndex = Math.max(0, Math.min(preview.index, preview.items.length - 1));
+  const current = preview.items[safeIndex];
+  const hasMany = preview.items.length > 1;
+  const move = (step: number) => {
+    const next = (safeIndex + step + preview.items.length) % preview.items.length;
+    onIndexChange(next);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-3 md:p-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-neutral-950 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 text-white md:px-5">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{preview.title}</div>
+            <div className="mt-0.5 text-xs text-white/50">
+              {current.label} · {safeIndex + 1}/{preview.items.length}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl leading-none text-white hover:bg-white/20"
+            aria-label="Đóng ảnh"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black p-2 md:p-4">
+          <img
+            src={current.src}
+            alt={`${preview.title} - ${current.label}`}
+            className="max-h-[72vh] max-w-full select-none object-contain"
+          />
+
+          {hasMany ? (
+            <>
+              <button
+                type="button"
+                onClick={() => move(-1)}
+                className="absolute left-3 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-2xl text-white backdrop-blur hover:bg-black/75 md:left-5"
+                aria-label="Ảnh trước"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => move(1)}
+                className="absolute right-3 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-2xl text-white backdrop-blur hover:bg-black/75 md:right-5"
+                aria-label="Ảnh sau"
+              >
+                ›
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        {hasMany ? (
+          <div className="flex gap-2 overflow-x-auto border-t border-white/10 bg-neutral-950 px-4 py-3">
+            {preview.items.map((item, index) => (
+              <button
+                key={`${item.src}-${index}`}
+                type="button"
+                onClick={() => onIndexChange(index)}
+                className={`h-14 w-14 shrink-0 overflow-hidden rounded-xl border-2 ${
+                  index === safeIndex ? "border-white" : "border-transparent opacity-65 hover:opacity-100"
+                }`}
+                title={item.label}
+              >
+                <img src={item.src} alt={item.label} className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ProductColorPreviewStrip({
   product,
   max = 4,
+  onPreview,
 }: {
   product?: ProductItem | null;
   max?: number;
+  onPreview?: (src: string, label: string) => void;
 }) {
   const colorItems = getProductColorPreviewItems(product);
   if (colorItems.length < 1) return null;
@@ -920,8 +1051,14 @@ function ProductColorPreviewStrip({
       {visibleItems.map((item) => (
         <span
           key={item.color}
-          className="inline-flex h-7 w-7 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow ring-1 ring-neutral-300"
+          className={`inline-flex h-7 w-7 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow ring-1 ring-neutral-300 ${item.imageUrl && onPreview ? "cursor-zoom-in" : ""}`}
           title={`${item.color} · ${item.variantCount} SKU`}
+          onClick={(event) => {
+            if (!item.imageUrl || !onPreview) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onPreview(item.imageUrl, item.color);
+          }}
         >
           {item.imageUrl ? (
             <img
@@ -954,15 +1091,26 @@ function ProductImage({
   alt,
   product,
   showColorPreview = false,
+  onPreview,
 }: {
   src?: string | null;
   alt: string;
   product?: ProductItem | null;
   showColorPreview?: boolean;
+  onPreview?: (src: string, label: string) => void;
 }) {
   return (
     <div className="flex w-[120px] flex-col items-center">
-      <div className="h-[58px] w-[58px] overflow-hidden rounded-2xl bg-neutral-100">
+      <div
+        className={`h-[58px] w-[58px] overflow-hidden rounded-2xl bg-neutral-100 ${src && onPreview ? "cursor-zoom-in transition hover:opacity-85" : ""}`}
+        onClick={(event) => {
+          if (!src || !onPreview) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onPreview(src, "Ảnh chính");
+        }}
+        title={src && onPreview ? "Bấm để xem nhanh ảnh" : undefined}
+      >
         {src ? (
           <img
             src={toAbsoluteFileUrl(src)}
@@ -976,8 +1124,25 @@ function ProductImage({
           </div>
         )}
       </div>
-      {showColorPreview ? <ProductColorPreviewStrip product={product} /> : null}
+      {showColorPreview ? (
+        <ProductColorPreviewStrip product={product} onPreview={onPreview} />
+      ) : null}
     </div>
+  );
+}
+
+function CostVisibilityIcon({ visible }: { visible: boolean }) {
+  return visible ? (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 3l18 18" />
+      <path d="M10.6 6.1A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a15.7 15.7 0 0 1-3 3.7" />
+      <path d="M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6c1.4 0 2.7-.3 3.8-.7" />
+    </svg>
   );
 }
 
@@ -2045,6 +2210,8 @@ export default function ProductsPageClient() {
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
+  const [imagePreview, setImagePreview] = useState<ProductImagePreviewState | null>(null);
+  const [showCostPrices, setShowCostPrices] = useState(false);
 
   const [role, setRole] = useState<AppRole>("retail-staff");
   const [currentUser, setCurrentUser] =
@@ -3189,6 +3356,30 @@ export default function ProductsPageClient() {
     } finally {
       setSavingProduct(false);
     }
+  };
+
+  const openProductImagePreview = (
+    product: ProductItem,
+    startSrc?: string | null,
+    startLabel?: string,
+  ) => {
+    const items = getProductImagePreviewGallery(product);
+    const absoluteStart = startSrc ? toAbsoluteFileUrl(startSrc) : "";
+    let index = absoluteStart
+      ? items.findIndex((item) => item.src === absoluteStart)
+      : 0;
+
+    if (absoluteStart && index < 0) {
+      items.unshift({ src: absoluteStart, label: startLabel || "Ảnh sản phẩm" });
+      index = 0;
+    }
+
+    if (!items.length) return;
+    setImagePreview({
+      title: product.name || product.slug || "Sản phẩm",
+      items,
+      index: Math.max(0, index),
+    });
   };
 
   const openProductDetail = (product: ProductItem) => {
@@ -5019,6 +5210,9 @@ export default function ProductsPageClient() {
                       alt={product.name}
                       product={productForPreview}
                       showColorPreview
+                      onPreview={(src, label) =>
+                        openProductImagePreview(productForPreview, src, label)
+                      }
                     />
 
                     <div className="min-w-0 flex-1">
@@ -5162,12 +5356,23 @@ export default function ProductsPageClient() {
                     </th>
                     {canViewCost ? (
                       <th className="border-b border-neutral-200 px-3 py-3">
-                        <SortButton
-                          label="Giá nhập"
-                          active={sortKey === "costPrice"}
-                          direction={sortDirection}
-                          onClick={() => handleSort("costPrice")}
-                        />
+                        <div className="flex items-center gap-2">
+                          <SortButton
+                            label="Giá nhập"
+                            active={sortKey === "costPrice"}
+                            direction={sortDirection}
+                            onClick={() => handleSort("costPrice")}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowCostPrices((current) => !current)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-500 transition hover:bg-neutral-50 hover:text-neutral-900"
+                            title={showCostPrices ? "Ẩn giá nhập" : "Hiện giá nhập"}
+                            aria-label={showCostPrices ? "Ẩn giá nhập" : "Hiện giá nhập"}
+                          >
+                            <CostVisibilityIcon visible={showCostPrices} />
+                          </button>
+                        </div>
                       </th>
                     ) : null}
                     <th className="border-b border-neutral-200 px-3 py-3">
@@ -5271,19 +5476,15 @@ export default function ProductsPageClient() {
                           />
                         </td>
                         <td className="border-b border-neutral-100 px-3 py-3 align-middle">
-                          <button
-                            type="button"
-                            onClick={() => openProductDetail(product)}
-                            className="block rounded-2xl transition hover:opacity-80"
-                            title="Mở chi tiết sản phẩm trong tab mới"
-                          >
-                            <ProductImage
-                              src={productForPreview.imageUrl || product.imageUrl}
-                              alt={product.name}
-                              product={productForPreview}
-                              showColorPreview
-                            />
-                          </button>
+                          <ProductImage
+                            src={productForPreview.imageUrl || product.imageUrl}
+                            alt={product.name}
+                            product={productForPreview}
+                            showColorPreview
+                            onPreview={(src, label) =>
+                              openProductImagePreview(productForPreview, src, label)
+                            }
+                          />
                         </td>
 
                         <td className="min-w-[260px] border-b border-neutral-100 px-3 py-3">
@@ -5348,7 +5549,16 @@ export default function ProductsPageClient() {
 
                         {canViewCost ? (
                           <td className="whitespace-nowrap border-b border-neutral-100 px-3 py-3">
-                            {currency(minCostPrice)}
+                            {showCostPrices ? (
+                              currency(minCostPrice)
+                            ) : (
+                              <span
+                                className="select-none text-sm tracking-[0.18em] text-neutral-400"
+                                title="Giá nhập đang được ẩn"
+                              >
+                                ••••••
+                              </span>
+                            )}
                           </td>
                         ) : null}
 
@@ -5525,6 +5735,14 @@ export default function ProductsPageClient() {
           </>
         )}
       </Panel>
+
+      <ProductImagePreviewModal
+        preview={imagePreview}
+        onClose={() => setImagePreview(null)}
+        onIndexChange={(index) =>
+          setImagePreview((current) => (current ? { ...current, index } : current))
+        }
+      />
 
       <Modal
         open={exportOpen}
