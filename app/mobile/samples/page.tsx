@@ -307,6 +307,13 @@ function sampleCreatedLabelMobile(value:any){
   const d=new Date(value);if(Number.isNaN(d.getTime()))return "Chưa có ngày";
   return d.toLocaleDateString("vi-VN",{day:"2-digit",month:"2-digit",year:"numeric"});
 }
+function sampleHasPattern(row:any){
+  return Array.isArray(row?.images) && row.images.some((x:any)=>isPatternAsset(x));
+}
+function samplePriorityRank(row:any){
+  const n=Number(row?.priorityRank||0);
+  return [1,2,3].includes(n)?n:null;
+}
 function sampleVisualUrlsMobile(row:any){
   const urls=[
     row?.coverImageUrl,
@@ -447,10 +454,24 @@ export default function Page(){
       ].some(v=>String(v||"").toLowerCase().includes(k));
     });
     return [...list].sort((a,b)=>{
+      const ar=samplePriorityRank(a)??99, br=samplePriorityRank(b)??99;
+      if(ar!==br)return ar-br;
       if(sortMode==="AZ")return String(a.name||a.code).localeCompare(String(b.name||b.code),"vi",{numeric:true,sensitivity:"base"});
       return (new Date(b.createdAt||b.updatedAt||`${b.year}-01-01`).getTime()||0)-(new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0);
     });
   },[rows,q,sampleTab,parentFilter,subFilter,sortMode,boardFilter]);
+
+  async function setSamplePriority(sample:Sample,rank:number|null){
+    if(!can("design_sample.edit"))return;
+    try{
+      setError("");
+      await api(`/sample-fabric/samples/${sample.id}`,{
+        method:"PATCH",
+        body:JSON.stringify({priorityRank:samplePriorityRank(sample)===rank?null:rank}),
+      });
+      await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được ưu tiên mẫu.")}
+  }
 
   async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
     if(!can("design_sample.edit"))return;
@@ -541,17 +562,24 @@ export default function Page(){
                 <div className="mt-1 text-xs text-neutral-500">{sampleParentCategoryMobile(r.category)} · {r.category||"Chưa phân loại"}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge>{statusLabel(r.status)}</Badge>
+                  {samplePriorityRank(r)&&<Badge>Ưu tiên #{samplePriorityRank(r)}</Badge>}
+                  {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
                   {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
                   {sampleTab==="IDEA"&&rowBoardNames(r).slice(0,2).map((name:string)=><Badge key={name}>{name}</Badge>)}
                 </div>
               </div>
             </button>
-            {can("design_sample.edit")&&<div className="mt-3 flex flex-wrap justify-end gap-2 border-t pt-3">
+            {can("design_sample.edit")&&<div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+              <div className="flex gap-1">
+                {[1,2,3].map(rank=><button key={rank} type="button" onClick={()=>void setSamplePriority(r,rank)} className={`grid h-8 w-8 place-items-center rounded-lg border text-[11px] font-black ${samplePriorityRank(r)===rank?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>{rank}</button>)}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-3 py-2 text-xs font-black">Bảng ý tưởng</button>}
               <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">
                 {sampleTab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}
               </button>
+              </div>
             </div>}
           </div>
         })}
@@ -569,15 +597,20 @@ export default function Page(){
                   <div className="mt-1 text-[10px] text-neutral-500">{r.category||"Chưa phân loại"}</div>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <Badge>{statusLabel(r.status)}</Badge>
+                    {samplePriorityRank(r)&&<Badge>#{samplePriorityRank(r)}</Badge>}
+                    {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
                     {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   </div>
                 </div>
               </button>
-              {can("design_sample.edit")&&<div className="grid grid-cols-2 gap-1 border-t p-2">
+              {can("design_sample.edit")&&<div className="border-t p-2">
+                <div className="mb-2 grid grid-cols-3 gap-1">{[1,2,3].map(rank=><button key={rank} type="button" onClick={()=>void setSamplePriority(r,rank)} className={`rounded-lg border py-1.5 text-[10px] font-black ${samplePriorityRank(r)===rank?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>#{rank}</button>)}</div>
+                <div className="grid grid-cols-2 gap-1">
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button>}
                 <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className={`rounded-xl border px-2 py-2 text-[10px] font-black ${sampleTab==="DEPLOY"?"col-span-2":""}`}>
                   {sampleTab==="IDEA"?"→ Triển khai":"← Ý tưởng"}
                 </button>
+                </div>
               </div>}
             </div>
           })}
