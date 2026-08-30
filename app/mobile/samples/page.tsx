@@ -324,6 +324,18 @@ function sampleVisualUrlsMobile(row:any){
   return Array.from(new Set(urls));
 }
 
+function SampleVisualDots({visuals,max=5}:{visuals:string[];max?:number}){
+  if(visuals.length<=1)return null;
+  const shown=visuals.slice(0,max);
+  const hidden=Math.max(0,visuals.length-shown.length);
+  return <div className="inline-flex items-center gap-1" title={`${visuals.length} ảnh`}>
+    {shown.map((url,i)=><span key={`${url}-${i}`} className="inline-flex h-6 w-6 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-300">
+      <img src={asset(url)} alt={`Ảnh ${i+1}`} className="h-full w-full object-cover"/>
+    </span>)}
+    {hidden>0&&<span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-neutral-950 px-1 text-[8px] font-black text-white">+{hidden}</span>}
+  </div>;
+}
+
 export default function Page(){
   const [rows,setRows]=useState<Sample[]>([]);
   const [meta,setMeta]=useState<Meta>({staff:[],boards:[],factories:[],seasons:[],productGroups:[],samplePeople:[]});
@@ -476,7 +488,18 @@ export default function Page(){
   }
 
   function usedPriorityRanks(exceptId?:string){
-    return new Set(rows.filter(x=>x.id!==exceptId).map(samplePriorityRank).filter(Boolean) as number[]);
+    return new Set(
+      rows
+        .filter(x=>{
+          if(x.id===exceptId)return false;
+          const inActiveTab=sampleTab==="IDEA"
+            ? String(x.status||"IDEA")==="IDEA"
+            : String(x.status||"IDEA")!=="IDEA";
+          return inActiveTab;
+        })
+        .map(samplePriorityRank)
+        .filter(Boolean) as number[],
+    );
   }
 
   function priorityOptions(exceptId?:string){
@@ -491,8 +514,10 @@ export default function Page(){
     const status=target==="IDEA"?"IDEA":"FABRIC_SELECTED";
     try{
       setError("");
-      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({status})});
-      if(detail?.id===sample.id)setDetail({...detail,status});
+      // STT của Ý tưởng và Triển khai là hai danh sách độc lập.
+      // Khi chuyển cột, bỏ STT cũ để mẫu không mang thứ tự của cột trước sang cột mới.
+      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({status,priorityRank:null})});
+      if(detail?.id===sample.id)setDetail({...detail,status,priorityRank:null});
       setSampleTab(target);setBoardFilter("");
       await load();
     }catch(e){setError(e instanceof Error?e.message:"Không chuyển được mẫu.")}
@@ -510,10 +535,10 @@ export default function Page(){
 
   return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
     <div className="mx-auto max-w-md">
-      <header className="relative z-10 border-b bg-white px-3 pb-2" style={{paddingTop:"max(44px, calc(env(safe-area-inset-top) + 8px))"}}>
-        <div className="flex min-h-11 items-center justify-between gap-2">
+      <header className="relative z-10 -mt-8 border-b bg-white px-3 pb-2 pt-3">
+        <div className="flex min-h-10 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <Link href="/mobile/production" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
+            <Link href="/mobile" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><ArrowLeft className="h-5 w-5"/></Link>
             <div className="min-w-0">
               <div className="text-[9px] font-black uppercase tracking-[.16em] text-neutral-400">Sản xuất</div>
               <h1 className="truncate text-[19px] font-black leading-5">Triển khai mẫu</h1>
@@ -577,7 +602,7 @@ export default function Page(){
                   <Badge>{statusLabel(r.status)}</Badge>
                   {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                   {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
-                  {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
+                  {visuals.length>1&&<SampleVisualDots visuals={visuals}/>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
                   {sampleTab==="IDEA"&&rowBoardNames(r).slice(0,2).map((name:string)=><Badge key={name}>{name}</Badge>)}
                 </div>
@@ -610,7 +635,7 @@ export default function Page(){
                     <Badge>{statusLabel(r.status)}</Badge>
                     {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                     {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
-                    {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
+                    {visuals.length>1&&<SampleVisualDots visuals={visuals}/>}
                   </div>
                 </div>
               </button>
