@@ -347,6 +347,7 @@ export default function Page(){
   const [assignBoardIds,setAssignBoardIds]=useState<string[]>([]);
   const [boardBusy,setBoardBusy]=useState(false);
   const [boardHubOpen,setBoardHubOpen]=useState(false);
+  const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
@@ -467,10 +468,22 @@ export default function Page(){
       setError("");
       await api(`/sample-fabric/samples/${sample.id}`,{
         method:"PATCH",
-        body:JSON.stringify({priorityRank:samplePriorityRank(sample)===rank?null:rank}),
+        body:JSON.stringify({priorityRank:rank}),
       });
+      setPriorityPickerSample(null);
       await load();
     }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được ưu tiên mẫu.")}
+  }
+
+  function usedPriorityRanks(exceptId?:string){
+    return new Set(rows.filter(x=>x.id!==exceptId).map(samplePriorityRank).filter(Boolean) as number[]);
+  }
+
+  function priorityOptions(exceptId?:string){
+    const used=usedPriorityRanks(exceptId);
+    const currentMax=Math.max(0,...Array.from(used));
+    const maxToShow=Math.max(currentMax+1,10);
+    return Array.from({length:maxToShow},(_,i)=>i+1);
   }
 
   async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
@@ -562,7 +575,7 @@ export default function Page(){
                 <div className="mt-1 text-xs text-neutral-500">{sampleParentCategoryMobile(r.category)} · {r.category||"Chưa phân loại"}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge>{statusLabel(r.status)}</Badge>
-                  {samplePriorityRank(r)&&<Badge>Ưu tiên #{samplePriorityRank(r)}</Badge>}
+                  {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                   {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
                   {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
@@ -571,9 +584,7 @@ export default function Page(){
               </div>
             </button>
             {can("design_sample.edit")&&<div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-              <div className="flex gap-1">
-                {[1,2,3].map(rank=><button key={rank} type="button" onClick={()=>void setSamplePriority(r,rank)} className={`grid h-8 w-8 place-items-center rounded-lg border text-[11px] font-black ${samplePriorityRank(r)===rank?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>{rank}</button>)}
-              </div>
+              <button type="button" onClick={()=>setPriorityPickerSample(r)} className={`rounded-lg border px-3 py-2 text-[11px] font-black ${samplePriorityRank(r)?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>{samplePriorityRank(r)?`STT #${samplePriorityRank(r)}`:"Chọn STT"}</button>
               <div className="flex flex-wrap justify-end gap-2">
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-3 py-2 text-xs font-black">Bảng ý tưởng</button>}
               <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">
@@ -597,14 +608,14 @@ export default function Page(){
                   <div className="mt-1 text-[10px] text-neutral-500">{r.category||"Chưa phân loại"}</div>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <Badge>{statusLabel(r.status)}</Badge>
-                    {samplePriorityRank(r)&&<Badge>#{samplePriorityRank(r)}</Badge>}
+                    {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                     {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
                     {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   </div>
                 </div>
               </button>
               {can("design_sample.edit")&&<div className="border-t p-2">
-                <div className="mb-2 grid grid-cols-3 gap-1">{[1,2,3].map(rank=><button key={rank} type="button" onClick={()=>void setSamplePriority(r,rank)} className={`rounded-lg border py-1.5 text-[10px] font-black ${samplePriorityRank(r)===rank?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>#{rank}</button>)}</div>
+                <button type="button" onClick={()=>setPriorityPickerSample(r)} className={`mb-2 w-full rounded-lg border py-1.5 text-[10px] font-black ${samplePriorityRank(r)?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>{samplePriorityRank(r)?`STT #${samplePriorityRank(r)}`:"Chọn STT"}</button>
                 <div className="grid grid-cols-2 gap-1">
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button>}
                 <button type="button" onClick={()=>void moveSample(r,sampleTab==="IDEA"?"DEPLOY":"IDEA")} className={`rounded-xl border px-2 py-2 text-[10px] font-black ${sampleTab==="DEPLOY"?"col-span-2":""}`}>
@@ -647,6 +658,20 @@ export default function Page(){
     />}
 
     
+    {priorityPickerSample&&<Modal title={`Chọn STT · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
+      <div className="space-y-4 p-4">
+        <div className="text-xs leading-5 text-neutral-500">Số đã có mẫu sẽ bị khóa. Chọn xong mẫu tự nhảy lên đầu theo thứ tự 1 → 2 → 3.</div>
+        <div className="grid grid-cols-4 gap-2">
+          {priorityOptions(priorityPickerSample.id).map(rank=>{
+            const used=usedPriorityRanks(priorityPickerSample.id).has(rank);
+            const current=samplePriorityRank(priorityPickerSample)===rank;
+            return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-3 text-sm font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"bg-neutral-100 text-neutral-300":"bg-white"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[8px]">Đã dùng</span>:null}</button>;
+          })}
+        </div>
+        {samplePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 py-2.5 text-sm font-bold text-red-700">Bỏ STT hiện tại</button>}
+      </div>
+    </Modal>}
+
     {boardHubOpen&&<Modal title="Bảng & kiểu hiển thị" onClose={()=>setBoardHubOpen(false)}>
       <div className="space-y-5 p-4">
         <div>

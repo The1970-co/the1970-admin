@@ -914,6 +914,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
   const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST">("CARDS");
   const [featuredId,setFeaturedId]=useState<string>("");
   const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
+  const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
   const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
   const [boardFilter,setBoardFilter]=useState("");
   const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
@@ -1023,12 +1024,24 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     try{
       await api(`/sample-fabric/samples/${row.id}`,{
         method:"PATCH",
-        body:JSON.stringify({priorityRank:samplePriorityRank(row)===rank?null:rank}),
+        body:JSON.stringify({priorityRank:rank}),
       });
+      setPriorityPickerSample(null);
       await onChanged();
     }catch(e){
       window.alert(e instanceof Error?e.message:"Không cập nhật được ưu tiên mẫu.");
     }
+  }
+
+  function usedPriorityRanks(exceptId?:string){
+    return new Set(rows.filter(x=>x.id!==exceptId).map(samplePriorityRank).filter(Boolean) as number[]);
+  }
+
+  function priorityOptions(exceptId?:string){
+    const used=usedPriorityRanks(exceptId);
+    const currentMax=Math.max(0,...Array.from(used));
+    const maxToShow=Math.max(currentMax+1,10);
+    return Array.from({length:maxToShow},(_,i)=>i+1);
   }
 
   async function moveSample(row:Sample,target:"IDEA"|"DEPLOY"){
@@ -1045,6 +1058,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     const primary=images[0];
     return <button type="button" onClick={()=>primary&&setViewer({sample:row,index:0})} className={`relative shrink-0 overflow-hidden rounded-2xl bg-neutral-100 text-left ${large?"w-full":"h-28 w-28"}`}>
       {primary?<img src={assetUrl(primary)} className={large?"block h-auto max-h-[72vh] w-full object-contain":"h-full w-full object-cover"}/>:<div className={`flex items-center justify-center text-2xl text-neutral-300 ${large?"min-h-64 w-full":"h-full"}`}>✦</div>}
+      {samplePriorityRank(row)&&<span className="absolute left-2 top-2 grid h-7 min-w-7 place-items-center rounded-lg bg-black px-2 text-xs font-black text-white shadow">#{samplePriorityRank(row)}</span>}
       {images.length>1&&<div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-xl bg-black/70 p-1">
         {images.slice(1,3).map((url,i)=><img key={url} src={assetUrl(url)} className="h-8 w-8 rounded-lg border border-white/40 object-cover"/>)}
         {images.length>3&&<span className="px-1 text-[10px] font-bold text-white">+{images.length-3}</span>}
@@ -1079,9 +1093,10 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
         <div className="mt-3 flex items-center justify-between gap-3">
           <div className="min-w-0 text-xs text-neutral-500">{row.nextAction?<>Tiếp theo: <b>{row.nextAction}</b></>:"Chưa ghi việc tiếp theo"}</div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {can("design_sample.edit")&&<div className="flex gap-1 rounded-xl border border-neutral-200 p-1">
-              {[1,2,3].map(rank=><button key={rank} type="button" onClick={()=>void setSamplePriority(row,rank)} className={`grid h-7 w-7 place-items-center rounded-lg text-[10px] font-black ${samplePriorityRank(row)===rank?"bg-neutral-950 text-white":"hover:bg-neutral-100"}`}>{rank}</button>)}
-            </div>}
+            {can("design_sample.edit")&&
+              <button type="button" onClick={()=>setPriorityPickerSample(row)} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${samplePriorityRank(row)?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+                {samplePriorityRank(row)?`STT #${samplePriorityRank(row)}`:"Chọn STT"}
+              </button>}
             {sampleVisuals(row).length>0&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Xem mẫu</button>}
             {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(row)} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Bảng ý tưởng</button>}
             {can("design_sample.edit")&&<button type="button" onClick={()=>void moveSample(row,tab==="IDEA"?"DEPLOY":"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">{tab==="IDEA"?"Chuyển sang triển khai →":"← Đưa về ý tưởng"}</button>}
@@ -1159,7 +1174,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
           {boardNames(featured).length>0&&<div className="mt-2 flex flex-wrap gap-1">{boardNames(featured).map(x=><span key={x} className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-semibold">{x}</span>)}</div>}
           {featuredImages.length>1&&<div className="mt-3 flex gap-2 overflow-x-auto">{featuredImages.slice(0,8).map((url,i)=><button key={url} onClick={()=>setViewer({sample:featured,index:i})}><img src={assetUrl(url)} className="h-16 w-16 rounded-xl object-cover"/></button>)}</div>}
           <div className="mt-4 flex flex-wrap gap-2">
-            {can("design_sample.edit")&&<div className="flex gap-1 rounded-xl border border-neutral-200 p-1">{[1,2,3].map(rank=><button key={rank} type="button" onClick={()=>void setSamplePriority(featured,rank)} className={`grid h-7 w-7 place-items-center rounded-lg text-[10px] font-black ${samplePriorityRank(featured)===rank?"bg-neutral-950 text-white":"hover:bg-neutral-100"}`}>{rank}</button>)}</div>}
+            {can("design_sample.edit")&&<button type="button" onClick={()=>setPriorityPickerSample(featured)} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${samplePriorityRank(featured)?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>{samplePriorityRank(featured)?`STT #${samplePriorityRank(featured)}`:"Chọn STT"}</button>}
             {featuredImages.length>0&&<button type="button" onClick={()=>setViewer({sample:featured,index:0})} className="rounded-xl border px-3 py-2 text-xs font-semibold">Xem đầy đủ ảnh</button>}
             {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Bảng ý tưởng</button>}
             {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
@@ -1187,6 +1202,19 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       </div>
     </Modal>}
 
+    {priorityPickerSample&&<Modal title={`Chọn số thứ tự · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
+      <div className="space-y-4 p-5">
+        <div className="text-sm text-neutral-500">Số đã dùng sẽ bị khóa. Mẫu được gán STT sẽ tự nhảy lên đầu danh sách theo thứ tự 1 → 2 → 3.</div>
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+          {priorityOptions(priorityPickerSample.id).map(rank=>{
+            const used=usedPriorityRanks(priorityPickerSample.id).has(rank);
+            const current=samplePriorityRank(priorityPickerSample)===rank;
+            return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-4 text-base font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"cursor-not-allowed bg-neutral-100 text-neutral-300":"bg-white hover:border-neutral-950"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[9px] font-semibold">Đã dùng</span>:null}</button>;
+          })}
+        </div>
+        {samplePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700">Bỏ STT hiện tại</button>}
+      </div>
+    </Modal>}
     {assignSample&&<Modal title={`Bảng ý tưởng · ${assignSample.code}`} onClose={()=>setAssignSample(null)}>
       <div className="space-y-4 p-5">
         <div><b>{assignSample.name}</b><div className="mt-1 text-xs text-neutral-400">Có thể chọn nhiều bảng cùng lúc.</div></div>
