@@ -372,6 +372,9 @@ function sampleParentCategory(category?:string|null){
 function sampleHasPattern(row:Sample){
   return Array.isArray(row.images) && row.images.some((x:any)=>isPatternAsset(x));
 }
+function samplePriorityLane(row:any){
+  return String(row?.priorityLane || (String(row?.status||"IDEA")==="IDEA" ? "IDEA" : "DEPLOY"));
+}
 function samplePriorityRank(row:Sample){
   const n=Number(row.priorityRank||0);
   return [1,2,3].includes(n)?n:null;
@@ -1024,7 +1027,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     try{
       await api(`/sample-fabric/samples/${row.id}`,{
         method:"PATCH",
-        body:JSON.stringify({priorityRank:rank}),
+        body:JSON.stringify({priorityRank:rank,priorityLane:tab}),
       });
       setPriorityPickerSample(null);
       await onChanged();
@@ -1033,12 +1036,17 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     }
   }
 
-  function usedPriorityRanks(exceptId?:string){
-    return new Set(rows.filter(x=>x.id!==exceptId).map(samplePriorityRank).filter(Boolean) as number[]);
+  function usedPriorityRanks(exceptId?:string, lane:"IDEA"|"DEPLOY"=tab){
+    return new Set(
+      rows
+        .filter(x=>x.id!==exceptId && samplePriorityLane(x)===lane)
+        .map(samplePriorityRank)
+        .filter(Boolean) as number[]
+    );
   }
 
-  function priorityOptions(exceptId?:string){
-    const used=usedPriorityRanks(exceptId);
+  function priorityOptions(exceptId?:string, lane:"IDEA"|"DEPLOY"=tab){
+    const used=usedPriorityRanks(exceptId,lane);
     const currentMax=Math.max(0,...Array.from(used));
     const maxToShow=Math.max(currentMax+1,10);
     return Array.from({length:maxToShow},(_,i)=>i+1);
@@ -1204,10 +1212,10 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
 
     {priorityPickerSample&&<Modal title={`Chọn số thứ tự · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
       <div className="space-y-4 p-5">
-        <div className="text-sm text-neutral-500">Số đã dùng sẽ bị khóa. Mẫu được gán STT sẽ tự nhảy lên đầu danh sách theo thứ tự 1 → 2 → 3.</div>
+        <div className="text-sm text-neutral-500">STT được xếp riêng cho Ý tưởng và Triển khai. Số đã dùng trong tab hiện tại sẽ bị khóa; tab kia không ảnh hưởng.</div>
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
-          {priorityOptions(priorityPickerSample.id).map(rank=>{
-            const used=usedPriorityRanks(priorityPickerSample.id).has(rank);
+          {priorityOptions(priorityPickerSample.id,tab).map(rank=>{
+            const used=usedPriorityRanks(priorityPickerSample.id,tab).has(rank);
             const current=samplePriorityRank(priorityPickerSample)===rank;
             return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-4 text-base font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"cursor-not-allowed bg-neutral-100 text-neutral-300":"bg-white hover:border-neutral-950"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[9px] font-semibold">Đã dùng</span>:null}</button>;
           })}

@@ -310,6 +310,9 @@ function sampleCreatedLabelMobile(value:any){
 function sampleHasPattern(row:any){
   return Array.isArray(row?.images) && row.images.some((x:any)=>isPatternAsset(x));
 }
+function samplePriorityLane(row:any){
+  return String(row?.priorityLane || (String(row?.status||"IDEA")==="IDEA" ? "IDEA" : "DEPLOY"));
+}
 function samplePriorityRank(row:any){
   const n=Number(row?.priorityRank||0);
   return [1,2,3].includes(n)?n:null;
@@ -322,18 +325,6 @@ function sampleVisualUrlsMobile(row:any){
     row?.producedProduct?.imageUrl,
   ].filter(Boolean).map(String);
   return Array.from(new Set(urls));
-}
-
-function SampleVisualDots({visuals,max=5}:{visuals:string[];max?:number}){
-  if(visuals.length<=1)return null;
-  const shown=visuals.slice(0,max);
-  const hidden=Math.max(0,visuals.length-shown.length);
-  return <div className="inline-flex items-center gap-1" title={`${visuals.length} ảnh`}>
-    {shown.map((url,i)=><span key={`${url}-${i}`} className="inline-flex h-6 w-6 shrink-0 overflow-hidden rounded-full border-2 border-white bg-neutral-100 shadow-sm ring-1 ring-neutral-300">
-      <img src={asset(url)} alt={`Ảnh ${i+1}`} className="h-full w-full object-cover"/>
-    </span>)}
-    {hidden>0&&<span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-neutral-950 px-1 text-[8px] font-black text-white">+{hidden}</span>}
-  </div>;
 }
 
 export default function Page(){
@@ -480,30 +471,24 @@ export default function Page(){
       setError("");
       await api(`/sample-fabric/samples/${sample.id}`,{
         method:"PATCH",
-        body:JSON.stringify({priorityRank:rank}),
+        body:JSON.stringify({priorityRank:rank,priorityLane:sampleTab}),
       });
       setPriorityPickerSample(null);
       await load();
     }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được ưu tiên mẫu.")}
   }
 
-  function usedPriorityRanks(exceptId?:string){
+  function usedPriorityRanks(exceptId?:string, lane:"IDEA"|"DEPLOY"=sampleTab){
     return new Set(
       rows
-        .filter(x=>{
-          if(x.id===exceptId)return false;
-          const inActiveTab=sampleTab==="IDEA"
-            ? String(x.status||"IDEA")==="IDEA"
-            : String(x.status||"IDEA")!=="IDEA";
-          return inActiveTab;
-        })
+        .filter(x=>x.id!==exceptId && samplePriorityLane(x)===lane)
         .map(samplePriorityRank)
-        .filter(Boolean) as number[],
+        .filter(Boolean) as number[]
     );
   }
 
-  function priorityOptions(exceptId?:string){
-    const used=usedPriorityRanks(exceptId);
+  function priorityOptions(exceptId?:string, lane:"IDEA"|"DEPLOY"=sampleTab){
+    const used=usedPriorityRanks(exceptId,lane);
     const currentMax=Math.max(0,...Array.from(used));
     const maxToShow=Math.max(currentMax+1,10);
     return Array.from({length:maxToShow},(_,i)=>i+1);
@@ -514,10 +499,8 @@ export default function Page(){
     const status=target==="IDEA"?"IDEA":"FABRIC_SELECTED";
     try{
       setError("");
-      // STT của Ý tưởng và Triển khai là hai danh sách độc lập.
-      // Khi chuyển cột, bỏ STT cũ để mẫu không mang thứ tự của cột trước sang cột mới.
-      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({status,priorityRank:null})});
-      if(detail?.id===sample.id)setDetail({...detail,status,priorityRank:null});
+      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({status})});
+      if(detail?.id===sample.id)setDetail({...detail,status});
       setSampleTab(target);setBoardFilter("");
       await load();
     }catch(e){setError(e instanceof Error?e.message:"Không chuyển được mẫu.")}
@@ -602,7 +585,7 @@ export default function Page(){
                   <Badge>{statusLabel(r.status)}</Badge>
                   {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                   {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
-                  {visuals.length>1&&<SampleVisualDots visuals={visuals}/>}
+                  {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
                   {sampleTab==="IDEA"&&rowBoardNames(r).slice(0,2).map((name:string)=><Badge key={name}>{name}</Badge>)}
                 </div>
@@ -635,7 +618,7 @@ export default function Page(){
                     <Badge>{statusLabel(r.status)}</Badge>
                     {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                     {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
-                    {visuals.length>1&&<SampleVisualDots visuals={visuals}/>}
+                    {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   </div>
                 </div>
               </button>
@@ -685,10 +668,10 @@ export default function Page(){
     
     {priorityPickerSample&&<Modal title={`Chọn STT · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
       <div className="space-y-4 p-4">
-        <div className="text-xs leading-5 text-neutral-500">Số đã có mẫu sẽ bị khóa. Chọn xong mẫu tự nhảy lên đầu theo thứ tự 1 → 2 → 3.</div>
+        <div className="text-xs leading-5 text-neutral-500">STT được xếp riêng cho Ý tưởng và Triển khai. Số đã dùng trong tab hiện tại sẽ bị khóa; số bên tab kia không ảnh hưởng.</div>
         <div className="grid grid-cols-4 gap-2">
-          {priorityOptions(priorityPickerSample.id).map(rank=>{
-            const used=usedPriorityRanks(priorityPickerSample.id).has(rank);
+          {priorityOptions(priorityPickerSample.id,sampleTab).map(rank=>{
+            const used=usedPriorityRanks(priorityPickerSample.id,sampleTab).has(rank);
             const current=samplePriorityRank(priorityPickerSample)===rank;
             return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-3 text-sm font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"bg-neutral-100 text-neutral-300":"bg-white"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[8px]">Đã dùng</span>:null}</button>;
           })}
@@ -818,6 +801,11 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
   const [viewerIndex,setViewerIndex]=useState<number>(0);
   const image=gallery[viewerIndex]||gallery[0]||"";
   const [detailExpanded,setDetailExpanded]=useState(false);
+  const [fabricQuickOpen,setFabricQuickOpen]=useState(false);
+  const [fabricQuick,setFabricQuick]=useState<any|null>(null);
+  const [fabricQuickLoading,setFabricQuickLoading]=useState(false);
+  const [fabricQuickError,setFabricQuickError]=useState("");
+  const [fabricQuickIndex,setFabricQuickIndex]=useState(0);
   const swipeStartX=useRef<number|null>(null);
   const [zoomOpen,setZoomOpen]=useState(false);
   const [zoomScale,setZoomScale]=useState(1);
@@ -1224,6 +1212,40 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
     }catch(e){setViewerError(e instanceof Error?e.message:"Không lưu được ảnh chỉnh sửa.")}
     finally{setEditBusy(false)}
   }
+  async function openFabricQuickView(){
+    const boardId=String(sample.fabricBoardId||sample.fabricBoard?.id||"").trim();
+    const boardCode=String(sample.fabricBoard?.boardCode||sample.fabricBoardCode||"").trim();
+    if(!boardId&&!boardCode)return;
+    try{
+      setFabricQuickOpen(true);
+      setFabricQuickLoading(true);
+      setFabricQuickError("");
+      setFabricQuickIndex(0);
+      let board:any=null;
+      if(boardId){
+        board=await api<any>(`/sample-fabric/library/${boardId}`);
+      }else{
+        const rows=await api<any[]>(`/sample-fabric/library?q=${encodeURIComponent(boardCode)}`);
+        const match=(Array.isArray(rows)?rows:[]).find((x:any)=>String(x?.boardCode||"").trim().toLowerCase()===boardCode.toLowerCase())||(Array.isArray(rows)?rows[0]:null);
+        if(match?.id)board=await api<any>(`/sample-fabric/library/${match.id}`);
+        else board=match||null;
+      }
+      if(!board)throw new Error("Không tìm thấy bảng vải đã liên kết.");
+      setFabricQuick(board);
+    }catch(e){
+      setFabricQuickError(e instanceof Error?e.message:"Không tải được bảng vải.");
+    }finally{
+      setFabricQuickLoading(false);
+    }
+  }
+
+  const fabricQuickImages=Array.from(new Set([
+    fabricQuick?.coverImageUrl,
+    ...(Array.isArray(fabricQuick?.images)?fabricQuick.images.map((x:any)=>x?.url):[]),
+    ...(Array.isArray(fabricQuick?.colors)?fabricQuick.colors.map((x:any)=>x?.imageUrl):[]),
+  ].filter(Boolean).map((x:any)=>asset(x))));
+  const fabricQuickImage=fabricQuickImages[fabricQuickIndex]||fabricQuickImages[0]||"";
+
   return <div className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-white text-neutral-950" style={{WebkitOverflowScrolling:"touch"}}>
     <div className="mx-auto min-h-[100dvh] max-w-md bg-white pb-[max(24px,env(safe-area-inset-bottom))]">
       <section className="relative bg-neutral-100">
@@ -1305,7 +1327,18 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
             <Info l="Mùa / BST" v={sample.season||"—"}/>
             <Info l="Nhóm SP" v={sample.category||"—"}/>
             <Info l="Tiến độ" v={statusLabel(sample.status)}/>
-            {can("fabric_library.view")&&<Info l="Bảng vải" v={sample.fabricBoard?.boardCode||sample.fabricBoardCode||"—"}/>}
+            {can("fabric_library.view")&&(
+              (sample.fabricBoard?.boardCode||sample.fabricBoardCode)
+                ? <button type="button" onClick={()=>void openFabricQuickView()} className="rounded-2xl bg-neutral-50 p-3 text-left transition active:scale-[.99]">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Bảng vải</div>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-sm font-black">
+                      <span>{sample.fabricBoard?.boardCode||sample.fabricBoardCode}</span>
+                      <ArrowUpRight className="h-4 w-4 text-neutral-400"/>
+                    </div>
+                    <div className="mt-1 text-[10px] font-semibold text-neutral-400">Bấm để xem nhanh ảnh bảng vải</div>
+                  </button>
+                : <Info l="Bảng vải" v="—"/>
+            )}
             {can("fabric_library.view")&&<Info l="Màu" v={`${sample.fabricColorName||"—"} ${sample.fabricColorCode||""}`.trim()}/>}
             <Info l="Nhà may làm mẫu" v={sample.sampleFactoryName||dispatches?.[0]?.recipientName||"—"}/>
             <Info l="Phụ trách" v={sample.assigneeName||"—"}/>
@@ -1336,6 +1369,46 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
         </div>}
       </section>
     </div>
+
+    {fabricQuickOpen&&<div className="fixed inset-0 z-[145] overflow-y-auto bg-black/45 px-3 py-[max(16px,env(safe-area-inset-top))]" style={{WebkitOverflowScrolling:"touch"}}>
+      <div className="mx-auto my-3 w-full max-w-md overflow-hidden rounded-[28px] bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-[.12em] text-neutral-400">Bảng vải đã liên kết</div>
+            <div className="truncate text-base font-black">{fabricQuick?.boardCode||sample.fabricBoard?.boardCode||sample.fabricBoardCode||"Bảng vải"}</div>
+          </div>
+          <button type="button" onClick={()=>{setFabricQuickOpen(false);setFabricQuick(null);setFabricQuickError("")}} className="grid h-10 w-10 shrink-0 place-items-center rounded-full border" aria-label="Đóng"><X className="h-5 w-5"/></button>
+        </div>
+
+        {fabricQuickLoading?<div className="grid min-h-64 place-items-center p-8 text-sm font-semibold text-neutral-400">Đang tải bảng vải...</div>:
+        fabricQuickError?<div className="p-5"><div className="rounded-2xl bg-red-50 p-4 text-sm font-semibold text-red-700">{fabricQuickError}</div></div>:
+        fabricQuick?<div>
+          <div className="relative bg-neutral-100">
+            {fabricQuickImage
+              ? <img src={fabricQuickImage} className="block max-h-[55dvh] w-full object-contain" alt="Ảnh bảng vải"/>
+              : <div className="grid h-64 place-items-center text-sm font-semibold text-neutral-400">Bảng vải chưa có ảnh</div>}
+            {fabricQuickImages.length>1&&<>
+              <button type="button" onClick={()=>setFabricQuickIndex(i=>(i-1+fabricQuickImages.length)%fabricQuickImages.length)} className="absolute left-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-xl shadow">‹</button>
+              <button type="button" onClick={()=>setFabricQuickIndex(i=>(i+1)%fabricQuickImages.length)} className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-xl shadow">›</button>
+              <span className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/65 px-2.5 py-1 text-[10px] font-black text-white">{fabricQuickIndex+1}/{fabricQuickImages.length}</span>
+            </>}
+          </div>
+
+          {fabricQuickImages.length>1&&<div className="flex gap-2 overflow-x-auto border-b p-3" style={{WebkitOverflowScrolling:"touch"}}>
+            {fabricQuickImages.map((url:string,i:number)=><button key={`${url}-${i}`} type="button" onClick={()=>setFabricQuickIndex(i)} className={`h-16 w-14 shrink-0 overflow-hidden rounded-xl border-2 bg-neutral-100 ${fabricQuickIndex===i?"border-neutral-950":"border-transparent"}`}><img src={url} className="h-full w-full object-cover" alt=""/></button>)}
+          </div>}
+
+          <div className="grid grid-cols-2 gap-2 p-4">
+            <Info l="Mã bảng" v={fabricQuick.boardCode||"—"}/>
+            <Info l="Mã vải" v={fabricQuick.fabricCode||"—"}/>
+            <Info l="Tên vải" v={fabricQuick.name||"—"}/>
+            <Info l="GSM" v={fabricQuick.expectedGsm||"—"}/>
+            <div className="col-span-2"><Info l="Thành phần" v={fabricQuick.composition||"—"}/></div>
+            {fabricQuick.supplier?.name&&<div className="col-span-2"><Info l="Nhà cung cấp" v={fabricQuick.supplier.name}/></div>}
+          </div>
+        </div>:null}
+      </div>
+    </div>}
 
     {zoomOpen&&image&&<div className="fixed inset-0 z-[125] overflow-hidden bg-black" style={{touchAction:"none"}}>
       <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-3" style={{paddingTop:"max(12px, env(safe-area-inset-top))"}}>
