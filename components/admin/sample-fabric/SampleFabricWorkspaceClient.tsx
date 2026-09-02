@@ -1130,46 +1130,61 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
         <button type="button" onClick={()=>{setTab("DEPLOY");setFeaturedId("");setBoardFilter("")}} className={`rounded-xl px-4 py-2 text-sm font-semibold ${tab==="DEPLOY"?"bg-neutral-950 text-white":"text-neutral-500"}`}>Triển khai mẫu · {stats.deploy}</button>
       </div>
 
-      {tab==="IDEA"&&<div className="border-b bg-white p-3">
+      {tab==="IDEA"&&<div className="border-b bg-white px-3 py-2.5">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <div><div className="text-sm font-semibold">Bảng ý tưởng</div><div className="text-[11px] text-neutral-400">Chọn bảng để lọc nhanh mẫu.</div></div>
-          {can("design_sample.edit")&&<button type="button" onClick={()=>setBoardForm({name:"",description:""})} className="rounded-xl bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-white">+ Tạo bảng</button>}
+          <div className="flex min-w-0 items-baseline gap-2">
+            <div className="text-sm font-semibold">Bảng ý tưởng</div>
+            <div className="truncate text-[11px] text-neutral-400">Chọn bảng để lọc nhanh.</div>
+          </div>
+          {can("design_sample.edit")&&<button type="button" onClick={()=>setBoardForm({name:"",description:""})} className="shrink-0 rounded-lg bg-neutral-950 px-3 py-1.5 text-[11px] font-semibold text-white">+ Tạo bảng</button>}
         </div>
         {boardError&&<div className="mb-2 rounded-xl bg-red-50 p-2.5 text-xs text-red-700">{boardError}</div>}
-        <div className="flex flex-wrap items-start gap-2">
-          <button type="button" onClick={()=>setBoardFilter("")} className={`h-[74px] w-[132px] rounded-xl border px-3 py-2 text-left ${boardFilter===""?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><div className="text-sm font-semibold">Tất cả ý tưởng</div><div className={`mt-1 text-[11px] ${boardFilter===""?"text-white/60":"text-neutral-400"}`}>{stats.idea} mẫu</div></button>
-          <button type="button" onClick={()=>setBoardFilter("__UNASSIGNED__")} className={`h-[74px] w-[132px] rounded-xl border px-3 py-2 text-left ${boardFilter==="__UNASSIGNED__"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}><div className="text-sm font-semibold">Chưa phân bảng</div><div className={`mt-1 text-[11px] ${boardFilter==="__UNASSIGNED__"?"text-white/60":"text-neutral-400"}`}>{unassignedIdeaCount} mẫu</div></button>
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          <button type="button" onClick={()=>setBoardFilter("")} className={`w-[116px] shrink-0 overflow-hidden rounded-xl border text-left ${boardFilter===""?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
+            <div className={`grid aspect-square place-items-center ${boardFilter===""?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-950"}`}>
+              <div className="text-center"><div className="text-2xl font-bold">{stats.idea}</div><div className={`mt-1 text-[10px] font-semibold ${boardFilter===""?"text-white/65":"text-neutral-400"}`}>mẫu</div></div>
+            </div>
+            <div className="px-2.5 py-2"><div className="truncate text-xs font-semibold">Tất cả ý tưởng</div></div>
+          </button>
+          <button type="button" onClick={()=>setBoardFilter("__UNASSIGNED__")} className={`w-[116px] shrink-0 overflow-hidden rounded-xl border text-left ${boardFilter==="__UNASSIGNED__"?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
+            <div className={`grid aspect-square place-items-center ${boardFilter==="__UNASSIGNED__"?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-950"}`}>
+              <div className="text-center"><div className="text-2xl font-bold">{unassignedIdeaCount}</div><div className={`mt-1 text-[10px] font-semibold ${boardFilter==="__UNASSIGNED__"?"text-white/65":"text-neutral-400"}`}>mẫu</div></div>
+            </div>
+            <div className="px-2.5 py-2"><div className="truncate text-xs font-semibold">Chưa phân bảng</div></div>
+          </button>
           {ideaBoards.map(board=>{
             const linked=(board.samples||[]).map(x=>x.designSample).filter(Boolean);
             const ideaCount=linked.filter((x:any)=>String(x.status||"IDEA")==="IDEA").length;
             const deployed=linked.length-ideaCount;
             const cover=linked.flatMap((x:any)=>[x.coverImageUrl,...(x.images||[]).filter((i:any)=>!isPatternAsset(i)).map((i:any)=>i.url)]).filter(Boolean)[0];
-            return <div key={board.id} className={`w-[132px] overflow-hidden rounded-xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
+            return <div key={board.id} className={`w-[116px] shrink-0 overflow-hidden rounded-xl border ${boardFilter===board.id?"border-neutral-950 ring-1 ring-neutral-950":"bg-white"}`}>
               <button type="button" onClick={()=>setBoardFilter(board.id)} className="block w-full text-left">
-                <div className="aspect-square w-full bg-neutral-100">{cover?<img src={assetUrl(String(cover))} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-2xl text-neutral-300">✦</div>}</div>
-                <div className="px-2.5 py-2"><div className="truncate text-sm font-semibold">{board.name}</div><div className="mt-0.5 text-[10px] text-neutral-400">{ideaCount} ý tưởng{deployed?` · ${deployed} triển khai`:""}</div></div>
+                <div className="aspect-square w-full bg-neutral-100">{cover?<img src={assetUrl(String(cover))} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-xl text-neutral-300">✦</div>}</div>
+                <div className="px-2.5 py-2">
+                  <div className="truncate text-xs font-semibold">{board.name}</div>
+                  <div className="mt-0.5 truncate text-[9px] text-neutral-400">{ideaCount} ý tưởng{deployed?` · ${deployed} triển khai`:""}</div>
+                </div>
               </button>
-              {can("design_sample.edit")&&<div className="flex gap-1 border-t p-1.5"><button type="button" onClick={()=>setBoardForm({id:board.id,name:board.name,description:board.description||""})} className="flex-1 rounded-lg border px-2 py-1 text-[10px] font-semibold">Sửa</button><button type="button" disabled={boardBusy} onClick={()=>void removeBoard(board)} className="rounded-lg border border-red-200 px-2 py-1 text-[10px] font-semibold text-red-600">Xoá</button></div>}
+              {can("design_sample.edit")&&<div className="flex border-t">
+                <button type="button" onClick={()=>setBoardForm({id:board.id,name:board.name,description:board.description||""})} className="flex-1 px-2 py-1.5 text-[9px] font-semibold hover:bg-neutral-50">Sửa</button>
+                <button type="button" disabled={boardBusy} onClick={()=>void removeBoard(board)} className="border-l border-red-100 px-2 py-1.5 text-[9px] font-semibold text-red-600 hover:bg-red-50">Xoá</button>
+              </div>}
             </div>
           })}
         </div>
       </div>}
 
-      <div className="grid gap-2 p-3 xl:grid-cols-[1fr_1fr_auto]">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <select className={inputClass} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
-          <select className={inputClass} value={subFilter} onChange={e=>setSubFilter(e.target.value)}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+        <select className={`${inputClass} !w-auto min-w-[170px] !rounded-xl !px-3 !py-2 text-xs`} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+        <select className={`${inputClass} !w-auto min-w-[190px] !rounded-xl !px-3 !py-2 text-xs`} value={subFilter} onChange={e=>setSubFilter(e.target.value)}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+        <label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border px-3 text-[11px] font-semibold"><input type="checkbox" checked={groupByCategory} onChange={e=>setGroupByCategory(e.target.checked)}/> Nhóm theo loại</label>
+        <select className={`${inputClass} !w-auto min-w-[150px] !rounded-xl !px-3 !py-2 text-xs`} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
+        <div className="ml-auto flex h-9 rounded-xl border p-1">
+          <button type="button" onClick={()=>setViewMode("CARDS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="CARDS"?"bg-neutral-950 text-white":""}`}>Danh sách</button>
+          <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><input type="checkbox" checked={groupByCategory} onChange={e=>setGroupByCategory(e.target.checked)}/> Nhóm theo loại</label>
-          <select className={`${inputClass} w-auto`} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
-        </div>
-        <div className="flex rounded-xl border p-1">
-          <button type="button" onClick={()=>setViewMode("CARDS")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${viewMode==="CARDS"?"bg-neutral-950 text-white":""}`}>Danh sách</button>
-          <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
-        </div>
+        <div className="w-full border-t pt-2 text-[11px] text-neutral-500 sm:w-auto sm:border-0 sm:pt-0">Hiển thị <b>{visible.length}</b> mẫu{tab==="IDEA"&&boardFilter?` · ${boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(x=>x.id===boardFilter)?.name||"bảng đã chọn"}`:""}</div>
       </div>
-      <div className="border-t px-4 py-2 text-xs text-neutral-500">Đang hiển thị <b>{visible.length}</b> mẫu{tab==="IDEA"&&boardFilter?` trong ${boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(x=>x.id===boardFilter)?.name||"bảng đã chọn"}`:""}.</div>
     </Card>
 
     {viewMode==="CARDS"?<div className="space-y-5">
