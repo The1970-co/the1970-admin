@@ -22,6 +22,7 @@ export default function PayrollAdjustmentModal({
   const [busy, setBusy] = useState(false);
 
   if (!open || !line) return null;
+  const reasonRequired = ["BONUS", "ALLOWANCE"].includes(form.type);
 
   async function submit() {
     setBusy(true);
@@ -59,14 +60,15 @@ export default function PayrollAdjustmentModal({
             <input value={form.amount} onChange={(e) => setForm((s) => ({ ...s, amount: e.target.value }))} placeholder="VD: 500000" className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-900" />
           </label>
           <label>
-            <span className="text-sm font-medium text-neutral-700">Lý do</span>
-            <textarea value={form.reason} onChange={(e) => setForm((s) => ({ ...s, reason: e.target.value }))} rows={3} className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-900" />
+            <span className="text-sm font-medium text-neutral-700">Ghi chú / lý do</span>
+            <textarea required={reasonRequired} value={form.reason} onChange={(e) => setForm((s) => ({ ...s, reason: e.target.value }))} rows={3} placeholder="VD: Thưởng đạt doanh số, phụ cấp đi hỗ trợ chi nhánh khác..." className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-900" />
+            {reasonRequired ? <span className="mt-1 block text-xs text-neutral-500">Bắt buộc ghi rõ lý do khi thêm thưởng hoặc phụ cấp.</span> : null}
           </label>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
           <button onClick={onClose} className="rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50">Hủy</button>
-          <button onClick={submit} disabled={busy || parseMoney(form.amount) <= 0} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Đang lưu..." : "Lưu điều chỉnh"}</button>
+          <button onClick={submit} disabled={busy || parseMoney(form.amount) <= 0 || (reasonRequired && !form.reason.trim())} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Đang lưu..." : "Lưu điều chỉnh"}</button>
         </div>
       </div>
     </div>

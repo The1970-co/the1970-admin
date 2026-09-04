@@ -26,10 +26,22 @@ function adjustmentLabel(type?: string) {
   return type || "—";
 }
 
+function bonusAllowanceNote(line: PayrollLine) {
+  const reasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
+    .filter((item: any) => ["BONUS", "ALLOWANCE"].includes(String(item.type || "").toUpperCase()))
+    .map((item: any) => String(item.reason || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set([String(line.note || "").trim(), ...reasons].filter(Boolean))).join(" · ");
+}
+
 export default function PayrollEmployeeDrawer({ line, onClose }: { line: PayrollLine | null; onClose: () => void }) {
   if (!line) return null;
   const orders = Array.isArray(line.orderLinks) ? line.orderLinks : [];
   const adjustments = Array.isArray(line.adjustments) ? line.adjustments : [];
+  const overtimeRows = (Array.isArray(line.overtimeBreakdown) ? line.overtimeBreakdown : [])
+    .map((row: any, index: number) => ({ ...row, index }))
+    .filter((row: any) => n(row.hours) > 0);
+  const rewardNote = bonusAllowanceNote(line);
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/30">
@@ -61,7 +73,9 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
               <Row label="Ngày công / chuẩn" value={`${num(line.workingDays)} / ${num(line.standardDays)}`} />
               <Row label="Giờ quy đổi" value={`${num(line.convertedWorkingHours)} giờ · ${money(line.hourlyAmount)}`} />
               <Row label="Tổng tăng ca" value={money(line.overtimeAmount)} />
-              {(Array.isArray(line.overtimeBreakdown) ? line.overtimeBreakdown : []).map((row: any) => <Row key={row.key} label={row.label || row.key} value={`${num(row.hours)}h × ${money(row.baseHourlyRate)} × ${num(row.multiplier)} = ${money(row.amount)}`} />)}
+              {overtimeRows.length
+                ? overtimeRows.map((row: any) => <Row key={row.key || row.index} label={`TC${row.index + 1}${row.label ? ` · ${row.label}` : ""}`} value={`${num(row.hours)}h × ${money(row.baseHourlyRate)} × ${num(row.multiplier)} = ${money(row.amount)}`} />)
+                : <Row label="Chi tiết tăng ca" value="Không có tăng ca" />}
               <Row label="Nghỉ có lương" value={`${num(line.paidLeaveDays)} ngày · ${money(line.paidLeaveAmount)}`} />
               <Row label="SP gắn tên" value={`${num(line.taggedProductQty)} sp · ${money(line.taggedProductAmount)}`} />
               <Row label="Thưởng COD GHN" value={`${num(line.ghnCodOrderCount)} đơn · ${money(line.ghnCodBonusAmount)}`} />
@@ -72,6 +86,7 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
               <Row label="% doanh thu" value={`${money(line.revenueAmount)} · ${money(line.commissionByPercent)}`} />
               <Row label="Tổng hoa hồng" value={money(line.commissionTotal)} />
               <Row label="Thưởng + phụ cấp" value={`${money(line.bonus)} + ${money(line.allowance)}`} />
+              {rewardNote ? <Row label="Ghi chú thưởng / phụ cấp" value={rewardNote} /> : null}
               <Row label="Tạm ứng + khấu trừ" value={`${money(line.advance)} + ${money(line.deduction)}`} />
             </div>
           </section>

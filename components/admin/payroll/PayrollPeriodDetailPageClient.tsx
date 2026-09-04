@@ -49,6 +49,26 @@ function dateOnly(value?: string | null) {
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleDateString("vi-VN");
 }
+
+function overtimeText(line: PayrollLine) {
+  const rows = [
+    { label: "TC1", hours: n(line.overtimeHours) },
+    { label: "TC2", hours: n(line.holidayHours) },
+    { label: "TC3", hours: n((line as any).overtime3Hours) },
+    { label: "TC4", hours: n((line as any).overtime4Hours) },
+  ].filter((row) => row.hours > 0);
+  return rows.length
+    ? rows.map((row) => `${row.label}: ${num(row.hours)}h`).join(" · ")
+    : "Không tăng ca";
+}
+
+function bonusAllowanceNote(line: PayrollLine) {
+  const adjustmentReasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
+    .filter((item: any) => ["BONUS", "ALLOWANCE"].includes(String(item.type || "").toUpperCase()))
+    .map((item: any) => String(item.reason || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set([String(line.note || "").trim(), ...adjustmentReasons].filter(Boolean))).join(" · ");
+}
 function statusClass(status?: string) {
   const s = String(status || "DRAFT").toUpperCase();
   if (s === "PAID") return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -78,6 +98,7 @@ type PayrollColumnKey =
   | "workingDays"
   | "baseSalary"
   | "convertedHours"
+  | "overtime"
   | "hourlyPay"
   | "orders"
   | "items"
@@ -95,12 +116,13 @@ const payrollColumnOptions: Array<{ key: PayrollColumnKey; label: string }> = [
   { key: "workingDays", label: "Công" },
   { key: "baseSalary", label: "Lương cứng" },
   { key: "convertedHours", label: "Giờ QĐ" },
+  { key: "overtime", label: "Tăng ca" },
   { key: "hourlyPay", label: "Lương giờ" },
   { key: "orders", label: "Đơn" },
   { key: "items", label: "SP" },
   { key: "commissionRate", label: "Mức hoa hồng" },
   { key: "commissionTotal", label: "Tổng hoa hồng" },
-  { key: "bonus", label: "Thưởng" },
+  { key: "bonus", label: "Thưởng + phụ cấp" },
   { key: "deduction", label: "Trừ" },
   { key: "netPay", label: "Thực nhận" },
   { key: "status", label: "Trạng thái" },
@@ -400,6 +422,8 @@ export default function PayrollPeriodDetailPageClient({
         overtimeRate: n(editLine.overtimeRate || 1),
         holidayHours: n(editLine.holidayHours),
         holidayRate: n(editLine.holidayRate || 2),
+        overtime3Hours: n((editLine as any).overtime3Hours),
+        overtime4Hours: n((editLine as any).overtime4Hours),
         hourlyRate: n(editLine.hourlyRate),
         paidLeaveDays: n(editLine.paidLeaveDays),
         paidLeaveHoursPerDay: n(editLine.paidLeaveHoursPerDay),
@@ -630,7 +654,7 @@ export default function PayrollPeriodDetailPageClient({
           </details>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1280px] text-left text-sm">
+          <table className="w-full min-w-[1500px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3">Nhân viên</th>
@@ -640,12 +664,13 @@ export default function PayrollPeriodDetailPageClient({
                 {visibleColumns.workingDays ? <th className="px-4 py-3 text-right">Công</th> : null}
                 {visibleColumns.baseSalary ? <th className="px-4 py-3 text-right">Lương cứng</th> : null}
                 {visibleColumns.convertedHours ? <th className="px-4 py-3 text-right">Giờ QĐ</th> : null}
+                {visibleColumns.overtime ? <th className="px-4 py-3">Tăng ca</th> : null}
                 {visibleColumns.hourlyPay ? <th className="px-4 py-3 text-right">Lương giờ</th> : null}
                 {visibleColumns.orders ? <th className="px-4 py-3 text-right">Đơn</th> : null}
                 {visibleColumns.items ? <th className="px-4 py-3 text-right">SP</th> : null}
                 {visibleColumns.commissionRate ? <th className="px-4 py-3 text-right">Mức HH</th> : null}
                 {visibleColumns.commissionTotal ? <th className="px-4 py-3 text-right">Tổng HH</th> : null}
-                {visibleColumns.bonus ? <th className="px-4 py-3 text-right">Thưởng</th> : null}
+                {visibleColumns.bonus ? <th className="px-4 py-3 text-right">Thưởng + phụ cấp</th> : null}
                 {visibleColumns.deduction ? <th className="px-4 py-3 text-right">Trừ</th> : null}
                 {visibleColumns.netPay ? <th className="px-4 py-3 text-right">Thực nhận</th> : null}
                 {visibleColumns.status ? <th className="px-4 py-3">TT</th> : null}
@@ -680,6 +705,11 @@ export default function PayrollPeriodDetailPageClient({
                   {visibleColumns.workingDays ? <td className="px-4 py-4 text-right">{num(line.workingDays)}</td> : null}
                   {visibleColumns.baseSalary ? <td className="px-4 py-4 text-right">{money(line.proratedSalary)}</td> : null}
                   {visibleColumns.convertedHours ? <td className="px-4 py-4 text-right">{num(line.convertedWorkingHours)}</td> : null}
+                  {visibleColumns.overtime ? (
+                    <td className="max-w-[190px] whitespace-normal px-4 py-4 text-xs font-medium text-neutral-700">
+                      {overtimeText(line)}
+                    </td>
+                  ) : null}
                   {visibleColumns.hourlyPay ? <td className="px-4 py-4 text-right">{money(line.hourlyAmount)}</td> : null}
                   {visibleColumns.orders ? <td className="px-4 py-4 text-right">{num(line.successOrderCount)}</td> : null}
                   {visibleColumns.items ? <td className="px-4 py-4 text-right">{num(line.successItemQty)}</td> : null}
@@ -687,7 +717,14 @@ export default function PayrollPeriodDetailPageClient({
                     <td className="max-w-[180px] whitespace-normal px-4 py-4 text-right text-xs font-medium text-neutral-700">{commissionSetting(line)}</td>
                   ) : null}
                   {visibleColumns.commissionTotal ? <td className="px-4 py-4 text-right font-medium text-neutral-900">{money(line.commissionTotal)}</td> : null}
-                  {visibleColumns.bonus ? <td className="px-4 py-4 text-right">{money(n(line.bonus) + n(line.allowance))}</td> : null}
+                  {visibleColumns.bonus ? (
+                    <td className="max-w-[230px] whitespace-normal px-4 py-4 text-right">
+                      <div className="font-semibold text-neutral-900">{money(n(line.bonus) + n(line.allowance))}</div>
+                      {bonusAllowanceNote(line) ? (
+                        <div className="mt-1 text-xs leading-5 text-neutral-500">{bonusAllowanceNote(line)}</div>
+                      ) : null}
+                    </td>
+                  ) : null}
                   {visibleColumns.deduction ? <td className="px-4 py-4 text-right">{money(n(line.advance) + n(line.deduction) + n(line.insuranceDeduction))}</td> : null}
                   {visibleColumns.netPay ? <td className="px-4 py-4 text-right font-semibold text-neutral-950">{money(line.netPay)}</td> : null}
                   {visibleColumns.status ? (
@@ -764,20 +801,20 @@ export default function PayrollPeriodDetailPageClient({
                   Giờ làm việc trong tháng
                 </div>
                 <p className="mt-1 text-xs text-neutral-500">
-                  Nhập tổng giờ cả tháng: giờ ngày thường + CT1 tăng ca + giờ
-                  ngày lễ CT2. CT2 sẽ nhân hệ số ngày lễ, mặc định x2.
+                  Nhập tổng giờ cả tháng: giờ ngày thường + TC1 tăng ca + giờ
+                  ngày lễ TC2. TC2 sẽ nhân hệ số ngày lễ, mặc định x2.
                 </p>
                 <div className="mt-3 grid gap-3 md:grid-cols-3">
                   {(
                     [
                       ["workingDays", "Công"],
                       ["normalHours", "Giờ ngày thường"],
-                      ["overtimeHours", "Giờ tăng ca CT1"],
-                      ["overtimeRate", "Hệ số CT1"],
-                      ["holidayHours", "Giờ ngày lễ CT2"],
-                      ["holidayRate", "Hệ số CT2 (x2)"],
-                      ["overtime3Hours", "Giờ tăng ca 3"],
-                      ["overtime4Hours", "Giờ tăng ca 4"],
+                      ["overtimeHours", "Giờ tăng ca TC1"],
+                      ["overtimeRate", "Hệ số TC1"],
+                      ["holidayHours", "Giờ ngày lễ TC2"],
+                      ["holidayRate", "Hệ số TC2 (x2)"],
+                      ["overtime3Hours", "Giờ tăng ca TC3"],
+                      ["overtime4Hours", "Giờ tăng ca TC4"],
                       ["hourlyRate", "Giá 1 giờ"],
                       ["paidLeaveDays", "Ngày nghỉ có lương"],
                       ["paidLeaveHoursPerDay", "Giờ / ngày nghỉ"],
@@ -840,6 +877,20 @@ export default function PayrollPeriodDetailPageClient({
                     </label>
                   ))}
                 </div>
+                <label className="mt-4 block">
+                  <span className="text-sm font-medium text-neutral-700">
+                    Ghi chú thưởng / phụ cấp tháng này
+                  </span>
+                  <textarea
+                    value={editLine.note || ""}
+                    onChange={(e) =>
+                      setEditLine((s) => (s ? { ...s, note: e.target.value } : s))
+                    }
+                    rows={3}
+                    placeholder="VD: Thưởng đạt doanh số tháng 8, phụ cấp hỗ trợ cửa hàng khác..."
+                    className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm"
+                  />
+                </label>
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -905,18 +956,6 @@ export default function PayrollPeriodDetailPageClient({
                   ))}
                 </div>
               </div>
-              <label className="mt-4 block">
-                <span className="text-sm font-medium text-neutral-700">
-                  Ghi chú
-                </span>
-                <textarea
-                  value={editLine.note || ""}
-                  onChange={(e) =>
-                    setEditLine((s) => (s ? { ...s, note: e.target.value } : s))
-                  }
-                  className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm"
-                />
-              </label>
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button
