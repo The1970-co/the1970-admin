@@ -19,19 +19,44 @@ function dateText(value?: string | null) {
   return date.toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 function adjustmentLabel(type?: string) {
-  if (type === "BONUS") return "Thưởng";
-  if (type === "ALLOWANCE") return "Phụ cấp";
-  if (type === "ADVANCE") return "Tạm ứng";
-  if (type === "DEDUCTION") return "Khấu trừ";
+  const value = String(type || "");
+  const normalized = value.toUpperCase();
+  if (normalized === "BONUS") return "Thưởng";
+  if (normalized === "ALLOWANCE") return "Phụ cấp";
+  if (normalized === "ADVANCE") return "Tạm ứng";
+  if (normalized === "DEDUCTION") return "Khấu trừ";
+  if (normalized.startsWith("CUSTOM_ADD:") || normalized.startsWith("CUSTOM_DEDUCT:")) {
+    return value.slice(value.indexOf(":") + 1).trim() || "Điều chỉnh tự đặt";
+  }
   return type || "—";
 }
 
 function bonusAllowanceNote(line: PayrollLine) {
   const reasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
-    .filter((item: any) => ["BONUS", "ALLOWANCE"].includes(String(item.type || "").toUpperCase()))
-    .map((item: any) => String(item.reason || "").trim())
+    .filter((item: any) => {
+      const type = String(item.type || "").toUpperCase();
+      return ["BONUS", "ALLOWANCE"].includes(type) || type.startsWith("CUSTOM_ADD:");
+    })
+    .map((item: any) => {
+      const reason = String(item.reason || "").trim();
+      return reason ? `${adjustmentLabel(item.type)}: ${reason}` : "";
+    })
     .filter(Boolean);
   return Array.from(new Set([String(line.note || "").trim(), ...reasons].filter(Boolean))).join(" · ");
+}
+
+function deductionNote(line: PayrollLine) {
+  const reasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
+    .filter((item: any) => {
+      const type = String(item.type || "").toUpperCase();
+      return ["ADVANCE", "DEDUCTION"].includes(type) || type.startsWith("CUSTOM_DEDUCT:");
+    })
+    .map((item: any) => {
+      const reason = String(item.reason || "").trim();
+      return reason ? `${adjustmentLabel(item.type)}: ${reason}` : "";
+    })
+    .filter(Boolean);
+  return Array.from(new Set(reasons)).join(" · ");
 }
 
 export default function PayrollEmployeeDrawer({ line, onClose }: { line: PayrollLine | null; onClose: () => void }) {
@@ -42,6 +67,7 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
     .map((row: any, index: number) => ({ ...row, index }))
     .filter((row: any) => n(row.hours) > 0);
   const rewardNote = bonusAllowanceNote(line);
+  const subtractNote = deductionNote(line);
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/30">
@@ -88,6 +114,7 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
               <Row label="Thưởng + phụ cấp" value={`${money(line.bonus)} + ${money(line.allowance)}`} />
               {rewardNote ? <Row label="Ghi chú thưởng / phụ cấp" value={rewardNote} /> : null}
               <Row label="Tạm ứng + khấu trừ" value={`${money(line.advance)} + ${money(line.deduction)}`} />
+              {subtractNote ? <Row label="Ghi chú khoản trừ" value={subtractNote} /> : null}
             </div>
           </section>
 
@@ -104,6 +131,7 @@ export default function PayrollEmployeeDrawer({ line, onClose }: { line: Payroll
                     <th className="px-3 py-3">Ngày</th>
                     <th className="px-3 py-3 text-right">Doanh thu</th>
                     <th className="px-3 py-3 text-right">SL SP</th>
+                    <th className="px-3 py-3">Nguồn tính</th>
                     <th className="px-3 py-3 text-right">Hoa hồng</th>
                   </tr>
                 </thead>

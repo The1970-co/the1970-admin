@@ -62,12 +62,98 @@ function overtimeText(line: PayrollLine) {
     : "Không tăng ca";
 }
 
+function adjustmentName(type?: string) {
+  const value = String(type || "");
+  const normalized = value.toUpperCase();
+  if (normalized === "BONUS") return "Thưởng";
+  if (normalized === "ALLOWANCE") return "Phụ cấp";
+  if (normalized === "ADVANCE") return "Tạm ứng";
+  if (normalized === "DEDUCTION") return "Khấu trừ";
+  if (normalized.startsWith("CUSTOM_ADD:") || normalized.startsWith("CUSTOM_DEDUCT:")) {
+    return value.slice(value.indexOf(":") + 1).trim() || "Điều chỉnh";
+  }
+  return value || "Điều chỉnh";
+}
+
 function bonusAllowanceNote(line: PayrollLine) {
   const adjustmentReasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
-    .filter((item: any) => ["BONUS", "ALLOWANCE"].includes(String(item.type || "").toUpperCase()))
-    .map((item: any) => String(item.reason || "").trim())
+    .filter((item: any) => {
+      const type = String(item.type || "").toUpperCase();
+      return ["BONUS", "ALLOWANCE"].includes(type) || type.startsWith("CUSTOM_ADD:");
+    })
+    .map((item: any) => {
+      const reason = String(item.reason || "").trim();
+      return reason ? `${adjustmentName(item.type)}: ${reason}` : "";
+    })
     .filter(Boolean);
   return Array.from(new Set([String(line.note || "").trim(), ...adjustmentReasons].filter(Boolean))).join(" · ");
+}
+
+function deductionNote(line: PayrollLine) {
+  const reasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
+    .filter((item: any) => {
+      const type = String(item.type || "").toUpperCase();
+      return ["ADVANCE", "DEDUCTION"].includes(type) || type.startsWith("CUSTOM_DEDUCT:");
+    })
+    .map((item: any) => {
+      const reason = String(item.reason || "").trim();
+      return reason ? `${adjustmentName(item.type)}: ${reason}` : "";
+    })
+    .filter(Boolean);
+  return Array.from(new Set(reasons)).join(" · ");
+}
+
+const overtimeInputKeys = ["overtimeHours", "holidayHours", "overtime3Hours", "overtime4Hours"] as const;
+
+function monthlyOvertimeRows(line: PayrollLine, config?: PayrollConfig | null) {
+  const snapshot = Array.isArray(line.overtimeBreakdown) ? line.overtimeBreakdown : [];
+  const configured = Array.isArray((config as any)?.overtimeConfigs) ? (config as any).overtimeConfigs : [];
+  return overtimeInputKeys.map((inputKey, index) => {
+    const source: any = configured[index] || snapshot[index] || {};
+    return {
+      inputKey,
+      key: source.key || `TC${index + 1}`,
+      label: source.label || `Tăng ca ${index + 1}`,
+      enabled: source.enabled !== false,
+      baseHourlyRate: n(source.baseHourlyRate ?? line.hourlyRate),
+      multiplier: n(source.multiplier ?? (index === 1 ? line.holidayRate || 2 : index === 0 ? line.overtimeRate || 1 : 1)),
+      hours: n((line as any)[inputKey]),
+    };
+  });
+}
+
+function salaryTypeLabel(type?: string | null) {
+  const value = String(type || "MONTHLY").toUpperCase();
+  if (value === "DAILY") return "Theo ngày";
+  if (value === "SHIFT") return "Theo ca";
+  if (value === "NONE") return "Không lương cơ bản";
+  return "Theo tháng";
+}
+
+function attributionModeLabel(mode?: string | null) {
+  if (mode === "CREATED_BY") return "Người tạo đơn";
+  if (mode === "ASSIGNED_ONLY") return "Chỉ NV phụ trách";
+  return "Ưu tiên NV phụ trách, chưa gán thì lấy người tạo";
+}
+
+function configCommissionText(config: any) {
+  if (!config) return "Không có cấu hình";
+  const parts: string[] = [];
+  if (config.commissionPerItemEnabled) parts.push(`${money(config.commissionPerItemAmount)}/SP`);
+  if (config.commissionPerOrderEnabled) parts.push(`${money(config.commissionPerOrderAmount)}/đơn`);
+  if (config.commissionPercentEnabled) parts.push(`${num(config.commissionRate)}% doanh thu`);
+  return parts.length ? parts.join(" · ") : "Không tính hoa hồng";
+}
+
+function configChannelText(config: any) {
+  if (!config) return "—";
+  const channels = [
+    config.applyPos !== false ? "POS" : "",
+    config.applyOnline !== false ? "Online" : "",
+    config.applyFacebook !== false ? "Facebook" : "",
+    config.applyCod !== false ? "COD" : "",
+  ].filter(Boolean);
+  return channels.length ? channels.join(" · ") : "Không có kênh";
 }
 function statusClass(status?: string) {
   const s = String(status || "DRAFT").toUpperCase();
@@ -419,24 +505,11 @@ export default function PayrollPeriodDetailPageClient({
         workingDays: n(editLine.workingDays),
         normalHours: n(editLine.normalHours),
         overtimeHours: n(editLine.overtimeHours),
-        overtimeRate: n(editLine.overtimeRate || 1),
         holidayHours: n(editLine.holidayHours),
-        holidayRate: n(editLine.holidayRate || 2),
         overtime3Hours: n((editLine as any).overtime3Hours),
         overtime4Hours: n((editLine as any).overtime4Hours),
-        hourlyRate: n(editLine.hourlyRate),
         paidLeaveDays: n(editLine.paidLeaveDays),
-        paidLeaveHoursPerDay: n(editLine.paidLeaveHoursPerDay),
-        mealAllowanceAmount: n(editLine.mealAllowanceAmount),
-        insuranceDeduction: n(editLine.insuranceDeduction),
         taggedProductQty: n(editLine.taggedProductQty),
-        taggedProductRate: n(editLine.taggedProductRate),
-        ghnCodOrderCount: n(editLine.ghnCodOrderCount),
-        ghnCodBonusPerOrder: n(editLine.ghnCodBonusPerOrder),
-        bonus: n(editLine.bonus),
-        allowance: n(editLine.allowance),
-        advance: n(editLine.advance),
-        deduction: n(editLine.deduction),
         attendanceCode: editLine.attendanceCode || "",
         attendanceMatchedBy: editLine.attendanceMatchedBy || "",
         attendanceRawName: editLine.attendanceRawName || "",
@@ -475,6 +548,31 @@ export default function PayrollPeriodDetailPageClient({
     setPayDialog(null);
   }
 
+  const editConfig = editLine
+    ? ((editLine as any).calculationConfig || payrollConfigByStaff.get(String(editLine.staffId || "")) || null)
+    : null;
+  const editOvertimeRows = editLine ? monthlyOvertimeRows(editLine, editConfig) : [];
+  const editHourlyEnabled = editConfig ? Boolean((editConfig as any).hourlyEnabled) : n(editLine?.hourlyAmount) > 0;
+  const editConvertedHours = editLine
+    ? n(editLine.normalHours) + editOvertimeRows.reduce((sum, row) => sum + (row.enabled ? row.hours * row.multiplier : 0), 0)
+    : 0;
+  const editHourlyAmount = editLine && editHourlyEnabled
+    ? n(editLine.normalHours) * n((editConfig as any)?.hourlyRate ?? editLine.hourlyRate) +
+      editOvertimeRows.reduce((sum, row) => sum + (row.enabled ? row.hours * row.baseHourlyRate * row.multiplier : 0), 0)
+    : 0;
+  const editTaggedProductEnabled = editConfig ? Boolean((editConfig as any).taggedProductEnabled) : n(editLine?.taggedProductRate) > 0;
+  const editTaggedProductRate = n((editConfig as any)?.taggedProductRate ?? editLine?.taggedProductRate);
+  const editSalaryType = String((editConfig as any)?.salaryType || editLine?.salaryType || "MONTHLY").toUpperCase();
+  const editWorkingDays = n(editLine?.workingDays);
+  const editStandardDays = Math.max(1, n((editConfig as any)?.standardWorkingDays ?? editLine?.standardDays));
+  const editBaseSalary = n((editConfig as any)?.baseSalary ?? editLine?.baseSalary);
+  const editDailyRate = n((editConfig as any)?.dailyRate ?? editLine?.dailyRate);
+  const editProratedSalary = editSalaryType === "NONE"
+    ? 0
+    : editSalaryType === "DAILY" || editSalaryType === "SHIFT"
+      ? editDailyRate * editWorkingDays
+      : editBaseSalary * Math.min(editWorkingDays, editStandardDays) / editStandardDays;
+
   if (loading && !period)
     return (
       <div className="rounded-3xl border border-neutral-200 bg-white p-8 text-sm text-neutral-500">
@@ -502,9 +600,9 @@ export default function PayrollPeriodDetailPageClient({
               {period?.branchName || period?.branchId || "Tất cả chi nhánh"}
             </p>
             <p className="mt-2 text-xs text-neutral-400">
-              Bấm “Nhập Excel chấm công” để tự đổ giờ thường/CT1/CT2 và cảnh báo
-              đi muộn. Bấm “Nhập giờ/SP” để sửa tổng giờ, số SP, giá 1 SP theo
-              tháng.
+              Bấm “Nhập Excel chấm công” để tự đổ giờ thường/TC1/TC2 và cảnh báo
+              đi muộn. “Nhập dữ liệu tháng” chỉ sửa số công, giờ và số SP thực tế;
+              đơn giá, hệ số luôn lấy từ cấu hình lương đang áp dụng.
             </p>
           </div>
           {period ? (
@@ -725,7 +823,12 @@ export default function PayrollPeriodDetailPageClient({
                       ) : null}
                     </td>
                   ) : null}
-                  {visibleColumns.deduction ? <td className="px-4 py-4 text-right">{money(n(line.advance) + n(line.deduction) + n(line.insuranceDeduction))}</td> : null}
+                  {visibleColumns.deduction ? (
+                    <td className="max-w-[230px] whitespace-normal px-4 py-4 text-right">
+                      <div>{money(n(line.advance) + n(line.deduction) + n(line.insuranceDeduction))}</div>
+                      {deductionNote(line) ? <div className="mt-1 text-xs leading-5 text-neutral-500">{deductionNote(line)}</div> : null}
+                    </td>
+                  ) : null}
                   {visibleColumns.netPay ? <td className="px-4 py-4 text-right font-semibold text-neutral-950">{money(line.netPay)}</td> : null}
                   {visibleColumns.status ? (
                     <td className="px-4 py-4">
@@ -737,7 +840,7 @@ export default function PayrollPeriodDetailPageClient({
                   <td className="px-4 py-4">
                     <div className="flex justify-end gap-2">
                       <button onClick={() => setSelectedLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Chi tiết</button>
-                      <button onClick={() => setEditLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Nhập giờ/SP</button>
+                      <button onClick={() => setEditLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Nhập dữ liệu tháng</button>
                       <button onClick={() => setAdjustLine(line)} className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white">Điều chỉnh</button>
                       <button
                         disabled={String(line.status).toUpperCase() === "PAID"}
@@ -797,133 +900,155 @@ export default function PayrollPeriodDetailPageClient({
             </div>
             <div className="mt-5 max-h-[72vh] overflow-y-auto pr-1">
               <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
-                <div className="font-semibold text-neutral-950">
-                  Giờ làm việc trong tháng
+                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="font-semibold text-neutral-950">Cấu hình lương đang áp dụng</div>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Các đơn giá, hệ số và mục bật/tắt được lấy từ cấu hình của kỳ lương, chỉ hiển thị để đối chiếu.
+                    </p>
+                  </div>
+                  <span className="w-fit rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600">
+                    {(editLine as any).sourceTemplateName || "Cấu hình riêng"}
+                  </span>
                 </div>
-                <p className="mt-1 text-xs text-neutral-500">
-                  Nhập tổng giờ cả tháng: giờ ngày thường + TC1 tăng ca + giờ
-                  ngày lễ TC2. TC2 sẽ nhân hệ số ngày lễ, mặc định x2.
-                </p>
-                <div className="mt-3 grid gap-3 md:grid-cols-3">
-                  {(
-                    [
-                      ["workingDays", "Công"],
-                      ["normalHours", "Giờ ngày thường"],
-                      ["overtimeHours", "Giờ tăng ca TC1"],
-                      ["overtimeRate", "Hệ số TC1"],
-                      ["holidayHours", "Giờ ngày lễ TC2"],
-                      ["holidayRate", "Hệ số TC2 (x2)"],
-                      ["overtime3Hours", "Giờ tăng ca TC3"],
-                      ["overtime4Hours", "Giờ tăng ca TC4"],
-                      ["hourlyRate", "Giá 1 giờ"],
-                      ["paidLeaveDays", "Ngày nghỉ có lương"],
-                      ["paidLeaveHoursPerDay", "Giờ / ngày nghỉ"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key}>
-                      <span className="text-sm font-medium text-neutral-700">
-                        {label}
-                      </span>
-                      <input
-                        value={String((editLine as any)[key] || 0)}
-                        onChange={(e) =>
-                          setEditLine((s) =>
-                            s ? { ...s, [key]: e.target.value } : s,
-                          )
-                        }
-                        className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm"
-                      />
-                    </label>
-                  ))}
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <ConfigValue
+                    label="Lương cơ bản"
+                    value={`${salaryTypeLabel((editConfig as any)?.salaryType || editLine.salaryType)} · ${money((editConfig as any)?.baseSalary ?? editLine.baseSalary)}`}
+                    detail={`Công chuẩn ${num((editConfig as any)?.standardWorkingDays ?? editLine.standardDays)} · Lương ngày/ca ${money((editConfig as any)?.dailyRate ?? editLine.dailyRate)}`}
+                  />
+                  <ConfigValue
+                    label="Lương theo giờ"
+                    value={editHourlyEnabled ? `Đang bật · ${money((editConfig as any)?.hourlyRate ?? editLine.hourlyRate)}/giờ` : "Đang tắt"}
+                    detail={`Giờ chuẩn/ngày ${num((editConfig as any)?.standardHoursPerDay ?? editLine.paidLeaveHoursPerDay)}`}
+                  />
+                  <ConfigValue
+                    label="Lương SP gắn tên"
+                    value={(editConfig as any)?.taggedProductEnabled === false ? "Đang tắt" : `${money((editConfig as any)?.taggedProductRate ?? editLine.taggedProductRate)}/SP`}
+                    detail="Chỉ nhập số lượng thực tế tháng này"
+                  />
+                  <ConfigValue
+                    label="Nghỉ có lương"
+                    value={(editConfig as any)?.paidLeaveEnabled ? "Đang bật" : "Đang tắt"}
+                    detail={`${num((editConfig as any)?.paidLeaveHoursPerDay ?? editLine.paidLeaveHoursPerDay)} giờ/ngày nghỉ`}
+                  />
+                  <ConfigValue
+                    label="Ăn trưa / Bảo hiểm"
+                    value={`${(editConfig as any)?.mealAllowanceEnabled ? `${money((editConfig as any)?.mealAmountPerUnit)}/${num((editConfig as any)?.mealHoursPerUnit)} giờ` : "Không ăn trưa"}`}
+                    detail={`Bảo hiểm trừ ${money((editConfig as any)?.insuranceDeductionAmount ?? editLine.insuranceDeduction)}`}
+                  />
+                  <ConfigValue
+                    label="COD GHN"
+                    value={(editConfig as any)?.ghnCodBonusEnabled ? `${money((editConfig as any)?.ghnCodBonusPerOrder ?? editLine.ghnCodBonusPerOrder)}/đơn` : "Đang tắt"}
+                    detail={`${num(editLine.ghnCodOrderCount)} đơn tự nhận từ hệ thống`}
+                  />
+                  <ConfigValue
+                    label="Hoa hồng"
+                    value={configCommissionText(editConfig)}
+                    detail={attributionModeLabel((editConfig as any)?.orderAttributionMode || editLine.orderAttributionMode)}
+                  />
+                  <ConfigValue
+                    label="Phụ cấp mặc định"
+                    value={money((editConfig as any)?.allowanceDefault ?? editLine.allowance)}
+                    detail="Các khoản phát sinh thêm nhập bằng Điều chỉnh"
+                  />
+                  <ConfigValue
+                    label="Kênh đơn áp dụng"
+                    value={configChannelText(editConfig)}
+                    detail="Đơn và sản phẩm được hệ thống tự tổng hợp"
+                  />
                 </div>
               </div>
 
-              <div className="mt-4 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
-                <div className="font-semibold text-neutral-950">
-                  Lương sản phẩm thưởng / phụ cấp / khấu trừ
-                </div>
+              <div className="mt-4 rounded-3xl border border-neutral-200 bg-white p-4">
+                <div className="font-semibold text-neutral-950">Dữ liệu thực tế trong tháng</div>
                 <p className="mt-1 text-xs text-neutral-500">
-                  Tách riêng số SP và giá 1 SP. Ví dụ Quốc Oai 74 SP x 5.000đ,
-                  Thái Hà có thể đặt giá khác theo cấu hình từng nhân viên.
+                  Chỉ điền số công, số giờ và số SP thực tế. Tiền sẽ tự tính theo cấu hình phía trên.
                 </p>
-                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
                   {(
                     [
-                      ["taggedProductQty", "Số SP thưởng"],
-                      ["taggedProductRate", "Giá 1 SP thưởng"],
-                      ["ghnCodOrderCount", "Đơn COD GHN"],
-                      ["ghnCodBonusPerOrder", "Thưởng / đơn GHN"],
-                      ["mealAllowanceAmount", "Ăn trưa"],
-                      ["insuranceDeduction", "Bảo hiểm trừ"],
-                      ["bonus", "Thưởng"],
-                      ["allowance", "Phụ cấp"],
-                      ["advance", "Tạm ứng"],
-                      ["deduction", "Phạt / khấu trừ"],
+                      ["workingDays", "Số công thực tế"],
+                      ["normalHours", "Giờ ngày thường"],
+                      ["paidLeaveDays", "Ngày nghỉ có lương"],
                     ] as const
                   ).map(([key, label]) => (
                     <label key={key}>
-                      <span className="text-sm font-medium text-neutral-700">
-                        {label}
-                      </span>
+                      <span className="text-sm font-medium text-neutral-700">{label}</span>
                       <input
-                        value={String((editLine as any)[key] || 0)}
-                        onChange={(e) =>
-                          setEditLine((s) =>
-                            s ? { ...s, [key]: e.target.value } : s,
-                          )
-                        }
-                        className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm"
+                        inputMode="decimal"
+                        value={String((editLine as any)[key] ?? 0)}
+                        onChange={(e) => setEditLine((s) => s ? { ...s, [key]: e.target.value } : s)}
+                        className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-900"
                       />
                     </label>
                   ))}
                 </div>
+
+                <div className="mt-5">
+                  <div className="text-sm font-semibold text-neutral-900">Các loại tăng ca</div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {editOvertimeRows.map((row, index) => (
+                      <div key={row.key} className={`rounded-2xl border p-4 ${row.enabled ? "border-neutral-200 bg-neutral-50" : "border-neutral-200 bg-neutral-100 opacity-65"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-neutral-950">TC{index + 1} · {row.label}</div>
+                            <div className="mt-1 text-xs text-neutral-500">
+                              {money(row.baseHourlyRate)}/giờ × hệ số {num(row.multiplier)}
+                            </div>
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${row.enabled ? "bg-emerald-100 text-emerald-700" : "bg-neutral-200 text-neutral-600"}`}>
+                            {row.enabled ? "Đang bật" : "Đã tắt"}
+                          </span>
+                        </div>
+                        <label className="mt-3 block">
+                          <span className="text-xs font-medium text-neutral-600">Số giờ tháng này</span>
+                          <input
+                            disabled={!row.enabled}
+                            inputMode="decimal"
+                            value={String((editLine as any)[row.inputKey] ?? 0)}
+                            onChange={(e) => setEditLine((s) => s ? { ...s, [row.inputKey]: e.target.value } : s)}
+                            className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 disabled:cursor-not-allowed"
+                          />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-3">
+                  <label>
+                    <span className="text-sm font-medium text-neutral-700">Số SP gắn tên thực tế</span>
+                    <input
+                      inputMode="numeric"
+                      value={String(editLine.taggedProductQty ?? 0)}
+                      onChange={(e) => setEditLine((s) => s ? { ...s, taggedProductQty: e.target.value as any } : s)}
+                      className="mt-2 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-900"
+                    />
+                  </label>
+                  <ConfigValue label="Đơn thành công" value={`${num(editLine.successOrderCount)} đơn`} detail="Tự tổng hợp, không nhập tay" />
+                  <ConfigValue label="SP bán thành công" value={`${num(editLine.successItemQty)} SP`} detail="Tự tổng hợp, không nhập tay" />
+                </div>
+
                 <label className="mt-4 block">
-                  <span className="text-sm font-medium text-neutral-700">
-                    Ghi chú thưởng / phụ cấp tháng này
-                  </span>
+                  <span className="text-sm font-medium text-neutral-700">Ghi chú dữ liệu tháng</span>
                   <textarea
                     value={editLine.note || ""}
-                    onChange={(e) =>
-                      setEditLine((s) => (s ? { ...s, note: e.target.value } : s))
-                    }
+                    onChange={(e) => setEditLine((s) => s ? { ...s, note: e.target.value } : s)}
                     rows={3}
-                    placeholder="VD: Thưởng đạt doanh số tháng 8, phụ cấp hỗ trợ cửa hàng khác..."
-                    className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm"
+                    placeholder="VD: Điều chỉnh công theo biên bản ngày 25..."
+                    className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-900"
                   />
+                  <span className="mt-1 block text-xs text-neutral-500">Thưởng, phụ cấp, tạm ứng và khấu trừ nhập bằng nút “Điều chỉnh” để có tên loại và lịch sử riêng.</span>
                 </label>
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-4">
-                <Metric
-                  label="Giờ quy đổi"
-                  value={num(
-                    n(editLine.normalHours) +
-                      n(editLine.overtimeHours) *
-                        n(editLine.overtimeRate || 1) +
-                      n(editLine.holidayHours) * n(editLine.holidayRate || 2),
-                  )}
-                />
-                <Metric
-                  label="Lương giờ dự tính"
-                  value={money(
-                    (n(editLine.normalHours) +
-                      n(editLine.overtimeHours) *
-                        n(editLine.overtimeRate || 1) +
-                      n(editLine.holidayHours) * n(editLine.holidayRate || 2)) *
-                      n(editLine.hourlyRate),
-                  )}
-                />
-                <Metric
-                  label="Lương SP dự tính"
-                  value={money(
-                    n(editLine.taggedProductQty) *
-                      n(editLine.taggedProductRate),
-                  )}
-                />
-                <Metric
-                  label="Ăn trưa / BH"
-                  value={`${money(editLine.mealAllowanceAmount)} / ${money(editLine.insuranceDeduction)}`}
-                />
+              <div className="mt-4 grid gap-3 md:grid-cols-5">
+                <Metric label="Lương cơ bản dự tính" value={money(editProratedSalary)} />
+                <Metric label="Giờ quy đổi dự tính" value={`${num(editConvertedHours)} giờ`} />
+                <Metric label="Lương giờ dự tính" value={money(editHourlyAmount)} />
+                <Metric label="Lương SP dự tính" value={money(editTaggedProductEnabled ? n(editLine.taggedProductQty) * editTaggedProductRate : 0)} />
+                <Metric label="Thưởng COD GHN" value={money(editLine.ghnCodBonusAmount)} />
               </div>
 
               <div className="mt-4 rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
@@ -1042,8 +1167,8 @@ export default function PayrollPeriodDetailPageClient({
                     <th className="px-3 py-2">Tên file</th>
                     <th className="px-3 py-2">Khớp NV hệ thống</th>
                     <th className="px-3 py-2 text-right">Tổng giờ</th>
-                    <th className="px-3 py-2 text-right">CT1</th>
-                    <th className="px-3 py-2 text-right">CT2 lễ</th>
+                    <th className="px-3 py-2 text-right">TC1</th>
+                    <th className="px-3 py-2 text-right">TC2 lễ</th>
                     <th className="px-3 py-2 text-right">Giờ QĐ dự kiến</th>
                     <th className="px-3 py-2 text-right">Muộn</th>
                     <th className="px-3 py-2 text-right">Sớm</th>
@@ -1270,6 +1395,24 @@ function Metric({
         {label}
       </div>
       <div className="mt-2 text-xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function ConfigValue({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+      <div className="text-xs font-medium text-neutral-500">{label}</div>
+      <div className="mt-1 font-semibold text-neutral-900">{value}</div>
+      {detail ? <div className="mt-1 text-xs leading-5 text-neutral-500">{detail}</div> : null}
     </div>
   );
 }
