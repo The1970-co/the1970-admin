@@ -315,7 +315,13 @@ function samplePriorityLane(row:any){
 }
 function samplePriorityRank(row:any){
   const n=Number(row?.priorityRank||0);
-  return [1,2,3].includes(n)?n:null;
+  return Number.isInteger(n) && n>0 ? n : null;
+}
+function sampleFabricBoardThumb(row:any){
+  return row?.fabricBoard?.coverImageUrl || row?.fabricColor?.imageUrl || "";
+}
+function sampleHasFabricBoard(row:any){
+  return Boolean(row?.fabricBoardId || row?.fabricBoard?.id || row?.fabricBoardCode || row?.fabricBoard?.boardCode);
 }
 function sampleVisualUrlsMobile(row:any){
   const urls=[
@@ -585,6 +591,7 @@ export default function Page(){
                   <Badge>{statusLabel(r.status)}</Badge>
                   {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                   {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
+                  {sampleHasFabricBoard(r)&&<Badge>Đã liên kết bảng vải</Badge>}
                   {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   {r.fabricColorName&&<Badge>{r.fabricColorName} {r.fabricColorCode||""}</Badge>}
                   {sampleTab==="IDEA"&&rowBoardNames(r).slice(0,2).map((name:string)=><Badge key={name}>{name}</Badge>)}
@@ -618,6 +625,7 @@ export default function Page(){
                     <Badge>{statusLabel(r.status)}</Badge>
                     {samplePriorityRank(r)&&<span className="inline-flex rounded-lg bg-black px-2 py-1 text-[10px] font-black text-white">#{samplePriorityRank(r)}</span>}
                     {sampleHasPattern(r)&&<Badge>Đã có rập</Badge>}
+                    {sampleHasFabricBoard(r)&&<Badge>Đã liên kết bảng vải</Badge>}
                     {visuals.length>1&&<Badge>{visuals.length} ảnh</Badge>}
                   </div>
                 </div>
@@ -1330,12 +1338,21 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
             {can("fabric_library.view")&&(
               (sample.fabricBoard?.boardCode||sample.fabricBoardCode)
                 ? <button type="button" onClick={()=>void openFabricQuickView()} className="rounded-2xl bg-neutral-50 p-3 text-left transition active:scale-[.99]">
-                    <div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Bảng vải</div>
-                    <div className="mt-1 flex items-center justify-between gap-2 text-sm font-black">
-                      <span>{sample.fabricBoard?.boardCode||sample.fabricBoardCode}</span>
-                      <ArrowUpRight className="h-4 w-4 text-neutral-400"/>
+                    <div className="flex gap-3">
+                      {sampleFabricBoardThumb(sample)
+                        ? <img src={asset(sampleFabricBoardThumb(sample))} className="h-16 w-14 shrink-0 rounded-xl object-cover" alt="Ảnh bảng vải"/>
+                        : <div className="grid h-16 w-14 shrink-0 place-items-center rounded-xl bg-neutral-100 text-[10px] font-black text-neutral-300">VẢI</div>}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-black uppercase tracking-wide text-neutral-400">Bảng vải</div>
+                        <div className="mt-1 flex items-center justify-between gap-2 text-sm font-black">
+                          <span className="truncate">{sample.fabricBoard?.boardCode||sample.fabricBoardCode}</span>
+                          <ArrowUpRight className="h-4 w-4 shrink-0 text-neutral-400"/>
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-[10px] font-semibold text-neutral-400">
+                          {sample.fabricBoard?.name||"Bấm để xem đầy đủ ảnh bảng vải"}
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt-1 text-[10px] font-semibold text-neutral-400">Bấm để xem nhanh ảnh bảng vải</div>
                   </button>
                 : <Info l="Bảng vải" v="—"/>
             )}
@@ -1501,11 +1518,43 @@ function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,
     technicalNote:sample?.technicalNote||"",
     coverImageUrl:sample?.coverImageUrl||(sample?.images||[]).find((x:any)=>!isPatternAsset(x))?.url||"",
   });
-  const [sampleImages,setSampleImages]=useState<Array<{type:string;url:string;caption?:string}>>(
+  type SampleImageDraft={
+    id:string;
+    type:string;
+    url:string;
+    previewUrl?:string;
+    caption?:string;
+    status:"ready"|"uploading"|"error";
+    error?:string;
+  };
+  const initialSampleImages:Array<SampleImageDraft>=(
     Array.isArray(sample?.images) && sample!.images!.some((x:any)=>!isPatternAsset(x))
-      ? sample!.images!.filter((x:any)=>!isPatternAsset(x)).map((x:any)=>({type:x.type||"SAMPLE",url:x.url,caption:x.caption||"Ảnh mẫu / ảnh tham khảo"}))
-      : (sample?.coverImageUrl ? [{type:"SAMPLE",url:sample.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}] : [])
+      ? sample!.images!.filter((x:any)=>!isPatternAsset(x)).map((x:any,i:number)=>({
+          id:String(x.id||`saved-${i}-${x.url}`),
+          type:x.type||"SAMPLE",
+          url:x.url,
+          caption:x.caption||"Ảnh mẫu / ảnh tham khảo",
+          status:"ready" as const,
+        }))
+      : (sample?.coverImageUrl ? [{
+          id:`saved-cover-${sample.coverImageUrl}`,
+          type:"SAMPLE",
+          url:sample.coverImageUrl,
+          caption:"Ảnh mẫu / ảnh tham khảo",
+          status:"ready" as const,
+        }] : [])
   );
+  const [sampleImages,setSampleImages]=useState<Array<SampleImageDraft>>(initialSampleImages);
+  const sampleImagesRef=useRef<Array<SampleImageDraft>>(initialSampleImages);
+  const imageUploadTasksRef=useRef<Map<string,Promise<void>>>(new Map());
+  const [uploadingImageCount,setUploadingImageCount]=useState(0);
+
+  function commitSampleImages(updater:(current:Array<SampleImageDraft>)=>Array<SampleImageDraft>){
+    const next=updater(sampleImagesRef.current);
+    sampleImagesRef.current=next;
+    setSampleImages(next);
+    return next;
+  }
   const [people,setPeople]=useState<SamplePerson[]>(meta.samplePeople||[]);
   const [creatingRole,setCreatingRole]=useState<"SAMPLE_MAKER"|"PATTERN_MAKER"|null>(null);
   const [newPersonName,setNewPersonName]=useState("");
@@ -1551,30 +1600,82 @@ function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,
     return()=>clearTimeout(t);
   },[form.code,sample?.id,sample?.code]);
 
-  async function changeImages(files?:FileList|File[]){
-    const list=Array.from(files||[]);
-    if(!list.length)return;
-    try{
-      const uploaded:Array<{type:string;url:string;caption:string}>=[];
-      for(const file of list){
-        const optimized=await sampleImageUnder10MB(file);
-        const r=await upload(optimized);
-        uploaded.push({type:"SAMPLE",url:r.url,caption:"Ảnh mẫu / ảnh tham khảo"});
-      }
-      setSampleImages(current=>{
-        const next=[...current,...uploaded];
-        setForm((prev:any)=>({
-          ...prev,
-          coverImageUrl:prev.coverImageUrl||next[0]?.url||"",
-        }));
-        return next;
-      });
-    }catch(e){setError(e instanceof Error?e.message:"Upload lỗi")}
+  function sampleImageKey(img:SampleImageDraft){
+    return img.url||`local:${img.id}`;
   }
 
-  function setCoverImage(url:string){
-    if(!url)return;
-    setForm((prev:any)=>({...prev,coverImageUrl:url}));
+  function sampleImageSrc(img:SampleImageDraft){
+    return img.previewUrl||img.url;
+  }
+
+  function startBackgroundImageUpload(id:string,file:File,localKey:string,previewUrl:string){
+    const task=(async()=>{
+      try{
+        const optimized=await sampleImageUnder10MB(file);
+        const r=await upload(optimized);
+        commitSampleImages(current=>current.map(img=>img.id===id?{
+          ...img,
+          url:r.url,
+          previewUrl:undefined,
+          status:"ready",
+          error:undefined,
+        }:img));
+        setForm((prev:any)=>({
+          ...prev,
+          coverImageUrl:prev.coverImageUrl===localKey?r.url:prev.coverImageUrl,
+        }));
+        URL.revokeObjectURL(previewUrl);
+      }catch(e){
+        const message=e instanceof Error?e.message:"Upload lỗi";
+        commitSampleImages(current=>current.map(img=>img.id===id?{
+          ...img,
+          status:"error",
+          error:message,
+        }:img));
+      }finally{
+        imageUploadTasksRef.current.delete(id);
+        setUploadingImageCount(imageUploadTasksRef.current.size);
+      }
+    })();
+    imageUploadTasksRef.current.set(id,task);
+    setUploadingImageCount(imageUploadTasksRef.current.size);
+  }
+
+  function changeImages(files?:FileList|File[]){
+    const list=Array.from(files||[]);
+    if(!list.length)return;
+    setError("");
+
+    const drafts=list.map((file,index)=>{
+      const id=`local-${Date.now()}-${index}-${Math.random().toString(36).slice(2,8)}`;
+      const previewUrl=URL.createObjectURL(file);
+      return {
+        id,
+        file,
+        previewUrl,
+        localKey:`local:${id}`,
+        draft:{
+          id,
+          type:"SAMPLE",
+          url:"",
+          previewUrl,
+          caption:"Ảnh mẫu / ảnh tham khảo",
+          status:"uploading" as const,
+        },
+      };
+    });
+
+    const next=commitSampleImages(current=>[...current,...drafts.map(x=>x.draft)]);
+    setForm((prev:any)=>({
+      ...prev,
+      coverImageUrl:prev.coverImageUrl||drafts[0]?.localKey||sampleImageKey(next[0]),
+    }));
+
+    drafts.forEach(x=>startBackgroundImageUpload(x.id,x.file,x.localKey,x.previewUrl));
+  }
+
+  function setCoverImage(img:SampleImageDraft){
+    setForm((prev:any)=>({...prev,coverImageUrl:sampleImageKey(img)}));
   }
 
   async function changePatternFiles(files?:FileList|File[]){
@@ -1620,10 +1721,21 @@ function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,
       const patternMaker=people.find(x=>x.id===form.patternMakerId);
       const board=meta.boards.find(x=>x.id===form.fabricBoardId);
 
-      const visualImages=sampleImages.filter(x=>!!x.url);
-      const validCover=visualImages.some(x=>x.url===form.coverImageUrl)
-        ? form.coverImageUrl
-        : (visualImages[0]?.url||form.coverImageUrl||null);
+      const pendingUploads=Array.from(imageUploadTasksRef.current.values());
+      if(pendingUploads.length)await Promise.allSettled(pendingUploads);
+
+      const latestImages=sampleImagesRef.current;
+      const failedImages=latestImages.filter(x=>x.status==="error");
+      if(failedImages.length)throw new Error(`${failedImages.length} ảnh tải lên bị lỗi. Xoá ảnh lỗi hoặc chọn lại rồi lưu.`);
+
+      const visualImages=latestImages.filter(x=>x.status==="ready"&&!!x.url);
+      const currentCover=form.coverImageUrl;
+      const coverFromLocal=currentCover?.startsWith?.("local:")
+        ? visualImages.find(x=>`local:${x.id}`===currentCover)?.url
+        : currentCover;
+      const validCover=visualImages.some(x=>x.url===coverFromLocal)
+        ? coverFromLocal
+        : (visualImages[0]?.url||null);
       if(validCover&&validCover!==form.coverImageUrl)setForm((prev:any)=>({...prev,coverImageUrl:validCover}));
 
       const saved=await api<any>(sample?`/sample-fabric/samples/${sample.id}`:"/sample-fabric/samples",{
@@ -1655,7 +1767,7 @@ function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,
           technicalNote:form.technicalNote||null,
           coverImageUrl:validCover,
           images:[
-            ...(sampleImages.length?sampleImages:(form.coverImageUrl?[{type:"SAMPLE",url:form.coverImageUrl,caption:"Ảnh mẫu / ảnh tham khảo"}]:[])),
+            ...(visualImages.length?visualImages.map(x=>({type:x.type,url:x.url,caption:x.caption})):(validCover?[{type:"SAMPLE",url:validCover,caption:"Ảnh mẫu / ảnh tham khảo"}]:[])),
             ...patternFiles.map(x=>({type:"OTHER",url:x.url,caption:x.caption})),
           ],
         })
@@ -1680,26 +1792,32 @@ function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,
 
       <Field l="Ảnh mẫu / ảnh tham khảo">
         <div className="rounded-3xl border border-dashed p-3">
-          {!!sampleImages.length&&<div className="mb-3 flex gap-3 overflow-x-auto pb-2">{sampleImages.map((img,i)=>{
-            const active=form.coverImageUrl===img.url;
-            return <div key={`${img.url}-${i}`} className="relative w-28 shrink-0">
-              <button type="button" onClick={()=>setCoverImage(img.url)} className={`relative block w-full overflow-hidden rounded-2xl border-2 ${active?"border-neutral-950":"border-neutral-200"}`}>
-                <img src={asset(img.url)} className="h-28 w-full object-cover" alt=""/>
-                {active&&<span className="absolute bottom-1 left-1 rounded-full bg-neutral-950 px-2 py-1 text-[9px] font-black text-white">ẢNH ĐẠI DIỆN</span>}
+          {!!sampleImages.length&&<div className="mb-3 flex gap-3 overflow-x-auto pb-2">{sampleImages.map((img)=>{
+            const key=sampleImageKey(img);
+            const active=form.coverImageUrl===key||form.coverImageUrl===img.url;
+            const src=sampleImageSrc(img);
+            return <div key={img.id} className="relative w-28 shrink-0">
+              <button type="button" onClick={()=>setCoverImage(img)} className={`relative block w-full overflow-hidden rounded-2xl border-2 ${active?"border-neutral-950":"border-neutral-200"}`}>
+                <img src={img.previewUrl?src:asset(src)} className="h-28 w-full object-cover" alt=""/>
+                {img.status==="uploading"&&<div className="absolute inset-0 grid place-items-center bg-black/35"><span className="rounded-full bg-black/70 px-2.5 py-1 text-[9px] font-black text-white">ĐANG TẢI…</span></div>}
+                {img.status==="error"&&<div className="absolute inset-x-0 bottom-0 bg-red-600/90 px-2 py-1.5 text-center text-[9px] font-black text-white">TẢI LỖI</div>}
+                {active&&img.status!=="uploading"&&<span className="absolute bottom-1 left-1 rounded-full bg-neutral-950 px-2 py-1 text-[9px] font-black text-white">ẢNH ĐẠI DIỆN</span>}
               </button>
-              {!active&&<button type="button" onClick={()=>setCoverImage(img.url)} className="mt-1.5 w-full rounded-xl border py-1.5 text-[10px] font-black">Đặt đại diện</button>}
-              {active&&<div className="mt-1.5 py-1.5 text-center text-[10px] font-black text-emerald-700">Đang đại diện</div>}
+              {!active&&<button type="button" onClick={()=>setCoverImage(img)} className="mt-1.5 w-full rounded-xl border py-1.5 text-[10px] font-black">Đặt đại diện</button>}
+              {active&&<div className={`mt-1.5 py-1.5 text-center text-[10px] font-black ${img.status==="uploading"?"text-blue-600":img.status==="error"?"text-red-600":"text-emerald-700"}`}>{img.status==="uploading"?"Đang tải nền":img.status==="error"?"Tải lỗi":"Đang đại diện"}</div>}
               {canUpload&&<button type="button" onClick={()=>{
-                const next=sampleImages.filter((_,j)=>j!==i);
-                setSampleImages(next);
-                if(form.coverImageUrl===img.url)setForm((prev:any)=>({...prev,coverImageUrl:next[0]?.url||""}));
+                imageUploadTasksRef.current.delete(img.id);
+                setUploadingImageCount(imageUploadTasksRef.current.size);
+                if(img.previewUrl)URL.revokeObjectURL(img.previewUrl);
+                const next=commitSampleImages(current=>current.filter(x=>x.id!==img.id));
+                if(active)setForm((prev:any)=>({...prev,coverImageUrl:next[0]?sampleImageKey(next[0]):""}));
               }} className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-white shadow">×</button>}
             </div>
           })}</div>}
-          <div className="mb-2 text-[11px] text-neutral-400">Upload nhiều ảnh: ảnh trên 10MB sẽ tự giảm kích thước/dung lượng trước khi tải. Ảnh đầu tiên tự làm đại diện.</div>
+          <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-neutral-400"><span>Chọn ảnh là hiện ngay. Upload chạy nền; ảnh trên 10MB sẽ tự tối ưu trước khi tải.</span>{uploadingImageCount>0&&<span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 font-black text-blue-600">{uploadingImageCount} đang tải</span>}</div>
           {canUpload&&<div className="grid grid-cols-2 gap-2">
-            <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
-            <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>void changeImages(e.target.files||undefined)}/></label>
+            <label className="cursor-pointer rounded-2xl bg-neutral-950 py-3 text-center text-xs font-black text-white"><Camera className="mr-1 inline h-4 w-4"/>Chụp<input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{changeImages(e.target.files||undefined);e.currentTarget.value=""}}/></label>
+            <label className="cursor-pointer rounded-2xl border py-3 text-center text-xs font-black"><ImagePlus className="mr-1 inline h-4 w-4"/>Tải nhiều ảnh<input type="file" accept="image/*" multiple className="hidden" onChange={e=>{changeImages(e.target.files||undefined);e.currentTarget.value=""}}/></label>
           </div>}
         </div>
       </Field>
@@ -1809,7 +1927,7 @@ function SampleForm({sample,meta,ideaBoards,canViewFabricLink,canUpload,onClose,
 
       <div className="grid grid-cols-2 gap-2 border-t pt-4">
         <button onClick={()=>closeWithZoomReset(onClose)} className="rounded-2xl border py-3 font-black">Đóng</button>
-        <button disabled={saving||!form.name.trim()} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40">{saving?"Đang lưu...":"Lưu mẫu"}</button>
+        <button disabled={saving||!form.name.trim()} onClick={()=>void save()} className="rounded-2xl bg-neutral-950 py-3 font-black text-white disabled:opacity-40">{saving?(uploadingImageCount>0?"Đang chờ ảnh & lưu...":"Đang lưu..."):"Lưu mẫu"}</button>
       </div>
     </div>
     {measurementOpen&&measurement&&<SampleMeasurementEditor value={measurement} onChange={setMeasurement} onClose={()=>setMeasurementOpen(false)} onSaveTemplate={tpl=>{const rows=[tpl,...loadMeasurementTemplates().filter(x=>x.id!==tpl.id)];localStorage.setItem(MEASUREMENT_TEMPLATE_KEY,JSON.stringify(rows));setMeasurementTemplates(rows)}}/>}
