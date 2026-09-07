@@ -710,7 +710,7 @@ export default function Page(){
             <input className={`${input} h-11 rounded-full py-2.5 pl-4 pr-3 text-[16px]`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Tìm mẫu..." onBlur={resetIosZoom}/>
           </div>
 
-          <button type="button" onClick={()=>setFiltersOpen(x=>!x)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border ${filtersOpen||parentFilter||subFilter||sortMode!=="NEWEST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`} aria-label="Bộ lọc">
+          <button type="button" onClick={()=>setFiltersOpen(true)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border ${yearFilter||parentFilter||subFilter||sortMode!=="NEWEST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`} aria-label="Bộ lọc">
             <span className="text-[11px] font-black">Lọc</span>
           </button>
 
@@ -722,14 +722,6 @@ export default function Page(){
           </button>
         </div>
 
-        {filtersOpen&&<div className="mt-2 grid gap-2 rounded-2xl bg-neutral-50/95 p-2 backdrop-blur">
-          <select className={input} value={yearFilter} onChange={e=>setYearFilter(e.target.value)} onBlur={resetIosZoom}><option value="">Tất cả năm</option>{yearOptions.map(y=><option key={y} value={String(y)}>{y}</option>)}</select>
-          <select className={input} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}} onBlur={resetIosZoom}><option value="">Tất cả danh mục</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
-          <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
-          {viewMode==="SECTIONS"&&<select className={input} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)} onBlur={resetIosZoom}><option value="MATERIAL">Theo chất liệu</option><option value="CATEGORY">Theo loại sản phẩm</option><option value="FABRIC">Theo bảng vải</option></select>}
-          {viewMode==="SECTIONS"&&sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialBoardForm({name:"",description:"",sortOrder:materialBoards.length?Math.max(...materialBoards.map(x=>Number(x.sortOrder||0)))+10:10})} className="rounded-2xl bg-amber-300 px-4 py-3 text-xs font-black">+ Bảng chất liệu</button>}
-          <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
-        </div>}
       </header>
 
       <div className="space-y-3 px-2 pb-4 pt-2">
@@ -820,8 +812,8 @@ export default function Page(){
               <div className="space-y-2 p-2">
                 {group.items.map(({row,priorityRank}:any)=>{
                   const visuals=sampleVisualUrlsMobile(row);const image=visuals[0]?asset(visuals[0]):"";
-                  return <div key={row.id} className="rounded-2xl border bg-white p-2">
-                    <button type="button" onClick={()=>sectionMode==="MATERIAL"&&can("design_sample.edit")?setMaterialManage({row,priorityRank}):setDetail(row)} className="flex w-full gap-2 text-left">
+                  return <div key={row.id} className="relative rounded-2xl border bg-white p-2">
+                    <button type="button" onClick={()=>setDetail(row)} className="flex w-full gap-2 pr-8 text-left">
                       <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
                         {image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
                         {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded bg-black px-1.5 py-0.5 text-[8px] font-black text-white">#{samplePriorityRank(row)}</span>}
@@ -831,9 +823,14 @@ export default function Page(){
                         <div className="truncate text-[9px] font-black text-neutral-400">{row.code} · {row.year}</div>
                         <div className="mt-1 line-clamp-2 text-xs font-black">{row.name}</div>
                         <div className="mt-1 text-[9px] text-neutral-400">{statusLabel(row.status)}</div>
-                        {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<div className="mt-1 text-[9px] font-black text-orange-700">Bấm để đổi bảng / STT</div>}
                       </div>
                     </button>
+                    {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button
+                      type="button"
+                      aria-label="Đổi bảng chất liệu và STT"
+                      onClick={()=>setMaterialManage({row,priorityRank})}
+                      className="absolute bottom-2 right-2 grid h-7 w-7 place-items-center rounded-full border bg-white text-[13px] font-black shadow-sm"
+                    >•••</button>}
                   </div>
                 })}
               </div>
@@ -844,6 +841,41 @@ export default function Page(){
         {!loading&&!filtered.length&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Chưa có mẫu phù hợp.</div>}
       </div>
     </div>
+
+    {filtersOpen&&<Modal title="Bộ lọc" onClose={()=>setFiltersOpen(false)}>
+      <div className="space-y-3 p-4">
+        <select className={input} value={yearFilter} onChange={e=>setYearFilter(e.target.value)} onBlur={resetIosZoom}>
+          <option value="">Tất cả năm</option>
+          {yearOptions.map(y=><option key={y} value={String(y)}>{y}</option>)}
+        </select>
+        <select className={input} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}} onBlur={resetIosZoom}>
+          <option value="">Tất cả danh mục</option>
+          {parentOptions.map(x=><option key={x} value={x}>{x}</option>)}
+        </select>
+        <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}>
+          <option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>
+          {subOptions.map(x=><option key={x} value={x}>{x}</option>)}
+        </select>
+        {viewMode==="SECTIONS"&&<select className={input} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)} onBlur={resetIosZoom}>
+          <option value="MATERIAL">Theo chất liệu</option>
+          <option value="CATEGORY">Theo loại sản phẩm</option>
+          <option value="FABRIC">Theo bảng vải</option>
+        </select>}
+        <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}>
+          <option value="NEWEST">Mới tạo trước</option>
+          <option value="AZ">Tên A → Z</option>
+        </select>
+        {viewMode==="SECTIONS"&&sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button
+          type="button"
+          onClick={()=>{setFiltersOpen(false);setMaterialBoardForm({name:"",description:"",sortOrder:materialBoards.length?Math.max(...materialBoards.map(x=>Number(x.sortOrder||0)))+10:10})}}
+          className="w-full rounded-2xl bg-amber-300 px-4 py-3 text-xs font-black"
+        >+ Bảng chất liệu</button>}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <button type="button" onClick={()=>{setYearFilter("");setParentFilter("");setSubFilter("");setSortMode("NEWEST")}} className="rounded-2xl border py-3 text-sm font-black">Xoá lọc</button>
+          <button type="button" onClick={()=>setFiltersOpen(false)} className="rounded-2xl bg-neutral-950 py-3 text-sm font-black text-white">Xong</button>
+        </div>
+      </div>
+    </Modal>}
 
     {detail&&<DetailModal
       sample={detail}
