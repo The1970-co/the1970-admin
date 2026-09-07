@@ -19,6 +19,7 @@ import {
   updatePayrollLine,
   listStaffOptions,
   listPayrollConfigs,
+  listPayrollBranchTemplates,
   updatePayrollConfig,
 } from "@/lib/payroll-api";
 import type {
@@ -28,6 +29,7 @@ import type {
   PayrollPeriod,
   StaffOption,
   PayrollConfig,
+  PayrollBranchConfigTemplate,
 } from "@/types/payroll";
 
 function n(value: unknown) {
@@ -75,32 +77,67 @@ function adjustmentName(type?: string) {
   return value || "Điều chỉnh";
 }
 
-function bonusAllowanceNote(line: PayrollLine) {
-  const adjustmentReasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
-    .filter((item: any) => {
-      const type = String(item.type || "").toUpperCase();
-      return ["BONUS", "ALLOWANCE"].includes(type) || type.startsWith("CUSTOM_ADD:");
-    })
-    .map((item: any) => {
-      const reason = String(item.reason || "").trim();
-      return reason ? `${adjustmentName(item.type)}: ${reason}` : "";
-    })
-    .filter(Boolean);
-  return Array.from(new Set([String(line.note || "").trim(), ...adjustmentReasons].filter(Boolean))).join(" · ");
+function adjustmentReason(item: any) {
+  const reason = String(item?.reason || "").trim();
+  if (!reason) return undefined;
+  return reason.localeCompare(adjustmentName(item?.type), "vi", { sensitivity: "accent" }) === 0
+    ? undefined
+    : reason;
 }
 
-function deductionNote(line: PayrollLine) {
-  const reasons = (Array.isArray(line.adjustments) ? line.adjustments : [])
-    .filter((item: any) => {
-      const type = String(item.type || "").toUpperCase();
-      return ["ADVANCE", "DEDUCTION"].includes(type) || type.startsWith("CUSTOM_DEDUCT:");
-    })
-    .map((item: any) => {
-      const reason = String(item.reason || "").trim();
-      return reason ? `${adjustmentName(item.type)}: ${reason}` : "";
-    })
-    .filter(Boolean);
-  return Array.from(new Set(reasons)).join(" · ");
+type PayrollAmountItem = { key: string; name: string; amount: number; reason?: string };
+
+function additionItems(line: PayrollLine): PayrollAmountItem[] {
+  const adjustments = Array.isArray(line.adjustments) ? line.adjustments as any[] : [];
+  const additions = adjustments.filter((item) => {
+    const type = String(item.type || "").toUpperCase();
+    return ["BONUS", "ALLOWANCE"].includes(type) || type.startsWith("CUSTOM_ADD:");
+  });
+  const linkedBonus = additions
+    .filter((item) => String(item.type || "").toUpperCase() !== "ALLOWANCE")
+    .reduce((sum, item) => sum + n(item.amount), 0);
+  const linkedAllowance = additions
+    .filter((item) => String(item.type || "").toUpperCase() === "ALLOWANCE")
+    .reduce((sum, item) => sum + n(item.amount), 0);
+  const rows: PayrollAmountItem[] = [];
+  const defaultAllowance = Math.max(0, n(line.allowance) - linkedAllowance);
+  const legacyBonus = Math.max(0, n(line.bonus) - linkedBonus);
+  if (defaultAllowance > 0) rows.push({ key: "default-allowance", name: "Phụ cấp mặc định", amount: defaultAllowance });
+  if (legacyBonus > 0) rows.push({ key: "legacy-bonus", name: "Thưởng nhập tay trước đây", amount: legacyBonus });
+  additions.forEach((item) => rows.push({
+    key: String(item.id),
+    name: adjustmentName(item.type),
+    amount: n(item.amount),
+    reason: adjustmentReason(item),
+  }));
+  return rows;
+}
+
+function subtractionItems(line: PayrollLine): PayrollAmountItem[] {
+  const adjustments = Array.isArray(line.adjustments) ? line.adjustments as any[] : [];
+  const subtractions = adjustments.filter((item) => {
+    const type = String(item.type || "").toUpperCase();
+    return ["ADVANCE", "DEDUCTION"].includes(type) || type.startsWith("CUSTOM_DEDUCT:");
+  });
+  const linkedAdvance = subtractions
+    .filter((item) => String(item.type || "").toUpperCase() === "ADVANCE")
+    .reduce((sum, item) => sum + n(item.amount), 0);
+  const linkedDeduction = subtractions
+    .filter((item) => String(item.type || "").toUpperCase() !== "ADVANCE")
+    .reduce((sum, item) => sum + n(item.amount), 0);
+  const rows: PayrollAmountItem[] = [];
+  if (n(line.insuranceDeduction) > 0) rows.push({ key: "insurance", name: "Bảo hiểm", amount: n(line.insuranceDeduction) });
+  const legacyAdvance = Math.max(0, n(line.advance) - linkedAdvance);
+  const legacyDeduction = Math.max(0, n(line.deduction) - linkedDeduction);
+  if (legacyAdvance > 0) rows.push({ key: "legacy-advance", name: "Tạm ứng trước đây", amount: legacyAdvance });
+  if (legacyDeduction > 0) rows.push({ key: "legacy-deduction", name: "Khấu trừ trước đây", amount: legacyDeduction });
+  subtractions.forEach((item) => rows.push({
+    key: String(item.id),
+    name: adjustmentName(item.type),
+    amount: n(item.amount),
+    reason: adjustmentReason(item),
+  }));
+  return rows;
 }
 
 const overtimeInputKeys = ["overtimeHours", "holidayHours", "overtime3Hours", "overtime4Hours"] as const;
@@ -270,6 +307,7 @@ export default function PayrollPeriodDetailPageClient({
   const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
   const [payrollConfigs, setPayrollConfigs] = useState<PayrollConfig[]>([]);
+  const [payrollTemplates, setPayrollTemplates] = useState<PayrollBranchConfigTemplate[]>([]);
   const [saveAttendanceMapping, setSaveAttendanceMapping] = useState(true);
   const [visibleColumns, setVisibleColumns] = useState<Record<PayrollColumnKey, boolean>>(
     defaultVisiblePayrollColumns,
@@ -279,16 +317,18 @@ export default function PayrollPeriodDetailPageClient({
     setLoading(true);
     setError(null);
     try {
-      const [detail, sources, staffRows, configRows] = await Promise.all([
+      const [detail, sources, staffRows, configRows, templateRows] = await Promise.all([
         getPayrollPeriod(periodId),
         listPaymentSources().catch(() => []),
         listStaffOptions().catch(() => []),
         listPayrollConfigs({ isActive: "true" }).catch(() => []),
+        listPayrollBranchTemplates({ isActive: "true" }).catch(() => []),
       ]);
       setPeriod(detail);
       setPaymentSources(Array.isArray(sources) ? sources : []);
       setStaffOptions(Array.isArray(staffRows) ? staffRows : []);
       setPayrollConfigs(Array.isArray(configRows) ? configRows : []);
+      setPayrollTemplates(Array.isArray(templateRows) ? templateRows : []);
     } catch (err) {
       setError(
         err instanceof Error
@@ -373,11 +413,21 @@ export default function PayrollPeriodDetailPageClient({
     const map = new Map<string, PayrollConfig>();
     payrollConfigs.forEach((config) => {
       const key = String(config.staffId || "");
-      if (!key || map.has(key)) return;
+      if (!key) return;
+      const current = map.get(key) as any;
+      const currentTime = new Date(current?.effectiveFrom || current?.updatedAt || 0).getTime();
+      const nextTime = new Date((config as any).effectiveFrom || (config as any).updatedAt || 0).getTime();
+      if (current && currentTime > nextTime) return;
       map.set(key, config);
     });
     return map;
   }, [payrollConfigs]);
+
+  const payrollTemplateById = useMemo(() => {
+    const map = new Map<string, PayrollBranchConfigTemplate>();
+    payrollTemplates.forEach((template) => map.set(String(template.id), template));
+    return map;
+  }, [payrollTemplates]);
 
   function commissionSetting(line: PayrollLine) {
     const config = payrollConfigByStaff.get(String(line.staffId || ""));
@@ -502,6 +552,7 @@ export default function PayrollPeriodDetailPageClient({
     if (!editLine) return;
     await run("edit-line", () =>
       updatePayrollLine(editLine.id, {
+        payrollConfigId: (editConfig as any)?.id || undefined,
         workingDays: n(editLine.workingDays),
         normalHours: n(editLine.normalHours),
         overtimeHours: n(editLine.overtimeHours),
@@ -548,9 +599,21 @@ export default function PayrollPeriodDetailPageClient({
     setPayDialog(null);
   }
 
-  const editConfig = editLine
-    ? ((editLine as any).calculationConfig || payrollConfigByStaff.get(String(editLine.staffId || "")) || null)
+  const currentEmployeeConfig = editLine
+    ? payrollConfigByStaff.get(String(editLine.staffId || "")) || null
     : null;
+  const currentTemplate = currentEmployeeConfig && (currentEmployeeConfig as any).sourceTemplateId
+    ? payrollTemplateById.get(String((currentEmployeeConfig as any).sourceTemplateId)) || null
+    : null;
+  const editConfig = currentTemplate && currentEmployeeConfig
+    ? {
+        ...currentEmployeeConfig,
+        ...currentTemplate,
+        id: currentEmployeeConfig.id,
+        staffId: currentEmployeeConfig.staffId,
+        sourceTemplateId: (currentEmployeeConfig as any).sourceTemplateId,
+      }
+    : currentEmployeeConfig || (editLine as any)?.calculationConfig || null;
   const editOvertimeRows = editLine ? monthlyOvertimeRows(editLine, editConfig) : [];
   const editHourlyEnabled = editConfig ? Boolean((editConfig as any).hourlyEnabled) : n(editLine?.hourlyAmount) > 0;
   const editConvertedHours = editLine
@@ -818,15 +881,33 @@ export default function PayrollPeriodDetailPageClient({
                   {visibleColumns.bonus ? (
                     <td className="max-w-[230px] whitespace-normal px-4 py-4 text-right">
                       <div className="font-semibold text-neutral-900">{money(n(line.bonus) + n(line.allowance))}</div>
-                      {bonusAllowanceNote(line) ? (
-                        <div className="mt-1 text-xs leading-5 text-neutral-500">{bonusAllowanceNote(line)}</div>
-                      ) : null}
+                      <div className="mt-2 space-y-1.5 text-left text-xs">
+                        {additionItems(line).map((item) => (
+                          <div key={item.key} className="rounded-lg bg-neutral-50 px-2 py-1.5">
+                            <div className="flex items-start justify-between gap-3 text-neutral-700">
+                              <span>{item.name}</span>
+                              <span className="whitespace-nowrap font-semibold text-neutral-900">{money(item.amount)}</span>
+                            </div>
+                            {item.reason ? <div className="mt-0.5 text-neutral-400">{item.reason}</div> : null}
+                          </div>
+                        ))}
+                      </div>
                     </td>
                   ) : null}
                   {visibleColumns.deduction ? (
                     <td className="max-w-[230px] whitespace-normal px-4 py-4 text-right">
                       <div>{money(n(line.advance) + n(line.deduction) + n(line.insuranceDeduction))}</div>
-                      {deductionNote(line) ? <div className="mt-1 text-xs leading-5 text-neutral-500">{deductionNote(line)}</div> : null}
+                      <div className="mt-2 space-y-1.5 text-left text-xs">
+                        {subtractionItems(line).map((item) => (
+                          <div key={item.key} className="rounded-lg bg-neutral-50 px-2 py-1.5">
+                            <div className="flex items-start justify-between gap-3 text-neutral-700">
+                              <span>{item.name}</span>
+                              <span className="whitespace-nowrap font-semibold text-neutral-900">{money(item.amount)}</span>
+                            </div>
+                            {item.reason ? <div className="mt-0.5 text-neutral-400">{item.reason}</div> : null}
+                          </div>
+                        ))}
+                      </div>
                     </td>
                   ) : null}
                   {visibleColumns.netPay ? <td className="px-4 py-4 text-right font-semibold text-neutral-950">{money(line.netPay)}</td> : null}
@@ -868,6 +949,10 @@ export default function PayrollPeriodDetailPageClient({
       <PayrollEmployeeDrawer
         line={selectedLine}
         onClose={() => setSelectedLine(null)}
+        onEditAdjustments={(line) => {
+          setSelectedLine(null);
+          setAdjustLine(line);
+        }}
       />
       <PayrollAdjustmentModal
         open={!!adjustLine}
@@ -904,11 +989,11 @@ export default function PayrollPeriodDetailPageClient({
                   <div>
                     <div className="font-semibold text-neutral-950">Cấu hình lương đang áp dụng</div>
                     <p className="mt-1 text-xs text-neutral-500">
-                      Các đơn giá, hệ số và mục bật/tắt được lấy từ cấu hình của kỳ lương, chỉ hiển thị để đối chiếu.
+                      Các đơn giá, hệ số và mục bật/tắt được lấy từ cấu hình hiện đang áp dụng cho nhân viên, chỉ hiển thị để đối chiếu.
                     </p>
                   </div>
                   <span className="w-fit rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600">
-                    {(editLine as any).sourceTemplateName || "Cấu hình riêng"}
+                    {(currentTemplate as any)?.name || (editLine as any).sourceTemplateName || "Cấu hình riêng"}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-3">

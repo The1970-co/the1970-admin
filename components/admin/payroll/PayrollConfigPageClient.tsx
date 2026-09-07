@@ -29,6 +29,16 @@ function money(value: unknown) {
   return new Intl.NumberFormat("vi-VN").format(n(value)) + "đ";
 }
 
+function overtimeSummary(source: any) {
+  const rows = Array.isArray(source?.overtimeConfigs) ? source.overtimeConfigs : [];
+  const enabled = rows
+    .map((row: any, index: number) => ({ ...row, index }))
+    .filter((row: any) => row.enabled !== false)
+    .map((row: any) => `TC${row.index + 1} ${n(row.multiplier || 1)}x`);
+  if (enabled.length) return enabled.join(" · ");
+  return `TC1 ${n(source?.overtimeRate || 1)}x · TC2 ${n(source?.holidayRate || 2)}x`;
+}
+
 function dateInput(value?: string | null) {
   if (!value) return "";
   return String(value).slice(0, 10);
@@ -410,9 +420,9 @@ export default function PayrollConfigPageClient() {
         branchName: branch?.name || undefined,
         ...baseToPayload(templateForm),
         isActive: templateForm.isActive !== false,
-        // Không tự đồng bộ ngược vào cấu hình nhân viên vì sẽ làm thay đổi
-        // lịch sử lương. Sửa mẫu xong, dùng khung "Áp dụng hàng loạt" để chọn ngày hiệu lực.
-        syncApplied: false,
+        // Nhân viên đã áp dụng mẫu phải nhận ngay đơn giá, hệ số và các mục
+        // bật/tắt mới (ví dụ TC3) để màn nhập dữ liệu tháng không dùng bản cũ.
+        syncApplied: true,
       };
       if (!payload.branchId)
         throw new Error("Chọn chi nhánh cho mẫu cấu hình.");
@@ -421,7 +431,7 @@ export default function PayrollConfigPageClient() {
       else await createPayrollBranchTemplate(payload);
       setNotice(
         templateForm.id
-          ? "Đã cập nhật mẫu. Chọn mẫu ở khung áp dụng hàng loạt để áp dụng với ngày hiệu lực mới."
+          ? "Đã cập nhật mẫu và đồng bộ tới các nhân viên đang áp dụng mẫu này."
           : "Đã lưu mẫu lương chi nhánh.",
       );
       setTemplateForm(emptyTemplateForm);
@@ -943,10 +953,7 @@ export default function PayrollConfigPageClient() {
                                 : "Tắt"
                             }
                           />
-                          <MiniStat
-                            label="CT1 / CT2"
-                            value={`${template.overtimeRate || 1}x / ${template.holidayRate || 2}x`}
-                          />
+                          <MiniStat label="Tăng ca bật" value={overtimeSummary(template)} />
                           <MiniStat
                             label="Giá 1 SP"
                             value={
