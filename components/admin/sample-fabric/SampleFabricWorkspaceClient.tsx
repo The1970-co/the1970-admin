@@ -953,6 +953,7 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
   const [materialBoards,setMaterialBoards]=useState<MaterialBoard[]>([]);
   const [materialBoardForm,setMaterialBoardForm]=useState<{id?:string;name:string;description:string;sortOrder?:number}|null>(null);
   const [materialBusy,setMaterialBusy]=useState(false);
+  const [materialManageSample,setMaterialManageSample]=useState<Sample|null>(null);
   const [featuredId,setFeaturedId]=useState<string>("");
   const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
   const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
@@ -983,9 +984,31 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
     if(!file)return;
     try{
       setBackgroundBusy(true);
-      const uploaded=await uploadWorkspaceFile("/sample-fabric/samples/upload",file);
-      setPageBackgroundUrl(uploaded.url);
-      try{localStorage.setItem("the1970.design-samples.background",uploaded.url)}catch{}
+      const dataUrl=await new Promise<string>((resolve,reject)=>{
+        const img=new Image();
+        const objectUrl=URL.createObjectURL(file);
+        img.onload=()=>{
+          try{
+            const maxSide=2000;
+            const scale=Math.min(1,maxSide/Math.max(img.width,img.height));
+            const canvas=document.createElement("canvas");
+            canvas.width=Math.max(1,Math.round(img.width*scale));
+            canvas.height=Math.max(1,Math.round(img.height*scale));
+            const ctx=canvas.getContext("2d");
+            if(!ctx)throw new Error("Không xử lý được ảnh nền.");
+            ctx.drawImage(img,0,0,canvas.width,canvas.height);
+            const out=canvas.toDataURL("image/jpeg",0.82);
+            URL.revokeObjectURL(objectUrl);
+            resolve(out);
+          }catch(e){URL.revokeObjectURL(objectUrl);reject(e)}
+        };
+        img.onerror=()=>{URL.revokeObjectURL(objectUrl);reject(new Error("Không đọc được ảnh nền."))};
+        img.src=objectUrl;
+      });
+      setPageBackgroundUrl(dataUrl);
+      try{localStorage.setItem("the1970.design-samples.background",dataUrl)}catch{
+        throw new Error("Ảnh nền vẫn quá lớn để lưu trên trình duyệt. Hãy chọn ảnh nhỏ hơn.");
+      }
     }catch(e){window.alert(e instanceof Error?e.message:"Không tải được ảnh nền.")}
     finally{setBackgroundBusy(false)}
   }
@@ -1070,7 +1093,12 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
       });
       const unassigned=visible.filter(x=>!assigned.has(x.id));
       if(unassigned.length)groups.push({id:"__UNASSIGNED_MATERIAL__",name:"Chưa phân bảng chất liệu",description:"",sortOrder:999999,rows:unassigned,items:unassigned.map(row=>({row,priorityRank:null,sortOrder:0}))});
-      return groups;
+      return [...groups].sort((a,b)=>{
+        const ae=a.rows.length===0?1:0, be=b.rows.length===0?1:0;
+        if(ae!==be)return ae-be;
+        if(a.sortOrder!==b.sortOrder)return a.sortOrder-b.sortOrder;
+        return a.name.localeCompare(b.name,"vi",{numeric:true,sensitivity:"base"});
+      });
     }
     const map=new Map<string,Sample[]>();
     visible.forEach(row=>{
@@ -1411,30 +1439,20 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
             {group.items.map(({row,priorityRank}:any)=>{
               const cover=sampleVisuals(row)[0];
               const currentBoardId=row.materialBoardItem?.boardId||"";
-              return <div key={row.id} className="rounded-xl border bg-white p-2">
-                <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex w-full gap-2 text-left">
+              return <button type="button" key={row.id} onClick={()=>sectionMode==="MATERIAL"&&can("design_sample.edit")?setMaterialManageSample(row):setViewer({sample:row,index:0})} className="block w-full rounded-xl border bg-white p-2 text-left transition hover:border-neutral-400 hover:shadow-sm">
+                <div className="flex w-full gap-2">
                   <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
                     {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded-md bg-neutral-950 px-1.5 py-0.5 text-[8px] font-bold text-white">#{samplePriorityRank(row)}</span>}
+                    {priorityRank&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow-md">{priorityRank}</span>}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="truncate text-[10px] font-semibold text-neutral-400">{row.code} · {row.year}</div>
-                      {priorityRank&&<span className="shrink-0 rounded-lg bg-amber-300 px-2 py-1 text-[12px] font-black text-neutral-950 shadow-sm">SX #{priorityRank}</span>}
-                    </div>
+                    <div className="truncate text-[10px] font-semibold text-neutral-400">{row.code} · {row.year}</div>
                     <div className="mt-1 line-clamp-2 text-xs font-semibold">{row.name}</div>
                     <div className="mt-1 text-[9px] text-neutral-400">{statusLabel(row.status,SAMPLE_STATUSES)}</div>
+                    {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<div className="mt-1 text-[9px] font-semibold text-neutral-400">Bấm để đổi bảng / STT</div>}
                   </div>
-                </button>
-                {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<div className="mt-2 flex items-center gap-1 border-t pt-2">
-                  <button type="button" onClick={()=>void moveMaterialRelative(row,-1)} disabled={!materialBoards.length||materialBoards.findIndex(x=>x.id===currentBoardId)<=0} className="h-7 rounded-lg border px-2 text-[10px] font-black disabled:opacity-30">←</button>
-                  <select value={currentBoardId} onChange={e=>void moveToMaterialBoard(row,e.target.value)} className="h-7 min-w-0 flex-1 rounded-lg border bg-white px-1.5 text-[9px] font-semibold">
-                    <option value="">Chưa phân bảng</option>
-                    {materialBoards.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                  <button type="button" onClick={()=>void moveMaterialRelative(row,1)} disabled={!materialBoards.length||materialBoards.findIndex(x=>x.id===currentBoardId)>=materialBoards.length-1} className="h-7 rounded-lg border px-2 text-[10px] font-black disabled:opacity-30">→</button>
-                  {currentBoardId&&<button type="button" onClick={()=>void setMaterialPriority(row,currentBoardId,priorityRank)} className={`h-7 rounded-lg px-2 text-[9px] font-black ${priorityRank?"bg-amber-300 text-neutral-950":"border border-amber-300 bg-amber-50 text-amber-800"}`}>{priorityRank?`SX #${priorityRank}`:"STT SX"}</button>}
-                </div>}
-              </div>
+                </div>
+              </button>
             })}
           </div>
         </section>)}
@@ -1473,6 +1491,34 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
         <div className="flex items-center justify-between border-t pt-4"><button type="button" onClick={()=>{setAssignSample(null);setBoardForm({name:"",description:""})}} className="rounded-xl border px-3 py-2 text-sm font-semibold">+ Tạo bảng mới</button><div className="flex gap-2"><button type="button" onClick={()=>setAssignSample(null)} className="rounded-xl border px-4 py-2">Huỷ</button><button type="button" disabled={boardBusy} onClick={()=>void saveAssignment()} className="rounded-xl bg-neutral-950 px-4 py-2 font-semibold text-white disabled:opacity-40">Lưu</button></div></div>
       </div>
     </Modal>}
+
+    {materialManageSample&&(()=>{
+      const row=materialManageSample;
+      const boardId=row.materialBoardItem?.boardId||"";
+      const board=materialBoards.find(x=>x.id===boardId);
+      const item=board?.samples?.find(x=>x.designSampleId===row.id);
+      const rank=item?.priorityRank??row.materialBoardItem?.priorityRank??null;
+      const idx=materialBoards.findIndex(x=>x.id===boardId);
+      const cover=sampleVisuals(row)[0];
+      return <Modal title={`Sắp xếp chất liệu · ${row.code}`} onClose={()=>setMaterialManageSample(null)}>
+        <div className="space-y-4 p-5">
+          <div className="flex gap-3 rounded-2xl border bg-neutral-50 p-3">
+            <div className="relative h-24 w-20 shrink-0 overflow-hidden rounded-xl bg-white">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}{rank&&<span className="absolute right-1.5 top-1.5 grid h-8 w-8 place-items-center rounded-full bg-orange-600 text-sm font-black text-white shadow">{rank}</span>}</div>
+            <div className="min-w-0"><div className="text-xs font-semibold text-neutral-400">{row.code} · {row.year}</div><div className="mt-1 font-semibold">{row.name}</div><div className="mt-1 text-xs text-neutral-500">{board?.name||"Chưa phân bảng chất liệu"}</div></div>
+          </div>
+          <Field label="Bảng chất liệu"><select value={boardId} onChange={async e=>{await moveToMaterialBoard(row,e.target.value);setMaterialManageSample({...row,materialBoardItem:e.target.value?{...(row.materialBoardItem||{} as any),boardId:e.target.value,priorityRank:null,board:materialBoards.find(b=>b.id===e.target.value) as any}:null})}} className={inputClass}><option value="">Chưa phân bảng</option>{materialBoards.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" disabled={idx<=0} onClick={async()=>{await moveMaterialRelative(row,-1);setMaterialManageSample(null)}} className="rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-30">← Bảng trước</button>
+            <button type="button" disabled={idx<0||idx>=materialBoards.length-1} onClick={async()=>{await moveMaterialRelative(row,1);setMaterialManageSample(null)}} className="rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-30">Bảng sau →</button>
+          </div>
+          <div className="flex items-center justify-between rounded-2xl border p-3">
+            <div><div className="text-sm font-semibold">STT trong bảng chất liệu</div><div className="text-xs text-neutral-400">Hiển thị bằng vòng tròn vàng cam trên ảnh.</div></div>
+            {boardId?<button type="button" onClick={async()=>{await setMaterialPriority(row,boardId,rank);setMaterialManageSample(null)}} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-black text-white">{rank?`Số ${rank}`:"Chọn số"}</button>:<span className="text-xs text-neutral-400">Chưa có bảng</span>}
+          </div>
+          {cover&&<button type="button" onClick={()=>{setMaterialManageSample(null);setViewer({sample:row,index:0})}} className="w-full rounded-xl border px-4 py-2.5 text-sm font-semibold">Xem ảnh mẫu</button>}
+        </div>
+      </Modal>
+    })()}
 
     {materialBoardForm&&<Modal title={materialBoardForm.id?"Sửa bảng chất liệu":"Tạo bảng chất liệu"} onClose={()=>setMaterialBoardForm(null)}>
       <div className="space-y-4 p-5">
