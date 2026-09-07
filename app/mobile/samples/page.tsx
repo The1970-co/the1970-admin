@@ -307,6 +307,28 @@ function sampleCreatedLabelMobile(value:any){
   const d=new Date(value);if(Number.isNaN(d.getTime()))return "Chưa có ngày";
   return d.toLocaleDateString("vi-VN",{day:"2-digit",month:"2-digit",year:"numeric"});
 }
+function sampleMaterialGroupMobile(row:any){
+  const source=[
+    row?.name,row?.category,row?.fabricComposition,row?.fabricBoard?.name,row?.fabricBoard?.fabricCode,row?.fabricCode,
+  ].map(x=>String(x||"").toLocaleLowerCase("vi-VN")).join(" ");
+  if(/da\s*lộn|suede/.test(source))return "Da lộn";
+  if(/canvas|vải\s*bạt|cotton\s*duck|duck\s*canvas/.test(source))return "Canvas";
+  if(/denim|jean/.test(source))return "Denim";
+  if(/kaki|khaki|chino/.test(source))return "Kaki";
+  if(/corduroy|nhung\s*tăm|nhung/.test(source))return "Nhung";
+  if(/linen|lanh/.test(source))return "Linen";
+  if(/wool|len|dạ/.test(source))return "Len / Dạ";
+  if(/leather|da\s*bò|da\s*cừu|da\s*thật|da\s*pu/.test(source))return "Da";
+  if(/fleece|nỉ/.test(source))return "Nỉ";
+  if(/nylon|polyester|áo\s*gió|vải\s*gió/.test(source))return "Vải gió";
+  if(/cotton/.test(source))return "Cotton";
+  return "Chưa xác định chất liệu";
+}
+function sampleSectionGroupMobile(row:any,mode:"MATERIAL"|"CATEGORY"|"FABRIC"){
+  if(mode==="CATEGORY")return String(row?.category||"Chưa phân loại").trim()||"Chưa phân loại";
+  if(mode==="FABRIC")return String(row?.fabricBoard?.name||row?.fabricBoard?.boardCode||row?.fabricBoardCode||"Chưa liên kết bảng vải").trim();
+  return sampleMaterialGroupMobile(row);
+}
 function sampleHasPattern(row:any){
   return Array.isArray(row?.images) && row.images.some((x:any)=>isPatternAsset(x));
 }
@@ -348,7 +370,12 @@ export default function Page(){
   const [subFilter,setSubFilter]=useState("");
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
   const [filtersOpen,setFiltersOpen]=useState(false);
-  const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST">("LIST");
+  const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST"|"SECTIONS">("LIST");
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC">("MATERIAL");
+  const [yearFilter,setYearFilter]=useState("");
+  const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
+  const [backgroundBusy,setBackgroundBusy]=useState(false);
+  const backgroundInputRef=useRef<HTMLInputElement|null>(null);
   const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
   const [boardFilter,setBoardFilter]=useState("");
   const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
@@ -389,6 +416,7 @@ export default function Page(){
 
   useEffect(()=>{
     setUser(getCurrentUserFromStorage());
+    try{setPageBackgroundUrl(localStorage.getItem("the1970.design-samples.background")||"")}catch{}
     lockMobileViewport();
     void load();
 
@@ -448,6 +476,24 @@ export default function Page(){
   const parentOptions=useMemo(()=>Array.from(new Set(rows.map(r=>sampleParentCategoryMobile(r.category)))).sort((a,b)=>a.localeCompare(b,"vi")),[rows]);
   const subOptions=useMemo(()=>Array.from(new Set(rows.filter(r=>!parentFilter||sampleParentCategoryMobile(r.category)===parentFilter).map(r=>String(r.category||"Chưa phân loại").trim()||"Chưa phân loại"))).sort((a,b)=>a.localeCompare(b,"vi")),[rows,parentFilter]);
 
+  async function changePageBackground(file?:File){
+    if(!file)return;
+    try{
+      setBackgroundBusy(true);
+      const r=await upload(file);
+      setPageBackgroundUrl(r.url);
+      try{localStorage.setItem("the1970.design-samples.background",r.url)}catch{}
+    }catch(e){setError(e instanceof Error?e.message:"Không tải được ảnh nền.")}
+    finally{setBackgroundBusy(false)}
+  }
+
+  function clearPageBackground(){
+    setPageBackgroundUrl("");
+    try{localStorage.removeItem("the1970.design-samples.background")}catch{}
+  }
+
+  const yearOptions=useMemo(()=>Array.from(new Set(rows.map((x:any)=>Number(x.year)).filter((x:number)=>Number.isInteger(x)&&x>0))).sort((a,b)=>b-a),[rows]);
+
   const filtered=useMemo(()=>{
     const k=q.trim().toLowerCase();
     const list=rows.filter(r=>{
@@ -455,6 +501,7 @@ export default function Page(){
       if(!inTab)return false;
       if(sampleTab==="IDEA"&&boardFilter==="__UNASSIGNED__"&&rowBoardIds(r).length)return false;
       if(sampleTab==="IDEA"&&boardFilter&&boardFilter!=="__UNASSIGNED__"&&!rowBoardIds(r).includes(boardFilter))return false;
+      if(yearFilter&&String(r.year)!==yearFilter)return false;
       if(parentFilter&&sampleParentCategoryMobile(r.category)!==parentFilter)return false;
       if(subFilter&&String(r.category||"Chưa phân loại").trim()!==subFilter)return false;
       if(!k)return true;
@@ -469,7 +516,20 @@ export default function Page(){
       if(sortMode==="AZ")return String(a.name||a.code).localeCompare(String(b.name||b.code),"vi",{numeric:true,sensitivity:"base"});
       return (new Date(b.createdAt||b.updatedAt||`${b.year}-01-01`).getTime()||0)-(new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0);
     });
-  },[rows,q,sampleTab,parentFilter,subFilter,sortMode,boardFilter]);
+  },[rows,q,sampleTab,yearFilter,parentFilter,subFilter,sortMode,boardFilter]);
+
+  const sectionGroups=useMemo(()=>{
+    const map=new Map<string,Sample[]>();
+    filtered.forEach((row:any)=>{
+      const key=sampleSectionGroupMobile(row,sectionMode);
+      map.set(key,[...(map.get(key)||[]),row]);
+    });
+    return Array.from(map.entries()).sort(([a],[b])=>{
+      if(a.startsWith("Chưa "))return 1;
+      if(b.startsWith("Chưa "))return -1;
+      return a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"});
+    }).map(([name,items])=>({name,rows:items}));
+  },[filtered,sectionMode]);
 
   async function setSamplePriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
@@ -522,7 +582,16 @@ export default function Page(){
     }catch(e){setError(e instanceof Error?e.message:"Không xoá được mẫu.")}
   }
 
-  return <main className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950">
+  return <main
+    className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950"
+    style={pageBackgroundUrl?{
+      backgroundImage:`linear-gradient(rgba(245,245,245,.84),rgba(245,245,245,.84)), url("${asset(pageBackgroundUrl)}")`,
+      backgroundSize:"cover",
+      backgroundPosition:"center",
+      backgroundRepeat:"no-repeat",
+      backgroundAttachment:"fixed",
+    }:undefined}
+  >
     <div className="mx-auto max-w-md">
       <header className="relative z-10 border-b bg-white px-3 pb-2 pt-3">
         <div className="flex min-h-10 items-center justify-between gap-2">
@@ -562,9 +631,11 @@ export default function Page(){
           </button>
         </div>
 
-        {filtersOpen&&<div className="mt-2 grid gap-2 rounded-2xl bg-neutral-50 p-2">
+        {filtersOpen&&<div className="mt-2 grid gap-2 rounded-2xl bg-neutral-50/95 p-2 backdrop-blur">
+          <select className={input} value={yearFilter} onChange={e=>setYearFilter(e.target.value)} onBlur={resetIosZoom}><option value="">Tất cả năm</option>{yearOptions.map(y=><option key={y} value={String(y)}>{y}</option>)}</select>
           <select className={input} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}} onBlur={resetIosZoom}><option value="">Tất cả danh mục</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
           <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+          {viewMode==="SECTIONS"&&<select className={input} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)} onBlur={resetIosZoom}><option value="MATERIAL">Theo chất liệu</option><option value="CATEGORY">Theo loại sản phẩm</option><option value="FABRIC">Theo bảng vải</option></select>}
           <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
         </div>}
       </header>
@@ -642,6 +713,36 @@ export default function Page(){
             </div>
           })}
         </div>}
+        {!loading&&viewMode==="SECTIONS"&&<div className="-mx-2 overflow-x-auto px-2 pb-2">
+          <div className="flex min-w-max items-start gap-2.5">
+            {sectionGroups.map(group=><section key={group.name} className="w-[248px] shrink-0 overflow-hidden rounded-[24px] border border-neutral-200 bg-white/95 shadow-sm backdrop-blur">
+              <div className="flex items-center justify-between border-b px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black">{group.name}</div>
+                  <div className="mt-0.5 text-[10px] font-bold text-neutral-400">{group.rows.length} mẫu{yearFilter?` · ${yearFilter}`:""}</div>
+                </div>
+              </div>
+              <div className="space-y-2 p-2">
+                {group.rows.map((r:any)=>{
+                  const visuals=sampleVisualUrlsMobile(r);
+                  const image=visuals[0]?asset(visuals[0]):"";
+                  return <button key={r.id} type="button" onClick={()=>setDetail(r)} className="flex w-full gap-2 rounded-2xl border bg-white p-2 text-left active:scale-[.99]">
+                    <div className="h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[10px] font-black text-neutral-400">{r.code} · {r.year}</div>
+                      <div className="mt-1 line-clamp-2 text-xs font-black">{r.name}</div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {samplePriorityRank(r)&&<span className="rounded-md bg-black px-1.5 py-0.5 text-[9px] font-black text-white">#{samplePriorityRank(r)}</span>}
+                        <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-bold text-neutral-500">{statusLabel(r.status)}</span>
+                      </div>
+                    </div>
+                  </button>
+                })}
+              </div>
+            </section>)}
+          </div>
+        </div>}
+
         {!loading&&!filtered.length&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Chưa có mẫu phù hợp.</div>}
       </div>
     </div>
@@ -692,24 +793,28 @@ export default function Page(){
       <div className="space-y-5 p-4">
         <div>
           <div className="mb-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Kiểu hiển thị</div>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={()=>{setViewMode("PINTEREST");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${viewMode==="PINTEREST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
-              <div className="grid h-10 w-10 grid-cols-2 gap-1">
-                <span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/>
-                <span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded-md ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/>
-              </div>
-              <div className="mt-2 text-sm font-black">Pinterest</div>
-              <div className={`mt-0.5 text-[10px] ${viewMode==="PINTEREST"?"text-white/60":"text-neutral-400"}`}>Ảnh lớn, 2 cột</div>
+          <div className="grid grid-cols-3 gap-2">
+            <button type="button" onClick={()=>{setViewMode("PINTEREST");setBoardHubOpen(false)}} className={`rounded-2xl border p-2.5 text-left ${viewMode==="PINTEREST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="grid h-8 w-8 grid-cols-2 gap-1"><span className={`rounded ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/><span className={`rounded ${viewMode==="PINTEREST"?"bg-white":"bg-neutral-950"}`}/></div>
+              <div className="mt-2 text-xs font-black">Pinterest</div>
             </button>
-            <button type="button" onClick={()=>{setViewMode("LIST");setBoardHubOpen(false)}} className={`rounded-2xl border p-3 text-left ${viewMode==="LIST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
-              <div className="space-y-1.5 pt-1">
-                <span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/>
-                <span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/>
-                <span className={`block h-2.5 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/>
-              </div>
-              <div className="mt-3 text-sm font-black">Danh sách</div>
-              <div className={`mt-0.5 text-[10px] ${viewMode==="LIST"?"text-white/60":"text-neutral-400"}`}>Xem đủ thông tin</div>
+            <button type="button" onClick={()=>{setViewMode("LIST");setBoardHubOpen(false)}} className={`rounded-2xl border p-2.5 text-left ${viewMode==="LIST"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="space-y-1.5 pt-1"><span className={`block h-2 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/><span className={`block h-2 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/><span className={`block h-2 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/></div>
+              <div className="mt-2 text-xs font-black">Danh sách</div>
             </button>
+            <button type="button" onClick={()=>{setViewMode("SECTIONS");setFiltersOpen(true);setBoardHubOpen(false)}} className={`rounded-2xl border p-2.5 text-left ${viewMode==="SECTIONS"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+              <div className="flex h-8 gap-1 pt-1"><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/></div>
+              <div className="mt-2 text-xs font-black">Theo mục</div>
+            </button>
+          </div>
+          <div className="mt-3 rounded-2xl bg-neutral-50 p-3">
+            <div className="mb-2 text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">Hình nền trang</div>
+            <input ref={backgroundInputRef} type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)void changePageBackground(f);e.currentTarget.value=""}}/>
+            <div className="flex gap-2">
+              <button type="button" disabled={backgroundBusy} onClick={()=>backgroundInputRef.current?.click()} className="flex-1 rounded-xl border bg-white px-3 py-2.5 text-xs font-black">{backgroundBusy?"Đang tải...":pageBackgroundUrl?"Đổi hình nền":"Chọn hình nền"}</button>
+              {pageBackgroundUrl&&<button type="button" onClick={clearPageBackground} className="rounded-xl border border-red-200 bg-white px-3 py-2.5 text-xs font-black text-red-600">Bỏ nền</button>}
+            </div>
+            <div className="mt-2 text-[10px] leading-4 text-neutral-400">Ảnh lớn tự co, ảnh nhỏ tự phóng để phủ kín trang.</div>
           </div>
         </div>
 

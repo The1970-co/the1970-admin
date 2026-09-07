@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api-base";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
 import { hasPermission, type AppRole } from "@/lib/authz";
@@ -369,6 +369,28 @@ function sampleParentCategory(category?:string|null){
   if(/\b(mũ|nón|túi|thắt lưng|belt|phụ kiện|ví|giày|dép)\b/.test(x))return "Phụ kiện";
   return "Khác";
 }
+function sampleMaterialGroup(row:Sample){
+  const source=[
+    row.name,row.category,row.fabricComposition,row.fabricBoard?.name,row.fabricBoard?.fabricCode,row.fabricCode,
+  ].map(x=>String(x||"").toLocaleLowerCase("vi-VN")).join(" ");
+  if(/da\s*lộn|suede/.test(source))return "Da lộn";
+  if(/canvas|vải\s*bạt|cotton\s*duck|duck\s*canvas/.test(source))return "Canvas";
+  if(/denim|jean/.test(source))return "Denim";
+  if(/kaki|khaki|chino/.test(source))return "Kaki";
+  if(/corduroy|nhung\s*tăm|nhung/.test(source))return "Nhung";
+  if(/linen|lanh/.test(source))return "Linen";
+  if(/wool|len|dạ/.test(source))return "Len / Dạ";
+  if(/leather|da\s*bò|da\s*cừu|da\s*thật|da\s*pu/.test(source))return "Da";
+  if(/fleece|nỉ/.test(source))return "Nỉ";
+  if(/nylon|polyester|áo\s*gió|vải\s*gió/.test(source))return "Vải gió";
+  if(/cotton/.test(source))return "Cotton";
+  return "Chưa xác định chất liệu";
+}
+function sampleSectionGroup(row:Sample,mode:"MATERIAL"|"CATEGORY"|"FABRIC"){
+  if(mode==="CATEGORY")return String(row.category||"Chưa phân loại").trim()||"Chưa phân loại";
+  if(mode==="FABRIC")return String(row.fabricBoard?.name||row.fabricBoard?.boardCode||row.fabricBoardCode||"Chưa liên kết bảng vải").trim();
+  return sampleMaterialGroup(row);
+}
 function sampleHasPattern(row:Sample){
   return Array.isArray(row.images) && row.images.some((x:any)=>isPatternAsset(x));
 }
@@ -377,7 +399,7 @@ function samplePriorityLane(row:any){
 }
 function samplePriorityRank(row:Sample){
   const n=Number(row.priorityRank||0);
-  return [1,2,3].includes(n)?n:null;
+  return Number.isInteger(n)&&n>0?n:null;
 }
 function sampleVisuals(row:Sample){
   const urls=[
@@ -918,7 +940,12 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
   const [subFilter,setSubFilter]=useState("");
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
   const [groupByCategory,setGroupByCategory]=useState(true);
-  const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST">("CARDS");
+  const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST"|"SECTIONS">("CARDS");
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC">("MATERIAL");
+  const [yearFilter,setYearFilter]=useState<string>("");
+  const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
+  const [backgroundBusy,setBackgroundBusy]=useState(false);
+  const backgroundInputRef=useRef<HTMLInputElement|null>(null);
   const [featuredId,setFeaturedId]=useState<string>("");
   const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
   const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
@@ -935,6 +962,22 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     catch(e){setBoardError(e instanceof Error?e.message:"Không tải được bảng ý tưởng.")}
   }
   useEffect(()=>{void loadIdeaBoards()},[]);
+  useEffect(()=>{try{setPageBackgroundUrl(localStorage.getItem("the1970.design-samples.background")||"")}catch{}},[]);
+
+  async function changePageBackground(file?:File){
+    if(!file)return;
+    try{
+      setBackgroundBusy(true);
+      const uploaded=await uploadWorkspaceFile("/sample-fabric/samples/upload",file);
+      setPageBackgroundUrl(uploaded.url);
+      try{localStorage.setItem("the1970.design-samples.background",uploaded.url)}catch{}
+    }catch(e){window.alert(e instanceof Error?e.message:"Không tải được ảnh nền.")}
+    finally{setBackgroundBusy(false)}
+  }
+  function clearPageBackground(){
+    setPageBackgroundUrl("");
+    try{localStorage.removeItem("the1970.design-samples.background")}catch{}
+  }
 
   const stats = useMemo(()=>({
     total: rows.length,
@@ -943,6 +986,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     approved: rows.filter(x=>["APPROVED_FOR_PRODUCTION","IN_PRODUCTION","COMPLETED"].includes(x.status)).length,
   }),[rows]);
 
+  const yearOptions=useMemo(()=>Array.from(new Set(rows.map(x=>Number(x.year)).filter(x=>Number.isInteger(x)&&x>0))).sort((a,b)=>b-a),[rows]);
   const parentOptions=useMemo(()=>Array.from(new Set(rows.map(x=>sampleParentCategory(x.category)))).sort((a,b)=>a.localeCompare(b,"vi")),[rows]);
   const subOptions=useMemo(()=>Array.from(new Set(rows.filter(x=>!parentFilter||sampleParentCategory(x.category)===parentFilter).map(x=>String(x.category||"Chưa phân loại").trim()||"Chưa phân loại"))).sort((a,b)=>a.localeCompare(b,"vi")),[rows,parentFilter]);
 
@@ -956,6 +1000,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       if(!inTab)return false;
       if(tab==="IDEA"&&boardFilter==="__UNASSIGNED__"&&rowBoardIds(row).length)return false;
       if(tab==="IDEA"&&boardFilter&&boardFilter!=="__UNASSIGNED__"&&!rowBoardIds(row).includes(boardFilter))return false;
+      if(yearFilter&&String(row.year)!==yearFilter)return false;
       if(parentFilter&&sampleParentCategory(row.category)!==parentFilter)return false;
       if(subFilter&&String(row.category||"Chưa phân loại").trim()!==subFilter)return false;
       return true;
@@ -969,7 +1014,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       const at=new Date(a.createdAt||a.updatedAt||`${a.year}-01-01`).getTime()||0;
       return bt-at;
     });
-  },[rows,tab,parentFilter,subFilter,sortMode,boardFilter]);
+  },[rows,tab,yearFilter,parentFilter,subFilter,sortMode,boardFilter]);
 
   const grouped=useMemo(()=>{
     if(!groupByCategory)return [{name:"Tất cả mẫu",rows:visible}];
@@ -980,6 +1025,19 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     });
     return Array.from(map.entries()).sort(([a],[b])=>a.localeCompare(b,"vi")).map(([name,items])=>({name,rows:items}));
   },[visible,groupByCategory]);
+
+  const sectionGroups=useMemo(()=>{
+    const map=new Map<string,Sample[]>();
+    visible.forEach(row=>{
+      const key=sampleSectionGroup(row,sectionMode);
+      map.set(key,[...(map.get(key)||[]),row]);
+    });
+    return Array.from(map.entries()).sort(([a],[b])=>{
+      if(a.startsWith("Chưa "))return 1;
+      if(b.startsWith("Chưa "))return -1;
+      return a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"});
+    }).map(([name,items])=>({name,rows:items}));
+  },[visible,sectionMode]);
 
   const featured=visible.find(x=>x.id===featuredId)||visible[0]||null;
   const featuredImages=featured?sampleVisuals(featured):[];
@@ -1121,7 +1179,9 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
     </Card>;
   }
 
-  return <>
+  return <div className="relative overflow-hidden rounded-[28px]">
+    {pageBackgroundUrl&&<div className="pointer-events-none absolute inset-0" style={{backgroundImage:`linear-gradient(rgba(255,255,255,.86),rgba(255,255,255,.86)), url("${assetUrl(pageBackgroundUrl)}")`,backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat"}}/>}
+    <div className="relative z-[1] space-y-3">
     <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{[["Tổng mẫu",stats.total],["Ý tưởng",stats.idea],["Đang triển khai",stats.deploy],["Đã duyệt SX",stats.approved]].map(([l,v])=><Card key={l} className="px-3 py-2.5"><div className="flex items-center justify-between gap-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">{l}</div><div className="text-lg font-semibold">{v}</div></div></Card>)}</div>
 
     <Card className="overflow-hidden">
@@ -1175,15 +1235,23 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       </div>}
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-        <select className={`${inputClass} !w-auto min-w-[170px] !rounded-xl !px-3 !py-2 text-xs`} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
-        <select className={`${inputClass} !w-auto min-w-[190px] !rounded-xl !px-3 !py-2 text-xs`} value={subFilter} onChange={e=>setSubFilter(e.target.value)}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
-        <label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border px-3 text-[11px] font-semibold"><input type="checkbox" checked={groupByCategory} onChange={e=>setGroupByCategory(e.target.checked)}/> Nhóm theo loại</label>
-        <select className={`${inputClass} !w-auto min-w-[150px] !rounded-xl !px-3 !py-2 text-xs`} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
-        <div className="ml-auto flex h-9 rounded-xl border p-1">
-          <button type="button" onClick={()=>setViewMode("CARDS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="CARDS"?"bg-neutral-950 text-white":""}`}>Danh sách</button>
-          <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
+        <select className={`${inputClass} !w-auto min-w-[112px] !rounded-xl !px-3 !py-2 text-xs`} value={yearFilter} onChange={e=>setYearFilter(e.target.value)}><option value="">Tất cả năm</option>{yearOptions.map(y=><option key={y} value={String(y)}>{y}</option>)}</select>
+        <select className={`${inputClass} !w-auto min-w-[160px] !rounded-xl !px-3 !py-2 text-xs`} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+        <select className={`${inputClass} !w-auto min-w-[180px] !rounded-xl !px-3 !py-2 text-xs`} value={subFilter} onChange={e=>setSubFilter(e.target.value)}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
+        {viewMode==="CARDS"&&<label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border bg-white/90 px-3 text-[11px] font-semibold"><input type="checkbox" checked={groupByCategory} onChange={e=>setGroupByCategory(e.target.checked)}/> Nhóm theo loại</label>}
+        {viewMode==="SECTIONS"&&<select className={`${inputClass} !w-auto min-w-[165px] !rounded-xl !px-3 !py-2 text-xs`} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)}><option value="MATERIAL">Cột theo chất liệu</option><option value="CATEGORY">Cột theo loại SP</option><option value="FABRIC">Cột theo bảng vải</option></select>}
+        <select className={`${inputClass} !w-auto min-w-[140px] !rounded-xl !px-3 !py-2 text-xs`} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
+        <div className="ml-auto flex items-center gap-2">
+          <input ref={backgroundInputRef} type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)void changePageBackground(f);e.currentTarget.value=""}}/>
+          <button type="button" disabled={backgroundBusy} onClick={()=>backgroundInputRef.current?.click()} className="h-9 rounded-xl border bg-white/90 px-3 text-[11px] font-semibold">{backgroundBusy?"Đang tải nền...":pageBackgroundUrl?"Đổi hình nền":"Hình nền"}</button>
+          {pageBackgroundUrl&&<button type="button" onClick={clearPageBackground} className="h-9 rounded-xl border border-red-200 bg-white/90 px-3 text-[11px] font-semibold text-red-600">Bỏ nền</button>}
+          <div className="flex h-9 rounded-xl border bg-white/90 p-1">
+            <button type="button" onClick={()=>setViewMode("CARDS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="CARDS"?"bg-neutral-950 text-white":""}`}>Danh sách</button>
+            <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
+            <button type="button" onClick={()=>setViewMode("SECTIONS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="SECTIONS"?"bg-neutral-950 text-white":""}`}>Theo mục</button>
+          </div>
         </div>
-        <div className="w-full border-t pt-2 text-[11px] text-neutral-500 sm:w-auto sm:border-0 sm:pt-0">Hiển thị <b>{visible.length}</b> mẫu{tab==="IDEA"&&boardFilter?` · ${boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(x=>x.id===boardFilter)?.name||"bảng đã chọn"}`:""}</div>
+        <div className="w-full border-t border-black/10 pt-2 text-[11px] text-neutral-500 sm:w-auto sm:border-0 sm:pt-0">Hiển thị <b>{visible.length}</b> mẫu{yearFilter?` · năm ${yearFilter}`:""}{tab==="IDEA"&&boardFilter?` · ${boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(x=>x.id===boardFilter)?.name||"bảng đã chọn"}`:""}</div>
       </div>
     </Card>
 
@@ -1192,7 +1260,7 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
         {groupByCategory&&<div className="mb-2 flex items-center gap-2"><h3 className="font-semibold">{group.name}</h3><span className="rounded-full bg-neutral-100 px-2 py-1 text-xs text-neutral-500">{group.rows.length} mẫu</span></div>}
         <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{group.rows.map(row=><SampleCard key={row.id} row={row}/>)}</div>
       </section>)}
-    </div>:<div className="grid gap-4 xl:grid-cols-[minmax(360px,.9fr)_1.6fr]">
+    </div>:viewMode==="PINTEREST"?<div className="grid gap-4 xl:grid-cols-[minmax(360px,.9fr)_1.6fr]">
       <Card className="h-fit overflow-hidden xl:sticky xl:top-4">
         {featured?<><SampleImageStack row={featured} large/><div className="p-4">
           <div className="text-xs font-semibold text-neutral-400">{featured.code} · Tạo {sampleCreatedLabel(featured.createdAt)}</div>
@@ -1216,6 +1284,17 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
         </button>
         <div className="flex gap-1 border-t p-2">{image&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold">Xem mẫu</button>}{can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(row)} className="rounded-lg border px-2 py-1.5 text-[11px] font-semibold">+ Bảng</button>}</div>
       </div>})}</div>
+    </div>:<div className="overflow-x-auto pb-3">
+      <div className="flex min-w-max items-start gap-3">
+        {sectionGroups.map(group=><section key={group.name} className="w-[270px] shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-white/92 shadow-sm backdrop-blur-sm">
+          <div className="flex items-center justify-between border-b bg-white/95 px-3 py-2.5 backdrop-blur"><div className="min-w-0"><h3 className="truncate text-sm font-semibold">{group.name}</h3><div className="mt-0.5 text-[10px] text-neutral-400">{group.rows.length} mẫu{yearFilter?` · ${yearFilter}`:""}</div></div></div>
+          <div className="space-y-2 p-2">{group.rows.map(row=>{const cover=sampleVisuals(row)[0];return <button key={row.id} type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex w-full gap-2 rounded-xl border bg-white p-2 text-left transition hover:border-neutral-400">
+            <div className="h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}</div>
+            <div className="min-w-0 flex-1"><div className="truncate text-[10px] font-semibold text-neutral-400">{row.code} · {row.year}</div><div className="mt-1 line-clamp-2 text-xs font-semibold">{row.name}</div><div className="mt-1 flex flex-wrap gap-1">{samplePriorityRank(row)&&<span className="rounded-full bg-neutral-950 px-1.5 py-0.5 text-[9px] font-bold text-white">#{samplePriorityRank(row)}</span>}<span className="rounded-full bg-neutral-100 px-1.5 py-0.5 text-[9px] text-neutral-500">{statusLabel(row.status,SAMPLE_STATUSES)}</span></div></div>
+          </button>})}</div>
+        </section>)}
+        {!sectionGroups.length&&<div className="rounded-2xl border bg-white/90 p-8 text-sm text-neutral-400">Không có mẫu phù hợp bộ lọc.</div>}
+      </div>
     </div>}
 
     {!visible.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu phù hợp với bộ lọc.</Card>}
@@ -1256,7 +1335,8 @@ function SamplesView({ rows, can, onEdit, onDispatch, onChanged }: { rows: Sampl
       <div className="flex min-h-0 flex-1 items-center justify-center p-4"><img src={assetUrl(current)} className="max-h-full max-w-full object-contain"/></div>
       {images.length>1&&<div className="flex justify-center gap-2 overflow-x-auto p-4">{images.map((url,i)=><button key={url} onClick={()=>setViewer({sample:viewer.sample,index:i})} className={`${i===viewer.index?"ring-2 ring-white":""} rounded-xl`}><img src={assetUrl(url)} className="h-16 w-16 rounded-xl object-cover"/></button>)}</div>}
     </div>})()}
-  </>;
+    </div>
+  </div>;
 }
 
 function receiptRollTotal(r:FabricReceipt,key:"supplierDeclaredM"|"supplierDeclaredKg"|"actualM"|"actualKg"){
