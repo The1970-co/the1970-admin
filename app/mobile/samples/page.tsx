@@ -51,6 +51,7 @@ type Meta = {
 };
 type Sample = any;
 type IdeaBoard={id:string;name:string;description?:string|null;createdByName?:string|null;updatedAt?:string|null;samples?:Array<{id:string;boardId:string;designSampleId:string;sortOrder?:number;designSample:any}>};
+type MaterialBoard={id:string;name:string;description?:string|null;sortOrder?:number;samples?:Array<{id:string;boardId:string;designSampleId:string;priorityRank?:number|null;sortOrder?:number;designSample:any}>};
 
 const SampleImageEditorKonva=dynamic(()=>import("@/components/mobile/SampleImageEditorKonva"),{ssr:false});
 
@@ -375,8 +376,12 @@ export default function Page(){
   const [yearFilter,setYearFilter]=useState("");
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
+  const [backgroundVisibility,setBackgroundVisibility]=useState(55);
   const backgroundInputRef=useRef<HTMLInputElement|null>(null);
   const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
+  const [materialBoards,setMaterialBoards]=useState<MaterialBoard[]>([]);
+  const [materialBoardForm,setMaterialBoardForm]=useState<{id?:string;name:string;description:string;sortOrder?:number}|null>(null);
+  const [materialBusy,setMaterialBusy]=useState(false);
   const [boardFilter,setBoardFilter]=useState("");
   const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
   const [assignSample,setAssignSample]=useState<Sample|null>(null);
@@ -391,13 +396,15 @@ export default function Page(){
   async function load(){
     try{
       setLoading(true);setError("");
-      const [samples,m,boards]=await Promise.all([
+      const [samples,m,boards,material]=await Promise.all([
         api<Sample[]>("/sample-fabric/samples"),
         api<Meta>("/sample-fabric/samples/meta"),
         api<IdeaBoard[]>("/sample-fabric/samples/idea-boards"),
+        api<MaterialBoard[]>("/sample-fabric/samples/material-boards"),
       ]);
       setRows(Array.isArray(samples)?samples:[]);
       setIdeaBoards(Array.isArray(boards)?boards:[]);
+      setMaterialBoards(Array.isArray(material)?material:[]);
       setMeta({
         staff:Array.isArray(m.staff)?m.staff:[],
         boards:Array.isArray(m.boards)?m.boards:[],
@@ -416,7 +423,11 @@ export default function Page(){
 
   useEffect(()=>{
     setUser(getCurrentUserFromStorage());
-    try{setPageBackgroundUrl(localStorage.getItem("the1970.design-samples.background")||"")}catch{}
+    try{
+      setPageBackgroundUrl(localStorage.getItem("the1970.design-samples.background")||"");
+      const stored=Number(localStorage.getItem("the1970.design-samples.backgroundVisibility")||55);
+      if(Number.isFinite(stored))setBackgroundVisibility(Math.max(10,Math.min(100,stored)));
+    }catch{}
     lockMobileViewport();
     void load();
 
@@ -491,6 +502,51 @@ export default function Page(){
     setPageBackgroundUrl("");
     try{localStorage.removeItem("the1970.design-samples.background")}catch{}
   }
+  function changeBackgroundVisibility(value:number){
+    const next=Math.max(10,Math.min(100,value));
+    setBackgroundVisibility(next);
+    try{localStorage.setItem("the1970.design-samples.backgroundVisibility",String(next))}catch{}
+  }
+
+  async function saveMaterialBoard(){
+    if(!materialBoardForm?.name.trim())return;
+    try{
+      setMaterialBusy(true);
+      await api(materialBoardForm.id?`/sample-fabric/samples/material-boards/${materialBoardForm.id}`:"/sample-fabric/samples/material-boards",{
+        method:materialBoardForm.id?"PATCH":"POST",
+        body:JSON.stringify({name:materialBoardForm.name.trim(),description:materialBoardForm.description.trim()||null,sortOrder:materialBoardForm.sortOrder}),
+      });
+      setMaterialBoardForm(null);await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được bảng chất liệu.")}
+    finally{setMaterialBusy(false)}
+  }
+  async function deleteMaterialBoard(board:MaterialBoard){
+    if(!window.confirm(`Xoá bảng chất liệu "${board.name}"? Mẫu bên trong sẽ về Chưa phân bảng.`))return;
+    try{setMaterialBusy(true);await api(`/sample-fabric/samples/material-boards/${board.id}`,{method:"DELETE"});await load()}
+    catch(e){setError(e instanceof Error?e.message:"Không xoá được bảng chất liệu.")}
+    finally{setMaterialBusy(false)}
+  }
+  async function moveToMaterialBoard(row:any,boardId:string){
+    try{await api(`/sample-fabric/samples/${row.id}/material-board`,{method:"PATCH",body:JSON.stringify({boardId:boardId||null})});await load()}
+    catch(e){setError(e instanceof Error?e.message:"Không chuyển được bảng chất liệu.")}
+  }
+  async function moveMaterialRelative(row:any,direction:-1|1){
+    const currentId=row?.materialBoardItem?.boardId||"";
+    const index=materialBoards.findIndex(x=>x.id===currentId);
+    const nextIndex=index<0?(direction>0?0:materialBoards.length-1):index+direction;
+    if(nextIndex<0||nextIndex>=materialBoards.length)return;
+    await moveToMaterialBoard(row,materialBoards[nextIndex].id);
+  }
+  async function setMaterialPriority(row:any,boardId:string,current?:number|null){
+    if(!boardId)return;
+    const inputValue=window.prompt("STT ưu tiên SX trong bảng chất liệu. Nhập 1, 2, 3...; để trống để bỏ.",current?String(current):"");
+    if(inputValue===null)return;
+    const value=inputValue.trim();
+    const rank=value===""?null:Number(value);
+    if(rank!==null&&(!Number.isInteger(rank)||rank<=0)){setError("STT phải là số nguyên từ 1 trở lên.");return}
+    try{await api(`/sample-fabric/samples/${row.id}/material-board`,{method:"PATCH",body:JSON.stringify({boardId,priorityRank:rank})});await load()}
+    catch(e){setError(e instanceof Error?e.message:"Không cập nhật được STT SX.")}
+  }
 
   const yearOptions=useMemo(()=>Array.from(new Set(rows.map((x:any)=>Number(x.year)).filter((x:number)=>Number.isInteger(x)&&x>0))).sort((a,b)=>b-a),[rows]);
 
@@ -519,17 +575,26 @@ export default function Page(){
   },[rows,q,sampleTab,yearFilter,parentFilter,subFilter,sortMode,boardFilter]);
 
   const sectionGroups=useMemo(()=>{
+    if(sectionMode==="MATERIAL"){
+      const visibleIds=new Set(filtered.map((x:any)=>x.id));
+      const assigned=new Set<string>();
+      const groups=materialBoards.map(board=>{
+        const items=(board.samples||[]).filter(x=>visibleIds.has(String(x.designSampleId))).map(x=>{
+          const row=filtered.find((v:any)=>v.id===x.designSampleId);
+          if(row)assigned.add(row.id);
+          return row?{row,priorityRank:x.priorityRank??null,sortOrder:x.sortOrder??0}:null;
+        }).filter(Boolean) as any[];
+        items.sort((a,b)=>(a.priorityRank??999999)-(b.priorityRank??999999)||a.sortOrder-b.sortOrder);
+        return {id:board.id,name:board.name,description:board.description||"",sortOrder:board.sortOrder||0,rows:items.map(x=>x.row),items};
+      });
+      const unassigned=filtered.filter((x:any)=>!assigned.has(x.id));
+      if(unassigned.length)groups.push({id:"__UNASSIGNED_MATERIAL__",name:"Chưa phân bảng chất liệu",description:"",sortOrder:999999,rows:unassigned,items:unassigned.map((row:any)=>({row,priorityRank:null,sortOrder:0}))});
+      return groups;
+    }
     const map=new Map<string,Sample[]>();
-    filtered.forEach((row:any)=>{
-      const key=sampleSectionGroupMobile(row,sectionMode);
-      map.set(key,[...(map.get(key)||[]),row]);
-    });
-    return Array.from(map.entries()).sort(([a],[b])=>{
-      if(a.startsWith("Chưa "))return 1;
-      if(b.startsWith("Chưa "))return -1;
-      return a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"});
-    }).map(([name,items])=>({name,rows:items}));
-  },[filtered,sectionMode]);
+    filtered.forEach((row:any)=>{const key=sampleSectionGroupMobile(row,sectionMode);map.set(key,[...(map.get(key)||[]),row])});
+    return Array.from(map.entries()).sort(([a],[b])=>a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"})).map(([name,items],i)=>({id:`derived-${i}`,name,description:"",sortOrder:i,rows:items,items:items.map((row:any)=>({row,priorityRank:null,sortOrder:0}))}));
+  },[filtered,sectionMode,materialBoards]);
 
   async function setSamplePriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
@@ -585,7 +650,7 @@ export default function Page(){
   return <main
     className="min-h-[100dvh] bg-neutral-100 pb-[calc(16px+env(safe-area-inset-bottom))] text-neutral-950"
     style={pageBackgroundUrl?{
-      backgroundImage:`linear-gradient(rgba(245,245,245,.84),rgba(245,245,245,.84)), url("${asset(pageBackgroundUrl)}")`,
+      backgroundImage:`linear-gradient(rgba(245,245,245,${1-backgroundVisibility/100}),rgba(245,245,245,${1-backgroundVisibility/100})), url("${asset(pageBackgroundUrl)}")`,
       backgroundSize:"cover",
       backgroundPosition:"center",
       backgroundRepeat:"no-repeat",
@@ -636,6 +701,7 @@ export default function Page(){
           <select className={input} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}} onBlur={resetIosZoom}><option value="">Tất cả danh mục</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
           <select className={input} value={subFilter} onChange={e=>setSubFilter(e.target.value)} onBlur={resetIosZoom}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
           {viewMode==="SECTIONS"&&<select className={input} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)} onBlur={resetIosZoom}><option value="MATERIAL">Theo chất liệu</option><option value="CATEGORY">Theo loại sản phẩm</option><option value="FABRIC">Theo bảng vải</option></select>}
+          {viewMode==="SECTIONS"&&sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialBoardForm({name:"",description:"",sortOrder:materialBoards.length?Math.max(...materialBoards.map(x=>Number(x.sortOrder||0)))+10:10})} className="rounded-2xl bg-amber-300 px-4 py-3 text-xs font-black">+ Bảng chất liệu</button>}
           <select className={input} value={sortMode} onChange={e=>setSortMode(e.target.value as any)} onBlur={resetIosZoom}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
         </div>}
       </header>
@@ -715,28 +781,31 @@ export default function Page(){
         </div>}
         {!loading&&viewMode==="SECTIONS"&&<div className="-mx-2 overflow-x-auto px-2 pb-2">
           <div className="flex min-w-max items-start gap-2.5">
-            {sectionGroups.map(group=><section key={group.name} className="w-[248px] shrink-0 overflow-hidden rounded-[24px] border border-neutral-200 bg-white/95 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between border-b px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-black">{group.name}</div>
-                  <div className="mt-0.5 text-[10px] font-bold text-neutral-400">{group.rows.length} mẫu{yearFilter?` · ${yearFilter}`:""}</div>
+            {sectionGroups.map((group:any)=><section key={group.id||group.name} className="w-[258px] shrink-0 overflow-hidden rounded-[24px] border border-neutral-200 bg-white/95 shadow-sm backdrop-blur">
+              <div className="border-b px-3 py-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0"><div className="truncate text-sm font-black">{group.name}</div><div className="mt-0.5 text-[10px] font-bold text-neutral-400">{group.rows.length} mẫu{yearFilter?` · ${yearFilter}`:""}</div></div>
+                  {sectionMode==="MATERIAL"&&group.id!=="__UNASSIGNED_MATERIAL__"&&can("design_sample.edit")&&<div className="flex gap-1">
+                    <button type="button" onClick={()=>setMaterialBoardForm({id:group.id,name:group.name,description:group.description||"",sortOrder:group.sortOrder||0})} className="rounded-lg border px-2 py-1 text-[9px] font-black">Sửa</button>
+                    <button type="button" onClick={()=>{const b=materialBoards.find(x=>x.id===group.id);if(b)void deleteMaterialBoard(b)}} className="rounded-lg border border-red-200 px-2 py-1 text-[9px] font-black text-red-600">Xoá</button>
+                  </div>}
                 </div>
               </div>
               <div className="space-y-2 p-2">
-                {group.rows.map((r:any)=>{
-                  const visuals=sampleVisualUrlsMobile(r);
-                  const image=visuals[0]?asset(visuals[0]):"";
-                  return <button key={r.id} type="button" onClick={()=>setDetail(r)} className="flex w-full gap-2 rounded-2xl border bg-white p-2 text-left active:scale-[.99]">
-                    <div className="h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[10px] font-black text-neutral-400">{r.code} · {r.year}</div>
-                      <div className="mt-1 line-clamp-2 text-xs font-black">{r.name}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {samplePriorityRank(r)&&<span className="rounded-md bg-black px-1.5 py-0.5 text-[9px] font-black text-white">#{samplePriorityRank(r)}</span>}
-                        <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-bold text-neutral-500">{statusLabel(r.status)}</span>
-                      </div>
-                    </div>
-                  </button>
+                {group.items.map(({row,priorityRank}:any)=>{
+                  const visuals=sampleVisualUrlsMobile(row);const image=visuals[0]?asset(visuals[0]):"";const currentBoardId=row?.materialBoardItem?.boardId||"";
+                  return <div key={row.id} className="rounded-2xl border bg-white p-2">
+                    <button type="button" onClick={()=>setDetail(row)} className="flex w-full gap-2 text-left">
+                      <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}{samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded bg-black px-1.5 py-0.5 text-[8px] font-black text-white">#{samplePriorityRank(row)}</span>}</div>
+                      <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-1"><div className="truncate text-[9px] font-black text-neutral-400">{row.code} · {row.year}</div>{priorityRank&&<span className="shrink-0 rounded-lg bg-amber-300 px-2 py-1 text-[11px] font-black">SX #{priorityRank}</span>}</div><div className="mt-1 line-clamp-2 text-xs font-black">{row.name}</div><div className="mt-1 text-[9px] text-neutral-400">{statusLabel(row.status)}</div></div>
+                    </button>
+                    {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<div className="mt-2 flex gap-1 border-t pt-2">
+                      <button type="button" onClick={()=>void moveMaterialRelative(row,-1)} className="h-7 rounded-lg border px-2 text-[10px] font-black">←</button>
+                      <select value={currentBoardId} onChange={e=>void moveToMaterialBoard(row,e.target.value)} className="h-7 min-w-0 flex-1 rounded-lg border bg-white px-1 text-[9px] font-black"><option value="">Chưa phân bảng</option>{materialBoards.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select>
+                      <button type="button" onClick={()=>void moveMaterialRelative(row,1)} className="h-7 rounded-lg border px-2 text-[10px] font-black">→</button>
+                      {currentBoardId&&<button type="button" onClick={()=>void setMaterialPriority(row,currentBoardId,priorityRank)} className={`h-7 rounded-lg px-2 text-[9px] font-black ${priorityRank?"bg-amber-300":"border border-amber-300 bg-amber-50 text-amber-800"}`}>{priorityRank?`SX #${priorityRank}`:"STT SX"}</button>}
+                    </div>}
+                  </div>
                 })}
               </div>
             </section>)}
@@ -814,6 +883,10 @@ export default function Page(){
               <button type="button" disabled={backgroundBusy} onClick={()=>backgroundInputRef.current?.click()} className="flex-1 rounded-xl border bg-white px-3 py-2.5 text-xs font-black">{backgroundBusy?"Đang tải...":pageBackgroundUrl?"Đổi hình nền":"Chọn hình nền"}</button>
               {pageBackgroundUrl&&<button type="button" onClick={clearPageBackground} className="rounded-xl border border-red-200 bg-white px-3 py-2.5 text-xs font-black text-red-600">Bỏ nền</button>}
             </div>
+            {pageBackgroundUrl&&<div className="mt-3 rounded-xl border bg-white p-3">
+              <div className="mb-2 flex items-center justify-between text-[10px] font-black"><span>Độ rõ hình nền</span><span>{backgroundVisibility}%</span></div>
+              <input type="range" min="10" max="100" step="5" value={backgroundVisibility} onChange={e=>changeBackgroundVisibility(Number(e.target.value))} className="w-full"/>
+            </div>}
             <div className="mt-2 text-[10px] leading-4 text-neutral-400">Ảnh lớn tự co, ảnh nhỏ tự phóng để phủ kín trang.</div>
           </div>
         </div>
@@ -848,6 +921,15 @@ export default function Page(){
             })}
           </div>
         </div>}
+      </div>
+    </Modal>}
+
+    {materialBoardForm&&<Modal title={materialBoardForm.id?"Sửa bảng chất liệu":"Tạo bảng chất liệu"} onClose={()=>setMaterialBoardForm(null)}>
+      <div className="space-y-4 p-4">
+        <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Tên bảng</div><input autoFocus className={input} value={materialBoardForm.name} onChange={e=>setMaterialBoardForm(x=>x?{...x,name:e.target.value}:x)} placeholder="VD: Da lộn, Canvas wax..." onBlur={resetIosZoom}/></label>
+        <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Mô tả</div><textarea className={`${input} min-h-24`} value={materialBoardForm.description} onChange={e=>setMaterialBoardForm(x=>x?{...x,description:e.target.value}:x)} onBlur={resetIosZoom}/></label>
+        <label className="block"><div className="mb-1 text-xs font-black uppercase text-neutral-400">Thứ tự cột</div><input type="number" className={input} value={materialBoardForm.sortOrder??0} onChange={e=>setMaterialBoardForm(x=>x?{...x,sortOrder:Number(e.target.value)}:x)} onBlur={resetIosZoom}/></label>
+        <div className="flex justify-end gap-2 border-t pt-4"><button type="button" onClick={()=>setMaterialBoardForm(null)} className="rounded-2xl border px-4 py-3 text-sm font-black">Huỷ</button><button type="button" disabled={materialBusy||!materialBoardForm.name.trim()} onClick={()=>void saveMaterialBoard()} className="rounded-2xl bg-neutral-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40">{materialBusy?"Đang lưu...":"Lưu bảng"}</button></div>
       </div>
     </Modal>}
 
