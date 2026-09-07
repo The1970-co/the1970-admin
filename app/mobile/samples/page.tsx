@@ -758,7 +758,7 @@ export default function Page(){
               <div className="flex flex-wrap justify-end gap-2">
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-3 py-2 text-xs font-black">Bảng ý tưởng</button>}
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>void moveSample(r,"DEPLOY")} className="rounded-xl border px-3 py-2 text-xs font-black">Chuyển sang triển khai →</button>}
-              {sampleTab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">← Đưa về ý tưởng</button>}
+              {sampleTab==="DEPLOY"&&<><button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">← Đưa về ý tưởng</button><button type="button" onClick={()=>void moveSample(r,"FABRIC_SAMPLE")} className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-xs font-black text-orange-700">→ Vải mẫu</button></>}
               {sampleTab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">Chuyển sang ý tưởng →</button>}
               </div>
             </div>}
@@ -790,7 +790,7 @@ export default function Page(){
                 <div className="grid grid-cols-2 gap-1">
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button>}
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>void moveSample(r,"DEPLOY")} className="rounded-xl border px-2 py-2 text-[10px] font-black">→ Triển khai</button>}
-                {sampleTab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="col-span-2 rounded-xl border px-2 py-2 text-[10px] font-black">← Ý tưởng</button>}
+                {sampleTab==="DEPLOY"&&<><button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-2 py-2 text-[10px] font-black">← Ý tưởng</button><button type="button" onClick={()=>void moveSample(r,"FABRIC_SAMPLE")} className="rounded-xl border border-orange-300 bg-orange-50 px-2 py-2 text-[10px] font-black text-orange-700">→ Vải mẫu</button></>}
                 {sampleTab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="col-span-2 rounded-xl border px-2 py-2 text-[10px] font-black">→ Ý tưởng</button>}
                 </div>
               </div>}
@@ -2031,8 +2031,8 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
           patternMakerId:form.patternMakerId||null,
           patternMakerName:patternMaker?.name||form.patternMakerName||null,
           status:form.status,
-          priorityLane:samplePriorityLane(sample)||initialLane,
-          fabricSampleReceivedAt:(samplePriorityLane(sample)||initialLane)==="FABRIC_SAMPLE"?(form.fabricSampleReceivedAt||null):null,
+          priorityLane:sample ? samplePriorityLane(sample) : initialLane,
+          fabricSampleReceivedAt:(sample ? samplePriorityLane(sample) : initialLane)==="FABRIC_SAMPLE"?(form.fabricSampleReceivedAt||null):null,
           assigneeStaffId:form.assigneeStaffId||null,
           assigneeName:staff?.name||null,
           nextAction:form.nextAction||null,
