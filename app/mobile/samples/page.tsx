@@ -52,6 +52,7 @@ type Meta = {
 type Sample = any;
 type IdeaBoard={id:string;name:string;description?:string|null;createdByName?:string|null;updatedAt?:string|null;samples?:Array<{id:string;boardId:string;designSampleId:string;sortOrder?:number;designSample:any}>};
 type MaterialBoard={id:string;name:string;description?:string|null;sortOrder?:number;samples?:Array<{id:string;boardId:string;designSampleId:string;priorityRank?:number|null;sortOrder?:number;designSample:any}>};
+type FabricSampleOption={id:string;code:string;name:string;fabricSampleReceivedAt?:string|null;coverImageUrl?:string|null;fabricBoard?:{id:string;boardCode:string;name?:string|null;fabricCode?:string|null}|null;fabricSampleColors:Array<{id:string;colorName:string;colorCode?:string|null;receivedMeters:number;usedMeters:number;availableMeters:number;allocations?:Array<any>}>};
 
 const SampleImageEditorKonva=dynamic(()=>import("@/components/mobile/SampleImageEditorKonva"),{ssr:false});
 
@@ -242,6 +243,8 @@ function asset(url?:string|null){
   return /^https?:\/\//.test(url)?url:`${API_BASE}${url.startsWith("/")?"":"/"}${url}`;
 }
 function normalizeCode(v:any){return String(v||"").trim().toUpperCase().replace(/\s+/g,"")}
+function num(v:any){const n=Number(String(v??"").trim().replace(/\s/g,"").replace(",","."));return Number.isFinite(n)?n:0}
+function fmt(v:any,digits=2){return new Intl.NumberFormat("vi-VN",{maximumFractionDigits:digits}).format(num(v))}
 function normalizeColor(v:any){
   const raw=String(v||"").trim();
   if(!raw)return "";
@@ -758,7 +761,7 @@ export default function Page(){
               <div className="flex flex-wrap justify-end gap-2">
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-3 py-2 text-xs font-black">Bảng ý tưởng</button>}
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>void moveSample(r,"DEPLOY")} className="rounded-xl border px-3 py-2 text-xs font-black">Chuyển sang triển khai →</button>}
-              {sampleTab==="DEPLOY"&&<><button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">← Đưa về ý tưởng</button><button type="button" onClick={()=>void moveSample(r,"FABRIC_SAMPLE")} className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-xs font-black text-orange-700">→ Vải mẫu</button></>}
+              {sampleTab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">← Đưa về ý tưởng</button>}
               {sampleTab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">Chuyển sang ý tưởng →</button>}
               </div>
             </div>}
@@ -790,7 +793,7 @@ export default function Page(){
                 <div className="grid grid-cols-2 gap-1">
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button>}
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>void moveSample(r,"DEPLOY")} className="rounded-xl border px-2 py-2 text-[10px] font-black">→ Triển khai</button>}
-                {sampleTab==="DEPLOY"&&<><button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-2 py-2 text-[10px] font-black">← Ý tưởng</button><button type="button" onClick={()=>void moveSample(r,"FABRIC_SAMPLE")} className="rounded-xl border border-orange-300 bg-orange-50 px-2 py-2 text-[10px] font-black text-orange-700">→ Vải mẫu</button></>}
+                {sampleTab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="col-span-2 rounded-xl border px-2 py-2 text-[10px] font-black">← Ý tưởng</button>}
                 {sampleTab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="col-span-2 rounded-xl border px-2 py-2 text-[10px] font-black">→ Ý tưởng</button>}
                 </div>
               </div>}
@@ -908,7 +911,7 @@ export default function Page(){
     
     {priorityPickerSample&&<Modal title={`Chọn STT · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
       <div className="space-y-4 p-4">
-        <div className="text-xs leading-5 text-neutral-500">STT được xếp riêng cho Ý tưởng và Triển khai. Số đã dùng trong tab hiện tại sẽ bị khóa; số bên tab kia không ảnh hưởng.</div>
+        <div className="text-xs leading-5 text-neutral-500">STT được xếp riêng cho Ý tưởng, Triển khai và Vải mẫu. Số đã dùng trong tab hiện tại sẽ bị khóa; các tab khác không ảnh hưởng.</div>
         <div className="grid grid-cols-4 gap-2">
           {priorityOptions(priorityPickerSample.id,sampleTab).map(rank=>{
             const used=usedPriorityRanks(priorityPickerSample.id,sampleTab).has(rank);
@@ -1852,7 +1855,14 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
   const [measurementTemplates,setMeasurementTemplates]=useState<MeasurementTemplate[]>([]);
   const [measurement,setMeasurement]=useState<SampleMeasurementSnapshot|null>(null);
   const [measurementOpen,setMeasurementOpen]=useState(false);
+  const lane=(sample ? samplePriorityLane(sample) : initialLane) as "IDEA"|"DEPLOY"|"FABRIC_SAMPLE";
+  const [fabricSampleColors,setFabricSampleColors]=useState<Array<{id?:string;colorName:string;colorCode:string;receivedMeters:string}>>(()=>lane==="FABRIC_SAMPLE"?(sample?.fabricSampleColors||[]).map((x:any)=>({id:x.id,colorName:x.colorName||"",colorCode:x.colorCode||"",receivedMeters:String(x.receivedMeters??"")})):[{colorName:"",colorCode:"",receivedMeters:""}]);
+  const [fabricSampleOptions,setFabricSampleOptions]=useState<FabricSampleOption[]>([]);
+  const currentFabricAllocation=(sample?.fabricSampleAllocations||[]).find((x:any)=>!x.releasedAt)||null;
+  const [selectedFabricColorId,setSelectedFabricColorId]=useState<string>(currentFabricAllocation?.fabricSampleColorId||"");
+  const [selectedFabricMeters,setSelectedFabricMeters]=useState<string>(currentFabricAllocation?String(currentFabricAllocation.meters):"");
   useEffect(()=>{setMeasurementTemplates(loadMeasurementTemplates());setMeasurement(loadSampleMeasurement(sample))},[sample?.id,sample?.code]);
+  useEffect(()=>{if(lane==="FABRIC_SAMPLE")return;api<FabricSampleOption[]>("/sample-fabric/samples/fabric-sample-options").then(setFabricSampleOptions).catch(()=>setFabricSampleOptions([]))},[lane,sample?.id]);
 
   const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
 
@@ -1992,6 +2002,7 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
       const sampleMaker=people.find(x=>x.id===form.sampleMakerId);
       const patternMaker=people.find(x=>x.id===form.patternMakerId);
       const board=meta.boards.find(x=>x.id===form.fabricBoardId);
+      if(lane==="FABRIC_SAMPLE"&&!fabricSampleColors.some(x=>x.colorName.trim()&&num(x.receivedMeters)>0))throw new Error("Vải mẫu phải có ít nhất 1 màu và số mét nhận lớn hơn 0.");
 
       const pendingUploads=Array.from(imageUploadTasksRef.current.values());
       if(pendingUploads.length)await Promise.allSettled(pendingUploads);
@@ -2032,7 +2043,8 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
           patternMakerName:patternMaker?.name||form.patternMakerName||null,
           status:form.status,
           priorityLane:sample ? samplePriorityLane(sample) : initialLane,
-          fabricSampleReceivedAt:(sample ? samplePriorityLane(sample) : initialLane)==="FABRIC_SAMPLE"?(form.fabricSampleReceivedAt||null):null,
+          fabricSampleReceivedAt:lane==="FABRIC_SAMPLE"?(form.fabricSampleReceivedAt||null):null,
+          ...(lane==="FABRIC_SAMPLE"?{fabricSampleColors:fabricSampleColors.map((x,index)=>({id:x.id||undefined,colorName:titleCase(x.colorName),colorCode:normalizeColor(x.colorCode)||null,receivedMeters:num(x.receivedMeters),sortOrder:index}))}:{}),
           assigneeStaffId:form.assigneeStaffId||null,
           assigneeName:staff?.name||null,
           nextAction:form.nextAction||null,
@@ -2047,10 +2059,14 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
         })
       });
       const savedId=String(saved?.id||sample?.id||"");
-      if(savedId){
+      if(savedId&&lane!=="FABRIC_SAMPLE"){
         await api(`/sample-fabric/samples/${savedId}/idea-boards`,{
           method:"PATCH",
           body:JSON.stringify({boardIds:selectedIdeaBoardIds}),
+        });
+        await api(`/sample-fabric/samples/${savedId}/fabric-sample`,{
+          method:"PATCH",
+          body:JSON.stringify(selectedFabricColorId?{fabricSampleColorId:selectedFabricColorId,meters:num(selectedFabricMeters)}:{fabricSampleColorId:null}),
         });
       }
       if(measurement)saveSampleMeasurement({id:saved?.id||sample?.id,code:saved?.code||form.code},measurement);
@@ -2060,10 +2076,27 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
     finally{setSaving(false)}
   }
 
-  const lane=(samplePriorityLane(sample)||initialLane) as "IDEA"|"DEPLOY"|"FABRIC_SAMPLE";
   return <Modal title={sample?`${lane==="FABRIC_SAMPLE"?"Sửa vải mẫu":"Sửa mẫu"} ${sample.code}`:(lane==="FABRIC_SAMPLE"?"Tạo vải mẫu":"Tạo mẫu triển khai")} onClose={onClose}>
     <div className="space-y-4 p-4">
       {error&&<Err x={error}/>}
+
+      {lane==="FABRIC_SAMPLE"&&<div className="space-y-3 rounded-3xl border border-orange-200 bg-orange-50/50 p-3">
+        <div className="flex items-center justify-between gap-2"><div><div className="text-sm font-black">Các màu vải mẫu</div><div className="text-[11px] text-neutral-500">Mỗi màu có số mét riêng.</div></div><button type="button" onClick={()=>setFabricSampleColors(rows=>[...rows,{colorName:"",colorCode:"",receivedMeters:""}])} className="rounded-2xl bg-orange-600 px-3 py-2 text-xs font-black text-white">+ Màu</button></div>
+        {fabricSampleColors.map((row,i)=><div key={row.id||i} className="space-y-2 rounded-2xl border bg-white p-3">
+          <div className="grid grid-cols-2 gap-2"><input className={input} value={row.colorName} onChange={e=>setFabricSampleColors(rows=>rows.map((x,j)=>j===i?{...x,colorName:e.target.value}:x))} placeholder="Tên màu"/><input className={input} value={row.colorCode} onChange={e=>setFabricSampleColors(rows=>rows.map((x,j)=>j===i?{...x,colorCode:e.target.value}:x))} placeholder="#12"/></div>
+          <div className="flex gap-2"><div className="relative flex-1"><input inputMode="decimal" className={`${input} pr-10`} value={row.receivedMeters} onChange={e=>setFabricSampleColors(rows=>rows.map((x,j)=>j===i?{...x,receivedMeters:String(e.target.value).replace(",",".")}:x))} placeholder="Số mét nhận"/><span className="absolute right-4 top-3 text-sm text-neutral-400">m</span></div><button type="button" disabled={fabricSampleColors.length<=1} onClick={()=>setFabricSampleColors(rows=>rows.filter((_,j)=>j!==i))} className="rounded-2xl border border-red-200 px-3 text-xs font-black text-red-600 disabled:opacity-30">Xoá</button></div>
+        </div>)}
+      </div>}
+
+      {lane!=="FABRIC_SAMPLE"&&<div className="space-y-3 rounded-3xl border border-orange-200 bg-orange-50/50 p-3">
+        <div><div className="text-sm font-black">Vải may mẫu</div><div className="text-[11px] text-neutral-500">Chọn vải mẫu, màu và số mét dùng. Thông tin giữ nguyên khi chuyển sang Triển khai.</div></div>
+        <select className={input} value={selectedFabricColorId} onChange={e=>{setSelectedFabricColorId(e.target.value);if(!e.target.value)setSelectedFabricMeters("")}}>
+          <option value="">Chưa chọn vải mẫu</option>
+          {fabricSampleOptions.flatMap(f=>f.fabricSampleColors.filter(c=>c.availableMeters>0||c.id===selectedFabricColorId).map(c=><option key={c.id} value={c.id}>{f.name} · {c.colorName}{c.colorCode?` ${c.colorCode}`:""} · còn {fmt(c.availableMeters,3)}m</option>))}
+        </select>
+        <input inputMode="decimal" className={input} disabled={!selectedFabricColorId} value={selectedFabricMeters} onChange={e=>setSelectedFabricMeters(String(e.target.value).replace(",","."))} placeholder="Số mét dùng, VD: 1"/>
+        {currentFabricAllocation&&<div className="rounded-2xl border bg-white p-3 text-xs"><span className="text-neutral-500">Đang dùng:</span> <b>{currentFabricAllocation.fabricSampleColor?.fabricSample?.name} · {currentFabricAllocation.fabricSampleColor?.colorName} {currentFabricAllocation.fabricSampleColor?.colorCode||""} · {fmt(currentFabricAllocation.meters,3)}m</b></div>}
+      </div>}
 
       <Field l="Ảnh mẫu / ảnh tham khảo">
         <div className="rounded-3xl border border-dashed p-3">
