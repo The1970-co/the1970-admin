@@ -1477,8 +1477,8 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
             {group.items.map(({row,priorityRank}:any)=>{
               const cover=sampleVisuals(row)[0];
               const currentBoardId=row.materialBoardItem?.boardId||"";
-              return <div key={row.id} className="overflow-hidden rounded-xl border bg-white transition hover:border-neutral-400 hover:shadow-sm">
-                <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="block w-full p-2 text-left">
+              return <div key={row.id} className="relative rounded-xl border bg-white p-2 transition hover:border-neutral-400 hover:shadow-sm">
+                <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="block w-full pr-12 text-left">
                   <div className="flex w-full gap-2">
                     <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
                       {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded-md bg-neutral-950 px-1.5 py-0.5 text-[8px] font-bold text-white">#{samplePriorityRank(row)}</span>}
@@ -1492,11 +1492,8 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                     </div>
                   </div>
                 </button>
-                <div className="flex gap-1 border-t p-1.5">
-                  <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex-1 rounded-lg border px-2 py-1.5 text-[10px] font-semibold">Xem</button>
-                  {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(row)} className="flex-1 rounded-lg bg-neutral-950 px-2 py-1.5 text-[10px] font-semibold text-white">Sửa</button>}
-                  {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold">Bảng / STT</button>}
-                </div>
+                {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(row)} className="absolute right-2 top-2 rounded-md border bg-white px-1.5 py-0.5 text-[9px] font-semibold text-neutral-700 shadow-sm">Sửa</button>}
+                {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="absolute bottom-2 right-2 rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-semibold text-neutral-600">STT</button>}
               </div>
             })}
           </div>

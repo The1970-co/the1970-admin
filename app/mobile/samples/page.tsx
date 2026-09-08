@@ -848,8 +848,8 @@ export default function Page(){
               <div className="space-y-2 p-2">
                 {group.items.map(({row,priorityRank}:any)=>{
                   const visuals=sampleVisualUrlsMobile(row);const image=visuals[0]?asset(visuals[0]):"";
-                  return <div key={row.id} className="overflow-hidden rounded-2xl border bg-white">
-                    <button type="button" onClick={()=>setDetail(row)} className="flex w-full gap-2 p-2 text-left">
+                  return <div key={row.id} className="relative rounded-2xl border bg-white p-2">
+                    <button type="button" onClick={()=>setDetail(row)} className="flex w-full gap-2 pr-10 text-left">
                       <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
                         {image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
                         {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded bg-black px-1.5 py-0.5 text-[8px] font-black text-white">#{samplePriorityRank(row)}</span>}
@@ -862,11 +862,17 @@ export default function Page(){
                         {sectionMode==="FACTORY"&&<div className="mt-1 truncate text-[9px] font-bold text-neutral-500">{row.sampleFactoryName||"Chưa chọn nhà may"}</div>}
                       </div>
                     </button>
-                    <div className="grid grid-cols-2 gap-1 border-t p-1.5">
-                      <button type="button" onClick={()=>setDetail(row)} className="rounded-xl border py-2 text-[10px] font-black">Xem</button>
-                      {can("design_sample.edit")&&<button type="button" onClick={()=>{setEditingLane((samplePriorityLane(row) as any)||"IDEA");setEditing(row)}} className="rounded-xl bg-neutral-950 py-2 text-[10px] font-black text-white">Sửa</button>}
-                      {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialManage({row,priorityRank})} className="col-span-2 rounded-xl border py-2 text-[10px] font-black">Đổi bảng / STT</button>}
-                    </div>
+                    {can("design_sample.edit")&&<button
+                      type="button"
+                      aria-label="Sửa mẫu"
+                      onClick={()=>{setEditingLane((samplePriorityLane(row) as any)||"IDEA");setEditing(row)}}
+                      className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border bg-white text-[12px] font-black shadow-sm"
+                    >•••</button>}
+                    {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button
+                      type="button"
+                      onClick={()=>setMaterialManage({row,priorityRank})}
+                      className="absolute bottom-2 right-2 rounded-lg bg-neutral-100 px-2 py-1 text-[9px] font-black text-neutral-600"
+                    >STT</button>}
                   </div>
                 })}
               </div>
