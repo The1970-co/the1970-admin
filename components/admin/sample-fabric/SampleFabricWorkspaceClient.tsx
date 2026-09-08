@@ -1477,20 +1477,27 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
             {group.items.map(({row,priorityRank}:any)=>{
               const cover=sampleVisuals(row)[0];
               const currentBoardId=row.materialBoardItem?.boardId||"";
-              return <button type="button" key={row.id} onClick={()=>sectionMode==="MATERIAL"&&can("design_sample.edit")?setMaterialManageSample(row):setViewer({sample:row,index:0})} className="block w-full rounded-xl border bg-white p-2 text-left transition hover:border-neutral-400 hover:shadow-sm">
-                <div className="flex w-full gap-2">
-                  <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
-                    {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded-md bg-neutral-950 px-1.5 py-0.5 text-[8px] font-bold text-white">#{samplePriorityRank(row)}</span>}
-                    {priorityRank&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow-md">{priorityRank}</span>}
+              return <div key={row.id} className="overflow-hidden rounded-xl border bg-white transition hover:border-neutral-400 hover:shadow-sm">
+                <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="block w-full p-2 text-left">
+                  <div className="flex w-full gap-2">
+                    <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
+                      {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded-md bg-neutral-950 px-1.5 py-0.5 text-[8px] font-bold text-white">#{samplePriorityRank(row)}</span>}
+                      {priorityRank&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow-md">{priorityRank}</span>}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[10px] font-semibold text-neutral-400">{row.code} · {row.year}</div>
+                      <div className="mt-1 line-clamp-2 text-xs font-semibold">{row.name}</div>
+                      <div className="mt-1 text-[9px] text-neutral-400">{statusLabel(row.status,SAMPLE_STATUSES)}</div>
+                      {sectionMode==="FACTORY"&&<div className="mt-1 truncate text-[9px] font-semibold text-neutral-500">{row.sampleFactoryName||"Chưa chọn nhà may"}</div>}
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[10px] font-semibold text-neutral-400">{row.code} · {row.year}</div>
-                    <div className="mt-1 line-clamp-2 text-xs font-semibold">{row.name}</div>
-                    <div className="mt-1 text-[9px] text-neutral-400">{statusLabel(row.status,SAMPLE_STATUSES)}</div>
-                    {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<div className="mt-1 text-[9px] font-semibold text-neutral-400">Bấm để đổi bảng / STT</div>}
-                  </div>
+                </button>
+                <div className="flex gap-1 border-t p-1.5">
+                  <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex-1 rounded-lg border px-2 py-1.5 text-[10px] font-semibold">Xem</button>
+                  {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(row)} className="flex-1 rounded-lg bg-neutral-950 px-2 py-1.5 text-[10px] font-semibold text-white">Sửa</button>}
+                  {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold">Bảng / STT</button>}
                 </div>
-              </button>
+              </div>
             })}
           </div>
         </section>)}
