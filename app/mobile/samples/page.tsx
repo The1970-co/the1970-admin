@@ -245,6 +245,14 @@ function asset(url?:string|null){
 function normalizeCode(v:any){return String(v||"").trim().toUpperCase().replace(/\s+/g,"")}
 function num(v:any){const n=Number(String(v??"").trim().replace(/\s/g,"").replace(",","."));return Number.isFinite(n)?n:0}
 function fmt(v:any,digits=2){return new Intl.NumberFormat("vi-VN",{maximumFractionDigits:digits}).format(num(v))}
+function readSessionState<T>(key:string,fallback:T):T{
+  if(typeof window==="undefined")return fallback;
+  try{const raw=sessionStorage.getItem(key);return raw?JSON.parse(raw) as T:fallback}catch{return fallback}
+}
+function writeSessionState(key:string,value:any){
+  if(typeof window==="undefined")return;
+  try{sessionStorage.setItem(key,JSON.stringify(value))}catch{}
+}
 function fabricSampleColorCount(row:any){return Array.isArray(row?.fabricSampleColors)?row.fabricSampleColors.filter((x:any)=>x?.isActive!==false).length:0}
 function fabricSampleTotalMeters(row:any){return Array.isArray(row?.fabricSampleColors)?row.fabricSampleColors.filter((x:any)=>x?.isActive!==false).reduce((sum:number,x:any)=>sum+num(x?.receivedMeters),0):0}
 function normalizeColor(v:any){
@@ -372,14 +380,14 @@ export default function Page(){
   const [editingLane,setEditingLane]=useState<"IDEA"|"DEPLOY"|"FABRIC_SAMPLE">("IDEA");
   const [dispatching,setDispatching]=useState<Sample|null>(null);
   const [user,setUser]=useState<any>(null);
-  const [sampleTab,setSampleTab]=useState<"IDEA"|"DEPLOY"|"FABRIC_SAMPLE">("IDEA");
-  const [parentFilter,setParentFilter]=useState("");
-  const [subFilter,setSubFilter]=useState("");
-  const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
+  const [sampleTab,setSampleTab]=useState<"IDEA"|"DEPLOY"|"FABRIC_SAMPLE">(()=>readSessionState("the1970.design-samples.mobile.tab","IDEA"));
+  const [parentFilter,setParentFilter]=useState(()=>readSessionState("the1970.design-samples.mobile.parentFilter",""));
+  const [subFilter,setSubFilter]=useState(()=>readSessionState("the1970.design-samples.mobile.subFilter",""));
+  const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">(()=>readSessionState("the1970.design-samples.mobile.sortMode","NEWEST"));
   const [filtersOpen,setFiltersOpen]=useState(false);
-  const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST"|"SECTIONS">("LIST");
-  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">("MATERIAL");
-  const [yearFilter,setYearFilter]=useState("");
+  const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST"|"SECTIONS">(()=>readSessionState("the1970.design-samples.mobile.viewMode","LIST"));
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">(()=>readSessionState("the1970.design-samples.mobile.sectionMode","MATERIAL"));
+  const [yearFilter,setYearFilter]=useState(()=>readSessionState("the1970.design-samples.mobile.yearFilter",""));
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
   const [backgroundVisibility,setBackgroundVisibility]=useState(55);
@@ -388,7 +396,7 @@ export default function Page(){
   const [materialBoards,setMaterialBoards]=useState<MaterialBoard[]>([]);
   const [materialBoardForm,setMaterialBoardForm]=useState<{id?:string;name:string;description:string;sortOrder?:number}|null>(null);
   const [materialBusy,setMaterialBusy]=useState(false);
-  const [boardFilter,setBoardFilter]=useState("");
+  const [boardFilter,setBoardFilter]=useState(()=>readSessionState("the1970.design-samples.mobile.boardFilter",""));
   const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
   const [assignSample,setAssignSample]=useState<Sample|null>(null);
   const [assignBoardIds,setAssignBoardIds]=useState<string[]>([]);
@@ -399,6 +407,15 @@ export default function Page(){
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
   const can=(key:string)=>isAdmin(user)||permissions.includes("*")||permissions.includes(key);
+
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.tab",sampleTab)},[sampleTab]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.parentFilter",parentFilter)},[parentFilter]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.subFilter",subFilter)},[subFilter]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.sortMode",sortMode)},[sortMode]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.viewMode",viewMode)},[viewMode]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.sectionMode",sectionMode)},[sectionMode]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.yearFilter",yearFilter)},[yearFilter]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.mobile.boardFilter",boardFilter)},[boardFilter]);
 
   async function load(){
     try{
@@ -561,13 +578,8 @@ export default function Page(){
     if(nextIndex<0||nextIndex>=materialBoards.length)return;
     await moveToMaterialBoard(row,materialBoards[nextIndex].id);
   }
-  async function setMaterialPriority(row:any,boardId:string,current?:number|null){
+  async function setMaterialPriority(row:any,boardId:string,rank:number|null){
     if(!boardId)return;
-    const inputValue=window.prompt("STT ưu tiên SX trong bảng chất liệu. Nhập 1, 2, 3...; để trống để bỏ.",current?String(current):"");
-    if(inputValue===null)return;
-    const value=inputValue.trim();
-    const rank=value===""?null:Number(value);
-    if(rank!==null&&(!Number.isInteger(rank)||rank<=0)){setError("STT phải là số nguyên từ 1 trở lên.");return}
     try{await api(`/sample-fabric/samples/${row.id}/material-board`,{method:"PATCH",body:JSON.stringify({boardId,priorityRank:rank})});await load()}
     catch(e){setError(e instanceof Error?e.message:"Không cập nhật được STT SX.")}
   }
@@ -1029,7 +1041,14 @@ export default function Page(){
       </div>
     </Modal>}
 
-    {materialManage&&<Modal title="Bảng chất liệu" onClose={()=>setMaterialManage(null)}>
+    {materialManage&&(()=>{
+      const boardId=materialManage.row?.materialBoardItem?.boardId||"";
+      const board=materialBoards.find(b=>b.id===boardId);
+      const rank=materialManage.priorityRank??materialManage.row?.materialBoardItem?.priorityRank??null;
+      const usedRanks=new Set<number>((board?.samples||[]).filter(x=>x.designSampleId!==materialManage.row.id).map(x=>Number(x.priorityRank||0)).filter(n=>Number.isInteger(n)&&n>0));
+      const maxUsed=Math.max(0,...Array.from(usedRanks),Number(rank||0));
+      const rankOptions=Array.from({length:Math.max(20,(board?.samples?.length||0)+10,maxUsed+5)},(_,i)=>i+1);
+      return <Modal title="Bảng chất liệu" onClose={()=>setMaterialManage(null)}>
       <div className="space-y-4 p-4">
         <div className="rounded-2xl bg-neutral-50 p-3">
           <div className="text-[10px] font-black uppercase tracking-[.14em] text-neutral-400">{materialManage.row.code}</div>
@@ -1046,10 +1065,26 @@ export default function Page(){
           <button type="button" onClick={async()=>{await moveMaterialRelative(materialManage.row,-1);setMaterialManage(null)}} className="rounded-2xl border py-3 text-sm font-black">← Bảng trước</button>
           <button type="button" onClick={async()=>{await moveMaterialRelative(materialManage.row,1);setMaterialManage(null)}} className="rounded-2xl border py-3 text-sm font-black">Bảng sau →</button>
         </div>
-        {materialManage.row?.materialBoardItem?.boardId&&<button type="button" onClick={async()=>{await setMaterialPriority(materialManage.row,materialManage.row.materialBoardItem.boardId,materialManage.priorityRank);setMaterialManage(null)}} className="w-full rounded-2xl bg-orange-600 py-3 text-sm font-black text-white">{materialManage.priorityRank?`Đổi số ưu tiên · ${materialManage.priorityRank}`:"Đặt số ưu tiên"}</button>}
+        {boardId&&<label className="block rounded-2xl border p-3">
+          <div className="mb-2 text-xs font-black uppercase text-neutral-400">STT trong bảng chất liệu</div>
+          <select
+            className={input}
+            value={rank??""}
+            onChange={async e=>{
+              const next=e.target.value?Number(e.target.value):null;
+              await setMaterialPriority(materialManage.row,boardId,next);
+              setMaterialManage(null);
+            }}
+          >
+            <option value="">Không đặt STT</option>
+            {rankOptions.map(n=><option key={n} value={n} disabled={usedRanks.has(n)}>{n}{usedRanks.has(n)?" · Đã dùng":""}</option>)}
+          </select>
+          <div className="mt-1 text-[10px] text-neutral-400">Chọn số trực tiếp, không cần nhập tay.</div>
+        </label>}
         <button type="button" onClick={()=>{setMaterialManage(null);setDetail(materialManage.row)}} className="w-full rounded-2xl border py-3 text-sm font-black">Mở chi tiết mẫu</button>
       </div>
-    </Modal>}
+    </Modal>
+    })()}
 
     {materialBoardForm&&<Modal title={materialBoardForm.id?"Sửa bảng chất liệu":"Tạo bảng chất liệu"} onClose={()=>setMaterialBoardForm(null)}>
       <div className="space-y-4 p-4">

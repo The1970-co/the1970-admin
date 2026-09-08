@@ -277,6 +277,14 @@ function moneyInput(v:any){const raw=String(v??"").replace(/\D/g,"");return raw?
 function moneyRaw(v:string){return v.replace(/\D/g,"");}
 function date(v?: string | null) { if (!v) return "—"; const d = new Date(v); return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("vi-VN"); }
 function confirmDelete(message: string) { return typeof window !== "undefined" && window.confirm(message); }
+function readSessionState<T>(key:string,fallback:T):T{
+  if(typeof window==="undefined")return fallback;
+  try{const raw=sessionStorage.getItem(key);return raw?JSON.parse(raw) as T:fallback}catch{return fallback}
+}
+function writeSessionState(key:string,value:any){
+  if(typeof window==="undefined")return;
+  try{sessionStorage.setItem(key,JSON.stringify(value))}catch{}
+}
 function statusLabel(value: string, list: readonly (readonly [string,string])[]) { return list.find(x => x[0] === value)?.[1] || value; }
 function statusTone(status: string) {
   if (["COMPLETED","APPROVED_FOR_PRODUCTION"].includes(status)) return "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -945,14 +953,14 @@ function DispatchForm({board,sample,meta,onClose,onSaved}:{board:FabricBoard;sam
 }
 
 function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onChanged }: { rows: Sample[]; factories:Factory[]; can: (k:string)=>boolean; onCreate:(lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE")=>void; onEdit:(x:Sample)=>void; onDispatch:(x:Sample)=>void; onChanged:()=>Promise<void> }) {
-  const [tab,setTab]=useState<"IDEA"|"DEPLOY"|"FABRIC_SAMPLE">("IDEA");
-  const [parentFilter,setParentFilter]=useState("");
-  const [subFilter,setSubFilter]=useState("");
-  const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
-  const [groupByCategory,setGroupByCategory]=useState(true);
-  const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST"|"SECTIONS">("CARDS");
-  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">("MATERIAL");
-  const [yearFilter,setYearFilter]=useState<string>("");
+  const [tab,setTab]=useState<"IDEA"|"DEPLOY"|"FABRIC_SAMPLE">(()=>readSessionState("the1970.design-samples.web.tab","IDEA"));
+  const [parentFilter,setParentFilter]=useState(()=>readSessionState("the1970.design-samples.web.parentFilter",""));
+  const [subFilter,setSubFilter]=useState(()=>readSessionState("the1970.design-samples.web.subFilter",""));
+  const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">(()=>readSessionState("the1970.design-samples.web.sortMode","NEWEST"));
+  const [groupByCategory,setGroupByCategory]=useState(()=>readSessionState("the1970.design-samples.web.groupByCategory",true));
+  const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST"|"SECTIONS">(()=>readSessionState("the1970.design-samples.web.viewMode","CARDS"));
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">(()=>readSessionState("the1970.design-samples.web.sectionMode","MATERIAL"));
+  const [yearFilter,setYearFilter]=useState<string>(()=>readSessionState("the1970.design-samples.web.yearFilter",""));
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
   const [backgroundVisibility,setBackgroundVisibility]=useState(55);
@@ -965,7 +973,7 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
   const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
   const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
   const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
-  const [boardFilter,setBoardFilter]=useState("");
+  const [boardFilter,setBoardFilter]=useState(()=>readSessionState("the1970.design-samples.web.boardFilter",""));
   const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
   const [assignSample,setAssignSample]=useState<Sample|null>(null);
   const [assignBoardIds,setAssignBoardIds]=useState<string[]>([]);
@@ -981,6 +989,15 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
     catch(e){setBoardError(e instanceof Error?e.message:"Không tải được bảng chất liệu.")}
   }
   useEffect(()=>{void Promise.all([loadIdeaBoards(),loadMaterialBoards()])},[]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.tab",tab)},[tab]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.parentFilter",parentFilter)},[parentFilter]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.subFilter",subFilter)},[subFilter]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.sortMode",sortMode)},[sortMode]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.groupByCategory",groupByCategory)},[groupByCategory]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.viewMode",viewMode)},[viewMode]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.sectionMode",sectionMode)},[sectionMode]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.yearFilter",yearFilter)},[yearFilter]);
+  useEffect(()=>{writeSessionState("the1970.design-samples.web.boardFilter",boardFilter)},[boardFilter]);
   useEffect(()=>{try{
     setPageBackgroundUrl(localStorage.getItem("the1970.design-samples.background")||"");
     const stored=Number(localStorage.getItem("the1970.design-samples.backgroundVisibility")||55);
@@ -1186,13 +1203,8 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
     await moveToMaterialBoard(row,materialBoards[nextIndex].id);
   }
 
-  async function setMaterialPriority(row:Sample,boardId:string,current?:number|null){
+  async function setMaterialPriority(row:Sample,boardId:string,rank:number|null){
     if(!boardId||boardId==="__UNASSIGNED_MATERIAL__")return;
-    const input=window.prompt(`STT ưu tiên SX trong bảng chất liệu.\nNhập 1, 2, 3...; để trống để bỏ STT.`,current?String(current):"");
-    if(input===null)return;
-    const trimmed=input.trim();
-    const rank=trimmed===""?null:Number(trimmed);
-    if(rank!==null&&(!Number.isInteger(rank)||rank<=0)){window.alert("STT phải là số nguyên từ 1 trở lên.");return}
     try{
       await api(`/sample-fabric/samples/${row.id}/material-board`,{method:"PATCH",body:JSON.stringify({boardId,priorityRank:rank})});
       await Promise.all([loadMaterialBoards(),onChanged()]);
@@ -1542,6 +1554,9 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
       const rank=item?.priorityRank??row.materialBoardItem?.priorityRank??null;
       const idx=materialBoards.findIndex(x=>x.id===boardId);
       const cover=sampleVisuals(row)[0];
+      const usedRanks=new Set<number>((board?.samples||[]).filter(x=>x.designSampleId!==row.id).map(x=>Number(x.priorityRank||0)).filter(n=>Number.isInteger(n)&&n>0));
+      const maxUsed=Math.max(0,...Array.from(usedRanks),Number(rank||0));
+      const rankOptions=Array.from({length:Math.max(20,(board?.samples?.length||0)+10,maxUsed+5)},(_,i)=>i+1);
       return <Modal title={`Sắp xếp chất liệu · ${row.code}`} onClose={()=>setMaterialManageSample(null)}>
         <div className="space-y-4 p-5">
           <div className="flex gap-3 rounded-2xl border bg-neutral-50 p-3">
@@ -1553,9 +1568,20 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
             <button type="button" disabled={idx<=0} onClick={async()=>{await moveMaterialRelative(row,-1);setMaterialManageSample(null)}} className="rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-30">← Bảng trước</button>
             <button type="button" disabled={idx<0||idx>=materialBoards.length-1} onClick={async()=>{await moveMaterialRelative(row,1);setMaterialManageSample(null)}} className="rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-30">Bảng sau →</button>
           </div>
-          <div className="flex items-center justify-between rounded-2xl border p-3">
-            <div><div className="text-sm font-semibold">STT trong bảng chất liệu</div><div className="text-xs text-neutral-400">Hiển thị bằng vòng tròn vàng cam trên ảnh.</div></div>
-            {boardId?<button type="button" onClick={async()=>{await setMaterialPriority(row,boardId,rank);setMaterialManageSample(null)}} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-black text-white">{rank?`Số ${rank}`:"Chọn số"}</button>:<span className="text-xs text-neutral-400">Chưa có bảng</span>}
+          <div className="rounded-2xl border p-3">
+            <div><div className="text-sm font-semibold">STT trong bảng chất liệu</div><div className="text-xs text-neutral-400">Chỉ cần chọn số. Số đã dùng trong bảng này sẽ bị khóa.</div></div>
+            {boardId?<select
+              className={`${inputClass} mt-3`}
+              value={rank??""}
+              onChange={async e=>{
+                const next=e.target.value?Number(e.target.value):null;
+                await setMaterialPriority(row,boardId,next);
+                setMaterialManageSample(null);
+              }}
+            >
+              <option value="">Không đặt STT</option>
+              {rankOptions.map(n=><option key={n} value={n} disabled={usedRanks.has(n)}>{n}{usedRanks.has(n)?" · Đã dùng":""}</option>)}
+            </select>:<div className="mt-2 text-xs text-neutral-400">Chưa có bảng chất liệu</div>}
           </div>
           {cover&&<button type="button" onClick={()=>{setMaterialManageSample(null);setViewer({sample:row,index:0})}} className="w-full rounded-xl border px-4 py-2.5 text-sm font-semibold">Xem ảnh mẫu</button>}
         </div>
