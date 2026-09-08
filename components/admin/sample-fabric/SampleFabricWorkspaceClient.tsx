@@ -1587,7 +1587,6 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                 <button type="button" onClick={()=>setViewer({sample:row,index:0})} className="block w-full pr-12 text-left">
                   <div className="flex w-full gap-2">
                     <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
-                      {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded-md bg-neutral-950 px-1.5 py-0.5 text-[8px] font-bold text-white">#{samplePriorityRank(row)}</span>}
                       {columnPriorityRank(row)&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow-md">{columnPriorityRank(row)}</span>}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -1605,14 +1604,14 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                     type="button"
                     title="STT tổng của tab"
                     onClick={()=>setPriorityPickerSample(row)}
-                    className={`grid h-7 w-7 place-items-center rounded-full border text-[10px] font-black ${samplePriorityRank(row)?"border-neutral-950 bg-neutral-950 text-white":"border-neutral-300 bg-white text-neutral-500"}`}
-                  >{samplePriorityRank(row)??"T"}</button>
+                    className={`rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${samplePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}
+                  >{samplePriorityRank(row)?`Ưu tiên #${samplePriorityRank(row)}`:"Ưu tiên"}</button>
                   {columnPriorityMode&&<button
                     type="button"
                     title="STT con trong cột"
                     onClick={()=>setColumnPriorityPickerSample(row)}
-                    className={`grid h-7 w-7 place-items-center rounded-full border text-[10px] font-black ${columnPriorityRank(row)?"border-orange-600 bg-orange-600 text-white":"border-orange-300 bg-orange-50 text-orange-700"}`}
-                  >{columnPriorityRank(row)??"C"}</button>}
+                    className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-semibold text-neutral-600"
+                  >{columnPriorityRank(row)?`Cột #${columnPriorityRank(row)}`:"Cột"}</button>}
                 </div>}
               </div>
             })}
