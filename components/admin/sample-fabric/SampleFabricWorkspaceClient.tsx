@@ -964,6 +964,9 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
   const [groupByCategory,setGroupByCategory]=useState(()=>readSessionState("the1970.design-samples.web.groupByCategory",true));
   const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST"|"SECTIONS">(()=>readSessionState("the1970.design-samples.web.viewMode","CARDS"));
   const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">(()=>readSessionState("the1970.design-samples.web.sectionMode","MATERIAL"));
+  const sectionScrollRef=useRef<HTMLDivElement|null>(null);
+  const sectionTopScrollRef=useRef<HTMLDivElement|null>(null);
+  const [sectionScrollWidth,setSectionScrollWidth]=useState(0);
   const [yearFilter,setYearFilter]=useState<string>(()=>readSessionState("the1970.design-samples.web.yearFilter",""));
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
@@ -976,6 +979,7 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
   const [featuredId,setFeaturedId]=useState<string>("");
   const [viewer,setViewer]=useState<{sample:Sample;index:number}|null>(null);
   const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
+  const [columnPriorityPickerSample,setColumnPriorityPickerSample]=useState<Sample|null>(null);
   const [ideaBoards,setIdeaBoards]=useState<IdeaBoard[]>([]);
   const [boardFilter,setBoardFilter]=useState(()=>readSessionState("the1970.design-samples.web.boardFilter",""));
   const [boardForm,setBoardForm]=useState<{id?:string;name:string;description:string}|null>(null);
@@ -1168,6 +1172,15 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
     }).map(([name,items],index)=>({id:`derived-${index}`,name,description:"",sortOrder:index,rows:items,items:items.map(row=>({row,priorityRank:null,sortOrder:0}))}));
   },[visible,sectionMode,materialBoards,factories]);
 
+  useEffect(()=>{
+    if(viewMode!=="SECTIONS")return;
+    const syncWidth=()=>setSectionScrollWidth(sectionScrollRef.current?.scrollWidth||0);
+    const raf=requestAnimationFrame(syncWidth);
+    window.addEventListener("resize",syncWidth);
+    return ()=>{cancelAnimationFrame(raf);window.removeEventListener("resize",syncWidth)};
+  },[viewMode,sectionMode,sectionGroups.length,visible.length]);
+
+
   async function saveMaterialBoard(){
     if(!materialBoardForm?.name.trim())return;
     try{
@@ -1261,35 +1274,96 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
   }
 
   const factoryPriorityMode=viewMode==="SECTIONS"&&sectionMode==="FACTORY";
-  function activePriorityRank(row:Sample){return factoryPriorityMode?sampleFactoryPriorityRank(row):samplePriorityRank(row)}
+  const materialPriorityMode=viewMode==="SECTIONS"&&sectionMode==="MATERIAL";
+  const columnPriorityMode=factoryPriorityMode||materialPriorityMode;
 
-  async function setSamplePriority(row:Sample,rank:number|null){
+  function columnPriorityRank(row:Sample){
+    if(factoryPriorityMode)return sampleFactoryPriorityRank(row);
+    if(materialPriorityMode){
+      const n=Number(row.materialBoardItem?.priorityRank||0);
+      return Number.isInteger(n)&&n>0?n:null;
+    }
+    return null;
+  }
+
+  async function setGlobalPriority(row:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
     try{
       await api(`/sample-fabric/samples/${row.id}`,{
         method:"PATCH",
-        body:JSON.stringify(factoryPriorityMode?{factoryPriorityRank:rank}:{priorityRank:rank,priorityLane:tab}),
+        body:JSON.stringify({priorityRank:rank,priorityLane:tab}),
       });
       setPriorityPickerSample(null);
       await onChanged();
     }catch(e){
-      window.alert(e instanceof Error?e.message:"Không cập nhật được ưu tiên mẫu.");
+      window.alert(e instanceof Error?e.message:"Không cập nhật được STT toàn bộ.");
     }
   }
 
-  function usedPriorityRanks(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=tab){
+  async function setColumnPriority(row:Sample,rank:number|null){
+    if(!can("design_sample.edit"))return;
+    try{
+      if(factoryPriorityMode){
+        await api(`/sample-fabric/samples/${row.id}`,{
+          method:"PATCH",
+          body:JSON.stringify({factoryPriorityRank:rank}),
+        });
+      }else if(materialPriorityMode){
+        const boardId=row.materialBoardItem?.boardId||"";
+        if(!boardId)throw new Error("Mẫu chưa nằm trong bảng chất liệu.");
+        await api(`/sample-fabric/samples/${row.id}/material-board`,{
+          method:"PATCH",
+          body:JSON.stringify({boardId,priorityRank:rank}),
+        });
+        await loadMaterialBoards();
+      }else{
+        return;
+      }
+      setColumnPriorityPickerSample(null);
+      await onChanged();
+    }catch(e){
+      window.alert(e instanceof Error?e.message:"Không cập nhật được STT trong cột.");
+    }
+  }
+
+  function usedGlobalPriorityRanks(exceptId?:string,lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=tab){
+    return new Set(
+      rows.filter(x=>x.id!==exceptId&&samplePriorityLane(x)===lane)
+        .map(samplePriorityRank).filter(Boolean) as number[]
+    );
+  }
+
+  function usedColumnPriorityRanks(exceptId?:string){
     if(factoryPriorityMode){
-      const factoryId=priorityPickerSample?.sampleFactoryId||"";
-      return new Set(rows.filter(x=>x.id!==exceptId&&String(x.sampleFactoryId||"")===String(factoryId)).map(sampleFactoryPriorityRank).filter(Boolean) as number[]);
+      const factoryId=columnPriorityPickerSample?.sampleFactoryId||"";
+      return new Set(
+        rows.filter(x=>x.id!==exceptId&&String(x.sampleFactoryId||"")===String(factoryId))
+          .map(sampleFactoryPriorityRank).filter(Boolean) as number[]
+      );
     }
-    return new Set(rows.filter(x=>x.id!==exceptId&&samplePriorityLane(x)===lane).map(samplePriorityRank).filter(Boolean) as number[]);
+    if(materialPriorityMode){
+      const boardId=columnPriorityPickerSample?.materialBoardItem?.boardId||"";
+      const board=materialBoards.find(x=>x.id===boardId);
+      return new Set(
+        (board?.samples||[])
+          .filter(x=>x.designSampleId!==exceptId)
+          .map(x=>Number(x.priorityRank||0))
+          .filter(n=>Number.isInteger(n)&&n>0)
+      );
+    }
+    return new Set<number>();
   }
 
-  function priorityOptions(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=tab){
-    const used=usedPriorityRanks(exceptId,lane);
+  function globalPriorityOptions(exceptId?:string,lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=tab){
+    const used=usedGlobalPriorityRanks(exceptId,lane);
     const currentMax=Math.max(0,...Array.from(used));
-    const maxToShow=Math.max(currentMax+1,10);
-    return Array.from({length:maxToShow},(_,i)=>i+1);
+    return Array.from({length:Math.max(currentMax+1,10)},(_,i)=>i+1);
+  }
+
+  function columnPriorityOptions(exceptId?:string){
+    const used=usedColumnPriorityRanks(exceptId);
+    const currentMax=Math.max(0,...Array.from(used));
+    return Array.from({length:Math.max(currentMax+1,10)},(_,i)=>i+1);
   }
 
   async function moveSample(row:Sample,target:"IDEA"|"DEPLOY"){
@@ -1443,7 +1517,7 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
           <div className="flex h-9 rounded-xl border bg-white/90 p-1">
             <button type="button" onClick={()=>setViewMode("CARDS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="CARDS"?"bg-neutral-950 text-white":""}`}>Danh sách</button>
             <button type="button" onClick={()=>setViewMode("PINTEREST")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="PINTEREST"?"bg-neutral-950 text-white":""}`}>Pinterest</button>
-            <button type="button" onClick={()=>setViewMode("SECTIONS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="SECTIONS"?"bg-neutral-950 text-white":""}`}>Theo mục</button>
+            <button type="button" onClick={()=>setViewMode("SECTIONS")} className={`rounded-lg px-3 text-[11px] font-semibold ${viewMode==="SECTIONS"?"bg-neutral-950 text-white":""}`}>Theo cột</button>
           </div>
         </div>
         <div className="w-full border-t border-black/10 pt-2 text-[11px] text-neutral-500 sm:w-auto sm:border-0 sm:pt-0">Hiển thị <b>{visible.length}</b> mẫu{yearFilter?` · năm ${yearFilter}`:""}{tab==="IDEA"&&boardFilter?` · ${boardFilter==="__UNASSIGNED__"?"Chưa phân bảng":ideaBoards.find(x=>x.id===boardFilter)?.name||"bảng đã chọn"}`:""}</div>
@@ -1479,7 +1553,21 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
         </button>
         <div className="flex gap-1 border-t p-2">{image&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold">Xem mẫu</button>}{can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(row)} className="rounded-lg border px-2 py-1.5 text-[11px] font-semibold">+ Bảng</button>}</div>
       </div>})}</div>
-    </div>:<div className="overflow-x-auto pb-3">
+    </div>:<div>
+      <div
+        ref={sectionTopScrollRef}
+        onScroll={e=>{if(sectionScrollRef.current)sectionScrollRef.current.scrollLeft=e.currentTarget.scrollLeft}}
+        className="mb-1 overflow-x-scroll"
+        style={{scrollbarGutter:"stable"}}
+      >
+        <div style={{width:Math.max(sectionScrollWidth,1),height:1}}/>
+      </div>
+      <div
+        ref={sectionScrollRef}
+        onScroll={e=>{if(sectionTopScrollRef.current)sectionTopScrollRef.current.scrollLeft=e.currentTarget.scrollLeft}}
+        className="overflow-x-scroll pb-3"
+        style={{scrollbarGutter:"stable"}}
+      >
       <div className="flex min-w-max items-start gap-3">
         {sectionGroups.map(group=><section key={group.id||group.name} className="w-[290px] shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-white/92 shadow-sm backdrop-blur-sm">
           <div className="border-b bg-white/95 px-3 py-2.5 backdrop-blur">
@@ -1500,7 +1588,7 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                   <div className="flex w-full gap-2">
                     <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">{cover?<img src={assetUrl(cover)} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
                       {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded-md bg-neutral-950 px-1.5 py-0.5 text-[8px] font-bold text-white">#{samplePriorityRank(row)}</span>}
-                      {priorityRank&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow-md">{priorityRank}</span>}
+                      {columnPriorityRank(row)&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow-md">{columnPriorityRank(row)}</span>}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[10px] font-semibold text-neutral-400">{row.code} · {row.year}</div>
@@ -1511,15 +1599,27 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                   </div>
                 </button>
                 {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(row)} className="absolute right-2 top-2 rounded-md border bg-white px-1.5 py-0.5 text-[9px] font-semibold text-neutral-700 shadow-sm">Sửa</button>}
-                {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1">
+                {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1.5">
                   {sectionMode==="MATERIAL"&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-semibold text-neutral-600">Bảng</button>}
-                  <button type="button" onClick={()=>setPriorityPickerSample(row)} className={`rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${activePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}>{activePriorityRank(row)?`STT #${activePriorityRank(row)}`:"STT"}</button>
+                  <button
+                    type="button"
+                    title="STT tổng của tab"
+                    onClick={()=>setPriorityPickerSample(row)}
+                    className={`grid h-7 w-7 place-items-center rounded-full border text-[10px] font-black ${samplePriorityRank(row)?"border-neutral-950 bg-neutral-950 text-white":"border-neutral-300 bg-white text-neutral-500"}`}
+                  >{samplePriorityRank(row)??"T"}</button>
+                  {columnPriorityMode&&<button
+                    type="button"
+                    title="STT con trong cột"
+                    onClick={()=>setColumnPriorityPickerSample(row)}
+                    className={`grid h-7 w-7 place-items-center rounded-full border text-[10px] font-black ${columnPriorityRank(row)?"border-orange-600 bg-orange-600 text-white":"border-orange-300 bg-orange-50 text-orange-700"}`}
+                  >{columnPriorityRank(row)??"C"}</button>}
                 </div>}
               </div>
             })}
           </div>
         </section>)}
         {!sectionGroups.length&&<div className="rounded-2xl border bg-white/90 p-8 text-sm text-neutral-400">Không có mẫu phù hợp bộ lọc.</div>}
+      </div>
       </div>
     </div>}
     {!visible.length&&<Card className="p-12 text-center text-sm text-neutral-500">Chưa có mẫu phù hợp với bộ lọc.</Card>}
@@ -1533,17 +1633,17 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
       </div>
     </Modal>}
 
-    {priorityPickerSample&&<Modal title={`Chọn số thứ tự · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
+    {priorityPickerSample&&<Modal title={`STT tổng · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
       <div className="space-y-4 p-5">
-        <div className="text-sm text-neutral-500">STT được xếp riêng cho Ý tưởng và Triển khai. Số đã dùng trong tab hiện tại sẽ bị khóa; tab kia không ảnh hưởng.</div>
+        <div className="text-sm text-neutral-500">STT tổng được xếp riêng cho từng tab. Ý tưởng có bộ STT riêng, Triển khai có bộ STT riêng. Số đã dùng trong tab hiện tại sẽ bị khóa.</div>
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
-          {priorityOptions(priorityPickerSample.id,tab).map(rank=>{
-            const used=usedPriorityRanks(priorityPickerSample.id,tab).has(rank);
-            const current=activePriorityRank(priorityPickerSample)===rank;
-            return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-4 text-base font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"cursor-not-allowed bg-neutral-100 text-neutral-300":"bg-white hover:border-neutral-950"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[9px] font-semibold">Đã dùng</span>:null}</button>;
+          {globalPriorityOptions(priorityPickerSample.id,tab).map(rank=>{
+            const used=usedGlobalPriorityRanks(priorityPickerSample.id,tab).has(rank);
+            const current=samplePriorityRank(priorityPickerSample)===rank;
+            return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setGlobalPriority(priorityPickerSample,rank)} className={`rounded-2xl border py-4 text-base font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"cursor-not-allowed bg-neutral-100 text-neutral-300":"bg-white hover:border-neutral-950"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[9px] font-semibold">Đã dùng</span>:null}</button>;
           })}
         </div>
-        {activePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700">Bỏ STT hiện tại</button>}
+        {samplePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setGlobalPriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700">Bỏ STT hiện tại</button>}
       </div>
     </Modal>}
     {assignSample&&<Modal title={`Bảng ý tưởng · ${assignSample.code}`} onClose={()=>setAssignSample(null)}>
@@ -1552,6 +1652,26 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
         {boardError&&<div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{boardError}</div>}
         <div className="max-h-72 space-y-2 overflow-y-auto">{ideaBoards.map(board=>{const checked=assignBoardIds.includes(board.id);return <label key={board.id} className="flex cursor-pointer items-start gap-3 rounded-2xl border p-3"><input type="checkbox" className="mt-0.5 h-4 w-4" checked={checked} onChange={()=>setAssignBoardIds(x=>checked?x.filter(id=>id!==board.id):[...x,board.id])}/><div><div className="font-semibold">{board.name}</div>{board.description&&<div className="mt-1 text-xs text-neutral-400">{board.description}</div>}</div></label>})}{!ideaBoards.length&&<div className="rounded-2xl bg-neutral-50 p-6 text-center text-sm text-neutral-400">Chưa có bảng. Tạo bảng trước rồi thêm mẫu.</div>}</div>
         <div className="flex items-center justify-between border-t pt-4"><button type="button" onClick={()=>{setAssignSample(null);setBoardForm({name:"",description:""})}} className="rounded-xl border px-3 py-2 text-sm font-semibold">+ Tạo bảng mới</button><div className="flex gap-2"><button type="button" onClick={()=>setAssignSample(null)} className="rounded-xl border px-4 py-2">Huỷ</button><button type="button" disabled={boardBusy} onClick={()=>void saveAssignment()} className="rounded-xl bg-neutral-950 px-4 py-2 font-semibold text-white disabled:opacity-40">Lưu</button></div></div>
+      </div>
+    </Modal>}
+
+    {columnPriorityPickerSample&&columnPriorityMode&&<Modal title={`STT con trong cột · ${columnPriorityPickerSample.code}`} onClose={()=>setColumnPriorityPickerSample(null)}>
+      <div className="space-y-4 p-4">
+        <div>
+          <div className="text-sm font-semibold">
+            {factoryPriorityMode?`Nhà may: ${columnPriorityPickerSample.sampleFactoryName||"Chưa chọn"}`:`Chất liệu: ${columnPriorityPickerSample.materialBoardItem?.board?.name||"Chưa chọn"}`}
+          </div>
+          <div className="mt-1 text-xs text-neutral-500">STT con chỉ tính trong đúng cột này. Cột khác vẫn có thể dùng lại #1, #2...</div>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          {columnPriorityOptions(columnPriorityPickerSample.id).map(rank=>{
+            const current=columnPriorityRank(columnPriorityPickerSample)===rank;
+            const used=usedColumnPriorityRanks(columnPriorityPickerSample.id);
+            const disabled=used.has(rank)&&!current;
+            return <button key={rank} type="button" disabled={disabled} onClick={()=>void setColumnPriority(columnPriorityPickerSample,rank)} className={`rounded-xl border py-2 text-sm font-semibold ${current?"bg-orange-600 text-white":disabled?"bg-neutral-100 text-neutral-300":"bg-white"}`}>{rank}</button>
+          })}
+        </div>
+        {columnPriorityRank(columnPriorityPickerSample)&&<button type="button" onClick={()=>void setColumnPriority(columnPriorityPickerSample,null)} className="w-full rounded-xl border py-2 text-sm font-semibold">Bỏ STT trong cột</button>}
       </div>
     </Modal>}
 

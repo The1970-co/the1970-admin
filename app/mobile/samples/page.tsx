@@ -391,6 +391,7 @@ export default function Page(){
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST"|"SECTIONS">(()=>readSessionState("the1970.design-samples.mobile.viewMode","LIST"));
   const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">(()=>readSessionState("the1970.design-samples.mobile.sectionMode","MATERIAL"));
+  const sectionScrollRef=useRef<HTMLDivElement|null>(null);
   const [yearFilter,setYearFilter]=useState(()=>readSessionState("the1970.design-samples.mobile.yearFilter",""));
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
@@ -407,6 +408,7 @@ export default function Page(){
   const [boardBusy,setBoardBusy]=useState(false);
   const [boardHubOpen,setBoardHubOpen]=useState(false);
   const [priorityPickerSample,setPriorityPickerSample]=useState<Sample|null>(null);
+  const [columnPriorityPickerSample,setColumnPriorityPickerSample]=useState<Sample|null>(null);
   const [materialManage,setMaterialManage]=useState<{row:Sample;priorityRank:number|null}|null>(null);
 
   const permissions=useMemo(()=>getCurrentUserPermissions(user,user?.activeBranchId||user?.branchId),[user]);
@@ -670,34 +672,80 @@ export default function Page(){
   },[filtered,sectionMode,materialBoards,meta.factories]);
 
   const factoryPriorityMode=viewMode==="SECTIONS"&&sectionMode==="FACTORY";
-  function activePriorityRank(row:Sample){return factoryPriorityMode?sampleFactoryPriorityRank(row):samplePriorityRank(row)}
+  const materialPriorityMode=viewMode==="SECTIONS"&&sectionMode==="MATERIAL";
+  const columnPriorityMode=factoryPriorityMode||materialPriorityMode;
 
-  async function setSamplePriority(sample:Sample,rank:number|null){
+  function columnPriorityRank(row:Sample){
+    if(factoryPriorityMode)return sampleFactoryPriorityRank(row);
+    if(materialPriorityMode){
+      const n=Number(row.materialBoardItem?.priorityRank||0);
+      return Number.isInteger(n)&&n>0?n:null;
+    }
+    return null;
+  }
+
+  async function setGlobalPriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
     try{
       setError("");
       await api(`/sample-fabric/samples/${sample.id}`,{
         method:"PATCH",
-        body:JSON.stringify(factoryPriorityMode?{factoryPriorityRank:rank}:{priorityRank:rank,priorityLane:sampleTab}),
+        body:JSON.stringify({priorityRank:rank,priorityLane:sampleTab}),
       });
       setPriorityPickerSample(null);
       await load();
-    }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được ưu tiên mẫu.")}
+    }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được STT toàn bộ.")}
   }
 
-  function usedPriorityRanks(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
-    if(factoryPriorityMode){
-      const factoryId=priorityPickerSample?.sampleFactoryId||"";
-      return new Set(rows.filter(x=>x.id!==exceptId&&String(x.sampleFactoryId||"")===String(factoryId)).map(sampleFactoryPriorityRank).filter(Boolean) as number[]);
-    }
+  async function setColumnPriority(sample:Sample,rank:number|null){
+    if(!can("design_sample.edit"))return;
+    try{
+      setError("");
+      if(factoryPriorityMode){
+        await api(`/sample-fabric/samples/${sample.id}`,{
+          method:"PATCH",
+          body:JSON.stringify({factoryPriorityRank:rank}),
+        });
+      }else if(materialPriorityMode){
+        const boardId=sample.materialBoardItem?.boardId||"";
+        if(!boardId)throw new Error("Mẫu chưa nằm trong bảng chất liệu.");
+        await api(`/sample-fabric/samples/${sample.id}/material-board`,{
+          method:"PATCH",
+          body:JSON.stringify({boardId,priorityRank:rank}),
+        });
+      }else return;
+      setColumnPriorityPickerSample(null);
+      await load();
+    }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được STT trong cột.")}
+  }
+
+  function usedGlobalPriorityRanks(exceptId?:string,lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
     return new Set(rows.filter(x=>x.id!==exceptId&&samplePriorityLane(x)===lane).map(samplePriorityRank).filter(Boolean) as number[]);
   }
 
-  function priorityOptions(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
-    const used=usedPriorityRanks(exceptId,lane);
+  function usedColumnPriorityRanks(exceptId?:string){
+    if(factoryPriorityMode){
+      const factoryId=columnPriorityPickerSample?.sampleFactoryId||"";
+      return new Set(rows.filter(x=>x.id!==exceptId&&String(x.sampleFactoryId||"")===String(factoryId)).map(sampleFactoryPriorityRank).filter(Boolean) as number[]);
+    }
+    if(materialPriorityMode){
+      const boardId=columnPriorityPickerSample?.materialBoardItem?.boardId||"";
+      const board=materialBoards.find(x=>x.id===boardId);
+      return new Set((board?.samples||[]).filter(x=>x.designSampleId!==exceptId).map(x=>Number(x.priorityRank||0)).filter(n=>Number.isInteger(n)&&n>0));
+    }
+    return new Set<number>();
+  }
+
+  function globalPriorityOptions(exceptId?:string,lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
+    const used=usedGlobalPriorityRanks(exceptId,lane);
     const currentMax=Math.max(0,...Array.from(used));
-    const maxToShow=Math.max(currentMax+1,10);
-    return Array.from({length:maxToShow},(_,i)=>i+1);
+    return Array.from({length:Math.max(currentMax+1,10)},(_,i)=>i+1);
+  }
+
+  function columnPriorityOptions(exceptId?:string){
+    const used=usedColumnPriorityRanks(exceptId);
+    const currentMax=Math.max(0,...Array.from(used));
+    return Array.from({length:Math.max(currentMax+1,10)},(_,i)=>i+1);
   }
 
   async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
@@ -851,7 +899,8 @@ export default function Page(){
             </div>
           })}
         </div>}
-        {!loading&&viewMode==="SECTIONS"&&<div className="-mx-2 overflow-x-auto px-2 pb-2">
+        {!loading&&viewMode==="SECTIONS"&&<div className="relative">
+          <div ref={sectionScrollRef} className="-mx-2 overflow-x-scroll px-2 pb-3" style={{WebkitOverflowScrolling:"touch",scrollbarGutter:"stable"}}>
           <div className="flex min-w-max items-start gap-2.5">
             {sectionGroups.map((group:any)=><section key={group.id||group.name} className="w-[258px] shrink-0 overflow-hidden rounded-[24px] border border-neutral-200 bg-white/95 shadow-sm backdrop-blur">
               <div className="border-b px-3 py-2.5">
@@ -871,7 +920,7 @@ export default function Page(){
                       <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
                         {image?<img src={image} className="h-full w-full object-cover" alt=""/>:<div className="grid h-full place-items-center text-neutral-300">✦</div>}
                         {samplePriorityRank(row)&&<span className="absolute left-1 top-1 rounded bg-black px-1.5 py-0.5 text-[8px] font-black text-white">#{samplePriorityRank(row)}</span>}
-                        {priorityRank&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow">{priorityRank}</span>}
+                        {columnPriorityRank(row)&&<span className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-orange-600 text-[12px] font-black text-white shadow">{columnPriorityRank(row)}</span>}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[9px] font-black text-neutral-400">{row.code} · {row.year}</div>
@@ -886,7 +935,7 @@ export default function Page(){
                       onClick={()=>{setEditingLane((samplePriorityLane(row) as any)||"IDEA");setEditing(row)}}
                       className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border bg-white text-[12px] font-black shadow-sm"
                     >•••</button>}
-                    {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1">
+                    {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1.5">
                       {sectionMode==="MATERIAL"&&<button
                         type="button"
                         onClick={()=>setMaterialManage({row,priorityRank})}
@@ -894,15 +943,24 @@ export default function Page(){
                       >Bảng</button>}
                       <button
                         type="button"
+                        aria-label="STT tổng"
                         onClick={()=>setPriorityPickerSample(row)}
-                        className={`rounded-lg px-2 py-1 text-[9px] font-black ${samplePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}
-                      >{samplePriorityRank(row)?`STT #${samplePriorityRank(row)}`:"STT"}</button>
+                        className={`grid h-8 w-8 place-items-center rounded-full border text-[11px] font-black ${samplePriorityRank(row)?"border-neutral-950 bg-neutral-950 text-white":"border-neutral-300 bg-white text-neutral-500"}`}
+                      >{samplePriorityRank(row)??"T"}</button>
+                      {columnPriorityMode&&<button
+                        type="button"
+                        aria-label="STT con trong cột"
+                        onClick={()=>setColumnPriorityPickerSample(row)}
+                        className={`grid h-8 w-8 place-items-center rounded-full border text-[11px] font-black ${columnPriorityRank(row)?"border-orange-600 bg-orange-600 text-white":"border-orange-300 bg-orange-50 text-orange-700"}`}
+                      >{columnPriorityRank(row)??"C"}</button>}
                     </div>}
                   </div>
                 })}
               </div>
             </section>)}
           </div>
+          </div>
+          <button type="button" aria-label="Kéo sang phải" onClick={()=>sectionScrollRef.current?.scrollBy({left:Math.max(220,(sectionScrollRef.current?.clientWidth||320)*0.8),behavior:"smooth"})} className="absolute right-1 top-1/2 z-20 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border bg-white/95 text-lg font-black shadow">→</button>
         </div>}
 
         {!loading&&!filtered.length&&<div className="rounded-3xl bg-white p-10 text-center text-sm font-bold text-neutral-400">Chưa có mẫu phù hợp.</div>}
@@ -976,15 +1034,15 @@ export default function Page(){
     
     {priorityPickerSample&&<Modal title={`Chọn STT · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
       <div className="space-y-4 p-4">
-        <div className="text-xs leading-5 text-neutral-500">{factoryPriorityMode?`STT riêng trong nhà may ${priorityPickerSample.sampleFactoryName||"đang chọn"}. Mỗi nhà may có #1, #2... riêng.`:"STT được xếp riêng cho Ý tưởng, Triển khai và Vải mẫu. Số đã dùng trong tab hiện tại sẽ bị khóa; các tab khác không ảnh hưởng."}</div>
+        <div className="text-xs leading-5 text-neutral-500">STT tổng dùng để xếp thứ tự toàn bộ trong tab hiện tại. Ý tưởng có bộ STT riêng, Triển khai có bộ STT riêng. Một số chỉ được dùng cho một mẫu trong cùng tab.</div>
         <div className="grid grid-cols-4 gap-2">
-          {priorityOptions(priorityPickerSample.id,sampleTab).map(rank=>{
-            const used=usedPriorityRanks(priorityPickerSample.id,sampleTab).has(rank);
-            const current=activePriorityRank(priorityPickerSample)===rank;
-            return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-3 text-sm font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"bg-neutral-100 text-neutral-300":"bg-white"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[8px]">Đã dùng</span>:null}</button>;
+          {globalPriorityOptions(priorityPickerSample.id,sampleTab).map(rank=>{
+            const used=usedGlobalPriorityRanks(priorityPickerSample.id,sampleTab).has(rank);
+            const current=samplePriorityRank(priorityPickerSample)===rank;
+            return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setGlobalPriority(priorityPickerSample,rank)} className={`rounded-2xl border py-3 text-sm font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"bg-neutral-100 text-neutral-300":"bg-white"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[8px]">Đã dùng</span>:null}</button>;
           })}
         </div>
-        {activePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 py-2.5 text-sm font-bold text-red-700">Bỏ STT hiện tại</button>}
+        {samplePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setGlobalPriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 py-2.5 text-sm font-bold text-red-700">Bỏ STT hiện tại</button>}
       </div>
     </Modal>}
 
@@ -1003,7 +1061,7 @@ export default function Page(){
             </button>
             <button type="button" onClick={()=>{setViewMode("SECTIONS");setFiltersOpen(true);setBoardHubOpen(false)}} className={`rounded-2xl border p-2.5 text-left ${viewMode==="SECTIONS"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
               <div className="flex h-8 gap-1 pt-1"><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/></div>
-              <div className="mt-2 text-xs font-black">Theo mục</div>
+              <div className="mt-2 text-xs font-black">Theo cột</div>
             </button>
           </div>
           <div className="mt-3 rounded-2xl bg-neutral-50 p-3">
@@ -1051,6 +1109,24 @@ export default function Page(){
             })}
           </div>
         </div>}
+      </div>
+    </Modal>}
+
+    {columnPriorityPickerSample&&columnPriorityMode&&<Modal title={`STT con trong cột · ${columnPriorityPickerSample.code}`} onClose={()=>setColumnPriorityPickerSample(null)}>
+      <div className="space-y-4 p-4">
+        <div>
+          <div className="text-sm font-black">{factoryPriorityMode?`Nhà may: ${columnPriorityPickerSample.sampleFactoryName||"Chưa chọn"}`:`Chất liệu: ${columnPriorityPickerSample.materialBoardItem?.board?.name||"Chưa chọn"}`}</div>
+          <div className="mt-1 text-xs leading-5 text-neutral-500">STT con chỉ tính trong đúng cột này. Cột khác vẫn có thể dùng lại #1, #2...</div>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          {columnPriorityOptions(columnPriorityPickerSample.id).map(rank=>{
+            const current=columnPriorityRank(columnPriorityPickerSample)===rank;
+            const used=usedColumnPriorityRanks(columnPriorityPickerSample.id);
+            const disabled=used.has(rank)&&!current;
+            return <button key={rank} type="button" disabled={disabled} onClick={()=>void setColumnPriority(columnPriorityPickerSample,rank)} className={`rounded-2xl border py-3 text-sm font-black ${current?"bg-orange-600 text-white":disabled?"bg-neutral-100 text-neutral-300":"bg-white"}`}>{rank}</button>
+          })}
+        </div>
+        {columnPriorityRank(columnPriorityPickerSample)&&<button type="button" onClick={()=>void setColumnPriority(columnPriorityPickerSample,null)} className="w-full rounded-2xl border py-3 text-sm font-black">Bỏ STT trong cột</button>}
       </div>
     </Modal>}
 
