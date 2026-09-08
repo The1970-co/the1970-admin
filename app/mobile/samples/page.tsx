@@ -880,11 +880,18 @@ export default function Page(){
                       onClick={()=>{setEditingLane((samplePriorityLane(row) as any)||"IDEA");setEditing(row)}}
                       className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border bg-white text-[12px] font-black shadow-sm"
                     >•••</button>}
-                    {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button
-                      type="button"
-                      onClick={()=>setMaterialManage({row,priorityRank})}
-                      className="absolute bottom-2 right-2 rounded-lg bg-neutral-100 px-2 py-1 text-[9px] font-black text-neutral-600"
-                    >STT</button>}
+                    {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1">
+                      {sectionMode==="MATERIAL"&&<button
+                        type="button"
+                        onClick={()=>setMaterialManage({row,priorityRank})}
+                        className="rounded-lg bg-neutral-100 px-2 py-1 text-[9px] font-black text-neutral-600"
+                      >Bảng</button>}
+                      <button
+                        type="button"
+                        onClick={()=>setPriorityPickerSample(row)}
+                        className={`rounded-lg px-2 py-1 text-[9px] font-black ${samplePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}
+                      >{samplePriorityRank(row)?`STT #${samplePriorityRank(row)}`:"STT"}</button>
+                    </div>}
                   </div>
                 })}
               </div>

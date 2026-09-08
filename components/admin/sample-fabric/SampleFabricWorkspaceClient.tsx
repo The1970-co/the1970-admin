@@ -1505,7 +1505,10 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                   </div>
                 </button>
                 {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(row)} className="absolute right-2 top-2 rounded-md border bg-white px-1.5 py-0.5 text-[9px] font-semibold text-neutral-700 shadow-sm">Sửa</button>}
-                {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="absolute bottom-2 right-2 rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-semibold text-neutral-600">STT</button>}
+                {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1">
+                  {sectionMode==="MATERIAL"&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-semibold text-neutral-600">Bảng</button>}
+                  <button type="button" onClick={()=>setPriorityPickerSample(row)} className={`rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${samplePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}>{samplePriorityRank(row)?`STT #${samplePriorityRank(row)}`:"STT"}</button>
+                </div>}
               </div>
             })}
           </div>
