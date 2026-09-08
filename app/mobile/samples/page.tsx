@@ -245,6 +245,8 @@ function asset(url?:string|null){
 function normalizeCode(v:any){return String(v||"").trim().toUpperCase().replace(/\s+/g,"")}
 function num(v:any){const n=Number(String(v??"").trim().replace(/\s/g,"").replace(",","."));return Number.isFinite(n)?n:0}
 function fmt(v:any,digits=2){return new Intl.NumberFormat("vi-VN",{maximumFractionDigits:digits}).format(num(v))}
+function fabricSampleColorCount(row:any){return Array.isArray(row?.fabricSampleColors)?row.fabricSampleColors.filter((x:any)=>x?.isActive!==false).length:0}
+function fabricSampleTotalMeters(row:any){return Array.isArray(row?.fabricSampleColors)?row.fabricSampleColors.filter((x:any)=>x?.isActive!==false).reduce((sum:number,x:any)=>sum+num(x?.receivedMeters),0):0}
 function normalizeColor(v:any){
   const raw=String(v||"").trim();
   if(!raw)return "";
@@ -376,7 +378,7 @@ export default function Page(){
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST"|"SECTIONS">("LIST");
-  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC">("MATERIAL");
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">("MATERIAL");
   const [yearFilter,setYearFilter]=useState("");
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
@@ -617,10 +619,39 @@ export default function Page(){
         return (a.sortOrder||0)-(b.sortOrder||0)||String(a.name).localeCompare(String(b.name),"vi",{numeric:true,sensitivity:"base"});
       });
     }
+    if(sectionMode==="FACTORY"){
+      const factoryById=new Map(meta.factories.map((f:any)=>[String(f.id),f]));
+      const groups=new Map<string,{id:string;name:string;rows:Sample[]}>();
+      filtered.forEach((row:any)=>{
+        const factory=row.sampleFactoryId?factoryById.get(String(row.sampleFactoryId)):null;
+        const name=String(factory?.name||row.sampleFactoryName||"Chưa chọn nhà may").trim()||"Chưa chọn nhà may";
+        const code=String(factory?.code||"").trim();
+        const id=factory?.id?String(factory.id):name==="Chưa chọn nhà may"?"__UNASSIGNED_FACTORY__":`factory-name-${name}`;
+        const label=code?`${code} · ${name}`:name;
+        const current=groups.get(id);
+        if(current)current.rows.push(row);
+        else groups.set(id,{id,name:label,rows:[row]});
+      });
+      return Array.from(groups.values())
+        .sort((a,b)=>{
+          const aEmpty=a.id==="__UNASSIGNED_FACTORY__"?1:0;
+          const bEmpty=b.id==="__UNASSIGNED_FACTORY__"?1:0;
+          if(aEmpty!==bEmpty)return aEmpty-bEmpty;
+          return a.name.localeCompare(b.name,"vi",{numeric:true,sensitivity:"base"});
+        })
+        .map((group,i)=>({
+          id:group.id,
+          name:group.name,
+          description:"",
+          sortOrder:i,
+          rows:group.rows,
+          items:group.rows.map((row:any)=>({row,priorityRank:null,sortOrder:0}))
+        }));
+    }
     const map=new Map<string,Sample[]>();
-    filtered.forEach((row:any)=>{const key=sampleSectionGroupMobile(row,sectionMode);map.set(key,[...(map.get(key)||[]),row])});
+    filtered.forEach((row:any)=>{const key=sampleSectionGroupMobile(row,sectionMode as "MATERIAL"|"CATEGORY"|"FABRIC");map.set(key,[...(map.get(key)||[]),row])});
     return Array.from(map.entries()).sort(([a],[b])=>a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"})).map(([name,items],i)=>({id:`derived-${i}`,name,description:"",sortOrder:i,rows:items,items:items.map((row:any)=>({row,priorityRank:null,sortOrder:0}))}));
-  },[filtered,sectionMode,materialBoards]);
+  },[filtered,sectionMode,materialBoards,meta.factories]);
 
   async function setSamplePriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
@@ -651,7 +682,7 @@ export default function Page(){
     return Array.from({length:maxToShow},(_,i)=>i+1);
   }
 
-  async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"){
+  async function moveSample(sample:Sample,target:"IDEA"|"DEPLOY"){
     if(!can("design_sample.edit"))return;
     try{
       setError("");
@@ -744,6 +775,7 @@ export default function Page(){
                 <div className="text-xs font-black text-neutral-400">{r.code} · {r.year}</div>
                 <div className="mt-1 text-base font-black">{r.name}</div>
                 <div className="mt-1 text-[11px] font-bold text-neutral-400">{sampleTab==="FABRIC_SAMPLE"?`Nhận ${fmtDate(r.fabricSampleReceivedAt)}`:`Tạo ${sampleCreatedLabelMobile(r.createdAt)}`}</div>
+                {sampleTab==="FABRIC_SAMPLE"&&<div className="mt-1 text-[11px] font-black text-orange-700">{fabricSampleColorCount(r)} màu · {fmt(fabricSampleTotalMeters(r),3)}m</div>}
                 <div className="mt-1 text-xs text-neutral-500">{sampleParentCategoryMobile(r.category)} · {r.category||"Chưa phân loại"}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge>{statusLabel(r.status)}</Badge>
@@ -762,7 +794,7 @@ export default function Page(){
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-3 py-2 text-xs font-black">Bảng ý tưởng</button>}
               {sampleTab==="IDEA"&&<button type="button" onClick={()=>void moveSample(r,"DEPLOY")} className="rounded-xl border px-3 py-2 text-xs font-black">Chuyển sang triển khai →</button>}
               {sampleTab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">← Đưa về ý tưởng</button>}
-              {sampleTab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-black">Chuyển sang ý tưởng →</button>}
+              
               </div>
             </div>}
           </div>
@@ -777,7 +809,8 @@ export default function Page(){
                 {image?<img src={image} className="block h-auto w-full object-contain" alt=""/>:<div className="grid h-36 place-items-center bg-neutral-100 text-2xl text-neutral-300">✦</div>}
                 <div className="p-2.5">
                   <div className="line-clamp-2 text-xs font-black">{r.name}</div>
-                  <div className="mt-1 text-[10px] font-bold text-neutral-400">{r.code} · {sampleCreatedLabelMobile(r.createdAt)}</div>
+                  <div className="mt-1 text-[10px] font-bold text-neutral-400">{r.code} · {sampleTab==="FABRIC_SAMPLE"?`Nhận ${fmtDate(r.fabricSampleReceivedAt)}`:sampleCreatedLabelMobile(r.createdAt)}</div>
+                  {sampleTab==="FABRIC_SAMPLE"&&<div className="mt-1 text-[10px] font-black text-orange-700">{fabricSampleColorCount(r)} màu · {fmt(fabricSampleTotalMeters(r),3)}m</div>}
                   <div className="mt-1 text-[10px] text-neutral-500">{r.category||"Chưa phân loại"}</div>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <Badge>{statusLabel(r.status)}</Badge>
@@ -794,7 +827,7 @@ export default function Page(){
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>openBoardAssign(r)} className="rounded-xl border px-2 py-2 text-[10px] font-black">+ Bảng</button>}
                 {sampleTab==="IDEA"&&<button type="button" onClick={()=>void moveSample(r,"DEPLOY")} className="rounded-xl border px-2 py-2 text-[10px] font-black">→ Triển khai</button>}
                 {sampleTab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="col-span-2 rounded-xl border px-2 py-2 text-[10px] font-black">← Ý tưởng</button>}
-                {sampleTab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(r,"IDEA")} className="col-span-2 rounded-xl border px-2 py-2 text-[10px] font-black">→ Ý tưởng</button>}
+                
                 </div>
               </div>}
             </div>
@@ -826,6 +859,7 @@ export default function Page(){
                         <div className="truncate text-[9px] font-black text-neutral-400">{row.code} · {row.year}</div>
                         <div className="mt-1 line-clamp-2 text-xs font-black">{row.name}</div>
                         <div className="mt-1 text-[9px] text-neutral-400">{statusLabel(row.status)}</div>
+                        {sectionMode==="FACTORY"&&<div className="mt-1 truncate text-[9px] font-bold text-neutral-500">{row.sampleFactoryName||"Chưa chọn nhà may"}</div>}
                       </div>
                     </button>
                     {sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button
@@ -861,6 +895,7 @@ export default function Page(){
         </select>
         {viewMode==="SECTIONS"&&<select className={input} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)} onBlur={resetIosZoom}>
           <option value="MATERIAL">Theo chất liệu</option>
+          <option value="FACTORY">Theo nhà may</option>
           <option value="CATEGORY">Theo loại sản phẩm</option>
           <option value="FABRIC">Theo bảng vải</option>
         </select>}
@@ -1793,6 +1828,7 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
     technicalNote:sample?.technicalNote||"",
     coverImageUrl:sample?.coverImageUrl||(sample?.images||[]).find((x:any)=>!isPatternAsset(x))?.url||"",
   });
+  const [fabricBoardSearch,setFabricBoardSearch]=useState("");
   type SampleImageDraft={
     id:string;
     type:string;
@@ -1863,6 +1899,12 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
   const [selectedFabricMeters,setSelectedFabricMeters]=useState<string>(currentFabricAllocation?String(currentFabricAllocation.meters):"");
   useEffect(()=>{setMeasurementTemplates(loadMeasurementTemplates());setMeasurement(loadSampleMeasurement(sample))},[sample?.id,sample?.code]);
   useEffect(()=>{if(lane==="FABRIC_SAMPLE")return;api<FabricSampleOption[]>("/sample-fabric/samples/fabric-sample-options").then(setFabricSampleOptions).catch(()=>setFabricSampleOptions([]))},[lane,sample?.id]);
+  const selectedFabricBoard=useMemo(()=>meta.boards.find(b=>b.id===form.fabricBoardId)||null,[meta.boards,form.fabricBoardId]);
+  const filteredFabricBoards=useMemo(()=>{
+    const key=fabricBoardSearch.trim().toLocaleLowerCase("vi-VN");
+    if(!key)return meta.boards;
+    return meta.boards.filter(b=>[b.boardCode,b.fabricCode,b.name].some(v=>String(v||"").toLocaleLowerCase("vi-VN").includes(key)));
+  },[meta.boards,fabricBoardSearch]);
 
   const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
 
@@ -2172,7 +2214,15 @@ function SampleForm({sample,initialLane,meta,ideaBoards,canViewFabricLink,canUpl
       </Field>}
 
       {canViewFabricLink&&<>
-        <Field l="Bảng vải"><select className={input} value={form.fabricBoardId} onChange={e=>patch("fabricBoardId",e.target.value)}><option value="">Chưa chọn bảng vải</option>{meta.boards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.name?` · ${b.name}`:""}</option>)}</select></Field>
+        <Field l="Bảng vải"><div className="space-y-2">
+          <input className={input} value={fabricBoardSearch} onChange={e=>setFabricBoardSearch(e.target.value)} placeholder="Tìm mã bảng, mã vải, tên vải..."/>
+          <select className={input} value={form.fabricBoardId} onChange={e=>{patch("fabricBoardId",e.target.value);setFabricBoardSearch("")}}>
+            <option value="">Chưa chọn bảng vải</option>
+            {selectedFabricBoard&&!filteredFabricBoards.some(b=>b.id===selectedFabricBoard.id)&&<option value={selectedFabricBoard.id}>{selectedFabricBoard.boardCode}{selectedFabricBoard.name?` · ${selectedFabricBoard.name}`:""}</option>}
+            {filteredFabricBoards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.fabricCode?` · ${b.fabricCode}`:""}{b.name?` · ${b.name}`:""}</option>)}
+          </select>
+          {fabricBoardSearch&&<div className="px-1 text-[10px] font-bold text-neutral-400">Tìm thấy {filteredFabricBoards.length} bảng vải</div>}
+        </div></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field l="Màu vải"><input className={input} value={form.fabricColorName} onChange={e=>patch("fabricColorName",e.target.value)} placeholder="VD: Trắng Kem"/></Field>
           <Field l="Mã màu"><input className={input} value={form.fabricColorCode} onChange={e=>patch("fabricColorCode",normalizeColor(e.target.value))} placeholder="#2"/></Field>

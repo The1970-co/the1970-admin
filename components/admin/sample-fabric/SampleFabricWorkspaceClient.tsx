@@ -262,7 +262,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 function assetUrl(url?: string | null) {
   if (!url) return "";
-  if (/^https?:\/\//i.test(url)) return url;
+  if (/^(https?:\/\/|data:|blob:)/i.test(url)) return url;
   return `${API_BASE.replace(/\/$/, "")}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 function num(v:any){const n=Number(String(v??"").trim().replace(/\s/g,"").replace(",","."));return Number.isFinite(n)?n:0}
@@ -585,7 +585,7 @@ export default function SampleFabricWorkspaceClient({ defaultSection }: { defaul
 
     {loading ? <Card className="p-10 text-center text-sm text-neutral-500">Đang tải dữ liệu...</Card> : defaultSection === "measurements" ? <MeasurementLibrary rows={measurementTemplates.filter(x=>(!q.trim()||[x.name,x.category,x.sourceFileName].some(v=>String(v||"").toLowerCase().includes(q.trim().toLowerCase())))&&(!measurementCategory||x.category===measurementCategory))} onEdit={setMeasurementEdit} onChanged={rows=>{setMeasurementTemplates(rows);saveMeasurementTemplates(rows)}}/> : defaultSection === "library" ?
       <LibraryView rows={boards} can={can} onEdit={x=>setBoardForm(x)} onDetail={async x=>{const full=await api<FabricBoard>(`/sample-fabric/library/${x.id}`);setBoardDetail(full)}} onChanged={reload}/> :
-      defaultSection === "samples" ? <SamplesView rows={filteredSamples} can={can} onCreate={lane=>{setEditingSample(null);setSampleFormLane(lane);setShowSampleForm(true)}} onEdit={x=>{setEditingSample(x);setSampleFormLane((samplePriorityLane(x) as any)||"IDEA");setShowSampleForm(true)}} onDispatch={x=>setDispatchSample(x)} onChanged={reload}/> :
+      defaultSection === "samples" ? <SamplesView rows={filteredSamples} factories={workspaceMeta.factories || []} can={can} onCreate={lane=>{setEditingSample(null);setSampleFormLane(lane);setShowSampleForm(true)}} onEdit={x=>{setEditingSample(x);setSampleFormLane((samplePriorityLane(x) as any)||"IDEA");setShowSampleForm(true)}} onDispatch={x=>setDispatchSample(x)} onChanged={reload}/> :
       <FabricView rows={filteredReceipts} can={can} onEdit={x=>{setEditingReceipt(x);setShowReceiptForm(true)}} onMeasure={setMeasureReceipt} onChanged={reload}/>}
 
     {showSupplierSettings && owner && <FabricSupplierSettings suppliers={workspaceMeta.suppliers || suppliers} onClose={()=>setShowSupplierSettings(false)} onChanged={async()=>{const rows=await api<Supplier[]>("/sample-fabric/fabric-suppliers");setSuppliers(rows);setWorkspaceMeta((m)=>({...m,suppliers:rows}));}} />}
@@ -944,14 +944,14 @@ function DispatchForm({board,sample,meta,onClose,onSaved}:{board:FabricBoard;sam
   </div><Field label="Ghi chú"><textarea className={`${inputClass} min-h-24`} value={form.note} onChange={e=>patch("note",e.target.value)}/></Field><div className="flex justify-end gap-2 border-t pt-4"><button onClick={onClose} className="rounded-xl border px-4 py-2">Đóng</button><button disabled={saving} onClick={save} className="rounded-xl bg-neutral-950 px-4 py-2 font-semibold text-white">{saving?"Đang lưu...":"Ghi nhận gửi mẫu"}</button></div></div></Modal>
 }
 
-function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { rows: Sample[]; can: (k:string)=>boolean; onCreate:(lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE")=>void; onEdit:(x:Sample)=>void; onDispatch:(x:Sample)=>void; onChanged:()=>Promise<void> }) {
+function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onChanged }: { rows: Sample[]; factories:Factory[]; can: (k:string)=>boolean; onCreate:(lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE")=>void; onEdit:(x:Sample)=>void; onDispatch:(x:Sample)=>void; onChanged:()=>Promise<void> }) {
   const [tab,setTab]=useState<"IDEA"|"DEPLOY"|"FABRIC_SAMPLE">("IDEA");
   const [parentFilter,setParentFilter]=useState("");
   const [subFilter,setSubFilter]=useState("");
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">("NEWEST");
   const [groupByCategory,setGroupByCategory]=useState(true);
   const [viewMode,setViewMode]=useState<"CARDS"|"PINTEREST"|"SECTIONS">("CARDS");
-  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC">("MATERIAL");
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">("MATERIAL");
   const [yearFilter,setYearFilter]=useState<string>("");
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
   const [backgroundBusy,setBackgroundBusy]=useState(false);
@@ -1107,9 +1107,37 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
         return a.name.localeCompare(b.name,"vi",{numeric:true,sensitivity:"base"});
       });
     }
+    if(sectionMode==="FACTORY"){
+      const factoryById=new Map(factories.map(f=>[String(f.id),f]));
+      const groups=new Map<string,{id:string;name:string;rows:Sample[]}>();
+      visible.forEach(row=>{
+        const factory=row.sampleFactoryId?factoryById.get(String(row.sampleFactoryId)):null;
+        const factoryName=String(factory?.name||row.sampleFactoryName||"Chưa chọn nhà may").trim()||"Chưa chọn nhà may";
+        const factoryCode=String(factory?.code||"").trim();
+        const id=factory?.id?String(factory.id):factoryName==="Chưa chọn nhà may"?"__UNASSIGNED_FACTORY__":`factory-name-${factoryName}`;
+        const label=factoryCode?`${factoryCode} · ${factoryName}`:factoryName;
+        const current=groups.get(id);
+        if(current)current.rows.push(row);
+        else groups.set(id,{id,name:label,rows:[row]});
+      });
+      return Array.from(groups.values())
+        .sort((a,b)=>{
+          const ae=a.id==="__UNASSIGNED_FACTORY__"?1:0, be=b.id==="__UNASSIGNED_FACTORY__"?1:0;
+          if(ae!==be)return ae-be;
+          return a.name.localeCompare(b.name,"vi",{numeric:true,sensitivity:"base"});
+        })
+        .map((group,index)=>({
+          id:group.id,
+          name:group.name,
+          description:"",
+          sortOrder:index,
+          rows:group.rows,
+          items:group.rows.map(row=>({row,priorityRank:null,sortOrder:0}))
+        }));
+    }
     const map=new Map<string,Sample[]>();
     visible.forEach(row=>{
-      const key=sampleSectionGroup(row,sectionMode);
+      const key=sampleSectionGroup(row,sectionMode as "MATERIAL"|"CATEGORY"|"FABRIC");
       map.set(key,[...(map.get(key)||[]),row]);
     });
     return Array.from(map.entries()).sort(([a],[b])=>{
@@ -1117,7 +1145,7 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
       if(b.startsWith("Chưa "))return -1;
       return a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"});
     }).map(([name,items],index)=>({id:`derived-${index}`,name,description:"",sortOrder:index,rows:items,items:items.map(row=>({row,priorityRank:null,sortOrder:0}))}));
-  },[visible,sectionMode,materialBoards]);
+  },[visible,sectionMode,materialBoards,factories]);
 
   async function saveMaterialBoard(){
     if(!materialBoardForm?.name.trim())return;
@@ -1246,7 +1274,7 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
     return Array.from({length:maxToShow},(_,i)=>i+1);
   }
 
-  async function moveSample(row:Sample,target:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"){
+  async function moveSample(row:Sample,target:"IDEA"|"DEPLOY"){
     if(!can("design_sample.edit"))return;
     try{
       const payload:any={priorityLane:target,priorityRank:null};
@@ -1308,8 +1336,8 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
             {sampleVisuals(row).length>0&&<button type="button" onClick={()=>setViewer({sample:row,index:0})} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Xem mẫu</button>}
             {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(row)} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold">Bảng ý tưởng</button>}
             {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>void moveSample(row,"DEPLOY")} className="rounded-xl border px-3 py-2 text-xs font-semibold">Chuyển sang triển khai →</button>}
-            {can("design_sample.edit")&&tab==="DEPLOY"&&<><button type="button" onClick={()=>void moveSample(row,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">← Đưa về ý tưởng</button><button type="button" onClick={()=>void moveSample(row,"FABRIC_SAMPLE")} className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700">→ Vải mẫu</button></>}
-            {can("design_sample.edit")&&tab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(row,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">Chuyển sang ý tưởng →</button>}
+            {can("design_sample.edit")&&tab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(row,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">← Đưa về ý tưởng</button>}
+            
             {can("sample_dispatch.create")&&row.fabricBoard&&tab==="DEPLOY"&&<button onClick={()=>onDispatch(row)} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">+ Gửi / gửi lại</button>}
             {can("design_sample.edit")&&<button onClick={()=>onEdit(row)} className="rounded-xl border border-neutral-300 px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
             {can("design_sample.delete")&&<button onClick={async()=>{if(!window.confirm(`Xoá mẫu ${row.code} · ${row.name}?`))return;try{await api(`/sample-fabric/samples/${row.id}`,{method:"DELETE"});await refreshBoardsAndSamples()}catch(e){window.alert(e instanceof Error?e.message:"Không xoá được mẫu.")}}} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Xoá</button>}
@@ -1383,7 +1411,7 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
         <select className={`${inputClass} !w-auto min-w-[160px] !rounded-xl !px-3 !py-2 text-xs`} value={parentFilter} onChange={e=>{setParentFilter(e.target.value);setSubFilter("")}}><option value="">Tất cả danh mục lớn</option>{parentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
         <select className={`${inputClass} !w-auto min-w-[180px] !rounded-xl !px-3 !py-2 text-xs`} value={subFilter} onChange={e=>setSubFilter(e.target.value)}><option value="">{parentFilter?`Tất cả loại ${parentFilter.toLowerCase()}`:"Tất cả loại mẫu"}</option>{subOptions.map(x=><option key={x} value={x}>{x}</option>)}</select>
         {viewMode==="CARDS"&&<label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border bg-white/90 px-3 text-[11px] font-semibold"><input type="checkbox" checked={groupByCategory} onChange={e=>setGroupByCategory(e.target.checked)}/> Nhóm theo loại</label>}
-        {viewMode==="SECTIONS"&&<select className={`${inputClass} !w-auto min-w-[165px] !rounded-xl !px-3 !py-2 text-xs`} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)}><option value="MATERIAL">Cột theo chất liệu</option><option value="CATEGORY">Cột theo loại SP</option><option value="FABRIC">Cột theo bảng vải</option></select>}
+        {viewMode==="SECTIONS"&&<select className={`${inputClass} !w-auto min-w-[165px] !rounded-xl !px-3 !py-2 text-xs`} value={sectionMode} onChange={e=>setSectionMode(e.target.value as any)}><option value="MATERIAL">Cột theo chất liệu</option><option value="FACTORY">Cột theo nhà may</option><option value="CATEGORY">Cột theo loại SP</option><option value="FABRIC">Cột theo bảng vải</option></select>}
         {viewMode==="SECTIONS"&&sectionMode==="MATERIAL"&&can("design_sample.edit")&&<button type="button" onClick={()=>setMaterialBoardForm({name:"",description:"",sortOrder:materialBoards.length?Math.max(...materialBoards.map(x=>Number(x.sortOrder||0)))+10:10})} className="h-9 rounded-xl bg-amber-300 px-3 text-[11px] font-black text-neutral-950">+ Bảng chất liệu</button>}
         <select className={`${inputClass} !w-auto min-w-[140px] !rounded-xl !px-3 !py-2 text-xs`} value={sortMode} onChange={e=>setSortMode(e.target.value as any)}><option value="NEWEST">Mới tạo trước</option><option value="AZ">Tên A → Z</option></select>
         <div className="ml-auto flex items-center gap-2">
@@ -1422,7 +1450,7 @@ function SamplesView({ rows, can, onCreate, onEdit, onDispatch, onChanged }: { r
             {featuredImages.length>0&&<button type="button" onClick={()=>setViewer({sample:featured,index:0})} className="rounded-xl border px-3 py-2 text-xs font-semibold">Xem đầy đủ ảnh</button>}
             {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>openAssign(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Bảng ý tưởng</button>}
             {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(featured)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Mở / sửa</button>}
-            {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>void moveSample(featured,"DEPLOY")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">Chuyển sang triển khai</button>}{can("design_sample.edit")&&tab==="DEPLOY"&&<><button type="button" onClick={()=>void moveSample(featured,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">Đưa về ý tưởng</button><button type="button" onClick={()=>void moveSample(featured,"FABRIC_SAMPLE")} className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700">→ Vải mẫu</button></>}{can("design_sample.edit")&&tab==="FABRIC_SAMPLE"&&<button type="button" onClick={()=>void moveSample(featured,"IDEA")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">Chuyển sang ý tưởng</button>}
+            {can("design_sample.edit")&&tab==="IDEA"&&<button type="button" onClick={()=>void moveSample(featured,"DEPLOY")} className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">Chuyển sang triển khai</button>}{can("design_sample.edit")&&tab==="DEPLOY"&&<button type="button" onClick={()=>void moveSample(featured,"IDEA")} className="rounded-xl border px-3 py-2 text-xs font-semibold">Đưa về ý tưởng</button>}
           </div>
         </div></>:<div className="p-12 text-center text-sm text-neutral-400">Chưa có mẫu.</div>}
       </Card>
@@ -1748,6 +1776,7 @@ function patternExt(name:string){const m=String(name||"").toLowerCase().match(/\
 function SampleForm({ sample, initialLane, measurementTemplates, boards, staff, seasons, productGroups, factories, samplePeople, canUpload, canViewFabricLink, onPeopleChanged, onClose, onSaved }: { sample: Sample | null; initialLane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"; measurementTemplates:MeasurementTemplate[]; boards: FabricBoard[]; staff: Staff[]; seasons: string[]; productGroups: string[]; factories: Factory[]; samplePeople:SamplePerson[]; canUpload: boolean; canViewFabricLink: boolean; onPeopleChanged:(rows:SamplePerson[])=>void; onClose: () => void; onSaved: () => void }) {
   const lane=String(sample?.priorityLane||initialLane||"IDEA") as "IDEA"|"DEPLOY"|"FABRIC_SAMPLE";
   const [form,setForm]=useState<any>({name:sample?.name||"",code:sample?.code||"",year:sample?.year||new Date().getFullYear(),season:sample?.season||"",category:sample?.category||"",fabricBoardId:sample?.fabricBoardId||"",fabricColorId:sample?.fabricColorId||"",fabricColorName:sample?.fabricColorName||sample?.fabricColor?.name||"",fabricColorCode:sample?.fabricColorCode||sample?.fabricColor?.code||"",sampleFactoryId:sample?.sampleFactoryId||"",sampleFactoryName:sample?.sampleFactoryName||"",sampleMakerId:sample?.sampleMakerId||"",sampleMakerName:sample?.sampleMakerName||"",patternMakerId:sample?.patternMakerId||"",patternMakerName:sample?.patternMakerName||"",status:sample?.status||(initialLane==="DEPLOY"?"FABRIC_SELECTED":"IDEA"),fabricSampleReceivedAt:sample?.fabricSampleReceivedAt?sample.fabricSampleReceivedAt.slice(0,10):"",assigneeStaffId:sample?.assigneeStaffId||"",assigneeName:sample?.assigneeName||"",nextAction:sample?.nextAction||"",dueDate:sample?.dueDate?sample.dueDate.slice(0,10):"",note:sample?.note||"",technicalNote:sample?.technicalNote||"",coverImageUrl:sample?.coverImageUrl||""});
+  const [fabricBoardSearch,setFabricBoardSearch]=useState("");
   const [saving,setSaving]=useState(false); const [error,setError]=useState("");
   const [codeCheck,setCodeCheck]=useState<{loading:boolean;available:boolean|null;message:string}>({loading:false,available:sample?true:null,message:""});
   const [customCategory,setCustomCategory]=useState(()=>Boolean(sample?.category&&!productGroups.includes(sample.category)));
@@ -1779,6 +1808,12 @@ function SampleForm({ sample, initialLane, measurementTemplates, boards, staff, 
   },[lane,sample?.id]);
   const patch=(k:string,v:any)=>setForm((x:any)=>({...x,[k]:v}));
   const selectedBoard=useMemo(()=>boards.find(x=>x.id===form.fabricBoardId)||null,[boards,form.fabricBoardId]);
+  const filteredFabricBoards=useMemo(()=>{
+    const key=fabricBoardSearch.trim().toLocaleLowerCase("vi-VN");
+    if(!key)return boards;
+    return boards.filter(b=>[b.boardCode,b.fabricCode,b.name,b.supplier?.code,b.supplier?.name,b.composition]
+      .some(v=>String(v||"").toLocaleLowerCase("vi-VN").includes(key)));
+  },[boards,fabricBoardSearch]);
   const selectedFabricColor=useMemo(()=>selectedBoard?.colors?.find(x=>x.id===form.fabricColorId)||null,[selectedBoard,form.fabricColorId]);
   useEffect(()=>{const code=normalizeSampleCode(form.code);const original=normalizeSampleCode(sample?.code||"");if(!code){setCodeCheck({loading:false,available:null,message:""});return}if(sample&&code===original){setCodeCheck({loading:false,available:true,message:"Mã hiện tại của mẫu."});return}setCodeCheck(x=>({...x,loading:true}));const timer=window.setTimeout(async()=>{try{const params=new URLSearchParams({code});if(sample?.id)params.set("excludeId",sample.id);const r=await api<{available:boolean;message:string}>(`/sample-fabric/samples/check-code?${params.toString()}`);setCodeCheck({loading:false,available:r.available,message:r.message||""})}catch(e){setCodeCheck({loading:false,available:false,message:e instanceof Error?e.message:"Không kiểm tra được mã mẫu."})}},350);return()=>window.clearTimeout(timer)},[form.code,sample?.id,sample?.code]);
   async function uploadSampleImages(files:FileList|File[]){
@@ -1925,7 +1960,15 @@ function SampleForm({ sample, initialLane, measurementTemplates, boards, staff, 
 
 <div className="grid gap-4 md:grid-cols-3">
     <Field label="Tên mẫu"><input className={inputClass} value={form.name} onChange={e=>patch("name",e.target.value)}/></Field><Field label="Mã mẫu"><div><input className={`${inputClass} ${codeCheck.available===false?"border-red-400":codeCheck.available===true?"border-emerald-400":""}`} value={form.code} onChange={e=>patch("code",normalizeSampleCode(e.target.value))} placeholder="VD: QSK925"/>{form.code&&<p className={`mt-1.5 text-xs ${codeCheck.loading?"text-neutral-400":codeCheck.available?"text-emerald-600":"text-red-600"}`}>{codeCheck.loading?"Đang kiểm tra mã...":codeCheck.message}</p>}</div></Field><Field label="Năm"><input type="number" className={inputClass} value={form.year} onChange={e=>patch("year",e.target.value)}/></Field>{lane==="FABRIC_SAMPLE"&&<Field label="Ngày nhận vải mẫu"><input type="date" className={inputClass} value={form.fabricSampleReceivedAt} onChange={e=>patch("fabricSampleReceivedAt",e.target.value)}/></Field>}
-    <Field label="Mùa / BST"><select className={inputClass} value={form.season} onChange={e=>patch("season",e.target.value)}><option value="">Chưa chọn</option>{seasons.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Nhóm sản phẩm"><div className="space-y-2"><select className={inputClass} value={customCategory?"__NEW__":form.category} onChange={e=>{if(e.target.value==="__NEW__"){setCustomCategory(true);patch("category","")}else{setCustomCategory(false);patch("category",e.target.value)}}}><option value="">Chưa chọn</option>{uniqueTextValues([...productGroups,!customCategory?form.category:""]).map(x=><option key={x} value={x}>{x}</option>)}<option value="__NEW__">+ Thêm nhóm mới</option></select>{customCategory&&<input className={inputClass} value={form.category} onChange={e=>patch("category",e.target.value)} onBlur={()=>patch("category",titleCaseVi(form.category))} placeholder="VD: Áo Khoác"/>}</div></Field>{canViewFabricLink && (<Field label="Bảng vải"><select className={inputClass} value={form.fabricBoardId} onChange={e=>{patch("fabricBoardId",e.target.value);patch("fabricColorId","")}}><option value="">Chưa chọn bảng vải</option>{boards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.name?` · ${b.name}`:""}</option>)}</select></Field>)}
+    <Field label="Mùa / BST"><select className={inputClass} value={form.season} onChange={e=>patch("season",e.target.value)}><option value="">Chưa chọn</option>{seasons.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Nhóm sản phẩm"><div className="space-y-2"><select className={inputClass} value={customCategory?"__NEW__":form.category} onChange={e=>{if(e.target.value==="__NEW__"){setCustomCategory(true);patch("category","")}else{setCustomCategory(false);patch("category",e.target.value)}}}><option value="">Chưa chọn</option>{uniqueTextValues([...productGroups,!customCategory?form.category:""]).map(x=><option key={x} value={x}>{x}</option>)}<option value="__NEW__">+ Thêm nhóm mới</option></select>{customCategory&&<input className={inputClass} value={form.category} onChange={e=>patch("category",e.target.value)} onBlur={()=>patch("category",titleCaseVi(form.category))} placeholder="VD: Áo Khoác"/>}</div></Field>{canViewFabricLink && (<Field label="Bảng vải"><div className="space-y-2">
+  <input className={inputClass} value={fabricBoardSearch} onChange={e=>setFabricBoardSearch(e.target.value)} placeholder="Tìm mã bảng, mã vải, tên vải, NCC..."/>
+  <select className={inputClass} value={form.fabricBoardId} onChange={e=>{patch("fabricBoardId",e.target.value);patch("fabricColorId","");setFabricBoardSearch("")}}>
+    <option value="">Chưa chọn bảng vải</option>
+    {selectedBoard&&!filteredFabricBoards.some(b=>b.id===selectedBoard.id)&&<option value={selectedBoard.id}>{selectedBoard.boardCode}{selectedBoard.name?` · ${selectedBoard.name}`:""}</option>}
+    {filteredFabricBoards.map(b=><option key={b.id} value={b.id}>{b.boardCode}{b.fabricCode?` · ${b.fabricCode}`:""}{b.name?` · ${b.name}`:""}</option>)}
+  </select>
+  {fabricBoardSearch&&<div className="text-[11px] text-neutral-400">Tìm thấy {filteredFabricBoards.length} bảng vải.</div>}
+</div></Field>)}
     {canViewFabricLink && (<><Field label="Màu vải"><input className={inputClass} value={form.fabricColorName} onChange={e=>patch("fabricColorName",e.target.value)} placeholder="VD: Trắng Kem" /></Field><Field label="Mã màu"><input className={inputClass} value={form.fabricColorCode} onChange={e=>patch("fabricColorCode",normalizeColorCode(e.target.value))} placeholder="#2" /></Field></>)}<Field label="Nhà may làm mẫu"><select className={inputClass} value={form.sampleFactoryId} onChange={e=>patch("sampleFactoryId",e.target.value)}><option value="">Chưa chọn nhà may</option>{factories.map(x=><option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
     <Field label="Người ra mẫu"><div className="flex gap-2"><select className={inputClass} value={form.sampleMakerId} onChange={e=>{const p=people.find(x=>x.id===e.target.value);patch("sampleMakerId",e.target.value);patch("sampleMakerName",p?.name||"")}}><option value="">Chưa chọn</option>{people.filter(x=>x.role==="SAMPLE_MAKER"||x.role==="BOTH").map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button type="button" onClick={()=>{setCreatingRole("SAMPLE_MAKER");setNewPersonName("");setNewPersonPhone("")}} className="shrink-0 rounded-2xl border px-3 text-xs font-semibold">+ Tạo</button></div></Field>
     <Field label="Người thiết kế rập"><div className="flex gap-2"><select className={inputClass} value={form.patternMakerId} onChange={e=>{const p=people.find(x=>x.id===e.target.value);patch("patternMakerId",e.target.value);patch("patternMakerName",p?.name||"")}}><option value="">Chưa chọn</option>{people.filter(x=>x.role==="PATTERN_MAKER"||x.role==="BOTH").map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button type="button" onClick={()=>{setCreatingRole("PATTERN_MAKER");setNewPersonName("");setNewPersonPhone("")}} className="shrink-0 rounded-2xl border px-3 text-xs font-semibold">+ Tạo</button></div></Field>
