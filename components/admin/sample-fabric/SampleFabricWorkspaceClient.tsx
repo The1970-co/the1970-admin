@@ -36,7 +36,7 @@ type Sample = {
   fabricBoardId?: string | null; fabricColorId?: string | null; fabricColorName?: string | null; fabricColorCode?: string | null; sampleFactoryId?: string | null; sampleFactoryName?: string | null; fabricBoard?: FabricBoard | null; fabricColor?: BoardColor | null;
   sampleDispatches?: Dispatch[]; matchedProduct?: { id:string; name:string; slug:string; imageUrl?:string|null } | null; producedProduct?: { id:string; name:string; slug:string; imageUrl?:string|null } | null;
   supplierId?: string | null; supplier?: Supplier | null; fabricBoardCode?: string | null; fabricCode?: string | null; fabricComposition?: string | null;
-  status: string; priorityRank?: number | null; priorityLane?: string | null; fabricSampleReceivedAt?: string | null; assigneeStaffId?: string | null; assigneeName?: string | null; sampleMakerId?:string|null; sampleMakerName?:string|null; patternMakerId?:string|null; patternMakerName?:string|null; nextAction?: string | null;
+  status: string; priorityRank?: number | null; factoryPriorityRank?: number | null; priorityLane?: string | null; fabricSampleReceivedAt?: string | null; assigneeStaffId?: string | null; assigneeName?: string | null; sampleMakerId?:string|null; sampleMakerName?:string|null; patternMakerId?:string|null; patternMakerName?:string|null; nextAction?: string | null;
   dueDate?: string | null; coverImageUrl?: string | null; note?: string | null; technicalNote?: string | null; createdAt?: string | null; updatedAt?: string | null;
   colors: SampleColor[]; images?: Array<{ id?: string; type?:string; url: string; caption?: string | null }>;
   progressLogs?: Array<{ id: string; fromStatus?: string | null; toStatus: string; note?: string | null; actorName?: string | null; createdAt: string }>;
@@ -416,6 +416,10 @@ function samplePriorityLane(row:any){
 }
 function samplePriorityRank(row:Sample){
   const n=Number(row.priorityRank||0);
+  return Number.isInteger(n)&&n>0?n:null;
+}
+function sampleFactoryPriorityRank(row:Sample){
+  const n=Number(row.factoryPriorityRank||0);
   return Number.isInteger(n)&&n>0?n:null;
 }
 function sampleVisuals(row:Sample){
@@ -1149,7 +1153,7 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
           description:"",
           sortOrder:index,
           rows:group.rows,
-          items:group.rows.map(row=>({row,priorityRank:null,sortOrder:0}))
+          items:group.rows.map(row=>({row,priorityRank:Number(row.factoryPriorityRank||0)||null,sortOrder:0}))
         }));
     }
     const map=new Map<string,Sample[]>();
@@ -1256,12 +1260,15 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
     finally{setBoardBusy(false)}
   }
 
+  const factoryPriorityMode=viewMode==="SECTIONS"&&sectionMode==="FACTORY";
+  function activePriorityRank(row:Sample){return factoryPriorityMode?sampleFactoryPriorityRank(row):samplePriorityRank(row)}
+
   async function setSamplePriority(row:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
     try{
       await api(`/sample-fabric/samples/${row.id}`,{
         method:"PATCH",
-        body:JSON.stringify({priorityRank:rank,priorityLane:tab}),
+        body:JSON.stringify(factoryPriorityMode?{factoryPriorityRank:rank}:{priorityRank:rank,priorityLane:tab}),
       });
       setPriorityPickerSample(null);
       await onChanged();
@@ -1271,12 +1278,11 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
   }
 
   function usedPriorityRanks(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=tab){
-    return new Set(
-      rows
-        .filter(x=>x.id!==exceptId && samplePriorityLane(x)===lane)
-        .map(samplePriorityRank)
-        .filter(Boolean) as number[]
-    );
+    if(factoryPriorityMode){
+      const factoryId=priorityPickerSample?.sampleFactoryId||"";
+      return new Set(rows.filter(x=>x.id!==exceptId&&String(x.sampleFactoryId||"")===String(factoryId)).map(sampleFactoryPriorityRank).filter(Boolean) as number[]);
+    }
+    return new Set(rows.filter(x=>x.id!==exceptId&&samplePriorityLane(x)===lane).map(samplePriorityRank).filter(Boolean) as number[]);
   }
 
   function priorityOptions(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=tab){
@@ -1507,7 +1513,7 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
                 {can("design_sample.edit")&&<button type="button" onClick={()=>onEdit(row)} className="absolute right-2 top-2 rounded-md border bg-white px-1.5 py-0.5 text-[9px] font-semibold text-neutral-700 shadow-sm">Sửa</button>}
                 {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1">
                   {sectionMode==="MATERIAL"&&<button type="button" onClick={()=>setMaterialManageSample(row)} className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[9px] font-semibold text-neutral-600">Bảng</button>}
-                  <button type="button" onClick={()=>setPriorityPickerSample(row)} className={`rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${samplePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}>{samplePriorityRank(row)?`STT #${samplePriorityRank(row)}`:"STT"}</button>
+                  <button type="button" onClick={()=>setPriorityPickerSample(row)} className={`rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${activePriorityRank(row)?"bg-neutral-950 text-white":"bg-neutral-100 text-neutral-600"}`}>{activePriorityRank(row)?`STT #${activePriorityRank(row)}`:"STT"}</button>
                 </div>}
               </div>
             })}
@@ -1533,11 +1539,11 @@ function SamplesView({ rows, factories, can, onCreate, onEdit, onDispatch, onCha
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
           {priorityOptions(priorityPickerSample.id,tab).map(rank=>{
             const used=usedPriorityRanks(priorityPickerSample.id,tab).has(rank);
-            const current=samplePriorityRank(priorityPickerSample)===rank;
+            const current=activePriorityRank(priorityPickerSample)===rank;
             return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-4 text-base font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"cursor-not-allowed bg-neutral-100 text-neutral-300":"bg-white hover:border-neutral-950"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[9px] font-semibold">Đã dùng</span>:null}</button>;
           })}
         </div>
-        {samplePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700">Bỏ STT hiện tại</button>}
+        {activePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700">Bỏ STT hiện tại</button>}
       </div>
     </Modal>}
     {assignSample&&<Modal title={`Bảng ý tưởng · ${assignSample.code}`} onClose={()=>setAssignSample(null)}>

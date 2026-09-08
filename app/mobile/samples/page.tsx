@@ -353,6 +353,10 @@ function samplePriorityRank(row:any){
   const n=Number(row?.priorityRank||0);
   return Number.isInteger(n) && n>0 ? n : null;
 }
+function sampleFactoryPriorityRank(row:any){
+  const n=Number(row?.factoryPriorityRank||0);
+  return Number.isInteger(n) && n>0 ? n : null;
+}
 function sampleFabricBoardThumb(row:any){
   return row?.fabricBoard?.coverImageUrl || row?.fabricColor?.imageUrl || "";
 }
@@ -657,7 +661,7 @@ export default function Page(){
           description:"",
           sortOrder:i,
           rows:group.rows,
-          items:group.rows.map((row:any)=>({row,priorityRank:null,sortOrder:0}))
+          items:group.rows.map((row:any)=>({row,priorityRank:Number(row.factoryPriorityRank||0)||null,sortOrder:0}))
         }));
     }
     const map=new Map<string,Sample[]>();
@@ -665,13 +669,16 @@ export default function Page(){
     return Array.from(map.entries()).sort(([a],[b])=>a.localeCompare(b,"vi",{numeric:true,sensitivity:"base"})).map(([name,items],i)=>({id:`derived-${i}`,name,description:"",sortOrder:i,rows:items,items:items.map((row:any)=>({row,priorityRank:null,sortOrder:0}))}));
   },[filtered,sectionMode,materialBoards,meta.factories]);
 
+  const factoryPriorityMode=viewMode==="SECTIONS"&&sectionMode==="FACTORY";
+  function activePriorityRank(row:Sample){return factoryPriorityMode?sampleFactoryPriorityRank(row):samplePriorityRank(row)}
+
   async function setSamplePriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
     try{
       setError("");
       await api(`/sample-fabric/samples/${sample.id}`,{
         method:"PATCH",
-        body:JSON.stringify({priorityRank:rank,priorityLane:sampleTab}),
+        body:JSON.stringify(factoryPriorityMode?{factoryPriorityRank:rank}:{priorityRank:rank,priorityLane:sampleTab}),
       });
       setPriorityPickerSample(null);
       await load();
@@ -679,12 +686,11 @@ export default function Page(){
   }
 
   function usedPriorityRanks(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
-    return new Set(
-      rows
-        .filter(x=>x.id!==exceptId && samplePriorityLane(x)===lane)
-        .map(samplePriorityRank)
-        .filter(Boolean) as number[]
-    );
+    if(factoryPriorityMode){
+      const factoryId=priorityPickerSample?.sampleFactoryId||"";
+      return new Set(rows.filter(x=>x.id!==exceptId&&String(x.sampleFactoryId||"")===String(factoryId)).map(sampleFactoryPriorityRank).filter(Boolean) as number[]);
+    }
+    return new Set(rows.filter(x=>x.id!==exceptId&&samplePriorityLane(x)===lane).map(samplePriorityRank).filter(Boolean) as number[]);
   }
 
   function priorityOptions(exceptId?:string, lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
@@ -970,15 +976,15 @@ export default function Page(){
     
     {priorityPickerSample&&<Modal title={`Chọn STT · ${priorityPickerSample.name}`} onClose={()=>setPriorityPickerSample(null)}>
       <div className="space-y-4 p-4">
-        <div className="text-xs leading-5 text-neutral-500">STT được xếp riêng cho Ý tưởng, Triển khai và Vải mẫu. Số đã dùng trong tab hiện tại sẽ bị khóa; các tab khác không ảnh hưởng.</div>
+        <div className="text-xs leading-5 text-neutral-500">{factoryPriorityMode?`STT riêng trong nhà may ${priorityPickerSample.sampleFactoryName||"đang chọn"}. Mỗi nhà may có #1, #2... riêng.`:"STT được xếp riêng cho Ý tưởng, Triển khai và Vải mẫu. Số đã dùng trong tab hiện tại sẽ bị khóa; các tab khác không ảnh hưởng."}</div>
         <div className="grid grid-cols-4 gap-2">
           {priorityOptions(priorityPickerSample.id,sampleTab).map(rank=>{
             const used=usedPriorityRanks(priorityPickerSample.id,sampleTab).has(rank);
-            const current=samplePriorityRank(priorityPickerSample)===rank;
+            const current=activePriorityRank(priorityPickerSample)===rank;
             return <button key={rank} type="button" disabled={used&&!current} onClick={()=>void setSamplePriority(priorityPickerSample,rank)} className={`rounded-2xl border py-3 text-sm font-black ${current?"border-neutral-950 bg-neutral-950 text-white":used?"bg-neutral-100 text-neutral-300":"bg-white"}`}>#{rank}{used&&!current?<span className="mt-1 block text-[8px]">Đã dùng</span>:null}</button>;
           })}
         </div>
-        {samplePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 py-2.5 text-sm font-bold text-red-700">Bỏ STT hiện tại</button>}
+        {activePriorityRank(priorityPickerSample)&&<button type="button" onClick={()=>void setSamplePriority(priorityPickerSample,null)} className="w-full rounded-xl border border-red-200 py-2.5 text-sm font-bold text-red-700">Bỏ STT hiện tại</button>}
       </div>
     </Modal>}
 
