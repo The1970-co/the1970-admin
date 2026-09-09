@@ -686,37 +686,40 @@ export default function Page(){
 
   async function setGlobalPriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
+    const previous=sample.priorityRank??null;
     try{
       setError("");
-      await api(`/sample-fabric/samples/${sample.id}`,{
-        method:"PATCH",
-        body:JSON.stringify({priorityRank:rank,priorityLane:sampleTab}),
-      });
+      setRows(current=>current.map(x=>x.id===sample.id?{...x,priorityRank:rank,priorityLane:sampleTab}:x));
       setPriorityPickerSample(null);
-      await load();
-    }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được STT toàn bộ.")}
+      await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({priorityRank:rank,priorityLane:sampleTab})});
+    }catch(e){
+      setRows(current=>current.map(x=>x.id===sample.id?{...x,priorityRank:previous}:x));
+      setError(e instanceof Error?e.message:"Không cập nhật được STT tổng.");
+    }
   }
 
   async function setColumnPriority(sample:Sample,rank:number|null){
     if(!can("design_sample.edit"))return;
+    const prevFactory=sample.factoryPriorityRank??null;
+    const prevMaterial=sample.materialBoardItem?.priorityRank??null;
     try{
       setError("");
       if(factoryPriorityMode){
-        await api(`/sample-fabric/samples/${sample.id}`,{
-          method:"PATCH",
-          body:JSON.stringify({factoryPriorityRank:rank}),
-        });
+        setRows(current=>current.map(x=>x.id===sample.id?{...x,factoryPriorityRank:rank}:x));
+        setColumnPriorityPickerSample(null);
+        await api(`/sample-fabric/samples/${sample.id}`,{method:"PATCH",body:JSON.stringify({factoryPriorityRank:rank})});
       }else if(materialPriorityMode){
         const boardId=sample.materialBoardItem?.boardId||"";
         if(!boardId)throw new Error("Mẫu chưa nằm trong bảng chất liệu.");
-        await api(`/sample-fabric/samples/${sample.id}/material-board`,{
-          method:"PATCH",
-          body:JSON.stringify({boardId,priorityRank:rank}),
-        });
-      }else return;
-      setColumnPriorityPickerSample(null);
-      await load();
-    }catch(e){setError(e instanceof Error?e.message:"Không cập nhật được STT trong cột.")}
+        setRows(current=>current.map(x=>x.id===sample.id?{...x,materialBoardItem:x.materialBoardItem?{...x.materialBoardItem,priorityRank:rank}:x.materialBoardItem}:x));
+        setMaterialBoards(current=>current.map(board=>board.id!==boardId?board:{...board,samples:(board.samples||[]).map(item=>item.designSampleId===sample.id?{...item,priorityRank:rank}:item)}));
+        setColumnPriorityPickerSample(null);
+        await api(`/sample-fabric/samples/${sample.id}/material-board`,{method:"PATCH",body:JSON.stringify({boardId,priorityRank:rank})});
+      }
+    }catch(e){
+      setRows(current=>current.map(x=>x.id===sample.id?{...x,factoryPriorityRank:prevFactory,materialBoardItem:x.materialBoardItem?{...x.materialBoardItem,priorityRank:prevMaterial}:x.materialBoardItem}:x));
+      setError(e instanceof Error?e.message:"Không cập nhật được STT trong cột.");
+    }
   }
 
   function usedGlobalPriorityRanks(exceptId?:string,lane:"IDEA"|"DEPLOY"|"FABRIC_SAMPLE"=sampleTab){
