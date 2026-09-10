@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PurchaseReceipt } from "@/lib/purchase-receipts-api";
+import { getProducts } from "@/lib/products-api";
+import { apiJson } from "@/lib/api";
 import {
   getPaymentSources,
   type PaymentSourceItem,
@@ -9,7 +11,6 @@ import {
 import {
   getSupplierPaymentReceipts,
   paySupplierReceipt,
-  updateSupplierPaymentItemCosts,
 } from "@/lib/supplier-payments-api";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 
@@ -128,6 +129,137 @@ function Pill({
 
 function getReceiptItems(receipt: PurchaseReceipt) {
   return Array.isArray(receipt.items) ? receipt.items : [];
+}
+
+type VariantCostLookup = {
+  byId: Map<string, number>;
+  bySku: Map<string, number>;
+};
+
+function positiveCost(...values: any[]) {
+  for (const raw of values) {
+    const value = Number(raw || 0);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+function getItemCostWithoutLookup(item: any) {
+  return positiveCost(
+    item?.unitCost,
+    item?.variant?.costPrice,
+    item?.variant?.unitCost,
+    item?.variant?.importPrice,
+    item?.variant?.purchasePrice,
+    item?.productVariant?.costPrice,
+    item?.productVariant?.unitCost,
+    item?.product?.costPrice,
+    item?.product?.defaultCostPrice,
+  );
+}
+
+function buildVariantCostLookup(products: any[]): VariantCostLookup {
+  const byId = new Map<string, number>();
+  const bySku = new Map<string, number>();
+
+  for (const product of products || []) {
+    for (const variant of product?.variants || []) {
+      const cost = positiveCost(
+        variant?.costPrice,
+        variant?.unitCost,
+        variant?.importPrice,
+        variant?.purchasePrice,
+        variant?.cost,
+        product?.costPrice,
+        product?.defaultCostPrice,
+        product?.unitCost,
+        product?.importPrice,
+        product?.purchasePrice,
+      );
+
+      if (cost <= 0) continue;
+      if (variant?.id) byId.set(String(variant.id), cost);
+      if (variant?.sku) bySku.set(String(variant.sku).trim().toUpperCase(), cost);
+    }
+  }
+
+  return { byId, bySku };
+}
+
+function getEffectiveItemCost(item: any, lookup?: VariantCostLookup | null) {
+  const direct = getItemCostWithoutLookup(item);
+  if (direct > 0) return direct;
+
+  const byId = item?.variantId
+    ? lookup?.byId.get(String(item.variantId)) || 0
+    : 0;
+  if (byId > 0) return byId;
+
+  const sku = String(item?.sku || "").trim().toUpperCase();
+  return sku ? lookup?.bySku.get(sku) || 0 : 0;
+}
+
+function hydrateReceiptCostsForUi(
+  receipts: PurchaseReceipt[],
+  lookup?: VariantCostLookup | null,
+) {
+  return (receipts || []).map((receipt) => ({
+    ...receipt,
+    items: getReceiptItems(receipt).map((item: any) => {
+      const unitCost = getEffectiveItemCost(item, lookup);
+      return {
+        ...item,
+        unitCost,
+        lineTotal: Number(item?.qty || 0) * unitCost,
+      };
+    }),
+  })) as PurchaseReceipt[];
+}
+
+
+function normalizeCostGroupToken(value: any) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase();
+}
+
+/**
+ * Một "SKU chính" ở màn thanh toán = cùng sản phẩm + cùng màu, khác size.
+ * Ví dụ QKK838-R-29 / 30 / 31 / 32... đều thuộc nhóm QKK838-R.
+ * Ưu tiên productId + color vì ổn định hơn cách cắt chuỗi SKU.
+ */
+function getMainSkuFromVariantSku(sku: any) {
+  const parts = String(sku || "")
+    .trim()
+    .split("-")
+    .filter(Boolean);
+  if (parts.length <= 1) return normalizeCostGroupToken(sku);
+  return parts.slice(0, -1).join("-").toUpperCase();
+}
+
+function getItemCostGroupKey(item: any) {
+  const productId = String(item?.productId || item?.product?.id || "").trim();
+  const color = normalizeCostGroupToken(item?.color);
+
+  if (productId && color) return `PRODUCT:${productId}|COLOR:${color}`;
+
+  const mainSku = getMainSkuFromVariantSku(item?.sku);
+  if (mainSku) return `SKU:${mainSku}`;
+  if (productId) return `PRODUCT:${productId}`;
+  return `ITEM:${String(item?.id || item?.variantId || item?.sku || "")}`;
+}
+
+async function updateReceiptCostsAndSyncProduct(
+  receiptId: string,
+  items: Array<{ itemId: string; unitCost: number }>,
+) {
+  return apiJson<PurchaseReceipt>(
+    `/purchase-receipts/${encodeURIComponent(receiptId)}/item-costs-sync`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ items }),
+    },
+  );
 }
 
 function getReceiptPayments(receipt: PurchaseReceipt) {
@@ -264,6 +396,7 @@ export default function SupplierPaymentsPageClient() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const currentUser = getCurrentUserFromStorage();
+  const productCostLookupRef = useRef<VariantCostLookup | null>(null);
 
   const supplierSummaries = useMemo<SupplierSummary[]>(() => {
     const map = new Map<string, SupplierSummary>();
@@ -458,7 +591,33 @@ export default function SupplierPaymentsPageClient() {
         getPaymentSources(),
       ]);
 
-      setRows(receiptsData);
+      let costLookup = productCostLookupRef.current;
+      const needsProductCostLookup = (receiptsData || []).some((receipt) =>
+        getReceiptItems(receipt).some(
+          (item: any) => getItemCostWithoutLookup(item) <= 0,
+        ),
+      );
+
+      if (needsProductCostLookup && !costLookup) {
+        try {
+          const productsData = await getProducts({ page: 1, limit: 10000 } as any);
+          const productRows = Array.isArray((productsData as any)?.data)
+            ? (productsData as any).data
+            : Array.isArray(productsData)
+              ? productsData
+              : [];
+
+          costLookup = buildVariantCostLookup(productRows);
+          productCostLookupRef.current = costLookup;
+        } catch (productErr) {
+          console.error(
+            "load product costs for supplier payment failed",
+            productErr,
+          );
+        }
+      }
+
+      setRows(hydrateReceiptCostsForUi(receiptsData || [], costLookup));
       setPaymentSources(paymentSourcesData);
     } catch (err) {
       setError(
@@ -507,6 +666,22 @@ export default function SupplierPaymentsPageClient() {
     setNote("");
   }
 
+
+  function updateCostForMainSku(sourceItem: any, value: string) {
+    if (!selected) return;
+    const groupKey = getItemCostGroupKey(sourceItem);
+
+    setCostDraft((prev) => {
+      const next = { ...prev };
+      for (const item of getReceiptItems(selected)) {
+        if (getItemCostGroupKey(item) === groupKey) {
+          next[item.id] = value;
+        }
+      }
+      return next;
+    });
+  }
+
   function selectedTotalFromDraft() {
     if (!selected) return 0;
     return getReceiptItems(selected).reduce((sum, item) => {
@@ -531,16 +706,28 @@ export default function SupplierPaymentsPageClient() {
       setError(null);
       setNotice(null);
 
-      const updated = await updateSupplierPaymentItemCosts(selected.id, {
-        items: getReceiptItems(selected).map((item) => ({
+      const updated = await updateReceiptCostsAndSyncProduct(selected.id,
+        getReceiptItems(selected).map((item) => ({
           itemId: item.id,
           unitCost: Number(costDraft[item.id] || 0),
         })),
-      });
+      );
 
-      setSelected(updated);
-      const total = getReceiptAmount(updated);
-      const paid = getPaidAmount(updated);
+      const hydratedUpdated = hydrateReceiptCostsForUi(
+        [updated],
+        productCostLookupRef.current,
+      )[0];
+      setSelected(hydratedUpdated);
+      setCostDraft(
+        Object.fromEntries(
+          getReceiptItems(hydratedUpdated).map((item) => [
+            item.id,
+            String(Number(item.unitCost || 0)),
+          ]),
+        ),
+      );
+      const total = getReceiptAmount(hydratedUpdated);
+      const paid = getPaidAmount(hydratedUpdated);
       setAmount(String(Math.max(total - paid, 0)));
       setNotice("Đã cập nhật giá nhập cho phiếu.");
       await loadAll();
@@ -578,6 +765,19 @@ export default function SupplierPaymentsPageClient() {
       setPaying(true);
       setError(null);
       setNotice(null);
+
+      // Nếu phiếu cũ đang lưu unitCost = 0 nhưng chi tiết sản phẩm đã có giá nhập,
+      // costDraft đã được hydrate từ ProductVariant.costPrice. Đồng bộ lại phiếu
+      // trước lần thanh toán đầu tiên để backend và sổ công nợ dùng đúng giá.
+      if (getPaidAmount(selected) <= 0) {
+        await updateReceiptCostsAndSyncProduct(
+          selected.id,
+          getReceiptItems(selected).map((item) => ({
+            itemId: item.id,
+            unitCost: Number(costDraft[item.id] || 0),
+          })),
+        );
+      }
 
       await paySupplierReceipt({
         receiptId: selected.id,
@@ -1084,16 +1284,18 @@ export default function SupplierPaymentsPageClient() {
                           <td className="px-3 py-2.5">{item.qty}</td>
                           <td className="px-3 py-2.5">
                             {canEditCost && getPaidAmount(selected) <= 0 ? (
-                              <input
-                                className="w-28 rounded-xl border border-neutral-300 px-3 py-1.5 text-sm outline-none"
-                                value={costDraft[item.id] || "0"}
-                                onChange={(e) =>
-                                  setCostDraft((prev) => ({
-                                    ...prev,
-                                    [item.id]: e.target.value,
-                                  }))
-                                }
-                              />
+                              <div>
+                                <input
+                                  className="w-28 rounded-xl border border-neutral-300 px-3 py-1.5 text-sm outline-none"
+                                  value={costDraft[item.id] || "0"}
+                                  onChange={(e) =>
+                                    updateCostForMainSku(item, e.target.value)
+                                  }
+                                />
+                                <p className="mt-1 text-[10px] text-neutral-400">
+                                  Cùng SKU chính tự áp dụng mọi size
+                                </p>
+                              </div>
                             ) : (
                               currency(Number(item.unitCost || 0))
                             )}

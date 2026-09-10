@@ -460,6 +460,14 @@ export default function PurchaseReceiptsPageClient() {
     );
   }
 
+  function isReceiptStockImported(receipt: PurchaseReceipt) {
+    return (
+      Boolean(getReceiptImportedAt(receipt)) ||
+      receipt.status === "STOCK_IMPORTED" ||
+      receipt.status === "COMPLETED"
+    );
+  }
+
   function getReceiptPaymentSourceIds(receipt: PurchaseReceipt) {
     return getReceiptPayments(receipt)
       .map((payment: any) => payment?.paymentSourceId || payment?.paymentSource?.id || "")
@@ -667,7 +675,13 @@ export default function PurchaseReceiptsPageClient() {
         ].join(" "));
 
         if (q && !haystack.includes(q)) return false;
-        if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+        if (statusFilter !== "ALL") {
+          if (statusFilter === "STOCK_IMPORTED") {
+            if (!isReceiptStockImported(item)) return false;
+          } else if (item.status !== statusFilter) {
+            return false;
+          }
+        }
         if (branchFilter !== "ALL" && String(item.branchId || item.branch?.id || "") !== branchFilter) return false;
         if (supplierFilter !== "ALL" && String(item.supplierId || item.supplier?.id || "") !== supplierFilter) return false;
         if (createdByFilter !== "ALL" && createdByIdValue !== createdByFilter) return false;
@@ -738,8 +752,15 @@ export default function PurchaseReceiptsPageClient() {
     );
     const totalAmountValue = filteredRows.reduce((sum, receipt) => sum + getReceiptAmount(receipt), 0);
     const paidAmountValue = filteredRows.reduce((sum, receipt) => sum + getPaidAmount(receipt), 0);
-    const waitingStock = filteredRows.filter((receipt) => receipt.status === "PAID").length;
-    const waitingPayment = filteredRows.filter((receipt) => receipt.status === "PAYMENT_REQUESTED" || receipt.status === "PARTIALLY_PAID").length;
+    const waitingStock = filteredRows.filter(
+      (receipt) =>
+        !isReceiptStockImported(receipt) &&
+        ["PAYMENT_REQUESTED", "PARTIALLY_PAID", "PAID"].includes(receipt.status),
+    ).length;
+    const waitingPayment = filteredRows.filter((receipt) => {
+      if (["DRAFT", "CANCELLED", "COMPLETED"].includes(receipt.status)) return false;
+      return getReceiptAmount(receipt) > getPaidAmount(receipt);
+    }).length;
 
     return {
       totalQty,
@@ -1164,7 +1185,7 @@ export default function PurchaseReceiptsPageClient() {
         paidByName: currentUser?.fullName || currentUser?.name || currentUser?.username,
       });
 
-      setNotice("Đã thanh toán nhà cung cấp. Có thể xác nhận nhập kho.");
+      setNotice("Đã ghi nhận thanh toán nhà cung cấp.");
       closePayment();
       await loadAll();
     } catch (err) {
@@ -1467,6 +1488,7 @@ export default function PurchaseReceiptsPageClient() {
             const receiptAmount = getReceiptAmount(receipt);
             const paidAmount = getPaidAmount(receipt);
             const paidEnough = isReceiptPaidEnough(receipt);
+            const stockImported = isReceiptStockImported(receipt);
             const expanded = expandedReceiptIds.includes(receipt.id);
 
             return (
@@ -1486,6 +1508,14 @@ export default function PurchaseReceiptsPageClient() {
                       <Badge tone={getReceiptStatusTone(receipt.status)}>
                         {getReceiptStatusLabel(receipt.status, isAdmin)}
                       </Badge>
+
+                      {receipt.status !== "STOCK_IMPORTED" &&
+                      receipt.status !== "DRAFT" &&
+                      receipt.status !== "CANCELLED" ? (
+                        <Badge tone={stockImported ? "blue" : "amber"}>
+                          {stockImported ? "Kho: Đã nhập" : "Kho: Chờ nhập"}
+                        </Badge>
+                      ) : null}
                     </div>
 
                     <div className="mt-2 space-y-1 text-xs text-neutral-500">
@@ -1507,7 +1537,7 @@ export default function PurchaseReceiptsPageClient() {
                       {canViewCost ? <p>Tổng tiền: {currency(receiptAmount)}</p> : null}
                       {canViewCost ? <p>Đã thanh toán: {currency(paidAmount)}</p> : null}
                       {canViewCost ? <p>Còn phải trả: {currency(Math.max(receiptAmount - paidAmount, 0))}</p> : null}
-                      {canImportStockReceipt && receipt.status === "PAID" ? (
+                      {canImportStockReceipt && paidEnough && !stockImported ? (
                         <p className="font-medium text-green-700">Đã thanh toán đủ · chờ nhập kho</p>
                       ) : null}
                       {receipt.note ? <p>Ghi chú: {receipt.note}</p> : null}
@@ -1572,8 +1602,8 @@ export default function PurchaseReceiptsPageClient() {
                     ) : null}
 
                     {canPayReceipt &&
-                      (receipt.status === "PAYMENT_REQUESTED" ||
-                        receipt.status === "PARTIALLY_PAID") ? (
+                      !paidEnough &&
+                      !["DRAFT", "CANCELLED", "COMPLETED"].includes(receipt.status) ? (
                       <a
                         href={`/finance/supplier-payments?receiptId=${receipt.id}`}
                         target="_blank"
@@ -1583,18 +1613,23 @@ export default function PurchaseReceiptsPageClient() {
                       </a>
                     ) : null}
 
-                    {canImportStockReceipt && receipt.status === "PAID" ? (
+                    {canImportStockReceipt &&
+                    !stockImported &&
+                    ["PAYMENT_REQUESTED", "PARTIALLY_PAID", "PAID"].includes(receipt.status) ? (
                       <button
                         onClick={() => void handleImportStock(receipt.id)}
                         disabled={importingId === receipt.id}
                         className={`rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 ${importingId === receipt.id ? "cursor-not-allowed opacity-60" : ""
                           }`}
                       >
-                        {importingId === receipt.id ? "Đang nhập kho..." : "Xác nhận nhập kho"}
+                        {importingId === receipt.id ? "Đang nhập kho..." : "Nhập kho"}
                       </button>
                     ) : null}
 
-                    {canCompleteReceipt && receipt.status === "STOCK_IMPORTED" ? (
+                    {canCompleteReceipt &&
+                    stockImported &&
+                    paidEnough &&
+                    receipt.status !== "COMPLETED" ? (
                       <button
                         onClick={() => void handleComplete(receipt.id)}
                         disabled={completingId === receipt.id}

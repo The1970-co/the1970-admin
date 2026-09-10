@@ -471,6 +471,52 @@ function Badge({
   );
 }
 
+function CostVisibilityIcon({ visible }: { visible: boolean }) {
+  return visible ? (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 3l18 18" />
+      <path d="M10.6 6.1A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a15.7 15.7 0 0 1-3 3.7" />
+      <path d="M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6c1.4 0 2.7-.3 3.8-.7" />
+    </svg>
+  );
+}
+
+function CostVisibilityButton({
+  visible,
+  onToggle,
+}: {
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-500 transition hover:bg-neutral-50 hover:text-neutral-900"
+      title={visible ? "Ẩn giá nhập" : "Hiện giá nhập"}
+      aria-label={visible ? "Ẩn giá nhập" : "Hiện giá nhập"}
+    >
+      <CostVisibilityIcon visible={visible} />
+    </button>
+  );
+}
+
+function HiddenCostValue({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      className={`flex w-full items-center rounded-2xl border border-neutral-300 bg-neutral-50 px-4 text-sm tracking-[0.18em] text-neutral-400 ${compact ? "h-[38px] py-2" : "h-[46px] py-3"}`}
+      title="Giá nhập đang được ẩn"
+    >
+      ••••••
+    </div>
+  );
+}
+
 function Field({
   label,
   children,
@@ -1206,6 +1252,7 @@ export default function ProductDetailPageClient({
   const [description, setDescription] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
   const [defaultCostPrice, setDefaultCostPrice] = useState("");
+  const [showCostPrices, setShowCostPrices] = useState(false);
   const [colors, setColors] = useState("");
   const [sizes, setSizes] = useState("");
   const [branchStocks, setBranchStocks] = useState<Record<string, string>>({});
@@ -1428,6 +1475,7 @@ export default function ProductDetailPageClient({
       getCurrentUserFromStorage() as CurrentUserPermissionProfile | null;
     setCurrentUser(storedUser);
     setRole(getPrimaryAppRole(storedUser));
+    setShowCostPrices(false);
 
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2281,13 +2329,25 @@ export default function ProductDetailPageClient({
               />
             </Field>
             {canViewCost ? (
-              <Field label="Giá vốn">
-                <Input
-                  type="number"
-                  value={defaultCostPrice}
-                  onChange={(e) => setDefaultCostPrice(e.target.value)}
-                  disabled={!canEditProductCost}
-                />
+              <Field label="Giá nhập">
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    {showCostPrices ? (
+                      <Input
+                        type="number"
+                        value={defaultCostPrice}
+                        onChange={(e) => setDefaultCostPrice(e.target.value)}
+                        disabled={!canEditProductCost}
+                      />
+                    ) : (
+                      <HiddenCostValue />
+                    )}
+                  </div>
+                  <CostVisibilityButton
+                    visible={showCostPrices}
+                    onToggle={() => setShowCostPrices((current) => !current)}
+                  />
+                </div>
               </Field>
             ) : null}
             <Field label="Mô tả">
@@ -2466,13 +2526,25 @@ export default function ProductDetailPageClient({
                   </Field>
 
                   {canViewCost ? (
-                    <Field label="Giá vốn">
-                      <Input
-                        type="number"
-                        value={defaultCostPrice}
-                        onChange={(e) => setDefaultCostPrice(e.target.value)}
-                        disabled={!canEditProductCost}
-                      />
+                    <Field label="Giá nhập">
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          {showCostPrices ? (
+                            <Input
+                              type="number"
+                              value={defaultCostPrice}
+                              onChange={(e) => setDefaultCostPrice(e.target.value)}
+                              disabled={!canEditProductCost}
+                            />
+                          ) : (
+                            <HiddenCostValue />
+                          )}
+                        </div>
+                        <CostVisibilityButton
+                          visible={showCostPrices}
+                          onToggle={() => setShowCostPrices((current) => !current)}
+                        />
+                      </div>
                     </Field>
                   ) : null}
 
@@ -2610,14 +2682,26 @@ export default function ProductDetailPageClient({
                       disabled={!canEditProductPrice}
                     />
                     {canViewCost ? (
-                      <Input
-                        type="number"
-                        value={variantCostPrice}
-                        onChange={(e) => setVariantCostPrice(e.target.value)}
-                        placeholder="Giá vốn"
-                        className="py-2"
-                        disabled={!canEditProductCost}
-                      />
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          {showCostPrices ? (
+                            <Input
+                              type="number"
+                              value={variantCostPrice}
+                              onChange={(e) => setVariantCostPrice(e.target.value)}
+                              placeholder="Giá nhập"
+                              className="py-2"
+                              disabled={!canEditProductCost}
+                            />
+                          ) : (
+                            <HiddenCostValue compact />
+                          )}
+                        </div>
+                        <CostVisibilityButton
+                          visible={showCostPrices}
+                          onToggle={() => setShowCostPrices((current) => !current)}
+                        />
+                      </div>
                     ) : null}
                   </div>
 
@@ -2685,7 +2769,15 @@ export default function ProductDetailPageClient({
                         <th className="border-b px-4 py-3">Size</th>
                         <th className="border-b px-4 py-3">Giá bán</th>
                         {canViewCost ? (
-                          <th className="border-b px-4 py-3">Giá vốn</th>
+                          <th className="border-b px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span>Giá nhập</span>
+                              <CostVisibilityButton
+                                visible={showCostPrices}
+                                onToggle={() => setShowCostPrices((current) => !current)}
+                              />
+                            </div>
+                          </th>
                         ) : null}
                         <th className="border-b px-4 py-3">Tồn chi nhánh</th>
                         <th className="border-b px-4 py-3 text-right">
@@ -2884,7 +2976,16 @@ export default function ProductDetailPageClient({
                               </td>
                               {canViewCost ? (
                                 <td className="border-b px-4 py-3">
-                                  {currency(Number(variant.costPrice || 0))}
+                                  {showCostPrices ? (
+                                    currency(Number(variant.costPrice || 0))
+                                  ) : (
+                                    <span
+                                      className="select-none text-sm tracking-[0.18em] text-neutral-400"
+                                      title="Giá nhập đang được ẩn"
+                                    >
+                                      ••••••
+                                    </span>
+                                  )}
                                 </td>
                               ) : null}
                               <td className="border-b px-4 py-3">
@@ -3168,7 +3269,16 @@ export default function ProductDetailPageClient({
                         Giá trị tồn
                       </p>
                       <p className="mt-1 text-lg font-semibold">
-                        {currency(catalogValue)}
+                        {showCostPrices ? (
+                          currency(catalogValue)
+                        ) : (
+                          <span
+                            className="select-none tracking-[0.18em] text-neutral-400"
+                            title="Giá trị tồn đang được ẩn theo giá nhập"
+                          >
+                            ••••••
+                          </span>
+                        )}
                       </p>
                     </div>
                   ) : null}
