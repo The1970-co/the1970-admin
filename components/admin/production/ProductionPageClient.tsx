@@ -135,6 +135,22 @@ type SavedAccessoryTemplate = {
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
 const PANTS_SIZES = ["29", "30", "31", "32", "34", "36"];
+const PRODUCTION_SIZE_ORDER = [...SHIRT_SIZES, ...PANTS_SIZES];
+
+function sortProductionSizes(values: string[]) {
+  return [...values].sort((a, b) => {
+    const aa = normalizeProductionSize(a);
+    const bb = normalizeProductionSize(b);
+    const ai = PRODUCTION_SIZE_ORDER.indexOf(aa);
+    const bi = PRODUCTION_SIZE_ORDER.indexOf(bb);
+    if (ai !== -1 || bi !== -1) {
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    }
+    return aa.localeCompare(bb, "vi", { numeric: true, sensitivity: "base" });
+  });
+}
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Chưa triển khai",
   PLANNING: "Đang lên kế hoạch",
@@ -1254,6 +1270,7 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
 
   return (
     <div className="min-w-0 space-y-5">
+      {/* Chỉ Admin / Owner nhìn thấy 2 bảng định mức vải; nhân viên vẫn thấy toàn bộ phần size/tỷ lệ bên dưới. */}
       {isAdmin && (
         <div className="min-w-0 space-y-4">
           <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
@@ -1354,7 +1371,7 @@ function groupSizes(rows: any[]) {
 }
 
 function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [], selectedMaterialCount = 0, hideMaterials = false }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[]; selectedMaterialCount?:number; hideMaterials?:boolean }) {
-  const sizes = Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[];
+  const sizes = sortProductionSizes(Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[]);
   const totalPlanned = Number(c.totalPlannedQty ?? c.totalQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0));
   const persistedActual = Number(c.totalActualQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number((x.actualQty ?? x.plannedQty) || 0),0));
   const draftActual = editable
