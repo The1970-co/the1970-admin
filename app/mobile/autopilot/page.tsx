@@ -29,6 +29,7 @@ import { useRouter } from "next/navigation";
 
 type AutomationLevel = "manual" | "semi" | "auto";
 type TabKey = "ads" | "posts" | "settings";
+type InsightRangePreset = "today" | "yesterday" | "7d" | "30d" | "custom";
 type AnyRow = Record<string, any>;
 
 const money = (v: any) => `${Math.round(Number(v || 0)).toLocaleString("vi-VN")}đ`;
@@ -61,6 +62,15 @@ function postImage(post: AnyRow) {
 
 const num = (v: any) => Number(v || 0) || 0;
 const pct = (v: any) => Number(v || 0).toFixed(2);
+
+function insightRangeLabel(range: string) {
+  if (range === "today") return "Hôm nay";
+  if (range === "yesterday") return "Hôm qua";
+  if (range === "7d") return "7 ngày";
+  if (range === "30d") return "30 ngày";
+  if (range.startsWith("custom:")) return "Tùy chỉnh";
+  return range;
+}
 
 const hcmDateKey = (value: any) => {
   const d = value ? new Date(value) : null;
@@ -140,9 +150,11 @@ export default function MobileAutopilotPage() {
   const [assessments, setAssessments] = useState<Record<string, AnyRow>>({});
   const [budgets, setBudgets] = useState<{ adSets: AnyRow[]; campaigns: AnyRow[] }>({ adSets: [], campaigns: [] });
   const [scaleHistory, setScaleHistory] = useState<AnyRow[]>([]);
-  const [insightRangeByAd, setInsightRangeByAd] = useState<Record<string, "today" | "yesterday" | "7d">>({});
+  const [insightRangeByAd, setInsightRangeByAd] = useState<Record<string, string>>({});
   const [insightsByRange, setInsightsByRange] = useState<Record<string, Record<string, AnyRow>>>({});
   const [insightLoadingKey, setInsightLoadingKey] = useState("");
+  const [customFromDate, setCustomFromDate] = useState("");
+  const [customToDate, setCustomToDate] = useState("");
 
 
   const [level, setLevel] = useState<AutomationLevel>("manual");
@@ -154,6 +166,7 @@ export default function MobileAutopilotPage() {
   const [scaleRoas, setScaleRoas] = useState(3);
   const [scalePercent, setScalePercent] = useState(20);
   const [minSpend, setMinSpend] = useState(200000);
+  const [minStockPerSize, setMinStockPerSize] = useState(10);
 
   const [warnThreshold, setWarnThreshold] = useState(10);
   const [pauseThreshold, setPauseThreshold] = useState(5);
@@ -173,19 +186,27 @@ export default function MobileAutopilotPage() {
   const [blockCriticalStock, setBlockCriticalStock] = useState(true);
   const [autoActivate, setAutoActivate] = useState(true);
 
-  async function ensureAdInsights(range: "today" | "yesterday" | "7d") {
-    if (insightsByRange[range]) return;
-    const key = `range:${range}`;
+  async function ensureAdInsights(rangeKey: string) {
+    if (insightsByRange[rangeKey]) return;
+    const key = `range:${rangeKey}`;
     setInsightLoadingKey(key);
     try {
-      const payload = await apiJson(`/meta-ads/live-insights?range=${range}&level=ad&limit=1000`);
+      let url = "";
+      if (rangeKey.startsWith("custom:")) {
+        const [, fromDate, toDate] = rangeKey.split(":");
+        if (!fromDate || !toDate) return;
+        url = `/meta-ads/live-insights?range=custom&fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}&level=ad&limit=1000`;
+      } else {
+        url = `/meta-ads/live-insights?range=${encodeURIComponent(rangeKey)}&level=ad&limit=1000`;
+      }
+      const payload = await apiJson(url);
       const rows = Array.isArray(payload?.topAds) ? payload.topAds : Array.isArray(payload?.items) ? payload.items : Array.isArray(payload?.rows) ? payload.rows : [];
       const map: Record<string, AnyRow> = {};
       for (const row of rows) {
         const id = String(row?.metaAdId || row?.adId || row?.id || "").trim();
         if (id) map[id] = row;
       }
-      setInsightsByRange((prev) => ({ ...prev, [range]: map }));
+      setInsightsByRange((prev) => ({ ...prev, [rangeKey]: map }));
     } catch (e: any) {
       setError(e?.message || "Không tải được kết quả Ads");
     } finally {
@@ -287,6 +308,7 @@ export default function MobileAutopilotPage() {
       setScaleRoas(num(perf?.scaleRoas) || 3);
       setScalePercent(num(perf?.scalePercent) || 20);
       setMinSpend(num(perf?.minSpend) || 200000);
+      setMinStockPerSize(Number(perf?.minStockPerSize ?? 10));
       setWarnThreshold(num(inv?.warnThreshold) || 10);
       setPauseThreshold(num(inv?.pauseThreshold) || 5);
       setCriticalSizeCount(num(inv?.criticalSizeCount) || 2);
@@ -507,7 +529,7 @@ export default function MobileAutopilotPage() {
       return {
         eligible: true,
         title: "ĐỦ ĐIỀU KIỆN AUTO SCALE",
-        reason: `ROAS 24h ${pct(row?.roas24h)} · Spend ${money(row?.spend24h)} · tồn an toàn.`,
+        reason: `ROAS 24h ${pct(row?.roas24h)} · Spend ${money(row?.spend24h)} · mọi size tồn ≥ ${minStockPerSize}.`,
       };
     }
 
@@ -549,7 +571,7 @@ export default function MobileAutopilotPage() {
     setBusy(true); setError(""); setMessage("");
     try {
       const tasks: Promise<any>[] = [
-        apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ enabled: performanceEnabled, dryRun, level, scaleRoas, scalePercent, minSpend }) }),
+        apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ enabled: performanceEnabled, dryRun, level, scaleRoas, scalePercent, minSpend, minStockPerSize }) }),
         apiJson("/meta-ads/autopilot/inventory/config", { method: "POST", body: JSON.stringify({ enabled: inventoryEnabled, dryRun, level, warnThreshold, pauseThreshold, criticalSizeCount, pauseTotalQty, requireBoth }) }),
       ];
       if (launchAvailable) {
@@ -1379,8 +1401,8 @@ export default function MobileAutopilotPage() {
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Spend 24h</div><div className="mt-1 text-xs font-black">{money(row.spend24h ?? row.spend ?? 0)}</div></div>
-                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT tổng</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
-                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS Tổng</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">DT 24h</div><div className="mt-1 text-xs font-black">{money(row.revenue24h ?? row.revenue ?? 0)}</div></div>
+                  <div className="rounded-2xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">ROAS 24h</div><div className="mt-1 text-xs font-black">{pct(row.roas24h ?? row.roas ?? 0)}</div></div>
                 </div>
                 {(() => {
                   const result = insightForAd(id);
@@ -1391,22 +1413,35 @@ export default function MobileAutopilotPage() {
                         <div className="text-xs font-black">Kết quả sau khi chạy</div>
                         <div className="text-[9px] text-neutral-400">Meta Insights</div>
                       </div>
-                      <div className="flex rounded-xl bg-neutral-100 p-1">
-                        {(["today","yesterday","7d"] as const).map((range) => <button
-                          key={range}
-                          onClick={() => {
+                      <div className="flex flex-wrap justify-end gap-1 rounded-xl bg-neutral-100 p-1">
+                        {(["today", "yesterday", "7d", "30d", "custom"] as InsightRangePreset[]).map((range) => {
+                          const active = range === "custom" ? String(result.range).startsWith("custom:") : result.range === range;
+                          return <button key={range} onClick={() => {
+                            if (range === "custom") {
+                              if (customFromDate && customToDate) {
+                                const customKey = `custom:${customFromDate}:${customToDate}`;
+                                setInsightRangeByAd((prev) => ({ ...prev, [id]: customKey }));
+                                void ensureAdInsights(customKey);
+                              }
+                              return;
+                            }
                             setInsightRangeByAd((prev) => ({ ...prev, [id]: range }));
                             void ensureAdInsights(range);
-                          }}
-                          className={`rounded-lg px-2 py-1.5 text-[9px] font-black ${result.range === range ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-400"}`}
-                        >{range === "today" ? "Hôm nay" : range === "yesterday" ? "Hôm qua" : "7 ngày"}</button>)}
+                          }} className={`rounded-lg px-2 py-1.5 text-[9px] font-black ${active ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-400"}`}>{insightRangeLabel(range)}</button>;
+                        })}
                       </div>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <input type="date" value={customFromDate} onChange={(e) => setCustomFromDate(e.target.value)} className="h-9 rounded-xl border border-neutral-200 bg-white px-2 text-[10px] font-bold" />
+                      <input type="date" value={customToDate} onChange={(e) => setCustomToDate(e.target.value)} className="h-9 rounded-xl border border-neutral-200 bg-white px-2 text-[10px] font-bold" />
+                      <button type="button" disabled={!customFromDate || !customToDate} onClick={() => { const customKey = `custom:${customFromDate}:${customToDate}`; setInsightRangeByAd((prev) => ({ ...prev, [id]: customKey })); void ensureAdInsights(customKey); }} className="h-9 rounded-xl bg-neutral-900 px-3 text-[10px] font-black text-white disabled:opacity-40">Xem</button>
                     </div>
 
                     {result.loading ? <div className="py-5 text-center text-[11px] font-bold text-neutral-400">Đang tải kết quả...</div> : result.row ? <>
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Đã chi tiêu</div><div className="mt-1 text-sm font-black">{money(m.spend || 0)}</div></div>
-                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Budget/ngày</div><div className="mt-1 text-sm font-black">{budget.value ? money(budget.value) : "—"}</div><div className="text-[9px] text-neutral-400">{budget.level || ""}</div></div>
+                        <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Budget hiện tại/ngày</div><div className="mt-1 text-sm font-black">{budget.value ? money(budget.value) : "—"}</div><div className="text-[9px] text-neutral-400">{budget.level || ""}</div></div>
                         <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Bắt đầu hội thoại</div><div className="mt-1 text-sm font-black">{Math.round(num(m.conversationStarts))}</div></div>
                         <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Chi phí / hội thoại</div><div className="mt-1 text-sm font-black">{money(m.costPerConversation || 0)}</div></div>
                         <div className="rounded-xl bg-neutral-50 p-3"><div className="text-[9px] text-neutral-400">Reach</div><div className="mt-1 text-sm font-black">{Math.round(num(m.reach)).toLocaleString("vi-VN")}</div></div>
@@ -1801,7 +1836,13 @@ export default function MobileAutopilotPage() {
 
           <section className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between"><div><div className="flex items-center gap-2 text-sm font-black"><CircleDollarSign className="h-4 w-4" /> Auto Scale</div><div className="mt-1 text-[11px] text-neutral-400">Scale theo ROAS và tồn kho.</div></div><Toggle checked={performanceEnabled} onChange={setPerformanceEnabled} /></div>
-            <div className="mt-4 grid grid-cols-2 gap-3"><Field label="ROAS tối thiểu"><input className={inputClass} type="number" step="0.1" value={scaleRoas} onChange={e => setScaleRoas(num(e.target.value))} /></Field><Field label="Tăng mỗi lần (%)"><input className={inputClass} type="number" value={scalePercent} onChange={e => setScalePercent(num(e.target.value))} /></Field><div className="col-span-2"><Field label="Spend tối thiểu"><input className={inputClass} type="number" value={minSpend} onChange={e => setMinSpend(num(e.target.value))} /></Field></div></div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <Field label="ROAS tối thiểu"><input className={inputClass} type="number" step="0.1" value={scaleRoas} onChange={e => setScaleRoas(num(e.target.value))} /></Field>
+              <Field label="Tăng mỗi lần (%)"><input className={inputClass} type="number" value={scalePercent} onChange={e => setScalePercent(num(e.target.value))} /></Field>
+              <Field label="Spend tối thiểu"><input className={inputClass} type="number" value={minSpend} onChange={e => setMinSpend(num(e.target.value))} /></Field>
+              <Field label="Tồn mỗi size tối thiểu để scale"><input className={inputClass} type="number" min="0" step="1" value={minStockPerSize} onChange={e => setMinStockPerSize(Math.max(0, num(e.target.value)))} /></Field>
+            </div>
+            <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-[11px] font-semibold leading-5 text-neutral-600">Đang áp dụng: ROAS ≥ {scaleRoas} · spend ≥ {money(minSpend)} · mọi size tồn ≥ {minStockPerSize} · chưa scale trong 24h → tăng +{scalePercent}%.</div>
           </section>
 
           <section className="rounded-[26px] border border-neutral-200 bg-white p-4 shadow-sm">

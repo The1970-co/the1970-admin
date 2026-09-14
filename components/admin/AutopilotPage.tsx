@@ -165,6 +165,16 @@ function ActionButton({
   );
 }
 
+type InsightRangePreset = "today" | "yesterday" | "7d" | "30d" | "custom";
+
+function insightRangeLabel(range: InsightRangePreset) {
+  if (range === "today") return "Hôm nay";
+  if (range === "yesterday") return "Hôm qua";
+  if (range === "7d") return "7 ngày";
+  if (range === "30d") return "30 ngày";
+  return "Tùy chỉnh";
+}
+
 export default function AutopilotPage({
   mappings,
   setMappings,
@@ -183,6 +193,7 @@ export default function AutopilotPage({
   const [scaleRoas, setScaleRoas] = useState(3);
   const [scalePercent, setScalePercent] = useState(20);
   const [minSpend, setMinSpend] = useState(200000);
+  const [minStockPerSize, setMinStockPerSize] = useState(10);
   const [warnThreshold, setWarnThreshold] = useState(10);
   const [pauseThreshold, setPauseThreshold] = useState(5);
   const [criticalSizeCount, setCriticalSizeCount] = useState(2);
@@ -214,6 +225,11 @@ export default function AutopilotPage({
   const [historyPopupAdId, setHistoryPopupAdId] = useState<string | null>(null);
   const [adsBusy, setAdsBusy] = useState(false);
   const [adFilter, setAdFilter] = useState<"all" | "active" | "paused" | "scale" | "stock">("active");
+  const [viewRange, setViewRange] = useState<InsightRangePreset>("today");
+  const [rangeMetricsByAd, setRangeMetricsByAd] = useState<Record<string, any>>({});
+  const [rangeBusy, setRangeBusy] = useState(false);
+  const [customFromDate, setCustomFromDate] = useState("");
+  const [customToDate, setCustomToDate] = useState("");
   const selectedMappingId = mappings[0]?.id || "";
   const [executionOutput, setExecutionOutput] = useState("Chưa chạy execute nào.");
   const [decisionLogs, setDecisionLogs] = useState<DecisionLog[]>([]);
@@ -233,7 +249,16 @@ export default function AutopilotPage({
     return true;
   }), [liveAds, adFilter]);
 
-
+  const displayedRangeSummary = useMemo(() => {
+    let spend = 0;
+    let revenue = 0;
+    for (const row of filteredLiveAds) {
+      const metric = rangeMetricsByAd[row.metaAdId];
+      spend += Number(metric?.spend || 0);
+      revenue += Number(metric?.revenue || 0);
+    }
+    return { spend, revenue, roas: spend > 0 ? revenue / spend : 0 };
+  }, [filteredLiveAds, rangeMetricsByAd]);
 
   const apiJson = async (path: string, init?: RequestInit, timeoutMs = 15000) => {
     const auth = typeof window !== "undefined" ? localStorage.getItem("access_token") || localStorage.getItem("token") || "" : "";
@@ -491,6 +516,37 @@ export default function AutopilotPage({
     }
   };
 
+  const loadRangeInsights = async (range: InsightRangePreset, fromDate?: string, toDate?: string) => {
+    if (range === "custom" && (!fromDate || !toDate)) return;
+    setRangeBusy(true);
+    try {
+      const params = new URLSearchParams({ range, level: "ad", limit: "1000" });
+      if (range === "custom") {
+        params.set("fromDate", String(fromDate));
+        params.set("toDate", String(toDate));
+      }
+      const payload = await apiJson(`/meta-ads/live-insights?${params.toString()}`, undefined, 25000);
+      const rows = Array.isArray(payload?.topAds) ? payload.topAds : Array.isArray(payload?.items) ? payload.items : Array.isArray(payload?.rows) ? payload.rows : [];
+      const map: Record<string, any> = {};
+      for (const item of rows) {
+        const id = String(item?.metaAdId || item?.adId || item?.id || "").trim();
+        if (!id) continue;
+        const metrics = item?.metrics || {};
+        const spend = Number(metrics?.spend ?? item?.spend ?? 0) || 0;
+        const facebookRevenue = Number(metrics?.facebookRevenue ?? item?.facebookRevenue ?? item?.productAttribution?.facebookRevenue ?? 0) || 0;
+        const posRevenue = Number(metrics?.posRevenue ?? item?.posRevenue ?? item?.productAttribution?.posRevenue ?? 0) || 0;
+        const revenue = Number(metrics?.internalRevenue ?? metrics?.totalRevenue ?? item?.internalRevenue ?? item?.totalRevenue ?? item?.productAttribution?.totalRevenue ?? (facebookRevenue + posRevenue)) || 0;
+        const roas = Number(metrics?.totalRoas ?? metrics?.internalRoas ?? item?.totalRoas ?? item?.internalRoas ?? item?.productAttribution?.totalRoas ?? (spend > 0 ? revenue / spend : 0)) || 0;
+        map[id] = { raw: item, metrics, spend, revenue, roas, facebookRevenue, posRevenue };
+      }
+      setRangeMetricsByAd(map);
+    } catch (error) {
+      setExecutionOutput(`Không tải được dữ liệu ${insightRangeLabel(range)}: ${String(error)}`);
+    } finally {
+      setRangeBusy(false);
+    }
+  };
+
   const loadControlCenter = async () => {
     setAdsBusy(true);
     setRolling24hFallbackReason("");
@@ -582,6 +638,7 @@ export default function AutopilotPage({
       setScaleRoas(Number(perf?.scaleRoas || 3));
       setScalePercent(Number(perf?.scalePercent || 20));
       setMinSpend(Number(perf?.minSpend || 200000));
+      setMinStockPerSize(Number(perf?.minStockPerSize ?? 10));
       setCooldownMinutes(Number(perf?.scaleWindowHours || perf?.minRunHours || 24) * 60);
       setMaxScalePerDay(Number(perf?.maxScalePerAdSetPer24h || 1));
       setWarnThreshold(Number(inv?.warnThreshold ?? 10));
@@ -602,6 +659,10 @@ export default function AutopilotPage({
     void loadScaleHistory();
     void connectMeta();
   }, []);
+
+  useEffect(() => {
+    if (viewRange !== "custom") void loadRangeInsights(viewRange);
+  }, [viewRange]);
 
   const connectMeta = async () => {
     try {
@@ -628,6 +689,7 @@ export default function AutopilotPage({
           scaleRoas,
           scalePercent,
           minSpend,
+          minStockPerSize,
           ...patch,
         }),
       });
@@ -667,7 +729,7 @@ export default function AutopilotPage({
     setBackendBusy(true);
     try {
       const [perf, inv] = await Promise.all([
-        apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ enabled: performanceEnabled, dryRun, level: automationLevel, scaleRoas, scalePercent, minSpend }) }),
+        apiJson("/meta-ads/autopilot/performance/config", { method: "POST", body: JSON.stringify({ enabled: performanceEnabled, dryRun, level: automationLevel, scaleRoas, scalePercent, minSpend, minStockPerSize }) }),
         apiJson("/meta-ads/autopilot/inventory/config", { method: "POST", body: JSON.stringify({ enabled: inventoryEnabled, dryRun, level: automationLevel, warnThreshold, pauseThreshold, criticalSizeCount, pauseTotalQty, requireBoth }) }),
       ]);
       setBackendStatus(perf);
@@ -884,8 +946,13 @@ export default function AutopilotPage({
           <div className="grid gap-4 xl:grid-cols-2">
             <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 p-4">
               <div className="flex items-center justify-between gap-3"><div><div className="text-[13px] font-semibold text-neutral-800">Auto Scale</div><div className="mt-1 text-[11px] text-neutral-500">Tăng đúng cấp ngân sách Campaign/Ad Set khi đạt rule.</div></div><label className="flex items-center gap-2 text-[12px] text-neutral-600"><input type="checkbox" checked={performanceEnabled} onChange={(e) => setPerformanceEnabled(e.target.checked)} /> {performanceEnabled ? "Đang bật" : "Đang tắt"}</label></div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3"><label className="text-[11px] text-neutral-500">ROAS tối thiểu<input type="number" step="0.1" value={scaleRoas} onChange={(e) => setScaleRoas(Number(e.target.value))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label><label className="text-[11px] text-neutral-500">Tăng mỗi lần %<input type="number" min="1" max="50" value={scalePercent} onChange={(e) => setScalePercent(Number(e.target.value))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label><label className="text-[11px] text-neutral-500">Spend tối thiểu<input type="number" min="0" value={minSpend} onChange={(e) => setMinSpend(Number(e.target.value))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label></div>
-              <div className="mt-3 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-[11px] text-neutral-600">Đang áp dụng: ROAS ≥ <b>{scaleRoas}</b>, spend ≥ <b>{compactMoney(minSpend)}</b>, tồn size an toàn và chưa scale trong 24h → tăng <b>+{scalePercent}%</b>.</div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                <label className="text-[11px] text-neutral-500">ROAS tối thiểu<input type="number" step="0.1" value={scaleRoas} onChange={(e) => setScaleRoas(Number(e.target.value))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label>
+                <label className="text-[11px] text-neutral-500">Tăng mỗi lần %<input type="number" min="1" max="50" value={scalePercent} onChange={(e) => setScalePercent(Number(e.target.value))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label>
+                <label className="text-[11px] text-neutral-500">Spend tối thiểu<input type="number" min="0" value={minSpend} onChange={(e) => setMinSpend(Number(e.target.value))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label>
+                <label className="text-[11px] text-neutral-500">Tồn mỗi size tối thiểu để scale<input type="number" min="0" step="1" value={minStockPerSize} onChange={(e) => setMinStockPerSize(Math.max(0, Number(e.target.value)))} className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-[12px]" /></label>
+              </div>
+              <div className="mt-3 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-[11px] text-neutral-600">Đang áp dụng: ROAS ≥ <b>{scaleRoas}</b>, spend ≥ <b>{compactMoney(minSpend)}</b>, mọi size tồn ≥ <b>{minStockPerSize}</b> và chưa scale trong 24h → tăng <b>+{scalePercent}%</b>.</div>
             </div>
             <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 p-4">
               <div className="flex items-center justify-between gap-3"><div><div className="text-[13px] font-semibold text-neutral-800">Auto Pause theo tồn kho</div><div className="mt-1 text-[11px] text-neutral-500">Chỉ pause Ad con đúng mã + màu, không pause Campaign/Ad Set.</div></div><label className="flex items-center gap-2 text-[12px] text-neutral-600"><input type="checkbox" checked={inventoryEnabled} onChange={(e) => setInventoryEnabled(e.target.checked)} /> {inventoryEnabled ? "Đang bật" : "Đang tắt"}</label></div>
@@ -914,6 +981,30 @@ export default function AutopilotPage({
             </div>
           </div>
 
+          <div className="mb-3 rounded-[16px] border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-1.5">
+                {(["today", "yesterday", "7d", "30d", "custom"] as InsightRangePreset[]).map((range) => (
+                  <button key={range} type="button" onClick={() => { setViewRange(range); if (range !== "custom") void loadRangeInsights(range); }} className={`rounded-xl border px-3 py-2 text-[11px] font-semibold ${viewRange === range ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-200 bg-white text-neutral-600"}`}>{insightRangeLabel(range)}</button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                <span className="text-neutral-500">Spend <b className="text-neutral-900">{currency(displayedRangeSummary.spend)}</b></span>
+                <span className="text-neutral-500">DT <b className="text-neutral-900">{currency(displayedRangeSummary.revenue)}</b></span>
+                <span className="text-neutral-500">ROAS <b className={displayedRangeSummary.roas >= scaleRoas ? "text-emerald-600" : "text-neutral-900"}>{displayedRangeSummary.roas.toFixed(2)}</b></span>
+                {rangeBusy ? <span className="text-neutral-400">Đang tải...</span> : null}
+              </div>
+            </div>
+            {viewRange === "custom" ? (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <label className="text-[10px] text-neutral-500">Từ ngày<input type="date" value={customFromDate} onChange={(e) => setCustomFromDate(e.target.value)} className="mt-1 block h-9 rounded-xl border border-neutral-200 bg-white px-3 text-[11px]" /></label>
+                <label className="text-[10px] text-neutral-500">Đến ngày<input type="date" value={customToDate} onChange={(e) => setCustomToDate(e.target.value)} className="mt-1 block h-9 rounded-xl border border-neutral-200 bg-white px-3 text-[11px]" /></label>
+                <button type="button" disabled={!customFromDate || !customToDate || rangeBusy} onClick={() => void loadRangeInsights("custom", customFromDate, customToDate)} className="h-9 rounded-xl bg-neutral-900 px-4 text-[11px] font-semibold text-white disabled:opacity-40">Xem khoảng ngày</button>
+              </div>
+            ) : null}
+            <div className="mt-2 text-[10px] text-neutral-400">Spend / doanh thu / ROAS trong bảng theo khoảng đang chọn. Budget là ngân sách hiện tại; Auto Scale vẫn dùng rolling 24h.</div>
+          </div>
+
           <div className="overflow-x-auto rounded-[18px] border border-neutral-200">
             <table className="w-full min-w-[1320px] text-left">
               <thead className="bg-neutral-50">
@@ -922,10 +1013,10 @@ export default function AutopilotPage({
                   <th className="px-3 py-3 font-medium">Mã / màu</th>
                   <th className="px-3 py-3 font-medium">Campaign → Ad Set</th>
                   <th className="px-3 py-3 font-medium">Tồn từng size</th>
-                  <th className="px-3 py-3 font-medium text-right">Spend</th>
-                  <th className="px-3 py-3 font-medium text-right">DT nội bộ</th>
-                  <th className="px-3 py-3 font-medium text-right">ROAS</th>
-                  <th className="px-3 py-3 font-medium text-right">Budget</th>
+                  <th className="px-3 py-3 font-medium text-right">Spend · {insightRangeLabel(viewRange)}</th>
+                  <th className="px-3 py-3 font-medium text-right">DT · {insightRangeLabel(viewRange)}</th>
+                  <th className="px-3 py-3 font-medium text-right">ROAS · {insightRangeLabel(viewRange)}</th>
+                  <th className="px-3 py-3 font-medium text-right">Budget hiện tại</th>
                   <th className="px-3 py-3 font-medium">Đánh giá</th>
                   <th className="px-3 py-3 font-medium">Hành động</th>
                 </tr>
@@ -984,9 +1075,17 @@ export default function AutopilotPage({
                           );
                         }) : <span className="text-[11px] text-neutral-400">Chưa match tồn kho</span>}
                       </td>
-                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.spend24h ?? row.spend)}</td>
-                      <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(row.revenue24h ?? row.revenue)}</td>
-                      <td className="px-3 py-4 text-right"><span className={`text-[13px] font-semibold ${row.roas >= scaleRoas ? "text-emerald-600" : "text-neutral-800"}`}>{Number(row.roas || 0).toFixed(2)}</span></td>
+                      {(() => {
+                        const period = rangeMetricsByAd[row.metaAdId] || {};
+                        const displaySpend = Number(period?.spend || 0);
+                        const displayRevenue = Number(period?.revenue || 0);
+                        const displayRoas = Number(period?.roas || 0);
+                        return <>
+                          <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(displaySpend)}</td>
+                          <td className="px-3 py-4 text-right text-[12px] text-neutral-700">{compactMoney(displayRevenue)}</td>
+                          <td className="px-3 py-4 text-right"><span className={`text-[13px] font-semibold ${displayRoas >= scaleRoas ? "text-emerald-600" : "text-neutral-800"}`}>{displayRoas.toFixed(2)}</span></td>
+                        </>;
+                      })()}
                       <td className="px-3 py-4 text-right">
                         {(() => {
                           const preview = scalePreviews[row.metaAdId];
@@ -1015,7 +1114,7 @@ export default function AutopilotPage({
                         ) : (
                           <>
                             {critical ? <Badge tone="red">CRITICAL STOCK</Badge> : low ? <Badge tone="amber">LOW STOCK</Badge> : (row.autoScaleEligible ?? row.canScale) ? <Badge tone="green">AUTO SCALE</Badge> : <Badge tone="gray">THEO DÕI</Badge>}
-                            {!row.canScale && row.scaleReasons?.length ? <div className="mt-2 max-w-[220px] text-[10px] leading-4 text-neutral-400">{row.scaleReasons.slice(0, 2).join(" · ")}</div> : null}
+                            {!(row.autoScaleEligible ?? row.canScale) ? <div className={`mt-2 max-w-[270px] rounded-lg border px-2 py-1.5 text-[10px] font-medium leading-4 ${Number(row.roas24h ?? row.roas ?? 0) >= scaleRoas ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-500"}`}><div className="font-semibold">Chưa Auto Scale vì:</div><div className="mt-0.5">{row.scaleReasons?.length ? row.scaleReasons.join(" · ") : "Chưa đủ điều kiện theo rule Auto Scale hiện tại."}</div></div> : <div className="mt-2 max-w-[240px] rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] font-medium text-emerald-700">Đủ điều kiện Auto Scale theo rule hiện tại.</div>}
                           </>
                         )}
                       </td>
