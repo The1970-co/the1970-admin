@@ -83,6 +83,7 @@ export default function PayrollEmployeeDrawer({ line, onClose, onEditAdjustments
   const overtimeRows = (Array.isArray(line.overtimeBreakdown) ? line.overtimeBreakdown : [])
     .map((row: any, index: number) => ({ ...row, index }))
     .filter((row: any) => n(row.hours) > 0);
+  const attendanceBranches = (Array.isArray((line as any).attendanceByBranch) ? (line as any).attendanceByBranch : []) as any[];
   const rewardRows = additionRows(line);
   const subtractNote = deductionNote(line);
 
@@ -108,6 +109,29 @@ export default function PayrollEmployeeDrawer({ line, onClose, onEditAdjustments
             <Card label="Đã trả" value={money(line.paidAmount)} />
             <Card label="Trạng thái" value={String(line.status || "DRAFT")} />
           </div>
+
+          {attendanceBranches.length ? (
+            <section className="rounded-[26px] border border-neutral-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="text-base font-semibold text-neutral-950">Giờ chấm công theo chi nhánh</h4>
+                <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-600">{attendanceBranches.length} chi nhánh</span>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {attendanceBranches.map((item) => (
+                  <div key={item.branchId || item.branchName} className="rounded-2xl bg-neutral-50 px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="font-semibold text-neutral-950">{item.branchName || item.branchId}</div>
+                      <div className="font-semibold text-neutral-950">{num(item.normalHours)} giờ thường</div>
+                    </div>
+                    <div className="mt-2 text-xs text-neutral-500">
+                      TC1 {num(item.overtimeHours)}h · TC2 {num(item.holidayHours)}h · TC3 {num(item.overtime3Hours)}h · TC4 {num(item.overtime4Hours)}h
+                    </div>
+                    {item.fileName ? <div className="mt-1 truncate text-xs text-neutral-400">File: {item.fileName}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="rounded-[26px] border border-neutral-200 bg-white p-5 shadow-sm">
             <h4 className="text-base font-semibold text-neutral-950">Công thức tính</h4>

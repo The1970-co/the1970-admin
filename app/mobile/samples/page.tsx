@@ -390,7 +390,7 @@ export default function Page(){
   const [sortMode,setSortMode]=useState<"NEWEST"|"AZ">(()=>readSessionState("the1970.design-samples.mobile.sortMode","NEWEST"));
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [viewMode,setViewMode]=useState<"LIST"|"PINTEREST"|"SECTIONS">(()=>readSessionState("the1970.design-samples.mobile.viewMode","LIST"));
-  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">(()=>readSessionState("the1970.design-samples.mobile.sectionMode","MATERIAL"));
+  const [sectionMode,setSectionMode]=useState<"MATERIAL"|"CATEGORY"|"FABRIC"|"FACTORY">(()=>readSessionState("the1970.design-samples.mobile.sectionMode","FACTORY"));
   const sectionScrollRef=useRef<HTMLDivElement|null>(null);
   const [yearFilter,setYearFilter]=useState(()=>readSessionState("the1970.design-samples.mobile.yearFilter",""));
   const [pageBackgroundUrl,setPageBackgroundUrl]=useState("");
@@ -937,6 +937,16 @@ export default function Page(){
                       onClick={()=>{setEditingLane((samplePriorityLane(row) as any)||"IDEA");setEditing(row)}}
                       className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border bg-white text-[12px] font-black shadow-sm"
                     >•••</button>}
+                    {can("design_sample.edit")&&samplePriorityLane(row)==="IDEA"&&<button
+                      type="button"
+                      onClick={()=>void moveSample(row,"DEPLOY")}
+                      className="absolute bottom-2 left-2 rounded-lg border bg-white/95 px-2 py-1 text-[9px] font-black shadow-sm"
+                    >→ Triển khai</button>}
+                    {can("design_sample.edit")&&samplePriorityLane(row)==="DEPLOY"&&<button
+                      type="button"
+                      onClick={()=>void moveSample(row,"IDEA")}
+                      className="absolute bottom-2 left-2 rounded-lg border bg-white/95 px-2 py-1 text-[9px] font-black shadow-sm"
+                    >← Ý tưởng</button>}
                     {can("design_sample.edit")&&<div className="absolute bottom-2 right-2 flex items-center gap-1.5">
                       {sectionMode==="MATERIAL"&&<button
                         type="button"
@@ -1012,6 +1022,7 @@ export default function Page(){
       onEdit={()=>{setEditingLane((samplePriorityLane(detail) as any)||"IDEA");setEditing(detail)}}
       onDelete={()=>void removeSample(detail)}
       onDispatch={()=>setDispatching(detail)}
+      onMove={(target)=>void moveSample(detail,target)}
       onChanged={load}
     />}
 
@@ -1061,7 +1072,7 @@ export default function Page(){
               <div className="space-y-1.5 pt-1"><span className={`block h-2 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/><span className={`block h-2 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/><span className={`block h-2 rounded ${viewMode==="LIST"?"bg-white":"bg-neutral-950"}`}/></div>
               <div className="mt-2 text-xs font-black">Danh sách</div>
             </button>
-            <button type="button" onClick={()=>{setViewMode("SECTIONS");setFiltersOpen(true);setBoardHubOpen(false)}} className={`rounded-2xl border p-2.5 text-left ${viewMode==="SECTIONS"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
+            <button type="button" onClick={()=>{setViewMode("SECTIONS");setSectionMode("FACTORY");setFiltersOpen(true);setBoardHubOpen(false)}} className={`rounded-2xl border p-2.5 text-left ${viewMode==="SECTIONS"?"border-neutral-950 bg-neutral-950 text-white":"bg-white"}`}>
               <div className="flex h-8 gap-1 pt-1"><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/><span className={`w-2.5 rounded ${viewMode==="SECTIONS"?"bg-white":"bg-neutral-950"}`}/></div>
               <div className="mt-2 text-xs font-black">Theo cột</div>
             </button>
@@ -1236,7 +1247,7 @@ function canvasArrow(ctx:CanvasRenderingContext2D,x1:number,y1:number,x2:number,
   ctx.closePath();ctx.fill();ctx.restore();
 }
 
-function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{sample:Sample;can:(k:string)=>boolean;onClose:()=>void;onEdit:()=>void;onDelete:()=>void;onDispatch:()=>void;onChanged:()=>void}){
+function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onMove,onChanged}:{sample:Sample;can:(k:string)=>boolean;onClose:()=>void;onEdit:()=>void;onDelete:()=>void;onDispatch:()=>void;onMove:(target:"IDEA"|"DEPLOY")=>void;onChanged:()=>void}){
   const dispatches=Array.isArray(sample.sampleDispatches)?sample.sampleDispatches:[];
   const patternAttachments=(sample.images||[]).filter((x:any)=>isPatternAsset(x)).map((x:any)=>({...x,...parsePatternCaption(x.caption)}));
   const visualUrls=(sample.images||[]).filter((x:any)=>!isPatternAsset(x)).map((x:any)=>x?.url).filter(Boolean);
@@ -1820,6 +1831,8 @@ function DetailModal({sample,can,onClose,onEdit,onDelete,onDispatch,onChanged}:{
           </section>
 
           <div className="grid grid-cols-2 gap-2 border-t pt-4">
+            {can("design_sample.edit")&&samplePriorityLane(sample)==="IDEA"&&<button onClick={()=>onMove("DEPLOY")} className="col-span-2 rounded-2xl border border-neutral-950 bg-white py-3 font-black">Chuyển sang triển khai →</button>}
+            {can("design_sample.edit")&&samplePriorityLane(sample)==="DEPLOY"&&<button onClick={()=>onMove("IDEA")} className="col-span-2 rounded-2xl border border-neutral-950 bg-white py-3 font-black">← Đưa về ý tưởng</button>}
             {can("design_sample.edit")&&<button onClick={onEdit} className="rounded-2xl bg-neutral-950 py-3 font-black text-white"><Pencil className="mr-1 inline h-4 w-4"/>Sửa thông tin</button>}
             {can("design_sample.delete")&&<button onClick={onDelete} className="rounded-2xl border border-red-200 bg-red-50 py-3 font-black text-red-700"><Trash2 className="mr-1 inline h-4 w-4"/>Xoá mẫu</button>}
           </div>

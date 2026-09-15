@@ -17,6 +17,7 @@ import {
   exportPayrollPeriod,
   unlockPayrollPeriod,
   updatePayrollLine,
+  listBranchOptions,
   listStaffOptions,
   listPayrollConfigs,
   listPayrollBranchTemplates,
@@ -24,6 +25,7 @@ import {
 } from "@/lib/payroll-api";
 import type {
   AttendancePreviewRow,
+  BranchOption,
   PaymentSourceOption,
   PayrollLine,
   PayrollPeriod,
@@ -52,16 +54,29 @@ function dateOnly(value?: string | null) {
   return date.toLocaleDateString("vi-VN");
 }
 
-function overtimeText(line: PayrollLine) {
-  const rows = [
-    { label: "TC1", hours: n(line.overtimeHours) },
-    { label: "TC2", hours: n(line.holidayHours) },
-    { label: "TC3", hours: n((line as any).overtime3Hours) },
-    { label: "TC4", hours: n((line as any).overtime4Hours) },
-  ].filter((row) => row.hours > 0);
-  return rows.length
-    ? rows.map((row) => `${row.label}: ${num(row.hours)}h`).join(" · ")
-    : "Không tăng ca";
+function overtimePayRows(line: PayrollLine) {
+  const stored = Array.isArray(line.overtimeBreakdown) ? line.overtimeBreakdown : [];
+  if (stored.length) {
+    return stored
+      .map((row: any, index: number) => ({
+        key: String(row.key || `TC${index + 1}`),
+        label: `TC${index + 1}${row.label ? ` · ${row.label}` : ""}`,
+        hours: n(row.hours),
+        amount: n(row.amount),
+      }))
+      .filter((row) => row.hours > 0 || row.amount > 0);
+  }
+  const hourlyRate = n(line.hourlyRate);
+  return [
+    { key: "TC1", label: "TC1", hours: n(line.overtimeHours), amount: n(line.overtimeHours) * hourlyRate * n(line.overtimeRate || 1) },
+    { key: "TC2", label: "TC2", hours: n(line.holidayHours), amount: n(line.holidayHours) * hourlyRate * n(line.holidayRate || 2) },
+    { key: "TC3", label: "TC3", hours: n((line as any).overtime3Hours), amount: 0 },
+    { key: "TC4", label: "TC4", hours: n((line as any).overtime4Hours), amount: 0 },
+  ].filter((row) => row.hours > 0 || row.amount > 0);
+}
+
+function attendanceBranchRows(line: PayrollLine) {
+  return (Array.isArray((line as any).attendanceByBranch) ? (line as any).attendanceByBranch : []) as any[];
 }
 
 function adjustmentName(type?: string) {
@@ -301,10 +316,14 @@ export default function PayrollPeriodDetailPageClient({
   } | null>(null);
   const [attendancePreview, setAttendancePreview] = useState<{
     fileName: string;
+    branchId: string;
+    branchName: string;
     summary: any;
     rows: AttendancePreviewRow[];
   } | null>(null);
   const [attendanceOpen, setAttendanceOpen] = useState(false);
+  const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
+  const [attendanceBranchId, setAttendanceBranchId] = useState("");
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
   const [payrollConfigs, setPayrollConfigs] = useState<PayrollConfig[]>([]);
   const [payrollTemplates, setPayrollTemplates] = useState<PayrollBranchConfigTemplate[]>([]);
@@ -317,15 +336,20 @@ export default function PayrollPeriodDetailPageClient({
     setLoading(true);
     setError(null);
     try {
-      const [detail, sources, staffRows, configRows, templateRows] = await Promise.all([
+      const [detail, sources, branchRows, staffRows, configRows, templateRows] = await Promise.all([
         getPayrollPeriod(periodId),
         listPaymentSources().catch(() => []),
+        listBranchOptions().catch(() => []),
         listStaffOptions().catch(() => []),
         listPayrollConfigs({ isActive: "true" }).catch(() => []),
         listPayrollBranchTemplates({ isActive: "true" }).catch(() => []),
       ]);
       setPeriod(detail);
       setPaymentSources(Array.isArray(sources) ? sources : []);
+      setBranchOptions(Array.isArray(branchRows) ? branchRows : []);
+      if (detail?.branchId && detail.branchId !== "ALL") {
+        setAttendanceBranchId(String(detail.branchId));
+      }
       setStaffOptions(Array.isArray(staffRows) ? staffRows : []);
       setPayrollConfigs(Array.isArray(configRows) ? configRows : []);
       setPayrollTemplates(Array.isArray(templateRows) ? templateRows : []);
@@ -526,9 +550,22 @@ export default function PayrollPeriodDetailPageClient({
 
   async function handleAttendanceFile(file?: File | null) {
     if (!file || !period) return;
+    const selectedBranch = branchOptions.find((item) => String(item.id) === attendanceBranchId);
+    if (!selectedBranch) {
+      setError("Chọn chi nhánh của file chấm công trước khi tải file lên.");
+      return;
+    }
     await run("attendance-preview", async () => {
       const data = await previewAttendanceImport(period.id, file);
-      setAttendancePreview(data);
+      setAttendancePreview({
+        ...data,
+        branchId: selectedBranch.id,
+        branchName: selectedBranch.name || selectedBranch.code || selectedBranch.id,
+        rows: (Array.isArray(data.rows) ? data.rows : []).map((row: AttendancePreviewRow) => ({
+          ...row,
+          branchName: selectedBranch.name || selectedBranch.code || selectedBranch.id,
+        })),
+      });
       setAttendanceOpen(true);
     });
   }
@@ -538,11 +575,14 @@ export default function PayrollPeriodDetailPageClient({
     const rows = attendancePreview.rows;
     await run("attendance-apply", async () => {
       await saveManualAttendanceMappings(rows);
-      await applyAttendanceImport(period.id, {
+      const attendancePayload = {
         fileName: attendancePreview.fileName,
+        branchId: attendancePreview.branchId,
+        branchName: attendancePreview.branchName,
         rows,
         autoCalculate: true,
-      });
+      };
+      await applyAttendanceImport(period.id, attendancePayload);
     });
     setAttendanceOpen(false);
     setAttendancePreview(null);
@@ -663,22 +703,34 @@ export default function PayrollPeriodDetailPageClient({
               {period?.branchName || period?.branchId || "Tất cả chi nhánh"}
             </p>
             <p className="mt-2 text-xs text-neutral-400">
-              Bấm “Nhập Excel chấm công” để tự đổ giờ thường/TC1/TC2 và cảnh báo
-              đi muộn. “Nhập dữ liệu tháng” chỉ sửa số công, giờ và số SP thực tế;
-              đơn giá, hệ số luôn lấy từ cấu hình lương đang áp dụng.
+              Chọn chi nhánh rồi nhập từng file Excel chấm công. Nhân viên làm
+              nhiều nơi sẽ được cộng giờ của tất cả chi nhánh; up lại cùng chi
+              nhánh sẽ thay dữ liệu cũ của chi nhánh đó.
             </p>
           </div>
           {period ? (
             <div className="flex flex-wrap gap-2">
-              <label className="cursor-pointer rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 hover:bg-neutral-50">
+              <select
+                value={attendanceBranchId}
+                onChange={(e) => setAttendanceBranchId(e.target.value)}
+                className="rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 outline-none focus:border-neutral-900"
+              >
+                <option value="">Chọn chi nhánh của file</option>
+                {branchOptions.map((branch) => (
+                  <option key={branch.id} value={branch.id}>{branch.name || branch.code || branch.id}</option>
+                ))}
+              </select>
+              <label className={`rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium ${attendanceBranchId && !busy ? "cursor-pointer text-neutral-800 hover:bg-neutral-50" : "cursor-not-allowed text-neutral-400 opacity-60"}`}>
                 Nhập Excel chấm công
                 <input
                   type="file"
                   accept=".xlsx,.xls,.xlsm"
+                  disabled={!attendanceBranchId || !!busy}
                   className="hidden"
-                  onChange={(e) =>
-                    void handleAttendanceFile(e.target.files?.[0] || null)
-                  }
+                  onChange={(e) => {
+                    void handleAttendanceFile(e.target.files?.[0] || null);
+                    e.currentTarget.value = "";
+                  }}
                 />
               </label>
               <button
@@ -814,9 +866,9 @@ export default function PayrollPeriodDetailPageClient({
             </div>
           </details>
         </div>
-        <div className="overflow-x-auto">
+        <div className="max-h-[72vh] overflow-auto">
           <table className="w-full min-w-[1500px] text-left text-sm">
-            <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
+            <thead className="sticky top-0 z-20 bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500 shadow-sm">
               <tr>
                 <th className="px-4 py-3">Nhân viên</th>
                 {visibleColumns.branch ? <th className="px-4 py-3">Chi nhánh</th> : null}
@@ -825,7 +877,7 @@ export default function PayrollPeriodDetailPageClient({
                 {visibleColumns.workingDays ? <th className="px-4 py-3 text-right">Công</th> : null}
                 {visibleColumns.baseSalary ? <th className="px-4 py-3 text-right">Lương cứng</th> : null}
                 {visibleColumns.convertedHours ? <th className="px-4 py-3 text-right">Giờ QĐ</th> : null}
-                {visibleColumns.overtime ? <th className="px-4 py-3">Tăng ca</th> : null}
+                {visibleColumns.overtime ? <th className="px-4 py-3">Tăng ca (giờ / tiền)</th> : null}
                 {visibleColumns.hourlyPay ? <th className="px-4 py-3 text-right">Lương giờ</th> : null}
                 {visibleColumns.orders ? <th className="px-4 py-3 text-right">Đơn</th> : null}
                 {visibleColumns.items ? <th className="px-4 py-3 text-right">SP</th> : null}
@@ -856,19 +908,43 @@ export default function PayrollPeriodDetailPageClient({
                     </td>
                   ) : null}
                   {visibleColumns.attendance ? (
-                    <td className="px-4 py-4 text-xs">
+                    <td className="max-w-[240px] whitespace-normal px-4 py-4 text-xs">
                       <div className={["WARNING", "CRITICAL"].includes(String(line.attendanceWarningLevel || "").toUpperCase()) ? "font-semibold text-red-600" : "text-neutral-500"}>
                         {line.attendanceWarningLevel || "—"}
                       </div>
                       <div className="text-neutral-400">Muộn {num(line.lateMinutes)}' · Sớm {num(line.earlyMinutes)}'</div>
+                      {attendanceBranchRows(line).length ? (
+                        <div className="mt-2 space-y-1">
+                          {attendanceBranchRows(line).map((item) => (
+                            <div key={item.branchId || item.branchName} className="rounded-lg bg-neutral-50 px-2 py-1.5 text-neutral-600">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-medium">{item.branchName || item.branchId}</span>
+                                <span className="whitespace-nowrap font-semibold text-neutral-900">{num(item.normalHours)}h</span>
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-neutral-400">
+                                TC1 {num(item.overtimeHours)}h · TC2 {num(item.holidayHours)}h · TC3 {num(item.overtime3Hours)}h · TC4 {num(item.overtime4Hours)}h
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </td>
                   ) : null}
                   {visibleColumns.workingDays ? <td className="px-4 py-4 text-right">{num(line.workingDays)}</td> : null}
                   {visibleColumns.baseSalary ? <td className="px-4 py-4 text-right">{money(line.proratedSalary)}</td> : null}
                   {visibleColumns.convertedHours ? <td className="px-4 py-4 text-right">{num(line.convertedWorkingHours)}</td> : null}
                   {visibleColumns.overtime ? (
-                    <td className="max-w-[190px] whitespace-normal px-4 py-4 text-xs font-medium text-neutral-700">
-                      {overtimeText(line)}
+                    <td className="max-w-[230px] whitespace-normal px-4 py-4 text-xs text-neutral-700">
+                      <div className="font-semibold text-neutral-950">Tổng {money(line.overtimeAmount)}</div>
+                      <div className="mt-2 space-y-1">
+                        {overtimePayRows(line).map((row) => (
+                          <div key={row.key} className="flex items-start justify-between gap-3 rounded-lg bg-neutral-50 px-2 py-1.5">
+                            <span>{row.label} · {num(row.hours)}h</span>
+                            <span className="whitespace-nowrap font-semibold text-neutral-900">{money(row.amount)}</span>
+                          </div>
+                        ))}
+                        {!overtimePayRows(line).length ? <div className="text-neutral-400">Không tăng ca</div> : null}
+                      </div>
                     </td>
                   ) : null}
                   {visibleColumns.hourlyPay ? <td className="px-4 py-4 text-right">{money(line.hourlyAmount)}</td> : null}
@@ -1196,6 +1272,9 @@ export default function PayrollPeriodDetailPageClient({
                 <h3 className="mt-2 text-xl font-semibold">
                   {attendancePreview.fileName}
                 </h3>
+                <span className="mt-2 inline-flex rounded-full bg-neutral-950 px-3 py-1 text-xs font-semibold text-white">
+                  File chi nhánh {attendancePreview.branchName}
+                </span>
                 <p className="mt-1 text-sm text-neutral-500">
                   Tên trên máy chấm công có thể lệch. Chọn nhân viên ở cột “Khớp
                   NV”, hệ thống sẽ lưu mã chấm công để lần sau tự nhận.
@@ -1246,7 +1325,7 @@ export default function PayrollPeriodDetailPageClient({
             </div>
             <div className="mt-4 max-h-[55vh] overflow-auto rounded-2xl border">
               <table className="w-full min-w-[1280px] text-left text-sm">
-                <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
+                <thead className="sticky top-0 z-10 bg-neutral-50 text-xs uppercase text-neutral-500 shadow-sm">
                   <tr>
                     <th className="px-3 py-2">Mã CC</th>
                     <th className="px-3 py-2">Tên file</th>
