@@ -115,6 +115,9 @@ function additionItems(line: PayrollLine): PayrollAmountItem[] {
     .filter((item) => String(item.type || "").toUpperCase() === "ALLOWANCE")
     .reduce((sum, item) => sum + n(item.amount), 0);
   const rows: PayrollAmountItem[] = [];
+  if (n(line.mealAllowanceAmount) > 0) {
+    rows.push({ key: "meal-allowance", name: "Tiền ăn trưa", amount: n(line.mealAllowanceAmount) });
+  }
   const defaultAllowance = Math.max(0, n(line.allowance) - linkedAllowance);
   const legacyBonus = Math.max(0, n(line.bonus) - linkedBonus);
   if (defaultAllowance > 0) rows.push({ key: "default-allowance", name: "Phụ cấp mặc định", amount: defaultAllowance });
@@ -956,7 +959,7 @@ export default function PayrollPeriodDetailPageClient({
                   {visibleColumns.commissionTotal ? <td className="px-4 py-4 text-right font-medium text-neutral-900">{money(line.commissionTotal)}</td> : null}
                   {visibleColumns.bonus ? (
                     <td className="max-w-[230px] whitespace-normal px-4 py-4 text-right">
-                      <div className="font-semibold text-neutral-900">{money(n(line.bonus) + n(line.allowance))}</div>
+                      <div className="font-semibold text-neutral-900">{money(n(line.bonus) + n(line.allowance) + n(line.mealAllowanceAmount))}</div>
                       <div className="mt-2 space-y-1.5 text-left text-xs">
                         {additionItems(line).map((item) => (
                           <div key={item.key} className="rounded-lg bg-neutral-50 px-2 py-1.5">

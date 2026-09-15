@@ -49,6 +49,9 @@ function additionRows(line: PayrollLine) {
     .filter((item) => String(item.type || "").toUpperCase() !== "ALLOWANCE")
     .reduce((sum, item) => sum + n(item.amount), 0);
   const rows: Array<{ key: string; label: string; amount: number; reason?: string }> = [];
+  if (n(line.mealAllowanceAmount) > 0) {
+    rows.push({ key: "meal-allowance", label: "Tiền ăn trưa", amount: n(line.mealAllowanceAmount) });
+  }
   const defaultAllowance = Math.max(0, n(line.allowance) - linkedAllowance);
   const legacyBonus = Math.max(0, n(line.bonus) - linkedBonus);
   if (defaultAllowance > 0) rows.push({ key: "default-allowance", label: "Phụ cấp mặc định", amount: defaultAllowance });
@@ -152,7 +155,7 @@ export default function PayrollEmployeeDrawer({ line, onClose, onEditAdjustments
               <Row label="Sản phẩm thành công" value={`${num(line.successItemQty)} sp · ${money(line.commissionByItem)}`} />
               <Row label="% doanh thu" value={`${money(line.revenueAmount)} · ${money(line.commissionByPercent)}`} />
               <Row label="Tổng hoa hồng" value={money(line.commissionTotal)} />
-              <Row label="Thưởng + phụ cấp" value={`${money(line.bonus)} + ${money(line.allowance)}`} />
+              <Row label="Thưởng + phụ cấp" value={money(n(line.bonus) + n(line.allowance) + n(line.mealAllowanceAmount))} />
               {rewardRows.map((item) => (
                 <Row key={item.key} label={item.label} value={`${money(item.amount)}${item.reason ? ` · ${item.reason}` : ""}`} />
               ))}

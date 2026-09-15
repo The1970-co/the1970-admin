@@ -44,8 +44,33 @@ type MobileProduct = {
   totalIncoming: number;
   minPrice: number;
   maxPrice: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  soldQty?: number;
+  soldCount?: number;
+  totalSold?: number;
+  orderItemsCount?: number;
+  salesCount?: number;
   variants: MobileProductVariant[];
 };
+
+type MobileProductSortKey =
+  | "name"
+  | "category"
+  | "color"
+  | "size"
+  | "sku"
+  | "price"
+  | "costPrice"
+  | "stock"
+  | "status"
+  | "createdAt"
+  | "sales";
+
+type SortDirection = "asc" | "desc";
+type ProductDisplayPreset = "default" | "newest" | "bestSelling" | "priceHigh";
+
+const PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY = "the1970.products.displayOptions";
 
 function money(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value || 0);
@@ -106,6 +131,78 @@ function statusLabel(status: string) {
     DRAFT: "Nháp",
   };
   return map[status] || status;
+}
+
+function getMobileProductSortValue(
+  product: MobileProduct,
+  key: MobileProductSortKey,
+): string | number {
+  const variants = product.variants || [];
+  const uniqueText = (values: Array<string | null | undefined>) =>
+    Array.from(
+      new Set(values.map((value) => String(value || "").trim()).filter(Boolean)),
+    );
+
+  const colors = uniqueText(variants.map((variant) => variant.color)).join(", ");
+  const sizes = uniqueText(variants.map((variant) => variant.size)).join(", ");
+  const firstSku = variants
+    .map((variant) => String(variant.sku || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "vi", { numeric: true, sensitivity: "base" }))[0] || "";
+
+  const variantPrices = variants
+    .map((variant) => Number(variant.price || 0))
+    .filter((value) => Number.isFinite(value));
+  const variantCosts = variants
+    .map((variant) => Number(variant.costPrice || 0))
+    .filter((value) => Number.isFinite(value));
+
+  switch (key) {
+    case "name":
+      return product.name || "";
+    case "category":
+      return product.category || product.productType || "";
+    case "color":
+      return colors;
+    case "size":
+      return sizes;
+    case "sku":
+      return firstSku;
+    case "price":
+      return Number(
+        product.minPrice ?? (variantPrices.length ? Math.min(...variantPrices) : 0),
+      );
+    case "costPrice":
+      return variantCosts.length ? Math.min(...variantCosts) : 0;
+    case "stock":
+      return Number(product.totalAvailable || 0);
+    case "status":
+      return product.status || "";
+    case "createdAt":
+      return (
+        new Date(product.createdAt || product.updatedAt || 0).getTime() || 0
+      );
+    case "sales":
+      return Number(
+        product.soldQty ??
+          product.soldCount ??
+          product.totalSold ??
+          product.orderItemsCount ??
+          product.salesCount ??
+          0,
+      );
+    default:
+      return product.name || "";
+  }
+}
+
+function sortDirectionLabel(key: MobileProductSortKey, direction: SortDirection) {
+  if (key === "stock") return direction === "desc" ? "Tồn nhiều → ít" : "Tồn ít → nhiều";
+  if (key === "price" || key === "costPrice")
+    return direction === "desc" ? "Giá cao → thấp" : "Giá thấp → cao";
+  if (key === "createdAt") return direction === "desc" ? "Mới → cũ" : "Cũ → mới";
+  if (key === "sales") return direction === "desc" ? "Bán nhiều → ít" : "Bán ít → nhiều";
+  return direction === "asc" ? "A-Z / tăng dần" : "Z-A / giảm dần";
 }
 
 function extractRows(payload: any) {
@@ -365,6 +462,123 @@ export default function MobileProductsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState<MobileImagePreviewState | null>(null);
+  const [displayOptionsOpen, setDisplayOptionsOpen] = useState(false);
+  const [displayPreset, setDisplayPreset] =
+    useState<ProductDisplayPreset>("default");
+  const [draftDisplayPreset, setDraftDisplayPreset] =
+    useState<ProductDisplayPreset>("default");
+  const [sortKey, setSortKey] = useState<MobileProductSortKey>("name");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [displayMessage, setDisplayMessage] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as {
+        preset?: ProductDisplayPreset;
+        sortKey?: MobileProductSortKey;
+        sortDirection?: SortDirection;
+      };
+
+      const validPresets: ProductDisplayPreset[] = [
+        "default",
+        "newest",
+        "bestSelling",
+        "priceHigh",
+      ];
+      const validSortKeys: MobileProductSortKey[] = [
+        "name",
+        "category",
+        "color",
+        "size",
+        "sku",
+        "price",
+        "costPrice",
+        "stock",
+        "status",
+        "createdAt",
+        "sales",
+      ];
+
+      if (parsed.preset && validPresets.includes(parsed.preset)) {
+        setDisplayPreset(parsed.preset);
+        setDraftDisplayPreset(parsed.preset);
+      }
+      if (parsed.sortKey && validSortKeys.includes(parsed.sortKey)) {
+        setSortKey(parsed.sortKey);
+      }
+      if (parsed.sortDirection === "asc" || parsed.sortDirection === "desc") {
+        setSortDirection(parsed.sortDirection);
+      }
+    } catch {
+      // Giữ mặc định nếu localStorage cũ/lỗi.
+    }
+  }, []);
+
+  const applyDisplayPreset = (preset: ProductDisplayPreset) => {
+    setDisplayPreset(preset);
+    setDraftDisplayPreset(preset);
+
+    if (preset === "newest") {
+      setSortKey("createdAt");
+      setSortDirection("desc");
+      return;
+    }
+
+    if (preset === "bestSelling") {
+      setSortKey("sales");
+      setSortDirection("desc");
+      return;
+    }
+
+    if (preset === "priceHigh") {
+      setSortKey("price");
+      setSortDirection("desc");
+      return;
+    }
+
+    setSortKey("name");
+    setSortDirection("asc");
+  };
+
+  const applyManualSort = (
+    key: MobileProductSortKey,
+    direction: SortDirection,
+  ) => {
+    setDisplayPreset("default");
+    setDraftDisplayPreset("default");
+    setSortKey(key);
+    setSortDirection(direction);
+  };
+
+  const saveDisplayOptions = () => {
+    try {
+      localStorage.setItem(
+        PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY,
+        JSON.stringify({
+          preset: draftDisplayPreset,
+          sortKey,
+          sortDirection,
+        }),
+      );
+      setDisplayMessage("Đã lưu tuỳ chọn hiển thị.");
+    } catch {
+      setDisplayMessage("Không lưu được tuỳ chọn trên thiết bị này.");
+    }
+    setDisplayOptionsOpen(false);
+  };
+
+  const resetDisplayOptions = () => {
+    applyDisplayPreset("default");
+    try {
+      localStorage.removeItem(PRODUCT_DISPLAY_OPTIONS_STORAGE_KEY);
+    } catch {
+      // Không ảnh hưởng việc reset trên màn hình.
+    }
+    setDisplayMessage("Đã đưa về mặc định A-Z.");
+  };
 
   const openImagePreview = (
     product: MobileProduct,
@@ -394,7 +608,7 @@ export default function MobileProductsPage() {
       const params = new URLSearchParams();
       params.set("branchId", branchId);
       params.set("status", status);
-      params.set("take", "300");
+      params.set("take", "500");
       if (query.trim()) params.set("q", query.trim());
       if (category !== "all") params.set("category", category);
 
@@ -449,13 +663,40 @@ export default function MobileProductsPage() {
   }, [branchId, status, category, query]);
 
   const visibleProducts = useMemo(() => {
-    if (category === "all") return products;
-    return products.filter(
-      (product) =>
-        String(product.category || "").trim().toLocaleLowerCase("vi") ===
-        category.trim().toLocaleLowerCase("vi"),
-    );
-  }, [products, category]);
+    const categoryFiltered =
+      category === "all"
+        ? [...products]
+        : products.filter(
+            (product) =>
+              String(product.category || "").trim().toLocaleLowerCase("vi") ===
+              category.trim().toLocaleLowerCase("vi"),
+          );
+
+    return categoryFiltered.sort((a, b) => {
+      const av = getMobileProductSortValue(a, sortKey);
+      const bv = getMobileProductSortValue(b, sortKey);
+
+      let result = 0;
+      if (typeof av === "number" || typeof bv === "number") {
+        result = Number(av || 0) - Number(bv || 0);
+      } else {
+        result = String(av || "").localeCompare(String(bv || ""), "vi", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      if (result !== 0) {
+        return sortDirection === "asc" ? result : -result;
+      }
+
+      // Nếu giá trị chính bằng nhau thì luôn giữ tên A-Z để danh sách ổn định.
+      return String(a.name || "").localeCompare(String(b.name || ""), "vi", {
+        numeric: true,
+        sensitivity: "base",
+      });
+    });
+  }, [products, category, sortKey, sortDirection]);
 
   const summary = useMemo(() => {
     return visibleProducts.reduce(
@@ -571,6 +812,157 @@ export default function MobileProductsPage() {
               <option value="DRAFT">Nháp</option>
             </select>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDraftDisplayPreset(displayPreset);
+              setDisplayOptionsOpen((current) => !current);
+              setDisplayMessage("");
+            }}
+            className="flex min-h-11 w-full items-center justify-between rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2 text-left"
+          >
+            <span className="text-sm font-semibold text-neutral-900">
+              Tuỳ chọn hiển thị
+            </span>
+            <span className="text-xs font-medium text-neutral-500">
+              {sortDirectionLabel(sortKey, sortDirection)} {displayOptionsOpen ? "▲" : "▼"}
+            </span>
+          </button>
+
+          {displayOptionsOpen ? (
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-neutral-500">
+                Sắp xếp nhanh
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {[
+                  {
+                    id: "default",
+                    label: "Mặc định A-Z",
+                    active:
+                      sortKey === "name" && sortDirection === "asc" && displayPreset === "default",
+                    onSelect: () => applyDisplayPreset("default"),
+                  },
+                  {
+                    id: "stockHigh",
+                    label: "Tồn nhiều lên đầu",
+                    active: sortKey === "stock" && sortDirection === "desc",
+                    onSelect: () => applyManualSort("stock", "desc"),
+                  },
+                  {
+                    id: "stockLow",
+                    label: "Tồn ít lên đầu",
+                    active: sortKey === "stock" && sortDirection === "asc",
+                    onSelect: () => applyManualSort("stock", "asc"),
+                  },
+                  {
+                    id: "newest",
+                    label: "Mới tạo lên đầu",
+                    active: sortKey === "createdAt" && sortDirection === "desc",
+                    onSelect: () => applyDisplayPreset("newest"),
+                  },
+                  {
+                    id: "bestSelling",
+                    label: "Bán chạy lên đầu",
+                    active: sortKey === "sales" && sortDirection === "desc",
+                    onSelect: () => applyDisplayPreset("bestSelling"),
+                  },
+                  {
+                    id: "priceHigh",
+                    label: "Giá cao lên đầu",
+                    active: sortKey === "price" && sortDirection === "desc",
+                    onSelect: () => applyDisplayPreset("priceHigh"),
+                  },
+                ].map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={option.onSelect}
+                    className={`rounded-xl border px-3 py-2.5 text-left text-xs font-semibold ${
+                      option.active
+                        ? "border-neutral-950 bg-neutral-950 text-white"
+                        : "border-neutral-200 bg-white text-neutral-800"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-4 border-t border-neutral-200 pt-3">
+                <div className="mb-2 text-xs font-black uppercase tracking-wide text-neutral-500">
+                  Sắp xếp chi tiết như bản web
+                </div>
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <select
+                    value={sortKey}
+                    onChange={(event) => {
+                      const nextKey = event.target.value as MobileProductSortKey;
+                      const defaultDirection: SortDirection =
+                        nextKey === "stock" || nextKey === "createdAt" || nextKey === "sales"
+                          ? "desc"
+                          : "asc";
+                      applyManualSort(nextKey, defaultDirection);
+                    }}
+                    className="h-11 min-w-0 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold outline-none"
+                  >
+                    <option value="name">Tên sản phẩm</option>
+                    <option value="category">Danh mục</option>
+                    <option value="color">Màu</option>
+                    <option value="size">Size</option>
+                    <option value="sku">SKU</option>
+                    <option value="price">Giá bán</option>
+                    <option value="costPrice">Giá nhập</option>
+                    <option value="stock">Tồn kho</option>
+                    <option value="status">Trạng thái</option>
+                    <option value="createdAt">Ngày tạo</option>
+                    <option value="sales">Bán chạy</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyManualSort(
+                        sortKey,
+                        sortDirection === "asc" ? "desc" : "asc",
+                      )
+                    }
+                    className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-bold text-neutral-800"
+                  >
+                    {sortDirection === "asc" ? "↑ Tăng" : "↓ Giảm"}
+                  </button>
+                </div>
+                <div className="mt-2 text-xs text-neutral-500">
+                  Hiện tại: {sortDirectionLabel(sortKey, sortDirection)}
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-neutral-200 pt-3">
+                <button
+                  type="button"
+                  onClick={resetDisplayOptions}
+                  className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700"
+                >
+                  Về mặc định
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDisplayOptions}
+                  className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"
+                >
+                  Lưu tuỳ chọn
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {displayMessage ? (
+            <div className="rounded-xl bg-neutral-100 px-3 py-2 text-xs font-medium text-neutral-600">
+              {displayMessage}
+            </div>
+          ) : null}
         </div>
 
         {loading ? (
