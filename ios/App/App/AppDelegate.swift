@@ -10,16 +10,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
-        // Override point for customization after application launch.
+        if let window = window {
+            OperationsAppLock.shared.install(on: window)
+        }
         return true
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
-        // Sent when the application is about to move from active to inactive state.
+        OperationsAppLock.shared.willResignActive()
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
+        OperationsAppLock.shared.didEnterBackground()
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
@@ -27,7 +29,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused while the application was inactive.
+        OperationsAppLock.shared.didBecomeActive()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

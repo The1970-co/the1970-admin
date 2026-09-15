@@ -82,6 +82,8 @@ type Order = {
   productKind?: "SHIRT" | "PANTS" | "OTHER";
   sizeSet?: string[] | null;
   sizeRatio?: Record<string, number> | null;
+  plannedQtyOverride?: number | null;
+  fabricSupplyMode?: "COMPANY" | "FACTORY" | string;
   dueDate?: string | null;
   updatedAt?: string | null;
   factory?: FactoryItem | null;
@@ -99,6 +101,7 @@ type Order = {
     totalPlannedQty?: number;
     totalActualQty?: number;
     sizeRatioText?: string;
+    fabricSupplyMode?: "COMPANY" | "FACTORY" | string;
   };
 };
 
@@ -135,22 +138,6 @@ type SavedAccessoryTemplate = {
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
 const PANTS_SIZES = ["29", "30", "31", "32", "34", "36"];
-const PRODUCTION_SIZE_ORDER = [...SHIRT_SIZES, ...PANTS_SIZES];
-
-function sortProductionSizes(values: string[]) {
-  return [...values].sort((a, b) => {
-    const aa = normalizeProductionSize(a);
-    const bb = normalizeProductionSize(b);
-    const ai = PRODUCTION_SIZE_ORDER.indexOf(aa);
-    const bi = PRODUCTION_SIZE_ORDER.indexOf(bb);
-    if (ai !== -1 || bi !== -1) {
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    }
-    return aa.localeCompare(bb, "vi", { numeric: true, sensitivity: "base" });
-  });
-}
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Chưa triển khai",
   PLANNING: "Đang lên kế hoạch",
@@ -347,7 +334,7 @@ export default function ProductionPageClient() {
                 </div>
 
                 <div className="mt-2 text-[11px] text-neutral-500">
-                  {p.fabricDone ? `Đã bàn giao ${fmt(p.allocatedM || 0)} m vải` : "Chưa bàn giao vải"}
+                  {String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY" ? `Nhà may tự cấp vải${o.plannedQtyOverride?` · tạm tính ${fmt(o.plannedQtyOverride)} sp`:""}` : p.fabricDone ? `Đã bàn giao ${fmt(p.allocatedM || 0)} m vải` : "Chưa bàn giao vải"}
                   {" · "}
                   {p.nplDone ? "NPL đã khai báo" : "NPL chưa xong"}
                   {" · "}
@@ -411,6 +398,8 @@ function CreateOrderModal({ meta, canViewSampleSource, onClose, onSaved }: { met
   const [sourceId, setSourceId] = useState("");
   const [factoryId, setFactoryId] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [factorySuppliesFabric, setFactorySuppliesFabric] = useState(false);
+  const [provisionalQty, setProvisionalQty] = useState("");
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -432,9 +421,15 @@ function CreateOrderModal({ meta, canViewSampleSource, onClose, onSaved }: { met
       setError("");
       if (!sourceId) throw new Error("Chưa chọn mã sản xuất.");
       if (!factoryId) throw new Error("Chưa chọn nhà may.");
+      const provisional = Number(String(provisionalQty || "").replace(",", "."));
+      if (factorySuppliesFabric && (!Number.isInteger(provisional) || provisional <= 0)) throw new Error("Nhập số lượng tạm tính lớn hơn 0.");
       const row = await productionApi<any>("/production/orders", {
         method: "POST",
-        body: JSON.stringify({ sourceType, sourceId, productionPartnerId: factoryId, dueDate: dueDate || null }),
+        body: JSON.stringify({
+          sourceType, sourceId, productionPartnerId: factoryId, dueDate: dueDate || null,
+          fabricSupplyMode: factorySuppliesFabric ? "FACTORY" : "COMPANY",
+          plannedQtyOverride: factorySuppliesFabric ? provisional : null,
+        }),
       });
       onSaved(row.id);
     } catch (e) {
@@ -480,6 +475,14 @@ function CreateOrderModal({ meta, canViewSampleSource, onClose, onSaved }: { met
         <div className="grid gap-4 md:grid-cols-2">
           <Field l="Nhà may / xưởng"><select className={input} value={factoryId} onChange={(e) => setFactoryId(e.target.value)}><option value="">Chọn nhà may</option>{meta.factories.map((f) => <option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}</select></Field>
           <Field l="Hạn hoàn thành"><input type="date" className={input} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
+        </div>
+
+        <div className={`rounded-2xl border p-4 ${factorySuppliesFabric ? "border-amber-300 bg-amber-50" : "bg-white"}`}>
+          <label className="flex items-start gap-3">
+            <input type="checkbox" className="mt-1 h-4 w-4" checked={factorySuppliesFabric} onChange={(e)=>setFactorySuppliesFabric(e.target.checked)} />
+            <span><b>Nhà may tự cấp vải</b><span className="mt-1 block text-xs text-neutral-500">Không cần xuất cây vải từ kho The 1970. Vẫn được tính và xuất phụ kiện theo số lượng tạm tính.</span></span>
+          </label>
+          {factorySuppliesFabric && <div className="mt-3 max-w-xs"><Field l="Số lượng tạm tính"><input type="number" min="1" step="1" className={input} value={provisionalQty} onChange={(e)=>setProvisionalQty(e.target.value)} placeholder="VD: 300" /></Field></div>}
         </div>
 
         <button disabled={saving || !sourceId || !factoryId} onClick={() => void save()} className="w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">
@@ -819,6 +822,12 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setBusy(true);
       setError("");
       if(!stepAccess[3]) throw new Error("Bạn không có quyền thao tác bước 3 · Cây vải.");
+      if(String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY") {
+        await productionApi(`/production/orders/${id}/rolls`,{method:"PATCH",body:JSON.stringify({rolls:[]})});
+        await load();
+        goToNextPermitted(3);
+        return;
+      }
       const allRolls = await productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}`);
       const duplicate = allRolls.find((r) => selected[r.id] && liningSelected[r.id]);
       if (duplicate) throw new Error(`Cây ${duplicate.rollCode || duplicate.id} đang được chọn đồng thời là vải chính và vải lót.`);
@@ -982,6 +991,20 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   if (!order) return <Modal title="Lệnh sản xuất" onClose={onClose} wide><div className="p-8">Đang tải...</div></Modal>;
   if (!permittedStepNumbers.length) return <Modal title={order.code || "Lệnh sản xuất"} onClose={onClose} wide><div className="p-8 text-sm text-neutral-500">Tài khoản chưa được cấp quyền vào bước nào của quy trình sản xuất.</div></Modal>;
 
+  async function saveSupplySettings() {
+    try {
+      setBusy(true);
+      setError("");
+      const factoryMode=String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY";
+      const provisional=Number(order?.plannedQtyOverride||0);
+      if(factoryMode&&(!Number.isInteger(provisional)||provisional<=0))throw new Error("Nhập số lượng tạm tính lớn hơn 0.");
+      await productionApi(`/production/orders/${id}`,{method:"PATCH",body:JSON.stringify({fabricSupplyMode:factoryMode?"FACTORY":"COMPANY",plannedQtyOverride:factoryMode?provisional:null})});
+      await load();
+      goToNextPermitted(1);
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được chế độ cấp vải.");}
+    finally{setBusy(false);}
+  }
+
   const allSteps = [
     [1, "Chọn mã"], [2, "NPL"], [3, "Cây vải"], [4, "Size & tỷ lệ"], [5, "Tính sản lượng"], [6, "Gửi lệnh SX & Tính giá"],
   ] as const;
@@ -993,7 +1016,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
 
   async function goNext() {
     if (busy) return;
-    if (step === 1) { goToNextPermitted(1); return; }
+    if (step === 1) { await saveSupplySettings(); return; }
     if (step === 2) { await saveSpec(); return; }
     if (step === 3) { await saveRolls(); return; }
     if (step === 4) { await saveSizes(); return; }
@@ -1047,7 +1070,11 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
               <div className="h-28 w-24 overflow-hidden rounded-2xl bg-neutral-100">{(order.sourceType !== "SAMPLE" || canViewSampleSource) && order.sourceImageUrl && <img src={asset(order.sourceImageUrl)} className="h-full w-full object-cover" />}</div>
               <div><div className="text-xs font-semibold text-neutral-400">{order.sourceType === "PRODUCT" ? "Mã cũ từ danh sách sản phẩm" : canViewSampleSource ? "Mẫu từ triển khai mẫu" : "Nguồn mẫu đã ẩn"}</div><h3 className="mt-1 text-xl font-semibold">{order.sourceType === "SAMPLE" && !canViewSampleSource ? "Mẫu triển khai · Đã ẩn theo phân quyền" : `${order.sourceCode} · ${order.sourceName || ""}`}</h3><div className="mt-3 text-sm">Nhà may: <b>{order.factory?.name}</b></div></div>
             </div>
-            <div className="mt-4 flex justify-end"><button onClick={() => goToNextPermitted(1)} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Tiếp →</button></div>
+            <div className="mt-4 rounded-2xl border p-4">
+              <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={String(order.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"} onChange={(e)=>setOrder((x:any)=>({...x,fabricSupplyMode:e.target.checked?"FACTORY":"COMPANY"}))}/><span><b>Nhà may tự cấp vải</b><span className="mt-1 block text-xs text-neutral-500">Bật khi xưởng tự lo vải. Lệnh vẫn xuất phụ kiện được mà không cần chọn cây vải.</span></span></label>
+              {String(order.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"&&<div className="mt-3 max-w-xs"><Field l="Số lượng tạm tính"><input type="number" min="1" step="1" className={input} value={order.plannedQtyOverride??""} onChange={(e)=>setOrder((x:any)=>({...x,plannedQtyOverride:e.target.value}))} placeholder="VD: 300"/></Field></div>}
+            </div>
+            <div className="mt-4 flex justify-end"><button disabled={busy} onClick={() => void saveSupplySettings()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Lưu & tiếp →</button></div>
           </div>
         )}
 
@@ -1120,6 +1147,12 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         )}
 
         {step === 3 && (
+          String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY" ? (
+            <div className="space-y-4 rounded-3xl border border-amber-300 bg-amber-50 p-5">
+              <div><b>Nhà may tự cấp vải</b><div className="mt-1 text-sm text-amber-800">Không cần chọn hoặc xuất cây vải từ kho The 1970. Số lượng tạm tính hiện tại: <b>{fmt(order?.plannedQtyOverride||0)} sp</b>.</div></div>
+              <div className="flex justify-end"><button disabled={busy||!stepAccess[3]} onClick={()=>void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">Xác nhận không cấp vải → Bước tiếp</button></div>
+            </div>
+          ) : (
           <div className="space-y-4">
             <div className="grid gap-2 lg:grid-cols-[minmax(280px,1fr)_190px_auto]">
               <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className={`${input} pl-10`} value={rollQ} onChange={(e) => void searchRolls(e.target.value)} placeholder="Tìm mã phiếu, mã cây, mã vải, màu, #mã màu..." /></div>
@@ -1155,6 +1188,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             ))}
             <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={openFabricPrintForm} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">In phiếu xuất vải chính</button><button disabled={busy||!stepAccess[3]} onClick={() => void saveRolls()} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white">{nextStep(3) ? "Lưu vải chính + vải lót → Bước tiếp" : "Lưu vải chính + vải lót"}</button></div>
           </div>
+          )
         )}
 
         {step === 4 && (
@@ -1163,7 +1197,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
 
         {step === 5 && (
           <div className="space-y-5">
-            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">Tính dự kiến từ vải chính. Vải lót chỉ kiểm tra đủ/thiếu theo cấu hình và cây đã gán ở Bước 4.</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{calc ? "Tính lại sản lượng" : "Tính sản lượng"}</button></div>
+            <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">{String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?`Nhà may tự cấp vải: tính NPL theo ${fmt(order?.plannedQtyOverride||0)} sp tạm tính. Khi có lệnh cắt thật, sửa ô TT bên dưới rồi lưu để tính lại NPL.`:"Tính dự kiến từ vải chính. Vải lót chỉ kiểm tra đủ/thiếu theo cấu hình và cây đã gán ở Bước 4."}</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?(calc?"Tính lại NPL theo SL tạm tính":"Tính NPL theo SL tạm tính"):(calc?"Tính lại sản lượng":"Tính sản lượng")}</button></div>
             {calc && <>
               <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!stepAccess[5]} history={order.cutHistory || []} selectedMaterialCount={materials.length} hideMaterials />
               <NplIssuePanel orderId={id} materials={calc.materials||[]} history={order.nplIssueHistory||calc.nplIssueHistory||[]} onChanged={load}/>
@@ -1270,7 +1304,6 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
 
   return (
     <div className="min-w-0 space-y-5">
-      {/* Chỉ Admin / Owner nhìn thấy 2 bảng định mức vải; nhân viên vẫn thấy toàn bộ phần size/tỷ lệ bên dưới. */}
       {isAdmin && (
         <div className="min-w-0 space-y-4">
           <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
@@ -1371,7 +1404,7 @@ function groupSizes(rows: any[]) {
 }
 
 function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [], selectedMaterialCount = 0, hideMaterials = false }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[]; selectedMaterialCount?:number; hideMaterials?:boolean }) {
-  const sizes = sortProductionSizes(Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[]);
+  const sizes = Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[];
   const totalPlanned = Number(c.totalPlannedQty ?? c.totalQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0));
   const persistedActual = Number(c.totalActualQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number((x.actualQty ?? x.plannedQty) || 0),0));
   const draftActual = editable

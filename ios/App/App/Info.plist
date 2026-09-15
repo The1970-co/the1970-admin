@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>The 1970 dùng Face ID để mở khoá ứng dụng trên thiết bị của bạn.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Ứng dụng cần camera để quét mã vạch kiểm kho.</string>
 	<key>UIBackgroundModes</key>
