@@ -659,11 +659,15 @@ export default function PayrollPeriodDetailPageClient({
     : currentEmployeeConfig || (editLine as any)?.calculationConfig || null;
   const editOvertimeRows = editLine ? monthlyOvertimeRows(editLine, editConfig) : [];
   const editHourlyEnabled = editConfig ? Boolean((editConfig as any).hourlyEnabled) : n(editLine?.hourlyAmount) > 0;
+  const editRawOvertimeHours = editOvertimeRows.reduce((sum, row) => sum + row.hours, 0);
+  const editRegularHours = editLine
+    ? Math.max(0, n(editLine.normalHours) - editRawOvertimeHours)
+    : 0;
   const editConvertedHours = editLine
-    ? n(editLine.normalHours) + editOvertimeRows.reduce((sum, row) => sum + (row.enabled ? row.hours * row.multiplier : 0), 0)
+    ? editRegularHours + editOvertimeRows.reduce((sum, row) => sum + (row.enabled ? row.hours * row.multiplier : 0), 0)
     : 0;
   const editHourlyAmount = editLine && editHourlyEnabled
-    ? n(editLine.normalHours) * n((editConfig as any)?.hourlyRate ?? editLine.hourlyRate) +
+    ? editRegularHours * n((editConfig as any)?.hourlyRate ?? editLine.hourlyRate) +
       editOvertimeRows.reduce((sum, row) => sum + (row.enabled ? row.hours * row.baseHourlyRate * row.multiplier : 0), 0)
     : 0;
   const editTaggedProductEnabled = editConfig ? Boolean((editConfig as any).taggedProductEnabled) : n(editLine?.taggedProductRate) > 0;
@@ -1133,7 +1137,7 @@ export default function PayrollPeriodDetailPageClient({
                   {(
                     [
                       ["workingDays", "Số công thực tế"],
-                      ["normalHours", "Giờ ngày thường"],
+                      ["normalHours", "Tổng giờ (T.Giờ)"],
                       ["paidLeaveDays", "Ngày nghỉ có lương"],
                     ] as const
                   ).map(([key, label]) => (
