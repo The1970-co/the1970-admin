@@ -10,6 +10,7 @@ type SettingsTab =
   | "shipping"
   | "mapping"
   | "printing"
+  | "bankQr"
   | "paymentSources"
   | "salesChannels"
   | "security";
@@ -51,6 +52,30 @@ type PaymentSourceItem = {
   sortOrder: number;
   note?: string | null;
 };
+
+type PosBankAccountItem = {
+  id?: string;
+  slot: number;
+  label: string;
+  bankCode: string;
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+const makeEmptyPosBankAccount = (slot: number): PosBankAccountItem => ({
+  id: `pos-bank-${slot}`,
+  slot,
+  label: `Tài khoản ${slot}`,
+  bankCode: "",
+  bankName: "",
+  accountNumber: "",
+  accountName: "",
+  isActive: false,
+  sortOrder: slot * 10,
+});
 
 type SalesChannelItem = {
   id: string;
@@ -475,6 +500,9 @@ export default function SettingsPage() {
 
   const [mapping, setMapping] = useState<OperationMapping>(mappingSeed);
 
+  const [posBankAccounts, setPosBankAccounts] = useState<PosBankAccountItem[]>([]);
+  const [savingPosBankAccounts, setSavingPosBankAccounts] = useState(false);
+
   const [paymentSources, setPaymentSources] = useState<PaymentSourceItem[]>([]);
   const [paymentSourceForm, setPaymentSourceForm] = useState({
     code: "",
@@ -581,6 +609,7 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadBranches();
     void loadPaymentSources();
+    void loadPosBankAccounts();
     void loadPickupLocationSettings();
     loadCarrierPickupMapping();
     loadAhamovePaymentMethod();
@@ -873,6 +902,74 @@ export default function SettingsPage() {
   const deleteSalesChannel = (id: string) => {
     saveSalesChannels(salesChannels.filter((item) => item.id !== id));
   };
+  const loadPosBankAccounts = async () => {
+    try {
+      const data = await apiJson<PosBankAccountItem[]>("/orders/pos-bank-accounts");
+      const saved = Array.isArray(data) ? data : [];
+      setPosBankAccounts(
+        saved
+          .slice()
+          .sort((a, b) => Number(a.sortOrder || a.slot || 0) - Number(b.sortOrder || b.slot || 0)),
+      );
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Không load được tài khoản QR POS.",
+      );
+    }
+  };
+
+  const updatePosBankAccount = (slot: number, patch: Partial<PosBankAccountItem>) => {
+    setPosBankAccounts((prev) =>
+      prev.map((item) => (item.slot === slot ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const addPosBankAccount = () => {
+    setPosBankAccounts((prev) => {
+      const nextSlot = prev.reduce((max, item) => Math.max(max, Number(item.slot || 0)), 0) + 1;
+      return [...prev, makeEmptyPosBankAccount(nextSlot)];
+    });
+  };
+
+  const removePosBankAccount = (slot: number) => {
+    setPosBankAccounts((prev) =>
+      prev
+        .filter((item) => item.slot !== slot)
+        .map((item, index) => ({
+          ...item,
+          id: `pos-bank-${index + 1}`,
+          slot: index + 1,
+          sortOrder: (index + 1) * 10,
+        })),
+    );
+  };
+
+  const savePosBankAccounts = async () => {
+    try {
+      setSavingPosBankAccounts(true);
+      setMessage("");
+      const items = posBankAccounts.map((item, index) => ({
+        ...item,
+        id: `pos-bank-${index + 1}`,
+        slot: index + 1,
+        sortOrder: (index + 1) * 10,
+      }));
+      const saved = await apiJson<PosBankAccountItem[]>("/orders/pos-bank-accounts", {
+        method: "PATCH",
+        body: JSON.stringify({ items }),
+      });
+      const rows = Array.isArray(saved) ? saved : [];
+      setPosBankAccounts(rows);
+      setMessage(`Đã lưu ${rows.length} tài khoản QR dùng chung cho toàn bộ chi nhánh.`);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Không lưu được tài khoản QR POS.",
+      );
+    } finally {
+      setSavingPosBankAccounts(false);
+    }
+  };
+
   const loadPaymentSources = async () => {
     try {
       const data = await apiJson<PaymentSourceItem[]>("/payment-sources");
@@ -1217,6 +1314,15 @@ const addWarehouse = async () => {
               }`}
           >
             Mẫu in
+          </button>
+          <button
+            onClick={() => setTab("bankQr")}
+            className={`rounded-full px-4 py-2 text-sm font-medium ${tab === "bankQr"
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 bg-white text-neutral-700"
+              }`}
+          >
+            QR chuyển khoản
           </button>
           <button
             onClick={() => setTab("paymentSources")}
@@ -2217,6 +2323,108 @@ const addWarehouse = async () => {
           </Panel>
         </div>
       )}
+      {tab === "bankQr" && (
+        <div className="space-y-6">
+          <Panel className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-neutral-900">
+                  QR chuyển khoản trên hoá đơn POS
+                </h3>
+                <p className="mt-1 max-w-3xl text-sm text-neutral-500">
+                  Danh sách tài khoản dùng chung toàn hệ thống, không giới hạn số lượng. Khi thanh toán POS,
+                  nhân viên chọn một tài khoản và hoá đơn sẽ in QR VietQR kèm đúng số tiền
+                  phải trả và mã đơn làm nội dung chuyển khoản.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={addPosBankAccount}>
+                  + Thêm tài khoản
+                </Button>
+                <Button onClick={() => void savePosBankAccounts()} disabled={savingPosBankAccounts}>
+                  {savingPosBankAccounts ? "Đang lưu..." : "Lưu cấu hình QR"}
+                </Button>
+              </div>
+            </div>
+          </Panel>
+
+          {posBankAccounts.length === 0 ? (
+            <Panel className="p-8 text-center text-sm text-neutral-500">
+              Chưa có tài khoản QR. Bấm “+ Thêm tài khoản” để tạo tài khoản đầu tiên.
+            </Panel>
+          ) : (
+          <div className="grid gap-5 xl:grid-cols-2">
+            {posBankAccounts.map((account) => (
+              <Panel key={account.slot} className="p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">
+                      Tài khoản {account.slot}
+                    </p>
+                    <h4 className="mt-1 text-lg font-semibold text-neutral-900">
+                      {account.label || `Tài khoản ${account.slot}`}
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updatePosBankAccount(account.slot, { isActive: !account.isActive })}
+                    >
+                      <Badge tone={account.isActive ? "green" : "gray"}>
+                        {account.isActive ? "ĐANG DÙNG" : "TẮT"}
+                      </Badge>
+                    </button>
+                    <Button variant="danger" onClick={() => removePosBankAccount(account.slot)}>
+                      Xoá
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  <input
+                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                    value={account.label}
+                    onChange={(e) => updatePosBankAccount(account.slot, { label: e.target.value })}
+                    placeholder="Tên gợi nhớ, VD: VCB Hà Kiều Anh"
+                  />
+                  <input
+                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
+                    value={account.bankCode}
+                    onChange={(e) => updatePosBankAccount(account.slot, { bankCode: e.target.value.toUpperCase() })}
+                    placeholder="Mã VietQR, VD: VCB, TCB, MB"
+                  />
+                  <input
+                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                    value={account.bankName}
+                    onChange={(e) => updatePosBankAccount(account.slot, { bankName: e.target.value })}
+                    placeholder="Tên ngân hàng, VD: Vietcombank"
+                  />
+                  <input
+                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                    value={account.accountNumber}
+                    onChange={(e) => updatePosBankAccount(account.slot, { accountNumber: e.target.value.replace(/\s+/g, "") })}
+                    placeholder="Số tài khoản"
+                  />
+                  <input
+                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none md:col-span-2"
+                    value={account.accountName}
+                    onChange={(e) => updatePosBankAccount(account.slot, { accountName: e.target.value.toUpperCase() })}
+                    placeholder="Tên chủ tài khoản"
+                  />
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-500">
+                  Mã ngân hàng dùng theo chuẩn VietQR. Ví dụ Vietcombank có thể nhập
+                  <span className="font-semibold text-neutral-700"> VCB</span>. Không gắn chi nhánh:
+                  cả QO, TH, CL, XD đều nhìn thấy cùng danh sách này.
+                </div>
+              </Panel>
+            ))}
+          </div>
+          )}
+        </div>
+      )}
+
       {tab === "paymentSources" && (
         <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <Panel className="overflow-hidden">

@@ -2178,6 +2178,7 @@ export default function MessagesPageClient({
             const IMAGE_CONCURRENCY = 3;
             const batch = job.imageUrls.slice(0, IMAGE_CONCURRENCY);
             const remaining = job.imageUrls.slice(IMAGE_CONCURRENCY);
+            const batchStartedAt = Date.now();
             const results = await Promise.allSettled(
               batch.map((attachmentUrl) =>
                 sendOmniMessage(job.conversationId, {
@@ -2187,7 +2188,11 @@ export default function MessagesPageClient({
               ),
             );
 
-            const failedImageUrls: string[] = [];
+            const rejectedImages: Array<{
+              url: string;
+              optimisticId: string;
+            }> = [];
+
             results.forEach((result, batchIndex) => {
               const optimisticId = `${job.optimisticPrefix}-image-${Number(job.imageOffset || 0) + batchIndex}`;
               if (result.status === "fulfilled") {
@@ -2206,9 +2211,68 @@ export default function MessagesPageClient({
                   };
                 });
               } else {
-                failedImageUrls.push(batch[batchIndex]);
+                rejectedImages.push({
+                  url: batch[batchIndex],
+                  optimisticId,
+                });
               }
             });
+
+            // Nếu browser bị mất response sau khi backend/Meta đã gửi thành công,
+            // Promise vẫn có thể rejected. Trước khi báo lỗi và giữ ảnh để gửi lại,
+            // đọc lại thread một lần; nếu DB đã có đúng URL ảnh vừa gửi thì coi là OK
+            // để tránh nhân viên bấm gửi lại và khách nhận ảnh trùng.
+            const failedImageUrls: string[] = [];
+            if (rejectedImages.length) {
+              let refreshed: OmniConversation | null = null;
+              try {
+                refreshed = await getOmniConversation(job.conversationId);
+              } catch {
+                // Không verify được thì giữ hành vi an toàn cũ: coi là chưa gửi.
+              }
+
+              const usedMessageIds = new Set<string>();
+              const recentOutboundImages = (refreshed?.messages || []).filter(
+                (message) => {
+                  if (message.direction !== "OUT" || message.type !== "IMAGE") {
+                    return false;
+                  }
+                  const sentAt = new Date(message.sentAt || 0).getTime();
+                  return (
+                    Number.isFinite(sentAt) &&
+                    sentAt >= batchStartedAt - 30_000
+                  );
+                },
+              );
+
+              rejectedImages.forEach(({ url, optimisticId }) => {
+                const confirmed = recentOutboundImages.find(
+                  (message) =>
+                    !usedMessageIds.has(message.id) &&
+                    String(message.attachmentUrl || "").trim() === url,
+                );
+
+                if (confirmed) {
+                  usedMessageIds.add(confirmed.id);
+                  setActiveConversation((prev) => {
+                    if (!prev || prev.id !== job.conversationId) return prev;
+                    return {
+                      ...prev,
+                      messages: reconcileOmniMessage(
+                        (prev.messages || []).filter(
+                          (message: any) => message.id !== optimisticId,
+                        ),
+                        confirmed,
+                      ),
+                      lastMessageText: "[Ảnh]",
+                      lastMessageAt: confirmed.sentAt || prev.lastMessageAt,
+                    };
+                  });
+                } else {
+                  failedImageUrls.push(url);
+                }
+              });
+            }
 
             // Đưa phần ảnh còn lại xuống cuối queue. Tin text mới được bấm sau đó
             // sẽ chen lên trước và không phải chờ toàn bộ ảnh tải xong.
@@ -2225,7 +2289,9 @@ export default function MessagesPageClient({
 
             if (failedImageUrls.length) {
               jobFailed = true;
-              setError(`Có ${failedImageUrls.length} ảnh gửi lỗi, đã giữ lại để gửi lại.`);
+              setError(
+                `Có ${failedImageUrls.length} ảnh chưa xác nhận gửi thành công, đã giữ lại để gửi lại.`,
+              );
               setDraftImageUrls((current) => [
                 ...current,
                 ...failedImageUrls.filter((url) => !current.includes(url)),

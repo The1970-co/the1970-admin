@@ -46,6 +46,18 @@ type PaymentRow = {
   amount: string;
 };
 
+type PosBankAccount = {
+  id: string;
+  slot: number;
+  label: string;
+  bankCode: string;
+  bankName?: string | null;
+  accountNumber: string;
+  accountName: string;
+  isActive: boolean;
+  sortOrder: number;
+};
+
 type BranchOption = {
   value: string;
   label: string;
@@ -419,6 +431,8 @@ export default function PosPageClient() {
   const [activeTabId, setActiveTabId] = useState("1");
 
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
+  const [posBankAccounts, setPosBankAccounts] = useState<PosBankAccount[]>([]);
+  const [selectedPosBankAccountId, setSelectedPosBankAccountId] = useState("");
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([
     { id: "pay-1", paymentSourceId: "", amount: "0" },
   ]);
@@ -656,6 +670,44 @@ export default function PosPageClient() {
           : [];
 
       setPaymentSources(rows);
+    };
+
+    void run();
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const apiBase = getApiBaseUrl();
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${apiBase}/orders/pos-bank-accounts`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const rows = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.items)
+            ? json.items
+            : [];
+        const activeRows = rows
+          .filter((item: any) => item?.isActive !== false)
+          .sort((a: any, b: any) => Number(a?.sortOrder || a?.slot || 0) - Number(b?.sortOrder || b?.slot || 0));
+        setPosBankAccounts(activeRows);
+        setSelectedPosBankAccountId((prev) =>
+          prev && activeRows.some((item: any) => String(item.id) === String(prev))
+            ? prev
+            : activeRows[0]?.id
+              ? String(activeRows[0].id)
+              : "",
+        );
+      } catch {
+        setPosBankAccounts([]);
+      }
     };
 
     void run();
@@ -1483,6 +1535,25 @@ export default function PosPageClient() {
       "POS";
     const paid = totalPaid;
     const printTime = new Date().toLocaleString("vi-VN");
+    const selectedBankAccount = posBankAccounts.find(
+      (item) => String(item.id) === String(selectedPosBankAccountId),
+    );
+    const qrAmount = Math.max(0, Math.round(mustPay));
+    const qrImageUrl = selectedBankAccount
+      ? `https://img.vietqr.io/image/${encodeURIComponent(selectedBankAccount.bankCode)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(selectedBankAccount.accountName)}`
+      : "";
+    const qrHtml = selectedBankAccount
+      ? `
+        <div class="line"></div>
+        <div class="qr-block center">
+          <div class="qr-title">QUÉT MÃ CHUYỂN KHOẢN</div>
+          <img class="qr-image" src="${escapeHtml(qrImageUrl)}" alt="QR chuyển khoản" />
+          <div class="qr-bank"><strong>${escapeHtml(selectedBankAccount.bankName || selectedBankAccount.bankCode)}</strong></div>
+          <div>${escapeHtml(selectedBankAccount.accountNumber)}</div>
+          <div>${escapeHtml(selectedBankAccount.accountName)}</div>
+          <div class="muted qr-note">Số tiền: ${currency(qrAmount)} · Nội dung: ${escapeHtml(orderCode)}</div>
+        </div>`
+      : "";
     const paymentSourceNames = paymentRows
       .filter((row) => moneyNumber(row.amount) > 0)
       .map((row) => {
@@ -1532,6 +1603,11 @@ export default function PosPageClient() {
     .right { text-align: right; white-space: nowrap; }
     .summary-row { display: flex; justify-content: space-between; gap: 10px; margin: 5px 0; }
     .total { font-size: 16px; font-weight: 800; }
+    .qr-block { break-inside: avoid; page-break-inside: avoid; padding: 2px 0 4px; }
+    .qr-title { font-size: 12px; font-weight: 800; margin-bottom: 5px; }
+    .qr-image { width: 44mm; height: 44mm; object-fit: contain; display: block; margin: 4px auto; }
+    .qr-bank { margin-top: 3px; }
+    .qr-note { font-size: 10px; margin-top: 4px; }
     @media print {
       @page { size: 80mm auto; margin: 0; }
       body { width: 80mm; }
@@ -1576,15 +1652,25 @@ export default function PosPageClient() {
     <div class="line"></div>
     <div><strong>Nguồn tiền</strong></div>
     <div>${paymentSourceNames || "-"}</div>
+    ${qrHtml}
     ${note.trim() ? `<div class="line"></div><div><strong>Ghi chú:</strong> ${escapeHtml(note.trim())}</div>` : ""}
     <div class="line"></div>
     <div class="center muted">Cảm ơn quý khách!</div>
   </div>
   <script>
     window.onload = function() {
-      window.focus();
-      window.print();
-      setTimeout(function() { window.close(); }, 500);
+      var images = Array.prototype.slice.call(document.images || []);
+      Promise.all(images.map(function(img) {
+        if (img.complete) return Promise.resolve();
+        return new Promise(function(resolve) {
+          img.onload = resolve;
+          img.onerror = resolve;
+        });
+      })).then(function() {
+        window.focus();
+        window.print();
+        setTimeout(function() { window.close(); }, 500);
+      });
     };
   </script>
 </body>
@@ -2220,6 +2306,27 @@ export default function PosPageClient() {
               {successMessage}
             </div>
           ) : null}
+
+          <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-3">
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              QR chuyển khoản in trên bill
+            </label>
+            <select
+              value={selectedPosBankAccountId}
+              onChange={(e) => setSelectedPosBankAccountId(e.target.value)}
+              className="h-11 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm font-semibold outline-none"
+            >
+              <option value="">Không in QR chuyển khoản</option>
+              {posBankAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label} · {account.bankName || account.bankCode} · {account.accountNumber}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-[11px] leading-4 text-neutral-400">
+              Danh sách dùng chung cho mọi chi nhánh, cấu hình tại Settings → QR chuyển khoản.
+            </p>
+          </div>
 
           <button
             type="button"
