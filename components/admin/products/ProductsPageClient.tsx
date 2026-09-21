@@ -1018,7 +1018,7 @@ function ProductImagePreviewModal({
                 }`}
                 title={item.label}
               >
-                <img src={item.src} alt={item.label} className="h-full w-full object-cover" />
+                <img {...productThumbnailProps(item.src, 240)} alt={item.label} className="h-full w-full object-cover" />
               </button>
             ))}
           </div>
@@ -1062,10 +1062,9 @@ function ProductColorPreviewStrip({
         >
           {item.imageUrl ? (
             <img
-              src={toAbsoluteFileUrl(item.imageUrl)}
+              {...productThumbnailProps(toAbsoluteFileUrl(item.imageUrl), 240)}
               alt={item.color}
               className="h-full w-full object-cover"
-              loading="lazy"
             />
           ) : (
             <span className="flex h-full w-full items-center justify-center text-[8px] font-semibold text-neutral-500">
@@ -1113,10 +1112,9 @@ function ProductImage({
       >
         {src ? (
           <img
-            src={toAbsoluteFileUrl(src)}
+            {...productThumbnailProps(toAbsoluteFileUrl(src), 240)}
             alt={alt}
             className="h-full w-full object-cover"
-            loading="lazy"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">
@@ -6216,7 +6214,7 @@ export default function ProductsPageClient() {
             {imageUrl ? (
               <div className="mt-3">
                 <img
-                  src={toAbsoluteFileUrl(imageUrl)}
+                  {...productThumbnailProps(toAbsoluteFileUrl(imageUrl), 240)}
                   alt="Preview"
                   className="h-24 w-24 rounded-2xl border border-neutral-200 object-cover"
                 />
@@ -6491,7 +6489,7 @@ export default function ProductsPageClient() {
             {editImageUrl ? (
               <div className="mt-3">
                 <img
-                  src={toAbsoluteFileUrl(editImageUrl)}
+                  {...productThumbnailProps(toAbsoluteFileUrl(editImageUrl), 240)}
                   alt="Preview"
                   className="h-24 w-24 rounded-2xl border border-neutral-200 object-cover"
                 />
@@ -7315,3 +7313,45 @@ export default function ProductsPageClient() {
     </div>
   );
 }
+
+
+// Use a few stable thumbnail sizes across pages to reuse browser/CDN caches.
+// Original URLs remain in product data and in the full-size image viewer.
+function productThumbnailProps(original: string, size: 240 | 640 = 240) {
+  let src = original;
+  try {
+    const url = new URL(original);
+    const match = url.pathname.match(/^\/([^/]+)\/image\/upload\/(.+)$/);
+    if (
+      url.hostname === "res.cloudinary.com" &&
+      !url.search &&
+      match &&
+      !match[2].startsWith("s--")
+    ) {
+      const first = match[2].split("/")[0];
+      // Leave existing transformations and signed URLs untouched.
+      const hasTransformation = first.includes(",") ||
+        /^(?:c|w|h|q|f|e|t|ar|dpr|g|fl|l|u|a|b|bo|r|x|y|z|o|d)_/.test(first);
+      if (!hasTransformation) {
+        url.pathname = "/" + match[1] + "/image/upload/" +
+          "c_limit,w_" + size + ",h_" + size + ",q_auto,f_auto/" + match[2];
+        src = url.toString();
+      }
+    }
+  } catch {
+    // Local, blob, data, and non-Cloudinary URLs keep their existing behavior.
+  }
+  return {
+    src,
+    loading: "lazy" as const,
+    decoding: "async" as const,
+    onError: (event: { currentTarget: HTMLImageElement }) => {
+      const image = event.currentTarget;
+      // If transforms are restricted/unavailable, retry the original only once.
+      if (src !== original && image.getAttribute("src") === src) {
+        image.src = original;
+      }
+    },
+  };
+}
+

@@ -2030,7 +2030,7 @@ export default function PosPageClient() {
                           <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
                             {variant.imageUrl ? (
                               <img
-                                src={variant.imageUrl}
+                                {...productThumbnailProps(variant.imageUrl, 240)}
                                 alt={variant.productName || variant.sku || "Sản phẩm"}
                                 className="h-full w-full object-cover"
                               />
@@ -2148,7 +2148,7 @@ export default function PosPageClient() {
                   <div>
                     {line.imageUrl ? (
                       <img
-                        src={line.imageUrl}
+                        {...productThumbnailProps(line.imageUrl, 240)}
                         alt=""
                         className="h-10 w-10 rounded-xl object-cover"
                       />
@@ -3201,3 +3201,45 @@ export default function PosPageClient() {
     </div>
   );
 }
+
+
+// Use a few stable thumbnail sizes across pages to reuse browser/CDN caches.
+// Original URLs remain in product data and in the full-size image viewer.
+function productThumbnailProps(original: string, size: 240 | 640 = 240) {
+  let src = original;
+  try {
+    const url = new URL(original);
+    const match = url.pathname.match(/^\/([^/]+)\/image\/upload\/(.+)$/);
+    if (
+      url.hostname === "res.cloudinary.com" &&
+      !url.search &&
+      match &&
+      !match[2].startsWith("s--")
+    ) {
+      const first = match[2].split("/")[0];
+      // Leave existing transformations and signed URLs untouched.
+      const hasTransformation = first.includes(",") ||
+        /^(?:c|w|h|q|f|e|t|ar|dpr|g|fl|l|u|a|b|bo|r|x|y|z|o|d)_/.test(first);
+      if (!hasTransformation) {
+        url.pathname = "/" + match[1] + "/image/upload/" +
+          "c_limit,w_" + size + ",h_" + size + ",q_auto,f_auto/" + match[2];
+        src = url.toString();
+      }
+    }
+  } catch {
+    // Local, blob, data, and non-Cloudinary URLs keep their existing behavior.
+  }
+  return {
+    src,
+    loading: "lazy" as const,
+    decoding: "async" as const,
+    onError: (event: { currentTarget: HTMLImageElement }) => {
+      const image = event.currentTarget;
+      // If transforms are restricted/unavailable, retry the original only once.
+      if (src !== original && image.getAttribute("src") === src) {
+        image.src = original;
+      }
+    },
+  };
+}
+

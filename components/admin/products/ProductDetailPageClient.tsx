@@ -1205,7 +1205,7 @@ function DetailImagePreviewModal({
                 }`}
                 title={item.label}
               >
-                <img src={item.src} alt={item.label} className="h-full w-full object-cover" />
+                <img {...productThumbnailProps(item.src, 240)} alt={item.label} className="h-full w-full object-cover" />
               </button>
             ))}
           </div>
@@ -2128,7 +2128,7 @@ export default function ProductDetailPageClient({
               <div className="h-20 w-20 shrink-0 overflow-hidden rounded-3xl bg-neutral-100">
                 {imageUrl ? (
                   <img
-                    src={toAbsoluteFileUrl(imageUrl)}
+                    {...productThumbnailProps(toAbsoluteFileUrl(imageUrl), 240)}
                     alt={product.name || "Sản phẩm"}
                     className="h-full w-full cursor-zoom-in object-cover"
                     onClick={() => openImagePreview(imageUrl)}
@@ -2806,7 +2806,7 @@ export default function ProductDetailPageClient({
                                       <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-neutral-200 bg-neutral-100">
                                         {groupImageUrl ? (
                                           <img
-                                            src={toAbsoluteFileUrl(groupImageUrl)}
+                                            {...productThumbnailProps(toAbsoluteFileUrl(groupImageUrl), 240)}
                                             alt={`${product.name || 'Sản phẩm'} ${group.colorLabel}`}
                                             className="h-full w-full cursor-zoom-in object-cover"
                                             onClick={() => openImagePreview(groupImageUrl)}
@@ -3053,7 +3053,7 @@ export default function ProductDetailPageClient({
                 <div className="mt-3 overflow-hidden rounded-3xl border border-neutral-200 bg-neutral-100">
                   {imageUrl ? (
                     <img
-                      src={toAbsoluteFileUrl(imageUrl)}
+                      {...productThumbnailProps(toAbsoluteFileUrl(imageUrl), 640)}
                       alt={name}
                       className="h-[210px] w-full cursor-zoom-in object-cover"
                       onClick={() => openImagePreview(imageUrl)}
@@ -3155,7 +3155,7 @@ export default function ProductDetailPageClient({
                               <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-neutral-200 bg-white">
                                 {colorImage ? (
                                   <img
-                                    src={toAbsoluteFileUrl(colorImage)}
+                                    {...productThumbnailProps(toAbsoluteFileUrl(colorImage), 240)}
                                     alt={`${name} ${color}`}
                                     className="h-full w-full cursor-zoom-in object-cover"
                                     onClick={() => openImagePreview(colorImage)}
@@ -3342,3 +3342,45 @@ export default function ProductDetailPageClient({
     </>
   );
 }
+
+
+// Use a few stable thumbnail sizes across pages to reuse browser/CDN caches.
+// Original URLs remain in product data and in the full-size image viewer.
+function productThumbnailProps(original: string, size: 240 | 640 = 240) {
+  let src = original;
+  try {
+    const url = new URL(original);
+    const match = url.pathname.match(/^\/([^/]+)\/image\/upload\/(.+)$/);
+    if (
+      url.hostname === "res.cloudinary.com" &&
+      !url.search &&
+      match &&
+      !match[2].startsWith("s--")
+    ) {
+      const first = match[2].split("/")[0];
+      // Leave existing transformations and signed URLs untouched.
+      const hasTransformation = first.includes(",") ||
+        /^(?:c|w|h|q|f|e|t|ar|dpr|g|fl|l|u|a|b|bo|r|x|y|z|o|d)_/.test(first);
+      if (!hasTransformation) {
+        url.pathname = "/" + match[1] + "/image/upload/" +
+          "c_limit,w_" + size + ",h_" + size + ",q_auto,f_auto/" + match[2];
+        src = url.toString();
+      }
+    }
+  } catch {
+    // Local, blob, data, and non-Cloudinary URLs keep their existing behavior.
+  }
+  return {
+    src,
+    loading: "lazy" as const,
+    decoding: "async" as const,
+    onError: (event: { currentTarget: HTMLImageElement }) => {
+      const image = event.currentTarget;
+      // If transforms are restricted/unavailable, retry the original only once.
+      if (src !== original && image.getAttribute("src") === src) {
+        image.src = original;
+      }
+    },
+  };
+}
+
