@@ -58,6 +58,14 @@ type PosBankAccount = {
   sortOrder: number;
 };
 
+type VietQrBankOption = {
+  bin: string;
+  code: string;
+  shortName: string;
+  name: string;
+  transferSupported?: number;
+};
+
 type BranchOption = {
   value: string;
   label: string;
@@ -312,6 +320,86 @@ function getApiBaseUrl() {
   ).replace(/\/$/, "");
 }
 
+function normalizeBankLookup(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
+const VIETQR_BANK_BIN_FALLBACK: Record<string, string> = {
+  agribank: "970405",
+  vba: "970405",
+  vietcombank: "970436",
+  vcb: "970436",
+  vietinbank: "970415",
+  icb: "970415",
+  bidv: "970418",
+  mb: "970422",
+  mbbank: "970422",
+  techcombank: "970407",
+  tcb: "970407",
+  acb: "970416",
+  vpbank: "970432",
+  vpb: "970432",
+  tpbank: "970423",
+  tpb: "970423",
+  sacombank: "970403",
+  stb: "970403",
+  hdbank: "970437",
+  hdb: "970437",
+  vib: "970441",
+  shb: "970443",
+  msb: "970426",
+  ocb: "970448",
+  lpbank: "970449",
+  lpb: "970449",
+};
+
+function resolveVietQrBankId(
+  account: PosBankAccount | undefined,
+  banks: VietQrBankOption[],
+) {
+  if (!account) return "";
+
+  const rawCode = String(account.bankCode || "").trim();
+  if (/^\d{6}$/.test(rawCode)) return rawCode;
+
+  const keys = [account.bankCode, account.bankName]
+    .map(normalizeBankLookup)
+    .filter(Boolean);
+
+  const matched = banks.find((bank) => {
+    const bankKeys = [bank.bin, bank.code, bank.shortName, bank.name]
+      .map(normalizeBankLookup)
+      .filter(Boolean);
+    return keys.some((key) => bankKeys.includes(key));
+  });
+
+  if (matched?.bin) return String(matched.bin);
+
+  for (const key of keys) {
+    if (VIETQR_BANK_BIN_FALLBACK[key]) return VIETQR_BANK_BIN_FALLBACK[key];
+  }
+
+  return rawCode;
+}
+
+function buildSafeTransferNote(value: any) {
+  return (
+    String(value || "POS")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/gi, "d")
+      .replace(/[^a-zA-Z0-9 ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 25) || "POS"
+  );
+}
+
 
 function normalizeColorImageKey(value?: string | null) {
   return String(value || "")
@@ -433,6 +521,8 @@ export default function PosPageClient() {
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [posBankAccounts, setPosBankAccounts] = useState<PosBankAccount[]>([]);
   const [selectedPosBankAccountId, setSelectedPosBankAccountId] = useState("");
+  const [posBankAccountsError, setPosBankAccountsError] = useState("");
+  const [vietQrBanks, setVietQrBanks] = useState<VietQrBankOption[]>([]);
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([
     { id: "pay-1", paymentSourceId: "", amount: "0" },
   ]);
@@ -678,6 +768,34 @@ export default function PosPageClient() {
   useEffect(() => {
     const run = async () => {
       try {
+        const res = await fetch("https://api.vietqr.io/v2/banks", {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const rows = Array.isArray(json?.data) ? json.data : [];
+        setVietQrBanks(
+          rows
+            .map((item: any) => ({
+              bin: String(item?.bin || "").trim(),
+              code: String(item?.code || "").trim(),
+              shortName: String(item?.shortName || item?.short_name || "").trim(),
+              name: String(item?.name || "").trim(),
+              transferSupported: Number(item?.transferSupported ?? item?.isTransfer ?? 0),
+            }))
+            .filter((item: VietQrBankOption) => item.bin),
+        );
+      } catch {
+        // POS vẫn có map BIN fallback cho các ngân hàng phổ biến nếu VietQR bank list lỗi.
+      }
+    };
+
+    void run();
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
         const apiBase = getApiBaseUrl();
         const token = localStorage.getItem("token");
         const res = await fetch(`${apiBase}/orders/pos-bank-accounts`, {
@@ -687,26 +805,50 @@ export default function PosPageClient() {
           },
           cache: "no-store",
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          let detail = "";
+          try {
+            const body = await res.json();
+            detail = String(body?.message || body?.error || "").trim();
+          } catch {}
+          setPosBankAccounts([]);
+          setSelectedPosBankAccountId("");
+          setPosBankAccountsError(
+            `Không tải được tài khoản QR (${res.status})${detail ? `: ${detail}` : ""}`,
+          );
+          return;
+        }
         const json = await res.json();
         const rows = Array.isArray(json)
           ? json
           : Array.isArray(json?.items)
             ? json.items
             : [];
-        const activeRows = rows
-          .filter((item: any) => item?.isActive !== false)
+
+        // Tài khoản QR là cấu hình dùng chung toàn hệ thống.
+        // Không lọc theo chi nhánh và cũng không ẩn các tài khoản cũ chỉ vì
+        // trường isActive trước đây mặc định false. Chỉ loại bản ghi chưa nhập đủ dữ liệu.
+        const configuredRows = rows
+          .filter((item: any) =>
+            String(item?.bankCode || "").trim() &&
+            String(item?.accountNumber || "").trim() &&
+            String(item?.accountName || "").trim(),
+          )
           .sort((a: any, b: any) => Number(a?.sortOrder || a?.slot || 0) - Number(b?.sortOrder || b?.slot || 0));
-        setPosBankAccounts(activeRows);
+
+        setPosBankAccountsError("");
+        setPosBankAccounts(configuredRows);
         setSelectedPosBankAccountId((prev) =>
-          prev && activeRows.some((item: any) => String(item.id) === String(prev))
+          prev && configuredRows.some((item: any) => String(item.id) === String(prev))
             ? prev
-            : activeRows[0]?.id
-              ? String(activeRows[0].id)
+            : configuredRows[0]?.id
+              ? String(configuredRows[0].id)
               : "",
         );
-      } catch {
+      } catch (err: any) {
         setPosBankAccounts([]);
+        setSelectedPosBankAccountId("");
+        setPosBankAccountsError(err?.message || "Không kết nối được API tài khoản QR.");
       }
     };
 
@@ -1539,19 +1681,33 @@ export default function PosPageClient() {
       (item) => String(item.id) === String(selectedPosBankAccountId),
     );
     const qrAmount = Math.max(0, Math.round(mustPay));
-    const qrImageUrl = selectedBankAccount
-      ? `https://img.vietqr.io/image/${encodeURIComponent(selectedBankAccount.bankCode)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(selectedBankAccount.accountName)}`
+    const transferNote = buildSafeTransferNote(orderCode);
+    const vietQrBankId = resolveVietQrBankId(selectedBankAccount, vietQrBanks);
+    const rawBankAlias = String(
+      selectedBankAccount?.bankName || selectedBankAccount?.bankCode || "",
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "");
+    const qrImageUrl = selectedBankAccount && vietQrBankId
+      ? `https://img.vietqr.io/image/${encodeURIComponent(vietQrBankId)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-qr_only.png?amount=${qrAmount}&addInfo=${encodeURIComponent(transferNote)}`
+      : "";
+    const qrFallbackUrl = selectedBankAccount && rawBankAlias && rawBankAlias !== String(vietQrBankId).toLowerCase()
+      ? `https://img.vietqr.io/image/${encodeURIComponent(rawBankAlias)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-qr_only.png?amount=${qrAmount}&addInfo=${encodeURIComponent(transferNote)}`
       : "";
     const qrHtml = selectedBankAccount
       ? `
         <div class="line"></div>
         <div class="qr-block center">
           <div class="qr-title">QUÉT MÃ CHUYỂN KHOẢN</div>
-          <img class="qr-image" src="${escapeHtml(qrImageUrl)}" alt="QR chuyển khoản" />
+          ${qrImageUrl
+            ? `<img id="payment-qr-image" class="qr-image" src="${escapeHtml(qrImageUrl)}" data-fallback-src="${escapeHtml(qrFallbackUrl)}" alt="QR chuyển khoản" />
+               <div id="payment-qr-error" class="qr-error" style="display:none;">Không tải được mã QR. Kiểm tra mã ngân hàng/BIN trong Settings.</div>`
+            : `<div class="qr-error">Chưa xác định được mã ngân hàng VietQR/BIN.</div>`}
           <div class="qr-bank"><strong>${escapeHtml(selectedBankAccount.bankName || selectedBankAccount.bankCode)}</strong></div>
           <div>${escapeHtml(selectedBankAccount.accountNumber)}</div>
           <div>${escapeHtml(selectedBankAccount.accountName)}</div>
-          <div class="muted qr-note">Số tiền: ${currency(qrAmount)} · Nội dung: ${escapeHtml(orderCode)}</div>
+          <div class="muted qr-note">Số tiền: ${currency(qrAmount)} · Nội dung: ${escapeHtml(transferNote)}</div>
         </div>`
       : "";
     const paymentSourceNames = paymentRows
@@ -1605,9 +1761,10 @@ export default function PosPageClient() {
     .total { font-size: 16px; font-weight: 800; }
     .qr-block { break-inside: avoid; page-break-inside: avoid; padding: 2px 0 4px; }
     .qr-title { font-size: 12px; font-weight: 800; margin-bottom: 5px; }
-    .qr-image { width: 44mm; height: 44mm; object-fit: contain; display: block; margin: 4px auto; }
+    .qr-image { width: 38mm; height: 38mm; object-fit: contain; display: block; margin: 4px auto; }
     .qr-bank { margin-top: 3px; }
     .qr-note { font-size: 10px; margin-top: 4px; }
+    .qr-error { margin: 8px 0; padding: 6px; border: 1px dashed #999; font-size: 10px; color: #666; }
     @media print {
       @page { size: 80mm auto; margin: 0; }
       body { width: 80mm; }
@@ -1658,15 +1815,48 @@ export default function PosPageClient() {
     <div class="center muted">Cảm ơn quý khách!</div>
   </div>
   <script>
+    function waitForPrintImage(img) {
+      return new Promise(function(resolve) {
+        var fallback = img.getAttribute("data-fallback-src") || "";
+        var triedFallback = false;
+
+        function finish(ok) {
+          if (!ok && img.id === "payment-qr-image") {
+            img.style.display = "none";
+            var errorBox = document.getElementById("payment-qr-error");
+            if (errorBox) errorBox.style.display = "block";
+          }
+          resolve();
+        }
+
+        function useFallbackOrFinish() {
+          if (!triedFallback && fallback) {
+            triedFallback = true;
+            img.onload = function() { finish(true); };
+            img.onerror = function() { finish(false); };
+            img.src = fallback;
+            return;
+          }
+          finish(false);
+        }
+
+        if (img.complete) {
+          if (img.naturalWidth > 0) {
+            finish(true);
+          } else {
+            useFallbackOrFinish();
+          }
+          return;
+        }
+
+        img.onload = function() { finish(true); };
+        img.onerror = useFallbackOrFinish;
+      });
+    }
+
     window.onload = function() {
       var images = Array.prototype.slice.call(document.images || []);
-      Promise.all(images.map(function(img) {
-        if (img.complete) return Promise.resolve();
-        return new Promise(function(resolve) {
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-      })).then(function() {
+      Promise.all(images.map(waitForPrintImage)).then(function() {
         window.focus();
         window.print();
         setTimeout(function() { window.close(); }, 500);
@@ -2323,9 +2513,19 @@ export default function PosPageClient() {
                 </option>
               ))}
             </select>
-            <p className="mt-2 text-[11px] leading-4 text-neutral-400">
-              Danh sách dùng chung cho mọi chi nhánh, cấu hình tại Settings → QR chuyển khoản.
-            </p>
+            {posBankAccountsError ? (
+              <p className="mt-2 text-[11px] font-semibold leading-4 text-red-600">
+                {posBankAccountsError}
+              </p>
+            ) : posBankAccounts.length === 0 ? (
+              <p className="mt-2 text-[11px] font-semibold leading-4 text-amber-600">
+                Chưa có tài khoản QR đã cấu hình. Vào Settings → QR chuyển khoản để thêm tài khoản.
+              </p>
+            ) : (
+              <p className="mt-2 text-[11px] leading-4 text-neutral-400">
+                {posBankAccounts.length} tài khoản dùng chung cho mọi chi nhánh.
+              </p>
+            )}
           </div>
 
           <button

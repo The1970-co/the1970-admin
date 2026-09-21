@@ -65,6 +65,39 @@ type PosBankAccountItem = {
   sortOrder: number;
 };
 
+type VietQrBankOption = {
+  bin: string;
+  code: string;
+  shortName: string;
+  name: string;
+  transferSupported: number;
+};
+
+function normalizeBankLookup(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
+function findVietQrBank(
+  account: Pick<PosBankAccountItem, "bankCode" | "bankName">,
+  banks: VietQrBankOption[],
+) {
+  const keys = [account.bankCode, account.bankName]
+    .map(normalizeBankLookup)
+    .filter(Boolean);
+
+  return banks.find((bank) => {
+    const bankKeys = [bank.bin, bank.code, bank.shortName, bank.name]
+      .map(normalizeBankLookup)
+      .filter(Boolean);
+    return keys.some((key) => bankKeys.includes(key));
+  });
+}
+
 const makeEmptyPosBankAccount = (slot: number): PosBankAccountItem => ({
   id: `pos-bank-${slot}`,
   slot,
@@ -73,7 +106,7 @@ const makeEmptyPosBankAccount = (slot: number): PosBankAccountItem => ({
   bankName: "",
   accountNumber: "",
   accountName: "",
-  isActive: false,
+  isActive: true,
   sortOrder: slot * 10,
 });
 
@@ -502,6 +535,7 @@ export default function SettingsPage() {
 
   const [posBankAccounts, setPosBankAccounts] = useState<PosBankAccountItem[]>([]);
   const [savingPosBankAccounts, setSavingPosBankAccounts] = useState(false);
+  const [vietQrBanks, setVietQrBanks] = useState<VietQrBankOption[]>([]);
 
   const [paymentSources, setPaymentSources] = useState<PaymentSourceItem[]>([]);
   const [paymentSourceForm, setPaymentSourceForm] = useState({
@@ -606,15 +640,62 @@ export default function SettingsPage() {
     }
   };
 
+  const loadVietQrBanks = async () => {
+    try {
+      const res = await fetch("https://api.vietqr.io/v2/banks", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = await res.json();
+      const rows = Array.isArray(json?.data) ? json.data : [];
+      const mapped: VietQrBankOption[] = rows
+        .map((item: any) => ({
+          bin: String(item?.bin || "").trim(),
+          code: String(item?.code || "").trim(),
+          shortName: String(item?.shortName || item?.short_name || "").trim(),
+          name: String(item?.name || "").trim(),
+          transferSupported: Number(item?.transferSupported ?? item?.isTransfer ?? 0),
+        }))
+        .filter((item: VietQrBankOption) => item.bin)
+        .sort((a: VietQrBankOption, b: VietQrBankOption) => {
+          if (a.transferSupported !== b.transferSupported) {
+            return b.transferSupported - a.transferSupported;
+          }
+          return a.shortName.localeCompare(b.shortName, "vi");
+        });
+      setVietQrBanks(mapped);
+    } catch {
+      // Nếu VietQR tạm lỗi vẫn cho nhập tay mã BIN ở form bên dưới.
+    }
+  };
+
   useEffect(() => {
     void loadBranches();
     void loadPaymentSources();
     void loadPosBankAccounts();
+    void loadVietQrBanks();
     void loadPickupLocationSettings();
     loadCarrierPickupMapping();
     loadAhamovePaymentMethod();
     loadSalesChannels();
   }, []);
+
+  useEffect(() => {
+    if (!vietQrBanks.length) return;
+
+    setPosBankAccounts((prev) =>
+      prev.map((account) => {
+        const matched = findVietQrBank(account, vietQrBanks);
+        if (!matched) return account;
+        if (account.bankCode === matched.bin && account.bankName === matched.shortName) {
+          return account;
+        }
+        return {
+          ...account,
+          bankCode: matched.bin,
+          bankName: matched.shortName || account.bankName,
+        };
+      }),
+    );
+  }, [vietQrBanks]);
 
   const loadCarrierPickupMapping = () => {
     try {
@@ -948,12 +1029,18 @@ export default function SettingsPage() {
     try {
       setSavingPosBankAccounts(true);
       setMessage("");
-      const items = posBankAccounts.map((item, index) => ({
-        ...item,
-        id: `pos-bank-${index + 1}`,
-        slot: index + 1,
-        sortOrder: (index + 1) * 10,
-      }));
+      const items = posBankAccounts.map((item, index) => {
+        const matched = findVietQrBank(item, vietQrBanks);
+        return {
+          ...item,
+          bankCode: matched?.bin || String(item.bankCode || "").trim(),
+          bankName: matched?.shortName || String(item.bankName || "").trim(),
+          id: `pos-bank-${index + 1}`,
+          slot: index + 1,
+          isActive: true,
+          sortOrder: (index + 1) * 10,
+        };
+      });
       const saved = await apiJson<PosBankAccountItem[]>("/orders/pos-bank-accounts", {
         method: "PATCH",
         body: JSON.stringify({ items }),
@@ -2332,8 +2419,8 @@ const addWarehouse = async () => {
                   QR chuyển khoản trên hoá đơn POS
                 </h3>
                 <p className="mt-1 max-w-3xl text-sm text-neutral-500">
-                  Danh sách tài khoản dùng chung toàn hệ thống, không giới hạn số lượng. Khi thanh toán POS,
-                  nhân viên chọn một tài khoản và hoá đơn sẽ in QR VietQR kèm đúng số tiền
+                  Danh sách tài khoản dùng chung toàn hệ thống, không giới hạn số lượng. Tài khoản đã lưu
+                  sẽ tự xuất hiện trong POS của mọi chi nhánh. Khi in hoá đơn, QR VietQR sẽ kèm đúng số tiền
                   phải trả và mã đơn làm nội dung chuyển khoản.
                 </p>
               </div>
@@ -2366,14 +2453,7 @@ const addWarehouse = async () => {
                     </h4>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => updatePosBankAccount(account.slot, { isActive: !account.isActive })}
-                    >
-                      <Badge tone={account.isActive ? "green" : "gray"}>
-                        {account.isActive ? "ĐANG DÙNG" : "TẮT"}
-                      </Badge>
-                    </button>
+                    <Badge tone="green">DÙNG TRÊN POS</Badge>
                     <Button variant="danger" onClick={() => removePosBankAccount(account.slot)}>
                       Xoá
                     </Button>
@@ -2387,17 +2467,44 @@ const addWarehouse = async () => {
                     onChange={(e) => updatePosBankAccount(account.slot, { label: e.target.value })}
                     placeholder="Tên gợi nhớ, VD: VCB Hà Kiều Anh"
                   />
+                  {vietQrBanks.length ? (
+                    <select
+                      className="h-12 rounded-2xl border border-neutral-300 bg-white px-4 text-sm outline-none"
+                      value={account.bankCode}
+                      onChange={(e) => {
+                        const bank = vietQrBanks.find((item) => item.bin === e.target.value);
+                        updatePosBankAccount(account.slot, {
+                          bankCode: bank?.bin || e.target.value,
+                          bankName: bank?.shortName || account.bankName,
+                        });
+                      }}
+                    >
+                      <option value="">Chọn ngân hàng VietQR</option>
+                      {!vietQrBanks.some((item) => item.bin === account.bankCode) && account.bankCode ? (
+                        <option value={account.bankCode}>Mã đang lưu: {account.bankCode}</option>
+                      ) : null}
+                      {vietQrBanks
+                        .filter((bank) => bank.transferSupported === 1)
+                        .map((bank) => (
+                          <option key={bank.bin} value={bank.bin}>
+                            {bank.shortName} · {bank.bin}
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
+                      value={account.bankCode}
+                      onChange={(e) => updatePosBankAccount(account.slot, { bankCode: e.target.value.toUpperCase() })}
+                      placeholder="Mã BIN VietQR, VD: 970436"
+                    />
+                  )}
                   <input
-                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm uppercase outline-none"
-                    value={account.bankCode}
-                    onChange={(e) => updatePosBankAccount(account.slot, { bankCode: e.target.value.toUpperCase() })}
-                    placeholder="Mã VietQR, VD: VCB, TCB, MB"
-                  />
-                  <input
-                    className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
+                    className="h-12 rounded-2xl border border-neutral-300 bg-neutral-50 px-4 text-sm outline-none"
                     value={account.bankName}
                     onChange={(e) => updatePosBankAccount(account.slot, { bankName: e.target.value })}
-                    placeholder="Tên ngân hàng, VD: Vietcombank"
+                    placeholder="Tên ngân hàng"
+                    readOnly={vietQrBanks.length > 0}
                   />
                   <input
                     className="h-12 rounded-2xl border border-neutral-300 px-4 text-sm outline-none"
@@ -2414,9 +2521,8 @@ const addWarehouse = async () => {
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-500">
-                  Mã ngân hàng dùng theo chuẩn VietQR. Ví dụ Vietcombank có thể nhập
-                  <span className="font-semibold text-neutral-700"> VCB</span>. Không gắn chi nhánh:
-                  cả QO, TH, CL, XD đều nhìn thấy cùng danh sách này.
+                  Ngân hàng được lấy trực tiếp từ danh sách VietQR và lưu bằng <span className="font-semibold text-neutral-700">mã BIN 6 số</span> để tránh lỗi ảnh QR.
+                  Ví dụ Agribank = <span className="font-semibold text-neutral-700">970405</span>, Vietcombank = <span className="font-semibold text-neutral-700">970436</span>. Không gắn chi nhánh: cả QO, TH, CL, XD đều dùng chung.
                 </div>
               </Panel>
             ))}
