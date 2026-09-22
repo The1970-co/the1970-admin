@@ -85,6 +85,7 @@ type Order = {
   plannedQtyOverride?: number | null;
   fabricSupplyMode?: "COMPANY" | "FACTORY" | string;
   dueDate?: string | null;
+  createdAt?: string | null;
   updatedAt?: string | null;
   factory?: FactoryItem | null;
   source?: { type: string; id?: string; code: string; name?: string | null; imageUrl?: string | null };
@@ -213,7 +214,7 @@ export default function ProductionPageClient() {
   const [factoryFilter, setFactoryFilter] = useState("ALL");
   const [materialFilter, setMaterialFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
-  const [viewMode, setViewMode] = useState<"CARDS" | "LIST" | "COLUMNS">("CARDS");
+  const [viewMode, setViewMode] = useState<"CARDS" | "LIST" | "COLUMNS" | "TIMELINE">("CARDS");
 
   async function load() {
     try {
@@ -311,6 +312,44 @@ export default function ProductionPageClient() {
     return Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }, [filteredOrders]);
 
+  const timelineGroups = useMemo(() => {
+    const years = new Map<number, Map<number, Order[]>>();
+    for (const order of filteredOrders) {
+      const d = new Date(order.createdAt || order.updatedAt || 0);
+      if (Number.isNaN(d.getTime())) continue;
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1;
+      if (!years.has(year)) years.set(year, new Map());
+      const months = years.get(year)!;
+      if (!months.has(month)) months.set(month, []);
+      months.get(month)!.push(order);
+    }
+    return Array.from(years.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([year, months]) => ({
+        year,
+        months: Array.from(months.entries())
+          .sort((a, b) => b[0] - a[0])
+          .map(([month, rows]) => ({
+            month,
+            rows: [...rows].sort((a, b) => new Date(b.createdAt || b.updatedAt || 0).getTime() - new Date(a.createdAt || a.updatedAt || 0).getTime()),
+          })),
+      }));
+  }, [filteredOrders]);
+
+  const timelineStats = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const dated = filteredOrders.filter((o) => {
+      const d = new Date(o.createdAt || o.updatedAt || 0);
+      return !Number.isNaN(d.getTime());
+    });
+    const thisYear = dated.filter((o) => new Date(o.createdAt || o.updatedAt || 0).getFullYear() === year);
+    const thisMonth = thisYear.filter((o) => new Date(o.createdAt || o.updatedAt || 0).getMonth() === month);
+    return { year, month: month + 1, thisYear: thisYear.length, thisMonth: thisMonth.length };
+  }, [filteredOrders]);
+
   if(user&&!canView)return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Lệnh sản xuất.</div>;
   return (
     <div className="space-y-5">
@@ -337,116 +376,44 @@ export default function ProductionPageClient() {
           <select className={input} value={materialFilter} onChange={(e) => setMaterialFilter(e.target.value)}><option value="ALL">Tất cả chất liệu</option>{materialOptions.map((x) => <option key={x} value={x}>{x}</option>)}</select>
           <select className={input} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="ALL">Tất cả trạng thái</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           <div className="flex rounded-2xl border bg-neutral-50 p-1 text-xs font-semibold">
-            {[{k:"CARDS",t:"Thẻ"},{k:"LIST",t:"Danh sách"},{k:"COLUMNS",t:"Theo cột"}].map((x) => <button key={x.k} onClick={() => setViewMode(x.k as any)} className={`rounded-xl px-3 py-2 ${viewMode === x.k ? "bg-neutral-950 text-white" : "text-neutral-600"}`}>{x.t}</button>)}
+            {[{k:"CARDS",t:"Thẻ"},{k:"LIST",t:"Danh sách"},{k:"COLUMNS",t:"Theo cột"},{k:"TIMELINE",t:"Thời gian"}].map((x) => <button key={x.k} onClick={() => setViewMode(x.k as any)} className={`rounded-xl px-3 py-2 ${viewMode === x.k ? "bg-neutral-950 text-white" : "text-neutral-600"}`}>{x.t}</button>)}
           </div>
         </div>
         <div className="mt-2 text-[11px] text-neutral-400">Hiển thị {filteredOrders.length}/{orders.length} lệnh · Lệnh đã hoàn thành tự động được xếp xuống dưới.</div>
       </div>
 
-      {viewMode === "CARDS" && <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+      {viewMode === "CARDS" && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {filteredOrders.map((o) => {
           const p = o.progress || {};
           const sourceVisible = o.sourceType === "PRODUCT" || canViewSampleSource;
-          const ratioText = p.sizeRatioText || (Array.isArray(o.sizeSet) ? o.sizeSet.map((s) => `${s}:${Number(o.sizeRatio?.[s] || 0)}`).join(" · ") : "");
           const actualTotal = Number(p.totalActualQty || 0);
-          const plannedTotal = Number(p.totalPlannedQty || 0);
+          const factorySupplied = String(o.fabricSupplyMode || p.fabricSupplyMode || "COMPANY").toUpperCase() === "FACTORY";
           return (
-            <div key={o.id} className={`overflow-hidden rounded-3xl border bg-white shadow-sm ${o.status === "CANCELLED" ? "opacity-75" : ""}`}>
-              <div className="flex gap-4 p-4">
-                <div className="h-24 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-100">
-                  {sourceVisible && (o.source?.imageUrl || o.sourceImageUrl) && (
-                    <img src={asset(o.source?.imageUrl || o.sourceImageUrl)} className="h-full w-full object-cover" />
-                  )}
+            <div key={o.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${o.status === "COMPLETED" ? "border-emerald-200 bg-emerald-50/20" : o.status === "CANCELLED" ? "opacity-70" : ""}`}>
+              <button type="button" onClick={() => canOpenAnyStep && setDetailId(o.id)} className="flex w-full gap-3 p-3 text-left">
+                <div className="h-16 w-14 shrink-0 overflow-hidden rounded-xl bg-neutral-100">
+                  {sourceVisible && (o.source?.imageUrl || o.sourceImageUrl) && <img src={asset(o.source?.imageUrl || o.sourceImageUrl)} className="h-full w-full object-cover" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-xs font-semibold text-neutral-400">{o.code} · {o.sourceType === "PRODUCT" ? "Mã cũ" : sourceVisible ? "Mẫu mới" : "Nguồn mẫu đã ẩn"}</div>
-                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${productionStatusTone(o.status)}`}>
-                      {STATUS_LABEL[o.status] || o.status}
-                    </span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="truncate text-[10px] font-semibold text-neutral-400">{o.code}</div>
+                    <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status] || o.status}</span>
                   </div>
-                  <div className="mt-1 truncate text-lg font-semibold">{sourceVisible ? `${o.sourceCode} · ${o.sourceName || o.source?.name || ""}` : "Mẫu triển khai · Đã ẩn theo phân quyền"}</div>
-                  <div className="mt-2 grid gap-1 text-xs text-neutral-600 sm:grid-cols-2">
-                    <div>Nhà may: <b className="text-neutral-900">{o.factory?.name || "—"}</b></div>
-                    <div>Hạn: <b className="text-neutral-900">{fmtDateShort(o.dueDate)}</b></div>
-                  </div>
+                  <div className="mt-0.5 line-clamp-1 text-sm font-black">{sourceVisible ? `${o.sourceCode} · ${o.sourceName || o.source?.name || ""}` : "Mẫu triển khai · Đã ẩn"}</div>
+                  <div className="mt-1 text-[10px] text-neutral-500">Nhà may: <b className="text-neutral-800">{o.factory?.name || "—"}</b></div>
+                  <div className="mt-0.5 text-[10px] text-neutral-400">Tạo: <b className="text-neutral-600">{fmtDateShort(o.createdAt || o.updatedAt)}</b>{o.dueDate ? <> · Hạn: <b>{fmtDateShort(o.dueDate)}</b></> : null}</div>
                 </div>
+              </button>
+              <div className="grid grid-cols-2 gap-2 border-t bg-neutral-50/70 p-2.5">
+                <div className="rounded-xl bg-white p-2"><div className="text-[8px] font-bold uppercase text-neutral-400">Vải</div><div className="text-sm font-black">{factorySupplied ? "Xưởng cấp" : `${fmt(p.allocatedM || 0)} m`}</div></div>
+                <div className="rounded-xl bg-white p-2"><div className="text-[8px] font-bold uppercase text-neutral-400">Màu / SL</div><div className="text-sm font-black">{Number(p.colorCount || 0)} màu · {fmt(actualTotal)} sp</div></div>
+                <div className="col-span-2 line-clamp-1 px-1 text-[9px] text-neutral-500">{p.colorBreakdown?.map((x) => `${x.name}: ${fmt(x.actualQty)} sp`).join(" · ") || "Chưa tính sản lượng theo màu"}</div>
               </div>
-
-              <div className="border-t bg-neutral-50/70 p-3">
-                <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.nplDone)}`}>
-                    {p.nplDone ? "✓" : "○"} NPL {p.nplCount ? `(${p.nplCount})` : ""}
-                  </div>
-                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.fabricDone)}`}>
-                    {p.fabricDone ? "✓" : "○"} Vải {p.rollCount ? `(${p.rollCount} cây)` : ""}
-                  </div>
-                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.sizeDone)}`}>
-                    {p.sizeDone ? "✓" : "○"} Size & tỷ lệ
-                  </div>
-                  <div className={`rounded-xl border px-2.5 py-2 font-semibold ${progressTone(p.calculationDone)}`}>
-                    {p.calculationDone ? "✓" : "○"} Sản lượng
-                  </div>
-                </div>
-
-                <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                  <div className="rounded-xl border bg-white p-2.5">
-                    <div className="text-[10px] font-semibold uppercase text-neutral-400">Tỷ lệ size</div>
-                    <div className="mt-1 line-clamp-2 font-semibold text-neutral-800">{ratioText || "Chưa thiết lập"}</div>
-                  </div>
-                  <div className="rounded-xl border bg-white p-2.5">
-                    <div className="text-[10px] font-semibold uppercase text-neutral-400">Cắt thực tế / dự kiến</div>
-                    <div className="mt-1 text-base font-black text-neutral-950">
-                      {p.calculationDone ? `${actualTotal} / ${plannedTotal}` : "Chưa tính"}
-                      {p.calculationDone && <span className="ml-1 text-xs font-semibold text-neutral-400">sp</span>}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-2 rounded-xl border bg-white p-2.5">
-                  <div className="flex flex-wrap items-end justify-between gap-2">
-                    <div><div className="text-[10px] font-semibold uppercase text-neutral-400">Tổng vải bàn giao</div><div className="mt-0.5 text-lg font-black text-neutral-950">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY" ? "Nhà may tự cấp" : `${fmt(p.allocatedM || 0)} m`}</div></div>
-                    <div className="text-right"><div className="text-[10px] font-semibold uppercase text-neutral-400">Màu sản xuất</div><div className="mt-0.5 text-base font-black text-neutral-950">{Number(p.colorCount || 0)} màu</div></div>
-                  </div>
-                  {!!p.colorBreakdown?.length && <div className="mt-1.5 line-clamp-2 text-[11px] font-semibold text-neutral-600">{p.colorBreakdown.map((x) => `${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")}</div>}
-                  {!!p.materialNames?.length && <div className="mt-1 text-[10px] text-neutral-400">Chất liệu: {p.materialNames.join(" · ")}</div>}
-                </div>
-
-                <div className="mt-2 text-[11px] text-neutral-500">
-                  {String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY" ? `Nhà may tự cấp vải${o.plannedQtyOverride?` · tạm tính ${fmt(o.plannedQtyOverride)} sp`:""}` : p.fabricDone ? `Đã bàn giao ${fmt(p.allocatedM || 0)} m vải` : "Chưa bàn giao vải"}
-                  {" · "}
-                  {p.nplDone ? "NPL đã khai báo" : "NPL chưa xong"}
-                  {" · "}
-                  {p.sent ? "Đã gửi lệnh" : "Chưa gửi lệnh"}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-end gap-2 border-t p-3">
-                {canOpenAnyStep && <button
-                  onClick={() => setDetailId(o.id)}
-                  className="rounded-xl bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"
-                >
-                  Sửa / Mở quy trình
-                </button>}
-                {canEdit && !["CANCELLED", "COMPLETED"].includes(o.status) && <button disabled={busyAction === `${o.id}:complete`} onClick={() => void completeOrder(o)} className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 disabled:opacity-40">✓ Đánh dấu xong</button>}
-                {canEdit && o.status !== "CANCELLED" && o.status !== "COMPLETED" && (
-                  <button
-                    disabled={busyAction === `${o.id}:cancel`}
-                    onClick={() => void cancelOrder(o)}
-                    className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-40"
-                  >
-                    Huỷ lệnh
-                  </button>
-                )}
-                {canManage && ["DRAFT", "PLANNING", "CANCELLED"].includes(o.status) && (
-                  <button
-                    disabled={busyAction === `${o.id}:delete`}
-                    onClick={() => void deleteOrder(o)}
-                    className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40"
-                  >
-                    Xoá
-                  </button>
-                )}
+              <div className="flex flex-wrap justify-end gap-1.5 border-t p-2.5">
+                {canOpenAnyStep && <button onClick={() => setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}
+                {canEdit && !["COMPLETED", "CANCELLED"].includes(o.status) && <button disabled={busyAction === `${o.id}:complete`} onClick={() => void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">✓ Xong</button>}
+                {canEdit && !["COMPLETED", "CANCELLED"].includes(o.status) && <button disabled={busyAction === `${o.id}:cancel`} onClick={() => void cancelOrder(o)} className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">Huỷ</button>}
+                {canManage && ["DRAFT", "PLANNING", "CANCELLED"].includes(o.status) && <button disabled={busyAction === `${o.id}:delete`} onClick={() => void deleteOrder(o)} className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[10px] font-semibold text-red-700">Xoá</button>}
               </div>
             </div>
           );
@@ -458,14 +425,22 @@ export default function ProductionPageClient() {
         {filteredOrders.map((o) => { const p=o.progress||{}; const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource; return <div key={o.id} className={`grid gap-3 border-b p-4 last:border-b-0 lg:grid-cols-[72px_minmax(260px,1.6fr)_180px_140px_minmax(220px,1fr)_170px] lg:items-center ${o.status==="COMPLETED"?"bg-emerald-50/30":o.status==="CANCELLED"?"bg-neutral-50 opacity-70":""}`}>
           <div className="h-16 w-14 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div>
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b className="text-xs text-neutral-500">{o.code}</b><span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-1 truncate text-sm font-black">{sourceVisible?`${o.sourceCode} · ${o.sourceName||o.source?.name||""}`:"Mẫu triển khai · Đã ẩn"}</div>{!!p.materialNames?.length&&<div className="mt-1 truncate text-[11px] text-neutral-400">{p.materialNames.join(" · ")}</div>}</div>
-          <div className="text-sm"><b>{o.factory?.name||"—"}</b><div className="mt-1 text-[11px] text-neutral-400">Hạn {fmtDateShort(o.dueDate)}</div></div>
+          <div className="text-sm"><b>{o.factory?.name||"—"}</b><div className="mt-1 text-[11px] text-neutral-400">Tạo {fmtDateShort(o.createdAt||o.updatedAt)}</div><div className="text-[11px] text-neutral-400">Hạn {fmtDateShort(o.dueDate)}</div></div>
           <div><div className="text-lg font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div><div className="text-[11px] text-neutral-400">{p.rollCount?`${p.rollCount} cây`:""}</div></div>
           <div><div className="text-sm font-black">{Number(p.colorCount||0)} màu · {fmt(p.totalActualQty||0)} sp</div><div className="mt-1 line-clamp-2 text-[11px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)}`).join(" · ")||"Chưa tính sản lượng theo màu"}</div></div>
           <div className="flex flex-wrap justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[11px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">✓ Xong</button>}</div>
         </div>; })}
       </div>}
 
-      {viewMode === "COLUMNS" && <div className="overflow-x-auto pb-2"><div className="flex min-w-max items-start gap-3">{columnGroups.map((group)=><div key={group.id} className="w-[320px] shrink-0 rounded-2xl border bg-neutral-50/70 p-2.5"><div className="mb-2 flex items-center justify-between px-1"><div><b className="text-sm">{group.name}</b><div className="text-[10px] text-neutral-400">{group.rows.length} lệnh</div></div></div><div className="space-y-2">{group.rows.map((o)=>{const p=o.progress||{};return <div key={o.id} className={`rounded-2xl border bg-white p-3 shadow-sm ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":o.status==="CANCELLED"?"opacity-65":""}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[10px] font-semibold text-neutral-400">{o.code}</div><div className="truncate text-sm font-black">{o.sourceCode} · {o.sourceName||o.source?.name||""}</div></div><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-neutral-50 p-2 text-[11px]"><div><span className="text-neutral-400">Vải</span><div className="text-sm font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div><div><span className="text-neutral-400">Màu</span><div className="text-sm font-black">{Number(p.colorCount||0)} màu</div></div></div><div className="mt-1.5 line-clamp-2 text-[10px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")||"Chưa tính màu"}</div><div className="mt-2 flex justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">✓ Xong</button>}</div></div>})}</div></div>)}</div></div>}
+      {viewMode === "COLUMNS" && <div className="overflow-x-auto pb-2"><div className="flex min-w-max items-start gap-3">{columnGroups.map((group)=><div key={group.id} className="w-[320px] shrink-0 rounded-2xl border bg-neutral-50/70 p-2.5"><div className="mb-2 flex items-center justify-between px-1"><div><b className="text-sm">{group.name}</b><div className="text-[10px] text-neutral-400">{group.rows.length} lệnh</div></div></div><div className="space-y-2">{group.rows.map((o)=>{const p=o.progress||{};const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource;return <div key={o.id} className={`rounded-2xl border bg-white p-2.5 shadow-sm ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":o.status==="CANCELLED"?"opacity-65":""}`}><button className="w-full text-left" onClick={()=>canOpenAnyStep&&setDetailId(o.id)}><div className="flex items-start gap-2.5"><div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[9px] font-semibold text-neutral-400">{o.code}</div><div className="truncate text-xs font-black">{o.sourceCode} · {o.sourceName||o.source?.name||""}</div></div><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-1 text-[9px] text-neutral-400">Tạo {fmtDateShort(o.createdAt||o.updatedAt)}</div></div></div><div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-neutral-50 p-2 text-[11px]"><div><span className="text-neutral-400">Vải</span><div className="text-sm font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div><div><span className="text-neutral-400">Màu</span><div className="text-sm font-black">{Number(p.colorCount||0)} màu</div></div></div><div className="mt-1.5 line-clamp-2 text-[10px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")||"Chưa tính màu"}</div></button><div className="mt-2 flex justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">✓ Xong</button>}</div></div>})}</div></div>)}</div></div>}
+
+      {viewMode === "TIMELINE" && <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border bg-white p-4"><div className="text-[10px] font-black uppercase text-neutral-400">Tháng {timelineStats.month}/{timelineStats.year}</div><div className="mt-1 text-2xl font-black">{timelineStats.thisMonth} lệnh</div><div className="text-xs text-neutral-500">Các mã tạo trong tháng này theo bộ lọc hiện tại.</div></div>
+          <div className="rounded-2xl border bg-white p-4"><div className="text-[10px] font-black uppercase text-neutral-400">Năm {timelineStats.year}</div><div className="mt-1 text-2xl font-black">{timelineStats.thisYear} lệnh</div><div className="text-xs text-neutral-500">Toàn bộ mã sản xuất tạo trong năm nay.</div></div>
+        </div>
+        {timelineGroups.map((yg)=><section key={yg.year} className="rounded-3xl border bg-white p-4"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-black">{yg.year}</h2><span className="text-xs text-neutral-400">{yg.months.reduce((sum,m)=>sum+m.rows.length,0)} lệnh</span></div><div className="space-y-5">{yg.months.map((mg)=><div key={`${yg.year}-${mg.month}`}><div className="mb-2 flex items-center gap-2"><div className="rounded-full bg-neutral-950 px-3 py-1 text-xs font-black text-white">Tháng {mg.month}</div><div className="text-xs text-neutral-400">{mg.rows.length} lệnh</div></div><div className="relative ml-3 border-l border-neutral-200 pl-5">{mg.rows.map((o)=>{const p=o.progress||{};const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource;const d=new Date(o.createdAt||o.updatedAt||0);return <div key={o.id} className="relative mb-3 last:mb-0"><span className="absolute -left-[25px] top-5 h-2.5 w-2.5 rounded-full border-2 border-white bg-neutral-950 shadow"/><button onClick={()=>canOpenAnyStep&&setDetailId(o.id)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":"bg-white"}`}><div className="w-12 shrink-0 text-center"><div className="text-lg font-black leading-none">{String(d.getDate()).padStart(2,"0")}</div><div className="mt-1 text-[9px] uppercase text-neutral-400">T{mg.month}</div></div><div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-xs">{o.sourceCode}</b><span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="truncate text-sm font-black">{sourceVisible?(o.sourceName||o.source?.name||""):"Mẫu triển khai · Đã ẩn"}</div><div className="mt-1 text-[10px] text-neutral-500">{o.factory?.name||"Chưa có nhà may"} · {Number(p.colorCount||0)} màu · {fmt(p.totalActualQty||0)} sp · {String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div></button></div>})}</div></div>)}</div></section>)}
+      </div>}
 
       {!filteredOrders.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Không có lệnh sản xuất phù hợp bộ lọc.</div>}
 
