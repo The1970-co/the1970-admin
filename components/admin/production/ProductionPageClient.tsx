@@ -102,6 +102,10 @@ type Order = {
     totalActualQty?: number;
     sizeRatioText?: string;
     fabricSupplyMode?: "COMPANY" | "FACTORY" | string;
+    fabricNames?: string[];
+    materialNames?: string[];
+    colorCount?: number;
+    colorBreakdown?: Array<{ name: string; code?: string | null; plannedQty: number; actualQty: number }>;
   };
 };
 
@@ -110,6 +114,7 @@ type MaterialSpec = {
   qtyPerProduct: number | string;
   wastePercent: number | string;
   sizeScoped: boolean;
+  colorScoped?: boolean;
   fixedSize?: string | null;
   note?: string | null;
 };
@@ -204,6 +209,11 @@ export default function ProductionPageClient() {
   const [factoryOpen, setFactoryOpen] = useState(false);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [searchQ, setSearchQ] = useState("");
+  const [factoryFilter, setFactoryFilter] = useState("ALL");
+  const [materialFilter, setMaterialFilter] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [viewMode, setViewMode] = useState<"CARDS" | "LIST" | "COLUMNS">("CARDS");
 
   async function load() {
     try {
@@ -238,6 +248,21 @@ export default function ProductionPageClient() {
     }
   }
 
+  async function completeOrder(row: Order) {
+    if (!canEdit || ["COMPLETED", "CANCELLED"].includes(row.status)) return;
+    if (!window.confirm(`Đánh dấu lệnh ${row.code} là ĐÃ SẢN XUẤT XONG? Lệnh sẽ được đưa xuống cuối danh sách.`)) return;
+    try {
+      setBusyAction(`${row.id}:complete`);
+      setError("");
+      await productionApi(`/production/orders/${row.id}/complete`, { method: "POST" });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không đánh dấu hoàn thành được lệnh sản xuất.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function deleteOrder(row: Order) {
     if (!canManage) return;
     if (!window.confirm(`XOÁ HẲN lệnh ${row.code}? Dữ liệu NPL, cây vải, size và lịch sử cắt của lệnh này sẽ bị xoá.`)) return;
@@ -253,6 +278,38 @@ export default function ProductionPageClient() {
       setBusyAction("");
     }
   }
+
+  const materialOptions = useMemo(() => Array.from(new Set(orders.flatMap((o) => o.progress?.materialNames || []).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi")), [orders]);
+  const filteredOrders = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    return [...orders]
+      .filter((o) => factoryFilter === "ALL" || o.productionPartnerId === factoryFilter)
+      .filter((o) => statusFilter === "ALL" || o.status === statusFilter)
+      .filter((o) => materialFilter === "ALL" || (o.progress?.materialNames || []).includes(materialFilter))
+      .filter((o) => {
+        if (!q) return true;
+        const p = o.progress || {};
+        return [o.code, o.sourceCode, o.sourceName, o.source?.name, o.factory?.name, ...(p.fabricNames || []), ...(p.materialNames || []), ...(p.colorBreakdown || []).map((x) => x.name)]
+          .filter(Boolean)
+          .some((x) => String(x).toLowerCase().includes(q));
+      })
+      .sort((a, b) => {
+        const rank = (x: Order) => x.status === "CANCELLED" ? 2 : x.status === "COMPLETED" ? 1 : 0;
+        const d = rank(a) - rank(b);
+        if (d) return d;
+        return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+      });
+  }, [orders, searchQ, factoryFilter, materialFilter, statusFilter]);
+  const columnGroups = useMemo(() => {
+    const grouped = new Map<string, { id: string; name: string; rows: Order[] }>();
+    for (const order of filteredOrders) {
+      const id = order.productionPartnerId || "NO_FACTORY";
+      const name = order.factory?.name || "Chưa có nhà may";
+      if (!grouped.has(id)) grouped.set(id, { id, name, rows: [] });
+      grouped.get(id)!.rows.push(order);
+    }
+    return Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [filteredOrders]);
 
   if(user&&!canView)return <div className="rounded-3xl border bg-white p-10 text-center text-sm text-neutral-500">Bạn không có quyền xem Lệnh sản xuất.</div>;
   return (
@@ -273,8 +330,21 @@ export default function ProductionPageClient() {
 
       {error && <Err x={error} />}
 
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {orders.map((o) => {
+      <div className="rounded-2xl border bg-white p-3">
+        <div className="grid gap-2 xl:grid-cols-[minmax(260px,1.2fr)_220px_220px_190px_auto]">
+          <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400" /><input className={`${input} pl-10`} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Tìm mã lệnh, mã SP, nhà may, vải, màu..." /></div>
+          <select className={input} value={factoryFilter} onChange={(e) => setFactoryFilter(e.target.value)}><option value="ALL">Tất cả nhà may</option>{meta.factories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
+          <select className={input} value={materialFilter} onChange={(e) => setMaterialFilter(e.target.value)}><option value="ALL">Tất cả chất liệu</option>{materialOptions.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+          <select className={input} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="ALL">Tất cả trạng thái</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          <div className="flex rounded-2xl border bg-neutral-50 p-1 text-xs font-semibold">
+            {[{k:"CARDS",t:"Thẻ"},{k:"LIST",t:"Danh sách"},{k:"COLUMNS",t:"Theo cột"}].map((x) => <button key={x.k} onClick={() => setViewMode(x.k as any)} className={`rounded-xl px-3 py-2 ${viewMode === x.k ? "bg-neutral-950 text-white" : "text-neutral-600"}`}>{x.t}</button>)}
+          </div>
+        </div>
+        <div className="mt-2 text-[11px] text-neutral-400">Hiển thị {filteredOrders.length}/{orders.length} lệnh · Lệnh đã hoàn thành tự động được xếp xuống dưới.</div>
+      </div>
+
+      {viewMode === "CARDS" && <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {filteredOrders.map((o) => {
           const p = o.progress || {};
           const sourceVisible = o.sourceType === "PRODUCT" || canViewSampleSource;
           const ratioText = p.sizeRatioText || (Array.isArray(o.sizeSet) ? o.sizeSet.map((s) => `${s}:${Number(o.sizeRatio?.[s] || 0)}`).join(" · ") : "");
@@ -333,6 +403,15 @@ export default function ProductionPageClient() {
                   </div>
                 </div>
 
+                <div className="mt-2 rounded-xl border bg-white p-2.5">
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div><div className="text-[10px] font-semibold uppercase text-neutral-400">Tổng vải bàn giao</div><div className="mt-0.5 text-lg font-black text-neutral-950">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY" ? "Nhà may tự cấp" : `${fmt(p.allocatedM || 0)} m`}</div></div>
+                    <div className="text-right"><div className="text-[10px] font-semibold uppercase text-neutral-400">Màu sản xuất</div><div className="mt-0.5 text-base font-black text-neutral-950">{Number(p.colorCount || 0)} màu</div></div>
+                  </div>
+                  {!!p.colorBreakdown?.length && <div className="mt-1.5 line-clamp-2 text-[11px] font-semibold text-neutral-600">{p.colorBreakdown.map((x) => `${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")}</div>}
+                  {!!p.materialNames?.length && <div className="mt-1 text-[10px] text-neutral-400">Chất liệu: {p.materialNames.join(" · ")}</div>}
+                </div>
+
                 <div className="mt-2 text-[11px] text-neutral-500">
                   {String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY" ? `Nhà may tự cấp vải${o.plannedQtyOverride?` · tạm tính ${fmt(o.plannedQtyOverride)} sp`:""}` : p.fabricDone ? `Đã bàn giao ${fmt(p.allocatedM || 0)} m vải` : "Chưa bàn giao vải"}
                   {" · "}
@@ -349,6 +428,7 @@ export default function ProductionPageClient() {
                 >
                   Sửa / Mở quy trình
                 </button>}
+                {canEdit && !["CANCELLED", "COMPLETED"].includes(o.status) && <button disabled={busyAction === `${o.id}:complete`} onClick={() => void completeOrder(o)} className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 disabled:opacity-40">✓ Đánh dấu xong</button>}
                 {canEdit && o.status !== "CANCELLED" && o.status !== "COMPLETED" && (
                   <button
                     disabled={busyAction === `${o.id}:cancel`}
@@ -371,9 +451,23 @@ export default function ProductionPageClient() {
             </div>
           );
         })}
-      </div>
+      </div>}
 
-      {!orders.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có lệnh sản xuất.</div>}
+      {viewMode === "LIST" && <div className="overflow-hidden rounded-3xl border bg-white">
+        <div className="hidden grid-cols-[72px_minmax(260px,1.6fr)_180px_140px_minmax(220px,1fr)_170px] gap-3 border-b bg-neutral-50 px-4 py-3 text-[10px] font-black uppercase text-neutral-400 lg:grid"><div>Ảnh</div><div>Lệnh / sản phẩm</div><div>Nhà may</div><div>Vải</div><div>Màu & sản lượng</div><div className="text-right">Thao tác</div></div>
+        {filteredOrders.map((o) => { const p=o.progress||{}; const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource; return <div key={o.id} className={`grid gap-3 border-b p-4 last:border-b-0 lg:grid-cols-[72px_minmax(260px,1.6fr)_180px_140px_minmax(220px,1fr)_170px] lg:items-center ${o.status==="COMPLETED"?"bg-emerald-50/30":o.status==="CANCELLED"?"bg-neutral-50 opacity-70":""}`}>
+          <div className="h-16 w-14 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div>
+          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b className="text-xs text-neutral-500">{o.code}</b><span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-1 truncate text-sm font-black">{sourceVisible?`${o.sourceCode} · ${o.sourceName||o.source?.name||""}`:"Mẫu triển khai · Đã ẩn"}</div>{!!p.materialNames?.length&&<div className="mt-1 truncate text-[11px] text-neutral-400">{p.materialNames.join(" · ")}</div>}</div>
+          <div className="text-sm"><b>{o.factory?.name||"—"}</b><div className="mt-1 text-[11px] text-neutral-400">Hạn {fmtDateShort(o.dueDate)}</div></div>
+          <div><div className="text-lg font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div><div className="text-[11px] text-neutral-400">{p.rollCount?`${p.rollCount} cây`:""}</div></div>
+          <div><div className="text-sm font-black">{Number(p.colorCount||0)} màu · {fmt(p.totalActualQty||0)} sp</div><div className="mt-1 line-clamp-2 text-[11px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)}`).join(" · ")||"Chưa tính sản lượng theo màu"}</div></div>
+          <div className="flex flex-wrap justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[11px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">✓ Xong</button>}</div>
+        </div>; })}
+      </div>}
+
+      {viewMode === "COLUMNS" && <div className="overflow-x-auto pb-2"><div className="flex min-w-max items-start gap-3">{columnGroups.map((group)=><div key={group.id} className="w-[320px] shrink-0 rounded-2xl border bg-neutral-50/70 p-2.5"><div className="mb-2 flex items-center justify-between px-1"><div><b className="text-sm">{group.name}</b><div className="text-[10px] text-neutral-400">{group.rows.length} lệnh</div></div></div><div className="space-y-2">{group.rows.map((o)=>{const p=o.progress||{};return <div key={o.id} className={`rounded-2xl border bg-white p-3 shadow-sm ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":o.status==="CANCELLED"?"opacity-65":""}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[10px] font-semibold text-neutral-400">{o.code}</div><div className="truncate text-sm font-black">{o.sourceCode} · {o.sourceName||o.source?.name||""}</div></div><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-neutral-50 p-2 text-[11px]"><div><span className="text-neutral-400">Vải</span><div className="text-sm font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div><div><span className="text-neutral-400">Màu</span><div className="text-sm font-black">{Number(p.colorCount||0)} màu</div></div></div><div className="mt-1.5 line-clamp-2 text-[10px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")||"Chưa tính màu"}</div><div className="mt-2 flex justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">✓ Xong</button>}</div></div>})}</div></div>)}</div></div>}
+
+      {!filteredOrders.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Không có lệnh sản xuất phù hợp bộ lọc.</div>}
 
       {createOpen && (
         <CreateOrderModal
@@ -595,7 +689,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setSavedTemplates(templateOptions || []);
       setMaterials((o.accessorySpecs || []).map((x: any) => {
         const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
-        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, fixedSize: fixedSizeFromNote(x.note), note: stripFixedSizeNote(x.note) || null };
+        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, colorScoped: isSizeLabelAccessory(accessory) ? false : colorScopedFromNote(x.note), fixedSize: fixedSizeFromNote(x.note), note: stripScopeMetaFromNote(x.note) || null };
       }));
       setRolls(rollOptions);
       const sel: Record<string, boolean> = {};
@@ -649,6 +743,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       ...row,
       accessoryItemId,
       sizeScoped: isSizeLabelAccessory(accessory) ? true : row.sizeScoped,
+      colorScoped: isSizeLabelAccessory(accessory) ? false : !!row.colorScoped,
       fixedSize: isSizeLabelAccessory(accessory) ? null : row.fixedSize,
       qtyPerProduct: defaultQty !== null && defaultQty !== undefined && defaultQty !== "" ? viDisplay(defaultQty, 4) : row.qtyPerProduct,
     } : row));
@@ -703,7 +798,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         qtyPerProduct: Number(viNumber(row.qtyPerProduct) || 0),
         wastePercent: Number(viNumber(row.wastePercent) || 0),
         sizeScoped: selectedAccessory ? (isSizeLabelAccessory(selectedAccessory) ? true : row.sizeScoped) : row.sizeScoped,
-        note: withFixedSizeNote(row.note, row.fixedSize),
+        note: withScopeMetaNote(row.note, row.fixedSize, !!row.colorScoped),
       };
     });
   }
@@ -759,8 +854,9 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         qtyPerProduct: Number(item.qtyPerProduct || 0),
         wastePercent: Number(item.wastePercent || 0),
         sizeScoped: accessory ? (isSizeLabelAccessory(accessory) ? true : !!item.sizeScoped) : !!item.sizeScoped,
+        colorScoped: accessory ? (isSizeLabelAccessory(accessory) ? false : colorScopedFromNote(item.note)) : colorScopedFromNote(item.note),
         fixedSize: fixedSizeFromNote(item.note),
-        note: stripFixedSizeNote(item.note) || `[Mẫu đã lưu] ${template.name} · ${[item.accessoryCodeSnapshot, item.accessoryNameSnapshot].filter(Boolean).join(" · ")}`,
+        note: stripScopeMetaFromNote(item.note) || `[Mẫu đã lưu] ${template.name} · ${[item.accessoryCodeSnapshot, item.accessoryNameSnapshot].filter(Boolean).join(" · ")}`,
       };
     });
     setMaterials(rows);
@@ -805,7 +901,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           productKind: order.productKind,
           materials: materials.map((m) => ({
             ...m,
-            note: withFixedSizeNote(m.note, m.fixedSize),
+            note: withScopeMetaNote(m.note, m.fixedSize, !!m.colorScoped),
             qtyPerProduct: numberOrZero(m.qtyPerProduct),
             wastePercent: numberOrZero(m.wastePercent),
           })),
@@ -1085,7 +1181,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             <div className="rounded-3xl border p-4">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                 <div><b>Nguyên phụ liệu của lệnh này</b><div className="text-xs text-neutral-400">Có thể chọn thủ công, nhập Excel hoặc áp dụng mẫu NPL có sẵn.</div></div>
-                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false, fixedSize: null }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
+                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false, colorScoped: false, fixedSize: null }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
               </div>
 
               <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_220px_170px_190px]">
@@ -1131,7 +1227,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
                         />
                         <ViNumberInput value={m.qtyPerProduct} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: v } : x))} suffix={qtySuffix} decimals={4} placeholder="VD: 1 hoặc 0,75" />
                         <ViNumberInput value={m.wastePercent} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: v } : x))} suffix="%" decimals={3} placeholder="Hao hụt" />
-                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <div className="space-y-1.5"><select className={`${input} py-2 text-xs font-semibold`} value={m.fixedSize ? "FIXED" : m.sizeScoped ? "BY_SIZE" : "ALL"} onChange={(e) => { const mode=e.target.value; setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,sizeScoped:mode==="BY_SIZE",fixedSize:mode==="FIXED"?(x.fixedSize || sizeSet[0] || null):null}:x)); }}><option value="ALL">Không theo size</option><option value="BY_SIZE">Theo tất cả size</option><option value="FIXED">Cố định 1 size</option></select>{m.fixedSize && <select className={`${input} py-2 text-xs font-black`} value={m.fixedSize} onChange={(e)=>setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,fixedSize:e.target.value}:x))}>{sizeSet.map((size)=><option key={size} value={size}>Dùng cho size {size}</option>)}</select>}</div>}
+                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <div className="space-y-1.5"><select className={`${input} py-2 text-xs font-semibold`} value={m.colorScoped ? "BY_COLOR" : m.fixedSize ? "FIXED" : m.sizeScoped ? "BY_SIZE" : "ALL"} onChange={(e) => { const mode=e.target.value; setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,sizeScoped:mode==="BY_SIZE",colorScoped:mode==="BY_COLOR",fixedSize:mode==="FIXED"?(x.fixedSize || sizeSet[0] || null):null}:x)); }}><option value="ALL">Không chia theo size/màu</option><option value="BY_COLOR">Theo màu</option><option value="BY_SIZE">Theo tất cả size</option><option value="FIXED">Cố định 1 size</option></select>{m.colorScoped && <div className="rounded-xl bg-blue-50 px-3 py-2 text-[11px] font-semibold text-blue-800">Tự tách NPL theo từng màu sản xuất, không phụ thuộc size.</div>}{m.fixedSize && <select className={`${input} py-2 text-xs font-black`} value={m.fixedSize} onChange={(e)=>setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,fixedSize:e.target.value}:x))}>{sizeSet.map((size)=><option key={size} value={size}>Dùng cho size {size}</option>)}</select>}</div>}
                         <button onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))} className="text-xs font-semibold text-red-600">Xoá</button>
                       </div>
                       {selectedAccessory && <div className="mt-2 text-xs text-neutral-500"><b>{selectedAccessory.typeName || "NPL"}</b>{accessorySpecShort(selectedAccessory) ? ` · ${accessorySpecShort(selectedAccessory)}` : ""}{selectedAccessory.specifications?.defaultQtyPerProduct !== null && selectedAccessory.specifications?.defaultQtyPerProduct !== undefined && selectedAccessory.specifications?.defaultQtyPerProduct !== "" ? ` · Mặc định ${viDisplay(selectedAccessory.specifications.defaultQtyPerProduct, 4)} ${accessoryUnitLabel(selectedAccessory.unit)}/SP` : ""}</div>}
@@ -1436,7 +1532,7 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
       {editable && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="text-sm text-blue-900"><b>Ô xanh = số lượng cắt thực tế.</b> Sửa xong bấm lưu; hệ thống chỉ cập nhật TT, giữ nguyên DK và tính lại toàn bộ NPL.</div><button disabled={busy} onClick={onSaveActual} className="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu thực tế & tính lại NPL</button></div>}
 
       {!hideMaterials&&<>      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500"><span>Đã chọn <b className="text-neutral-900">{selectedMaterialCount}</b> NPL · Bảng tính hiển thị <b className="text-neutral-900">{(c.materials || []).length}</b> dòng.</span><span>Mác size không có sản lượng ở size hiện tại vẫn được giữ và hiển thị 0.</span></div>
-      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Size</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b>{m.sizeLabel && Number(m.requiredQty||0)===0 ? <div className="mt-0.5 text-[11px] font-medium text-amber-600">Size này hiện không có trong sản lượng cắt thực tế</div> : null}</td><td className="text-center">{m.sizeLabel ? <span className="inline-flex rounded-lg bg-neutral-950 px-2.5 py-1 text-xs font-black text-white">SIZE {m.sizeLabel}</span> : "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto rounded-2xl border"><table className="min-w-[760px] w-full text-sm"><thead className="bg-neutral-50"><tr><th className="p-3 text-left">NPL</th><th>Theo</th><th>Định mức</th><th>Hao hụt</th><th>Cần xuất theo TT</th><th>Thiếu</th></tr></thead><tbody>{(c.materials || []).map((m: any, i: number) => <tr key={i} className="border-t"><td className="p-3">{m.accessoryCode} · <b>{m.accessoryName}</b>{m.sizeLabel && Number(m.requiredQty||0)===0 ? <div className="mt-0.5 text-[11px] font-medium text-amber-600">Phạm vi này hiện không có trong sản lượng cắt thực tế</div> : null}</td><td className="text-center">{m.sizeLabel ? <span className="inline-flex rounded-lg bg-neutral-950 px-2.5 py-1 text-xs font-black text-white">{scopeBadge(m.sizeLabel)}</span> : "—"}</td><td className="text-center">{fmt(m.qtyPerProduct)}</td><td className="text-center">{fmt(m.wastePercent)}%</td><td className="text-center font-semibold">{fmt(m.requiredQty)}</td><td className={`text-center font-semibold ${Number(m.shortageQty) > 0 ? "text-red-700" : "text-emerald-700"}`}>{fmt(m.shortageQty)}</td></tr>)}</tbody></table></div>
 
 </>}
       {!!history.length && <details className="rounded-2xl border bg-white" open={false}><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Lịch sử thay đổi số lượng cắt ({history.length})</summary><div className="max-h-80 overflow-auto border-t"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-neutral-50"><tr><th className="p-2 text-left">Thời gian</th><th>Màu</th><th>Size</th><th>DK</th><th>TT trước</th><th>TT sau</th><th>Thao tác</th><th>Người sửa</th></tr></thead><tbody>{history.map((h:any)=><tr key={h.id} className="border-t"><td className="p-2">{h.createdAt?new Date(h.createdAt).toLocaleString("vi-VN"):"—"}</td><td className="text-center">{h.colorName}</td><td className="text-center font-semibold">{h.size}</td><td className="text-center">{h.plannedQty}</td><td className="text-center">{h.previousActualQty ?? "—"}</td><td className="bg-blue-50 text-center font-semibold text-blue-800">{h.actualQty ?? "—"}</td><td className="text-center">{h.changeType==="ACTUAL_UPDATE"?"Sửa thực tế":h.changeType==="INITIAL_CALCULATE"?"Tính lần đầu":"Tính lại dự kiến"}</td><td className="text-center">{h.createdByName || "Hệ thống"}</td></tr>)}</tbody></table></div></details>}
@@ -1446,6 +1542,7 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
 
 
 
+function scopeBadge(value:any){const raw=String(value||"").trim();return raw.toUpperCase().startsWith("MÀU:")||raw.toUpperCase().startsWith("MAU:")?`MÀU ${raw.split(":").slice(1).join(":").trim()}`:`SIZE ${raw}`}
 function nplLineKey(m:any){return `${String(m.accessoryItemId||"")}|||${String(m.sizeLabel||"").trim().toUpperCase()}`}
 
 function NplIssuePanel({orderId,materials,history,onChanged}:{orderId:string;materials:any[];history:any[];onChanged:()=>Promise<any>|any}) {
@@ -1538,7 +1635,7 @@ function NplIssuePanel({orderId,materials,history,onChanged}:{orderId:string;mat
             const done=remain<=0.0001;
             return <tr key={key} className="border-t">
               <td className="p-3"><span className="text-neutral-500">{m.accessoryCode}</span> · <b>{m.accessoryName}</b></td>
-              <td className="text-center">{m.sizeLabel?<span className="rounded-lg bg-neutral-950 px-2 py-1 text-[10px] font-black text-white">SIZE {m.sizeLabel}</span>:"—"}</td>
+              <td className="text-center">{m.sizeLabel?<span className="rounded-lg bg-neutral-950 px-2 py-1 text-[10px] font-black text-white">{scopeBadge(m.sizeLabel)}</span>:"—"}</td>
               <td className="text-center font-semibold">{fmt(m.requiredQty)}</td>
               <td className="text-center font-semibold text-blue-700">{fmt(m.issuedQty||0)}</td>
               <td className={`text-center font-black ${done?"text-emerald-700":"text-amber-700"}`}>{fmt(remain)}</td>
@@ -1565,7 +1662,7 @@ function NplIssuePanel({orderId,materials,history,onChanged}:{orderId:string;mat
         <summary className="cursor-pointer list-none p-4">
           <div className="flex items-center justify-between gap-3"><div><b>Lần {r.roundNo}{Number(r.roundNo)>1?" · Bổ sung":""}</b><div className="mt-1 text-[11px] text-neutral-400">{r.createdAt?new Date(r.createdAt).toLocaleString("vi-VN"):"—"} · {r.createdByName||"—"}{r.note?` · ${r.note}`:""}</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-black">{(r.items||[]).length} NPL</span></div>
         </summary>
-        <div className="overflow-x-auto border-t"><table className="min-w-[780px] w-full text-xs"><thead className="bg-neutral-50"><tr><th className="p-2 text-left">NPL</th><th>Size</th><th>Đã cấp trước</th><th>Cấp lần này</th><th>Còn thiếu sau cấp</th><th className="text-left">Ghi chú</th></tr></thead><tbody>{(r.items||[]).map((x:any)=><tr key={x.id} className="border-t"><td className="p-2">{x.accessoryCode} · <b>{x.accessoryName}</b></td><td className="text-center">{x.sizeLabel||"—"}</td><td className="text-center">{fmt(x.issuedBeforeQty)}</td><td className="text-center font-black text-blue-700">{fmt(x.issuedQty)}</td><td className={`text-center font-black ${Number(x.remainingAfterQty)>0?"text-amber-700":"text-emerald-700"}`}>{fmt(x.remainingAfterQty)}</td><td className="p-2">{x.note||"—"}</td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto border-t"><table className="min-w-[780px] w-full text-xs"><thead className="bg-neutral-50"><tr><th className="p-2 text-left">NPL</th><th>Theo</th><th>Đã cấp trước</th><th>Cấp lần này</th><th>Còn thiếu sau cấp</th><th className="text-left">Ghi chú</th></tr></thead><tbody>{(r.items||[]).map((x:any)=><tr key={x.id} className="border-t"><td className="p-2">{x.accessoryCode} · <b>{x.accessoryName}</b></td><td className="text-center">{x.sizeLabel?scopeBadge(x.sizeLabel):"—"}</td><td className="text-center">{fmt(x.issuedBeforeQty)}</td><td className="text-center font-black text-blue-700">{fmt(x.issuedQty)}</td><td className={`text-center font-black ${Number(x.remainingAfterQty)>0?"text-amber-700":"text-emerald-700"}`}>{fmt(x.remainingAfterQty)}</td><td className="p-2">{x.note||"—"}</td></tr>)}</tbody></table></div>
       </details>)}</div>}
     </div>}
   </div>
@@ -1711,7 +1808,7 @@ function ProductionCostCard({cost,extraCosts,onExtraCostsChange,onSaveExtras,pri
       <summary className="cursor-pointer px-3 py-3 text-xs font-black">Chi tiết cấu thành giá</summary>
       <div className="border-t">
         {(cost.fabricLines||[]).map((x:any,i:number)=><div key={`f-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.role==="LINING"?"Vải lót":"Vải chính"} · {x.fabricName||x.fabricCode||"Vải"}</b><div className="mt-0.5 text-neutral-400">{x.rollCode||x.receiptCode||"Cây"} · {fmt(x.usedM)}m · {fmt(x.usedKg)}kg</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
-        {(cost.accessoryLines||[]).map((x:any,i:number)=><div key={`a-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.accessoryCode} · {x.accessoryName}</b>{x.sizeLabel&&<span className="ml-1 rounded bg-neutral-950 px-1.5 py-0.5 text-[9px] text-white">SIZE {x.sizeLabel}</span>}<div className="mt-0.5 text-neutral-400">{fmt(x.requiredQty)} × {x.unitPriceVnd==null?"chưa có giá":moneyVnd(x.unitPriceVnd)}</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
+        {(cost.accessoryLines||[]).map((x:any,i:number)=><div key={`a-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.accessoryCode} · {x.accessoryName}</b>{x.sizeLabel&&<span className="ml-1 rounded bg-neutral-950 px-1.5 py-0.5 text-[9px] text-white">{scopeBadge(x.sizeLabel)}</span>}<div className="mt-0.5 text-neutral-400">{fmt(x.requiredQty)} × {x.unitPriceVnd==null?"chưa có giá":moneyVnd(x.unitPriceVnd)}</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
       </div>
     </details>
   </div>;
@@ -1983,28 +2080,34 @@ function AccessoryCombobox({ accessories, value, onChange, typeName = "ALL", glo
 }
 
 const FIXED_SIZE_NOTE_RE = /\[\[FIXED_SIZE:([^\]]+)\]\]/i;
+const COLOR_SCOPED_NOTE_RE = /\[\[COLOR_SCOPED\]\]/i;
 function fixedSizeFromNote(note?: string | null) {
   const matched=String(note||"").match(FIXED_SIZE_NOTE_RE);
   return matched?.[1] ? normalizeProductionSize(matched[1]) : null;
 }
-function stripFixedSizeNote(note?: string | null) {
-  return String(note||"").replace(FIXED_SIZE_NOTE_RE, "").replace(/\s{2,}/g," ").trim();
+function colorScopedFromNote(note?: string | null) {
+  return COLOR_SCOPED_NOTE_RE.test(String(note||""));
 }
-function withFixedSizeNote(note?: string | null, fixedSize?: string | null) {
-  const clean=stripFixedSizeNote(note);
+function stripScopeMetaFromNote(note?: string | null) {
+  return String(note||"").replace(FIXED_SIZE_NOTE_RE, "").replace(COLOR_SCOPED_NOTE_RE, "").replace(/\s{2,}/g," ").trim();
+}
+function stripFixedSizeNote(note?: string | null) { return stripScopeMetaFromNote(note); }
+function withScopeMetaNote(note?: string | null, fixedSize?: string | null, colorScoped?: boolean) {
+  const clean=stripScopeMetaFromNote(note);
   const size=fixedSize ? normalizeProductionSize(fixedSize) : "";
-  return [size ? `[[FIXED_SIZE:${size}]]` : "", clean].filter(Boolean).join(" ") || null;
+  return [size ? `[[FIXED_SIZE:${size}]]` : "", colorScoped ? "[[COLOR_SCOPED]]" : "", clean].filter(Boolean).join(" ") || null;
 }
+function withFixedSizeNote(note?: string | null, fixedSize?: string | null) { return withScopeMetaNote(note, fixedSize, false); }
 
 function materialSourceLabel(note?: string | null) {
-  const raw = stripFixedSizeNote(note);
+  const raw = stripScopeMetaFromNote(note);
   if (raw.startsWith("[Mẫu]")) return raw;
   if (raw.startsWith("[Excel]")) return raw;
   return "";
 }
 
 function excelSourceSnapshot(note?: string | null) {
-  const raw = stripFixedSizeNote(note);
+  const raw = stripScopeMetaFromNote(note);
   const text = raw.replace(/^\[(Excel|Mẫu|Mẫu đã lưu)\]\s*/i, "");
   const parts = text.split(" · ").map((x) => x.trim()).filter(Boolean);
   return { code: parts[0] || "", name: parts.slice(1).join(" · ") || "" };
