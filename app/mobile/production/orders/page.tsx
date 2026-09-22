@@ -15,11 +15,42 @@ import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { apiJson } from "@/lib/api";
 import { API_BASE } from "@/lib/api-base";
 import Link from "next/link";
-import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
+import { getCurrentUserFromStorage, getCurrentUserPermissions, getTokenFromStorage } from "@/lib/current-user";
 import * as XLSX from "xlsx";
 
 async function productionApi<T=any>(path:string, init:RequestInit={}) {
   return apiJson<T>(path,{...init,redirectOnUnauthorized:false} as any);
+}
+
+function unwrapRows<T=any>(value:any):T[]{
+  if(Array.isArray(value)) return value as T[];
+  if(Array.isArray(value?.data)) return value.data as T[];
+  if(Array.isArray(value?.items)) return value.items as T[];
+  if(Array.isArray(value?.rows)) return value.rows as T[];
+  if(Array.isArray(value?.results)) return value.results as T[];
+  return [];
+}
+
+async function productionOrdersWithoutBranchHeader():Promise<Order[]>{
+  let token=getTokenFromStorage();
+  if(!token){
+    try{
+      const mobileAuth=await import("@/lib/mobile-auth-token");
+      token=await mobileAuth.getMobileToken();
+    }catch{}
+  }
+  const headers:Record<string,string>={};
+  if(token) headers.Authorization=`Bearer ${token}`;
+  const res=await fetch(`${API_BASE}/production/orders`,{
+    method:"GET",
+    headers,
+    credentials:"include",
+    cache:"no-store",
+  });
+  const text=await res.text();
+  const data=text?JSON.parse(text):null;
+  if(!res.ok) throw new Error(data?.message||data?.error||`Request failed: ${res.status}`);
+  return unwrapRows<Order>(data);
 }
 function asset(url?:string|null) {
   if(!url) return "";
@@ -236,12 +267,26 @@ export default function Page() {
   async function load() {
     try {
       setError("");
-      const [m, o] = await Promise.all([
+      const [m, rawOrders] = await Promise.all([
         productionApi<Meta>("/production/meta"),
-        productionApi<Order[]>("/production/orders"),
+        productionApi<any>("/production/orders"),
       ]);
+      let rows=unwrapRows<Order>(rawOrders);
+
+      // Mobile gửi x-active-branch-id qua apiJson. Lệnh SX là dữ liệu toàn hệ thống,
+      // nên nếu request có scope chi nhánh trả 0 dòng thì thử lại đúng endpoint
+      // nhưng không kèm header chi nhánh. Web ADMIN - ALL vẫn dùng request bình thường.
+      if(!rows.length && typeof window!=="undefined" && window.location.pathname.startsWith("/mobile")){
+        try{
+          const globalRows=await productionOrdersWithoutBranchHeader();
+          if(globalRows.length) rows=globalRows;
+        }catch(err){
+          console.warn("[production-mobile] fallback orders without branch failed",err);
+        }
+      }
+
       setMeta(m);
-      setOrders(o);
+      setOrders(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được sản xuất.");
     }
