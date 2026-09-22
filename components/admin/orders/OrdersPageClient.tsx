@@ -5299,6 +5299,26 @@ export default function OrdersPageClient() {
         const selectedBranchIds = selectedMultiFilterValues(appliedBranchFilter);
         const selectedOrderStatuses = selectedMultiFilterValues(appliedOrderFilter);
         const selectedPaymentStatuses = selectedMultiFilterValues(appliedPaymentFilter);
+        const selectedCreatedByNames = selectedMultiFilterValues(appliedCreatedByFilter);
+
+        if (selectedCreatedByNames.length) {
+          const selectedCreatedByNameKeys = new Set(
+            selectedCreatedByNames.map(normalizeComparableText),
+          );
+          const selectedCreatedByIds = staffList
+            .filter((staff) =>
+              selectedCreatedByNameKeys.has(
+                normalizeComparableText(staffLabel(staff)),
+              ),
+            )
+            .map((staff) => String(staff.id || "").trim())
+            .filter(Boolean);
+
+          if (selectedCreatedByIds.length) {
+            params.set("createdByStaffIds", selectedCreatedByIds.join("|"));
+          }
+          params.set("createdByStaffNames", selectedCreatedByNames.join("|"));
+        }
 
         if (!canViewAllOrders && currentUser?.branchId) {
           params.set("branchId", currentUser.branchId);
@@ -5616,6 +5636,7 @@ export default function OrdersPageClient() {
     appliedBranchFilter,
     appliedOrderFilter,
     appliedPaymentFilter,
+    appliedCreatedByFilter,
     appliedCodReconciliationFilter,
     appliedDateFrom,
     appliedDateTo,
@@ -6254,7 +6275,28 @@ export default function OrdersPageClient() {
     }
 
     if (!isAllMultiFilter(appliedCreatedByFilter)) {
-      result = result.filter((o) => multiFilterIncludes(appliedCreatedByFilter, o._createdByName));
+      const selectedCreatedByNames = selectedMultiFilterValues(appliedCreatedByFilter);
+      const selectedCreatedByNameKeys = new Set(
+        selectedCreatedByNames.map(normalizeComparableText),
+      );
+      const selectedCreatedByIds = new Set(
+        staffList
+          .filter((staff) =>
+            selectedCreatedByNameKeys.has(
+              normalizeComparableText(staffLabel(staff)),
+            ),
+          )
+          .map((staff) => String(staff.id || "").trim())
+          .filter(Boolean),
+      );
+
+      result = result.filter((o) => {
+        const orderStaffId = String((o as any).createdByStaffId || "").trim();
+        return (
+          (orderStaffId && selectedCreatedByIds.has(orderStaffId)) ||
+          selectedCreatedByNameKeys.has(normalizeComparableText(o._createdByName))
+        );
+      });
     }
 
     if (!isAllMultiFilter(appliedAssignedStaffFilter)) {
@@ -6430,6 +6472,7 @@ export default function OrdersPageClient() {
     appliedFreeTextFilter,
     parsedSmartSearch,
     branches,
+    staffList,
   ]);
 
   const visibleOrders = filteredOrders;
@@ -7005,6 +7048,16 @@ export default function OrdersPageClient() {
     const selectedOrderStatuses = selectedMultiFilterValues(appliedOrderFilter);
     const selectedPaymentStatuses = selectedMultiFilterValues(appliedPaymentFilter);
     const selectedCodReconciliationStatuses = selectedMultiFilterValues(appliedCodReconciliationFilter);
+    const selectedCreatedByNames = selectedMultiFilterValues(appliedCreatedByFilter);
+    const selectedCreatedByNameKeys = new Set(
+      selectedCreatedByNames.map(normalizeComparableText),
+    );
+    const selectedCreatedByIds = staffList
+      .filter((staff) =>
+        selectedCreatedByNameKeys.has(normalizeComparableText(staffLabel(staff))),
+      )
+      .map((staff) => String(staff.id || "").trim())
+      .filter(Boolean);
     const rows: AdminOrder[] = [];
     const seen = new Set<string>();
 
@@ -7029,6 +7082,12 @@ export default function OrdersPageClient() {
         if (selectedPaymentStatuses.length === 1) params.set("paymentStatus", selectedPaymentStatuses[0]);
         if (selectedCodReconciliationStatuses.length) {
           params.set("codReconciliationStatus", selectedCodReconciliationStatuses.join(","));
+        }
+        if (selectedCreatedByNames.length) {
+          if (selectedCreatedByIds.length) {
+            params.set("createdByStaffIds", selectedCreatedByIds.join("|"));
+          }
+          params.set("createdByStaffNames", selectedCreatedByNames.join("|"));
         }
         if (!canViewAllOrders && canViewOwnOrders) {
           params.set("viewScope", "own");

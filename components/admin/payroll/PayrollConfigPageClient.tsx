@@ -262,6 +262,11 @@ export default function PayrollConfigPageClient() {
     );
   }, [staff, bulkBranchId]);
 
+  const configuredStaffIds = useMemo(
+    () => new Set(configs.map((item) => String(item.staffId || "").trim()).filter(Boolean)),
+    [configs],
+  );
+
   const bulkTemplates = useMemo(() => {
     if (!bulkBranchId) return [];
     return templates.filter(
@@ -1083,8 +1088,15 @@ export default function PayrollConfigPageClient() {
                   className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm hover:bg-neutral-50"
                 >
                   <span>
-                    <span className="font-black text-neutral-950">
-                      {item.name || item.code || item.id}
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-black text-neutral-950">
+                        {item.name || item.code || item.id}
+                      </span>
+                      {!configuredStaffIds.has(String(item.id)) ? (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700">
+                          Chưa có cấu hình lương
+                        </span>
+                      ) : null}
                     </span>
                     <span className="ml-2 text-xs text-neutral-500">
                       {item.code || "—"} ·{" "}
