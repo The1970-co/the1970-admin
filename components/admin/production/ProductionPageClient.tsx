@@ -118,6 +118,7 @@ type MaterialSpec = {
   wastePercent: number | string;
   sizeScoped: boolean;
   colorScoped?: boolean;
+  colorTargets?: string[];
   fixedSize?: string | null;
   note?: string | null;
 };
@@ -815,7 +816,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setSavedTemplates(templateOptions || []);
       setMaterials((o.accessorySpecs || []).map((x: any) => {
         const accessory = meta.accessories.find((a) => a.id === x.accessoryItemId);
-        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, colorScoped: isSizeLabelAccessory(accessory) ? false : colorScopedFromNote(x.note), fixedSize: fixedSizeFromNote(x.note), note: stripScopeMetaFromNote(x.note) || null };
+        return { accessoryItemId: x.accessoryItemId, qtyPerProduct: Number(x.qtyPerProduct || 0), wastePercent: Number(x.wastePercent || 0), sizeScoped: isSizeLabelAccessory(accessory) ? true : !!x.sizeScoped, colorScoped: isSizeLabelAccessory(accessory) ? false : colorScopedFromNote(x.note), colorTargets: isSizeLabelAccessory(accessory) ? [] : colorTargetsFromNote(x.note), fixedSize: fixedSizeFromNote(x.note), note: stripScopeMetaFromNote(x.note) || null };
       }));
       setRolls(rollOptions);
       const sel: Record<string, boolean> = {};
@@ -870,6 +871,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       accessoryItemId,
       sizeScoped: isSizeLabelAccessory(accessory) ? true : row.sizeScoped,
       colorScoped: isSizeLabelAccessory(accessory) ? false : !!row.colorScoped,
+      colorTargets: isSizeLabelAccessory(accessory) ? [] : (row.accessoryItemId === accessoryItemId ? (row.colorTargets || []) : []),
       fixedSize: isSizeLabelAccessory(accessory) ? null : row.fixedSize,
       qtyPerProduct: defaultQty !== null && defaultQty !== undefined && defaultQty !== "" ? viDisplay(defaultQty, 4) : row.qtyPerProduct,
     } : row));
@@ -924,7 +926,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         qtyPerProduct: Number(viNumber(row.qtyPerProduct) || 0),
         wastePercent: Number(viNumber(row.wastePercent) || 0),
         sizeScoped: selectedAccessory ? (isSizeLabelAccessory(selectedAccessory) ? true : row.sizeScoped) : row.sizeScoped,
-        note: withScopeMetaNote(row.note, row.fixedSize, !!row.colorScoped),
+        note: withScopeMetaNote(row.note, row.fixedSize, !!row.colorScoped, []),
       };
     });
   }
@@ -981,6 +983,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
         wastePercent: Number(item.wastePercent || 0),
         sizeScoped: accessory ? (isSizeLabelAccessory(accessory) ? true : !!item.sizeScoped) : !!item.sizeScoped,
         colorScoped: accessory ? (isSizeLabelAccessory(accessory) ? false : colorScopedFromNote(item.note)) : colorScopedFromNote(item.note),
+        colorTargets: [],
         fixedSize: fixedSizeFromNote(item.note),
         note: stripScopeMetaFromNote(item.note) || `[Mẫu đã lưu] ${template.name} · ${[item.accessoryCodeSnapshot, item.accessoryNameSnapshot].filter(Boolean).join(" · ")}`,
       };
@@ -1027,7 +1030,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           productKind: order.productKind,
           materials: materials.map((m) => ({
             ...m,
-            note: withScopeMetaNote(m.note, m.fixedSize, !!m.colorScoped),
+            note: withScopeMetaNote(m.note, m.fixedSize, !!m.colorScoped, m.colorTargets),
             qtyPerProduct: numberOrZero(m.qtyPerProduct),
             wastePercent: numberOrZero(m.wastePercent),
           })),
@@ -1100,6 +1103,59 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
     finally { setBusy(false); }
   }
 
+  function toggleNplColorTarget(materialIndex: number, colorName: string) {
+    setMaterials((rows) => rows.map((row, index) => {
+      if (index !== materialIndex) return row;
+      const current = Array.isArray(row.colorTargets) ? row.colorTargets : [];
+      const key = String(colorName || "").trim().toLocaleUpperCase("vi");
+      const exists = current.some((x) => String(x || "").trim().toLocaleUpperCase("vi") === key);
+      return { ...row, colorTargets: exists ? current.filter((x) => String(x || "").trim().toLocaleUpperCase("vi") !== key) : [...current, colorName] };
+    }));
+  }
+
+  function setNplColorTargets(materialIndex: number, colorNames: string[]) {
+    setMaterials((rows) => rows.map((row, index) => index === materialIndex ? { ...row, colorTargets: Array.from(new Set(colorNames.map((x) => String(x || "").trim()).filter(Boolean))) } : row));
+  }
+
+  async function saveColorMappingsAndRecalculate() {
+    try {
+      setBusy(true);
+      setError("");
+      if (!stepAccess[2] || !stepAccess[5]) throw new Error("Cần quyền Bước 2 và Bước 5 để gán màu NPL.");
+      validateMaterialRows();
+      const scoped = materials.filter((m) => m.colorScoped);
+      const unmapped = scoped.filter((m) => !Array.isArray(m.colorTargets) || !m.colorTargets.length);
+      if (unmapped.length) {
+        const names = unmapped.slice(0, 3).map((m) => {
+          const a = meta.accessories.find((x) => x.id === m.accessoryItemId);
+          return a ? `${a.code} · ${a.name}` : "NPL";
+        });
+        throw new Error(`Còn ${unmapped.length} NPL theo màu chưa gán màu vải: ${names.join("; ")}${unmapped.length > 3 ? "..." : ""}`);
+      }
+      await productionApi(`/production/orders/${id}/spec`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          productKind: order.productKind,
+          materials: materials.map((m) => ({
+            ...m,
+            note: withScopeMetaNote(m.note, m.fixedSize, !!m.colorScoped, m.colorTargets),
+            qtyPerProduct: numberOrZero(m.qtyPerProduct),
+            wastePercent: numberOrZero(m.wastePercent),
+          })),
+        }),
+      });
+      const c = await productionApi<any>(`/production/orders/${id}/calculate`, { method: "POST" });
+      setCalc(c);
+      await load();
+      setStep(5);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được gán màu NPL.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function calculate() {
     try {
       setBusy(true);
@@ -1118,6 +1174,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             productKind: order.productKind,
             materials: materials.map((m) => ({
               ...m,
+              note: withScopeMetaNote(m.note, m.fixedSize, !!m.colorScoped, m.colorTargets),
               qtyPerProduct: numberOrZero(m.qtyPerProduct),
               wastePercent: numberOrZero(m.wastePercent),
             })),
@@ -1308,7 +1365,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             <div className="rounded-3xl border p-4">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                 <div><b>Nguyên phụ liệu của lệnh này</b><div className="text-xs text-neutral-400">Có thể chọn thủ công, nhập Excel hoặc áp dụng mẫu NPL có sẵn.</div></div>
-                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false, colorScoped: false, fixedSize: null }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
+                <button onClick={() => setMaterials((x) => [...x, { accessoryItemId: "", qtyPerProduct: 1, wastePercent: 0, sizeScoped: false, colorScoped: false, colorTargets: [], fixedSize: null }])} className="rounded-xl border px-3 py-2 text-xs font-semibold">+ Thêm NPL</button>
               </div>
 
               <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_220px_170px_190px]">
@@ -1354,7 +1411,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
                         />
                         <ViNumberInput value={m.qtyPerProduct} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, qtyPerProduct: v } : x))} suffix={qtySuffix} decimals={4} placeholder="VD: 1 hoặc 0,75" />
                         <ViNumberInput value={m.wastePercent} onChange={(v) => setMaterials((rows) => rows.map((x, j) => j === i ? { ...x, wastePercent: v } : x))} suffix="%" decimals={3} placeholder="Hao hụt" />
-                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <div className="space-y-1.5"><select className={`${input} py-2 text-xs font-semibold`} value={m.colorScoped ? "BY_COLOR" : m.fixedSize ? "FIXED" : m.sizeScoped ? "BY_SIZE" : "ALL"} onChange={(e) => { const mode=e.target.value; setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,sizeScoped:mode==="BY_SIZE",colorScoped:mode==="BY_COLOR",fixedSize:mode==="FIXED"?(x.fixedSize || sizeSet[0] || null):null}:x)); }}><option value="ALL">Không chia theo size/màu</option><option value="BY_COLOR">Theo màu</option><option value="BY_SIZE">Theo tất cả size</option><option value="FIXED">Cố định 1 size</option></select>{m.colorScoped && <div className="rounded-xl bg-blue-50 px-3 py-2 text-[11px] font-semibold text-blue-800">Tự tách NPL theo từng màu sản xuất, không phụ thuộc size.</div>}{m.fixedSize && <select className={`${input} py-2 text-xs font-black`} value={m.fixedSize} onChange={(e)=>setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,fixedSize:e.target.value}:x))}>{sizeSet.map((size)=><option key={size} value={size}>Dùng cho size {size}</option>)}</select>}</div>}
+                        {isSizeLabelAccessory(selectedAccessory) ? <div className={`flex items-center rounded-2xl px-3 text-xs font-semibold ${sizeTag ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{sizeTag ? `Tự theo size ${sizeTag}` : "Chưa gán size"}</div> : <div className="space-y-1.5"><select className={`${input} py-2 text-xs font-semibold`} value={m.colorScoped ? "BY_COLOR" : m.fixedSize ? "FIXED" : m.sizeScoped ? "BY_SIZE" : "ALL"} onChange={(e) => { const mode=e.target.value; setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,sizeScoped:mode==="BY_SIZE",colorScoped:mode==="BY_COLOR",colorTargets:mode==="BY_COLOR"?(x.colorTargets||[]):[],fixedSize:mode==="FIXED"?(x.fixedSize || sizeSet[0] || null):null}:x)); }}><option value="ALL">Không chia theo size/màu</option><option value="BY_COLOR">Theo màu</option><option value="BY_SIZE">Theo tất cả size</option><option value="FIXED">Cố định 1 size</option></select>{m.colorScoped && <div className="rounded-xl bg-blue-50 px-3 py-2 text-[11px] font-semibold text-blue-800">NPL theo màu sẽ được gán với màu vải cụ thể ở Bước 5. Chưa gán màu thì hệ thống không tự trừ NPL này.</div>}{m.fixedSize && <select className={`${input} py-2 text-xs font-black`} value={m.fixedSize} onChange={(e)=>setMaterials((rows)=>rows.map((x,j)=>j===i?{...x,fixedSize:e.target.value}:x))}>{sizeSet.map((size)=><option key={size} value={size}>Dùng cho size {size}</option>)}</select>}</div>}
                         <button onClick={() => setMaterials((rows) => rows.filter((_, j) => j !== i))} className="text-xs font-semibold text-red-600">Xoá</button>
                       </div>
                       {selectedAccessory && <div className="mt-2 text-xs text-neutral-500"><b>{selectedAccessory.typeName || "NPL"}</b>{accessorySpecShort(selectedAccessory) ? ` · ${accessorySpecShort(selectedAccessory)}` : ""}{selectedAccessory.specifications?.defaultQtyPerProduct !== null && selectedAccessory.specifications?.defaultQtyPerProduct !== undefined && selectedAccessory.specifications?.defaultQtyPerProduct !== "" ? ` · Mặc định ${viDisplay(selectedAccessory.specifications.defaultQtyPerProduct, 4)} ${accessoryUnitLabel(selectedAccessory.unit)}/SP` : ""}</div>}
@@ -1423,6 +1480,16 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
             <div className="rounded-3xl border p-5"><div className="flex items-center gap-3"><Calculator className="h-6 w-6" /><div><b>Sản lượng cắt dự kiến / thực tế</b><div className="text-xs text-neutral-400">{String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?`Nhà may tự cấp vải: tính NPL theo ${fmt(order?.plannedQtyOverride||0)} sp tạm tính. Khi có lệnh cắt thật, sửa ô TT bên dưới rồi lưu để tính lại NPL.`:"Tính dự kiến từ vải chính. Vải lót chỉ kiểm tra đủ/thiếu theo cấu hình và cây đã gán ở Bước 4."}</div></div></div><button disabled={busy||!stepAccess[5]} onClick={() => void calculate()} className="mt-4 w-full rounded-2xl bg-neutral-950 py-3 font-semibold text-white">{String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?(calc?"Tính lại NPL theo SL tạm tính":"Tính NPL theo SL tạm tính"):(calc?"Tính lại sản lượng":"Tính sản lượng")}</button></div>
             {calc && <>
               <Results c={calc} editable actualCut={actualCut} setActualCut={setActualCut} onSaveActual={() => void saveActualCuts()} busy={busy||!stepAccess[5]} history={order.cutHistory || []} selectedMaterialCount={materials.length} hideMaterials />
+              <NplColorMappingPanel
+                materials={materials}
+                accessories={meta.accessories}
+                colors={calc.colors || []}
+                busy={busy}
+                canEdit={stepAccess[2] && stepAccess[5]}
+                onToggle={toggleNplColorTarget}
+                onSetTargets={setNplColorTargets}
+                onSave={() => void saveColorMappingsAndRecalculate()}
+              />
               <NplIssuePanel orderId={id} materials={calc.materials||[]} history={order.nplIssueHistory||calc.nplIssueHistory||[]} onChanged={load}/>
             </>}
             <div className="flex justify-end"><button type="button" onClick={() => window.open(`/production/print/${id}`, "_blank")} className="rounded-xl border px-5 py-2.5 text-sm font-semibold">Xem / In phiếu sản xuất</button></div>
@@ -1671,6 +1738,107 @@ function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActu
 
 function scopeBadge(value:any){const raw=String(value||"").trim();return raw.toUpperCase().startsWith("MÀU:")||raw.toUpperCase().startsWith("MAU:")?`MÀU ${raw.split(":").slice(1).join(":").trim()}`:`SIZE ${raw}`}
 function nplLineKey(m:any){return `${String(m.accessoryItemId||"")}|||${String(m.sizeLabel||"").trim().toUpperCase()}`}
+
+function NplColorMappingPanel({
+  materials,
+  accessories,
+  colors,
+  busy,
+  canEdit,
+  onToggle,
+  onSetTargets,
+  onSave,
+}: {
+  materials: MaterialSpec[];
+  accessories: Accessory[];
+  colors: any[];
+  busy: boolean;
+  canEdit: boolean;
+  onToggle: (materialIndex: number, colorName: string) => void;
+  onSetTargets: (materialIndex: number, colorNames: string[]) => void;
+  onSave: () => void;
+}) {
+  const scoped = materials
+    .map((material, index) => ({ material, index, accessory: accessories.find((a) => a.id === material.accessoryItemId) }))
+    .filter((row) => row.material.colorScoped);
+  if (!scoped.length) return null;
+
+  const productionColors = (Array.isArray(colors) ? colors : [])
+    .map((x: any) => ({ name: String(x?.colorName || x?.name || "").trim(), code: x?.colorCode || x?.code || null, qty: Number(x?.actualQty ?? x?.plannedQty ?? 0) }))
+    .filter((x: any) => x.name);
+  const uniqueColors = Array.from(new Map(productionColors.map((x: any) => [x.name.toLocaleUpperCase("vi"), x])).values()) as Array<{name:string;code?:string|null;qty:number}>;
+  const unmapped = scoped.filter(({ material }) => !Array.isArray(material.colorTargets) || !material.colorTargets.length);
+
+  return <div className="rounded-3xl border-2 border-blue-300 bg-blue-50/40 p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <div className="text-sm font-black text-blue-950">Gán NPL theo màu vải</div>
+        <div className="mt-1 max-w-3xl text-xs text-blue-800">
+          Chọn chính xác màu vải nào dùng từng NPL. Ví dụ <b>khóa đen → vải ĐEN</b>, <b>khóa than → vải THAN</b>. Một NPL có thể dùng cho nhiều màu.
+        </div>
+      </div>
+      <div className={`rounded-full px-3 py-1 text-[10px] font-black ${unmapped.length ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+        {unmapped.length ? `${unmapped.length} NPL chưa gán màu` : "Đã gán đủ màu"}
+      </div>
+    </div>
+
+    {!uniqueColors.length ? (
+      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+        Chưa có danh sách màu sản xuất. Bấm <b>Tính sản lượng</b> trước để lấy màu vải, sau đó quay lại gán màu NPL.
+      </div>
+    ) : (
+      <div className="mt-4 space-y-3">
+        {scoped.map(({ material, index, accessory }) => {
+          const selected = Array.isArray(material.colorTargets) ? material.colorTargets : [];
+          const selectedKeys = new Set(selected.map((x) => String(x || "").trim().toLocaleUpperCase("vi")));
+          return <div key={`${material.accessoryItemId}-${index}`} className="rounded-2xl border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="text-xs text-neutral-400">{accessory?.code || "NPL"}</div>
+                <div className="text-sm font-black">{accessory?.name || "Chưa chọn NPL"}</div>
+                <div className="mt-1 text-[10px] text-neutral-500">Định mức {viDisplay(material.qtyPerProduct, 4)} {accessoryUnitLabel(accessory?.unit || "PIECE")}/SP</div>
+              </div>
+              <div className="flex gap-1.5">
+                <button type="button" disabled={!canEdit || busy} onClick={() => onSetTargets(index, uniqueColors.map((x) => x.name))} className="rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-40">Chọn tất cả</button>
+                <button type="button" disabled={!canEdit || busy} onClick={() => onSetTargets(index, [])} className="rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-40">Bỏ chọn</button>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {uniqueColors.map((color) => {
+                const active = selectedKeys.has(color.name.toLocaleUpperCase("vi"));
+                return <button
+                  key={color.name}
+                  type="button"
+                  disabled={!canEdit || busy}
+                  onClick={() => onToggle(index, color.name)}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black disabled:opacity-40 ${active ? "border-blue-700 bg-blue-700 text-white" : "bg-white text-neutral-700"}`}
+                >
+                  {color.code ? <span className="h-3 w-3 rounded-full border border-black/10" style={{ backgroundColor: color.code }} /> : null}
+                  <span>{color.name}</span>
+                  <span className={active ? "text-blue-100" : "text-neutral-400"}>{fmt(color.qty)} sp</span>
+                  {active ? <span>✓</span> : null}
+                </button>;
+              })}
+            </div>
+            {!selected.length && <div className="mt-2 text-[10px] font-semibold text-amber-700">Chưa gán màu → NPL này chưa được tính/trừ kho.</div>}
+          </div>;
+        })}
+      </div>
+    )}
+
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-blue-200 pt-3">
+      <div className="text-[11px] text-blue-800">Sau khi lưu, hệ thống tính lại NPL và tự hoàn/trừ chênh lệch tồn kho theo đúng màu đã gán.</div>
+      <button
+        type="button"
+        disabled={!canEdit || busy || !uniqueColors.length || !!unmapped.length}
+        onClick={onSave}
+        className="rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40"
+      >
+        Lưu gán màu & tính lại NPL
+      </button>
+    </div>
+  </div>;
+}
 
 function NplIssuePanel({orderId,materials,history,onChanged}:{orderId:string;materials:any[];history:any[];onChanged:()=>Promise<any>|any}) {
   const [tab,setTab]=useState<"ISSUE"|"HISTORY">("ISSUE");
@@ -2208,6 +2376,7 @@ function AccessoryCombobox({ accessories, value, onChange, typeName = "ALL", glo
 
 const FIXED_SIZE_NOTE_RE = /\[\[FIXED_SIZE:([^\]]+)\]\]/i;
 const COLOR_SCOPED_NOTE_RE = /\[\[COLOR_SCOPED\]\]/i;
+const COLOR_TARGETS_NOTE_RE = /\[\[COLOR_TARGETS:([^\]]*)\]\]/i;
 function fixedSizeFromNote(note?: string | null) {
   const matched=String(note||"").match(FIXED_SIZE_NOTE_RE);
   return matched?.[1] ? normalizeProductionSize(matched[1]) : null;
@@ -2215,14 +2384,23 @@ function fixedSizeFromNote(note?: string | null) {
 function colorScopedFromNote(note?: string | null) {
   return COLOR_SCOPED_NOTE_RE.test(String(note||""));
 }
+function colorTargetsFromNote(note?: string | null) {
+  const matched=String(note||"").match(COLOR_TARGETS_NOTE_RE);
+  if (!matched?.[1]) return [] as string[];
+  return matched[1].split("|").map((x) => {
+    try { return decodeURIComponent(x); } catch { return x; }
+  }).map((x) => x.trim()).filter(Boolean);
+}
 function stripScopeMetaFromNote(note?: string | null) {
-  return String(note||"").replace(FIXED_SIZE_NOTE_RE, "").replace(COLOR_SCOPED_NOTE_RE, "").replace(/\s{2,}/g," ").trim();
+  return String(note||"").replace(FIXED_SIZE_NOTE_RE, "").replace(COLOR_SCOPED_NOTE_RE, "").replace(COLOR_TARGETS_NOTE_RE, "").replace(/\s{2,}/g," ").trim();
 }
 function stripFixedSizeNote(note?: string | null) { return stripScopeMetaFromNote(note); }
-function withScopeMetaNote(note?: string | null, fixedSize?: string | null, colorScoped?: boolean) {
+function withScopeMetaNote(note?: string | null, fixedSize?: string | null, colorScoped?: boolean, colorTargets?: string[]) {
   const clean=stripScopeMetaFromNote(note);
   const size=fixedSize ? normalizeProductionSize(fixedSize) : "";
-  return [size ? `[[FIXED_SIZE:${size}]]` : "", colorScoped ? "[[COLOR_SCOPED]]" : "", clean].filter(Boolean).join(" ") || null;
+  const targets=Array.from(new Set((Array.isArray(colorTargets)?colorTargets:[]).map((x)=>String(x||"").trim()).filter(Boolean)));
+  const encodedTargets=targets.map((x)=>encodeURIComponent(x)).join("|");
+  return [size ? `[[FIXED_SIZE:${size}]]` : "", colorScoped ? "[[COLOR_SCOPED]]" : "", colorScoped && encodedTargets ? `[[COLOR_TARGETS:${encodedTargets}]]` : "", clean].filter(Boolean).join(" ") || null;
 }
 function withFixedSizeNote(note?: string | null, fixedSize?: string | null) { return withScopeMetaNote(note, fixedSize, false); }
 
