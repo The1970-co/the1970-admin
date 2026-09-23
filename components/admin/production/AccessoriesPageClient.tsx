@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FileSpreadsheet, ImagePlus, Plus, Search, Settings2 } from "lucide-react";
+import { FileSpreadsheet, History, ImagePlus, Plus, Search, Settings2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { asset, money, productionApi, uploadProductionImage } from "./production-api";
 import { getCurrentUserFromStorage, getCurrentUserPermissions } from "@/lib/current-user";
@@ -190,6 +190,7 @@ export default function AccessoriesPageClient() {
   const [editing, setEditing] = useState<Item | null | undefined>(undefined);
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptHistoryOpen, setReceiptHistoryOpen] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
@@ -287,6 +288,7 @@ export default function AccessoriesPageClient() {
         <div className="flex gap-2">
           {canManage && <button onClick={() => setSupplierOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><Settings2 className="mr-2 inline h-4 w-4" />NCC NPL</button>}
           {canManage && <button onClick={() => setImportOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><FileSpreadsheet className="mr-2 inline h-4 w-4" />Nhập Excel NPL</button>}
+          <button onClick={() => setReceiptHistoryOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold"><History className="mr-2 inline h-4 w-4" />Lịch sử nhập NPL</button>
           {canStock && <button onClick={() => setReceiptOpen(true)} className="rounded-2xl border px-4 py-2.5 text-sm font-semibold">+ Phiếu nhập NPL</button>}
           {canManage && <button onClick={() => setEditing(null)} className="rounded-2xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" />Thêm NPL</button>}
         </div>
@@ -357,7 +359,7 @@ export default function AccessoriesPageClient() {
       {!rows.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Chưa có nguyên phụ liệu phù hợp.</div>}
       {editing !== undefined && <ItemModal item={editing} suppliers={suppliers} canManage={canManage} canStock={canStock} canCostView={canCostView} canSupplierIdentity={canSupplierIdentity} onClose={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await load(); }} />}
       {importOpen && <AccessoryExcelImportModal items={items} suppliers={suppliers} canCostView={canCostView} canStock={canStock} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={() => setImportOpen(false)} onImported={async () => { setImportOpen(false); await load(); }} />}
-      {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}{receiptOpen && <AccessoryReceiptModal items={items} suppliers={suppliers} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={()=>setReceiptOpen(false)} onSaved={async()=>{setReceiptOpen(false);await load();}} />}
+      {supplierOpen && <SupplierModal rows={suppliers} canSupplierIdentity={canSupplierIdentity} onClose={() => setSupplierOpen(false)} onSaved={load} />}{receiptOpen && <AccessoryReceiptModal items={items} suppliers={suppliers} defaultReceiver={user?.name||user?.fullName||user?.email||""} onClose={()=>setReceiptOpen(false)} onSaved={async()=>{setReceiptOpen(false);await load();}} />}{receiptHistoryOpen && <AccessoryReceiptHistoryModal suppliers={suppliers} canStock={canStock} canCostView={canCostView} onClose={()=>setReceiptHistoryOpen(false)} onChanged={load} />}
     </div>
   );
 }
@@ -677,6 +679,66 @@ function printAccessoryReceipt(r:AccessoryReceipt,suppliers:Supplier[]){
   const w=window.open("","_blank","noopener,noreferrer,width=1000,height=760");if(!w){window.alert("Trình duyệt đang chặn cửa sổ in.");return;}
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${receiptEsc(r.code)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;font-size:12px;color:#111}h1{font-size:20px;margin:0 0 5px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0}table{width:100%;border-collapse:collapse}th,td{border:1px solid #222;padding:7px}th{background:#f3f3f3}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px;text-align:center;margin-top:55px}.sign div{padding-top:7px;border-top:1px solid #222}@media print{button{display:none}}</style></head><body><button onclick="window.print()">In phiếu</button><h1>THE 1970 · PHIẾU NHẬP NPL</h1><div>Mã phiếu: <b>${receiptEsc(r.code)}</b></div><div class="grid"><div>Ngày nhận: <b>${new Date(r.receivedAt).toLocaleDateString("vi-VN")}</b></div><div>Người nhận: <b>${receiptEsc(r.receivedByName||"—")}</b></div><div>Nhà cung cấp: <b>${receiptEsc(supplier?.name||supplier?.code||"—")}</b></div><div>Người tạo phiếu: <b>${receiptEsc(r.createdByName||"—")}</b></div></div><table><thead><tr><th>STT</th><th>Mã NPL</th><th>Tên NPL</th><th>Số lượng</th><th>Đơn vị</th><th>Đơn giá</th></tr></thead><tbody>${rows}</tbody></table><div class="grid"><div>Ghi chú: <b>${receiptEsc(r.note||"—")}</b></div></div><div class="sign"><div>NGƯỜI GIAO</div><div>NGƯỜI NHẬN</div><div>THỦ KHO / XÁC NHẬN</div></div></body></html>`);
   w.document.close();w.focus();setTimeout(()=>w.print(),250);
+}
+
+
+function receiptDateKey(v?:string|null){
+  if(!v)return "";
+  const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v).slice(0,10);
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function receiptDateLabel(v?:string|null){
+  if(!v)return "—";
+  const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleDateString("vi-VN");
+}
+function receiptSupplierLabel(r:AccessoryReceipt,suppliers:Supplier[]){
+  const s=suppliers.find(x=>x.id===r.supplierId);return s?`${s.code}${s.name?` · ${s.name}`:""}`:"Chưa chọn NCC";
+}
+function receiptTotalValue(r:AccessoryReceipt){return (r.items||[]).reduce((sum,x)=>sum+Number(x.qty||0)*Number(x.unitPrice||0),0);}
+
+function AccessoryReceiptHistoryModal({suppliers,canStock,canCostView,onClose,onChanged}:{suppliers:Supplier[];canStock:boolean;canCostView:boolean;onClose:()=>void;onChanged:()=>void}){
+  const [rows,setRows]=useState<AccessoryReceipt[]>([]);
+  const [selected,setSelected]=useState<AccessoryReceipt|null>(null);
+  const [q,setQ]=useState("");
+  const [status,setStatus]=useState<"ALL"|"POSTED"|"DRAFT">("ALL");
+  const [from,setFrom]=useState("");
+  const [to,setTo]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [posting,setPosting]=useState(false);
+  const [error,setError]=useState("");
+  async function loadReceipts(){
+    try{setLoading(true);setError("");const data=await productionApi<AccessoryReceipt[]>("/production/accessory-receipts");setRows(Array.isArray(data)?data:[]);}
+    catch(e){setError(e instanceof Error?e.message:"Không tải được danh sách NPL nhập về.");}
+    finally{setLoading(false);}
+  }
+  useEffect(()=>{void loadReceipts();},[]);
+  const filtered=useMemo(()=>{const key=q.trim().toLowerCase();return rows.filter(r=>{
+    const day=receiptDateKey(r.receivedAt);const supplier=receiptSupplierLabel(r,suppliers);
+    const text=[r.code,r.receivedByName,r.createdByName,r.postedByName,supplier,r.note,...(r.items||[]).flatMap(x=>[x.accessoryCodeSnapshot,x.accessoryNameSnapshot,x.note])].join(" ").toLowerCase();
+    return (status==="ALL"||String(r.status||"DRAFT").toUpperCase()===status)&&(!from||day>=from)&&(!to||day<=to)&&(!key||text.includes(key));
+  })},[rows,q,status,from,to,suppliers]);
+  async function postReceipt(r:AccessoryReceipt){
+    if(!canStock||posting)return;
+    if(!window.confirm(`Nhập kho phiếu ${r.code}? Tồn NPL sẽ được cộng theo phiếu này.`))return;
+    try{setPosting(true);setError("");const updated=await productionApi<AccessoryReceipt>(`/production/accessory-receipts/${r.id}/post`,{method:"POST"});setRows(old=>old.map(x=>x.id===updated.id?updated:x));setSelected(updated);await onChanged();}
+    catch(e){setError(e instanceof Error?e.message:"Không nhập được phiếu vào kho.");}
+    finally{setPosting(false);}
+  }
+  if(selected){const posted=String(selected.status||"").toUpperCase()==="POSTED";const totalValue=receiptTotalValue(selected);return <Modal title={`${selected.code} · Chi tiết nhập NPL`} onClose={onClose}><div className="space-y-4 p-5">
+    {error&&<Err x={error}/>}<div className="flex flex-wrap items-center justify-between gap-2"><button onClick={()=>setSelected(null)} className="rounded-xl border px-3 py-2 text-sm font-semibold">← Danh sách nhập</button><div className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${posted?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}`}>{posted?"Đã nhập kho":"Phiếu nháp"}</div></div>
+    <div className="grid gap-3 md:grid-cols-4"><Stat label="Ngày nhận" value={receiptDateLabel(selected.receivedAt)}/><Stat label="NCC" value={receiptSupplierLabel(selected,suppliers)}/><Stat label="Người nhận" value={selected.receivedByName||"—"}/><Stat label="Số dòng NPL" value={(selected.items||[]).length}/></div>
+    <div className="overflow-auto rounded-2xl border"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-neutral-100 text-xs"><tr><th className="p-3">Mã NPL</th><th>Tên NPL</th><th className="text-right">SL nhập</th><th>ĐVT</th>{canCostView&&<><th className="text-right">Đơn giá</th><th className="pr-3 text-right">Thành tiền</th></>}</tr></thead><tbody className="divide-y">{(selected.items||[]).map(x=><tr key={x.id}><td className="p-3 font-semibold">{x.accessoryCodeSnapshot}</td><td>{x.accessoryNameSnapshot}</td><td className="text-right font-semibold">{fmtQty(x.qty)}</td><td>{UNITS.find(u=>u[0]===x.unit)?.[1]||x.unit}</td>{canCostView&&<><td className="text-right">{x.unitPrice?money(x.unitPrice):"—"}</td><td className="pr-3 text-right font-semibold">{x.unitPrice?money(Number(x.qty||0)*Number(x.unitPrice||0)):"—"}</td></>}</tr>)}</tbody></table></div>
+    <div className="grid gap-3 md:grid-cols-3"><div className="rounded-2xl bg-neutral-50 p-3 text-sm"><div className="text-xs font-semibold uppercase text-neutral-400">Người tạo</div><b>{selected.createdByName||"—"}</b></div><div className="rounded-2xl bg-neutral-50 p-3 text-sm"><div className="text-xs font-semibold uppercase text-neutral-400">Người nhập kho</div><b>{selected.postedByName||"—"}</b></div>{canCostView&&<div className="rounded-2xl bg-neutral-950 p-3 text-sm text-white"><div className="text-xs font-semibold uppercase text-neutral-400">Giá trị phiếu</div><b className="text-lg">{money(totalValue)}</b></div>}</div>
+    {selected.note&&<div className="rounded-2xl bg-neutral-50 p-3 text-sm"><div className="text-xs font-semibold uppercase text-neutral-400">Ghi chú</div><div className="mt-1">{selected.note}</div></div>}
+    <div className="grid gap-2 md:grid-cols-2">{canStock&&!posted&&<button disabled={posting} onClick={()=>void postReceipt(selected)} className="rounded-xl bg-neutral-950 py-3 font-semibold text-white disabled:opacity-40">{posting?"Đang nhập kho...":"Nhập kho phiếu này"}</button>}<button onClick={()=>printAccessoryReceipt(selected,suppliers)} className="rounded-xl border py-3 font-semibold">In phiếu</button></div>
+  </div></Modal>}
+  const postedCount=rows.filter(x=>String(x.status||"").toUpperCase()==="POSTED").length;const draftCount=rows.length-postedCount;
+  return <Modal title="Danh sách NPL nhập về" onClose={onClose}><div className="space-y-4 p-5">{error&&<Err x={error}/>}<div className="grid gap-3 md:grid-cols-3"><Stat label="Tổng phiếu" value={rows.length}/><Stat label="Đã nhập kho" value={postedCount}/><Stat label="Phiếu nháp" value={draftCount}/></div>
+    <div className="grid gap-2 md:grid-cols-[minmax(240px,1fr)_160px_150px_150px]"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-neutral-400"/><input className={`${input} pl-10`} value={q} onChange={e=>setQ(e.target.value)} placeholder="Mã phiếu, mã NPL, NCC, người nhận..."/></div><select className={input} value={status} onChange={e=>setStatus(e.target.value as any)}><option value="ALL">Tất cả trạng thái</option><option value="POSTED">Đã nhập kho</option><option value="DRAFT">Phiếu nháp</option></select><input type="date" className={input} value={from} onChange={e=>setFrom(e.target.value)}/><input type="date" className={input} value={to} onChange={e=>setTo(e.target.value)}/></div>
+    <div className="text-xs text-neutral-400">Hiển thị <b className="text-neutral-700">{filtered.length}</b> / {rows.length} phiếu · mới nhất ở trên.</div>
+    {loading?<div className="rounded-2xl bg-neutral-50 p-10 text-center text-sm text-neutral-400">Đang tải danh sách nhập...</div>:filtered.length?<div className="overflow-auto rounded-2xl border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-neutral-100 text-xs"><tr><th className="p-3">Ngày</th><th>Mã phiếu</th><th>NCC</th><th>NPL nhập về</th><th>Người nhận</th><th>Trạng thái</th><th></th></tr></thead><tbody className="divide-y">{filtered.map(r=>{const posted=String(r.status||"").toUpperCase()==="POSTED";const preview=(r.items||[]).slice(0,2).map(x=>`${x.accessoryCodeSnapshot} · ${fmtQty(x.qty)}`).join("; ");return <tr key={r.id}><td className="p-3 whitespace-nowrap">{receiptDateLabel(r.receivedAt)}</td><td className="font-semibold">{r.code}</td><td>{receiptSupplierLabel(r,suppliers)}</td><td><div className="max-w-[300px] truncate">{preview||"—"}</div><div className="text-xs text-neutral-400">{(r.items||[]).length} dòng NPL</div></td><td>{r.receivedByName||"—"}</td><td><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${posted?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}`}>{posted?"Đã nhập kho":"Phiếu nháp"}</span></td><td className="pr-3 text-right"><button onClick={()=>setSelected(r)} className="rounded-xl border px-3 py-2 text-xs font-semibold">Xem</button></td></tr>})}</tbody></table></div>:<div className="rounded-2xl bg-neutral-50 p-10 text-center text-sm text-neutral-400">Không có phiếu nhập NPL phù hợp.</div>}
+  </div></Modal>;
 }
 
 function AccessoryReceiptModal({items,suppliers,defaultReceiver,onClose,onSaved}:{items:Item[];suppliers:Supplier[];defaultReceiver:string;onClose:()=>void;onSaved:()=>void}){
