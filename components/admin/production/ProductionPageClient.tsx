@@ -85,6 +85,8 @@ type Order = {
   plannedQtyOverride?: number | null;
   fabricSupplyMode?: "COMPANY" | "FACTORY" | string;
   dueDate?: string | null;
+  note?: string | null;
+  quickStage?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   factory?: FactoryItem | null;
@@ -156,6 +158,48 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: "Đã huỷ",
 };
 
+const QUICK_STAGE_OPTIONS = [
+  { value: "", label: "Chưa cập nhật" },
+  { value: "READY", label: "Chờ triển khai" },
+  { value: "SENT", label: "Đã giao nhà may" },
+  { value: "CUTTING", label: "Đang cắt vải" },
+  { value: "SEWING", label: "Đang may" },
+  { value: "WASHED", label: "Đã giặt" },
+  { value: "FINISHING", label: "Đang hoàn thiện" },
+  { value: "QC", label: "QC / kiểm hàng" },
+  { value: "PACKING", label: "Đóng gói" },
+] as const;
+
+function quickStageValue(order: Order) {
+  const explicit = String(order.quickStage || "").trim().toUpperCase();
+  if (explicit) return explicit;
+  return ["READY", "SENT", "CUTTING", "SEWING", "QC"].includes(String(order.status || "").toUpperCase())
+    ? String(order.status || "").toUpperCase()
+    : "";
+}
+
+function quickStageLabel(order: Order) {
+  const value = quickStageValue(order);
+  return QUICK_STAGE_OPTIONS.find((x) => x.value === value)?.label || STATUS_LABEL[order.status] || order.status;
+}
+
+function broadStatusForQuickStage(stage: string, currentStatus: string) {
+  const value = String(stage || "").toUpperCase();
+  if (["READY", "SENT", "CUTTING", "SEWING", "QC"].includes(value)) return value;
+  if (["WASHED", "FINISHING", "PACKING"].includes(value)) return "QC";
+  return currentStatus;
+}
+
+function dateInputValue(v?: string | null) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "";
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const input =
   "w-full rounded-2xl border border-neutral-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-neutral-900";
 
@@ -215,6 +259,7 @@ export default function ProductionPageClient() {
   const [materialFilter, setMaterialFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [viewMode, setViewMode] = useState<"CARDS" | "LIST" | "COLUMNS" | "TIMELINE">("CARDS");
+  const [quickNoteDrafts, setQuickNoteDrafts] = useState<Record<string, string>>({});
 
   async function load() {
     try {
@@ -233,6 +278,64 @@ export default function ProductionPageClient() {
   useEffect(() => {
     void load();
   }, []);
+
+  async function quickUpdateDueDate(row: Order, dueDate: string) {
+    if (!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(row.status)) return;
+    try {
+      setBusyAction(`${row.id}:due`);
+      setError("");
+      await productionApi(`/production/orders/${row.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ dueDate: dueDate || null }),
+      });
+      setOrders((prev) => prev.map((x) => x.id === row.id ? { ...x, dueDate: dueDate || null } : x));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không cập nhật được ngày dự kiến xong.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function quickUpdateStage(row: Order, stage: string) {
+    if (!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(row.status)) return;
+    const nextStatus = broadStatusForQuickStage(stage, row.status);
+    try {
+      setBusyAction(`${row.id}:stage`);
+      setError("");
+      await productionApi(`/production/orders/${row.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ quickStage: stage || null, status: nextStatus }),
+      });
+      setOrders((prev) => prev.map((x) => x.id === row.id ? { ...x, quickStage: stage || null, status: nextStatus } : x));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không cập nhật được trạng thái sản xuất.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function quickSaveNote(row: Order) {
+    if (!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(row.status)) return;
+    const nextNote = (quickNoteDrafts[row.id] ?? row.note ?? "").trim();
+    try {
+      setBusyAction(`${row.id}:note`);
+      setError("");
+      await productionApi(`/production/orders/${row.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ note: nextNote || null }),
+      });
+      setOrders((prev) => prev.map((x) => x.id === row.id ? { ...x, note: nextNote || null } : x));
+      setQuickNoteDrafts((prev) => {
+        const next = { ...prev };
+        delete next[row.id];
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được ghi chú nhanh.");
+    } finally {
+      setBusyAction("");
+    }
+  }
 
   async function cancelOrder(row: Order) {
     if (!canEdit) return;
@@ -290,7 +393,7 @@ export default function ProductionPageClient() {
       .filter((o) => {
         if (!q) return true;
         const p = o.progress || {};
-        return [o.code, o.sourceCode, o.sourceName, o.source?.name, o.factory?.name, ...(p.fabricNames || []), ...(p.materialNames || []), ...(p.colorBreakdown || []).map((x) => x.name)]
+        return [o.code, o.sourceCode, o.sourceName, o.source?.name, o.factory?.name, o.note, quickStageLabel(o), ...(p.fabricNames || []), ...(p.materialNames || []), ...(p.colorBreakdown || []).map((x) => x.name)]
           .filter(Boolean)
           .some((x) => String(x).toLowerCase().includes(q));
       })
@@ -397,21 +500,65 @@ export default function ProductionPageClient() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <div className="truncate text-[10px] font-semibold text-neutral-400">{o.code}</div>
-                    <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status] || o.status}</span>
+                    <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{quickStageLabel(o)}</span>
                   </div>
                   <div className="mt-0.5 line-clamp-1 text-sm font-black">{sourceVisible ? `${o.sourceCode} · ${o.sourceName || o.source?.name || ""}` : "Mẫu triển khai · Đã ẩn"}</div>
                   <div className="mt-1 text-[10px] text-neutral-500">Nhà may: <b className="text-neutral-800">{o.factory?.name || "—"}</b></div>
                   <div className="mt-0.5 text-[10px] text-neutral-400">Tạo: <b className="text-neutral-600">{fmtDateShort(o.createdAt || o.updatedAt)}</b></div>
                 </div>
               </button>
-              <div className="grid grid-cols-2 gap-2 border-t bg-neutral-50/70 p-2.5">
-                <div className="col-span-2 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-2">
-                  <div className="text-[8px] font-black uppercase tracking-wide text-amber-700">Dự kiến SX xong</div>
-                  <div className="text-sm font-black text-amber-950">{o.dueDate ? fmtDateShort(o.dueDate) : "Chưa đặt ngày"}</div>
+              <div className="space-y-2 border-t bg-neutral-50/70 p-2.5">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="rounded-xl border border-amber-200 bg-amber-50 p-2">
+                    <span className="mb-1 block text-[8px] font-black uppercase tracking-wide text-amber-700">Dự kiến SX xong</span>
+                    <input
+                      type="date"
+                      className="w-full bg-transparent text-[12px] font-black text-amber-950 outline-none disabled:opacity-60"
+                      value={dateInputValue(o.dueDate)}
+                      disabled={!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(o.status) || busyAction === `${o.id}:due`}
+                      onChange={(e) => void quickUpdateDueDate(o, e.target.value)}
+                    />
+                  </label>
+                  <label className="rounded-xl border bg-white p-2">
+                    <span className="mb-1 block text-[8px] font-black uppercase tracking-wide text-neutral-400">Trạng thái SX</span>
+                    <select
+                      className="w-full bg-transparent text-[12px] font-black text-neutral-900 outline-none disabled:opacity-60"
+                      value={quickStageValue(o)}
+                      disabled={!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(o.status) || busyAction === `${o.id}:stage`}
+                      onChange={(e) => void quickUpdateStage(o, e.target.value)}
+                    >
+                      {QUICK_STAGE_OPTIONS.map((x) => <option key={x.value || "NONE"} value={x.value}>{x.label}</option>)}
+                    </select>
+                  </label>
                 </div>
-                <div className="rounded-xl bg-white p-2"><div className="text-[8px] font-bold uppercase text-neutral-400">Vải</div><div className="text-sm font-black">{factorySupplied ? "Xưởng cấp" : `${fmt(p.allocatedM || 0)} m`}</div></div>
-                <div className="rounded-xl bg-white p-2"><div className="text-[8px] font-bold uppercase text-neutral-400">Màu / SL</div><div className="text-sm font-black">{Number(p.colorCount || 0)} màu · {fmt(actualTotal)} sp</div></div>
-                <div className="col-span-2 line-clamp-1 px-1 text-[9px] text-neutral-500">{p.colorBreakdown?.map((x) => `${x.name}: ${fmt(x.actualQty)} sp`).join(" · ") || "Chưa tính sản lượng theo màu"}</div>
+                <div className="flex items-center gap-2 rounded-xl border bg-white p-2">
+                  <input
+                    className="min-w-0 flex-1 bg-transparent text-[11px] font-medium outline-none placeholder:text-neutral-300"
+                    value={quickNoteDrafts[o.id] ?? o.note ?? ""}
+                    disabled={!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(o.status)}
+                    onChange={(e) => setQuickNoteDrafts((prev) => ({ ...prev, [o.id]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void quickSaveNote(o);
+                      }
+                    }}
+                    placeholder="Ghi chú nhanh: thiếu cúc, chờ giặt, đổi ngày..."
+                  />
+                  <button
+                    type="button"
+                    disabled={!stepAccess[1] || ["COMPLETED", "CANCELLED"].includes(o.status) || busyAction === `${o.id}:note`}
+                    onClick={() => void quickSaveNote(o)}
+                    className="shrink-0 rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[9px] font-black text-white disabled:opacity-40"
+                  >
+                    Lưu
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl bg-white p-2"><div className="text-[8px] font-bold uppercase text-neutral-400">Vải</div><div className="text-sm font-black">{factorySupplied ? "Xưởng cấp" : `${fmt(p.allocatedM || 0)} m`}</div></div>
+                  <div className="rounded-xl bg-white p-2"><div className="text-[8px] font-bold uppercase text-neutral-400">Màu / SL</div><div className="text-sm font-black">{Number(p.colorCount || 0)} màu · {fmt(actualTotal)} sp</div></div>
+                  <div className="col-span-2 line-clamp-1 px-1 text-[9px] text-neutral-500">{p.colorBreakdown?.map((x) => `${x.name}: ${fmt(x.actualQty)} sp`).join(" · ") || "Chưa tính sản lượng theo màu"}</div>
+                </div>
               </div>
               <div className="flex flex-wrap justify-end gap-1.5 border-t p-2.5">
                 {canOpenAnyStep && <button onClick={() => setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}
@@ -428,7 +575,7 @@ export default function ProductionPageClient() {
         <div className="hidden grid-cols-[72px_minmax(260px,1.6fr)_180px_140px_minmax(220px,1fr)_170px] gap-3 border-b bg-neutral-50 px-4 py-3 text-[10px] font-black uppercase text-neutral-400 lg:grid"><div>Ảnh</div><div>Lệnh / sản phẩm</div><div>Nhà may</div><div>Vải</div><div>Màu & sản lượng</div><div className="text-right">Thao tác</div></div>
         {filteredOrders.map((o) => { const p=o.progress||{}; const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource; return <div key={o.id} className={`grid gap-3 border-b p-4 last:border-b-0 lg:grid-cols-[72px_minmax(260px,1.6fr)_180px_140px_minmax(220px,1fr)_170px] lg:items-center ${o.status==="COMPLETED"?"bg-emerald-50/30":o.status==="CANCELLED"?"bg-neutral-50 opacity-70":""}`}>
           <div className="h-16 w-14 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div>
-          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b className="text-xs text-neutral-500">{o.code}</b><span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-1 truncate text-sm font-black">{sourceVisible?`${o.sourceCode} · ${o.sourceName||o.source?.name||""}`:"Mẫu triển khai · Đã ẩn"}</div>{!!p.materialNames?.length&&<div className="mt-1 truncate text-[11px] text-neutral-400">{p.materialNames.join(" · ")}</div>}</div>
+          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b className="text-xs text-neutral-500">{o.code}</b><span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${productionStatusTone(o.status)}`}>{quickStageLabel(o)}</span></div><div className="mt-1 truncate text-sm font-black">{sourceVisible?`${o.sourceCode} · ${o.sourceName||o.source?.name||""}`:"Mẫu triển khai · Đã ẩn"}</div>{!!p.materialNames?.length&&<div className="mt-1 truncate text-[11px] text-neutral-400">{p.materialNames.join(" · ")}</div>}</div>
           <div className="text-sm"><b>{o.factory?.name||"—"}</b><div className="mt-1 text-[11px] text-neutral-400">Tạo {fmtDateShort(o.createdAt||o.updatedAt)}</div><div className="text-[11px] font-semibold text-amber-700">Dự kiến xong {o.dueDate ? fmtDateShort(o.dueDate) : "Chưa đặt"}</div></div>
           <div><div className="text-lg font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div><div className="text-[11px] text-neutral-400">{p.rollCount?`${p.rollCount} cây`:""}</div></div>
           <div><div className="text-sm font-black">{Number(p.colorCount||0)} màu · {fmt(p.totalActualQty||0)} sp</div><div className="mt-1 line-clamp-2 text-[11px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)}`).join(" · ")||"Chưa tính sản lượng theo màu"}</div></div>
@@ -436,14 +583,14 @@ export default function ProductionPageClient() {
         </div>; })}
       </div>}
 
-      {viewMode === "COLUMNS" && <div className="overflow-x-auto pb-2"><div className="flex min-w-max items-start gap-3">{columnGroups.map((group)=><div key={group.id} className="w-[320px] shrink-0 rounded-2xl border bg-neutral-50/70 p-2.5"><div className="mb-2 flex items-center justify-between px-1"><div><b className="text-sm">{group.name}</b><div className="text-[10px] text-neutral-400">{group.rows.length} lệnh</div></div></div><div className="space-y-2">{group.rows.map((o)=>{const p=o.progress||{};const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource;return <div key={o.id} className={`rounded-2xl border bg-white p-2.5 shadow-sm ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":o.status==="CANCELLED"?"opacity-65":""}`}><button className="w-full text-left" onClick={()=>canOpenAnyStep&&setDetailId(o.id)}><div className="flex items-start gap-2.5"><div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[9px] font-semibold text-neutral-400">{o.code}</div><div className="truncate text-xs font-black">{o.sourceCode} · {o.sourceName||o.source?.name||""}</div></div><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="mt-1 text-[9px] text-neutral-400">Tạo {fmtDateShort(o.createdAt||o.updatedAt)}</div><div className="mt-1 rounded-lg bg-amber-50 px-2 py-1 text-[9px] font-black text-amber-800">Dự kiến xong: {o.dueDate?fmtDateShort(o.dueDate):"Chưa đặt"}</div></div></div><div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-neutral-50 p-2 text-[11px]"><div><span className="text-neutral-400">Vải</span><div className="text-sm font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div><div><span className="text-neutral-400">Màu</span><div className="text-sm font-black">{Number(p.colorCount||0)} màu</div></div></div><div className="mt-1.5 line-clamp-2 text-[10px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")||"Chưa tính màu"}</div></button><div className="mt-2 flex justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">✓ Xong</button>}</div></div>})}</div></div>)}</div></div>}
+      {viewMode === "COLUMNS" && <div className="overflow-x-auto pb-2"><div className="flex min-w-max items-start gap-3">{columnGroups.map((group)=><div key={group.id} className="w-[320px] shrink-0 rounded-2xl border bg-neutral-50/70 p-2.5"><div className="mb-2 flex items-center justify-between px-1"><div><b className="text-sm">{group.name}</b><div className="text-[10px] text-neutral-400">{group.rows.length} lệnh</div></div></div><div className="space-y-2">{group.rows.map((o)=>{const p=o.progress||{};const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource;return <div key={o.id} className={`rounded-2xl border bg-white p-2.5 shadow-sm ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":o.status==="CANCELLED"?"opacity-65":""}`}><button className="w-full text-left" onClick={()=>canOpenAnyStep&&setDetailId(o.id)}><div className="flex items-start gap-2.5"><div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[9px] font-semibold text-neutral-400">{o.code}</div><div className="truncate text-xs font-black">{o.sourceCode} · {o.sourceName||o.source?.name||""}</div></div><span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{quickStageLabel(o)}</span></div><div className="mt-1 text-[9px] text-neutral-400">Tạo {fmtDateShort(o.createdAt||o.updatedAt)}</div><div className="mt-1 rounded-lg bg-amber-50 px-2 py-1 text-[9px] font-black text-amber-800">Dự kiến xong: {o.dueDate?fmtDateShort(o.dueDate):"Chưa đặt"}</div></div></div><div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-neutral-50 p-2 text-[11px]"><div><span className="text-neutral-400">Vải</span><div className="text-sm font-black">{String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div><div><span className="text-neutral-400">Màu</span><div className="text-sm font-black">{Number(p.colorCount||0)} màu</div></div></div><div className="mt-1.5 line-clamp-2 text-[10px] text-neutral-500">{p.colorBreakdown?.map((x)=>`${x.name}: ${fmt(x.actualQty)} sp`).join(" · ")||"Chưa tính màu"}</div></button><div className="mt-2 flex justify-end gap-1.5">{canOpenAnyStep&&<button onClick={()=>setDetailId(o.id)} className="rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[10px] font-semibold text-white">Mở</button>}{canEdit&&!["COMPLETED","CANCELLED"].includes(o.status)&&<button disabled={busyAction===`${o.id}:complete`} onClick={()=>void completeOrder(o)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800">✓ Xong</button>}</div></div>})}</div></div>)}</div></div>}
 
       {viewMode === "TIMELINE" && <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-2xl border bg-white p-4"><div className="text-[10px] font-black uppercase text-neutral-400">Tháng {timelineStats.month}/{timelineStats.year}</div><div className="mt-1 text-2xl font-black">{timelineStats.thisMonth} lệnh</div><div className="text-xs text-neutral-500">Các mã tạo trong tháng này theo bộ lọc hiện tại.</div></div>
           <div className="rounded-2xl border bg-white p-4"><div className="text-[10px] font-black uppercase text-neutral-400">Năm {timelineStats.year}</div><div className="mt-1 text-2xl font-black">{timelineStats.thisYear} lệnh</div><div className="text-xs text-neutral-500">Toàn bộ mã sản xuất tạo trong năm nay.</div></div>
         </div>
-        {timelineGroups.map((yg)=><section key={yg.year} className="rounded-3xl border bg-white p-4"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-black">{yg.year}</h2><span className="text-xs text-neutral-400">{yg.months.reduce((sum,m)=>sum+m.rows.length,0)} lệnh</span></div><div className="space-y-5">{yg.months.map((mg)=><div key={`${yg.year}-${mg.month}`}><div className="mb-2 flex items-center gap-2"><div className="rounded-full bg-neutral-950 px-3 py-1 text-xs font-black text-white">Tháng {mg.month}</div><div className="text-xs text-neutral-400">{mg.rows.length} lệnh</div></div><div className="relative ml-3 border-l border-neutral-200 pl-5">{mg.rows.map((o)=>{const p=o.progress||{};const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource;const d=new Date(o.createdAt||o.updatedAt||0);return <div key={o.id} className="relative mb-3 last:mb-0"><span className="absolute -left-[25px] top-5 h-2.5 w-2.5 rounded-full border-2 border-white bg-neutral-950 shadow"/><button onClick={()=>canOpenAnyStep&&setDetailId(o.id)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":"bg-white"}`}><div className="w-12 shrink-0 text-center"><div className="text-lg font-black leading-none">{String(d.getDate()).padStart(2,"0")}</div><div className="mt-1 text-[9px] uppercase text-neutral-400">T{mg.month}</div></div><div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-xs">{o.sourceCode}</b><span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{STATUS_LABEL[o.status]||o.status}</span></div><div className="truncate text-sm font-black">{sourceVisible?(o.sourceName||o.source?.name||""):"Mẫu triển khai · Đã ẩn"}</div><div className="mt-1 text-[10px] text-neutral-500">{o.factory?.name||"Chưa có nhà may"} · {Number(p.colorCount||0)} màu · {fmt(p.totalActualQty||0)} sp · {String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div></button></div>})}</div></div>)}</div></section>)}
+        {timelineGroups.map((yg)=><section key={yg.year} className="rounded-3xl border bg-white p-4"><div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-black">{yg.year}</h2><span className="text-xs text-neutral-400">{yg.months.reduce((sum,m)=>sum+m.rows.length,0)} lệnh</span></div><div className="space-y-5">{yg.months.map((mg)=><div key={`${yg.year}-${mg.month}`}><div className="mb-2 flex items-center gap-2"><div className="rounded-full bg-neutral-950 px-3 py-1 text-xs font-black text-white">Tháng {mg.month}</div><div className="text-xs text-neutral-400">{mg.rows.length} lệnh</div></div><div className="relative ml-3 border-l border-neutral-200 pl-5">{mg.rows.map((o)=>{const p=o.progress||{};const sourceVisible=o.sourceType==="PRODUCT"||canViewSampleSource;const d=new Date(o.createdAt||o.updatedAt||0);return <div key={o.id} className="relative mb-3 last:mb-0"><span className="absolute -left-[25px] top-5 h-2.5 w-2.5 rounded-full border-2 border-white bg-neutral-950 shadow"/><button onClick={()=>canOpenAnyStep&&setDetailId(o.id)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${o.status==="COMPLETED"?"border-emerald-200 bg-emerald-50/30":"bg-white"}`}><div className="w-12 shrink-0 text-center"><div className="text-lg font-black leading-none">{String(d.getDate()).padStart(2,"0")}</div><div className="mt-1 text-[9px] uppercase text-neutral-400">T{mg.month}</div></div><div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-100">{sourceVisible&&(o.source?.imageUrl||o.sourceImageUrl)&&<img src={asset(o.source?.imageUrl||o.sourceImageUrl)} className="h-full w-full object-cover"/>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-xs">{o.sourceCode}</b><span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-black ${productionStatusTone(o.status)}`}>{quickStageLabel(o)}</span></div><div className="truncate text-sm font-black">{sourceVisible?(o.sourceName||o.source?.name||""):"Mẫu triển khai · Đã ẩn"}</div><div className="mt-1 text-[10px] text-neutral-500">{o.factory?.name||"Chưa có nhà may"} · {Number(p.colorCount||0)} màu · {fmt(p.totalActualQty||0)} sp · {String(o.fabricSupplyMode||p.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"?"Xưởng cấp":`${fmt(p.allocatedM||0)} m`}</div></div></button></div>})}</div></div>)}</div></section>)}
       </div>}
 
       {!filteredOrders.length && <div className="rounded-3xl border bg-white p-12 text-center text-sm text-neutral-400">Không có lệnh sản xuất phù hợp bộ lọc.</div>}
@@ -547,7 +694,7 @@ function CreateOrderModal({ meta, canViewSampleSource, onClose, onSaved }: { met
 
         <div className="grid gap-4 md:grid-cols-2">
           <Field l="Nhà may / xưởng"><select className={input} value={factoryId} onChange={(e) => setFactoryId(e.target.value)}><option value="">Chọn nhà may</option>{meta.factories.map((f) => <option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}</select></Field>
-          <Field l="Hạn hoàn thành"><input type="date" className={input} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
+          <Field l="Dự kiến SX xong"><input type="date" className={input} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
         </div>
 
         <div className={`rounded-2xl border p-4 ${factorySuppliesFabric ? "border-amber-300 bg-amber-50" : "bg-white"}`}>
