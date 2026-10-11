@@ -750,6 +750,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [rollQ, setRollQ] = useState("");
   const [showUnavailableRolls, setShowUnavailableRolls] = useState(false);
+  const [browseFabricRoles, setBrowseFabricRoles] = useState<Record<string, boolean>>({ MAIN: false, LINING: false });
   const [rollSort, setRollSort] = useState<"NEWEST" | "CODE">("NEWEST");
   const [accessoryQ, setAccessoryQ] = useState("");
   const [accessoryType, setAccessoryType] = useState("ALL");
@@ -855,12 +856,9 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
 
   useEffect(() => { void load(); }, [id]);
 
-  async function searchRolls(value: string) {
+  function searchRolls(value: string) {
+    // Lọc tại client để những cây đã chọn luôn hiển thị, kể cả khi tìm cây mới.
     setRollQ(value);
-    try {
-      const rows = await productionApi<Roll[]>(`/production/fabric-rolls?orderId=${encodeURIComponent(id)}&q=${encodeURIComponent(value)}`);
-      setRolls(rows);
-    } catch {}
   }
 
   function setMaterialAccessory(index: number, accessoryItemId: string) {
@@ -1311,7 +1309,8 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   }
 
   const visibleRolls = rolls
-    .filter((r) => showUnavailableRolls || (!r.isDepleted && Number(r.remainingM || r.actualM || r.supplierDeclaredM || 0) > 0))
+    .filter((r) => selected[r.id] || liningSelected[r.id] || showUnavailableRolls || (!r.isDepleted && Number(r.remainingM || r.actualM || r.supplierDeclaredM || 0) > 0))
+    .filter((r) => selected[r.id] || liningSelected[r.id] || !rollQ.trim() || [r.receiptCode, r.rollCode, r.fabricName, r.fabricCode, r.fabricBoardCode, r.colorName, r.colorCode].some((value) => String(value || "").toLowerCase().includes(rollQ.trim().toLowerCase())))
     .sort((a, b) => {
       if (rollSort === "NEWEST") {
         const ad = Date.parse(String(a.receivedAt || a.createdAt || "")) || 0;
@@ -1322,6 +1321,13 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       }
       return `${a.receiptCode || ""} ${a.rollCode || ""}`.localeCompare(`${b.receiptCode || ""} ${b.rollCode || ""}`, "vi", { numeric: true });
     });
+
+  const selectedRollSummary = (role: "MAIN" | "LINING") => {
+    const chosen = role === "MAIN" ? selected : liningSelected;
+    const amounts = role === "MAIN" ? allocated : liningAllocated;
+    const rows = rolls.filter((r) => chosen[r.id]);
+    return { count: rows.length, meters: rows.reduce((sum, r) => sum + (Number(String(amounts[r.id] ?? r.remainingM ?? 0).replace(",", ".")) || 0), 0) };
+  };
 
   const liningComponents = normalizeLiningComponentsClient(order?.liningFabricComponents);
   const enabledLiningComponents = liningComponents.filter((x)=>x.enabled && numberOrZero(x.consumption)>0);
@@ -1443,9 +1449,9 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
 
             {[{role:"MAIN" as const,title:"Vải chính",selectedMap:selected,setSelectedMap:setSelected,allocatedMap:allocated,setAllocatedMap:setAllocated},{role:"LINING" as const,title:"Vải lót",selectedMap:liningSelected,setSelectedMap:setLiningSelected,allocatedMap:liningAllocated,setAllocatedMap:setLiningAllocated,kgMap:liningAllocatedKg,setKgMap:setLiningAllocatedKg}].map((section)=> (
               <div key={section.role} className={`rounded-3xl border p-3 ${section.role==="LINING"?"border-blue-200 bg-blue-50/30":"bg-white"}`}>
-                <div className="mb-2 flex items-center justify-between gap-3 px-1"><div><b>{section.title}</b><div className="text-[11px] text-neutral-400">{section.role==="MAIN"?"Quyết định số lượng sản phẩm cắt được.":"Đối chiếu đủ/thiếu theo sản lượng của vải chính."}</div></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold">{Object.values(section.selectedMap).filter(Boolean).length} cây</span></div>
+                <div className="mb-2 flex items-center justify-between gap-3 px-1"><div><b>{section.title}</b><div className="text-[11px] text-neutral-400">{section.role==="MAIN"?"Quyết định số lượng sản phẩm cắt được.":"Đối chiếu đủ/thiếu theo sản lượng của vải chính."}</div></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold">{selectedRollSummary(section.role).count} cây · {fmt(selectedRollSummary(section.role).meters)} m đã chọn</span><button type="button" onClick={() => setBrowseFabricRoles((v) => ({ ...v, [section.role]: !v[section.role] }))} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-bold">{browseFabricRoles[section.role] ? "Ẩn kho vải · Chỉ xem đã chọn" : `+ Xem toàn bộ kho ${section.role === "MAIN" ? "vải chính" : "vải lót"}`}</button></div></div>
                 <div className="max-h-[330px] space-y-2 overflow-y-auto rounded-2xl border bg-white p-2">
-                  {visibleRolls.map((r) => {
+                  {visibleRolls.filter((r) => section.selectedMap[r.id] || (browseFabricRoles[section.role] && !(section.role === "MAIN" ? liningSelected[r.id] : selected[r.id]))).sort((a,b) => Number(!!section.selectedMap[b.id]) - Number(!!section.selectedMap[a.id])).map((r) => {
                     const availableM=Number(r.remainingM||r.actualM||r.supplierDeclaredM||0);
                     const disabled=!!r.isDepleted||availableM<=0;
                     const active=!!section.selectedMap[r.id];
@@ -1462,7 +1468,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
                       </div>
                     );
                   })}
-                  {!visibleRolls.length && <div className="p-8 text-center text-sm text-neutral-400">Không có cây vải phù hợp bộ lọc.</div>}
+                  {!visibleRolls.some((r) => section.selectedMap[r.id] || (browseFabricRoles[section.role] && !(section.role === "MAIN" ? liningSelected[r.id] : selected[r.id]))) && <div className="p-8 text-center text-sm text-neutral-400">{browseFabricRoles[section.role] ? "Không có cây vải phù hợp bộ lọc." : "Chưa chọn cây vải. Bấm Xem toàn bộ kho để thêm cây."}</div>}
                 </div>
               </div>
             ))}
@@ -1500,7 +1506,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           <div className="space-y-4">
             {calc ? (
               <>
-                <ProductionCostCard cost={calc.costSummary || order.costSummary} extraCosts={extraCosts} onExtraCostsChange={setExtraCosts} onSaveExtras={()=>void saveExtraCosts()} priceMultiplier={priceMultiplier} onPriceMultiplierChange={setPriceMultiplier} busy={busy}/>
+                <ProductionCostCard order={order} cost={calc.costSummary || order.costSummary} extraCosts={extraCosts} onExtraCostsChange={setExtraCosts} onSaveExtras={()=>void saveExtraCosts()} priceMultiplier={priceMultiplier} onPriceMultiplierChange={setPriceMultiplier} busy={busy}/>
                 <Step6CompactReview calc={calc} order={order}/>
               </>
             ) : <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">Chưa có kết quả tính. Quay lại Bước 5 để tính sản lượng trước.</div>}
@@ -2005,7 +2011,7 @@ function compactNplSummary(calc:any) {
 }
 
 
-function ProductionCostCard({cost,extraCosts,onExtraCostsChange,onSaveExtras,priceMultiplier=2.2,onPriceMultiplierChange,busy=false}:{cost:any;extraCosts?:ProductionExtraCost[];onExtraCostsChange?:(x:ProductionExtraCost[])=>void;onSaveExtras?:()=>void;priceMultiplier?:number|string;onPriceMultiplierChange?:(x:number|string)=>void;busy?:boolean}) {
+function ProductionCostCard({order,cost,extraCosts,onExtraCostsChange,onSaveExtras,priceMultiplier=2.2,onPriceMultiplierChange,busy=false}: {order:any;cost:any;extraCosts?:ProductionExtraCost[];onExtraCostsChange?:(x:ProductionExtraCost[])=>void;onSaveExtras?:()=>void;priceMultiplier?:number|string;onPriceMultiplierChange?:(x:number|string)=>void;busy?:boolean}) {
   if(!cost) return <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">Chưa có dữ liệu giá sản xuất.</div>;
   if(cost.canView===false) return <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">Chỉ Admin / Owner có quyền xem giá sản xuất.</div>;
 
@@ -2097,12 +2103,16 @@ function ProductionCostCard({cost,extraCosts,onExtraCostsChange,onSaveExtras,pri
       <div className="mt-3 flex justify-end"><button disabled={busy} onClick={onSaveExtras} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">Lưu phụ phí & tính lại giá</button></div>
     </div>}
 
+    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="rounded-2xl border bg-neutral-50 p-3"><div className="text-[10px] font-black uppercase text-neutral-500">Định mức vải chính / áo</div><div className="mt-1 text-lg font-black">{Number(order?.fabricConsumptionM)>0 ? `${fmt(Number(order.fabricConsumptionM))} m/áo` : "Chưa khai báo"}</div></div>
+      <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-3"><div className="text-[10px] font-black uppercase text-blue-600">Định mức vải lót / áo</div><div className="mt-1 text-sm font-bold">{normalizeLiningComponentsClient(order?.liningFabricComponents).filter(x=>x.enabled&&numberOrZero(x.consumption)>0).length ? normalizeLiningComponentsClient(order?.liningFabricComponents).filter(x=>x.enabled&&numberOrZero(x.consumption)>0).map(x=>`${x.name}: ${fmt(numberOrZero(x.consumption))} ${x.unit==="G"?"g":"m"}/áo`).join(" · ") : "Chưa khai báo"}</div><div className="mt-1 text-[10px] text-blue-600">Tổng theo đơn vị: {fmt(normalizeLiningComponentsClient(order?.liningFabricComponents).filter(x=>x.enabled&&x.unit==="M").reduce((v,x)=>v+numberOrZero(x.consumption),0))} m/áo · {fmt(normalizeLiningComponentsClient(order?.liningFabricComponents).filter(x=>x.enabled&&x.unit==="G").reduce((v,x)=>v+numberOrZero(x.consumption),0))} g/áo</div></div>
+    </div>
     {missing>0&&<div className="mt-3 rounded-2xl bg-amber-50 p-3 text-xs text-amber-800">Giá/SP hiện là <b>tạm tính</b> vì còn {missing} mục chưa có đơn giá.</div>}
 
     <details className="mt-3 rounded-2xl border">
       <summary className="cursor-pointer px-3 py-3 text-xs font-black">Chi tiết cấu thành giá</summary>
       <div className="border-t">
-        {(cost.fabricLines||[]).map((x:any,i:number)=><div key={`f-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.role==="LINING"?"Vải lót":"Vải chính"} · {x.fabricName||x.fabricCode||"Vải"}</b><div className="mt-0.5 text-neutral-400">{x.rollCode||x.receiptCode||"Cây"} · {fmt(x.usedM)}m · {fmt(x.usedKg)}kg</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
+        {(cost.fabricLines||[]).map((x:any,i:number)=><div key={`f-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.role==="LINING"?"Vải lót":"Vải chính"} · {x.fabricName||x.fabricCode||"Vải"}</b><div className="mt-0.5 text-neutral-400">{x.rollCode||x.receiptCode||"Cây"} · Màu: <b className="text-neutral-700">{x.colorName||"Chưa khai báo"}</b> · {fmt(x.usedM)}m · {fmt(x.usedKg)}kg</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
         {(cost.accessoryLines||[]).map((x:any,i:number)=><div key={`a-${i}`} className="flex items-start justify-between gap-3 border-b p-3 text-xs last:border-b-0"><div><b>{x.accessoryCode} · {x.accessoryName}</b>{x.sizeLabel&&<span className="ml-1 rounded bg-neutral-950 px-1.5 py-0.5 text-[9px] text-white">{scopeBadge(x.sizeLabel)}</span>}<div className="mt-0.5 text-neutral-400">{fmt(x.requiredQty)} × {x.unitPriceVnd==null?"chưa có giá":moneyVnd(x.unitPriceVnd)}</div></div><div className={`text-right font-black ${x.missingPrice?"text-amber-600":""}`}>{x.missingPrice?"Chưa giá":moneyVnd(x.costVnd)}</div></div>)}
       </div>
     </details>
