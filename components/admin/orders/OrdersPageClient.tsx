@@ -58,6 +58,18 @@ import {
 } from "@/lib/print-template-engine";
 
 
+// Chỉ quyết định loại phiếu mặc định; không thay đổi cấu hình mẫu in.
+function orderDefaultPrintType(branchId?: string | null, branchName?: string | null): "sales" | "shipping" {
+  const key = `${branchId || ""} ${branchName || ""}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .toLowerCase();
+  return /(?:^|[^a-z0-9])(?:b2|b3|b4)(?:$|[^a-z0-9])|thai[\s-]*ha|chua[\s-]*lang|xa[\s-]*dan/.test(key)
+    ? "sales"
+    : "shipping";
+}
+
 type MultiFilterValue = string[];
 
 type MultiFilterOption = {
@@ -6984,7 +6996,7 @@ export default function OrdersPageClient() {
     setConfirmOpen(true);
   };
   const handlePrint = async (
-    type: "shipping" | "sales",
+    type: "shipping" | "sales" | "auto",
     paper: PrintPaperSize,
     sourceOrders: NormalizedOrder[] = checkedOrders,
   ) => {
@@ -7001,7 +7013,9 @@ export default function OrdersPageClient() {
         const template = findPrintTemplate({
           templates,
           branchId: order.branchId,
-          templateType: type,
+          templateType: type === "auto"
+            ? orderDefaultPrintType(order.branchId, branches.find((b) => b.id === order.branchId)?.name)
+            : type,
           paperSize: paper,
         });
 
@@ -9049,6 +9063,15 @@ export default function OrdersPageClient() {
 
                     {showPrintMenu ? (
                       <div className="absolute right-0 z-[200] mt-2 w-64 rounded-3xl border border-neutral-200 bg-white p-2 shadow-2xl">
+                        <button
+                          className="block w-full rounded-2xl bg-neutral-100 px-3 py-2 text-left text-sm font-semibold hover:bg-neutral-200"
+                          onClick={() => {
+                            setShowPrintMenu(false);
+                            void handlePrint("auto", "80mm");
+                          }}
+                        >
+                          In mặc định theo chi nhánh (80mm)
+                        </button>
                         <button
                           className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-neutral-50"
                           onClick={() => {

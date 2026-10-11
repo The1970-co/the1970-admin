@@ -17,6 +17,18 @@ import {
   renderOrderTemplateHtml,
 } from "@/lib/print-template-engine";
 
+// Chỉ quyết định loại phiếu mặc định; không thay đổi cấu hình mẫu in.
+function orderDefaultPrintType(branchId?: string | null, branchName?: string | null): "sales" | "shipping" {
+  const key = `${branchId || ""} ${branchName || ""}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .toLowerCase();
+  return /(?:^|[^a-z0-9])(?:b2|b3|b4)(?:$|[^a-z0-9])|thai[\s-]*ha|chua[\s-]*lang|xa[\s-]*dan/.test(key)
+    ? "sales"
+    : "shipping";
+}
+
 type OrderItem = {
   id: string;
   productName?: string;
@@ -3812,15 +3824,17 @@ export default function OrderDetailPageClient({
 
     const templates = loadPrintTemplates();
 
-    const shippingTemplate = findPrintTemplate({
+    const branchName = templates.find((item) => item.branchId === viewOrder.branchId)?.branchName;
+    const printType = orderDefaultPrintType(viewOrder.branchId, branchName);
+    const selectedTemplate = findPrintTemplate({
       templates,
       branchId: viewOrder.branchId || undefined,
-      templateType: "shipping",
+      templateType: printType,
       paperSize: "80mm",
     });
 
-    if (!shippingTemplate) {
-      setMessage("Chưa có mẫu in phiếu giao hàng cho chi nhánh này.");
+    if (!selectedTemplate) {
+      setMessage("Chưa có mẫu in 80mm cho chi nhánh này.");
       return;
     }
 
@@ -3845,11 +3859,11 @@ export default function OrderDetailPageClient({
         warehousePhone: "0975615475",
         warehouseAddress: "",
       },
-      template: shippingTemplate,
+      template: selectedTemplate,
     });
 
     openPrintDocument({
-      title: `Phieu-giao-hang-${viewOrder.orderCode}`,
+      title: `${printType === "sales" ? "Phieu-ban-hang" : "Phieu-giao-hang"}-${viewOrder.orderCode}`,
       paperSize: "80mm",
       bodyHtml: `<div class="print-page">${html}</div>`,
     });
