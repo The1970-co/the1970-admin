@@ -3404,9 +3404,14 @@ export default function MessagesPageClient({
       return;
     }
 
+    const originalImageUrls = parseQuickReplyImportMeta(editingQuickReply.category).imageUrls;
+    const imagesUnchanged =
+      originalImageUrls.length === editingQuickReplyImageUrls.length &&
+      originalImageUrls.every((url, index) => url === editingQuickReplyImageUrls[index]);
     if (
       shortcut === String(editingQuickReply.title || "") &&
-      content === String(editingQuickReply.content || "")
+      content === String(editingQuickReply.content || "") &&
+      imagesUnchanged
     ) {
       setEditingQuickReply(null);
       return;
@@ -5275,7 +5280,7 @@ export default function MessagesPageClient({
                       Ảnh đính kèm
                     </p>
                     <p className="mt-1 text-xs text-neutral-500">
-                      {editingQuickReplyImageUrls.length}/8 ảnh
+                      {editingQuickReplyImageUrls.length}/8 ảnh · Ảnh 1 được gửi trước. Dùng mũi tên để đổi vị trí.
                     </p>
                   </div>
 
@@ -5321,20 +5326,54 @@ export default function MessagesPageClient({
                           alt={`Ảnh đính kèm ${index + 1}`}
                           className="h-full w-full object-cover"
                         />
+                        <span className="absolute left-1 top-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          {index + 1}
+                        </span>
                         <button
                           type="button"
                           onClick={() =>
                             setEditingQuickReplyImageUrls((prev) =>
-                              prev.filter(
-                                (_, itemIndex) => itemIndex !== index,
-                              ),
+                              prev.filter((_, itemIndex) => itemIndex !== index),
                             )
                           }
-                          className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
+                          className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/75 text-white"
                           aria-label={`Xoá ảnh ${index + 1}`}
+                          title="Xoá ảnh khỏi mẫu"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
+                        <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => setEditingQuickReplyImageUrls((prev) => {
+                              if (index <= 0 || index >= prev.length) return prev;
+                              const next = [...prev];
+                              [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                              return next;
+                            })}
+                            className="flex h-7 flex-1 items-center justify-center rounded-md bg-black/75 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-30"
+                            aria-label={`Đưa ảnh ${index + 1} lên trước`}
+                            title="Chuyển lên trước"
+                          >
+                            ←
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === editingQuickReplyImageUrls.length - 1}
+                            onClick={() => setEditingQuickReplyImageUrls((prev) => {
+                              if (index < 0 || index >= prev.length - 1) return prev;
+                              const next = [...prev];
+                              [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                              return next;
+                            })}
+                            className="flex h-7 flex-1 items-center justify-center rounded-md bg-black/75 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-30"
+                            aria-label={`Đưa ảnh ${index + 1} ra sau`}
+                            title="Chuyển ra sau"
+                          >
+                            →
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
