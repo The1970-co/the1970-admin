@@ -1002,6 +1002,7 @@ function shouldShowAhamoveService(
 function getAhamoveServiceDisplayName(serviceLabel: string) {
   const label = String(serviceLabel || "").toUpperCase();
 
+  if (label === "HAN-ECO" || label.endsWith("-ECO")) return "Siêu tốc - Tiết kiệm";
   if (label.includes("TRUCK-1000")) return "Xe tải 1000kg";
   if (label.includes("TRUCK-2000")) return "Xe tải 2000kg";
   if (label.includes("TRUCK-5000")) return "Xe tải 5000kg";
@@ -5015,7 +5016,7 @@ export default function CreateOrderPageClient() {
               toAddress,
               codAmount: remaining > 0 ? remaining : 0,
               services:
-                "HAN-BIKE,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
+                "HAN-BIKE,HAN-ECO,HAN-2H,HAN-TRUCK-1000,HAN-TRUCK-2000,HAN-TRUCK-5000",
               serviceId: "HAN-BIKE",
               payment_method: ahamovePaymentMethod,
               paymentMethod: ahamovePaymentMethod,
@@ -5045,8 +5046,17 @@ export default function CreateOrderPageClient() {
             });
 
             const ahamoveRows = normalizeAhamoveQuoteItems(rawAhamoveQuote)
+              // Không hiển thị dịch vụ báo giá lỗi (data=null, INVALID_SERVICE,
+              // cấm tải...). Tuyệt đối không coi báo giá lỗi là phí 0đ.
+              .filter((item: any) =>
+                item?.data != null &&
+                !item?.error &&
+                !item?._disabled,
+              )
               .map((item: any) => parseAhamoveQuoteFee(item))
               .filter((parsed: any) =>
+                Number.isFinite(parsed.quoteFee) &&
+                parsed.quoteFee > 0 &&
                 shouldShowAhamoveService(
                   parsed.serviceLabel,
                   Number(shippingWeight || 200),

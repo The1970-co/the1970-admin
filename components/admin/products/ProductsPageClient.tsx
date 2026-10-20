@@ -5289,7 +5289,7 @@ export default function ProductsPageClient() {
             </div>
 
             <div className="hidden overflow-auto md:block">
-              <table className="min-w-[1750px] w-full border-collapse">
+              <table className="min-w-[1800px] w-full border-collapse">
                 <thead className="bg-neutral-50">
                   <tr className="text-left text-[11px] uppercase tracking-wide text-neutral-500">
                     <th className="w-10 border-b border-neutral-200 px-3 py-3">
@@ -5330,7 +5330,7 @@ export default function ProductsPageClient() {
                     </th>
                     <th className="border-b border-neutral-200 px-3 py-3">
                       <SortButton
-                        label="Size"
+                        label="Tồn theo size"
                         active={sortKey === "size"}
                         direction={sortDirection}
                         onClick={() => handleSort("size")}
@@ -5451,6 +5451,15 @@ export default function ProductsPageClient() {
                     const sizesList = uniqueValues(
                       product.variants.map((variant) => variant.size),
                     );
+                    const stockBySize = new Map<string, number>();
+                    product.variants.forEach((variant) => {
+                      const size = String(variant.size || "").trim();
+                      if (!size) return;
+                      stockBySize.set(
+                        size,
+                        (stockBySize.get(size) || 0) + getVariantScopedStock(variant),
+                      );
+                    });
 
                     const productForPreview =
                       productPreviewDetailsById[product.id] || product;
@@ -5527,13 +5536,24 @@ export default function ProductsPageClient() {
                           </div>
                         </td>
 
-                        <td className="min-w-[120px] border-b border-neutral-100 px-3 py-3">
+                        <td className="min-w-[150px] border-b border-neutral-100 px-3 py-3">
                           <div className="flex flex-wrap gap-2">
-                            {sizesList.map((size) => (
-                              <Badge key={size} tone="gray">
-                                {size}
-                              </Badge>
-                            ))}
+                            {sizesList.map((size) => {
+                              const qty = stockBySize.get(size) || 0;
+                              return (
+                                <span
+                                  key={size}
+                                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                                    qty > 0
+                                      ? "border-green-200 bg-green-50 text-green-700"
+                                      : "border-amber-200 bg-amber-50 text-amber-700"
+                                  }`}
+                                  title={`Size ${size}: ${qty} sản phẩm tồn`}
+                                >
+                                  {size}: <strong>{qty}</strong>
+                                </span>
+                              );
+                            })}
                           </div>
                         </td>
 
