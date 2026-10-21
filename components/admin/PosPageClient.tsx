@@ -44,7 +44,22 @@ type PaymentRow = {
   id: string;
   paymentSourceId: string;
   amount: string;
+  qrAccountId?: string;
 };
+
+type PosPaymentRule = {
+  id: string;
+  branchId: string;
+  kind: "amount" | "purchase_count" | "first_purchase" | "returning";
+  operator: "gte" | "lte";
+  threshold: number;
+  paymentSourceId: string;
+  qrAccountId: string;
+  priority: number;
+  enabled: boolean;
+};
+
+
 
 type PosBankAccount = {
   id: string;
@@ -527,6 +542,15 @@ export default function PosPageClient() {
     { id: "pay-1", paymentSourceId: "", amount: "0" },
   ]);
 
+  const [paymentRules, setPaymentRules] = useState<PosPaymentRule[]>([]);
+  const [paymentSettingsOpen, setPaymentSettingsOpen] = useState(false);
+  const [ruleBranch, setRuleBranch] = useState("");
+  const [ruleKind, setRuleKind] = useState<PosPaymentRule["kind"]>("amount");
+  const [ruleOperator, setRuleOperator] = useState<"gte" | "lte">("gte");
+  const [ruleThreshold, setRuleThreshold] = useState("1500000");
+  const [ruleSource, setRuleSource] = useState("");
+  const [ruleQrAccount, setRuleQrAccount] = useState("");
+  const [customerPurchaseCount, setCustomerPurchaseCount] = useState<number | null>(null);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerSuggestions, setCustomerSuggestions] = useState<any[]>([]);
@@ -537,6 +561,7 @@ export default function PosPageClient() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [lastPosOrder, setLastPosOrder] = useState<any | null>(null);
+  const [printSourcePickerOpen, setPrintSourcePickerOpen] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [promoOpen, setPromoOpen] = useState(false);
@@ -567,6 +592,64 @@ export default function PosPageClient() {
     typeof window !== "undefined" ? getCurrentUserFromStorage() : null;
   const userBranchIds = currentUser ? getUserBranchIds(currentUser) : [];
   const canPickAll = isOwnerUser(currentUser);
+  const canManagePosSettings = canPickAll || ["ADMIN", "OWNER", "SUPER_ADMIN"]
+    .includes(String(currentUser?.role?.code || currentUser?.role?.name || currentUser?.role || "").toUpperCase());
+
+  const [rulesLoading, setRulesLoading] = useState(true);
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [rulesError, setRulesError] = useState("");
+  const rulesLoadVersionRef = useRef(0);
+
+  const loadPaymentRules = async () => {
+    const version = ++rulesLoadVersionRef.current;
+    setRulesLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${getApiBaseUrl()}/payment-sources/pos-rules`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        cache: "no-store",
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.message || "Không tải được cấu hình thanh toán POS.");
+      if (version === rulesLoadVersionRef.current) {
+        setPaymentRules(Array.isArray(payload) ? payload : []);
+        setRulesError("");
+      }
+    } catch (error: any) {
+      if (version === rulesLoadVersionRef.current) setRulesError(error?.message || "Lỗi tải cấu hình từ máy chủ.");
+    } finally {
+      if (version === rulesLoadVersionRef.current) setRulesLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadPaymentRules(); }, []);
+  useEffect(() => { if (paymentSettingsOpen) void loadPaymentRules(); }, [paymentSettingsOpen]);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void loadPaymentRules(); };
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, []);
+
+  const savePaymentRules = async (next: PosPaymentRule[]) => {
+    if (!canManagePosSettings || rulesSaving) return;
+    setRulesSaving(true);
+    setRulesError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${getApiBaseUrl()}/payment-sources/pos-rules`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ items: next }),
+      });
+      const result = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(result?.message || "Lưu cấu hình POS thất bại.");
+      setPaymentRules(Array.isArray(result) ? result : []);
+    } catch (error: any) {
+      setRulesError(error?.message || "Không lưu được cấu hình thanh toán.");
+      setError(error?.message || "Lưu cấu hình thất bại.");
+      await loadPaymentRules();
+    } finally { setRulesSaving(false); }
+  };
 
   const canEditPosManualDiscount =
     userHasPermission(currentUser, "promotions.price_policy.pos_discount_only") ||
@@ -913,10 +996,33 @@ export default function PosPageClient() {
   useEffect(() => {
     setPaidAmount(String(mustPay));
     setPaymentRows((prev) => {
-      if (prev.length !== 1) return prev;
-      return [{ ...prev[0], amount: String(mustPay) }];
+      if (prev.length === 1) return [{ ...prev[0], amount: String(mustPay) }];
+      let remaining = mustPay;
+      return prev.map((row, i) => {
+        const amount = i === prev.length - 1 ? remaining : Math.min(moneyNumber(row.amount), remaining);
+        remaining -= amount;
+        return { ...row, amount: String(Math.max(0, amount)) };
+      });
     });
   }, [mustPay]);
+
+  useEffect(() => {
+    if (!branchId || !visiblePaymentSources.length || rulesLoading || rulesError) return;
+    const matching = paymentRules.filter((rule) => {
+      if (!rule.enabled || String(rule.branchId) !== String(branchId)) return false;
+      const value = rule.kind === "amount" ? mustPay : customerPurchaseCount;
+      if (value === null && rule.kind !== "amount") return false;
+      if (rule.kind === "first_purchase") return value === 0;
+      if (rule.kind === "returning") return Number(value) > 0;
+      return rule.operator === "gte" ? Number(value) >= rule.threshold : Number(value) <= rule.threshold;
+    }).sort((a, b) => a.priority - b.priority);
+    const match = matching.find((rule) => visiblePaymentSources.some((source) => String(source.id) === String(rule.paymentSourceId)));
+    if (!match) return;
+    setPaymentRows((prev) => {
+      if (prev.length !== 1 || (prev[0].paymentSourceId === match.paymentSourceId && (!match.qrAccountId || prev[0].qrAccountId === match.qrAccountId))) return prev;
+      return [{ ...prev[0], paymentSourceId: match.paymentSourceId, qrAccountId: match.qrAccountId || undefined }];
+    });
+  }, [branchId, mustPay, customerPurchaseCount, paymentRules, visiblePaymentSources, rulesLoading, rulesError]);
 
   const allVariants = useMemo(() => {
     return products.flatMap((product) =>
@@ -1154,11 +1260,31 @@ export default function PosPageClient() {
     );
   };
 
+  useEffect(() => {
+    const phone = customerPhone.replace(/\D/g, "");
+    if (phone.length < 9) { setCustomerPurchaseCount(null); return; }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${getApiBaseUrl()}/payment-sources/pos-customer-history?phone=${encodeURIComponent(phone)}`, {
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          cache: "no-store",
+        });
+        const result = await res.json().catch(() => null);
+        if (!res.ok) throw new Error("Không tra cứu được lịch sử khách hàng.");
+        if (!cancelled) setCustomerPurchaseCount(Number(result?.completedOrderCount ?? 0));
+      } catch { if (!cancelled) setCustomerPurchaseCount(null); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [customerPhone]);
+
   const clearOrder = () => {
     setLines([]);
     setCustomerName("");
     setCustomerPhone("");
     setCustomerSuggestions([]);
+    setCustomerPurchaseCount(null);
     setPaidAmount("0");
     setPaymentRows([
       {
@@ -1191,6 +1317,7 @@ export default function PosPageClient() {
   const handleCustomerPhoneChange = async (value: string) => {
     const version = ++customerSearchVersionRef.current;
     setCustomerPhone(value);
+    setCustomerPurchaseCount(null);
 
     const phone = value.replace(/\D/g, "");
     if (phone.length < 3) {
@@ -1350,33 +1477,77 @@ export default function PosPageClient() {
     ).filter((n) => n > 0);
   }, [mustPay]);
 
-  const updatePaymentRow = (
-    id: string,
-    patch: Partial<Pick<PaymentRow, "paymentSourceId" | "amount">>,
-  ) => {
-    setPaymentRows((prev) =>
-      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
-    );
+  // Keep payment allocation capped at the actual amount due. The edited row has
+  // priority; subsequent rows get the remaining balance in sequence.
+  const allocatePaymentRows = (rows: PaymentRow[], preferredId?: string, desired?: number) => {
+    const target = Math.max(0, mustPay);
+    const adjusted = rows.map((row) => ({ ...row }));
+    if (!adjusted.length) return adjusted;
+    const preferredIndex = preferredId ? adjusted.findIndex((row) => row.id === preferredId) : -1;
+    if (preferredIndex >= 0) {
+      const fixed = Math.min(target, Math.max(0, desired ?? 0));
+      adjusted[preferredIndex].amount = String(fixed);
+      let remaining = target - fixed;
+      const others = adjusted.map((_, i) => i).filter((i) => i !== preferredIndex);
+      others.forEach((i, j) => {
+        const value = j === others.length - 1 ? remaining : Math.min(moneyNumber(adjusted[i].amount), remaining);
+        adjusted[i].amount = String(value);
+        remaining -= value;
+      });
+      // A single row must always cover the full payable amount.
+      if (!others.length) adjusted[preferredIndex].amount = String(target);
+      return adjusted;
+    }
+    let remaining = target;
+    adjusted.forEach((row, i) => {
+      const value = i === adjusted.length - 1 ? remaining : Math.min(moneyNumber(row.amount), remaining);
+      row.amount = String(value);
+      remaining -= value;
+    });
+    return adjusted;
+  };
+
+  const updatePaymentRow = (id: string, patch: Partial<PaymentRow>) => {
+    setPaymentRows((prev) => {
+      const rows = prev.map((row) => (row.id === id ? { ...row, ...patch } : row));
+      return patch.amount !== undefined
+        ? allocatePaymentRows(rows, id, moneyNumber(patch.amount))
+        : rows;
+    });
   };
 
   const addPaymentRow = () => {
-    const remaining = Math.max(0, mustPay - totalPaid);
-    setPaymentRows((prev) => [
-      ...prev,
-      {
+    setPaymentRows((prev) => {
+      const rows = [...prev, {
         id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        paymentSourceId: visiblePaymentSources[0]?.id
-          ? String(visiblePaymentSources[0].id)
-          : "",
-        amount: remaining ? String(remaining) : "0",
-      },
-    ]);
+        paymentSourceId: "",
+        amount: "0",
+      }];
+      return allocatePaymentRows(rows);
+    });
   };
 
   const removePaymentRow = (id: string) => {
-    setPaymentRows((prev) =>
-      prev.length <= 1 ? prev : prev.filter((row) => row.id !== id),
-    );
+    setPaymentRows((prev) => prev.length <= 1 ? prev : allocatePaymentRows(prev.filter((row) => row.id !== id)));
+  };
+
+  const addPaymentRule = () => {
+    if (!canManagePosSettings) return;
+    if (!ruleBranch || !ruleSource) {
+      setError("Chọn chi nhánh và nguồn tiền cho quy tắc.");
+      return;
+    }
+    const threshold = Math.max(0, moneyNumber(ruleThreshold));
+    if ((ruleKind === "amount" || ruleKind === "purchase_count") && !threshold) {
+      setError("Ngưỡng điều kiện phải lớn hơn 0.");
+      return;
+    }
+    void savePaymentRules([...paymentRules, {
+      id: `rule-${Date.now()}`, branchId: ruleBranch, kind: ruleKind,
+      operator: ruleOperator, threshold, paymentSourceId: ruleSource,
+      qrAccountId: ruleQrAccount, priority: paymentRules.length + 1, enabled: true,
+    }]);
+    setError("");
   };
 
   const quickActions = [
@@ -1424,6 +1595,7 @@ export default function PosPageClient() {
       },
     },
     { label: "Xem danh sách đơn", action: () => router.push("/orders") },
+    ...(canManagePosSettings ? [{ label: "Cài đặt thanh toán POS", action: () => { setRuleBranch(branchId); setPaymentSettingsOpen(true); } }] : []),
     {
       label: "Tất cả thao tác",
       action: () => setError("Menu thao tác nâng cao sẽ làm sau."),
@@ -1553,7 +1725,7 @@ export default function PosPageClient() {
 
       if (e.key === "F1") {
         e.preventDefault();
-        void handlePay();
+        requestPayAndPrint();
         return;
       }
 
@@ -1625,6 +1797,8 @@ export default function PosPageClient() {
     lines,
     branchId,
     paymentRows,
+    selectedPosBankAccountId,
+    posBankAccounts,
     totalPaid,
     discountNumber,
     note,
@@ -1639,6 +1813,7 @@ export default function PosPageClient() {
   const handlePrintReceipt = (
     order?: any | null,
     preparedWindow?: Window | null,
+    sourceRowId?: string,
   ) => {
     const receiptLines = lines;
 
@@ -1677,10 +1852,15 @@ export default function PosPageClient() {
       "POS";
     const paid = totalPaid;
     const printTime = new Date().toLocaleString("vi-VN");
+    const printedSource = sourceRowId ? paymentRows.find((row) => row.id === sourceRowId) : undefined;
+    const printedSourceName = printedSource
+      ? visiblePaymentSources.find((source) => String(source.id) === String(printedSource.paymentSourceId))
+      : undefined;
+    const accountId = printedSource?.qrAccountId || selectedPosBankAccountId;
     const selectedBankAccount = posBankAccounts.find(
-      (item) => String(item.id) === String(selectedPosBankAccountId),
+      (item) => String(item.id) === String(accountId),
     );
-    const qrAmount = Math.max(0, Math.round(mustPay));
+    const qrAmount = Math.max(0, Math.round(printedSource ? moneyNumber(printedSource.amount) : mustPay));
     const transferNote = buildSafeTransferNote(orderCode);
     const vietQrBankId = resolveVietQrBankId(selectedBankAccount, vietQrBanks);
     const rawBankAlias = String(
@@ -1699,7 +1879,7 @@ export default function PosPageClient() {
       ? `
         <div class="line"></div>
         <div class="qr-block center">
-          <div class="qr-title">QUÉT MÃ CHUYỂN KHOẢN</div>
+          <div class="qr-title">QUÉT MÃ CHUYỂN KHOẢN${printedSourceName ? ` — ${escapeHtml(printedSourceName.name || printedSourceName.label || printedSourceName.displayName || "Nguồn tiền")}` : ""}</div>
           ${qrImageUrl
             ? `<img id="payment-qr-image" class="qr-image" src="${escapeHtml(qrImageUrl)}" data-fallback-src="${escapeHtml(qrFallbackUrl)}" alt="QR chuyển khoản" />
                <div id="payment-qr-error" class="qr-error" style="display:none;">Không tải được mã QR. Kiểm tra mã ngân hàng/BIN trong Settings.</div>`
@@ -1805,6 +1985,7 @@ export default function PosPageClient() {
     <div class="summary-row"><span>Giảm giá</span><strong>-${currency(totalDiscountNumber)}</strong></div>
     <div class="summary-row total"><span>Phải trả</span><strong>${currency(mustPay)}</strong></div>
     <div class="summary-row"><span>Đã thanh toán</span><strong>${currency(paid)}</strong></div>
+    ${printedSource ? `<div class="summary-row"><span>Khoản thanh toán in QR</span><strong>${currency(qrAmount)}</strong></div>` : ""}
     <div class="summary-row"><span>Tiền thừa</span><strong>${currency(change)}</strong></div>
     <div class="line"></div>
     <div><strong>Nguồn tiền</strong></div>
@@ -1869,7 +2050,20 @@ export default function PosPageClient() {
     setError("");
   };
 
-  const handlePay = async () => {
+  const activePrintSources = paymentRows.filter(
+    (row) => row.paymentSourceId && moneyNumber(row.amount) > 0,
+  );
+
+  const requestPayAndPrint = () => {
+    if (saving) return;
+    if (activePrintSources.length > 1) {
+      setPrintSourcePickerOpen(true);
+      return;
+    }
+    void handlePay(activePrintSources[0]?.id);
+  };
+
+  const handlePay = async (printSourceRowId?: string) => {
     if (!branchId) {
       setError("Chưa có chi nhánh.");
       return;
@@ -1897,8 +2091,8 @@ export default function PosPageClient() {
       return;
     }
 
-    if (rawValidPayments.reduce((sum, row) => sum + row.amount, 0) < mustPay) {
-      setError("Tổng tiền khách thanh toán chưa đủ.");
+    if (rawValidPayments.reduce((sum, row) => sum + row.amount, 0) !== mustPay) {
+      setError("Tổng các nguồn tiền phải đúng bằng số khách phải trả.");
       return;
     }
 
@@ -1975,7 +2169,7 @@ export default function PosPageClient() {
 
       const createdOrder = created?.data || created?.order || created;
       setLastPosOrder(createdOrder);
-      handlePrintReceipt(createdOrder, printWindow);
+      handlePrintReceipt(createdOrder, printWindow, printSourceRowId);
       setSuccessMessage("Tạo đơn POS thành công. Đã gửi lệnh in hoá đơn...");
 
       setTimeout(() => {
@@ -2389,7 +2583,7 @@ export default function PosPageClient() {
             {paymentRows.map((row, index) => (
               <div
                 key={row.id}
-                className="grid grid-cols-[minmax(0,1fr)_128px_28px] gap-2"
+                className="grid grid-cols-[minmax(0,1fr)_106px_32px_24px] items-center gap-1.5"
               >
                 <select
                   value={row.paymentSourceId}
@@ -2424,6 +2618,16 @@ export default function PosPageClient() {
 
                 <button
                   type="button"
+                  onClick={() => handlePrintReceipt(lastPosOrder, null, row.id)}
+                  disabled={!row.paymentSourceId || moneyNumber(row.amount) <= 0 || !lines.length}
+                  className="flex h-10 items-center justify-center rounded-xl border border-neutral-200 text-neutral-700 hover:bg-neutral-100 disabled:opacity-30"
+                  title={`In bill QR riêng cho nguồn tiền ${currency(moneyNumber(row.amount))}`}
+                  aria-label="In QR nguồn tiền"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6zM18 12h.01"/></svg>
+                </button>
+                <button
+                  type="button"
                   onClick={() => removePaymentRow(row.id)}
                   disabled={paymentRows.length <= 1}
                   className="h-10 rounded-xl text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
@@ -2431,6 +2635,20 @@ export default function PosPageClient() {
                 >
                   ×
                 </button>
+                {row.paymentSourceId && moneyNumber(row.amount) > 0 && posBankAccounts.length > 0 ? (
+                  <select
+                    value={row.qrAccountId || selectedPosBankAccountId}
+                    onChange={(e) => updatePaymentRow(row.id, { qrAccountId: e.target.value })}
+                    className="col-span-4 h-8 min-w-0 rounded-xl border border-neutral-200 bg-neutral-50 px-2 text-xs text-neutral-600"
+                    title="Tài khoản nhận tiền cho mã QR của nguồn này"
+                  >
+                    {posBankAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        QR: {account.label} · {account.bankName || account.bankCode} · {account.accountNumber}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
               </div>
             ))}
           </div>
@@ -2441,20 +2659,7 @@ export default function PosPageClient() {
                 key={amount}
                 type="button"
                 onClick={() =>
-                  setPaymentRows((prev) =>
-                    prev.length
-                      ? [
-                          { ...prev[0], amount: String(amount) },
-                          ...prev.slice(1),
-                        ]
-                      : [
-                          {
-                            id: "pay-1",
-                            paymentSourceId: "",
-                            amount: String(amount),
-                          },
-                        ],
-                  )
+                  setPaymentRows((prev) => allocatePaymentRows(prev, prev[0]?.id, amount))
                 }
                 className="rounded-xl bg-neutral-100 px-2 py-2 text-xs font-medium hover:bg-neutral-200"
               >
@@ -2470,10 +2675,10 @@ export default function PosPageClient() {
             </div>
             <div className="flex justify-between">
               <span>
-                {totalPaid >= mustPay ? "Tiền thừa trả khách" : "Còn thiếu"}
+                {totalPaid === mustPay ? "Đã phân bổ đủ" : totalPaid > mustPay ? "Phân bổ vượt" : "Còn thiếu"}
               </span>
               <strong className={totalPaid >= mustPay ? "" : "text-red-600"}>
-                {currency(totalPaid >= mustPay ? change : mustPay - totalPaid)}
+                {currency(Math.abs(mustPay - totalPaid))}
               </strong>
             </div>
           </div>
@@ -2530,7 +2735,7 @@ export default function PosPageClient() {
 
           <button
             type="button"
-            onClick={handlePay}
+            onClick={requestPayAndPrint}
             disabled={saving || !lines.length}
             className="mt-4 h-14 w-full rounded-[22px] bg-neutral-950 text-base font-bold text-white shadow-lg shadow-neutral-200 transition hover:bg-neutral-800 disabled:bg-neutral-300 disabled:shadow-none"
           >
@@ -2555,6 +2760,102 @@ export default function PosPageClient() {
           </button>
         </aside>
       </div>
+
+      {paymentSettingsOpen && canManagePosSettings ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xl font-bold">Cài đặt thanh toán POS</h2>
+              {rulesLoading ? <p className="text-sm text-neutral-500">Đang đồng bộ cấu hình từ máy chủ...</p> : null}
+              {rulesSaving ? <p className="text-sm text-neutral-500">Đang lưu trên máy chủ...</p> : null}
+              {rulesError ? <p className="text-sm text-red-600">{rulesError}</p> : null}
+              <button type="button" onClick={() => setPaymentSettingsOpen(false)} className="rounded-xl border px-3 py-2">Đóng</button>
+            </div>
+            <p className="mt-2 text-sm text-neutral-500">Ưu tiên số nhỏ áp dụng trước. Điều kiện lần mua chỉ chạy khi dữ liệu khách hàng có số đơn đã hoàn tất. Các quy tắc hiện lưu trong trình duyệt này, chưa đồng bộ toàn hệ thống.</p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <label className="text-sm">Chi nhánh
+                <select value={ruleBranch} onChange={(e) => { setRuleBranch(e.target.value); setRuleSource(""); }} className="mt-1 w-full rounded-xl border p-3">
+                  <option value="">Chọn chi nhánh</option>
+                  {branchOptions.map((branch) => <option key={branch.value} value={branch.value}>{branch.label}</option>)}
+                </select>
+              </label>
+              <label className="text-sm">Điều kiện
+                <select value={ruleKind} onChange={(e) => setRuleKind(e.target.value as PosPaymentRule["kind"])} className="mt-1 w-full rounded-xl border p-3">
+                  <option value="amount">Tổng hóa đơn</option>
+                  <option value="purchase_count">Số lần đã mua</option>
+                  <option value="first_purchase">Khách mua lần đầu</option>
+                  <option value="returning">Khách đã mua trước đây</option>
+                </select>
+              </label>
+              {(ruleKind === "amount" || ruleKind === "purchase_count") ? <div className="grid grid-cols-[1fr_2fr] gap-2">
+                <label className="text-sm">So sánh
+                  <select value={ruleOperator} onChange={(e) => setRuleOperator(e.target.value as "gte" | "lte")} className="mt-1 w-full rounded-xl border p-3">
+                    <option value="gte">Từ / ≥</option><option value="lte">Đến / ≤</option>
+                  </select>
+                </label>
+                <label className="text-sm">{ruleKind === "amount" ? "Số tiền (đ)" : "Số lần mua"}
+                  <input value={ruleThreshold} onChange={(e) => setRuleThreshold(e.target.value)} className="mt-1 w-full rounded-xl border p-3" inputMode="numeric" />
+                </label>
+              </div> : <div />}
+              <label className="text-sm">Nguồn tiền mặc định
+                <select value={ruleSource} onChange={(e) => setRuleSource(e.target.value)} className="mt-1 w-full rounded-xl border p-3">
+                  <option value="">Chọn nguồn tiền</option>
+                  {paymentSources.filter((source) => source.isActive !== false && (
+                    !source.branchId || String(source.branchId) === String(ruleBranch) ||
+                    !source.branch?.id || String(source.branch.id) === String(ruleBranch)
+                  )).map((source) => <option key={source.id} value={String(source.id)}>{source.name || source.label}</option>)}
+                </select>
+              </label>
+              <label className="text-sm">Tài khoản QR mặc định
+                <select value={ruleQrAccount} onChange={(e) => setRuleQrAccount(e.target.value)} className="mt-1 w-full rounded-xl border p-3">
+                  <option value="">Theo QR đang chọn ở POS</option>
+                  {posBankAccounts.map((account) => <option key={account.id} value={account.id}>{account.label} · {account.accountNumber}</option>)}
+                </select>
+              </label>
+            </div>
+            <button type="button" onClick={addPaymentRule} className="mt-4 rounded-xl bg-black px-5 py-3 font-semibold text-white">+ Lưu quy tắc</button>
+            <div className="mt-6 space-y-2">
+              <h3 className="font-bold">Danh sách quy tắc (ưu tiên theo thứ tự)</h3>
+              {paymentRules.map((rule, index) => {
+                const branch = branchOptions.find((b) => b.value === rule.branchId);
+                const source = paymentSources.find((s) => String(s.id) === String(rule.paymentSourceId));
+                const condition = rule.kind === "amount" ? `Hóa đơn ${rule.operator === "gte" ? "≥" : "≤"} ${currency(rule.threshold)}` : rule.kind === "purchase_count" ? `Đã mua ${rule.operator === "gte" ? "≥" : "≤"} ${rule.threshold} lần` : rule.kind === "first_purchase" ? "Mua lần đầu" : "Đã từng mua";
+                return <div key={rule.id} className="flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm">
+                  <input type="checkbox" checked={rule.enabled} onChange={(e) => void savePaymentRules(paymentRules.map((r) => r.id === rule.id ? { ...r, enabled: e.target.checked } : r))} aria-label="Bật tắt quy tắc" />
+                  <span className="flex-1"><strong>{branch?.label || rule.branchId}</strong> · {condition} → <strong>{source?.name || source?.label || "Nguồn không còn tồn tại"}</strong></span>
+                  <button type="button" disabled={index === 0} onClick={() => { const next = [...paymentRules]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; void savePaymentRules(next.map((r,i) => ({...r,priority:i+1}))); }} className="rounded-lg border px-2 py-1 disabled:opacity-30">↑</button>
+                  <button type="button" disabled={index === paymentRules.length - 1} onClick={() => { const next = [...paymentRules]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; void savePaymentRules(next.map((r,i) => ({...r,priority:i+1}))); }} className="rounded-lg border px-2 py-1 disabled:opacity-30">↓</button>
+                  <button type="button" onClick={() => void savePaymentRules(paymentRules.filter((r) => r.id !== rule.id))} className="rounded-lg border px-2 py-1 text-red-600">Xóa</button>
+                </div>;
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {printSourcePickerOpen ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-bold">Chọn nguồn tiền để in QR</h3>
+            <p className="mt-1 text-sm text-neutral-500">Đơn hàng vẫn thanh toán đủ tất cả nguồn tiền. Bill chỉ in QR và số tiền của nguồn được chọn.</p>
+            <div className="mt-4 space-y-2">
+              {activePrintSources.map((row) => {
+                const source = visiblePaymentSources.find((item) => String(item.id) === String(row.paymentSourceId));
+                return (
+                  <button key={row.id} type="button" disabled={saving}
+                    onClick={() => { setPrintSourcePickerOpen(false); void handlePay(row.id); }}
+                    className="flex w-full items-center justify-between rounded-xl border border-neutral-200 px-4 py-3 text-left hover:bg-neutral-50"
+                  >
+                    <span className="font-semibold">{source?.name || source?.label || source?.displayName || "Nguồn tiền"}</span>
+                    <strong>{currency(moneyNumber(row.amount))}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            <button type="button" onClick={() => setPrintSourcePickerOpen(false)} className="mt-4 w-full rounded-xl bg-neutral-100 py-3 font-semibold">Huỷ</button>
+          </div>
+        </div>
+      ) : null}
 
       {cameraOpen ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
