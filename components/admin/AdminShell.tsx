@@ -37,6 +37,8 @@ const MENU: MenuItem[] = [
     children: [
       { href: "/products", label: "Danh sách", permission: PERMISSIONS.MENU_PRODUCTS },
       { href: "/website/products", label: "Sản phẩm website", permission: PERMISSIONS.MENU_PRODUCTS, adminOnly: true },
+      { href: "/website/homepage", label: "Trang chủ website", permission: PERMISSIONS.MENU_PRODUCTS, adminOnly: true },
+      { href: "/website/navigation", label: "Menu website", permission: PERMISSIONS.MENU_PRODUCTS, adminOnly: true },
       { href: "/promotions", label: "Khuyến mại", permission: PERMISSIONS.MENU_PROMOTIONS },
       { href: "/control/product-categories", label: "Danh mục", permission: PERMISSIONS.MENU_PRODUCT_CATEGORIES },
       { href: "/control/suppliers", label: "Nhà cung cấp", permission: PERMISSIONS.MENU_SUPPLIERS },
@@ -345,7 +347,11 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     pathname === "/fabric-orders" ||
     pathname.startsWith("/fabric-orders/") ||
     pathname === "/website/products" ||
-    pathname.startsWith("/website/products/");
+    pathname.startsWith("/website/products/") ||
+    pathname === "/website/homepage" ||
+    pathname.startsWith("/website/homepage/") ||
+    pathname === "/website/navigation" ||
+    pathname.startsWith("/website/navigation/");
   const canAccessCurrentRoute =
     (!requiredPermission || can(requiredPermission)) &&
     (!adminOnlyRoute || admin);
