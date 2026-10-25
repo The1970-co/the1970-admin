@@ -11,6 +11,7 @@ import {
   type WebsiteImageDraft,
   type WebsiteProductPayload,
 } from "@/lib/website-products-api";
+import { useAuth } from "@/components/admin/auth/AuthProvider";
 
 type MasterProduct = {
   id: string;
@@ -215,6 +216,11 @@ function Badge({
 }
 
 export default function WebsiteProductsPageClient() {
+  const { can } = useAuth();
+  const canEdit = can("website.edit");
+  const canDelete = can("website.delete");
+  const canPublish = can("website.publish");
+  const canUpload = can("website.image.upload");
   const [rows, setRows] = useState<WebsiteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -498,12 +504,12 @@ export default function WebsiteProductsPageClient() {
             </p>
           </div>
 
-          <button
+          {canEdit ? <button
             onClick={openCreate}
             className="h-11 rounded-xl bg-zinc-950 px-5 text-sm font-semibold text-white shadow-sm hover:bg-zinc-800"
           >
             + Đăng sản phẩm
-          </button>
+          </button> : null}
         </div>
 
         {error && !editorOpen ? (
@@ -633,18 +639,18 @@ export default function WebsiteProductsPageClient() {
                                   </div>
 
                                   <div className="mt-3 flex gap-2">
-                                    <button
+                                    {canEdit ? <button
                                       onClick={() => openEdit(row)}
                                       className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50"
                                     >
                                       Sửa
-                                    </button>
-                                    <button
+                                    </button> : null}
+                                    {canDelete ? <button
                                       onClick={() => void remove(row)}
                                       className="rounded-lg px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
                                     >
                                       Xóa
-                                    </button>
+                                    </button> : null}
                                   </div>
                                 </div>
                               </article>
@@ -927,20 +933,20 @@ export default function WebsiteProductsPageClient() {
                   </div>
 
                   <div className="grid gap-2 pt-2">
-                    <button
+                    {canPublish ? <button
                       disabled={saving || uploading}
                       onClick={() => void save("PUBLISHED")}
                       className="h-12 rounded-xl bg-zinc-950 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
                     >
                       {saving ? "Đang lưu..." : "Đăng bán"}
-                    </button>
-                    <button
+                    </button> : null}
+                    {canEdit ? <button
                       disabled={saving || uploading}
                       onClick={() => void save("DRAFT")}
                       className="h-11 rounded-xl border border-zinc-300 bg-white text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
                     >
                       Lưu bản nháp
-                    </button>
+                    </button> : null}
                   </div>
                 </div>
               </aside>

@@ -11,6 +11,7 @@ import {
   type WebsiteNavigationConfig,
 } from "@/lib/website-navigation-api";
 import { uploadWebsiteImage } from "@/lib/website-products-api";
+import { useAuth } from "@/components/admin/auth/AuthProvider";
 
 const uid = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -54,6 +55,11 @@ function blankItem(): WebsiteNavItem {
 }
 
 export default function WebsiteNavigationPageClient() {
+  const { can } = useAuth();
+  const canEdit = can("website.edit");
+  const canDelete = can("website.delete");
+  const canPublish = can("website.publish");
+  const canUpload = can("website.image.upload");
   const [config, setConfig] = useState<WebsiteNavigationConfig>({
     version: 1,
     items: [],
@@ -269,20 +275,20 @@ export default function WebsiteNavigationPageClient() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button
+          {canEdit ? <button
             onClick={() => void save()}
             disabled={saving}
             className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold"
           >
             {saving ? "Đang lưu..." : "Lưu nháp"}
-          </button>
-          <button
+          </button> : null}
+          {canPublish ? <button
             onClick={() => void publish()}
             disabled={saving || publishing}
             className="rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white"
           >
             {publishing ? "Đang xuất bản..." : "Xuất bản"}
-          </button>
+          </button> : null}
         </div>
       </div>
 
@@ -298,12 +304,12 @@ export default function WebsiteNavigationPageClient() {
             <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
               Menu trên cùng
             </span>
-            <button
+            {canEdit ? <button
               onClick={addMenu}
               className="rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white"
             >
               + Thêm menu
-            </button>
+            </button> : null}
           </div>
 
           <div className="space-y-2">
@@ -343,30 +349,30 @@ export default function WebsiteNavigationPageClient() {
                 </button>
 
                 <div className="mt-3 flex gap-1">
-                  <button
+                  {canEdit ? <button
                     onClick={() => moveMenu(item.id, -1)}
                     className="rounded-lg border px-2 py-1 text-xs"
                   >
                     ↑
-                  </button>
-                  <button
+                  </button> : null}
+                  {canEdit ? <button
                     onClick={() => moveMenu(item.id, 1)}
                     className="rounded-lg border px-2 py-1 text-xs"
                   >
                     ↓
-                  </button>
-                  <button
+                  </button> : null}
+                  {canEdit ? <button
                     onClick={() => duplicateMenu(item)}
                     className="rounded-lg border px-2 py-1 text-xs"
                   >
                     Nhân bản
-                  </button>
-                  <button
+                  </button> : null}
+                  {canDelete ? <button
                     onClick={() => removeMenu(item.id)}
                     className="ml-auto rounded-lg px-2 py-1 text-xs text-red-600"
                   >
                     Xóa
-                  </button>
+                  </button> : null}
                 </div>
               </div>
             ))}
@@ -451,12 +457,12 @@ export default function WebsiteNavigationPageClient() {
                           Ví dụ: cột Danh mục, cột Theo màu.
                         </p>
                       </div>
-                      <button
+                      {canEdit ? <button
                         onClick={addColumn}
                         className="rounded-xl border px-3 py-2 text-sm font-semibold"
                       >
                         + Thêm cột
-                      </button>
+                      </button> : null}
                     </div>
 
                     <div className="space-y-4">
@@ -481,12 +487,12 @@ export default function WebsiteNavigationPageClient() {
                             >
                               →
                             </button>
-                            <button
+                            {canDelete ? <button
                               onClick={() => removeColumn(column.id)}
                               className="ml-auto text-xs text-red-600"
                             >
                               Xóa cột
-                            </button>
+                            </button> : null}
                           </div>
 
                           <div className="grid gap-3 md:grid-cols-2">
@@ -560,24 +566,24 @@ export default function WebsiteNavigationPageClient() {
                                   }
                                   className="h-10 rounded-lg border px-3 text-sm"
                                 />
-                                <button
+                                {canDelete ? <button
                                   onClick={() =>
                                     removeLink(column.id, link.id)
                                   }
                                   className="text-xs text-red-600"
                                 >
                                   Xóa
-                                </button>
+                                </button> : <span />}
                               </div>
                             ))}
                           </div>
 
-                          <button
+                          {canEdit ? <button
                             onClick={() => addLink(column.id)}
                             className="mt-3 rounded-xl border px-3 py-2 text-xs font-semibold"
                           >
                             + Thêm link
-                          </button>
+                          </button> : null}
                         </div>
                       ))}
                     </div>
@@ -642,7 +648,7 @@ export default function WebsiteNavigationPageClient() {
                           }
                         />
 
-                        <label className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed bg-neutral-50 px-4 py-7">
+                        {canEdit && canUpload ? <label className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed bg-neutral-50 px-4 py-7">
                           <input
                             type="file"
                             accept="image/*"
@@ -657,7 +663,7 @@ export default function WebsiteNavigationPageClient() {
                               Dùng hệ thống upload ảnh hiện tại.
                             </div>
                           </div>
-                        </label>
+                        </label> : null}
                       </div>
 
                       <div className="overflow-hidden rounded-xl border bg-neutral-50">

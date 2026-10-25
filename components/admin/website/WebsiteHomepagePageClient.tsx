@@ -7,6 +7,7 @@ import {
   type HomepageImage, type HomepageItem,
 } from "@/lib/website-homepage-api";
 import { uploadWebsiteImage } from "@/lib/website-products-api";
+import { useAuth } from "@/components/admin/auth/AuthProvider";
 
 const TYPES: {value:HomepageBlockType;label:string}[] = [
   {value:"HERO_SPLIT",label:"Hero chia 2 cột"},
@@ -32,6 +33,11 @@ function blankBlock(type:HomepageBlockType):HomepageBlock{
 }
 
 export default function WebsiteHomepagePageClient(){
+  const { can } = useAuth();
+  const canEdit = can("website.edit");
+  const canDelete = can("website.delete");
+  const canPublish = can("website.publish");
+  const canUpload = can("website.image.upload");
   const [config,setConfig]=useState<HomepageConfig>({version:1,blocks:[]});
   const [selectedId,setSelectedId]=useState("");
   const [loading,setLoading]=useState(true);
@@ -118,8 +124,8 @@ export default function WebsiteHomepagePageClient(){
     <div className="sticky top-0 z-30 flex items-center justify-between border-b bg-white px-6 py-4">
       <div><div className="text-xs font-semibold uppercase tracking-[.18em] text-neutral-400">Website / Trang chủ</div><h1 className="mt-1 text-xl font-semibold">Bố cục homepage</h1></div>
       <div className="flex gap-2">
-        <button onClick={()=>void save()} disabled={saving} className="rounded-xl border px-4 py-2.5 text-sm font-semibold">{saving?"Đang lưu...":"Lưu nháp"}</button>
-        <button onClick={()=>void publish()} disabled={saving||publishing} className="rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white">{publishing?"Đang xuất bản...":"Xuất bản"}</button>
+        {canEdit ? <button onClick={()=>void save()} disabled={saving} className="rounded-xl border px-4 py-2.5 text-sm font-semibold">{saving?"Đang lưu...":"Lưu nháp"}</button> : null}
+        {canPublish ? <button onClick={()=>void publish()} disabled={saving||publishing} className="rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white">{publishing?"Đang xuất bản...":"Xuất bản"}</button> : null}
       </div>
     </div>
 
@@ -137,17 +143,17 @@ export default function WebsiteHomepagePageClient(){
               </div>
             </button>
             <div className="mt-3 flex gap-1">
-              <button onClick={()=>moveBlock(b.id,-1)} className="rounded-lg border px-2 py-1 text-xs">↑</button>
-              <button onClick={()=>moveBlock(b.id,1)} className="rounded-lg border px-2 py-1 text-xs">↓</button>
-              <button onClick={()=>duplicateBlock(b)} className="rounded-lg border px-2 py-1 text-xs">Nhân bản</button>
-              <button onClick={()=>deleteBlock(b.id)} className="ml-auto rounded-lg px-2 py-1 text-xs text-red-600">Xóa</button>
+              {canEdit ? <button onClick={()=>moveBlock(b.id,-1)} className="rounded-lg border px-2 py-1 text-xs">↑</button> : null}
+              {canEdit ? <button onClick={()=>moveBlock(b.id,1)} className="rounded-lg border px-2 py-1 text-xs">↓</button> : null}
+              {canEdit ? <button onClick={()=>duplicateBlock(b)} className="rounded-lg border px-2 py-1 text-xs">Nhân bản</button> : null}
+              {canDelete ? <button onClick={()=>deleteBlock(b.id)} className="ml-auto rounded-lg px-2 py-1 text-xs text-red-600">Xóa</button> : null}
             </div>
           </div>)}
         </div>
-        <div className="mt-5 border-t pt-4">
+        {canEdit ? <div className="mt-5 border-t pt-4">
           <div className="mb-2 text-xs font-semibold text-neutral-500">Thêm block</div>
           <div className="grid gap-2">{TYPES.map(t=><button key={t.value} onClick={()=>addBlock(t.value)} className="rounded-xl border px-3 py-2 text-left text-sm">+ {t.label}</button>)}</div>
-        </div>
+        </div> : null}
       </aside>
 
       <main className="p-6">
@@ -157,18 +163,18 @@ export default function WebsiteHomepagePageClient(){
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Tên block trong admin" value={selected.titleVi} onChange={v=>patchBlock(selected.id,{titleVi:v})}/>
               <label><div className="mb-1 text-xs font-semibold text-neutral-500">Loại block</div>
-                <select value={selected.type} onChange={e=>patchBlock(selected.id,{type:e.target.value as HomepageBlockType})} className="h-11 w-full rounded-xl border px-3 text-sm">
+                <select disabled={!canEdit} value={selected.type} onChange={e=>patchBlock(selected.id,{type:e.target.value as HomepageBlockType})} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-100">
                   {TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </label>
             </div>
             <label className="mt-4 flex items-center justify-between rounded-xl bg-neutral-50 p-4">
               <div><div className="text-sm font-semibold">Hiển thị block</div><div className="text-xs text-neutral-500">Tắt là block biến mất sau khi xuất bản.</div></div>
-              <input type="checkbox" checked={selected.enabled} onChange={e=>patchBlock(selected.id,{enabled:e.target.checked})} className="h-5 w-5"/>
+              <input disabled={!canEdit} type="checkbox" checked={selected.enabled} onChange={e=>patchBlock(selected.id,{enabled:e.target.checked})} className="h-5 w-5"/>
             </label>
             {selected.type==="PRODUCT_GRID"?<div className="mt-4 grid gap-4 md:grid-cols-2">
               <Field label="Số sản phẩm" value={String(selected.settings?.limit||8)} onChange={v=>patchBlock(selected.id,{settings:{...selected.settings,limit:Number(v||8)}})}/>
-              <label className="flex items-center gap-3 rounded-xl border p-3"><input type="checkbox" checked={selected.settings?.onlyFeatured===true} onChange={e=>patchBlock(selected.id,{settings:{...selected.settings,onlyFeatured:e.target.checked}})}/><span className="text-sm">Chỉ sản phẩm nổi bật</span></label>
+              <label className="flex items-center gap-3 rounded-xl border p-3"><input disabled={!canEdit} type="checkbox" checked={selected.settings?.onlyFeatured===true} onChange={e=>patchBlock(selected.id,{settings:{...selected.settings,onlyFeatured:e.target.checked}})}/><span className="text-sm">Chỉ sản phẩm nổi bật</span></label>
             </div>:null}
           </section>
 
@@ -176,7 +182,10 @@ export default function WebsiteHomepagePageClient(){
             {selected.items.map((item,index)=><section key={item.id} className="rounded-2xl border bg-white p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div><div className="text-sm font-semibold">Thẻ {index+1}</div><div className="text-xs text-neutral-400">{item.mediaMode==="slider"?`Slider · ${item.images.length} ảnh`:"1 ảnh"}</div></div>
-                <div className="flex gap-1"><button onClick={()=>moveItem(selected.id,item.id,-1)} className="rounded border px-2 py-1 text-xs">↑</button><button onClick={()=>moveItem(selected.id,item.id,1)} className="rounded border px-2 py-1 text-xs">↓</button><button onClick={()=>removeItem(selected.id,item.id)} className="rounded px-2 py-1 text-xs text-red-600">Xóa thẻ</button></div>
+                <div className="flex gap-1">
+                  {canEdit ? <><button onClick={()=>moveItem(selected.id,item.id,-1)} className="rounded border px-2 py-1 text-xs">↑</button><button onClick={()=>moveItem(selected.id,item.id,1)} className="rounded border px-2 py-1 text-xs">↓</button></> : null}
+                  {canDelete ? <button onClick={()=>removeItem(selected.id,item.id)} className="rounded px-2 py-1 text-xs text-red-600">Xóa thẻ</button> : null}
+                </div>
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="space-y-3">
@@ -190,7 +199,7 @@ export default function WebsiteHomepagePageClient(){
                   <Field label="Link khi bấm" value={item.link} onChange={v=>patchItem(selected.id,item.id,{link:v})} placeholder="/collections/all"/>
                   <div className="grid gap-3 md:grid-cols-2">
                     <label><div className="mb-1 text-xs font-semibold text-neutral-500">Kiểu ảnh</div>
-                      <select value={item.mediaMode} onChange={e=>patchItem(selected.id,item.id,{mediaMode:e.target.value as "single"|"slider"})} className="h-11 w-full rounded-xl border px-3 text-sm">
+                      <select disabled={!canEdit} value={item.mediaMode} onChange={e=>patchItem(selected.id,item.id,{mediaMode:e.target.value as "single"|"slider"})} className="h-11 w-full rounded-xl border px-3 text-sm">
                         <option value="single">1 ảnh</option><option value="slider">Slider nhiều ảnh</option>
                       </select>
                     </label>
@@ -205,15 +214,15 @@ export default function WebsiteHomepagePageClient(){
                   <div className="mt-3 grid grid-cols-2 gap-3">{item.images.map((img,i)=><div key={img.id} className="overflow-hidden rounded-xl border">
                     {/* eslint-disable-next-line @next/next/no-img-element */}<img src={img.url} alt="" className="aspect-[4/3] w-full object-cover"/>
                     <div className="p-2"><div className="mb-2 text-[11px] text-neutral-400">Ảnh {i+1}</div><div className="grid grid-cols-3 gap-1">
-                      <button onClick={()=>moveImage(selected.id,item,img.id,-1)} className="rounded border py-1 text-xs">←</button>
-                      <button onClick={()=>moveImage(selected.id,item,img.id,1)} className="rounded border py-1 text-xs">→</button>
-                      <button onClick={()=>removeImage(selected.id,item,img.id)} className="rounded py-1 text-xs text-red-600">Xóa</button>
+                      {canEdit ? <button onClick={()=>moveImage(selected.id,item,img.id,-1)} className="rounded border py-1 text-xs">←</button> : <span />}
+                      {canEdit ? <button onClick={()=>moveImage(selected.id,item,img.id,1)} className="rounded border py-1 text-xs">→</button> : <span />}
+                      {canDelete ? <button onClick={()=>removeImage(selected.id,item,img.id)} className="rounded py-1 text-xs text-red-600">Xóa</button> : <span />}
                     </div></div>
                   </div>)}</div>
                 </div>
               </div>
             </section>)}
-            <button onClick={()=>addItem(selected.id)} className="w-full rounded-2xl border-2 border-dashed bg-white py-4 text-sm font-semibold text-neutral-600">+ Thêm thẻ vào block này</button>
+            {canEdit ? <button onClick={()=>addItem(selected.id)} className="w-full rounded-2xl border-2 border-dashed bg-white py-4 text-sm font-semibold text-neutral-600">+ Thêm thẻ vào block này</button> : null}
           </>:null}
         </div>}
       </main>

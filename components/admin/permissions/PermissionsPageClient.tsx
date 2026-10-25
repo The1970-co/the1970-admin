@@ -301,6 +301,7 @@ function diffPermissionKeys(before: string[], after: string[]) {
 const MODULE_HEALTH = [
   { module: "Đơn hàng", backend: "orders.*", status: "ready", note: "Controller đã có PermissionGuard + action mapping." },
   { module: "Sản phẩm", backend: "products.*", status: "ready", note: "Import/export/image/master data đã tách quyền." },
+  { module: "Website", backend: "website.*", status: "ready", note: "Website CMS tách riêng quyền xem/sửa/xóa/xuất bản/upload; không còn dùng products.*." },
   { module: "Chuyển kho", backend: "stock_transfer.*", status: "ready", note: "Create/confirm/receive/cancel đã chặn backend." },
   { module: "Kiểm kho", backend: "stocktake.*", status: "ready", note: "Session/scan/apply/export đã chặn backend." },
   { module: "Nhập kho", backend: "purchase_receipt.*", status: "ready", note: "Pay/import stock/cancel đã có guard." },
@@ -368,6 +369,21 @@ const PERMISSION_MODULES: PermissionModule[] = [
       { key: "products.master_data.manage", label: "Đồng bộ/ghép danh mục, merge, clear mô tả", risk: "critical" },
       { key: "products.excel.export", label: "Xuất Excel sản phẩm", risk: "medium" },
       { key: "products.excel.import", label: "Nhập Excel sản phẩm", risk: "critical" },
+    ],
+  },
+  {
+    id: "website",
+    title: "Website",
+    subtitle: "Quản lý sản phẩm website, trang chủ, menu, ảnh và xuất bản. Tách hoàn toàn khỏi quyền Sản phẩm nội bộ.",
+    icon: "🌐",
+    tone: "cyan",
+    actions: [
+      { key: "menu.website", label: "Mở menu Website", risk: "low" },
+      { key: "website.view", label: "Xem Website CMS", risk: "low", desc: "Xem sản phẩm website, bố cục trang chủ và menu website." },
+      { key: "website.edit", label: "Tạo / sửa nội dung Website", risk: "high", desc: "Tạo và chỉnh sản phẩm website, homepage và menu." },
+      { key: "website.delete", label: "Xóa nội dung Website", risk: "critical", desc: "Xóa bài sản phẩm hoặc nội dung website có hỗ trợ xóa." },
+      { key: "website.publish", label: "Xuất bản Website", risk: "critical", desc: "Đưa thay đổi nháp của trang chủ/menu lên website khách." },
+      { key: "website.image.upload", label: "Upload ảnh Website", risk: "medium", desc: "Upload ảnh dùng riêng cho sản phẩm, homepage và menu website." },
     ],
   },
   {

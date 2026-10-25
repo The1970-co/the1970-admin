@@ -5,7 +5,7 @@ import WebsiteProductsPageClient from "@/components/admin/website/WebsiteProduct
 export default function WebsiteProductsPage() {
   return (
     <AdminShell title="Sản phẩm website">
-      <PagePermissionGuard permission="products.view">
+      <PagePermissionGuard permission="website.view">
         <WebsiteProductsPageClient />
       </PagePermissionGuard>
     </AdminShell>
