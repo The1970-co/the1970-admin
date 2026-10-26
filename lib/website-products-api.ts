@@ -47,6 +47,7 @@ export type WebsiteProductPayload = {
   marketInternational: boolean;
   featured: boolean;
   sortOrder: number;
+  websiteCategorySlugs: string[];
   titleVi: string;
   titleEn?: string;
   shortDescriptionVi?: string;

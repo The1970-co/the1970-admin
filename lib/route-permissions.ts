@@ -43,6 +43,8 @@ export const ROUTE_PERMISSION_MAP: Record<string, string> = {
   "/staff-transfer": PERMISSIONS.MENU_STAFF_TRANSFER,
   "/control/autopilot": PERMISSIONS.MENU_AUTOPILOT,
   "/control/ai-content": PERMISSIONS.MENU_AI_CONTENT,
+  "/website/settings": PERMISSIONS.WEBSITE_VIEW,
+
 
   // Omni Inbox routes phải chặn theo đúng quyền menu.
   "/messages": PERMISSIONS.MENU_OMNI_MESSAGES,

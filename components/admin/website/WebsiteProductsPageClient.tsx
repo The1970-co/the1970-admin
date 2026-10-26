@@ -11,7 +11,10 @@ import {
   type WebsiteImageDraft,
   type WebsiteProductPayload,
 } from "@/lib/website-products-api";
-import { useAuth } from "@/components/admin/auth/AuthProvider";
+import {
+  getWebsiteNavigation,
+  type WebsiteNavigationConfig,
+} from "@/lib/website-navigation-api";
 
 type MasterProduct = {
   id: string;
@@ -40,6 +43,7 @@ type WebsiteRow = {
   marketVn?: boolean;
   featured?: boolean;
   sortOrder?: number;
+  websiteCategorySlugs?: string[];
   titleVi?: string;
   shortDescriptionVi?: string | null;
   descriptionVi?: string | null;
@@ -64,6 +68,7 @@ type FormState = {
   status: "DRAFT" | "PUBLISHED";
   featured: boolean;
   sortOrder: number;
+  websiteCategorySlugs: string[];
   coverImageUrl: string;
   images: WebsiteImageDraft[];
 };
@@ -77,6 +82,7 @@ const emptyForm = (): FormState => ({
   status: "DRAFT",
   featured: false,
   sortOrder: 0,
+  websiteCategorySlugs: [],
   coverImageUrl: "",
   images: [],
 });
@@ -216,11 +222,6 @@ function Badge({
 }
 
 export default function WebsiteProductsPageClient() {
-  const { can } = useAuth();
-  const canEdit = can("website.edit");
-  const canDelete = can("website.delete");
-  const canPublish = can("website.publish");
-  const canUpload = can("website.image.upload");
   const [rows, setRows] = useState<WebsiteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -234,6 +235,7 @@ export default function WebsiteProductsPageClient() {
   const [masterResults, setMasterResults] = useState<MasterProduct[]>([]);
   const [searchingMaster, setSearchingMaster] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [websiteNav, setWebsiteNav] = useState<WebsiteNavigationConfig>({ version: 1, items: [] });
 
   async function load() {
     try {
@@ -251,6 +253,20 @@ export default function WebsiteProductsPageClient() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void getWebsiteNavigation("VN")
+      .then((row: any) => {
+        setWebsiteNav(
+          (row?.draftConfig ||
+            row?.publishedConfig ||
+            { version: 1, items: [] }) as WebsiteNavigationConfig,
+        );
+      })
+      .catch(() => {
+        setWebsiteNav({ version: 1, items: [] });
+      });
   }, []);
 
   useEffect(() => {
@@ -304,6 +320,7 @@ export default function WebsiteProductsPageClient() {
       status: row.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT",
       featured: row.featured === true,
       sortOrder: Number(row.sortOrder || 0),
+      websiteCategorySlugs: Array.isArray(row.websiteCategorySlugs) ? row.websiteCategorySlugs : [],
       coverImageUrl: row.coverImageUrl || imgs[0]?.url || "",
       images: imgs,
     });
@@ -395,6 +412,7 @@ export default function WebsiteProductsPageClient() {
       marketInternational: false,
       featured: form.featured,
       sortOrder: Number(form.sortOrder || 0),
+      websiteCategorySlugs: form.websiteCategorySlugs,
       titleVi: form.titleVi.trim(),
       shortDescriptionVi: form.shortDescriptionVi.trim() || undefined,
       descriptionVi: form.descriptionVi.trim() || undefined,
@@ -488,6 +506,39 @@ export default function WebsiteProductsPageClient() {
     });
   }, [groupedRows]);
 
+  const websiteCategoryOptions = useMemo(() => {
+    const options: Array<{ slug: string; label: string }> = [];
+    const seen = new Set<string>();
+
+    for (const item of websiteNav.items || []) {
+      if (!item.enabled) continue;
+
+      const links = [
+        { label: item.labelVi, link: item.link },
+        ...(item.columns || []).flatMap((column) =>
+          (column.links || [])
+            .filter((link) => link.enabled)
+            .map((link) => ({ label: link.labelVi, link: link.link })),
+        ),
+      ];
+
+      for (const entry of links) {
+        const rawLink = String(entry.link || "");
+        if (!rawLink.startsWith("/collections/")) continue;
+        const slug = rawLink
+          .replace("/collections/", "")
+          .split(/[?#]/)[0]
+          .replace(/^\/+|\/+$/g, "")
+          .trim();
+        if (!slug || slug === "all" || seen.has(slug)) continue;
+        seen.add(slug);
+        options.push({ slug, label: entry.label || slug });
+      }
+    }
+
+    return options;
+  }, [websiteNav]);
+
   return (
     <div className="min-h-screen bg-[#f6f6f4]">
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
@@ -504,12 +555,12 @@ export default function WebsiteProductsPageClient() {
             </p>
           </div>
 
-          {canEdit ? <button
+          <button
             onClick={openCreate}
             className="h-11 rounded-xl bg-zinc-950 px-5 text-sm font-semibold text-white shadow-sm hover:bg-zinc-800"
           >
             + Đăng sản phẩm
-          </button> : null}
+          </button>
         </div>
 
         {error && !editorOpen ? (
@@ -639,18 +690,18 @@ export default function WebsiteProductsPageClient() {
                                   </div>
 
                                   <div className="mt-3 flex gap-2">
-                                    {canEdit ? <button
+                                    <button
                                       onClick={() => openEdit(row)}
                                       className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50"
                                     >
                                       Sửa
-                                    </button> : null}
-                                    {canDelete ? <button
+                                    </button>
+                                    <button
                                       onClick={() => void remove(row)}
                                       className="rounded-lg px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
                                     >
                                       Xóa
-                                    </button> : null}
+                                    </button>
                                   </div>
                                 </div>
                               </article>
@@ -867,6 +918,60 @@ export default function WebsiteProductsPageClient() {
                       </div>
                     </label>
 
+                    <div>
+                      <div className="mb-2 text-sm font-medium text-zinc-700">Danh mục trên website</div>
+                      {websiteCategoryOptions.length ? (
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {websiteCategoryOptions.map((option) => {
+                            const checked = form.websiteCategorySlugs.includes(option.slug);
+                            return (
+                              <label
+                                key={option.slug}
+                                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 transition ${
+                                  checked
+                                    ? "border-zinc-950 bg-zinc-950 text-white"
+                                    : "border-zinc-200 bg-white text-zinc-800 hover:border-zinc-400"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setField(
+                                      "websiteCategorySlugs",
+                                      e.target.checked
+                                        ? Array.from(
+                                            new Set([
+                                              ...form.websiteCategorySlugs,
+                                              option.slug,
+                                            ]),
+                                          )
+                                        : form.websiteCategorySlugs.filter(
+                                            (value) => value !== option.slug,
+                                          ),
+                                    );
+                                  }}
+                                  className="h-4 w-4 accent-zinc-950"
+                                />
+                                <span className="text-sm font-medium">{option.label}</span>
+                                <span
+                                  className={`ml-auto text-[11px] ${
+                                    checked ? "text-white/60" : "text-zinc-400"
+                                  }`}
+                                >
+                                  /collections/{option.slug}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                          Chưa tìm thấy danh mục website từ Menu website. Hãy tạo link dạng /collections/ten-danh-muc rồi lưu menu.
+                        </div>
+                      )}
+                    </div>
+
                     <label>
                       <div className="mb-1.5 text-sm font-medium text-zinc-700">Mô tả ngắn</div>
                       <textarea
@@ -933,20 +1038,20 @@ export default function WebsiteProductsPageClient() {
                   </div>
 
                   <div className="grid gap-2 pt-2">
-                    {canPublish ? <button
+                    <button
                       disabled={saving || uploading}
                       onClick={() => void save("PUBLISHED")}
                       className="h-12 rounded-xl bg-zinc-950 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
                     >
                       {saving ? "Đang lưu..." : "Đăng bán"}
-                    </button> : null}
-                    {canEdit ? <button
+                    </button>
+                    <button
                       disabled={saving || uploading}
                       onClick={() => void save("DRAFT")}
                       className="h-11 rounded-xl border border-zinc-300 bg-white text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
                     >
                       Lưu bản nháp
-                    </button> : null}
+                    </button>
                   </div>
                 </div>
               </aside>
