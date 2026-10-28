@@ -16,11 +16,29 @@ export type WebsiteNavColumn = {
 };
 
 export type WebsiteNavPromo = {
+  id: string;
   enabled: boolean;
   imageUrl: string;
   titleVi: string;
   titleEn: string;
   link: string;
+};
+
+export type WebsiteNavigationSettings = {
+  menuFontFamily: "SERIF" | "SANS";
+  menuFontSize: number;
+  menuGap: number;
+  megaMenuHeightVh: number;
+  megaOverlayOpacity: number;
+  headerSticky: boolean;
+  announcementEnabled: boolean;
+  announcementTextVi: string;
+  announcementLink: string;
+
+  // Logo header có thể upload từ Admin. Optional để tương thích config cũ.
+  headerLogoUrl?: string;
+  headerLogoWidth?: number;
+  headerLogoAlign?: "LEFT" | "CENTER" | "RIGHT";
 };
 
 export type WebsiteNavItem = {
@@ -31,11 +49,15 @@ export type WebsiteNavItem = {
   labelEn: string;
   link: string;
   columns: WebsiteNavColumn[];
-  promo: WebsiteNavPromo;
+  promos: WebsiteNavPromo[];
+
+  // Backward compatibility với config cũ.
+  promo?: Omit<WebsiteNavPromo, "id">;
 };
 
 export type WebsiteNavigationConfig = {
   version: number;
+  settings: WebsiteNavigationSettings;
   items: WebsiteNavItem[];
 };
 
@@ -51,7 +73,7 @@ function token() {
 
 async function request(path: string, init?: RequestInit) {
   const t = token();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       Accept: "application/json",
@@ -61,8 +83,13 @@ async function request(path: string, init?: RequestInit) {
     },
     cache: "no-store",
   });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(json?.message || `API error ${res.status}`);
+
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(json?.message || `API error ${response.status}`);
+  }
+
   return json?.data || json;
 }
 
@@ -70,7 +97,10 @@ export function getWebsiteNavigation(market = "VN") {
   return request(`/website/navigation?market=${encodeURIComponent(market)}`);
 }
 
-export function saveWebsiteNavigation(config: WebsiteNavigationConfig, market = "VN") {
+export function saveWebsiteNavigation(
+  config: WebsiteNavigationConfig,
+  market = "VN",
+) {
   return request(`/website/navigation?market=${encodeURIComponent(market)}`, {
     method: "PATCH",
     body: JSON.stringify({ config }),
@@ -78,7 +108,8 @@ export function saveWebsiteNavigation(config: WebsiteNavigationConfig, market = 
 }
 
 export function publishWebsiteNavigation(market = "VN") {
-  return request(`/website/navigation/publish?market=${encodeURIComponent(market)}`, {
-    method: "POST",
-  });
+  return request(
+    `/website/navigation/publish?market=${encodeURIComponent(market)}`,
+    { method: "POST" },
+  );
 }

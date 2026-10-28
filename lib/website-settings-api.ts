@@ -1,16 +1,17 @@
 import { API_BASE } from "@/lib/api-base";
 
 export type WebsiteSettings = {
+  id?: string;
   market: string;
   cartEnabled: boolean;
   checkoutEnabled: boolean;
   newCustomerDiscountEnabled: boolean;
   newCustomerDiscountPercent: number;
   messengerEnabled: boolean;
-  messengerUrl?: string | null;
+  messengerUrl: string;
   zaloEnabled: boolean;
-  zaloUrl?: string | null;
-  defaultBranchId?: string | null;
+  zaloUrl: string;
+  defaultBranchId: string;
 };
 
 function token() {
@@ -25,25 +26,36 @@ function token() {
 
 async function request(path: string, init?: RequestInit) {
   const t = token();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       Accept: "application/json",
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...(t ? { Authorization: `Bearer ${t}` } : {}),
+      ...(init?.headers || {}),
     },
     cache: "no-store",
   });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(json?.message || `API error ${res.status}`);
+
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(json?.message || `API error ${response.status}`);
+  }
+
   return json?.data || json;
 }
 
-export const getWebsiteSettings = (market = "VN") =>
-  request(`/website/settings?market=${encodeURIComponent(market)}`);
+export function getWebsiteSettings(market = "VN") {
+  return request(`/website/settings?market=${encodeURIComponent(market)}`);
+}
 
-export const saveWebsiteSettings = (body: Partial<WebsiteSettings>, market = "VN") =>
-  request(`/website/settings?market=${encodeURIComponent(market)}`, {
+export function saveWebsiteSettings(
+  body: Partial<WebsiteSettings>,
+  market = "VN",
+) {
+  return request(`/website/settings?market=${encodeURIComponent(market)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}

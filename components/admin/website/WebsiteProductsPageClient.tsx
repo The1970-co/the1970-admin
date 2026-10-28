@@ -235,7 +235,17 @@ export default function WebsiteProductsPageClient() {
   const [masterResults, setMasterResults] = useState<MasterProduct[]>([]);
   const [searchingMaster, setSearchingMaster] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const [websiteNav, setWebsiteNav] = useState<WebsiteNavigationConfig>({ version: 1, items: [] });
+  const [websiteNav, setWebsiteNav] = useState<WebsiteNavigationConfig>({ version: 2, settings: {
+  menuFontFamily: "SERIF",
+  menuFontSize: 12,
+  menuGap: 28,
+  megaMenuHeightVh: 48,
+  megaOverlayOpacity: 0.28,
+  headerSticky: true,
+  announcementEnabled: true,
+  announcementTextVi: "THE 1970 — EST. 2015",
+  announcementLink: "",
+}, items: [] });
 
   async function load() {
     try {
@@ -261,11 +271,31 @@ export default function WebsiteProductsPageClient() {
         setWebsiteNav(
           (row?.draftConfig ||
             row?.publishedConfig ||
-            { version: 1, items: [] }) as WebsiteNavigationConfig,
+            { version: 2, settings: {
+  menuFontFamily: "SERIF",
+  menuFontSize: 12,
+  menuGap: 28,
+  megaMenuHeightVh: 48,
+  megaOverlayOpacity: 0.28,
+  headerSticky: true,
+  announcementEnabled: true,
+  announcementTextVi: "THE 1970 — EST. 2015",
+  announcementLink: "",
+}, items: [] }) as WebsiteNavigationConfig,
         );
       })
       .catch(() => {
-        setWebsiteNav({ version: 1, items: [] });
+        setWebsiteNav({ version: 2, settings: {
+  menuFontFamily: "SERIF",
+  menuFontSize: 12,
+  menuGap: 28,
+  megaMenuHeightVh: 48,
+  megaOverlayOpacity: 0.28,
+  headerSticky: true,
+  announcementEnabled: true,
+  announcementTextVi: "THE 1970 — EST. 2015",
+  announcementLink: "",
+}, items: [] });
       });
   }, []);
 

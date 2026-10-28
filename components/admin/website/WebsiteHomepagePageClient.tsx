@@ -10,6 +10,7 @@ import { uploadWebsiteImage } from "@/lib/website-products-api";
 import { useAuth } from "@/components/admin/auth/AuthProvider";
 
 const TYPES: {value:HomepageBlockType;label:string}[] = [
+  {value:"FULL_BLEED_HERO",label:"Hero tràn viền ảnh / video"},
   {value:"HERO_SPLIT",label:"Hero chia 2 cột"},
   {value:"CARD_ROW",label:"Hàng thẻ ảnh"},
   {value:"STORY_WIDE",label:"Bài ảnh lớn ngang"},
@@ -20,14 +21,28 @@ const TYPES: {value:HomepageBlockType;label:string}[] = [
 const uid=(p:string)=>`${p}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
 const blankItem=():HomepageItem=>({
   id:uid("item"),titleVi:"",titleEn:"",subtitleVi:"",subtitleEn:"",
-  bodyVi:"",bodyEn:"",ctaVi:"",ctaEn:"",link:"",mediaMode:"single",autoplayMs:5000,images:[]
+  bodyVi:"",bodyEn:"",ctaVi:"",ctaEn:"",link:"",mediaMode:"single",autoplayMs:5000,images:[],
+  mediaType:"image",videoUrl:""
 });
 function blankBlock(type:HomepageBlockType):HomepageBlock{
-  const count=type==="HERO_SPLIT"?6:type==="CARD_ROW"?3:type==="STORY_SPLIT"?2:type==="PRODUCT_GRID"?0:1;
+  const count=
+    type==="FULL_BLEED_HERO"?1:
+    type==="HERO_SPLIT"?6:
+    type==="CARD_ROW"?3:
+    type==="STORY_SPLIT"?2:
+    type==="PRODUCT_GRID"?0:1;
+
+  const settings=
+    type==="PRODUCT_GRID"
+      ? {limit:8,onlyFeatured:false}
+      : type==="FULL_BLEED_HERO"
+        ? {heightVh:82,contentAlign:"LEFT",overlayOpacity:0.24}
+        : {};
+
   return {
     id:uid("block"),type,enabled:true,
     titleVi:TYPES.find(x=>x.value===type)?.label||"Block mới",titleEn:"",
-    layout:type.toLowerCase(),settings:type==="PRODUCT_GRID"?{limit:8,onlyFeatured:false}:{},
+    layout:type.toLowerCase(),settings,
     items:Array.from({length:count},()=>blankItem())
   };
 }
@@ -197,20 +212,50 @@ export default function WebsiteHomepagePageClient(){
                   <Area label="Nội dung EN" value={item.bodyEn} onChange={v=>patchItem(selected.id,item.id,{bodyEn:v})}/>
                   <div className="grid gap-3 md:grid-cols-2"><Field label="Nút VI" value={item.ctaVi} onChange={v=>patchItem(selected.id,item.id,{ctaVi:v})}/><Field label="Nút EN" value={item.ctaEn} onChange={v=>patchItem(selected.id,item.id,{ctaEn:v})}/></div>
                   <Field label="Link khi bấm" value={item.link} onChange={v=>patchItem(selected.id,item.id,{link:v})} placeholder="/collections/all"/>
-                  <div className="grid gap-3 md:grid-cols-2">
+
+                  {selected.type==="FULL_BLEED_HERO"?<>
+                    <label>
+                      <div className="mb-1 text-xs font-semibold text-neutral-500">Media chính</div>
+                      <select
+                        disabled={!canEdit}
+                        value={item.mediaType||"image"}
+                        onChange={e=>patchItem(selected.id,item.id,{mediaType:e.target.value as "image"|"video"})}
+                        className="h-11 w-full rounded-xl border px-3 text-sm"
+                      >
+                        <option value="image">Ảnh / slideshow</option>
+                        <option value="video">Video</option>
+                      </select>
+                    </label>
+                    {(item.mediaType||"image")==="video"?(
+                      <Field
+                        label="URL video MP4 / WebM"
+                        value={item.videoUrl||""}
+                        onChange={v=>patchItem(selected.id,item.id,{videoUrl:v})}
+                        placeholder="https://.../hero.mp4"
+                      />
+                    ):null}
+                  </>:null}
+
+                  {(selected.type!=="FULL_BLEED_HERO" || (item.mediaType||"image")==="image")?<div className="grid gap-3 md:grid-cols-2">
                     <label><div className="mb-1 text-xs font-semibold text-neutral-500">Kiểu ảnh</div>
                       <select disabled={!canEdit} value={item.mediaMode} onChange={e=>patchItem(selected.id,item.id,{mediaMode:e.target.value as "single"|"slider"})} className="h-11 w-full rounded-xl border px-3 text-sm">
                         <option value="single">1 ảnh</option><option value="slider">Slider nhiều ảnh</option>
                       </select>
                     </label>
                     <Field label="Đổi ảnh mỗi (ms)" value={String(item.autoplayMs)} onChange={v=>patchItem(selected.id,item.id,{autoplayMs:Math.max(1500,Number(v||5000))})}/>
-                  </div>
+                  </div>:null}
                 </div>
                 <div>
-                  <label className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed bg-neutral-50 px-4 py-7 text-center">
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={e=>void upload(selected.id,item,e.target.files)}/>
-                    <div><div className="text-sm font-semibold">+ Upload ảnh</div><div className="mt-1 text-xs text-neutral-400">Chọn nhiều ảnh nếu muốn chạy slider.</div></div>
-                  </label>
+                  {selected.type==="FULL_BLEED_HERO" && (item.mediaType||"image")==="video" ? (
+                    <div className="rounded-xl border bg-neutral-50 p-5 text-sm text-neutral-600">
+                      Video dùng URL MP4/WebM ở cột bên trái. Video ngoài website sẽ autoplay + muted + loop + playsInline.
+                    </div>
+                  ) : (
+                    <label className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed bg-neutral-50 px-4 py-7 text-center">
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={e=>void upload(selected.id,item,e.target.files)}/>
+                      <div><div className="text-sm font-semibold">+ Upload ảnh</div><div className="mt-1 text-xs text-neutral-400">Nếu có từ 2 ảnh trở lên, ngoài website sẽ tự chạy slideshow.</div></div>
+                    </label>
+                  )}
                   <div className="mt-3 grid grid-cols-2 gap-3">{item.images.map((img,i)=><div key={img.id} className="overflow-hidden rounded-xl border">
                     {/* eslint-disable-next-line @next/next/no-img-element */}<img src={img.url} alt="" className="aspect-[4/3] w-full object-cover"/>
                     <div className="p-2"><div className="mb-2 text-[11px] text-neutral-400">Ảnh {i+1}</div><div className="grid grid-cols-3 gap-1">
