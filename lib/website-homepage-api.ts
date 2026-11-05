@@ -1,50 +1,127 @@
-import { API_BASE } from "@/lib/api-base";
+import type {
+  HomepageConfig,
+  HomepageImage,
+  HomepageItem,
+  HomepageBlock,
+  HomepageBlockType,
+} from "./website-homepage-types";
 
-export type HomepageImage = { id: string; url: string; altVi?: string; altEn?: string; link?: string };
-export type HomepageItem = {
-  id: string; titleVi: string; titleEn: string; subtitleVi: string; subtitleEn: string;
-  bodyVi: string; bodyEn: string; ctaVi: string; ctaEn: string; link: string;
-  mediaMode: "single" | "slider"; autoplayMs: number; images: HomepageImage[];
-  mediaType?: "image" | "video";
-  videoUrl?: string;
+export type {
+  HomepageConfig,
+  HomepageImage,
+  HomepageItem,
+  HomepageBlock,
+  HomepageBlockType,
 };
-export type HomepageBlockType = "FULL_BLEED_HERO" | "HERO_SPLIT" | "CARD_ROW" | "STORY_WIDE" | "STORY_SPLIT" | "PRODUCT_GRID";
-export type HomepageBlock = {
-  id: string; type: HomepageBlockType; enabled: boolean; titleVi: string; titleEn: string;
-  layout: string; settings: Record<string, any>; items: HomepageItem[];
-};
-export type HomepageConfig = { version: number; blocks: HomepageBlock[] };
+
+const PROD_CORE =
+  "https://the1970-core-api-production.up.railway.app";
+
+function base() {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname.toLowerCase();
+
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1"
+    ) {
+      return (
+        process.env.NEXT_PUBLIC_CORE_API_URL ||
+        process.env.NEXT_PUBLIC_API_URL ||
+        "http://localhost:3001"
+      ).replace(/\/$/, "");
+    }
+
+    if (
+      host === "operations.the1970.co"
+    ) {
+      return PROD_CORE;
+    }
+  }
+
+  return (
+    process.env.NEXT_PUBLIC_CORE_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    PROD_CORE
+  ).replace(/\/$/, "");
+}
 
 function token() {
   if (typeof window === "undefined") return "";
-  return localStorage.getItem("token") || localStorage.getItem("accessToken") || localStorage.getItem("the1970_token") || "";
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken") ||
+    localStorage.getItem("the1970_token") ||
+    ""
+  );
 }
 
-async function request(path: string, init?: RequestInit) {
+async function request(
+  path: string,
+  init?: RequestInit,
+) {
   const t = token();
-  const res = await fetch(`${API_BASE}${path}`, {
+
+  const res = await fetch(`${base()}${path}`, {
     ...init,
     headers: {
       Accept: "application/json",
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...(t ? { Authorization: `Bearer ${t}` } : {}),
+      ...(init?.body
+        ? { "Content-Type": "application/json" }
+        : {}),
+      ...(t
+        ? { Authorization: `Bearer ${t}` }
+        : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",
   });
+
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(json?.message || `API error ${res.status}`);
+
+  if (!res.ok) {
+    throw new Error(
+      json?.message || `API error ${res.status}`,
+    );
+  }
+
   return json?.data || json;
 }
 
-export function getHomepageAdmin(market = "VN") {
-  return request(`/website/homepage?market=${encodeURIComponent(market)}`);
+export function getHomepageAdmin(
+  market = "VN",
+) {
+  return request(
+    `/website/homepage?market=${encodeURIComponent(
+      market,
+    )}`,
+  );
 }
-export function saveHomepageDraft(config: HomepageConfig, market = "VN") {
-  return request(`/website/homepage?market=${encodeURIComponent(market)}`, {
-    method: "PATCH", body: JSON.stringify({ config }),
-  });
+
+export function saveHomepageDraft(
+  config: HomepageConfig,
+  market = "VN",
+) {
+  return request(
+    `/website/homepage?market=${encodeURIComponent(
+      market,
+    )}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ config }),
+    },
+  );
 }
-export function publishHomepage(market = "VN") {
-  return request(`/website/homepage/publish?market=${encodeURIComponent(market)}`, { method: "POST" });
+
+export function publishHomepage(
+  market = "VN",
+) {
+  return request(
+    `/website/homepage/publish?market=${encodeURIComponent(
+      market,
+    )}`,
+    {
+      method: "POST",
+    },
+  );
 }
