@@ -147,6 +147,19 @@ type SavedAccessoryTemplate = {
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
 const PANTS_SIZES = ["29", "30", "31", "32", "34", "36"];
+
+// Cố định thứ tự size áo/quần thay vì phụ thuộc thứ tự trả về từ API hoặc DB.
+function sortProductionSizes(sizes: string[]): string[] {
+  const rank = (value: string) => {
+    const size = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+    const normalized = size === "2XL" ? "XXL" : size;
+    const shirtIndex = SHIRT_SIZES.indexOf(normalized);
+    if (shirtIndex >= 0) return shirtIndex;
+    if (/^\d+$/.test(normalized)) return 100 + Number(normalized);
+    return 1000;
+  };
+  return [...sizes].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, "vi", { numeric: true }));
+}
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Chưa triển khai",
   PLANNING: "Đang lên kế hoạch",
@@ -836,7 +849,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
       setLiningAllocated(liningMeters);
       setLiningAllocatedKg(liningKg);
       const ss = Array.isArray(o.sizeSet) && o.sizeSet.length ? o.sizeSet : o.productKind === "PANTS" ? PANTS_SIZES : SHIRT_SIZES;
-      setSizeSet(ss);
+      setSizeSet(sortProductionSizes(ss));
       setRatio(o.sizeRatio && typeof o.sizeRatio === "object" ? o.sizeRatio : Object.fromEntries(ss.map((x: string) => [x, 1])));
       if (o.sizes?.length) {
         const actualDraft: Record<string, string> = {};
@@ -881,7 +894,7 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
     const rows = buildTemplateMaterials(template, meta.accessories);
     setMaterials(rows);
     setOrder((current: any) => ({ ...current, productKind: template.productKind }));
-    setSizeSet([...template.sizes]);
+    setSizeSet(sortProductionSizes([...template.sizes]));
     setRatio(Object.fromEntries(template.sizes.map((size) => [size, 1])));
     setAccessoryQ("");
     setAccessoryType("ALL");
@@ -1268,17 +1281,53 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
   if (!order) return <Modal title="Lệnh sản xuất" onClose={onClose} wide><div className="p-8">Đang tải...</div></Modal>;
   if (!permittedStepNumbers.length) return <Modal title={order.code || "Lệnh sản xuất"} onClose={onClose} wide><div className="p-8 text-sm text-neutral-500">Tài khoản chưa được cấp quyền vào bước nào của quy trình sản xuất.</div></Modal>;
 
-  async function saveSupplySettings() {
+  function confirmFactoryChange() {
+    if (String(order?.productionPartnerId || "") === String(order?.factory?.id || "")) return true;
+    const selectedFactory = meta.factories.find((f) => f.id === order?.productionPartnerId);
+    return window.confirm(
+      `Đổi nhà may của lệnh ${order?.code || ""} từ "${order?.factory?.name || "—"}" sang "${selectedFactory?.name || "—"}"?\n\n` +
+      "Dữ liệu vải, NPL, size và sản lượng của lệnh sẽ được giữ nguyên. Nếu đã gửi lệnh hoặc xuất phiếu, cần thông báo lại cho nhà may."
+    );
+  }
+
+  async function saveFactoryChange() {
+    if (busy) return;
     try {
-      setBusy(true);
       setError("");
+      const productionPartnerId = String(order?.productionPartnerId || "").trim();
+      if (!productionPartnerId) throw new Error("Chưa chọn nhà may / nhà sản xuất.");
+      if (productionPartnerId === String(order?.factory?.id || "")) return;
+      if (!confirmFactoryChange()) return;
+      setBusy(true);
+      await productionApi(`/production/orders/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ productionPartnerId }),
+      });
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không đổi được nhà may / nhà sản xuất.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveSupplySettings() {
+    if (busy) return;
+    try {
+      setError("");
+      const productionPartnerId = String(order?.productionPartnerId || "").trim();
+      if (!productionPartnerId) throw new Error("Chưa chọn nhà may / nhà sản xuất.");
       const factoryMode=String(order?.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY";
       const provisional=Number(order?.plannedQtyOverride||0);
       if(factoryMode&&(!Number.isInteger(provisional)||provisional<=0))throw new Error("Nhập số lượng tạm tính lớn hơn 0.");
-      await productionApi(`/production/orders/${id}`,{method:"PATCH",body:JSON.stringify({fabricSupplyMode:factoryMode?"FACTORY":"COMPANY",plannedQtyOverride:factoryMode?provisional:null})});
+      if (!confirmFactoryChange()) return;
+      setBusy(true);
+      await productionApi(`/production/orders/${id}`,{method:"PATCH",body:JSON.stringify({productionPartnerId,fabricSupplyMode:factoryMode?"FACTORY":"COMPANY",plannedQtyOverride:factoryMode?provisional:null})});
       await load();
+      onChanged();
       goToNextPermitted(1);
-    }catch(e){setError(e instanceof Error?e.message:"Không lưu được chế độ cấp vải.");}
+    }catch(e){setError(e instanceof Error?e.message:"Không lưu được thông tin lệnh / chế độ cấp vải.");}
     finally{setBusy(false);}
   }
 
@@ -1353,7 +1402,36 @@ function OrderWizard({ id, meta, canEdit, canCalculate, canManage, isAdmin, canV
           <div className="rounded-3xl border p-5">
             <div className="flex gap-4">
               <div className="h-28 w-24 overflow-hidden rounded-2xl bg-neutral-100">{(order.sourceType !== "SAMPLE" || canViewSampleSource) && order.sourceImageUrl && <img src={asset(order.sourceImageUrl)} className="h-full w-full object-cover" />}</div>
-              <div><div className="text-xs font-semibold text-neutral-400">{order.sourceType === "PRODUCT" ? "Mã cũ từ danh sách sản phẩm" : canViewSampleSource ? "Mẫu từ triển khai mẫu" : "Nguồn mẫu đã ẩn"}</div><h3 className="mt-1 text-xl font-semibold">{order.sourceType === "SAMPLE" && !canViewSampleSource ? "Mẫu triển khai · Đã ẩn theo phân quyền" : `${order.sourceCode} · ${order.sourceName || ""}`}</h3><div className="mt-3 text-sm">Nhà may: <b>{order.factory?.name}</b></div></div>
+              <div><div className="text-xs font-semibold text-neutral-400">{order.sourceType === "PRODUCT" ? "Mã cũ từ danh sách sản phẩm" : canViewSampleSource ? "Mẫu từ triển khai mẫu" : "Nguồn mẫu đã ẩn"}</div><h3 className="mt-1 text-xl font-semibold">{order.sourceType === "SAMPLE" && !canViewSampleSource ? "Mẫu triển khai · Đã ẩn theo phân quyền" : `${order.sourceCode} · ${order.sourceName || ""}`}</h3><div className="mt-3 text-sm">Nhà may hiện tại: <b>{order.factory?.name || "—"}</b></div></div>
+            </div>
+            <div className="mt-4 rounded-2xl border p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1">
+                  <Field l="Nhà sản xuất / nhà may">
+                    <select
+                      className={input}
+                      value={String(order.productionPartnerId || "")}
+                      disabled={busy}
+                      onChange={(e) => setOrder((current: any) => ({ ...current, productionPartnerId: e.target.value }))}
+                    >
+                      <option value="">Chọn nhà sản xuất</option>
+                      {order.factory && !meta.factories.some((f) => f.id === order.factory.id) && (
+                        <option value={order.factory.id}>{order.factory.code} · {order.factory.name} (ngừng hoạt động)</option>
+                      )}
+                      {meta.factories.map((f) => <option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy || !order.productionPartnerId || order.productionPartnerId === order.factory?.id}
+                  onClick={() => void saveFactoryChange()}
+                  className="shrink-0 rounded-xl border border-neutral-900 bg-white px-4 py-2.5 text-sm font-semibold disabled:opacity-40"
+                >
+                  Lưu nhà sản xuất
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-neutral-500">Có thể đổi nhà may sau khi tạo lệnh. Thông tin vải, NPL, size và sản lượng không thay đổi.</div>
             </div>
             <div className="mt-4 rounded-2xl border p-4">
               <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={String(order.fabricSupplyMode||"COMPANY").toUpperCase()==="FACTORY"} onChange={(e)=>setOrder((x:any)=>({...x,fabricSupplyMode:e.target.checked?"FACTORY":"COMPANY"}))}/><span><b>Nhà may tự cấp vải</b><span className="mt-1 block text-xs text-neutral-500">Bật khi xưởng tự lo vải. Lệnh vẫn xuất phụ kiện được mà không cần chọn cây vải.</span></span></label>
@@ -1583,7 +1661,7 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
       setSizeSet(sizeSet.filter((x: string) => x !== size));
       const next = { ...ratio }; delete next[size]; setRatio(next);
     } else {
-      setSizeSet([...sizeSet, size]);
+      setSizeSet(sortProductionSizes([...sizeSet, size]));
       setRatio({ ...ratio, [size]: ratio[size] || 1 });
     }
   }
@@ -1673,8 +1751,8 @@ function SizeRatioEditor({ order, setOrder, sizeSet, setSizeSet, ratio, setRatio
 
       <div className="flex flex-wrap gap-2"><button onClick={() => { const next=[...SHIRT_SIZES]; setOrder({ ...order, productKind: "SHIRT" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "SHIRT" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size áo</button><button onClick={() => { const next=[...PANTS_SIZES]; setOrder({ ...order, productKind: "PANTS" }); setSizeSet(next); setRatio(Object.fromEntries(next.map(x=>[x,1]))); }} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${order.productKind === "PANTS" ? "bg-neutral-950 text-white" : "bg-white"}`}>Size quần</button></div>
       <div><b>Chọn dải size</b><div className="mt-3 flex flex-wrap gap-2">{preset.map((size) => { const active = sizeSet.includes(size); return <button key={size} onClick={() => toggle(size)} className={`min-w-14 rounded-2xl border px-4 py-3 text-base font-black ${active ? "border-neutral-950 bg-neutral-950 text-white" : "bg-white text-neutral-400"}`}>{size}</button>; })}</div></div>
-      <div><b>Tỷ lệ từng size</b><div className="mt-3 grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">{sizeSet.map((size: string) => <div key={size} className="rounded-2xl border bg-neutral-50 p-3 text-center"><div className="text-lg font-black">{size}</div><input type="number" min="0" className={`${input} mt-2 text-center font-bold`} value={ratio[size] ?? 1} onChange={(e) => setRatio({ ...ratio, [size]: Number(e.target.value || 0) })} /></div>)}</div></div>
-      <div className="rounded-2xl bg-neutral-50 p-4 text-sm">Tỷ lệ hiện tại: <b>{sizeSet.map((s: string) => `${s}:${ratio[s] || 0}`).join(" · ") || "Chưa chọn"}</b></div>
+      <div><b>Tỷ lệ từng size</b><div className="mt-3 grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">{sortProductionSizes(sizeSet).map((size: string) => <div key={size} className="rounded-2xl border bg-neutral-50 p-3 text-center"><div className="text-lg font-black">{size}</div><input type="number" min="0" className={`${input} mt-2 text-center font-bold`} value={ratio[size] ?? 1} onChange={(e) => setRatio({ ...ratio, [size]: Number(e.target.value || 0) })} /></div>)}</div></div>
+      <div className="rounded-2xl bg-neutral-50 p-4 text-sm">Tỷ lệ hiện tại: <b>{sortProductionSizes(sizeSet).map((s: string) => `${s}:${ratio[s] || 0}`).join(" · ") || "Chưa chọn"}</b></div>
       <div className="flex justify-end"><button disabled={busy || !sizeSet.length} onClick={onNext} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Lưu size + vải lót</button></div>
     </div>
   );
@@ -1700,7 +1778,7 @@ function groupSizes(rows: any[]) {
 }
 
 function Results({ c, editable = false, actualCut = {}, setActualCut, onSaveActual, busy = false, history = [], selectedMaterialCount = 0, hideMaterials = false }: { c: any; editable?: boolean; actualCut?: Record<string,string>; setActualCut?: (x:Record<string,string>)=>void; onSaveActual?:()=>void; busy?:boolean; history?:any[]; selectedMaterialCount?:number; hideMaterials?:boolean }) {
-  const sizes = Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[];
+  const sizes = sortProductionSizes(Array.from(new Set((c.colors || []).flatMap((x: any) => Object.keys(x.sizes || {})))) as string[]);
   const totalPlanned = Number(c.totalPlannedQty ?? c.totalQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number(x.plannedQty||0),0));
   const persistedActual = Number(c.totalActualQty ?? (c.colors || []).reduce((sum:number,x:any)=>sum+Number((x.actualQty ?? x.plannedQty) || 0),0));
   const draftActual = editable
@@ -2137,16 +2215,75 @@ function Step6CompactReview({calc,order}:{calc:any;order:any}) {
 }
 
 function FactoryModal({ factories, onClose, onSaved }: { factories: FactoryItem[]; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState<any>({ name: "", code: "", contactName: "", phone: "" });
+  const emptyDraft = () => ({ name: "", code: "", contactName: "", phone: "" });
+  const [f, setF] = useState<any>(emptyDraft);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
-  async function save() {
-    try {
-      await productionApi("/production/factories", { method: "POST", body: JSON.stringify(f) });
-      setF({ name: "", code: "", contactName: "", phone: "" });
-      await onSaved();
-    } catch (e) { setError(e instanceof Error ? e.message : "Không tạo được nhà may."); }
+  const [saving, setSaving] = useState(false);
+
+  function startEdit(x: FactoryItem) {
+    setEditingId(x.id);
+    setF({ name: x.name, code: x.code, contactName: x.contactName || "", phone: x.phone || "" });
+    setError("");
   }
-  return <Modal title="Nhà may / xưởng" onClose={onClose}><div className="grid gap-5 p-5 md:grid-cols-2"><div className="max-h-96 overflow-y-auto rounded-2xl border">{factories.map((x) => <div key={x.id} className="border-b p-3 text-sm"><b>{x.code} · {x.name}</b><div className="text-xs text-neutral-400">{x.contactName || ""} {x.phone || ""}</div></div>)}</div><div className="space-y-3">{error && <Err x={error} />}<Field l="Tên"><input className={input} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field l="Mã"><input className={input} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="Tự sinh nếu trống" /></Field><Field l="Liên hệ"><input className={input} value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field l="SĐT"><input className={input} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field><button onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-2.5 font-semibold text-white">Tạo nhà may</button></div></div></Modal>;
+  function startCreate() {
+    setEditingId(null);
+    setF(emptyDraft());
+    setError("");
+  }
+
+  async function save() {
+    if (saving) return;
+    if (!String(f.name || "").trim()) { setError("Phải nhập tên nhà may / xưởng."); return; }
+    try {
+      setSaving(true);
+      setError("");
+      await productionApi(editingId ? `/production/factories/${editingId}` : "/production/factories", {
+        method: editingId ? "PATCH" : "POST",
+        body: JSON.stringify({ ...f, name: String(f.name).trim() }),
+      });
+      startCreate();
+      await onSaved();
+    } catch (e) { setError(e instanceof Error ? e.message : "Không lưu được nhà may."); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Modal title="Nhà may / xưởng" onClose={onClose}>
+      <div className="grid gap-5 p-5 md:grid-cols-2">
+        <div className="max-h-96 overflow-y-auto rounded-2xl border">
+          {factories.map((x) => (
+            <button
+              key={x.id}
+              type="button"
+              disabled={saving}
+              onClick={() => startEdit(x)}
+              className={`block w-full border-b p-3 text-left text-sm hover:bg-neutral-50 ${editingId === x.id ? "bg-neutral-100" : ""}`}
+            >
+              <b>{x.code} · {x.name}</b>
+              <div className="text-xs text-neutral-400">{x.contactName || ""} {x.phone || ""}</div>
+              <div className="mt-1 text-[11px] text-neutral-500">Bấm để chỉnh sửa</div>
+            </button>
+          ))}
+        </div>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <b className="text-sm">{editingId ? "Chỉnh sửa nhà may" : "Tạo nhà may"}</b>
+            {editingId && <button type="button" disabled={saving} onClick={startCreate} className="rounded-xl border px-3 py-1.5 text-xs font-semibold">+ Tạo mới</button>}
+          </div>
+          {error && <Err x={error} />}
+          <Field l="Tên"><input className={input} disabled={saving} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+          <Field l="Mã"><input className={input} disabled={saving} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="Tự sinh nếu trống" /></Field>
+          <Field l="Liên hệ"><input className={input} disabled={saving} value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field>
+          <Field l="SĐT"><input className={input} disabled={saving} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+          {editingId && <p className="text-xs text-neutral-500">Đổi tên ở đây sẽ cập nhật tên nhà may trên tất cả lệnh đang sử dụng nhà may này.</p>}
+          <button disabled={saving} onClick={() => void save()} className="w-full rounded-xl bg-neutral-950 py-2.5 font-semibold text-white disabled:opacity-40">
+            {saving ? "Đang lưu..." : editingId ? "Lưu thay đổi nhà may" : "Tạo nhà may"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 
