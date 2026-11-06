@@ -663,16 +663,8 @@ export default function MobileProductsPage() {
   }, [branchId, status, category, query]);
 
   const visibleProducts = useMemo(() => {
-    const categoryFiltered =
-      category === "all"
-        ? [...products]
-        : products.filter(
-            (product) =>
-              String(product.category || "").trim().toLocaleLowerCase("vi") ===
-              category.trim().toLocaleLowerCase("vi"),
-          );
-
-    return categoryFiltered.sort((a, b) => {
+    // API mobile đã lọc danh mục ở database, không lọc lại trên dữ liệu giới hạn.
+    return [...products].sort((a, b) => {
       const av = getMobileProductSortValue(a, sortKey);
       const bv = getMobileProductSortValue(b, sortKey);
 
@@ -696,7 +688,7 @@ export default function MobileProductsPage() {
         sensitivity: "base",
       });
     });
-  }, [products, category, sortKey, sortDirection]);
+  }, [products, sortKey, sortDirection]);
 
   const summary = useMemo(() => {
     return visibleProducts.reduce(
