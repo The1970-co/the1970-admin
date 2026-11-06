@@ -203,8 +203,28 @@ export default function WebsiteNavigationPageClient() {
     try {
       setUploadingLogo(true);
       setError("");
-      const url = await uploadWebsiteImage(file);
-      patchSettings({ headerLogoUrl: url });
+
+      const uploadedUrl = await uploadWebsiteImage(file);
+
+      // Tránh cache nếu backend/CDN trả lại URL cũ hoặc cùng public-id.
+      const separator = uploadedUrl.includes("?") ? "&" : "?";
+      const versionedUrl = `${uploadedUrl}${separator}v=${Date.now()}`;
+
+      const nextConfig: WebsiteNavigationConfig = {
+        ...config,
+        settings: {
+          ...config.settings,
+          headerLogoUrl: versionedUrl,
+        },
+      };
+
+      // Preview đổi ngay.
+      setConfig(nextConfig);
+
+      // Tự lưu draft ngay sau upload để refresh không mất logo.
+      if (canEdit) {
+        await saveWebsiteNavigation(nextConfig, "VN");
+      }
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Upload logo header thất bại.",
@@ -538,6 +558,7 @@ export default function WebsiteNavigationPageClient() {
                     {config.settings.headerLogoUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
+                        key={config.settings.headerLogoUrl}
                         src={config.settings.headerLogoUrl}
                         alt="The 1970"
                         style={{
