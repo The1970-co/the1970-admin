@@ -203,28 +203,8 @@ export default function WebsiteNavigationPageClient() {
     try {
       setUploadingLogo(true);
       setError("");
-
-      const uploadedUrl = await uploadWebsiteImage(file);
-
-      // Tránh cache nếu backend/CDN trả lại URL cũ hoặc cùng public-id.
-      const separator = uploadedUrl.includes("?") ? "&" : "?";
-      const versionedUrl = `${uploadedUrl}${separator}v=${Date.now()}`;
-
-      const nextConfig: WebsiteNavigationConfig = {
-        ...config,
-        settings: {
-          ...config.settings,
-          headerLogoUrl: versionedUrl,
-        },
-      };
-
-      // Preview đổi ngay.
-      setConfig(nextConfig);
-
-      // Tự lưu draft ngay sau upload để refresh không mất logo.
-      if (canEdit) {
-        await saveWebsiteNavigation(nextConfig, "VN");
-      }
+      const url = await uploadWebsiteImage(file);
+      patchSettings({ headerLogoUrl: url });
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Upload logo header thất bại.",
@@ -558,14 +538,13 @@ export default function WebsiteNavigationPageClient() {
                     {config.settings.headerLogoUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        key={config.settings.headerLogoUrl}
                         src={config.settings.headerLogoUrl}
                         alt="The 1970"
                         style={{
                           width: `${Math.max(
                             40,
                             Math.min(
-                              260,
+                              420,
                               Number(config.settings.headerLogoWidth || 118),
                             ),
                           )}px`,
@@ -604,7 +583,7 @@ export default function WebsiteNavigationPageClient() {
                         <input
                           type="range"
                           min={40}
-                          max={260}
+                          max={420}
                           step={2}
                           disabled={!canEdit}
                           value={Number(config.settings.headerLogoWidth || 118)}
@@ -618,14 +597,14 @@ export default function WebsiteNavigationPageClient() {
                         <input
                           type="number"
                           min={40}
-                          max={260}
+                          max={420}
                           disabled={!canEdit}
                           value={Number(config.settings.headerLogoWidth || 118)}
                           onChange={(e) =>
                             patchSettings({
                               headerLogoWidth: Math.max(
                                 40,
-                                Math.min(260, Number(e.target.value || 118)),
+                                Math.min(420, Number(e.target.value || 118)),
                               ),
                             })
                           }
