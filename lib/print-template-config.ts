@@ -119,6 +119,7 @@ function defaultShipping80TemplateHtml() {
 
   {{financialBlock}}
   {{shippingFeeBlock}}
+  {{partialDeliveryBlock}}
   {{noteBlock}}
 
   <div style="position:absolute;left:2.2mm;right:2.2mm;top:29mm;bottom:15.5mm;overflow:hidden;">
@@ -169,6 +170,7 @@ function defaultShippingLongTemplateHtml() {
     </tr>
     {{financialBlock}}
     {{shippingFeeBlock}}
+    {{partialDeliveryBlock}}
     {{noteBlock}}
   </table>
 

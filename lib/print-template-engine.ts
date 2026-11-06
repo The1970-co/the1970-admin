@@ -717,6 +717,31 @@ function shortenNote(value?: string, max = 140) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+function isGhnPartialDeliveryOrder(order: any) {
+  const shipmentMetadata = parseMaybeJson(order?.shipment?.metadata) || order?.shipment?.metadata || {};
+  const shippingSnapshot = parseMaybeJson(order?.shippingSnapshot) || order?.shippingSnapshot || {};
+  const instructionText = [
+    order?.note,
+    order?.shippingNote,
+    shipmentMetadata?.note,
+    shipmentMetadata?.requestPayload?.note,
+    shippingSnapshot?.shippingNote,
+  ].filter(Boolean).join(" | ");
+  return (
+    shipmentMetadata?.ghnPartialDelivery === true ||
+    shippingSnapshot?.ghnPartialDelivery === true ||
+    order?.ghnPartialDelivery === true ||
+    /giao\s*(?:hàng\s*)?1\s*phần\s*[-–]\s*trả\s*1\s*phần/i.test(instructionText)
+  );
+}
+
+function withoutPartialDeliveryNote(note: string) {
+  return String(note || "")
+    .split(/\s*\|\s*/g)
+    .filter((part) => !/giao\s*(?:hàng\s*)?1\s*phần\s*[-–]\s*trả\s*1\s*phần/i.test(part))
+    .join(" | ");
+}
+
 function buildCleanNote(
   order: any,
   meta: ReturnType<typeof parseStructuredNote>,
@@ -757,7 +782,7 @@ function buildShippingTemplateHtml(params: {
   const hasTracking = Boolean(trackingCode);
   const isSquare80 = template.paperSize === "80mm";
   const ghnSortCodeBlock = buildGhnSortCodeBlock(ghnSortCode, isSquare80);
-  const squareItemsTop = ghnSortCodeBlock ? "36mm" : "29mm";
+  const squareItemsTop = `${(ghnSortCodeBlock ? 36 : 29) + (data.partialDeliveryBlock ? 6 : 0)}mm`;
 
   if (isSquare80) {
     return `
@@ -779,6 +804,7 @@ function buildShippingTemplateHtml(params: {
   </div>
 
   ${data.financialBlock || ""}
+  ${data.partialDeliveryBlock || ""}
   ${ghnSortCodeBlock}
 
   <div style="position:absolute;left:2.3mm;right:2.3mm;top:${squareItemsTop};bottom:15mm;overflow:hidden;">
@@ -834,9 +860,11 @@ function buildShippingTemplateHtml(params: {
     <div style="margin-top:2px;"><strong>Đ/C:</strong> ${data.shippingAddress}</div>
   </div>
 
+  ${data.partialDeliveryBlock || ""}
   ${noteValue ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>` : ""}
 
   ${data.financialBlock || ""}
+  ${data.partialDeliveryBlock || ""}
   ${ghnSortCodeBlock}
 
   <div style="border-top:1px dashed #999;border-bottom:1px dashed #999;padding:6px 0;margin-bottom:8px;">
@@ -1254,7 +1282,15 @@ export function renderOrderTemplateHtml(params: {
 
   const itemsRows = `${baseItemsRows}${totalQtyRow}`;
   const shippingAddress = buildShippingAddress(order, meta.address || "");
-  const noteValue = template.showNote ? buildCleanNote(order, meta) : "";
+  const hasPartialDelivery = template.templateType === "shipping" && isGhnPartialDeliveryOrder(order);
+  const noteValue = template.showNote
+    ? hasPartialDelivery
+      ? withoutPartialDeliveryNote(buildCleanNote(order, meta))
+      : buildCleanNote(order, meta)
+    : "";
+  const partialDeliveryBlock = hasPartialDelivery
+    ? `<div style="border:1.5px solid #000;padding:2px 3px;margin:2px 0;font-size:10px;font-weight:900;line-height:1.15;text-align:center;">GIAO HÀNG 1 PHẦN - THU HỒI SP CŨ</div>`
+    : "";
 
   const orderMetaCells = [
     showOrderCode
@@ -1362,6 +1398,7 @@ export function renderOrderTemplateHtml(params: {
       order?.shipment?.carrier || meta.shippingPartner || "",
     ),
     note: escapeHtml(noteValue),
+    partialDeliveryBlock,
     ghnSortCode: escapeHtml(ghnSortCode),
     ghnSortCodeBlock,
 
@@ -1456,11 +1493,12 @@ export function renderOrderTemplateHtml(params: {
   ${customerBlock}
   ${codBlock}
   ${shippingFeeBlock}
+  ${partialDeliveryBlock}
   ${noteBlock}
   ${ghnSortCodeBlock}
   ${requiredNoteBlock}
 
-  ${showItems ? `<div style="position:absolute;left:2.2mm;right:2.2mm;top:${ghnSortCodeBlock || requiredNoteBlock ? (codBlock ? "37mm" : "34mm") : codBlock ? "29mm" : "25mm"};bottom:15.5mm;overflow:hidden;">
+  ${showItems ? `<div style="position:absolute;left:2.2mm;right:2.2mm;top:${parseInt(ghnSortCodeBlock || requiredNoteBlock ? (codBlock ? "37" : "34") : codBlock ? "29" : "25", 10) + (partialDeliveryBlock ? 6 : 0)}mm;bottom:15.5mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9px;line-height:1.03;">
       <thead>
         <tr>
@@ -1494,13 +1532,23 @@ export function renderOrderTemplateHtml(params: {
     template.templateHtml &&
     template.templateHtml.includes("{{itemsRows}}")
   ) {
-    const templateHtmlForRender =
+    let templateHtmlForRender =
       template.templateType === "shipping" && !templateHasGhnSortToken && ghnSortCodeBlock
         ? String(template.templateHtml || "").replace(
           "{{financialBlock}}",
           "{{financialBlock}}\n{{ghnSortCodeBlock}}",
         )
         : template.templateHtml;
+
+    // Các mẫu in cũ lưu ở localStorage chưa có token mới: tự chèn vào phiếu giao.
+    // Không xoá hoặc reset mẫu in tuỳ chỉnh của từng chi nhánh.
+    if (template.templateType === "shipping" && partialDeliveryBlock &&
+        !String(templateHtmlForRender || "").includes("{{partialDeliveryBlock}}")) {
+      const target = ["{{noteBlock}}", "{{shippingFeeBlock}}", "{{financialBlock}}"]
+        .find((token) => String(templateHtmlForRender || "").includes(token));
+      if (target) templateHtmlForRender = String(templateHtmlForRender).replace(target, `{{partialDeliveryBlock}}\n${target}`);
+      else templateHtmlForRender = String(templateHtmlForRender).replace(/(<\/div>\s*)$/, "{{partialDeliveryBlock}}$1");
+    }
 
     let html = replaceAllTokens(templateHtmlForRender, {
       ...data,
@@ -1516,17 +1564,12 @@ export function renderOrderTemplateHtml(params: {
 
     if (template.templateType === "shipping" && template.paperSize === "80mm") {
       const hasCod = Number(codAmount || amountDue || 0) > 0;
-      const nextItemsTop = ghnSortCodeBlock
-        ? hasCod
-          ? "37mm"
-          : "34mm"
+      const baseTopMm = ghnSortCodeBlock
+        ? (hasCod ? 37 : 34)
         : noteValue
-          ? hasCod
-            ? "34mm"
-            : "31mm"
-          : hasCod
-            ? "29mm"
-            : "25mm";
+          ? (hasCod ? 34 : 31)
+          : (hasCod ? 29 : 25);
+      const nextItemsTop = `${baseTopMm + (partialDeliveryBlock ? 6 : 0)}mm`;
 
       html = html
         .replaceAll("top:29mm;bottom:15.5mm", `top:${nextItemsTop};bottom:15.5mm`)

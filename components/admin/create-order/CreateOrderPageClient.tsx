@@ -185,6 +185,9 @@ type DeliveryRequirement =
   | "KHONGCHOXEMHANG";
 
 const DELIVERY_FAILED_FEE_NOTE = "Giao hàng k thành công thu 30k";
+// GHN sử dụng ghi chú để báo shipper. Tài khoản GHN phải được kích hoạt dịch vụ.
+const GHN_PARTIAL_DELIVERY_NOTE = "Giao 1 phần - Trả 1 phần";
+const GHN_OLD_ITEM_RETURN_NOTE = "Thu hồi sản phẩm cũ của khách về shop khi đổi hàng";
 
 type OrderLine = {
   productId?: string | null;
@@ -1323,15 +1326,17 @@ function requiredNoteLabel(value: DeliveryRequirement) {
 
 function mapRequiredNoteForGhn(value: DeliveryRequirement) {
   if (value === "CHOXEMHANG_KHONGTHU") return "CHOXEMHANGKHONGTHU";
-  if (value === "CHOXEMHANG_CHOTHU") return "CHOXEMHANG";
+  if (value === "CHOXEMHANG_CHOTHU") return "CHOTHUHANG";
   return "KHONGCHOXEMHANG";
 }
 
 function deliveryRequirementLabels(input: {
   deliveryRequirement: DeliveryRequirement;
   failedDeliveryFee30k?: boolean;
+  ghnPartialDelivery?: boolean;
 }) {
   return [
+    ...(input.ghnPartialDelivery ? [GHN_PARTIAL_DELIVERY_NOTE, GHN_OLD_ITEM_RETURN_NOTE] : []),
     requiredNoteLabel(input.deliveryRequirement),
     input.failedDeliveryFee30k ? DELIVERY_FAILED_FEE_NOTE : "",
   ].filter(Boolean);
@@ -1340,6 +1345,7 @@ function deliveryRequirementLabels(input: {
 function deliveryRequirementSummary(input: {
   deliveryRequirement: DeliveryRequirement;
   failedDeliveryFee30k?: boolean;
+  ghnPartialDelivery?: boolean;
 }) {
   return deliveryRequirementLabels(input).join(" | ");
 }
@@ -1348,6 +1354,7 @@ function buildCustomerFacingShippingNote(input: {
   orderNote?: string;
   deliveryRequirement: DeliveryRequirement;
   failedDeliveryFee30k?: boolean;
+  ghnPartialDelivery?: boolean;
 }) {
   const parts = [
     ...deliveryRequirementLabels(input),
@@ -2141,6 +2148,7 @@ export default function CreateOrderPageClient() {
   const [deliveryRequirement, setDeliveryRequirement] =
     useState<DeliveryRequirement>("CHOXEMHANG_KHONGTHU");
   const [failedDeliveryFee30k, setFailedDeliveryFee30k] = useState(true);
+  const [ghnPartialDelivery, setGhnPartialDelivery] = useState(false);
 
   const [ghnDistrictId, setGhnDistrictId] = useState<number | undefined>();
   const [ghnWardCode, setGhnWardCode] = useState<string | undefined>();
@@ -2325,16 +2333,24 @@ export default function CreateOrderPageClient() {
           setBranchId(order.branchId);
         }
 
-        setNote(
-          getCleanCopyOrderNote(
-            order?.internalNote ||
-              order?.orderNote ||
-              order?.customerNote ||
-              order?.shippingNote ||
-              order?.note ||
-              "",
-          ),
+        const copiedNote = getCleanCopyOrderNote(
+          order?.internalNote ||
+            order?.orderNote ||
+            order?.customerNote ||
+            order?.shippingNote ||
+            order?.note ||
+            "",
         );
+        const partialOnCopiedOrder = Boolean(snap?.ghnPartialDelivery) ||
+          /giao\s*(?:hàng\s*)?1\s*phần\s*[-–]\s*trả\s*1\s*phần/i.test(
+            String(order?.note || "") + " | " + copiedNote,
+          );
+        setGhnPartialDelivery(partialOnCopiedOrder);
+        // Giữ lựa chọn trong checkbox, không dính chỉ dẫn đổi hàng vào ghi chú tự do.
+        setNote(copiedNote.split(/\s*\|\s*/).filter((part) =>
+          !/giao\s*(?:hàng\s*)?1\s*phần\s*[-–]\s*trả\s*1\s*phần/i.test(part) &&
+          !/thu hồi sản phẩm cũ của khách về shop khi đổi hàng/i.test(part),
+        ).join(" | "));
 
         const preferredAddressId =
           snap?.shippingAddressId ||
@@ -4454,6 +4470,7 @@ export default function CreateOrderPageClient() {
     setShippingPartner("ghn");
     setDeliveryRequirement("CHOXEMHANG_KHONGTHU");
     setFailedDeliveryFee30k(true);
+    setGhnPartialDelivery(false);
     setGhnDistrictId(undefined);
     setGhnWardCode(undefined);
     setSelectedShippingServiceId(undefined);
@@ -5215,19 +5232,20 @@ export default function CreateOrderPageClient() {
           return;
         }
 
-        const currentCarrierQuotes = sortedQuotes.filter(
-          (row) => getQuoteCarrier(row) === shippingPartner,
-        );
-        const recommended =
-          getDefaultQuoteForCarrier(sortedQuotes, shippingPartner) ||
-          sortedQuotes.find((row) =>
-            getQuoteBadges(row).includes("Khuyên dùng"),
-          ) ||
-          sortedQuotes[0];
-        const selected =
-          getDefaultQuoteForCarrier(currentCarrierQuotes, shippingPartner) ||
-          recommended ||
-          sortedQuotes[0];
+        // Không tự chuyển GHN sang SPX/Aha/Viettel khi địa chỉ hoặc sản phẩm
+        // thay đổi làm tính lại báo giá. Chỉ nhân viên mới đổi hãng vận chuyển.
+        // Đọc hãng mới nhất từ ref để tránh callback quote bất đồng bộ dùng state cũ.
+        const currentShippingState = shippingStateRef.current;
+        if (currentShippingState.shippingUiMode !== "carrier") return;
+        const selected = getDefaultQuoteForCarrier(sortedQuotes, currentShippingState.shippingPartner);
+        if (!selected) {
+          setSelectedShippingServiceId(undefined);
+          setSelectedShippingServiceTypeId(undefined);
+          setSelectedShippingQuoteKey("");
+          setShippingHint(`Đã nhận ${sortedQuotes.length} báo giá, nhưng chưa có gói khả dụng cho hãng đang chọn. Vui lòng kiểm tra địa chỉ hoặc chọn hãng khác bên dưới.`);
+          setShippingError(errors.join(" | "));
+          return;
+        }
 
         applyShippingRef.current?.({
           shippingFee: getFeeNumber(selected),
@@ -5406,15 +5424,19 @@ export default function CreateOrderPageClient() {
       const effectivePaymentSourceId = paymentSourceId;
       const effectivePaidAmount = parseNumber(customerPaid);
 
+      const isGhnPartialDelivery =
+        !isPickupOrder && shippingUiMode === "carrier" && shippingPartner === "ghn" && ghnPartialDelivery;
       const customerFacingShippingNote = buildCustomerFacingShippingNote({
         orderNote: note,
         deliveryRequirement,
         failedDeliveryFee30k,
+        ghnPartialDelivery: isGhnPartialDelivery,
       });
 
       const deliveryRequirementPrintLabel = deliveryRequirementSummary({
         deliveryRequirement,
         failedDeliveryFee30k,
+        ghnPartialDelivery: isGhnPartialDelivery,
       });
 
       const failedDeliveryCodAmount =
@@ -5538,6 +5560,7 @@ export default function CreateOrderPageClient() {
         requiredNoteLabel: isPickupOrder
           ? undefined
           : deliveryRequirementPrintLabel,
+        ghnPartialDelivery: isGhnPartialDelivery,
         failedDeliveryFee30k: isPickupOrder ? undefined : failedDeliveryFee30k,
         failedDeliveryCodAmount: isPickupOrder
           ? undefined
@@ -5601,6 +5624,7 @@ export default function CreateOrderPageClient() {
           requiredNoteLabel: isPickupOrder
             ? undefined
             : deliveryRequirementPrintLabel,
+          ghnPartialDelivery: isGhnPartialDelivery,
           failedDeliveryFee30k: isPickupOrder
             ? undefined
             : failedDeliveryFee30k,
@@ -5691,6 +5715,8 @@ export default function CreateOrderPageClient() {
             ? { coupon: couponCode.trim(), couponCode: couponCode.trim() }
             : {}) as Record<string, any>),
           note: customerFacingShippingNote,
+          // Truyền cờ bổ sung mà không gây excess-property error ở kiểu API cũ.
+          ...({ ghnPartialDelivery: isGhnPartialDelivery }),
           deliveryRequirement,
           requiredNote: mapRequiredNoteForGhn(deliveryRequirement),
           required_note: mapRequiredNoteForGhn(deliveryRequirement),
@@ -6511,6 +6537,23 @@ export default function CreateOrderPageClient() {
                         <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-neutral-900">
                           <input
                             type="checkbox"
+                            checked={ghnPartialDelivery}
+                            onChange={(e) => setGhnPartialDelivery(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 accent-neutral-900"
+                          />
+                          <span>GIAO HÀNG 1 PHẦN (đổi hàng, thu hồi SP cũ)</span>
+                        </label>
+                        <p className="mt-1 pl-6 text-[11px] text-amber-800">
+                          {shippingUiMode === "carrier" && shippingPartner === "ghn"
+                            ? "Yêu cầu sẽ được gửi vào ghi chú GHN và in trên phiếu giao. Shop cần đăng ký dịch vụ Giao 1 phần - Trả 1 phần với GHN."
+                            : "Chỉ áp dụng khi chọn GHN. Lựa chọn này được giữ lại, nhưng không gửi cho hãng vận chuyển khác."}
+                        </p>
+                      </div>
+
+                      <div className="border-t border-neutral-100 pt-2 sm:col-span-3">
+                        <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-neutral-900">
+                          <input
+                            type="checkbox"
                             checked={failedDeliveryFee30k}
                             onChange={(e) =>
                               setFailedDeliveryFee30k(e.target.checked)
@@ -6877,6 +6920,7 @@ export default function CreateOrderPageClient() {
                         {deliveryRequirementSummary({
                           deliveryRequirement,
                           failedDeliveryFee30k,
+                          ghnPartialDelivery: shippingUiMode === "carrier" && shippingPartner === "ghn" && ghnPartialDelivery,
                         })}
                       </div>
                     </div>
