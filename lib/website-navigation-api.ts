@@ -34,11 +34,9 @@ export type WebsiteNavigationSettings = {
   announcementEnabled: boolean;
   announcementTextVi: string;
   announcementLink: string;
-
-  // Logo header có thể upload từ Admin. Optional để tương thích config cũ.
-  headerLogoUrl?: string;
-  headerLogoWidth?: number;
-  headerLogoAlign?: "LEFT" | "CENTER" | "RIGHT";
+  headerLogoUrl: string;
+  headerLogoWidth: number;
+  headerLogoAlign: "LEFT" | "CENTER" | "RIGHT";
 };
 
 export type WebsiteNavItem = {
