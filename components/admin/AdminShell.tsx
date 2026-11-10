@@ -120,6 +120,7 @@ const MENU: MenuItem[] = [
     children: [
       { href: "/permissions", label: "Phân quyền", permission: PERMISSIONS.MENU_PERMISSIONS },
       { href: "/settings", label: "Cấu hình", permission: PERMISSIONS.MENU_SETTINGS },
+      { href: "/dashboard/notifications", label: "Báo cáo & cảnh báo", permission: PERMISSIONS.MENU_SETTINGS, adminOnly: true },
       { href: "/print-center", label: "Trung tâm in ấn", permission: PERMISSIONS.MENU_PRINT_CENTER },
     ],
   },
