@@ -2466,8 +2466,18 @@ export default function DashboardPage() {
     dailyTableDefaultRange.toDate,
   );
   const [dailyTableMonth, setDailyTableMonth] = useState(getCurrentMonthValue());
-  const [dailyOperatingCost, setDailyOperatingCost] = useState(0);
+  const [dailyOperatingCost, setDailyOperatingCost] = useState(7_000_000);
   const [operatingCostMode, setOperatingCostMode] = useState<"daily" | "monthly">("daily");
+  useEffect(() => {
+    let ignore = false;
+    dashboardFetchJson<{dailyOperatingCost:number;operatingCostEnabled:boolean}>('/business-reports/settings')
+      .then((settings) => { if (!ignore && settings) {
+        setDailyOperatingCost(settings.operatingCostEnabled ? settings.dailyOperatingCost : 0);
+        setOperatingCostMode('daily');
+      }}).catch(() => {});
+    return () => { ignore = true; };
+  }, []);
+
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3466,6 +3476,7 @@ export default function DashboardPage() {
 
   return (
     <div className="relative w-full max-w-full space-y-4 overflow-x-hidden pb-20 text-[12px] md:overflow-x-visible">
+      <div className="flex justify-end"><a href="/dashboard/notifications" className="rounded-xl border bg-white px-4 py-2 text-xs font-semibold">⚙ Báo cáo & thông báo</a></div>
       <Panel className="overflow-hidden p-0">
         <div className="rounded-[28px] bg-neutral-950 p-4 text-white md:p-5">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
@@ -3952,6 +3963,13 @@ export default function DashboardPage() {
               onChange={(e) =>
                 setDailyOperatingCost(parseQtyMetric(e.target.value))
               }
+              onBlur={() => {
+                const amount = operatingCostMode === 'monthly' ? Math.round(dailyOperatingCost / 30) : dailyOperatingCost;
+                void dashboardPostJson('/business-reports/settings', {
+                  dailyOperatingCost: amount,
+                  operatingCostEnabled: amount > 0,
+                });
+              }}
               placeholder={operatingCostMode === "daily" ? "VD 2.000.000/ngày" : "VD 60.000.000/tháng"}
               className="mt-2 w-full bg-transparent text-lg font-semibold outline-none"
             />

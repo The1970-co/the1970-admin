@@ -438,10 +438,12 @@ function TinyBar({ value, max }: { value: number; max: number }) {
 }
 
 export default function MobileReportOverviewPage() {
+  // Cài đặt thông báo chung với web, mở từ app Capacitor.
+
   const [range, setRange] = useState<RangeKey>("today");
   const [overview, setOverview] = useState<AnyObj | null>(null);
   const [warRoom, setWarRoom] = useState<WarRoomPayload | null>(null);
-  const [operatingCost, setOperatingCost] = useState(0);
+  const [operatingCost, setOperatingCost] = useState(7_000_000);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -459,13 +461,14 @@ export default function MobileReportOverviewPage() {
         dateFrom: dateRange.fromDate,
         dateTo: dateRange.toDate,
       });
-      const [overviewPayload, warRoomPayload] = await Promise.all([
+      const [overviewPayload, settings] = await Promise.all([
         fetchJson<AnyObj>(`/dashboard/overview?range=${range}&fromDate=${dateRange.fromDate}&toDate=${dateRange.toDate}&branchId=ALL`),
-        fetchJson<WarRoomPayload>(`/shipments/war-room/delivery-revenue?${query.toString()}`),
+        fetchJson<{dailyOperatingCost:number;operatingCostEnabled:boolean}>(`/business-reports/settings`).catch(() => null),
       ]);
+      const warRoomPayload: WarRoomPayload | null = null;
       setOverview(overviewPayload || null);
       setWarRoom(warRoomPayload || null);
-      setOperatingCost(getDailyOperatingCost());
+      setOperatingCost(settings ? (settings.operatingCostEnabled ? settings.dailyOperatingCost : 0) : getDailyOperatingCost());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra.");
     } finally {
@@ -494,7 +497,7 @@ export default function MobileReportOverviewPage() {
       const overviewRow = overviewRows.get(date) || {};
       const raw = overviewRow.raw && typeof overviewRow.raw === "object" ? overviewRow.raw : {};
       const successRow = successRows.get(date);
-      const createdRow = createdRows.get(date);
+      const createdRow = createdRows.get(date) || (raw.createdOrders !== undefined ? raw as DailyCreatedRow : undefined);
       const revenue = successRow ? toNumber(successRow.successAmount) : toNumber(raw.revenue ?? overviewRow.revenue);
       const cost = successRow ? toNumber(successRow.successCost) : toNumber(raw.cost ?? overviewRow.cost);
       const ads = toNumber(raw.adsCost ?? overviewRow.adsCost);
@@ -578,6 +581,7 @@ export default function MobileReportOverviewPage() {
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-950">
       <div className="mx-auto min-h-screen w-full max-w-md px-4 pb-28 pt-5">
+        <div className="mb-3 flex justify-end"><Link href="/mobile/reports/notifications" className="rounded-xl bg-white px-3 py-2 text-xs font-bold shadow-sm">⚙ Báo cáo & thông báo</Link></div>
         <header className="mb-5 flex items-center justify-between">
           <Link href="/mobile" className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm"><ArrowLeft className="h-5 w-5" /></Link>
           <div className="text-center"><div className="text-xs font-black uppercase tracking-[0.24em] text-neutral-400">War Room</div><div className="text-lg font-black">{currentRangeTitle}</div></div>

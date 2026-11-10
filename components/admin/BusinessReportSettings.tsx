@@ -1,0 +1,34 @@
+'use client';
+import {useEffect,useState} from 'react';
+import {apiJson} from '@/lib/api';
+
+type Settings={enabled:boolean;slots:{time:string;enabled:boolean}[];metrics:Record<string,boolean>;alerts:Record<string,boolean>;posTarget:number;codTarget:number;revenueTarget:number;growthPct:number;declinePct:number;recordDays:7|14|30;dailyOperatingCost:number;operatingCostEnabled:boolean};
+const fields=[['orders','Tổng đơn tạo'],['pos','Số đơn POS'],['cod','Số đơn COD'],['createdRevenue','Doanh thu tạo đơn'],['successRevenue','Doanh thu thành công'],['actualProfit','Lợi nhuận thực tế'],['estimatedProfit','Lợi nhuận ước tính'],['ads','Chi phí Ads']];
+const alerts=[['pos','POS đạt mục tiêu'],['cod','COD đạt mục tiêu'],['revenue','Tổng doanh thu đạt mục tiêu'],['growth','Tăng trưởng so với hôm qua cùng giờ'],['decline','Doanh thu giảm so với hôm qua cùng giờ'],['record','Kỷ lục doanh thu']];
+const money=(v:number)=>new Intl.NumberFormat('vi-VN').format(v);
+const inp='rounded-xl border border-neutral-300 bg-white px-3 py-2 text-neutral-950 w-full';
+const block='rounded-2xl border border-neutral-200 bg-white p-5';
+
+export default function BusinessReportSettings(){
+ const [data,setData]=useState<Settings|null>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[preview,setPreview]=useState<any>(null),[history,setHistory]=useState<any[]>([]);
+ const load=async()=>{try{const [s,h]=await Promise.all([apiJson<Settings>('/business-reports/settings'),apiJson<any[]>('/business-reports/history')]);setData(s);setHistory(h);}catch(e:any){setMessage(e?.message||'Không tải được cấu hình');}};
+ useEffect(()=>{void load();},[]);
+ const update=(v:Partial<Settings>)=>setData(s=>s?{...s,...v}:s);
+ const action=async(type:'save'|'preview'|'test')=>{if(!data)return;setBusy(true);setMessage('');try{
+  if(type==='save'){const s=await apiJson<Settings>('/business-reports/settings',{method:'POST',body:JSON.stringify(data)} as any);setData(s);setMessage('Đã lưu cấu hình lên máy chủ.');}
+  if(type==='preview'){setPreview(await apiJson<any>('/business-reports/preview'));}
+  if(type==='test'){const r=await apiJson<any>('/business-reports/test',{method:'POST',body:'{}'} as any);setMessage(`Đã gửi tới ${r.sent||0} thiết bị. Lỗi: ${r.failed||0}.`);}
+ }catch(e:any){setMessage(e?.message||'Thao tác thất bại');}finally{setBusy(false);}};
+ if(!data)return <div className="p-6 text-sm text-neutral-600">Đang tải cài đặt... {message}</div>;
+ return <main className="mx-auto max-w-3xl space-y-5 p-4 pb-24 text-neutral-950 md:p-8">
+ <header><h1 className="text-2xl font-bold">Báo cáo & cảnh báo kinh doanh</h1><p className="mt-1 text-sm text-neutral-500">Cùng nguồn dữ liệu Dashboard · Giờ Việt Nam · Thông báo APNs tới app THE 1970</p></header>
+ <section className={block}><label className="flex items-center gap-3 font-semibold"><input type="checkbox" checked={data.enabled} onChange={e=>update({enabled:e.target.checked})}/> Bật thông báo báo cáo</label><h2 className="mb-3 mt-5 font-semibold">Lịch gửi tự động</h2><div className="space-y-3">{data.slots.map((slot,i)=><div key={i} className="flex items-center gap-3"><input type="checkbox" checked={slot.enabled} onChange={e=>update({slots:data.slots.map((s,j)=>j===i?{...s,enabled:e.target.checked}:s)})}/><input type="time" className={inp} value={slot.time} onChange={e=>update({slots:data.slots.map((s,j)=>j===i?{...s,time:e.target.value}:s)})}/><button className="text-sm text-red-600" onClick={()=>update({slots:data.slots.filter((_,j)=>j!==i)})}>Xóa</button></div>)}</div><button className="mt-3 text-sm font-semibold underline" onClick={()=>update({slots:[...data.slots,{time:'18:00',enabled:true}]})}>+ Thêm mốc giờ</button></section>
+ <section className={block}><h2 className="mb-3 font-semibold">Chỉ số hiển thị trong thông báo</h2><div className="grid gap-3 sm:grid-cols-2">{fields.map(([k,label])=><label className="flex items-center gap-3 text-sm" key={k}><input type="checkbox" checked={!!data.metrics[k]} onChange={e=>update({metrics:{...data.metrics,[k]:e.target.checked}})}/>{label}</label>)}</div></section>
+ <section className={block}><h2 className="mb-3 font-semibold">Điều kiện cảnh báo</h2><div className="grid gap-3 sm:grid-cols-2">{alerts.map(([k,label])=><label className="flex items-center gap-3 text-sm" key={k}><input type="checkbox" checked={!!data.alerts[k]} onChange={e=>update({alerts:{...data.alerts,[k]:e.target.checked}})}/>{label}</label>)}</div><div className="mt-5 grid gap-4 sm:grid-cols-2">{([['posTarget','Mục tiêu POS (đ)'],['codTarget','Mục tiêu COD (đ)'],['revenueTarget','Mục tiêu tổng (đ)'],['growthPct','Tăng tối thiểu (%)'],['declinePct','Giảm tối thiểu (%)']] as const).map(([k,label])=><label className="text-sm" key={k}>{label}<input className={`${inp} mt-1`} type="number" min={0} value={data[k]} onChange={e=>update({[k]:Number(e.target.value)})}/></label>)}<label className="text-sm">Khoảng kỷ lục<select className={`${inp} mt-1`} value={data.recordDays} onChange={e=>update({recordDays:Number(e.target.value) as 7|14|30})}><option value={7}>7 ngày</option><option value={14}>14 ngày</option><option value={30}>30 ngày</option></select></label></div></section>
+ <section className={block}><h2 className="mb-3 font-semibold">Chi phí vận hành chung</h2><label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={data.operatingCostEnabled} onChange={e=>update({operatingCostEnabled:e.target.checked})}/> Tính vào lợi nhuận</label><label className="mt-3 block text-sm">Số tiền mỗi ngày (đ)<input className={`${inp} mt-1`} type="number" min={0} value={data.dailyOperatingCost} onChange={e=>update({dailyOperatingCost:Number(e.target.value)})}/></label><p className="mt-2 text-sm text-neutral-500">Mặc định {money(7000000)}đ/ngày. Lưu trên server cho cả web và app.</p></section>
+ <div className="flex flex-wrap gap-2"><button disabled={busy} onClick={()=>void action('save')} className="rounded-xl bg-black px-5 py-3 font-semibold text-white disabled:opacity-50">Lưu cài đặt</button><button disabled={busy} onClick={()=>void action('preview')} className="rounded-xl border px-4 py-3">Xem thử</button><button disabled={busy} onClick={()=>void action('test')} className="rounded-xl border px-4 py-3">Gửi thử iPhone</button></div>
+ {message&&<p role="status" className="text-sm">{message}</p>}
+ {preview&&<section className={block}><h2 className="font-semibold">{preview.title}</h2><p className="mt-2 text-sm">{preview.body}</p></section>}
+ <section className={block}><h2 className="font-semibold">Lịch sử 50 thông báo gần nhất</h2><div className="mt-3 space-y-2">{history.length?history.map(h=><div key={h.id} className="border-t py-2 text-sm"><b>{h.title}</b><p className="text-neutral-500">{h.status} · {new Date(h.createdAt).toLocaleString('vi-VN')}</p></div>):<p className="text-sm text-neutral-500">Chưa có thông báo</p>}</div></section>
+ </main>;
+}
