@@ -2133,6 +2133,10 @@ export default function CreateOrderPageClient() {
   const [discountTotal, setDiscountTotal] = useState("0");
   const [shippingFee, setShippingFee] = useState("30000");
   const [couponCode, setCouponCode] = useState("");
+  const [ahaPromoLoading, setAhaPromoLoading] = useState(false);
+  const [ahaPromoResult, setAhaPromoResult] = useState<any>(null);
+  const [ahaPromoError, setAhaPromoError] = useState("");
+
   const [customerPaid, setCustomerPaid] = useState("0");
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [paymentSourceId, setPaymentSourceId] = useState("");
@@ -3645,6 +3649,45 @@ export default function CreateOrderPageClient() {
         !(q as any)?._disabled,
     ) ||
     null;
+
+  const handleFetchAhamovePromotions = async () => {
+    if (shippingPartner !== "ahamove") return;
+    const quote = selectedQuote && getQuoteCarrier(selectedQuote) === "ahamove"
+      ? selectedQuote
+      : shippingQuotes.find((item) => getQuoteCarrier(item) === "ahamove" && !(item as any)?._disabled);
+    if (!quote) {
+      setAhaPromoError("Cần nhập địa chỉ lấy/giao và đợi báo giá AhaMove trước.");
+      return;
+    }
+    setAhaPromoLoading(true);
+    setAhaPromoError("");
+    setAhaPromoResult(null);
+    try {
+      const token = getTokenFromStorage();
+      const response = await fetch(`${getApiBaseUrl()}/shipments/ahamove/promotions/for-order`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          branchId,
+          serviceId: String((quote as any)._ahamoveServiceId || (quote as any)._serviceName || "HAN-BIKE"),
+          serviceFee: getFeeNumber(quote),
+          distance: Number((quote as any)._distanceKm || 0),
+          orderFee: orderValueForInsurance,
+          paymentMethod: ahamovePaymentMethod.toLowerCase(),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.message || `Không lấy được mã AhaMove (HTTP ${response.status})`);
+      setAhaPromoResult(data);
+    } catch (error) {
+      setAhaPromoError(error instanceof Error ? error.message : "Không gọi được API khuyến mãi AhaMove.");
+    } finally {
+      setAhaPromoLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -6910,6 +6953,47 @@ export default function CreateOrderPageClient() {
                         placeholder="VD: 1970VIP"
                         className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none"
                       />
+                      {shippingUiMode === "carrier" && shippingPartner === "ahamove" ? (
+                        <div className="mt-2 space-y-2">
+                          <button
+                            type="button"
+                            disabled={ahaPromoLoading || shippingLoading}
+                            onClick={handleFetchAhamovePromotions}
+                            className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-800 hover:bg-orange-100 disabled:opacity-50"
+                          >
+                            {ahaPromoLoading ? "Đang lấy mã từ AhaMove..." : "Lấy mã KM AhaMove"}
+                          </button>
+                          {ahaPromoError ? <p className="text-xs text-red-600">{ahaPromoError}</p> : null}
+                          {ahaPromoResult ? (
+                            <div className="space-y-2 rounded-xl border border-orange-200 bg-orange-50/60 p-3 text-xs">
+                              <div className="font-semibold text-orange-900">
+                                {ahaPromoResult.supported
+                                  ? `${ahaPromoResult.itemCount ?? 0} ưu đãi từ AhaMove`
+                                  : `AhaMove chưa cho phép lấy mã (${ahaPromoResult.reason || `HTTP ${ahaPromoResult.httpStatus || "?"}`})`}
+                              </div>
+                              {Array.isArray(ahaPromoResult.promotions) && ahaPromoResult.promotions.length > 0 ?
+                                ahaPromoResult.promotions.map((promo: any, index: number) => (
+                                  <button
+                                    key={`${promo.code || "promo"}-${index}`}
+                                    type="button"
+                                    disabled={!promo.code}
+                                    onClick={() => setCouponCode(String(promo.code))}
+                                    className="block w-full rounded-lg border border-orange-200 bg-white p-2 text-left disabled:opacity-60"
+                                  >
+                                    <span className="font-bold">{promo.title || promo.code || "Ưu đãi"}</span>
+                                    {promo.code ? <span className="ml-2 text-orange-700">{promo.code} · Chọn mã</span> : null}
+                                    {promo.description ? <div>{promo.description}</div> : null}
+                                  </button>
+                                )) : null}
+                              {ahaPromoResult.supported && ahaPromoResult.itemCount === 0 ?
+                                <p>Không có mã áp dụng cho tuyến và gói đang chọn.</p> : null}
+                              {ahaPromoResult.pickupAddress ?
+                                <p className="text-neutral-500">Kho lấy: {ahaPromoResult.pickupAddress}</p> : null}
+                            </div>
+                          ) : null}
+                          <p className="text-xs text-neutral-500">Thử bằng token đối tác AhaMove. Chỉ áp dụng mã khi hãng xác nhận ở bước báo giá.</p>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div>
