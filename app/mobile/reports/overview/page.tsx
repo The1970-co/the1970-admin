@@ -438,8 +438,6 @@ function TinyBar({ value, max }: { value: number; max: number }) {
 }
 
 export default function MobileReportOverviewPage() {
-  // Cài đặt thông báo chung với web, mở từ app Capacitor.
-
   const [range, setRange] = useState<RangeKey>("today");
   const [overview, setOverview] = useState<AnyObj | null>(null);
   const [warRoom, setWarRoom] = useState<WarRoomPayload | null>(null);
@@ -461,11 +459,11 @@ export default function MobileReportOverviewPage() {
         dateFrom: dateRange.fromDate,
         dateTo: dateRange.toDate,
       });
-      const [overviewPayload, settings] = await Promise.all([
+      const [overviewPayload, warRoomPayload, settings] = await Promise.all([
         fetchJson<AnyObj>(`/dashboard/overview?range=${range}&fromDate=${dateRange.fromDate}&toDate=${dateRange.toDate}&branchId=ALL`),
-        fetchJson<{dailyOperatingCost:number;operatingCostEnabled:boolean}>(`/business-reports/settings`).catch(() => null),
+        fetchJson<WarRoomPayload>(`/shipments/war-room/delivery-revenue?${query.toString()}`),
+        fetchJson<{ dailyOperatingCost: number; operatingCostEnabled: boolean }>("/business-reports/settings").catch(() => null),
       ]);
-      const warRoomPayload: WarRoomPayload | null = null;
       setOverview(overviewPayload || null);
       setWarRoom(warRoomPayload || null);
       setOperatingCost(settings ? (settings.operatingCostEnabled ? settings.dailyOperatingCost : 0) : getDailyOperatingCost());
@@ -497,7 +495,7 @@ export default function MobileReportOverviewPage() {
       const overviewRow = overviewRows.get(date) || {};
       const raw = overviewRow.raw && typeof overviewRow.raw === "object" ? overviewRow.raw : {};
       const successRow = successRows.get(date);
-      const createdRow = createdRows.get(date) || (raw.createdOrders !== undefined ? raw as DailyCreatedRow : undefined);
+      const createdRow = createdRows.get(date);
       const revenue = successRow ? toNumber(successRow.successAmount) : toNumber(raw.revenue ?? overviewRow.revenue);
       const cost = successRow ? toNumber(successRow.successCost) : toNumber(raw.cost ?? overviewRow.cost);
       const ads = toNumber(raw.adsCost ?? overviewRow.adsCost);
