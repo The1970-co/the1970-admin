@@ -123,6 +123,7 @@ const SALES_CHANNELS_STORAGE_KEY = "the1970_sales_channels";
 const CARRIER_PICKUP_MAPPING_STORAGE_KEY = "the1970_carrier_pickup_mapping";
 const CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY = "the1970_custom_ahamove_pickups";
 const AHAMOVE_PAYMENT_METHOD_STORAGE_KEY = "the1970_ahamove_payment_method";
+const PICKUP_SETTINGS_API = "/shipments/pickup-location-settings";
 
 type AhamovePaymentMethod = "BALANCE" | "CASH" | "CASH_BY_RECIPIENT";
 
@@ -673,8 +674,6 @@ export default function SettingsPage() {
     void loadPosBankAccounts();
     void loadVietQrBanks();
     void loadPickupLocationSettings();
-    loadCarrierPickupMapping();
-    loadAhamovePaymentMethod();
     loadSalesChannels();
   }, []);
 
@@ -697,53 +696,89 @@ export default function SettingsPage() {
     );
   }, [vietQrBanks]);
 
-  const loadCarrierPickupMapping = () => {
+  // Đọc/lưu cấu hình tập trung trong Railway PostgreSQL, không đọc localStorage khi vận hành.
+  const getCustomAhamoveRows = (rows: PickupLocation[] = pickupLocations) =>
+    normalizeCustomAhamovePickups(
+      rows.filter((item) => item.carrier === "ahamove" && String(item.id).startsWith("ahamove-custom-")),
+    );
+
+  const persistPickupSettings = async (next: {
+    carrierPickupMapping: CarrierPickupMapping;
+    customAhamovePickups: PickupLocation[];
+    ahamovePaymentMethod: AhamovePaymentMethod;
+  }) => {
+    return apiJson<typeof next>(PICKUP_SETTINGS_API, {
+      method: "PUT",
+      body: JSON.stringify(next),
+    });
+  };
+
+  const saveCarrierPickupMapping = async () => {
     try {
-      const raw = localStorage.getItem(CARRIER_PICKUP_MAPPING_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      const next = parsed && typeof parsed === "object" ? parsed : {};
+      const saved = await persistPickupSettings({
+        carrierPickupMapping: carrierPickupMappingDraft,
+        customAhamovePickups: getCustomAhamoveRows(),
+        ahamovePaymentMethod,
+      });
+      const next = saved.carrierPickupMapping || {};
       setCarrierPickupMapping(next);
       setCarrierPickupMappingDraft(next);
       setCarrierPickupMappingDirty(false);
-    } catch {
-      setCarrierPickupMapping({});
-      setCarrierPickupMappingDraft({});
-      setCarrierPickupMappingDirty(false);
+      setMessage("Đã lưu mapping kho lấy hàng lên Railway PostgreSQL cho tất cả máy.");
+    } catch (err) {
+      setMessage(err instanceof Error ? `Không lưu được mapping lên Railway: ${err.message}` : "Không lưu được mapping lên Railway.");
     }
   };
 
-  const loadAhamovePaymentMethod = () => {
-    if (typeof window === "undefined") return;
-    try {
-      setAhamovePaymentMethod(
-        normalizeAhamovePaymentMethod(
-          localStorage.getItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY),
-        ),
-      );
-    } catch {
-      setAhamovePaymentMethod("BALANCE");
-    }
-  };
-
-  const saveAhamovePaymentMethod = (method: AhamovePaymentMethod) => {
+  const saveAhamovePaymentMethod = async (method: AhamovePaymentMethod) => {
     const safeMethod = normalizeAhamovePaymentMethod(method);
-    setAhamovePaymentMethod(safeMethod);
     try {
-      localStorage.setItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY, safeMethod);
-    } catch {
-      // ignore localStorage error
+      await persistPickupSettings({
+        carrierPickupMapping: carrierPickupMappingDraft,
+        customAhamovePickups: getCustomAhamoveRows(),
+        ahamovePaymentMethod: safeMethod,
+      });
+      setAhamovePaymentMethod(safeMethod);
+      setCarrierPickupMapping(carrierPickupMappingDraft);
+      setCarrierPickupMappingDirty(false);
+      setMessage(`Đã lưu thanh toán AhaMove lên Railway: ${safeMethod}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không lưu được thanh toán AhaMove.");
     }
-    setMessage(`Đã lưu thanh toán AhaMove: ${safeMethod}.`);
   };
 
-  const saveCarrierPickupMapping = () => {
-    setCarrierPickupMapping(carrierPickupMappingDraft);
-    localStorage.setItem(
-      CARRIER_PICKUP_MAPPING_STORAGE_KEY,
-      JSON.stringify(carrierPickupMappingDraft),
-    );
-    setCarrierPickupMappingDirty(false);
-    setMessage("Đã lưu cấu hình kho lấy hàng theo chi nhánh. Màn tạo đơn sẽ tự dùng mapping này.");
+  // Chỉ chạy khi admin chủ động bấm nhập dữ liệu cũ trên chính máy từng cấu hình.
+  // Không tự ghi đè cấu hình trung tâm từ localStorage.
+  const importLegacyPickupSettings = async () => {
+    try {
+      const legacyMapping = safeJsonParse(localStorage.getItem(CARRIER_PICKUP_MAPPING_STORAGE_KEY));
+      const legacyPickups = readCustomAhamovePickups();
+      const legacyPayment = localStorage.getItem(AHAMOVE_PAYMENT_METHOD_STORAGE_KEY);
+      const importedMapping = legacyMapping && typeof legacyMapping === "object" && !Array.isArray(legacyMapping)
+        ? legacyMapping as CarrierPickupMapping : {};
+      if (!Object.keys(importedMapping).length && !legacyPickups.length) {
+        setMessage("Máy này không có cấu hình kho AhaMove cũ trong localStorage để nhập.");
+        return;
+      }
+      const mergedMapping = { ...carrierPickupMappingDraft, ...importedMapping };
+      const mergedPickups = [
+        ...getCustomAhamoveRows().filter((item) => !legacyPickups.some((old) => String(old.id) === String(item.id))),
+        ...legacyPickups,
+      ];
+      const saved = await persistPickupSettings({
+        carrierPickupMapping: mergedMapping,
+        customAhamovePickups: mergedPickups,
+        ahamovePaymentMethod: normalizeAhamovePaymentMethod(legacyPayment || ahamovePaymentMethod),
+      });
+      setCarrierPickupMapping(saved.carrierPickupMapping || {});
+      setCarrierPickupMappingDraft(saved.carrierPickupMapping || {});
+      setCarrierPickupMappingDirty(false);
+      setAhamovePaymentMethod(normalizeAhamovePaymentMethod(saved.ahamovePaymentMethod));
+      await loadPickupLocationSettings();
+      setMessage(`Đã nhập ${legacyPickups.length} kho AhaMove cũ và mapping lên Railway. Chưa xoá dữ liệu localStorage dự phòng.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? `Nhập dữ liệu cũ thất bại: ${err.message}` : "Nhập dữ liệu cũ thất bại.");
+    }
   };
 
   const resetCarrierPickupMappingDraft = () => {
@@ -770,53 +805,44 @@ export default function SettingsPage() {
   const loadPickupLocationSettings = async () => {
     try {
       setPickupLocationsLoading(true);
-      setMessage("");
-
-      const rows = await apiJson<PickupLocation[]>("/shipments/pickup-locations");
+      const [rows, settings] = await Promise.all([
+        apiJson<PickupLocation[]>("/shipments/pickup-locations"),
+        apiJson<{
+          carrierPickupMapping?: CarrierPickupMapping;
+          customAhamovePickups?: PickupLocation[];
+          ahamovePaymentMethod?: AhamovePaymentMethod;
+        }>(PICKUP_SETTINGS_API),
+      ]);
       const backendRows = Array.isArray(rows) ? rows : [];
-      const customAhamoveRows = readCustomAhamovePickups();
-
+      const customRows = normalizeCustomAhamovePickups(settings.customAhamovePickups);
+      const nextMapping = settings.carrierPickupMapping || {};
       setPickupLocations([
         ...backendRows.filter((item) => !String(item.id).startsWith("ahamove-custom-")),
-        ...customAhamoveRows,
+        ...customRows,
       ]);
-
-      if (!backendRows.length && !customAhamoveRows.length) {
-        setMessage(
-          "Chưa đọc được kho hãng từ core API. Kiểm tra Railway env/token và endpoint /shipments/pickup-locations.",
-        );
-      }
+      setCarrierPickupMapping(nextMapping);
+      setCarrierPickupMappingDraft(nextMapping);
+      setCarrierPickupMappingDirty(false);
+      setAhamovePaymentMethod(normalizeAhamovePaymentMethod(settings.ahamovePaymentMethod));
     } catch (err) {
-      const customAhamoveRows = readCustomAhamovePickups();
-      setPickupLocations(customAhamoveRows);
-      setMessage(
-        err instanceof Error
-          ? `Không load được kho lấy hàng từ core API: ${err.message}`
-          : "Không load được danh sách kho lấy hàng hãng vận chuyển.",
-      );
+      setMessage(err instanceof Error ? `Không tải được cấu hình kho từ Railway: ${err.message}` : "Không tải được cấu hình kho Railway.");
     } finally {
       setPickupLocationsLoading(false);
     }
   };
 
-  const saveCustomAhamovePickups = (items: PickupLocation[]) => {
-    const cleaned = items
-      .filter((item) => item.carrier === "ahamove")
-      .map((item) => ({
-        id: String(item.id),
-        carrier: "ahamove",
-        label: String(item.label || item.name || item.address || "Điểm lấy hàng AhaMove"),
-        name: String(item.name || item.label || "Điểm lấy hàng AhaMove"),
-        phone: String(item.phone || ""),
-        address: String(item.address || ""),
-        note: String((item as any).note || ""),
-        isCustom: true,
-      }));
-
-    localStorage.setItem(CUSTOM_AHAMOVE_PICKUPS_STORAGE_KEY, JSON.stringify(cleaned));
+  const saveCustomAhamovePickups = async (items: PickupLocation[], mapping: CarrierPickupMapping = carrierPickupMappingDraft) => {
+    const saved = await persistPickupSettings({
+      carrierPickupMapping: mapping,
+      customAhamovePickups: normalizeCustomAhamovePickups(items),
+      ahamovePaymentMethod,
+    });
+    setCarrierPickupMapping(saved.carrierPickupMapping || {});
+    setCarrierPickupMappingDraft(saved.carrierPickupMapping || {});
+    setCarrierPickupMappingDirty(false);
   };
 
-  const addManualAhamovePickup = () => {
+  const addManualAhamovePickup = async () => {
     const name = manualAhamovePickupForm.name.trim();
     const phone = manualAhamovePickupForm.phone.trim();
     const address = manualAhamovePickupForm.address.trim();
@@ -838,37 +864,39 @@ export default function SettingsPage() {
       isCustom: true,
     };
 
-    const customRows = [...readCustomAhamovePickups(), next];
-    saveCustomAhamovePickups(customRows);
+    const customRows = [...getCustomAhamoveRows(), next];
+    try {
+      await saveCustomAhamovePickups(customRows);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không lưu được kho AhaMove lên Railway.");
+      return;
+    }
     setPickupLocations((prev) => [
       ...prev.filter((item) => String(item.id) !== String(next.id)),
       next,
     ]);
     setManualAhamovePickupForm({ name: "", phone: "", address: "", note: "" });
     setSelectedPickupCarrier("ahamove");
-    setMessage("Đã thêm điểm lấy hàng AhaMove. Hãy map chi nhánh rồi bấm Lưu cấu hình.");
+    setMessage("Đã thêm kho AhaMove vào Railway. Hãy map chi nhánh rồi bấm Lưu cấu hình.");
   };
 
-  const deleteManualAhamovePickup = (pickupId: string) => {
-    const customRows = readCustomAhamovePickups().filter(
-      (item) => String(item.id) !== String(pickupId),
-    );
-    saveCustomAhamovePickups(customRows);
-
-    setPickupLocations((prev) => prev.filter((item) => String(item.id) !== String(pickupId)));
-    setCarrierPickupMappingDraft((prev) => {
-      const next: CarrierPickupMapping = {};
-      Object.entries(prev).forEach(([warehouseId, value]) => {
-        const row = (value || {}) as CarrierPickupMapping[string];
-        next[warehouseId] = {
-          ...row,
-          ahamove: row.ahamove === pickupId ? "" : row.ahamove,
-        };
-      });
-      return next;
+  const deleteManualAhamovePickup = async (pickupId: string) => {
+    const customRows = getCustomAhamoveRows().filter((item) => String(item.id) !== String(pickupId));
+    const nextMapping: CarrierPickupMapping = {};
+    Object.entries(carrierPickupMappingDraft).forEach(([warehouseId, value]) => {
+      const row = (value || {}) as CarrierPickupMapping[string];
+      nextMapping[warehouseId] = {
+        ...row,
+        ahamove: row.ahamove === pickupId ? "" : row.ahamove,
+      };
     });
-    setCarrierPickupMappingDirty(true);
-    setMessage("Đã xoá điểm lấy hàng AhaMove thủ công. Bấm Lưu cấu hình để cập nhật mapping.");
+    try {
+      await saveCustomAhamovePickups(customRows, nextMapping);
+      setPickupLocations((prev) => prev.filter((item) => String(item.id) !== String(pickupId)));
+      setMessage("Đã xoá kho AhaMove và mapping liên quan trên Railway.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Không xoá được kho AhaMove trên Railway.");
+    }
   };
 
   const pickupOptionsByCarrier = (carrier: PickupCarrier) =>
@@ -1947,6 +1975,9 @@ const addWarehouse = async () => {
                     ? "Đang tải..."
                     : `${pickupLocations.length} kho hãng`}
                 </Badge>
+                <Button variant="secondary" onClick={() => void importLegacyPickupSettings()}>
+                  Nhập cấu hình cũ từ máy này
+                </Button>
                 <Button variant="secondary" onClick={() => void loadPickupLocationSettings()}>
                   Tải lại kho hãng
                 </Button>
@@ -2290,7 +2321,7 @@ const addWarehouse = async () => {
             </div>
 
             <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-              Bấm <b>Lưu cấu hình</b> sau khi map kho. Với AhaMove, điểm lấy hàng thủ công sẽ ưu tiên hơn env Railway khi chi nhánh đã map vào điểm đó. Với SPX, hệ thống sẽ dùng kho SPX backend trả về hoặc fallback env SPX_USER_ID/SPX_USER_SECRET. Hiện cấu hình đang lưu localStorage key <b>the1970_carrier_pickup_mapping</b> và <b>the1970_custom_ahamove_pickups</b>; bước sau nên đưa vào DB để tất cả máy dùng chung giống Sapo thật.
+              Bấm <b>Lưu cấu hình</b> sau khi map kho. Với AhaMove, điểm lấy hàng thủ công sẽ ưu tiên hơn env Railway khi chi nhánh đã map vào điểm đó. Với SPX, hệ thống sẽ dùng kho SPX backend trả về hoặc fallback env SPX_USER_ID/SPX_USER_SECRET. Cấu hình hiện lưu tập trung trên Railway PostgreSQL. Nếu trước đây admin đã cài kho trên một máy khác, mở máy đó và bấm <b>Nhập cấu hình cũ từ máy này</b> một lần để chuyển các kho và mapping từ localStorage lên Railway. Không tự xoá bản cũ.
             </div>
           </Panel>
 
