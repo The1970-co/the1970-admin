@@ -464,8 +464,17 @@ export default function MobileReportOverviewPage() {
         fetchJson<WarRoomPayload>(`/shipments/war-room/delivery-revenue?${query.toString()}`),
         fetchJson<{ dailyOperatingCost: number; operatingCostEnabled: boolean }>("/business-reports/settings").catch(() => null),
       ]);
+      // Giống Dashboard Web: PHẢI có nguồn giao thành công và danh sách đơn tạo.
+      // Không dùng dailyRows.revenue thay cho giao thành công khi API War Room thiếu dữ liệu.
+      if (
+        !warRoomPayload ||
+        !Array.isArray(warRoomPayload.dailySuccessRows) ||
+        (!Array.isArray(warRoomPayload.createdOrders) && !Array.isArray(warRoomPayload.orders))
+      ) {
+        throw new Error("Thiếu dữ liệu giao thành công / đơn tạo từ War Room. Không tính lợi nhuận để tránh sai với Dashboard Web.");
+      }
       setOverview(overviewPayload || null);
-      setWarRoom(warRoomPayload || null);
+      setWarRoom(warRoomPayload);
       setOperatingCost(settings ? (settings.operatingCostEnabled ? settings.dailyOperatingCost : 0) : getDailyOperatingCost());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra.");
@@ -506,6 +515,9 @@ export default function MobileReportOverviewPage() {
       const directCreatedCost = toNumber(createdRow?.posCreatedCostEstimate) + toNumber(createdRow?.facebookCreatedCostEstimate);
       const successCostRate = revenue > 0 && cost > 0 ? cost / revenue : 0;
       const estimatedCost = directCreatedCost > 0 ? directCreatedCost : estimatedRevenue > 0 ? Math.round(estimatedRevenue * (successCostRate || 0.42)) : 0;
+      // Công thức y hệt DashboardPage Web (dailyRowsWithOperatingCost):
+      // thực tế = successAmount - successCost - adsCost - chi phí vận hành
+      // ước tính = POS + Facebook created - giá vốn đơn tạo (fallback rate/42%) - ads - vận hành
       const actualProfit = revenue - cost - ads - operatingCost;
       const estimatedProfit = estimatedRevenue - estimatedCost - ads - operatingCost;
       return {
