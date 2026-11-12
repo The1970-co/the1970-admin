@@ -376,6 +376,35 @@ function customerAvatar(conversation?: OmniConversation | null) {
   return conversation?.customer?.avatarUrl || "";
 }
 
+// SSE profile updates may arrive while an older conversations request is still in flight.
+// Preserve the newest customer record instead of letting an old list response
+// overwrite a freshly archived avatar or restored customer name.
+function mergeNewestCustomerProfile(
+  previous: OmniConversation | null | undefined,
+  incoming: OmniConversation,
+): OmniConversation {
+  if (!previous?.customer || !incoming.customer) return incoming;
+  const oldCustomer = previous.customer;
+  const newCustomer = incoming.customer;
+  if (oldCustomer.id !== newCustomer.id) return incoming;
+  const oldAt = new Date((oldCustomer as any).updatedAt || 0).getTime();
+  const newAt = new Date((newCustomer as any).updatedAt || 0).getTime();
+  // Preserve a newer SSE profile if a slower request resolves afterwards.
+  if (Number.isFinite(oldAt) && Number.isFinite(newAt) && oldAt > newAt) {
+    return { ...incoming, customer: oldCustomer };
+  }
+  // Partial SSE payloads must not erase a known name/avatar.
+  return {
+    ...incoming,
+    customer: {
+      ...oldCustomer,
+      ...newCustomer,
+      name: newCustomer.name || oldCustomer.name,
+      avatarUrl: newCustomer.avatarUrl || oldCustomer.avatarUrl,
+    },
+  };
+}
+
 function parseEventPayload(event: MessageEvent) {
   try {
     return JSON.parse(event.data);
@@ -452,36 +481,52 @@ function reconcileOmniMessage(
   });
 }
 
-function promoteUnreadConversation(
-  rows: OmniConversation[],
+// Một quy tắc duy nhất cho mọi tab: tin nhắn có sentAt mới nhất đứng đầu.
+// Thay đổi nhãn, người phụ trách, đã đọc/chưa đọc KHÔNG làm đổi thứ tự.
+function messageActivityAt(row: OmniConversation): number {
+  if (!row.lastMessageAt) return 0;
+  const value = new Date(row.lastMessageAt).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortConversationsByLastMessage(rows: OmniConversation[]): OmniConversation[] {
+  return [...rows].sort((a, b) => {
+    const byActivity = messageActivityAt(b) - messageActivityAt(a);
+    if (byActivity) return byActivity;
+    // Stable deterministic tie-breaker without promoting metadata-only changes.
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function preserveNewestMessagePreview(
+  previous: OmniConversation | undefined,
   incoming: OmniConversation,
-) {
-  const next = rows.filter((item) => item.id !== incoming.id);
-
-  // Hội thoại đang có tin chưa đọc luôn đứng đầu danh sách.
-  // Trong nhóm chưa đọc, tin mới nhất đứng trước để tin vừa nhảy vào không bị
-  // nằm lại ở vị trí cũ khi nhân viên đang kiểm tra các hội thoại cũ phía dưới.
-  if (Number(incoming.unreadCount || 0) > 0) {
-    const unreadRows = next.filter((item) => Number(item.unreadCount || 0) > 0);
-    const readRows = next.filter((item) => Number(item.unreadCount || 0) <= 0);
-
-    const byNewest = (a: OmniConversation, b: OmniConversation) => {
-      const aa = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
-      const bb = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || 0).getTime();
-      return bb - aa;
-    };
-
-    return [incoming, ...unreadRows.sort(byNewest), ...readRows];
+): OmniConversation {
+  if (!previous) return incoming;
+  const prevAt = messageActivityAt(previous);
+  const nextAt = messageActivityAt(incoming);
+  if (prevAt > nextAt) {
+    return {
+      ...incoming,
+      lastMessageAt: previous.lastMessageAt,
+      lastMessageText: previous.lastMessageText,
+      lastMessageDirection: (previous as any).lastMessageDirection,
+    } as OmniConversation;
   }
+  if (prevAt === nextAt && previous.lastMessageText && !incoming.lastMessageText) {
+    return { ...incoming, lastMessageText: previous.lastMessageText };
+  }
+  return incoming;
+}
 
-  // Event không tạo unread (profile/tag/assign/read...) chỉ cập nhật đúng vị trí,
-  // không làm xáo trộn danh sách nhân viên đang kiểm tra.
-  const oldIndex = rows.findIndex((item) => item.id === incoming.id);
-  if (oldIndex < 0) return [incoming, ...rows];
-
-  const result = [...rows];
-  result[oldIndex] = incoming;
-  return result;
+function promoteUnreadConversation(rows: OmniConversation[], incoming: OmniConversation) {
+  // Compatibility for other update paths; unreadCount no longer controls rank.
+  const previous = rows.find((item) => item.id === incoming.id);
+  const merged = preserveNewestMessagePreview(previous, incoming);
+  return sortConversationsByLastMessage([
+    merged,
+    ...rows.filter((item) => item.id !== incoming.id),
+  ]);
 }
 
 function normalizeApiList(data: any): any[] {
@@ -1027,12 +1072,18 @@ export default function MessagesPageClient({
   const [activeConversation, setActiveConversation] =
     useState<OmniConversation | null>(null);
   const [activeId, setActiveId] = useState("");
+  // SSE giữ một kết nối khi chuyển A -> B -> C; callback đọc khách hiện tại qua ref.
+  const activeIdForSseRef = useRef("");
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("LATEST");
   const [channel, setChannel] = useState<OmniChannel | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
+  const [tagFilterSearch, setTagFilterSearch] = useState("");
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [tagManagerSearch, setTagManagerSearch] = useState("");
   const [staffOptions, setStaffOptions] = useState<AssigneeOption[]>([]);
   const [metaConnection, setMetaConnection] =
     useState<MetaConnectionStatus | null>(null);
@@ -1368,7 +1419,7 @@ export default function MessagesPageClient({
     try {
       const data = await listOmniConversations({
         q: debouncedSearch,
-        status: inboxFilter === "WAITING" ? "OPEN" : "ALL",
+        status: "ALL",
         channel,
         assigneeId: assigneeFilter,
         tag: tagFilter,
@@ -1380,7 +1431,14 @@ export default function MessagesPageClient({
       if (requestId !== listRequestId.current) return;
 
       const items = data?.items || [];
-      setConversations(items);
+      setConversations((previous) => {
+        const byId = new Map(previous.map((row) => [row.id, row]));
+        return items.map((row: OmniConversation) => {
+          const previousRow = byId.get(row.id);
+          const merged = mergeNewestCustomerProfile(previousRow, row);
+          return preserveNewestMessagePreview(previousRow, merged);
+        }).sort((a, b) => messageActivityAt(b) - messageActivityAt(a));
+      });
       setConversationPage(data?.page || 1);
       setHasMoreConversations(Boolean(data?.hasNext));
 
@@ -1425,7 +1483,7 @@ export default function MessagesPageClient({
       const nextPage = conversationPage + 1;
       const data = await listOmniConversations({
         q: debouncedSearch,
-        status: inboxFilter === "WAITING" ? "OPEN" : "ALL",
+        status: "ALL",
         channel,
         assigneeId: assigneeFilter,
         tag: tagFilter,
@@ -1438,10 +1496,10 @@ export default function MessagesPageClient({
 
       setConversations((prev) => {
         const seen = new Set(prev.map((item) => item.id));
-        return [
+        return sortConversationsByLastMessage([
           ...prev,
           ...items.filter((item) => !seen.has(item.id)),
-        ];
+        ]);
       });
 
       setConversationPage(data?.page || nextPage);
@@ -1498,12 +1556,25 @@ export default function MessagesPageClient({
       // Người dùng có thể bấm khách khác trước khi request cũ xong.
       // Chỉ request mới nhất được phép thay nội dung ô chat.
       if (requestSeq !== detailRequestSeqRef.current) return;
-      setActiveConversation(data);
+      setActiveConversation((previous) =>
+        previous?.id === id ? mergeNewestCustomerProfile(previous, data) : data,
+      );
       void markOmniConversationRead(id).catch(() => undefined);
       setConversations((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, unreadCount: 0 } : item,
-        ),
+        sortConversationsByLastMessage(prev.map((item) => {
+          if (item.id !== id) return item;
+          const latest = (data.messages || []).at(-1);
+          const latestPreview = String(latest?.text || "").trim() ||
+            (latest?.type === "IMAGE" ? "[Ảnh]" :
+             latest?.type === "STICKER" ? "[Nhãn dán]" :
+             latest?.type === "FILE" ? "[Tệp đính kèm]" : "");
+          return preserveNewestMessagePreview(item, {
+            ...item,
+            unreadCount: 0,
+            lastMessageText: latestPreview || data.lastMessageText || item.lastMessageText,
+            lastMessageAt: latest?.sentAt || data.lastMessageAt || item.lastMessageAt,
+          });
+        })),
       );
     } catch (err) {
       if (requestSeq !== detailRequestSeqRef.current) return;
@@ -1718,8 +1789,12 @@ export default function MessagesPageClient({
     void loadCustomerOrderHistory();
   }, [activeConversation, loadCustomerOrderHistory, rightPanelTab]);
 
+  // update synchronously on each render, independent of SSE subscription lifecycle
+  activeIdForSseRef.current = activeId;
+
   useEffect(() => {
     let source: EventSource | null = null;
+    let hasConnectedOnce = false;
 
     try {
       source = openOmniInboxEventSource((event) => {
@@ -1730,7 +1805,7 @@ export default function MessagesPageClient({
 
         if (event.type === "conversation.history_synced") {
           const syncedId = String(payload?.conversationId || "");
-          if (syncedId && syncedId === activeId) {
+          if (syncedId && syncedId === activeIdForSseRef.current) {
             // Silent refresh: keep current chat visible while missing history arrives.
             const currentSeq = detailRequestSeqRef.current;
             void getOmniConversation(syncedId).then((detail) => {
@@ -1752,7 +1827,7 @@ export default function MessagesPageClient({
         if (event.type === "message.created") {
           const message = payload as OmniMessage;
 
-          if (message?.conversationId === activeId) {
+          if (message?.conversationId === activeIdForSseRef.current) {
             setActiveConversation((prev) => {
               if (!prev) return prev;
               return {
@@ -1762,10 +1837,24 @@ export default function MessagesPageClient({
             });
           }
 
-          // Không reload toàn bộ list khi SSE có tin mới. Backend đã emit
-          // conversation.updated ngay sau message.created; dùng event đó để cập nhật
-          // đúng một dòng giúp tin mới hiện nhanh và không phá vị trí nhân viên đang
-          // check các hội thoại cũ ở phía dưới.
+          // Tin IN/OUT từ backend vừa được lưu: đẩy đúng dòng lên đầu ngay,
+          // không chờ conversation.updated. Backfill tin cũ không được đẩy sai.
+          if (message?.conversationId && message.sentAt) {
+            setConversations((prev) => {
+              const existing = prev.find((item) => item.id === message.conversationId);
+              if (!existing || messageActivityAt(existing) >= new Date(message.sentAt).getTime()) return prev;
+              const preview = String(message.text || "").trim() ||
+                (message.type === "IMAGE" ? "[Ảnh]" :
+                 message.type === "FILE" ? "[Tệp đính kèm]" :
+                 message.type === "STICKER" ? "[Nhãn dán]" : "[Tin nhắn]");
+              return promoteUnreadConversation(prev, {
+                ...existing,
+                lastMessageAt: message.sentAt,
+                lastMessageText: preview,
+                lastMessageDirection: message.direction,
+              } as OmniConversation);
+            });
+          }
           return;
         }
 
@@ -1785,34 +1874,35 @@ export default function MessagesPageClient({
             if (!existed && debouncedSearch.trim()) return prev;
 
             const merged = existedRow
-              ? { ...existedRow, ...conversation }
+              ? mergeNewestCustomerProfile(existedRow, { ...existedRow, ...conversation })
               : conversation;
 
-            // Tin chưa đọc phải nhảy lên đầu NGAY CẢ KHI conversation này đã có sẵn
-            // ở rất sâu trong list. Đây là case nhân viên đang check tin cũ từ dưới lên:
-            // khách vừa nhắn lại sẽ không nằm nguyên ở vị trí cũ nữa.
-            if (Number(merged.unreadCount || 0) > 0) {
-              return promoteUnreadConversation(prev, merged);
-            }
-
-            // Event không có unread chỉ update tại chỗ để không phá vị trí đang check.
-            if (!existed) return [merged, ...prev];
-            return prev.map((item) =>
-              item.id === merged.id ? merged : item,
-            );
+            const safeMerged = preserveNewestMessagePreview(existedRow, merged);
+            // A/B/C: bất kỳ tin IN hoặc OUT mới hơn đều tự lên đầu.
+            // Metadata-only update vẫn giữ thứ tự theo lastMessageAt.
+            if (!existed && !safeMerged.lastMessageAt) return prev;
+            return sortConversationsByLastMessage([
+              safeMerged,
+              ...prev.filter((item) => item.id !== safeMerged.id),
+            ]);
           });
 
-          if (conversation.id === activeId) {
+          if (conversation.id === activeIdForSseRef.current) {
             setActiveConversation((prev) =>
               prev
-                ? { ...prev, ...conversation, messages: prev.messages }
+                ? { ...mergeNewestCustomerProfile(prev, { ...prev, ...conversation }), messages: prev.messages }
                 : conversation,
             );
           }
         }
       });
 
-      source.onopen = () => setSseStatus("online");
+      source.onopen = () => {
+        setSseStatus("online");
+        // Recover messages missed while disconnected; first connection already loads list.
+        if (hasConnectedOnce) void loadList();
+        hasConnectedOnce = true;
+      };
       source.onerror = () => setSseStatus("offline");
     } catch {
       setSseStatus("offline");
@@ -1821,7 +1911,7 @@ export default function MessagesPageClient({
     return () => {
       source?.close();
     };
-  }, [activeId, debouncedSearch, loadList]);
+  }, [debouncedSearch, loadList]);
 
   const visibleConversations = useMemo(() => {
     // Bình luận Facebook dùng chung channel FACEBOOK ở backend, nên phải
@@ -1837,12 +1927,15 @@ export default function MessagesPageClient({
       );
     }
 
+    items = sortConversationsByLastMessage(items);
+
     // Đợi phản hồi phải là OPEN cả ở client. Khi nhân viên vừa gửi xong,
     // hội thoại rời danh sách ngay tại chỗ, không chờ lần reload API kế tiếp.
     if (inboxFilter === "WAITING") {
       return items.filter(
         (item) =>
-          item.status === "OPEN" ||
+          (item as any).lastMessageDirection === "IN" ||
+          ((item as any).lastMessageDirection == null && item.status === "OPEN") ||
           pendingReplyConversationIds.includes(item.id),
       );
     }
@@ -2440,7 +2533,7 @@ export default function MessagesPageClient({
         : prev,
     );
     setConversations((prev) =>
-      prev.map((item) =>
+      sortConversationsByLastMessage(prev.map((item) =>
         item.id === conversationId
           ? {
               ...item,
@@ -2453,7 +2546,7 @@ export default function MessagesPageClient({
               status: item.status === "OPEN" ? "PROCESSING" : item.status,
             }
           : item,
-      ),
+      )),
     );
 
     sendQueueRef.current.push({
@@ -3828,22 +3921,22 @@ export default function MessagesPageClient({
           </header>
 
           {isInboxWorkspace ? (
-            <section className="grid h-[calc(100dvh-72px)] min-h-0 grid-cols-1 gap-3 overflow-hidden p-3 2xl:grid-cols-[360px_minmax(720px,1fr)_340px]">
-              <aside className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
-                <div className="shrink-0 border-b border-neutral-200 p-5">
-                  <div className="mb-4 flex items-start justify-between">
+            <section className="grid h-[calc(100dvh-72px)] min-h-0 grid-cols-1 gap-3 overflow-hidden p-3 2xl:grid-cols-[340px_minmax(650px,1fr)_300px]">
+              <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+                <div className="shrink-0 border-b border-neutral-200 px-3 pt-3 pb-2">
+                  <div className="mb-2 flex items-center justify-between">
                     <div>
-                      <h3 className="text-lg font-bold">Hội thoại</h3>
-                      <p className="text-sm text-neutral-500">
-                        The 1970 · {workspace === "comments" ? "Facebook Comments" : "Facebook Messenger"}
+                      <h3 className="text-base font-bold">Hội thoại</h3>
+                      <p className="text-[10px] text-neutral-500">
+                        {workspace === "comments" ? "Bình luận Facebook" : "Messenger · The 1970"}
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1">
                       <button
                         type="button"
                         onClick={() => setOmniNavCollapsed((value) => !value)}
                         className={cx(
-                          "rounded-full border p-2 text-neutral-600 hover:bg-neutral-50",
+                          "rounded-full border p-1.5 text-neutral-600 hover:bg-neutral-50",
                           !omniNavCollapsed
                             ? "border-blue-200 bg-blue-50 text-blue-700"
                             : "border-neutral-200",
@@ -3855,7 +3948,7 @@ export default function MessagesPageClient({
                       </button>
                       <button
                         onClick={() => void loadList()}
-                        className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50"
+                        className="rounded-full border border-neutral-200 p-1.5 text-neutral-600 hover:bg-neutral-50"
                       >
                         <RefreshCw
                           className={cx(
@@ -3864,19 +3957,17 @@ export default function MessagesPageClient({
                           )}
                         />
                       </button>
-                      <button className="rounded-full border border-neutral-200 p-2 text-neutral-600 hover:bg-neutral-50">
-                        <Filter className="h-4 w-4" />
-                      </button>
+
                     </div>
                   </div>
 
-                  <div className="mb-3 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
+                  <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5">
                     <Search className="h-4 w-4 shrink-0 text-neutral-400" />
                     <input
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
-                      className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-400"
-                      placeholder="Tìm khách, SĐT, nội dung tin..."
+                      className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-neutral-400"
+                      placeholder="Tìm kiếm hội thoại..."
                     />
                     {search ? (
                       <button
@@ -3890,41 +3981,13 @@ export default function MessagesPageClient({
                     ) : null}
                   </div>
 
-                  <div className="mb-4 rounded-3xl border border-blue-100 bg-blue-50 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm">
-                          {channelBadge("FACEBOOK")}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-black text-blue-950">
-                            {getPageName(metaConnection, activeConversation)}
-                          </p>
-                          <p className="text-xs font-semibold text-blue-700">
-                            Facebook Messenger · Page ID{" "}
-                            {getPageId(metaConnection, activeConversation)}
-                          </p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-black text-emerald-700">
-                        Configured
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <Metric label="Mới nhất" value={visibleConversations.length} />
-                    <Metric label="Đợi phản hồi" value={selectedSummary.open} />
-                    <Metric label="Chưa đọc" value={selectedSummary.unread} />
-                  </div>
-
-                  <div className="mt-4 flex gap-2 overflow-x-auto">
+                  <div className="flex gap-1 overflow-x-auto py-1">
                     {INBOX_FILTERS.map((item) => (
                       <button
                         key={item.key}
                         onClick={() => setInboxFilter(item.key)}
                         className={cx(
-                          "whitespace-nowrap rounded-full px-3 py-2 text-xs font-black transition",
+                          "whitespace-nowrap rounded-md px-2 py-1.5 text-[11px] font-medium transition",
                           inboxFilter === item.key
                             ? item.key === "UNREAD"
                               ? "bg-blue-600 text-white shadow-sm"
@@ -3944,13 +4007,13 @@ export default function MessagesPageClient({
                     ))}
                   </div>
 
-                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div className="mt-1 grid grid-cols-3 gap-1">
                     <select
                       value={channel}
                       onChange={(event) =>
                         setChannel(event.target.value as OmniChannel | "ALL")
                       }
-                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                      className="min-w-0 w-full rounded-lg border border-neutral-200 bg-white px-1.5 py-1.5 text-[10px] font-medium outline-none"
                     >
                       {CHANNEL_OPTIONS.map((item) => (
                         <option key={item.key} value={item.key}>
@@ -3964,7 +4027,7 @@ export default function MessagesPageClient({
                       onChange={(event) =>
                         setAssigneeFilter(event.target.value)
                       }
-                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                      className="min-w-0 w-full rounded-lg border border-neutral-200 bg-white px-1.5 py-1.5 text-[10px] font-medium outline-none"
                     >
                       <option value="">Tất cả nhân viên</option>
                       {assigneeOptions
@@ -3976,26 +4039,54 @@ export default function MessagesPageClient({
                         ))}
                     </select>
 
-                    <select
-                      value={tagFilter}
-                      onChange={(event) => setTagFilter(event.target.value)}
-                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none"
+                    <button
+                      type="button"
+                      onClick={() => { setTagFilterSearch(""); setTagFilterOpen(true); }}
+                      title={tagFilter || "Lọc theo nhãn"}
+                      className="flex min-w-0 w-full items-center justify-between gap-1 rounded-lg border border-neutral-200 bg-white px-1.5 py-1.5 text-left text-[10px] font-medium outline-none hover:border-blue-300"
                     >
-                      <option value="">Tất cả nhãn</option>
-                      {tagTemplates
-                        .filter((template) => template.isActive !== false)
-                        .map((template) => {
-                          const tagName = String(
-                            (template as any).name || (template as any).tag || "",
-                          ).trim();
-                          if (!tagName) return null;
-                          return (
-                            <option key={template.id} value={tagName}>
-                              {tagName}
-                            </option>
-                          );
-                        })}
-                    </select>
+                      <span className="min-w-0 truncate">{tagFilter || "Tất cả nhãn"}</span>
+                      <ChevronDown className="h-3 w-3 shrink-0" />
+                    </button>
+                    {tagFilterOpen ? (
+                      <div
+                        className="fixed inset-0 z-[120] flex items-center justify-center bg-black/45 p-3 sm:p-6"
+                        onMouseDown={(event) => { if (event.target === event.currentTarget) setTagFilterOpen(false); }}
+                      >
+                        <div role="dialog" aria-modal="true" aria-label="Bộ lọc nhãn hội thoại" className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+                          <div className="flex items-center justify-between border-b px-4 py-3">
+                            <div>
+                              <h3 className="text-sm font-bold">Bộ lọc nhãn hội thoại</h3>
+                              <p className="text-[11px] text-neutral-500">Chọn một nhãn để lọc danh sách</p>
+                            </div>
+                            <button type="button" className="rounded-lg p-2 hover:bg-neutral-100" onClick={() => setTagFilterOpen(false)} aria-label="Đóng bộ lọc"><X className="h-4 w-4" /></button>
+                          </div>
+                          <div className="border-b px-4 py-3">
+                            <div className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2">
+                              <Search className="h-4 w-4 text-neutral-400" />
+                              <input autoFocus value={tagFilterSearch} onChange={(event) => setTagFilterSearch(event.target.value)} placeholder="Tìm nhãn..." className="w-full bg-transparent text-sm outline-none" />
+                            </div>
+                          </div>
+                          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                            <button type="button" onClick={() => { setTagFilter(""); setTagFilterOpen(false); }} className={cx("mb-2 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-neutral-100", !tagFilter && "bg-blue-50 font-bold text-blue-700")}>
+                              Tất cả nhãn {!tagFilter ? <CheckCircle2 className="h-4 w-4" /> : null}
+                            </button>
+                            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                              {tagTemplates.filter((item) => item.isActive !== false).filter((item) => String((item as any).name || (item as any).tag || "").toLocaleLowerCase("vi-VN").includes(tagFilterSearch.trim().toLocaleLowerCase("vi-VN"))).sort((a, b) => String((a as any).name || (a as any).tag || "").localeCompare(String((b as any).name || (b as any).tag || ""), "vi")).map((item) => {
+                                const tagName = String((item as any).name || (item as any).tag || "").trim();
+                                if (!tagName) return null;
+                                const selected = tagName === tagFilter;
+                                return <button key={item.id} type="button" onClick={() => { setTagFilter(tagName); setTagFilterOpen(false); }} className={cx("flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-xs hover:border-blue-300 hover:bg-blue-50", selected ? "border-blue-400 bg-blue-50 text-blue-700" : "border-neutral-100")}><span className="truncate">{tagName}</span>{selected ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : null}</button>;
+                              })}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between border-t px-4 py-3">
+                            <span className="text-xs text-neutral-500">{tagTemplates.filter((x) => x.isActive !== false).length} nhãn</span>
+                            <button type="button" onClick={() => { setTagFilter(""); setTagFilterOpen(false); }} className="rounded-lg border px-3 py-2 text-xs font-semibold hover:bg-neutral-50">Xóa bộ lọc</button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -4030,6 +4121,13 @@ export default function MessagesPageClient({
                             detailRequestSeqRef.current += 1;
                             orderHistoryRequestSeqRef.current += 1;
                             setActiveId(item.id);
+                            // Chỉ dòng được bấm có highlight; giữ dòng đó trong vùng nhìn.
+                            window.requestAnimationFrame(() => {
+                              const row = Array.from(
+                                conversationListRef.current?.querySelectorAll<HTMLElement>("[data-conversation-id]") || [],
+                              ).find((node) => node.dataset.conversationId === item.id);
+                              row?.scrollIntoView({ block: "nearest" });
+                            });
                             setActiveConversation((prev) =>
                               prev?.id === item.id
                                 ? prev
@@ -4782,48 +4880,31 @@ export default function MessagesPageClient({
                           </div>
                           {tagTemplates.length ? (
                             <div className="mt-3 border-t border-neutral-100 pt-3">
-                              <p className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
-                                Chọn nhanh nhãn
-                              </p>
-                              <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pr-1">
-                                {tagTemplates.map((template) => {
-                                  const tagName = String(template.name || "").trim();
-                                  if (!tagName) return null;
-                                  const selected = Boolean(
-                                    activeConversation.tags?.some(
-                                      (item) => item.tag === tagName,
-                                    ),
-                                  );
-                                  return (
-                                    <button
-                                      key={template.id || tagName}
-                                      type="button"
-                                      onClick={() =>
-                                        void handleQuickTagToggle(tagName)
-                                      }
-                                      className={cx(
-                                        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition",
-                                        selected
-                                          ? "border-blue-600 bg-blue-600 text-white shadow-sm"
-                                          : "border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700",
-                                      )}
-                                      title={
-                                        selected
-                                          ? `Bỏ nhãn ${tagName}`
-                                          : `Gắn nhãn ${tagName}`
-                                      }
-                                    >
-                                      <span
-                                        className={cx(
-                                          "h-2 w-2 rounded-full",
-                                          selected ? "bg-white" : "bg-blue-500",
-                                        )}
-                                      />
-                                      {tagName}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                              <button type="button" onClick={() => { setTagManagerSearch(""); setTagManagerOpen(true); }} className="flex w-full items-center justify-between rounded-xl border border-neutral-200 px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50">
+                                <span>Chọn nhãn từ danh sách ({tagTemplates.length})</span><ChevronDown className="h-4 w-4" />
+                              </button>
+                              {tagManagerOpen ? (
+                                <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) setTagManagerOpen(false); }}>
+                                  <div role="dialog" aria-modal="true" aria-label="Danh sách nhãn khách hàng" className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+                                    <div className="flex items-center justify-between border-b px-4 py-3">
+                                      <div><h3 className="text-sm font-bold">Gắn nhãn khách hàng</h3><p className="text-[11px] text-neutral-500">Bấm nhãn để gắn hoặc bỏ, có thể chọn nhiều nhãn</p></div>
+                                      <button type="button" onClick={() => setTagManagerOpen(false)} className="rounded-lg p-2 hover:bg-neutral-100" aria-label="Đóng danh sách nhãn"><X className="h-4 w-4" /></button>
+                                    </div>
+                                    <div className="border-b px-4 py-3"><div className="flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2"><Search className="h-4 w-4 text-neutral-400" /><input autoFocus value={tagManagerSearch} onChange={(event) => setTagManagerSearch(event.target.value)} placeholder="Tìm nhãn..." className="w-full text-sm outline-none" /></div></div>
+                                    <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                                      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                                      {tagTemplates.filter((item) => item.isActive !== false).filter((item) => String(item.name || "").toLocaleLowerCase("vi-VN").includes(tagManagerSearch.trim().toLocaleLowerCase("vi-VN"))).sort((a,b) => String(a.name || "").localeCompare(String(b.name || ""), "vi")).map((item) => {
+                                        const name = String(item.name || "").trim();
+                                        if (!name) return null;
+                                        const selected = Boolean(activeConversation.tags?.some((tag) => tag.tag === name));
+                                        return <button key={item.id} type="button" onClick={() => void handleQuickTagToggle(name)} className={cx("flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-xs hover:border-blue-300", selected ? "border-blue-400 bg-blue-50 text-blue-700" : "border-neutral-100 hover:bg-neutral-50")}><span className="truncate">{name}</span>{selected ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : null}</button>;
+                                      })}
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-end border-t px-4 py-3"><button type="button" onClick={() => setTagManagerOpen(false)} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white">Hoàn tất</button></div>
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
                           </>
@@ -7692,11 +7773,11 @@ function SidebarGroup({
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+    <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-2 py-1.5">
+      <p className="text-[9px] font-semibold uppercase tracking-tight text-neutral-400">
         {label}
       </p>
-      <p className="mt-1 text-lg font-black">{value}</p>
+      <p className="text-sm font-bold tabular-nums">{value}</p>
     </div>
   );
 }
@@ -7711,88 +7792,77 @@ function ConversationRow({
   onClick: () => void;
 }) {
   const tags = item.tags || [];
+  const unreadCount = Number(item.unreadCount || 0);
   return (
     <button
+      type="button"
       data-conversation-id={item.id}
       onClick={onClick}
       className={cx(
-        "relative flex w-full gap-3 border-b border-neutral-100 px-5 py-4 text-left transition",
-        Number(item.unreadCount || 0) > 0
-          ? "bg-blue-100 hover:bg-blue-200"
+        "relative flex w-full items-start gap-2 border-b border-neutral-100 px-2.5 py-1.5 text-left transition-colors",
+        active
+          ? "bg-blue-100 ring-1 ring-inset ring-blue-200"
           : "bg-white hover:bg-neutral-50",
-        active &&
-          (Number(item.unreadCount || 0) > 0
-            ? "bg-blue-200"
-            : "bg-blue-50/70"),
-        Number(item.unreadCount || 0) > 0 &&
-          "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-blue-600",
+        active && "before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-blue-600",
       )}
     >
-      <div className="relative shrink-0">
+      <div className="relative mt-0.5 shrink-0">
         <Avatar
           src={item.customer?.avatarUrl || ""}
           name={customerName(item)}
-          size="md"
+          size="sm"
         />
-        <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-white ring-2 ring-white">
+        <span className="absolute -bottom-0.5 -right-0.5 flex scale-75 items-center justify-center rounded-full bg-white ring-2 ring-white">
           {channelBadge(item.channel)}
         </span>
       </div>
-
       <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-baseline justify-between gap-1.5">
           <p className={cx(
-            "truncate text-sm",
-            Number(item.unreadCount || 0) > 0 ? "font-black text-blue-950" : "font-black",
+            "min-w-0 flex-1 truncate text-[12px] leading-[16px]",
+            unreadCount > 0 ? "font-bold text-neutral-950" : "font-semibold text-neutral-800",
           )}>
             {customerName(item)}
           </p>
-          <span className="shrink-0 text-xs font-medium text-neutral-400">
+          <span className="shrink-0 text-[10px] tabular-nums text-neutral-400">
             {formatTime(item.lastMessageAt)}
           </span>
         </div>
-
-        <p
-          className={cx(
-            "mt-1 truncate text-sm",
-            Number(item.unreadCount || 0) > 0
-              ? "font-semibold text-blue-900"
-              : "text-neutral-600",
-          )}
-        >
-          {item.lastMessageText || "Chưa có nội dung"}
-        </p>
-
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {item.assigneeName ? (
-            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-bold text-neutral-500">
-              {item.assigneeName}
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+          <p className={cx(
+            "min-w-0 flex-1 truncate text-[11px] leading-[15px]",
+            unreadCount > 0 ? "font-semibold text-blue-800" : "text-neutral-500",
+          )}>
+            {item.lastMessageText || "Chưa có nội dung"}
+          </p>
+          {unreadCount > 0 ? (
+            <span className="flex h-[17px] min-w-[17px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+              {unreadCount > 99 ? "99+" : unreadCount}
             </span>
-          ) : (
-            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">
-              Chưa gán
-            </span>
-          )}
-
-          {tags.slice(0, 2).map((tag) => (
+          ) : null}
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap leading-[13px]">
+          <span className={cx(
+            "max-w-[58%] shrink truncate rounded bg-neutral-100 px-1.5 py-px text-[9px] font-medium text-neutral-500",
+            !item.assigneeName && "bg-amber-50 text-amber-700",
+          )} title={item.assigneeName || "Chưa gán"}>
+            {item.assigneeName || "Chưa gán"}
+          </span>
+          {tags.slice(0, 1).map((tag) => (
             <span
               key={tag.id || tag.tag}
-              className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-600"
+              title={tag.tag}
+              className="min-w-0 max-w-[40%] truncate rounded bg-blue-50 px-1.5 py-px text-[9px] font-medium text-blue-600"
             >
               {tag.tag}
             </span>
           ))}
+          {tags.length > 1 ? (
+            <span className="shrink-0 text-[9px] text-neutral-400" title={tags.slice(1).map((tag) => tag.tag).join(", ")}>
+              +{tags.length - 1}
+            </span>
+          ) : null}
         </div>
-      </div>
-
-      <div className="flex w-6 shrink-0 items-center justify-end">
-        {item.unreadCount > 0 ? (
-          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-black text-white">
-            {item.unreadCount}
-          </span>
-        ) : (
-          <CheckCircle2 className="h-4 w-4 text-neutral-300" />
-        )}
       </div>
     </button>
   );
