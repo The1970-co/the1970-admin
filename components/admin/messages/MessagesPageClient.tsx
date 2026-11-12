@@ -1728,6 +1728,27 @@ export default function MessagesPageClient({
 
         if (!payload) return;
 
+        if (event.type === "conversation.history_synced") {
+          const syncedId = String(payload?.conversationId || "");
+          if (syncedId && syncedId === activeId) {
+            // Silent refresh: keep current chat visible while missing history arrives.
+            const currentSeq = detailRequestSeqRef.current;
+            void getOmniConversation(syncedId).then((detail) => {
+              if (currentSeq !== detailRequestSeqRef.current) return;
+              setActiveConversation((prev) =>
+                prev?.id === syncedId
+                  ? { ...detail, messages: (detail.messages || []).reduce(
+                      (acc: OmniMessage[], message: OmniMessage) =>
+                        reconcileOmniMessage(acc, message),
+                      prev.messages || [],
+                    ) }
+                  : prev,
+              );
+            }).catch(() => undefined);
+          }
+          return;
+        }
+
         if (event.type === "message.created") {
           const message = payload as OmniMessage;
 
@@ -8002,6 +8023,20 @@ function MessageImage({
 }
 
 
+function AvatarImage({ src, name, size, sizeClass }: {
+  src: string;
+  name: string;
+  size: "sm" | "md" | "lg" | "xl";
+  sizeClass: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (failed) return <Avatar name={name} size={size} />;
+  return <img src={src} alt="" loading="lazy"
+    className={cx("shrink-0 rounded-full object-cover", sizeClass)}
+    onError={() => setFailed(true)} />;
+}
+
 function Avatar({
   src,
   name,
@@ -8020,14 +8055,10 @@ function Avatar({
           ? "h-12 w-12 text-sm"
           : "h-16 w-16 text-lg";
 
+  // Avatar URLs can expire; never show a broken-image icon.
+  // This image falls back to the customer's initial without any request to Meta.
   if (src) {
-    return (
-      <img
-        src={src}
-        alt=""
-        className={cx("shrink-0 rounded-full object-cover", sizeClass)}
-      />
-    );
+    return <AvatarImage src={src} name={name} size={size} sizeClass={sizeClass} />;
   }
 
   const initial = String(name || "?")
