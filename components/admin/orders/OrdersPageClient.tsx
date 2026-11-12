@@ -8681,7 +8681,7 @@ export default function OrdersPageClient() {
                     </div>
 
                     <div className="max-h-[260px] overflow-y-auto pr-1">
-                      <div className="grid gap-1.5 sm:grid-cols-3 lg:grid-cols-6 2xl:grid-cols-9">
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                         {COLUMN_DEFS.filter((col) =>
                           canSeeMoney ? true : !col.money,
                         ).map((col) => {
@@ -8694,7 +8694,7 @@ export default function OrdersPageClient() {
                               onDragStart={() => handleColumnDragStart(col.key)}
                               onDragOver={(e) => e.preventDefault()}
                               onDrop={() => handleColumnDrop(col.key)}
-                              className={`grid grid-cols-[18px_18px_minmax(0,1fr)_44px] items-center gap-1.5 rounded-2xl border px-2 py-2 text-[11px] transition ${visible
+                              className={`grid min-w-0 grid-cols-[18px_18px_minmax(0,1fr)_48px] items-center gap-2 rounded-xl border px-3 py-2.5 text-xs transition ${visible
                                   ? "border-neutral-200 bg-white hover:bg-neutral-50"
                                   : "border-neutral-100 bg-white/70 text-neutral-400"
                                 }`}
@@ -8711,7 +8711,7 @@ export default function OrdersPageClient() {
                                 checked={visible}
                                 onChange={() => toggleColumn(col.key)}
                               />
-                              <span className="min-w-0 truncate font-semibold text-neutral-800">
+                              <span className={`min-w-0 break-words font-semibold leading-5 ${visible ? "text-neutral-800" : "text-neutral-500"}`} title={col.label}>
                                 {index >= 0 ? `${index + 1}. ` : ""}
                                 {col.label}
                               </span>
