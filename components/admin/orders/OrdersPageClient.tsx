@@ -1173,6 +1173,7 @@ function canonicalCarrierValue(value?: string | null) {
   if (upper.includes("VIETTEL") || upper.includes("VTP")) return "VIETTEL_POST";
   if (upper.includes("GHN") || upper.includes("GIAO HANG NHANH")) return "GHN";
   if (upper.includes("GHTK") || upper.includes("GIAO HANG TIET KIEM")) return "GHTK";
+  if (upper.includes("SPX") || upper.includes("SHOPEE")) return "SPX";
   if (upper.includes("GRAB")) return "GRAB";
   if (upper.includes("SHIPPER") || upper.includes("INTERNAL")) return "INTERNAL_SHIPPER";
 
@@ -1186,6 +1187,7 @@ function carrierLabel(value?: string | null) {
   if (canonical === "VIETTEL_POST") return "Viettel Post";
   if (canonical === "GHN") return "GHN";
   if (canonical === "GHTK") return "GHTK";
+  if (canonical === "SPX") return "SPX";
   if (canonical === "GRAB") return "Grab Express";
   if (canonical === "INTERNAL_SHIPPER") return "Shipper riêng";
 
@@ -1923,6 +1925,8 @@ function shipmentDisplayStatusLabel(order: AdminOrder) {
   }
 
 
+  if (["RETURNED", "RETURNED_TO_CLIENT"].includes(value)) return "Đã hoàn hàng";
+
   if (looksLikeReturnShipment) {
     return "Đang hoàn hàng";
   }
@@ -2212,6 +2216,8 @@ const DELIVERY_STATUS_FILTER_OPTIONS = [
   "Giao thành công",
   "Đang hoàn hàng",
   "Đã hoàn hàng",
+  "Đã nhận hàng hoàn",
+  "Đang tìm tài xế",
   "Đã huỷ vận đơn",
   "Có sự cố",
 ];
@@ -4549,6 +4555,7 @@ export default function OrdersPageClient() {
     };
   }, []);
 
+  const [globalFilterOptions, setGlobalFilterOptions] = useState<{ shippingPartners: string[]; salesChannels: string[] }>({ shippingPartners: [], salesChannels: [] });
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [printVersion, setPrintVersion] = useState(0);
@@ -5114,6 +5121,9 @@ export default function OrdersPageClient() {
     // khiến createdByOptions/assignedStaffOptions fallback sang normalizedOrders
     // và số nhân viên thay đổi theo pageSize (25/50/100 đơn).
     void loadStaffList();
+    void apiFetch("/orders/filter-options", { cache: "no-store" })
+      .then(async res => { if (res.ok) setGlobalFilterOptions(await res.json()); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -5270,15 +5280,11 @@ export default function OrdersPageClient() {
         shouldFallbackToClientOrderSearch(effectiveServerKeyword) || hasMultiExactLookupSearch;
 
       const hasSmartSearch = Boolean(String(smartSearch || "").trim());
-      const hasMultiServerFilter = [
-        appliedBranchFilter,
-        appliedOrderFilter,
-        appliedPaymentFilter,
-      ].some((filterValue) => selectedMultiFilterValues(filterValue).length > 1);
+      // Các filter nhiều lựa chọn đã xử lý trong API trước khi phân trang.
+      // Không tải cưỡng bức 5 trang rồi tính nhầm tổng kết quả.
       const hasQuickStatusFilter = appliedQuickStatus !== "ALL";
       const shouldLoadWideForClientFilters =
         hasSmartSearch ||
-        hasMultiServerFilter ||
         shouldUseClientOnlySearch;
       const requestPageSize = shouldLoadWideForClientFilters
         ? Math.max(pageSize, ORDER_CLIENT_SEARCH_PAGE_SIZE)
@@ -5338,8 +5344,24 @@ export default function OrdersPageClient() {
           params.set("branchId", selectedBranchIds[0]);
         }
 
-        if (selectedOrderStatuses.length === 1) params.set("orderStatus", selectedOrderStatuses[0]);
-        if (selectedPaymentStatuses.length === 1) params.set("paymentStatus", selectedPaymentStatuses[0]);
+        const advancedFilters: Array<[string, string[]]> = [
+          ["branchIds", selectedBranchIds], ["orderStatuses", selectedOrderStatuses],
+          ["paymentStatuses", selectedPaymentStatuses],
+          ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
+          ["deliveryStatuses", selectedMultiFilterValues(appliedDeliveryStatusFilter)],
+          ["salesChannels", selectedMultiFilterValues(appliedSalesChannelFilter)],
+          ["shippingModes", selectedMultiFilterValues(appliedShippingModeFilter)],
+          ["shippingPartners", selectedMultiFilterValues(appliedShippingPartnerFilter)],
+          ["trackingStatuses", selectedMultiFilterValues(appliedTrackingFilter)],
+          ["codStatuses", selectedMultiFilterValues(appliedCodFilter)],
+          ["amountDueStatuses", selectedMultiFilterValues(appliedAmountDueFilter)],
+          ["itemCountStatuses", selectedMultiFilterValues(appliedItemCountFilter)],
+          ["productSkus", appliedProductSkuValues],
+          ["assignedStaffNames", selectedMultiFilterValues(appliedAssignedStaffFilter)],
+        ];
+        for (const [name, values] of advancedFilters) {
+          if (values.length) params.set(name, values.join("|"));
+        }
 
         const selectedCodReconciliationStatuses = selectedMultiFilterValues(appliedCodReconciliationFilter);
         if (selectedCodReconciliationStatuses.length > 0) {
@@ -5649,6 +5671,16 @@ export default function OrdersPageClient() {
     appliedOrderFilter,
     appliedPaymentFilter,
     appliedCreatedByFilter,
+    appliedAssignedStaffFilter,
+    appliedFulfillmentFilter,
+    appliedDeliveryStatusFilter,
+    appliedSalesChannelFilter,
+    appliedShippingModeFilter,
+    appliedShippingPartnerFilter,
+    appliedTrackingFilter,
+    appliedCodFilter,
+    appliedAmountDueFilter,
+    appliedItemCountFilter,
     appliedCodReconciliationFilter,
     appliedDateFrom,
     appliedDateTo,
@@ -5804,23 +5836,23 @@ export default function OrdersPageClient() {
   }, [normalizedOrders]);
 
   const salesChannelOptions = useMemo(
-    () => uniqueOptions(normalizedOrders.map((o) => o.salesChannel)),
-    [normalizedOrders],
+    () => uniqueOptions([...globalFilterOptions.salesChannels, ...normalizedOrders.map((o) => o.salesChannel)]),
+    [normalizedOrders, globalFilterOptions],
   );
 
   const shippingModeOptions = useMemo(
-    () => uniqueOptions(normalizedOrders.map((o) => o._meta.shippingMode)),
+    () => uniqueOptions(["Giao hàng", "Nhận tại cửa hàng", "Bán tại quầy", ...normalizedOrders.map((o) => o._meta.shippingMode)]),
     [normalizedOrders],
   );
 
   const shippingPartnerOptions = useMemo(
     () =>
       uniqueOptions(
-        normalizedOrders.map((o) =>
-          canonicalCarrierValue(o.shipment?.carrier || o._meta.shippingPartner),
-        ),
+        [...["GHN", "AHAMOVE", "VIETTEL_POST", "SPX", "GHTK", "GRAB", "INTERNAL_SHIPPER"],
+          ...globalFilterOptions.shippingPartners,
+          ...normalizedOrders.map((o) => o.shipment?.carrier || o._meta.shippingPartner)].map(canonicalCarrierValue),
       ),
-    [normalizedOrders],
+    [normalizedOrders, globalFilterOptions],
   );
 
   const productSkuOptions = useMemo<ProductFilterOption[]>(() => {
@@ -7092,8 +7124,23 @@ export default function OrdersPageClient() {
         if (dateRange.from) params.set("dateFrom", dateRange.from);
         if (dateRange.to) params.set("dateTo", dateRange.to);
         if (appliedQuickStatus !== "ALL") params.set("quickStatus", appliedQuickStatus);
-        if (selectedOrderStatuses.length === 1) params.set("orderStatus", selectedOrderStatuses[0]);
-        if (selectedPaymentStatuses.length === 1) params.set("paymentStatus", selectedPaymentStatuses[0]);
+        const excelAdvancedFilters: Array<[string, string[]]> = [
+          ["orderStatuses", selectedOrderStatuses], ["paymentStatuses", selectedPaymentStatuses],
+          ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
+          ["deliveryStatuses", selectedMultiFilterValues(appliedDeliveryStatusFilter)],
+          ["salesChannels", selectedMultiFilterValues(appliedSalesChannelFilter)],
+          ["shippingModes", selectedMultiFilterValues(appliedShippingModeFilter)],
+          ["shippingPartners", selectedMultiFilterValues(appliedShippingPartnerFilter)],
+          ["trackingStatuses", selectedMultiFilterValues(appliedTrackingFilter)],
+          ["codStatuses", selectedMultiFilterValues(appliedCodFilter)],
+          ["amountDueStatuses", selectedMultiFilterValues(appliedAmountDueFilter)],
+          ["itemCountStatuses", selectedMultiFilterValues(appliedItemCountFilter)],
+          ["productSkus", appliedProductSkuValues],
+          ["assignedStaffNames", selectedMultiFilterValues(appliedAssignedStaffFilter)],
+        ];
+        for (const [name, values] of excelAdvancedFilters) {
+          if (values.length) params.set(name, values.join("|"));
+        }
         if (selectedCodReconciliationStatuses.length) {
           params.set("codReconciliationStatus", selectedCodReconciliationStatuses.join(","));
         }
