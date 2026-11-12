@@ -102,7 +102,7 @@ import {
 } from "@/lib/address-api";
 import * as XLSX from "xlsx";
 
-type InboxFilter = "LATEST" | "WAITING" | "UNREAD";
+type InboxFilter = "LATEST" | "UNREAD" | "READ_UNANSWERED";
 type WorkspaceKey =
   | "inbox"
   | "facebook"
@@ -138,9 +138,37 @@ const WORKSPACE_TITLES: Record<WorkspaceKey, string> = {
 
 const INBOX_FILTERS: { key: InboxFilter; label: string }[] = [
   { key: "LATEST", label: "Mới nhất" },
-  { key: "WAITING", label: "Đợi phản hồi" },
   { key: "UNREAD", label: "Chưa đọc" },
+  { key: "READ_UNANSWERED", label: "Đã đọc chưa trả lời" },
 ];
+
+
+// Only the "read, unanswered" filter needs an additional backend predicate.
+// Use the existing authenticated apiJson() client so the filter is applied
+// against the full database BEFORE server pagination, not just 40 loaded rows.
+async function listReadUnansweredConversations(args: {
+  q?: string;
+  channel?: string;
+  assigneeId?: string;
+  tag?: string;
+  page: number;
+  limit: number;
+}) {
+  const params = new URLSearchParams({
+    status: "ALL",
+    readUnanswered: "1",
+    page: String(args.page),
+    limit: String(args.limit),
+  });
+  if (args.q) params.set("q", args.q);
+  if (args.channel && args.channel !== "ALL") params.set("channel", args.channel);
+  if (args.assigneeId) params.set("assigneeId", args.assigneeId);
+  if (args.tag) params.set("tag", args.tag);
+  return apiJson(`/omni-inbox/conversations?${params.toString()}`, {
+    redirectOnUnauthorized: false,
+    timeoutMs: 30000,
+  } as any);
+}
 
 const CHANNEL_OPTIONS: { key: OmniChannel | "ALL"; label: string }[] = [
   { key: "ALL", label: "Tất cả kênh" },
@@ -481,11 +509,10 @@ function reconcileOmniMessage(
   });
 }
 
-// Một quy tắc duy nhất cho mọi tab: tin nhắn có sentAt mới nhất đứng đầu.
-// Thay đổi nhãn, người phụ trách, đã đọc/chưa đọc KHÔNG làm đổi thứ tự.
+// One timeline for messages AND referral-only threads. Use createdAt only
+// when there is no message; never use updatedAt for sort priority.
 function messageActivityAt(row: OmniConversation): number {
-  if (!row.lastMessageAt) return 0;
-  const value = new Date(row.lastMessageAt).getTime();
+  const value = new Date(row.lastMessageAt || row.createdAt || 0).getTime();
   return Number.isFinite(value) ? value : 0;
 }
 
@@ -1419,16 +1446,19 @@ export default function MessagesPageClient({
     }
 
     try {
-      const data = await listOmniConversations({
+      const listArgs = {
         q: debouncedSearch,
-        status: "ALL",
+        status: "ALL" as const,
         channel,
         assigneeId: assigneeFilter,
         tag: tagFilter,
         unread: inboxFilter === "UNREAD" ? true : undefined,
         page: 1,
         limit: workspace === "comments" ? 100 : 40,
-      });
+      };
+      const data = inboxFilter === "READ_UNANSWERED"
+        ? await listReadUnansweredConversations(listArgs)
+        : await listOmniConversations(listArgs);
 
       if (requestId !== listRequestId.current) return;
 
@@ -1438,7 +1468,11 @@ export default function MessagesPageClient({
         return items.map((row: OmniConversation) => {
           const previousRow = byId.get(row.id);
           const merged = mergeNewestCustomerProfile(previousRow, row);
-          return preserveNewestMessagePreview(previousRow, merged);
+          const result = preserveNewestMessagePreview(previousRow, merged);
+          if (previousRow && (row as any).lastMessageDirection === undefined) {
+            (result as any).lastMessageDirection = (previousRow as any).lastMessageDirection;
+          }
+          return result;
         }).sort((a, b) => messageActivityAt(b) - messageActivityAt(a));
       });
       setConversationPage(data?.page || 1);
@@ -1485,16 +1519,19 @@ export default function MessagesPageClient({
 
     try {
       const nextPage = conversationPage + 1;
-      const data = await listOmniConversations({
+      const listArgs = {
         q: debouncedSearch,
-        status: "ALL",
+        status: "ALL" as const,
         channel,
         assigneeId: assigneeFilter,
         tag: tagFilter,
         unread: inboxFilter === "UNREAD" ? true : undefined,
         page: nextPage,
         limit: workspace === "comments" ? 100 : 40,
-      });
+      };
+      const data = inboxFilter === "READ_UNANSWERED"
+        ? await listReadUnansweredConversations(listArgs)
+        : await listOmniConversations(listArgs);
 
       const items = data?.items || [];
 
@@ -1929,9 +1966,12 @@ export default function MessagesPageClient({
               : conversation;
 
             const safeMerged = preserveNewestMessagePreview(existedRow, merged);
+            if (existedRow && (conversation as any).lastMessageDirection === undefined) {
+              (safeMerged as any).lastMessageDirection = (existedRow as any).lastMessageDirection;
+            }
             // A/B/C: bất kỳ tin IN hoặc OUT mới hơn đều tự lên đầu.
             // Metadata-only update vẫn giữ thứ tự theo lastMessageAt.
-            if (!existed && !safeMerged.lastMessageAt) return prev;
+            // New referral-only threads are also legitimate conversations.
             return sortConversationsByLastMessage([
               safeMerged,
               ...prev.filter((item) => item.id !== safeMerged.id),
@@ -1980,14 +2020,15 @@ export default function MessagesPageClient({
 
     items = sortConversationsByLastMessage(items);
 
-    // Đợi phản hồi phải là OPEN cả ở client. Khi nhân viên vừa gửi xong,
-    // hội thoại rời danh sách ngay tại chỗ, không chờ lần reload API kế tiếp.
-    if (inboxFilter === "WAITING") {
+    // Read but unanswered = unreadCount is zero and the last persisted message
+    // was sent by the customer. Referral-only threads do not qualify.
+    // Pending outgoing sends must not be presented as needing a reply.
+    if (inboxFilter === "READ_UNANSWERED") {
       return items.filter(
         (item) =>
-          (item as any).lastMessageDirection === "IN" ||
-          ((item as any).lastMessageDirection == null && item.status === "OPEN") ||
-          pendingReplyConversationIds.includes(item.id),
+          Number(item.unreadCount || 0) === 0 &&
+          (item as any).lastMessageDirection === "IN" &&
+          !pendingReplyConversationIds.includes(item.id),
       );
     }
 
@@ -2518,7 +2559,7 @@ export default function MessagesPageClient({
     // Trước đây set traversal ngay tại đây nên text gửi xong làm status OPEN -> PROCESSING
     // trong khi ảnh còn đang gửi, khiến UI tự nhảy sang khách khác.
     const traversalIndex =
-      inboxFilter === "WAITING"
+      inboxFilter === "READ_UNANSWERED"
         ? Math.max(
             0,
             visibleConversations.findIndex((item) => item.id === conversationId),

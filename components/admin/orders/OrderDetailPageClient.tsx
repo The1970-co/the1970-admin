@@ -139,6 +139,7 @@ type OrderDetail = {
   fulfillmentStatus?: string | null;
   finalAmount?: number;
   shopActualReceived?: number;
+  effectiveCustomerCollection?: number;
   totalAmount?: number;
   discountAmount?: number;
   shippingFee?: number;
@@ -163,6 +164,7 @@ type OrderDetail = {
   shipment?: ShipmentItem | null;
   customer?: CustomerItem | null;
   payments?: PaymentItem[];
+  settlementPreview?: SettlementPreview | null;
 };
 
 type ShipmentEditDraft = {
@@ -295,6 +297,57 @@ type ReturnExchangeSummary = {
     itemType?: string | null;
   }>;
 };
+
+type CreditLine = { returnCode?: string; amount: number; date?: string };
+type RefundVoucher = { returnCode?: string; voucherCode?: string; amount: number };
+type SettlementPreview = {
+  originalTotal: number;
+  paidAmount: number;
+  dueBeforeReturns: number;
+  returnCreditAmount: number;
+  remainingDuePreview: number;
+  creditLines: CreditLine[];
+  unlinkedReturns?: { returnCode: string; returnAmount: number }[];
+  confirmedRefundVouchers?: RefundVoucher[];
+  status: string;
+  note?: string;
+};
+const money = (n: number) => `${Math.round(Number(n) || 0).toLocaleString("vi-VN")}đ`;
+
+/** Render beside the existing payment summary. Supply order.settlementPreview from GET /orders/:id. */
+function ReturnSettlementPanel({ summary }: { summary?: SettlementPreview | null }) {
+  if (!summary) return null;
+  const warnings = summary.confirmedRefundVouchers || [];
+  return (
+    <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
+      <h3 style={{ margin: "0 0 14px", fontSize: 15 }}>Đối chiếu công nợ sau trả hàng</h3>
+      <div style={{ display: "grid", gap: 9, fontSize: 13 }}>
+        <Line label="Tổng đơn ban đầu" value={money(summary.originalTotal)} />
+        <Line label="Khách đã thanh toán" value={money(summary.paidAmount)} />
+        <Line label="Khách còn phải trả trước hoàn" value={money(summary.dueBeforeReturns)} />
+        {summary.creditLines.map((line, i) => <Line key={`${line.returnCode}-${i}`} label={`Cấn trừ hàng hoàn · ${line.returnCode || "Phiếu RTN"}`} value={`−${money(line.amount)}`} />)}
+        <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+          <Line label="Còn phải trả sau đối chiếu" value={money(summary.remainingDuePreview)} strong />
+        </div>
+      </div>
+      {warnings.length > 0 && (
+        <p role="alert" style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, padding: 10, fontSize: 12 }}>
+          <b>Cần kiểm tra phiếu chi hoàn tiền:</b> {warnings.map(v => `${v.voucherCode || v.returnCode} (${money(v.amount)})`).join(", ")}. Có phiếu chi xác nhận nên chưa thể khẳng định khách và shop đã tất toán tiền thực tế.
+        </p>
+      )}
+      {(summary.unlinkedReturns || []).length > 0 && (
+        <p style={{ color: "#6b7280", fontSize: 12 }}>
+          Phiếu trả hàng chưa được cấn trừ ở lần giao này: {summary.unlinkedReturns!.map(x => x.returnCode).join(", ")}. Không cộng trùng vào công nợ.
+        </p>
+      )}
+      <p style={{ color: "#6b7280", fontSize: 11, marginBottom: 0 }}>Số đối chiếu để xem nhanh, chưa thay đổi sổ quỹ hay thanh toán gốc.</p>
+    </section>
+  );
+}
+function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: strong ? 700 : 400 }}><span>{label}</span><span style={{ whiteSpace: "nowrap" }}>{value}</span></div>;
+}
+
 
 function currency(n?: number | null) {
   return new Intl.NumberFormat("vi-VN").format(Number(n || 0)) + "đ";
@@ -1471,6 +1524,7 @@ type MobileOrderDetailViewProps = {
   shownFinalAmount: number;
   customerPaid: number;
   amountDue: number;
+  settlement?: SettlementPreview | null;
   paymentsTotal: number;
   paymentLines: PaymentItem[];
   partialDelivery: boolean;
@@ -1532,6 +1586,7 @@ function MobileOrderDetailView({
   shownFinalAmount,
   customerPaid,
   amountDue,
+  settlement,
   paymentsTotal,
   paymentLines,
   partialDelivery,
@@ -1739,7 +1794,9 @@ function MobileOrderDetailView({
             label="Đã thanh toán"
             value={currency(customerPaid)}
           />
-          <MobileInfoLine label="Còn phải trả" value={currency(amountDue)} />
+          <MobileInfoLine label={settlement?.creditLines?.length ? "Còn phải trả trước cấn trừ" : "Còn phải trả"} value={currency(amountDue)} />
+          {settlement?.creditLines?.length ? <MobileInfoLine label="Còn phải trả sau cấn trừ (đối chiếu)" value={currency(settlement.remainingDuePreview)} /> : null}
+          {settlement?.creditLines?.length ? <ReturnSettlementPanel summary={settlement} /> : null}
           <MobileInfoLine
             label="COD"
             value={currency(viewOrder.shipment?.codAmount)}
@@ -2938,12 +2995,20 @@ export default function OrderDetailPageClient({
     ? shipmentCodAmount
     : Math.max(shownFinalAmount - customerPaid, 0);
 
+  const settlement = viewOrder?.settlementPreview;
+  const settlementAmountDue = settlement && Number.isFinite(Number(settlement.remainingDuePreview))
+    ? Math.max(0, Number(settlement.remainingDuePreview))
+    : amountDue;
+  const settlementHasRefundWarning = Boolean(settlement?.confirmedRefundVouchers?.length);
+
   const carrierShippingFee = getShipmentCarrierShippingFee(viewOrder?.shipment);
   const shopActualReceived = Number.isFinite(Number(viewOrder?.shopActualReceived))
     ? Math.max(0, Number(viewOrder?.shopActualReceived || 0))
     : Math.max(0, shownFinalAmount - carrierShippingFee);
 
-  const reconciledShopAmount = Number(viewOrder?.shipment?.codReconciliationAmount || 0) || shopActualReceived;
+  const storedReconciledShopAmount = Number(viewOrder?.shipment?.codReconciliationAmount || 0);
+  const reconciliationAmountMismatch = isCodReconciled(viewOrder?.shipment?.codReconciliationStatus) &&
+    Math.abs(storedReconciledShopAmount - shopActualReceived) > 1;
 
   const partialDelivery = useMemo(
     () => hasRealPartialDelivery(viewOrder),
@@ -3991,7 +4056,8 @@ export default function OrderDetailPageClient({
         itemsSubtotal={itemsSubtotal}
         shownFinalAmount={shownFinalAmount}
         customerPaid={customerPaid}
-        amountDue={amountDue}
+        amountDue={settlementAmountDue}
+        settlement={settlement}
         paymentsTotal={paymentsTotal}
         paymentLines={paymentLines}
         partialDelivery={partialDelivery}
@@ -4459,9 +4525,9 @@ export default function OrderDetailPageClient({
                 <SectionHeader title="Tổng quan" subtitle="Số liệu nhanh." />
                 <div className="space-y-3 px-4 py-3">
                   <div className="flex items-center justify-between text-[12px]">
-                    <span className="text-neutral-500">Nợ phải thu</span>
-                    <span className="font-semibold text-red-600">
-                      {currency(amountDue)}
+                    <span className="text-neutral-500">{settlement?.creditLines?.length ? "Còn phải thu (đối chiếu)" : "Nợ phải thu"}</span>
+                    <span className={settlementAmountDue > 0 ? "font-semibold text-red-600" : "font-semibold text-emerald-700"}>
+                      {currency(settlementAmountDue)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[12px]">
@@ -4544,11 +4610,24 @@ export default function OrderDetailPageClient({
                     value={currency(customerPaid)}
                   />
                   <MiniStat
-                    label="Còn phải trả"
+                    label={settlement?.creditLines?.length ? "Còn phải trả trước cấn trừ" : "Còn phải trả"}
                     value={currency(amountDue)}
-                    tone="danger"
+                    tone={amountDue > 0 ? "danger" : undefined}
                   />
+                  {settlement?.creditLines?.length ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                      <p className="text-[11px] font-medium text-emerald-700">Còn phải trả sau cấn trừ</p>
+                      <p className="mt-1 text-[17px] font-bold text-emerald-700">{currency(settlementAmountDue)}</p>
+                      <p className="mt-1 text-[10px] text-emerald-700">Số đối chiếu · chưa tự ghi sổ quỹ</p>
+                    </div>
+                  ) : null}
                 </div>
+
+                {settlement?.creditLines?.length ? (
+                  <div className="mt-3">
+                    <ReturnSettlementPanel summary={settlement} />
+                  </div>
+                ) : null}
 
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={toneForPaymentStatus(viewOrder.paymentStatus)}>
@@ -4561,7 +4640,8 @@ export default function OrderDetailPageClient({
                   ) : null}
                   {isCodReconciled(viewOrder.shipment?.codReconciliationStatus) ? (
                     <span className="text-[12px] font-semibold text-emerald-700">
-                      Đối soát shop nhận {currency(reconciledShopAmount)}
+                      COD {currency(viewOrder.shipment?.codAmount)} · Shop dự kiến nhận sau phí {currency(shopActualReceived)}
+                      {reconciliationAmountMismatch ? ` · Đối soát đã lưu ${currency(storedReconciledShopAmount)} (LỆCH – cần kiểm tra)` : ""}
                     </span>
                   ) : null}
                 </div>
@@ -5102,7 +5182,7 @@ export default function OrderDetailPageClient({
                     {currency(shopActualReceived)}
                   </p>
                   <p className="mt-1 text-[11px] text-neutral-500">
-                    Khách còn phải trả {currency(amountDue)}
+                    {settlement?.creditLines?.length ? "Còn phải trả sau đối chiếu" : "Khách còn phải trả"} {currency(settlementAmountDue)}{settlementHasRefundWarning ? " · cần kiểm tra phiếu chi" : ""}
                   </p>
                 </div>
               </div>

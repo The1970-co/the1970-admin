@@ -751,8 +751,8 @@ const COLUMN_DEFS: ColumnDef[] = [
     money: true,
     defaultVisible: true,
   },
-  { key: "shopActualReceived", label: "Shop thực thu", money: true, defaultVisible: true },
-  { key: "finalAmount", label: "Tổng tiền", money: true, defaultVisible: true },
+  { key: "shopActualReceived", label: "Shop nhận sau phí", money: true, defaultVisible: true },
+  { key: "finalAmount", label: "Tổng tiền đơn gốc", money: true, defaultVisible: true },
 ];
 
 function currency(n: number) {
@@ -801,14 +801,61 @@ function getShipmentCarrierShippingFee(shipment?: any) {
   return 0;
 }
 
+// Chỉ dùng COD đã thu để thay số shop thu sai khi có bằng chứng: 
+// khoản thanh toán COD_GHN đã xác nhận khớp chính xác COD vận đơn.
+// Không suy diễn từ COD riêng lẻ (đơn thanh toán trước / nhiều nguồn tiền).
+function getVerifiedCollectedCod(order: AdminOrder): number | null {
+  const anyOrder: any = order || {};
+  const shipmentCod = anyOrder.shipment?.codAmount;
+  if (shipmentCod === null || shipmentCod === undefined || !Number.isFinite(Number(shipmentCod))) return null;
+  const cod = Number(shipmentCod);
+  const finalAmount = Number(anyOrder.finalAmount || 0);
+  if (cod <= 0 || cod >= finalAmount) return null;
+  const paid = (Array.isArray(anyOrder.payments) ? anyOrder.payments : [])
+    .filter((p: any) => ["PAID", "PARTIAL"].includes(String(p.status || "").toUpperCase()));
+  const isCodPayment = (p: any) => {
+    const label = [p.method, p.paymentSource?.code, p.paymentSource?.name, p.sourceCode, p.sourceName]
+      .map((v: any) => String(v || "").toUpperCase()).join(" ");
+    return label.includes("COD_GHN") || (label.includes("COD") && label.includes("GHN"));
+  };
+  const codPaid = paid.filter(isCodPayment).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+  const otherPaid = paid.filter((p: any) => !isCodPayment(p)).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+  return Math.abs(codPaid - cod) < 1 && otherPaid === 0 ? cod : null;
+}
+
+function getPaidRevenueAmount(order: AdminOrder): number {
+  const anyOrder: any = order || {};
+  const cod = anyOrder.effectivePartialDeliveryCod ?? getVerifiedCollectedCod(order);
+  return cod != null && Number.isFinite(Number(cod)) ? Number(cod) : Number(anyOrder.finalAmount || 0);
+}
+
 function getShopActualReceived(order: AdminOrder) {
   const anyOrder: any = order || {};
-  const backendValue = Number(anyOrder.shopActualReceived);
-  if (Number.isFinite(backendValue) && backendValue >= 0) return backendValue;
-
-  const customerTotal = Number(anyOrder.finalAmount || 0);
   const carrierShippingFee = getShipmentCarrierShippingFee(anyOrder.shipment);
-  return Math.max(0, customerTotal - carrierShippingFee);
+
+  // Trên đơn giao một phần, COD cuối cùng là nguồn thu thực tế.
+  // Không ưu tiên shopActualReceived từ API cũ vì nó có thể được tính
+  // từ finalAmount của đơn gốc (ví dụ 1.560.000 - 25.651 = 1.534.349).
+  const adjustedCod = anyOrder.effectivePartialDeliveryCod;
+  if (adjustedCod !== null && adjustedCod !== undefined && Number.isFinite(Number(adjustedCod))) {
+    return Math.max(0, Math.round(Number(adjustedCod) - carrierShippingFee));
+  }
+  const shipmentCod = anyOrder.shipment?.codAmount;
+  if (isPartialDeliveryListOrder(order) && shipmentCod !== null && shipmentCod !== undefined && Number.isFinite(Number(shipmentCod))) {
+    return Math.max(0, Math.round(Number(shipmentCod) - carrierShippingFee));
+  }
+
+  // Dữ liệu đơn có thể thiếu cờ PDL trên API list dù chi tiết đã có.
+  // Chỉ fallback khi COD_GHN được ghi nhận PAID đúng bằng COD shipment.
+  const verifiedCod = getVerifiedCollectedCod(order);
+  if (verifiedCod !== null) return Math.max(0, Math.round(verifiedCod - carrierShippingFee));
+
+  const backendValue = anyOrder.shopActualReceived;
+  if (backendValue !== null && backendValue !== undefined && Number.isFinite(Number(backendValue)) && Number(backendValue) >= 0) {
+    return Number(backendValue);
+  }
+  const customerTotal = Number(anyOrder.finalAmount || 0);
+  return Math.max(0, Math.round(customerTotal - carrierShippingFee));
 }
 
 
@@ -1406,30 +1453,8 @@ function normalizedCodReconciliationStatusFromOrder(order: AdminOrder) {
 
   if (reconciledAt) return "PAID";
 
-  const payments = Array.isArray(anyOrder.payments) ? anyOrder.payments : [];
-  const hasGhnCodPayment = payments.some((payment: any) => {
-    const paymentText = [
-      payment?.method,
-      payment?.transactionRef,
-      payment?.note,
-      payment?.paymentSourceId,
-      payment?.paymentSource?.code,
-      payment?.paymentSource?.name,
-      payment?.sourceCode,
-      payment?.sourceName,
-    ]
-      .map((item) => String(item || "").toUpperCase())
-      .join(" ");
-
-    return (
-      paymentText.includes("COD_GHN") ||
-      paymentText.includes("GHN_COD") ||
-      paymentText.includes("COD GHN") ||
-      paymentText.includes("ĐỐI SOÁT COD")
-    );
-  });
-
-  if (hasGhnCodPayment) return "PAID";
+  // COD_GHN đã thanh toán không đồng nghĩa phiên đối soát GHN đã xác nhận.
+  // Chỉ tin trạng thái chốt từ Shipment hoặc mốc codReconciledAt phía trên.
 
   return "";
 }
@@ -1468,20 +1493,21 @@ function CodReconciliationDot({ order }: { order: AdminOrder }) {
 
   if (done) {
     const anyOrder: any = order || {};
-    const reconciledAmount = Number(
-      anyOrder.shipment?.codReconciliationAmount ??
-      anyOrder.shipmentCodReconciliationAmount ??
-      getShopActualReceived(order),
-    );
+    const rawReconciledAmount = anyOrder.shipment?.codReconciliationAmount ??
+      anyOrder.shipmentCodReconciliationAmount;
+    const hasReconciledAmount = rawReconciledAmount !== null && rawReconciledAmount !== undefined;
+    const reconciledAmount = Number(rawReconciledAmount ?? 0);
+    const expectedAmount = getShopActualReceived(order);
+    const mismatch = hasReconciledAmount && Math.abs(reconciledAmount - expectedAmount) > 1;
 
     return (
       <span
-        title={`${label}: ${currency(reconciledAmount)}`}
+        title={mismatch ? `Đối soát đã lưu ${currency(reconciledAmount)}; shop dự kiến nhận ${currency(expectedAmount)}. CẦN KIỂM TRA LỆCH.` : hasReconciledAmount ? `${label}: ${currency(reconciledAmount)}` : label}
         className="mx-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-neutral-950 px-2 py-1 text-[11px] font-semibold leading-none text-white"
         aria-label={label}
       >
         <span>✓</span>
-        <span>{currency(reconciledAmount)}</span>
+        <span>{mismatch ? `⚠ ${currency(expectedAmount)}` : hasReconciledAmount ? currency(reconciledAmount) : "Đã đối soát"}</span>
       </span>
     );
   }
@@ -3506,6 +3532,12 @@ function formatOrderDate(value?: string | null) {
 }
 
 function amountCustomerStillOwes(order: AdminOrder) {
+  // Khi API danh sách cung cấp số dư đã đối chiếu mới ưu tiên dùng.
+  // Không suy luận số cấn trừ từ RTN độc lập vì có thể là phiếu chi hoàn tiền thực tế.
+  const reconciledDue = (order as AdminOrder & { remainingDueAfterReturns?: number | null }).remainingDueAfterReturns;
+  if (reconciledDue !== null && reconciledDue !== undefined && Number.isFinite(Number(reconciledDue))) {
+    return Math.max(0, Number(reconciledDue));
+  }
   if (order.status === "CANCELLED") return 0;
   if (order.paymentStatus === "PAID" || order.paymentStatus === "REFUNDED") {
     return 0;
@@ -4223,7 +4255,7 @@ const orderExportColumnLabels: Record<OrderExportColumnKey, string> = {
   codAmount: "Tiền COD",
   amountDue: "Khách còn phải trả",
   shopActualReceived: "Shop thực thu",
-  finalAmount: "Tổng tiền",
+  finalAmount: "Tổng tiền đơn gốc",
 };
 
 function makeOrderWorksheet(rows: Record<string, any>[]) {
@@ -4377,7 +4409,7 @@ function getOrderExportRows(
     if (columns.codAmount) row["Thu hộ COD"] = order._codAmount;
     if (columns.amountDue) row["Khách còn phải trả"] = order._amountDue;
     if (columns.shopActualReceived) row["Shop thực thu"] = order._shopActualReceived;
-    if (columns.finalAmount) row["Tổng tiền"] = Number(order.finalAmount || 0);
+    if (columns.finalAmount) row["Tổng tiền đơn gốc"] = Number(order.finalAmount || 0);
 
     return row;
   });
@@ -4419,7 +4451,9 @@ function exportOrdersExcel({
   );
   const totalPaidRevenue = sortedOrders
     .filter((o) => o.paymentStatus === "PAID")
-    .reduce((sum, o) => sum + Number(o.finalAmount || 0), 0);
+    .reduce((sum, o) => sum + (
+getPaidRevenueAmount(o)
+    ), 0);
   const totalCod = sortedOrders.reduce(
     (sum, o) => sum + Number(o._codAmount || 0),
     0,
@@ -4432,7 +4466,7 @@ function exportOrdersExcel({
   if (includeSummarySheet) {
     const summaryRows = [
       { "Chỉ số": "Tổng đơn", "Giá trị": sortedOrders.length },
-      { "Chỉ số": "Tổng tiền", "Giá trị": totalRevenue },
+      { "Chỉ số": "Tổng tiền đơn gốc", "Giá trị": totalRevenue },
       { "Chỉ số": "Doanh thu đã thanh toán", "Giá trị": totalPaidRevenue },
       { "Chỉ số": "Tổng COD", "Giá trị": totalCod },
       { "Chỉ số": "Khách còn phải trả", "Giá trị": totalDue },
@@ -4466,7 +4500,7 @@ function exportOrdersExcel({
       "Thanh toán": orderPaymentStatusLabel(o),
       "Tiền COD": o._codAmount,
       "Còn phải trả": o._amountDue,
-      "Tổng tiền": Number(o.finalAmount || 0),
+      "Tổng tiền đơn gốc": Number(o.finalAmount || 0),
       "Mã vận đơn": o.shipment?.trackingCode || "",
     }));
   if (codRows.length)
@@ -7407,7 +7441,9 @@ export default function OrdersPageClient() {
     () =>
       filteredOrders
         .filter((o) => o.paymentStatus === "PAID")
-        .reduce((sum, o) => sum + Number(o.finalAmount || 0), 0),
+        .reduce((sum, o) => sum + (
+getPaidRevenueAmount(o)
+        ), 0),
     [filteredOrders],
   );
 
@@ -7918,7 +7954,7 @@ export default function OrdersPageClient() {
           <td
             key={key}
             className="border-b border-neutral-100 px-3 py-3 text-right font-semibold whitespace-nowrap text-emerald-700"
-            title="Tổng tiền khách trả trừ phí thực tế hãng vận chuyển"
+            title="Shop dự kiến nhận: COD đã điều chỉnh (nếu giao 1 phần) trừ phí hãng vận chuyển; không phải số đã chốt đối soát"
           >
             {currency(order._shopActualReceived)}
           </td>
@@ -9866,7 +9902,7 @@ export default function OrdersPageClient() {
                         >
                           <option value="created_desc">Mới nhất trước</option>
                           <option value="amount_desc">
-                            Tổng tiền cao trước
+                            Tổng tiền đơn gốc cao trước
                           </option>
                           <option value="cod_desc">COD cao trước</option>
                         </select>
@@ -10040,7 +10076,7 @@ export default function OrdersPageClient() {
                     </Panel>
 
                     <Panel className="p-4">
-                      <p className="text-xs text-neutral-500">Tổng tiền</p>
+                      <p className="text-xs text-neutral-500">Tổng tiền đơn gốc</p>
                       <p className="mt-2 text-lg font-semibold">
                         {currency(Number(quickViewOrder.finalAmount || 0))}
                       </p>
