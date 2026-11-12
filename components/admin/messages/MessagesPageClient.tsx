@@ -1411,10 +1411,12 @@ export default function MessagesPageClient({
     return () => clearTimeout(timer);
   }, [search]);
 
-  const loadList = useCallback(async () => {
+  const loadList = useCallback(async (options?: { silent?: boolean }) => {
     const requestId = ++listRequestId.current;
-    setLoadingList(true);
-    setError("");
+    if (!options?.silent) {
+      setLoadingList(true);
+      setError("");
+    }
 
     try {
       const data = await listOmniConversations({
@@ -1453,13 +1455,15 @@ export default function MessagesPageClient({
         setActiveConversation(null);
       }
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Không tải được danh sách hội thoại.",
-      );
+      if (!options?.silent) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Không tải được danh sách hội thoại.",
+        );
+      }
     } finally {
-      if (requestId === listRequestId.current) setLoadingList(false);
+      if (!options?.silent && requestId === listRequestId.current) setLoadingList(false);
     }
   }, [assigneeFilter, channel, debouncedSearch, inboxFilter, tagFilter, workspace]);
 
@@ -1592,6 +1596,53 @@ export default function MessagesPageClient({
     if (!activeId) return;
     void loadDetail(activeId);
   }, [activeId, loadDetail]);
+
+  // Recovery when the browser suspends an inactive tab OR local development
+  // connects to a different NestJS instance than the public Meta webhook.
+  // SSE remains the fast path; this is a bounded safety net, not per-second polling.
+  useEffect(() => {
+    let disposed = false;
+    let checking = false;
+    let lastCheck = 0;
+
+    const reconcile = async (refreshOpenedChat = false) => {
+      const now = Date.now();
+      if (disposed || checking || now - lastCheck < 1500) return;
+      checking = true;
+      lastCheck = now;
+      try {
+        await loadList({ silent: true });
+        if (refreshOpenedChat && !disposed && activeIdForSseRef.current) {
+          // Also recover content of the active conversation if events were missed.
+          await loadDetail(activeIdForSseRef.current);
+        }
+      } finally {
+        checking = false;
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void reconcile(true);
+    };
+    const onFocus = () => {
+      if (document.visibilityState === "visible") void reconcile(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+
+    // Local/prod may use separate API processes sharing one DB: their in-memory
+    // SSE subjects do not propagate events between processes.
+    const timer = window.setInterval(() => {
+      void reconcile(false);
+    }, 30000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [loadList, loadDetail]);
 
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -1900,7 +1951,7 @@ export default function MessagesPageClient({
       source.onopen = () => {
         setSseStatus("online");
         // Recover messages missed while disconnected; first connection already loads list.
-        if (hasConnectedOnce) void loadList();
+        if (hasConnectedOnce) void loadList({ silent: true });
         hasConnectedOnce = true;
       };
       source.onerror = () => setSseStatus("offline");
@@ -4878,10 +4929,42 @@ export default function MessagesPageClient({
                               Thêm
                             </button>
                           </div>
-                          {tagTemplates.length ? (
+                          {tagTemplates.some((item) => item.isActive !== false) ? (
                             <div className="mt-3 border-t border-neutral-100 pt-3">
-                              <button type="button" onClick={() => { setTagManagerSearch(""); setTagManagerOpen(true); }} className="flex w-full items-center justify-between rounded-xl border border-neutral-200 px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50">
-                                <span>Chọn nhãn từ danh sách ({tagTemplates.length})</span><ChevronDown className="h-4 w-4" />
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Gắn nhãn nhanh</span>
+                                <button type="button" onClick={() => { setTagManagerSearch(""); setTagManagerOpen(true); }} className="text-[11px] font-semibold text-blue-600 hover:underline">Xem tất cả ({tagTemplates.filter((item) => item.isActive !== false).length})</button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {tagTemplates
+                                  .filter((item) => item.isActive !== false && String(item.name || "").trim())
+                                  .sort((a, b) => {
+                                    const priority = ["CHỐT", "CỬA HÀNG", "ĐÃ CK/CỌC", "đã tạo", "ĐỢI CHỐT", "ĐỢI CK", "ĐỔI HÀNG", "ĐỢI ĐỔI HÀNG", "ĐƠN NỘI", "HÀNG"];
+                                    const ai = priority.findIndex((name) => name.toLocaleLowerCase("vi-VN") === String(a.name).toLocaleLowerCase("vi-VN"));
+                                    const bi = priority.findIndex((name) => name.toLocaleLowerCase("vi-VN") === String(b.name).toLocaleLowerCase("vi-VN"));
+                                    return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || String(a.name).localeCompare(String(b.name), "vi");
+                                  })
+                                  .slice(0, 10)
+                                  .map((item) => {
+                                    const name = String(item.name || "").trim();
+                                    const selected = Boolean(activeConversation.tags?.some((tag) => tag.tag === name));
+                                    return (
+                                      <button
+                                        key={item.id}
+                                        type="button"
+                                        aria-pressed={selected}
+                                        title={name}
+                                        onClick={() => void handleQuickTagToggle(name)}
+                                        className={cx("flex min-w-0 items-center justify-between gap-1 rounded-lg border px-2 py-1.5 text-left text-[10px] font-semibold transition-colors", selected ? "border-blue-300 bg-blue-50 text-blue-700" : "border-neutral-200 text-neutral-600 hover:border-blue-300 hover:bg-blue-50")}
+                                      >
+                                        <span className="min-w-0 break-words">{name}</span>
+                                        {selected ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <Plus className="h-3 w-3 shrink-0 opacity-50" />}
+                                      </button>
+                                    );
+                                  })}
+                              </div>
+                              <button type="button" onClick={() => { setTagManagerSearch(""); setTagManagerOpen(true); }} className="mt-2 flex w-full items-center justify-between rounded-xl border border-neutral-200 px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50">
+                                <span>Mở danh sách toàn bộ nhãn</span><ChevronDown className="h-4 w-4" />
                               </button>
                               {tagManagerOpen ? (
                                 <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) setTagManagerOpen(false); }}>
@@ -7841,27 +7924,22 @@ function ConversationRow({
             </span>
           ) : null}
         </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap leading-[13px]">
+        <div className="mt-0.5 flex min-w-0 flex-wrap items-start gap-x-1 gap-y-0.5 leading-[13px]">
           <span className={cx(
-            "max-w-[58%] shrink truncate rounded bg-neutral-100 px-1.5 py-px text-[9px] font-medium text-neutral-500",
+            "max-w-full min-w-0 rounded bg-neutral-100 px-1.5 py-px text-[9px] font-medium text-neutral-500 break-words",
             !item.assigneeName && "bg-amber-50 text-amber-700",
           )} title={item.assigneeName || "Chưa gán"}>
             {item.assigneeName || "Chưa gán"}
           </span>
-          {tags.slice(0, 1).map((tag) => (
+          {tags.map((tag) => (
             <span
               key={tag.id || tag.tag}
               title={tag.tag}
-              className="min-w-0 max-w-[40%] truncate rounded bg-blue-50 px-1.5 py-px text-[9px] font-medium text-blue-600"
+              className="max-w-full min-w-0 rounded bg-blue-50 px-1.5 py-px text-[9px] font-medium text-blue-600 break-words"
             >
               {tag.tag}
             </span>
           ))}
-          {tags.length > 1 ? (
-            <span className="shrink-0 text-[9px] text-neutral-400" title={tags.slice(1).map((tag) => tag.tag).join(", ")}>
-              +{tags.length - 1}
-            </span>
-          ) : null}
         </div>
       </div>
     </button>
