@@ -5,6 +5,7 @@ import { updateOrderStatus } from "@/lib/orders-api";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import ProductPicker from "./ProductPicker";
+import ExchangeMethodDialog from "../returns/ExchangeMethodDialog";
 import { useRouter } from "next/navigation";
 import { getCurrentUserFromStorage } from "@/lib/current-user";
 import { hasPermission } from "@/lib/authz";
@@ -165,6 +166,7 @@ type OrderDetail = {
   customer?: CustomerItem | null;
   payments?: PaymentItem[];
   settlementPreview?: SettlementPreview | null;
+  exchangeContext?: ExchangeContext | null;
 };
 
 type ShipmentEditDraft = {
@@ -289,6 +291,7 @@ type ReturnExchangeSummary = {
   handledByStaffName?: string | null;
   returnReceiveBranchId?: string | null;
   createdAt?: string | null;
+  updatedAt?: string | null;
   note?: string | null;
   items?: Array<{
     sku?: string | null;
@@ -299,7 +302,22 @@ type ReturnExchangeSummary = {
 };
 
 type CreditLine = { returnCode?: string; amount: number; date?: string };
-type RefundVoucher = { returnCode?: string; voucherCode?: string; amount: number };
+type RefundVoucher = { returnId?: string; returnCode?: string; voucherCode?: string; amount: number; status?: string; isCredited?: boolean };
+type ExchangeContext = {
+  returnId: string;
+  returnCode: string;
+  sourceOrderCode?: string | null;
+  linkMethod: "EXPLICIT" | "MATCHED";
+  manualCollection?: boolean;
+  returnStatus: string;
+  returnedAmount: number;
+  goodsAmount: number;
+  shippingFee: number;
+  customerCod: number;
+  remainingDifference: number;
+  deliveredItems: Array<{ sku?: string | null; productName?: string | null; qty: number; amount: number }>;
+  returnedItems: Array<{ sku?: string | null; productName?: string | null; qty: number; amount: number }>;
+};
 type SettlementPreview = {
   originalTotal: number;
   paidAmount: number;
@@ -331,9 +349,16 @@ function ReturnSettlementPanel({ summary }: { summary?: SettlementPreview | null
         </div>
       </div>
       {warnings.length > 0 && (
-        <p role="alert" style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, padding: 10, fontSize: 12 }}>
-          <b>Cần kiểm tra phiếu chi hoàn tiền:</b> {warnings.map(v => `${v.voucherCode || v.returnCode} (${money(v.amount)})`).join(", ")}. Có phiếu chi xác nhận nên chưa thể khẳng định khách và shop đã tất toán tiền thực tế.
-        </p>
+        <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: 10, fontSize: 12 }}>
+          <b style={{ color: "#047857" }}>Phiếu chi hoàn tiền liên kết · Đã xác nhận</b>
+          {warnings.map((v, i) => (
+            <div key={`${v.voucherCode || v.returnCode}-${i}`} style={{ paddingTop: 6 }}>
+              <b>{v.voucherCode || "Phiếu chi"}</b> · {money(v.amount)} · RTN {v.returnCode || "—"}
+              {v.isCredited ? " · Đã đối chiếu với khoản cấn trừ hàng trả" : " · Phiếu trả hàng riêng"}
+            </div>
+          ))}
+          <p style={{ margin: "8px 0 0", color: "#065f46" }}>Trạng thái được đọc trực tiếp từ sổ phiếu chi. Không tạo phiếu mới hoặc trừ số tiền này thêm lần nữa.</p>
+        </div>
       )}
       {(summary.unlinkedReturns || []).length > 0 && (
         <p style={{ color: "#6b7280", fontSize: 12 }}>
@@ -899,19 +924,14 @@ function ActionButton({
   disabled?: boolean;
   onClick?: () => void | Promise<void>;
 }) {
-  const styles =
-    tone === "dark"
-      ? "border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800"
-      : tone === "danger"
-        ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-        : "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50";
+  const styles = "border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800";
 
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={() => void onClick?.()}
-      className={`inline-flex items-center justify-center rounded-xl border px-3 py-1.5 text-xs font-medium transition ${styles} ${disabled ? "cursor-not-allowed opacity-45" : ""
+      className={`inline-flex items-center justify-center rounded-md border px-3 py-2 text-xs font-medium transition ${styles} ${disabled ? "cursor-not-allowed opacity-45" : ""
         }`}
     >
       {children}
@@ -1346,10 +1366,10 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
 
         return (
           <div key={step.key} className="flex items-start">
-            <div className="flex min-w-[54px] flex-col items-center text-center">
+            <div className="flex min-w-[58px] flex-col items-center text-center">
               <div
                 className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ${active
-                    ? "bg-blue-600 text-white"
+                    ? "bg-neutral-950 text-white"
                     : "bg-neutral-200 text-neutral-500"
                   }`}
               >
@@ -1365,7 +1385,7 @@ function Timeline({ order }: { order?: OrderDetail | null }) {
 
             {!last ? (
               <div
-                className={`mx-1.5 mt-3 h-[2px] w-7 md:w-9 ${current > step.key ? "bg-blue-600" : "bg-neutral-200"
+                className={`mx-1 mt-3 h-[2px] w-5 md:w-7 ${current > step.key ? "bg-neutral-900" : "bg-neutral-200"
                   }`}
               />
             ) : null}
@@ -1542,6 +1562,7 @@ type MobileOrderDetailViewProps = {
   onOpenCodEdit: () => void;
   canCreateShipment: boolean;
   onCreateShipment: (carrier: "ghn" | "ahamove" | "viettelpost") => void | Promise<void>;
+  onOpenReturn: () => void;
 };
 
 function MobileInfoLine({ label, value }: { label: string; value: ReactNode }) {
@@ -1604,6 +1625,7 @@ function MobileOrderDetailView({
   onOpenCodEdit,
   canCreateShipment,
   onCreateShipment,
+  onOpenReturn,
 }: MobileOrderDetailViewProps) {
   return (
     <div className="lg:hidden">
@@ -1677,12 +1699,10 @@ function MobileOrderDetailView({
               Đẩy GHN
             </button>
           ) : null}
-          <Link
-            href={`/returns/create?orderId=${viewOrder.id}`}
-            className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-center text-[12px] font-semibold text-blue-700 shadow-sm"
-          >
+          <button type="button" onClick={onOpenReturn}
+            className="rounded-md border border-neutral-900 bg-neutral-950 px-3 py-3 text-center text-[12px] font-semibold text-white">
             Đổi / Trả
-          </Link>
+          </button>
           {shipmentEditable ? (
             <button
               type="button"
@@ -1756,6 +1776,19 @@ function MobileOrderDetailView({
             </p>
           </div>
         </div>
+
+        {viewOrder.exchangeContext?.linkMethod === "EXPLICIT" ? (
+          <MobileOrderCard title="Giao hàng / thu hồi khi đổi">
+            <MobileInfoLine label="Phiếu thu hồi" value={viewOrder.exchangeContext.returnCode} />
+            <MobileInfoLine label="Hàng giao" value={viewOrder.exchangeContext.deliveredItems.map(i => `${i.productName || i.sku} ×${i.qty}`).join(" · ")} />
+            <MobileInfoLine label="Hàng thu hồi" value={viewOrder.exchangeContext.returnedItems.map(i => `${i.productName || i.sku} ×${i.qty}`).join(" · ")} />
+            <MobileInfoLine label="Kho nhận hàng cũ" value={viewOrder.exchangeContext.manualCollection ? "Cần kiểm tra thực nhận" : viewOrder.exchangeContext.returnStatus === "COMPLETED" ? "Đã xác nhận" : "Chưa xác nhận"} />
+            <MobileInfoLine label={viewOrder.exchangeContext.manualCollection ? "Giá trị hàng trả (chưa cấn trừ)" : "Cấn trừ hàng thu hồi"}
+              value={`${viewOrder.exchangeContext.manualCollection ? "" : "−"}${currency(viewOrder.exchangeContext.returnedAmount)}`} />
+            <MobileInfoLine label={viewOrder.exchangeContext.manualCollection ? "COD hiện tại" : "COD thu thêm"} value={currency(viewOrder.exchangeContext.customerCod)} />
+            {viewOrder.exchangeContext.manualCollection ? <p className="text-xs font-medium text-amber-700">Liên kết thủ công: chỉ lưu lịch sử. Chưa xác nhận cấn trừ công nợ hay nhận hàng thực tế.</p> : null}
+          </MobileOrderCard>
+        ) : null}
 
         <MobileOrderCard title="Khách hàng & giao hàng">
           <MobileInfoLine
@@ -2429,6 +2462,7 @@ export default function OrderDetailPageClient({
   const [trackingRefreshing, setTrackingRefreshing] = useState(false);
   const [trackingMessage, setTrackingMessage] = useState("");
   const [returnConfirming, setReturnConfirming] = useState(false);
+  const [exchangeMethodOpen, setExchangeMethodOpen] = useState(false);
 
   useEffect(() => {
     const refreshCodSessionCountdown = () => {
@@ -2842,6 +2876,65 @@ export default function OrderDetailPageClient({
       });
     }
 
+    if (order.exchangeContext?.linkMethod === "EXPLICIT") {
+      entries.push({
+        id: `${order.id}-exchange-context`,
+        title: order.exchangeContext.manualCollection ? "Liên kết thu hồi phát sinh (thủ công)" : "Giao hàng kèm thu hồi hàng đổi",
+        description: `Giao ${order.exchangeContext.deliveredItems.map(i => `${i.sku || i.productName} x${i.qty}`).join(", ")} · Thu hồi ${order.exchangeContext.returnedItems.map(i => `${i.sku || i.productName} x${i.qty}`).join(", ")} (${currency(order.exchangeContext.returnedAmount)}) · COD thu thêm ${currency(order.exchangeContext.customerCod)} · Phiếu ${order.exchangeContext.returnCode}${order.exchangeContext.manualCollection ? " (chỉ liên kết lịch sử; chưa đối soát tiền/kho)" : ""}`,
+        createdAt: order.createdAt,
+        tone: "success",
+      });
+    }
+
+    // Timeline đổi/trả chỉ lấy liên kết thật (RTN -> đơn giao), không lấy phiếu suy luận từ SĐT.
+    const collectedExchangeEvents: OrderHistoryEntry[] = relatedReturns
+      .filter((row) => String(row.note || "").includes("[EXCHANGE_COLLECT_ON_DELIVERY]"))
+      .flatMap((row) => {
+        const returned = (row.items || []).filter(i => String(i.itemType || "RETURN").toUpperCase() === "RETURN");
+        const outgoing = (row.items || []).filter(i => String(i.itemType || "").toUpperCase() === "EXCHANGE");
+        const describe = (items: typeof returned) => items.map(i => `${i.sku || i.productName || "SP"} ×${Number(i.qty || 0)}`).join(", ");
+        const events: OrderHistoryEntry[] = [{
+          id: `exchange-shipment-${row.id}`,
+          title: "Tạo đổi hàng – giao mới, thu hồi hàng cũ",
+          description: `Giao: ${describe(outgoing)} · Cần thu: ${describe(returned)} · Cấn trừ ${currency(Number(row.returnAmount || 0))} · COD ${currency(Number(row.customerPayableAmount || 0))} · Đơn giao ${row.exchangeOrderCode || "đang tạo"} · Mã vận đơn ${row.exchangeTrackingCode || "chưa có"}`,
+          createdAt: row.createdAt || order.createdAt,
+          tone: "warning",
+        }];
+        if (row.status === "COMPLETED") events.push({
+          id: `exchange-warehouse-received-${row.id}`,
+          title: "Kho xác nhận đã nhận hàng đổi",
+          description: `Đã thu hồi ${describe(returned)} · Phiếu ${row.code} · Không cộng kho lặp lại`,
+          createdAt: row.updatedAt || row.createdAt,
+          tone: "success",
+        });
+        return events;
+      });
+
+    const separateCollectionEvents: OrderHistoryEntry[] = relatedReturns
+      .filter((row) => String(row.note || "").includes("[SEPARATE_COLLECTION]"))
+      .flatMap((row) => {
+        const returned = (row.items || []).filter(i => String(i.itemType || "RETURN").toUpperCase() === "RETURN");
+        const outgoing = (row.items || []).filter(i => String(i.itemType || "").toUpperCase() === "EXCHANGE");
+        const describe = (items: typeof returned) => items.map(i => `${i.sku || i.productName || "SP"} ×${Number(i.qty || 0)}`).join(", ");
+        const events: OrderHistoryEntry[] = [{
+          id: `separate-request-${row.id}`, title: "Yêu cầu thu hồi hàng riêng – chờ về kho",
+          description: `Phiếu ${row.code} · Hàng cần thu: ${describe(returned)} · Thu hồi qua tài khoản GHN ngoài hệ thống · Chưa xuất hàng mới, chưa nhập kho/hoàn tiền`,
+          createdAt: row.createdAt || order.createdAt, tone: "warning",
+        }];
+        const receiptMatch = String(row.note || "").match(/Kho đã nhận hàng cũ:.*?\((\d{4}-\d{2}-\d{2}T[^)]+)\)/);
+        if (receiptMatch) events.push({
+          id: `separate-received-${row.id}`, title: "Kho xác nhận nhận đủ hàng thu hồi",
+          description: `Phiếu ${row.code} · Đã thực nhận ${describe(returned)} · Hàng trả được nhập kho một lần`,
+          createdAt: receiptMatch[1], tone: "success",
+        });
+        if (row.exchangeOrderId) events.push({
+          id: `separate-sent-${row.id}`, title: "Tạo đơn đổi mới sau khi nhận hàng cũ",
+          description: `Phiếu ${row.code} · Giao ${describe(outgoing)} · Đơn ${row.exchangeOrderCode || row.exchangeOrderId} · HVC ${row.exchangeCarrier || "chưa có"} · Vận đơn ${row.exchangeTrackingCode || "đang xử lý"} · COD ${currency(Number(row.customerPayableAmount || 0))}`,
+          createdAt: row.updatedAt || row.createdAt, tone: "success",
+        });
+        return events;
+      });
+
     const returnEntries: OrderHistoryEntry[] = relatedReturns.map((row) => {
       const code = row.code || row.id || "";
       const returnAmount = Number(row.returnAmount || row.refundAmount || 0);
@@ -2874,7 +2967,11 @@ export default function OrderDetailPageClient({
       };
     });
 
-    setOrderHistory([...returnEntries, ...entries.reverse()]);
+    setOrderHistory([...entries, ...returnEntries, ...collectedExchangeEvents, ...separateCollectionEvents].sort((a, b) => {
+      const at = a.createdAt ? new Date(normalizeDateTimeInput(a.createdAt)).getTime() : 0;
+      const bt = b.createdAt ? new Date(normalizeDateTimeInput(b.createdAt)).getTime() : 0;
+      return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+    }));
   }, [order, relatedReturns]);
 
   const viewOrder = isEditing && draftOrder ? draftOrder : order;
@@ -4075,10 +4172,17 @@ export default function OrderDetailPageClient({
         onOpenCodEdit={() => handleOpenCodEdit("normal")}
         canCreateShipment={canCreateShipment}
         onCreateShipment={handleCreateShipmentFromOrder}
+        onOpenReturn={() => setExchangeMethodOpen(true)}
       />
 
+      {exchangeMethodOpen ? (
+        <ExchangeMethodDialog orderId={viewOrder.id} orderCode={viewOrder.orderCode}
+          onClose={() => setExchangeMethodOpen(false)}
+          onLinked={() => { setExchangeMethodOpen(false); window.location.reload(); }} />
+      ) : null}
+
       <div className="hidden lg:block">
-        <div className="flex items-center justify-between rounded-[18px] border border-neutral-200 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <div className="rounded-md border border-neutral-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
           <div className="min-w-0">
             <Link
               href="/orders"
@@ -4103,11 +4207,9 @@ export default function OrderDetailPageClient({
             </div>
           </div>
 
-          <div className="ml-4 flex items-start gap-3">
-            <div className="hidden xl:block">
-              <Timeline order={viewOrder} />
-            </div>
-            <div className="flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-neutral-100 pt-2">
+            <div className="shrink-0 overflow-x-auto py-0.5"><Timeline order={viewOrder} /></div>
+            <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
               <ActionButton onClick={handlePrint}>In đơn hàng</ActionButton>
               <ActionButton onClick={handleCopyOrder}>
                 Sao chép đơn
@@ -4129,7 +4231,7 @@ export default function OrderDetailPageClient({
                   href={openTrackingUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded-xl border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                  className="inline-flex items-center justify-center rounded-md border border-neutral-900 bg-neutral-950 px-3 py-2 text-xs font-medium text-white transition hover:bg-neutral-800"
                 >
                   {`Mở ${getCarrierLabel(viewOrder, meta)}`}
                 </a>
@@ -4164,12 +4266,10 @@ export default function OrderDetailPageClient({
               ) : null}
 
               {canCreateReturnPermission ? (
-                <Link
-                  href={`/returns/create?orderId=${viewOrder.id}`}
-                  className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
-                >
+                <button type="button" onClick={() => setExchangeMethodOpen(true)}
+                  className="inline-flex items-center justify-center rounded-md border border-neutral-900 bg-neutral-950 px-3 py-2 text-xs font-medium text-white transition hover:bg-neutral-800">
                   Đổi / Trả hàng
-                </Link>
+                </button>
               ) : null}
 
               {!isEditing ? (
@@ -4982,6 +5082,48 @@ export default function OrderDetailPageClient({
               </Panel>
             ) : null}
 
+            {viewOrder.exchangeContext?.linkMethod === "EXPLICIT" ? (
+              <Panel>
+                <SectionHeader
+                  title="Giao hàng kèm thu hồi hàng đổi"
+                  subtitle={`Phiếu ${viewOrder.exchangeContext.returnCode} · đơn gốc ${viewOrder.exchangeContext.sourceOrderCode || "—"}`}
+                />
+                <div className="space-y-3 px-4 py-4 text-[12px]">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                      <p className="mb-2 font-semibold text-emerald-800">Hàng giao cho khách</p>
+                      {viewOrder.exchangeContext.deliveredItems.map((item, i) => (
+                        <div key={`${item.sku}-${i}`} className="flex justify-between gap-2 py-1">
+                          <span>{item.productName || item.sku} · {item.sku} ×{item.qty}</span>
+                          <b>{currency(item.amount)}</b>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                      <p className="mb-2 font-semibold text-rose-800">Hàng cũ cần thu hồi · {viewOrder.exchangeContext.manualCollection ? "Cần kiểm tra thực nhận" : viewOrder.exchangeContext.returnStatus === "COMPLETED" ? "Kho đã xác nhận" : "Chờ kho xác nhận"}</p>
+                      {viewOrder.exchangeContext.returnedItems.map((item, i) => (
+                        <div key={`${item.sku}-${i}`} className="flex justify-between gap-2 py-1">
+                          <span>{item.productName || item.sku} · {item.sku} ×{item.qty}</span>
+                          <b>{currency(item.amount)}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-neutral-50 p-3">
+                    <div className="flex flex-wrap justify-between gap-3">
+                      <span>Tiền hàng {currency(viewOrder.exchangeContext.goodsAmount)} + phí giao {currency(viewOrder.exchangeContext.shippingFee)}</span>
+                      <span>{viewOrder.exchangeContext.manualCollection ? "Giá trị hàng trả (chưa cấn trừ)" : "Cấn trừ hàng thu hồi"} {viewOrder.exchangeContext.manualCollection ? "" : "−"}{currency(viewOrder.exchangeContext.returnedAmount)}</span>
+                      <b>{viewOrder.exchangeContext.manualCollection ? "COD hiện tại" : "COD thu thêm"} {currency(viewOrder.exchangeContext.customerCod)}</b>
+                    </div>
+                    {viewOrder.exchangeContext.manualCollection ? <p className="mt-2 font-semibold text-amber-800">Phiếu thu hồi được nhân viên liên kết thủ công. Chưa tự giảm COD, cấn trừ công nợ hoặc xác minh đã nhận hàng. Cần đối chiếu và xác nhận riêng.</p> : null}
+                    {Math.abs(viewOrder.exchangeContext.remainingDifference) > 1 ? (
+                      <p className="mt-2 text-amber-700">Chênh lệch chưa giải thích: {currency(Math.abs(viewOrder.exchangeContext.remainingDifference))}</p>
+                    ) : null}
+                  </div>
+                </div>
+              </Panel>
+            ) : null}
+
             <Panel className="overflow-visible">
               <SectionHeader
                 title="Sản phẩm"
@@ -5182,7 +5324,7 @@ export default function OrderDetailPageClient({
                     {currency(shopActualReceived)}
                   </p>
                   <p className="mt-1 text-[11px] text-neutral-500">
-                    {settlement?.creditLines?.length ? "Còn phải trả sau đối chiếu" : "Khách còn phải trả"} {currency(settlementAmountDue)}{settlementHasRefundWarning ? " · cần kiểm tra phiếu chi" : ""}
+                    {settlement?.creditLines?.length ? "Còn phải trả sau đối chiếu" : "Khách còn phải trả"} {currency(settlementAmountDue)}{settlementHasRefundWarning ? " · phiếu chi đã liên kết" : ""}
                   </p>
                 </div>
               </div>
@@ -5325,7 +5467,9 @@ export default function OrderDetailPageClient({
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <Link
-                              href={`/returns?returnId=${encodeURIComponent(row.id || row.code || "")}`}
+                              href={`/returns/${encodeURIComponent(row.id || row.code || "")}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
                               className="text-[13px] font-bold text-blue-600 hover:underline"
                             >
                               {row.code || "Phiếu đổi/trả"}
@@ -5371,6 +5515,40 @@ export default function OrderDetailPageClient({
                             value={row.handledByStaffName || "—"}
                           />
                           <DataRow label="Sản phẩm" value={summarizeReturnItems(row.items)} />
+                          {(["[EXCHANGE_COLLECT_ON_DELIVERY]", "[SEPARATE_COLLECTION]"].some((tag) => String(row.note || "").includes(tag))) ? (
+                            <>
+                              <DataRow label="Hình thức" value={String(row.note || "").includes("[SEPARATE_COLLECTION]") ? "Thu hồi riêng – nhận hàng trước, gửi đổi sau" : "Giao hàng mới, thu hồi hàng cũ cùng chuyến"} />
+                              <DataRow label="Kho nhận hàng cũ" value={row.status === "COMPLETED" ? "Đã xác nhận nhận hàng" : "Chưa xác nhận (không tự nhập kho)"} />
+                              {row.status === "PENDING" && (row.exchangeOrderId || String(row.note || "").includes("[SEPARATE_COLLECTION]")) && canCreateReturnPermission ? (
+                                <button
+                                  type="button"
+                                  className="rounded-xl border border-emerald-400 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                                  onClick={async () => {
+                                    if (!window.confirm(`Xác nhận kho đã nhận ĐỦ hàng cũ của phiếu ${row.code}? Thao tác này cộng tồn kho đúng một lần.`)) return;
+                                    try {
+                                      const response = await apiFetch(`/returns/${encodeURIComponent(row.id)}/confirm-collected`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ condition: "OK" }),
+                                      });
+                                      if (!response.ok) throw new Error((await response.json().catch(() => null))?.message || "Không xác nhận được hàng.");
+                                      window.location.reload();
+                                    } catch (error) {
+                                      window.alert(error instanceof Error ? error.message : "Xác nhận thất bại.");
+                                    }
+                                  }}
+                                >
+                                  Kho xác nhận đã nhận đủ hàng cũ
+                                </button>
+                              ) : null}
+                              {String(row.note || "").includes("[SEPARATE_COLLECTION]") && row.status === "COMPLETED" && !row.exchangeOrderId && canCreateReturnPermission ? (
+                                <Link href={`/returns/create?orderId=${encodeURIComponent(order?.id || "")}&collectionMethod=SEPARATE&returnId=${encodeURIComponent(row.id)}`}
+                                  className="mt-2 inline-flex rounded-md bg-neutral-950 px-3 py-2 text-xs font-semibold text-white">
+                                  Kho đã nhận – Chọn gói giao và tạo đơn đổi
+                                </Link>
+                              ) : null}
+                            </>
+                          ) : null}
                           <DataRow label="Ngày tạo" value={formatDateTime(row.createdAt) || "—"} />
                         </div>
                       </div>

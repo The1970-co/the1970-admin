@@ -51,6 +51,8 @@ import {
   isOwnerUser,
 } from "@/lib/current-user";
 
+type SplitPayment = { id: number; amount: string; paymentSourceId: string };
+
 type ShippingMode = "partner" | "pickup";
 type ShippingPayer = "shop" | "customer";
 type ShippingUiMode = "carrier" | "external" | "pickup" | "schedule";
@@ -2140,6 +2142,8 @@ export default function CreateOrderPageClient() {
   const [customerPaid, setCustomerPaid] = useState("0");
   const [paymentSources, setPaymentSources] = useState<any[]>([]);
   const [paymentSourceId, setPaymentSourceId] = useState("");
+  const [additionalPayments, setAdditionalPayments] = useState<SplitPayment[]>([]);
+  const nextPaymentId = useRef(1);
   const [shippingMode, setShippingMode] = useState<ShippingMode>("partner");
   const [shippingPayer, setShippingPayer] = useState<ShippingPayer>("shop");
   const [shippingUiMode, setShippingUiMode] =
@@ -2506,6 +2510,7 @@ export default function CreateOrderPageClient() {
           String(order?.shippingFee ?? snap?.shippingFee ?? 30000),
         );
         setCustomerPaid("0");
+        setAdditionalPayments([]);
 
         setShippingMode("partner");
         setShippingUiMode("carrier");
@@ -3374,7 +3379,11 @@ export default function CreateOrderPageClient() {
 
   const manualDiscount = canEditManualDiscount ? parseNumber(discountTotal) : 0;
   const fee = parseNumber(shippingFee);
-  const paid = parseNumber(customerPaid);
+  const paymentEntries = [
+    { id: 0, amount: customerPaid, paymentSourceId },
+    ...additionalPayments,
+  ];
+  const paid = paymentEntries.reduce((sum, entry) => sum + parseNumber(entry.amount), 0);
   const promotionPreview = useMemo(
     () =>
       calculatePromotionDiscount({
@@ -3405,15 +3414,12 @@ export default function CreateOrderPageClient() {
       : orderValueForInsurance,
   );
 
-  useEffect(() => {
-    const selected = paymentSources.find((s) => s.id === paymentSourceId);
-    if (!selected) return;
+  const isCodPaymentSource = (sourceId: string) =>
+    String(paymentSources.find((source) => String(source.id) === String(sourceId))?.type || "")
+      .toUpperCase() === "COD";
 
-    // Chỉ nguồn COD mới tự đưa khách đã trả về 0.
-    // Tiền mặt/chuyển khoản phải giữ nguyên số nhân viên nhập tay.
-    if (String(selected.type || "").toUpperCase() === "COD") {
-      setCustomerPaid("0");
-    }
+  useEffect(() => {
+    if (paymentSourceId && isCodPaymentSource(paymentSourceId)) setCustomerPaid("0");
   }, [paymentSourceId, paymentSources]);
 
   const visiblePaymentSources = useMemo(() => {
@@ -3488,13 +3494,14 @@ export default function CreateOrderPageClient() {
   }, [paymentSources, branchId, branchOptions]);
 
   useEffect(() => {
-    if (!paymentSourceId) return;
-
-    const stillValid = visiblePaymentSources.some(
+    if (paymentSourceId && !visiblePaymentSources.some(
       (s) => String(s.id) === String(paymentSourceId),
-    );
-
-    if (!stillValid) setPaymentSourceId("");
+    )) setPaymentSourceId("");
+    setAdditionalPayments((previous) => previous.map((row) =>
+      row.paymentSourceId && !visiblePaymentSources.some((s) => String(s.id) === String(row.paymentSourceId))
+        ? { ...row, paymentSourceId: "" }
+        : row,
+    ));
   }, [visiblePaymentSources, paymentSourceId]);
 
   const previewBranch =
@@ -4507,6 +4514,8 @@ export default function CreateOrderPageClient() {
     setShippingFee("30000");
     setCouponCode("");
     setCustomerPaid("0");
+    setPaymentSourceId("");
+    setAdditionalPayments([]);
     setShippingMode("partner");
     setShippingPayer("shop");
     setShippingUiMode("carrier");
@@ -5390,6 +5399,22 @@ export default function CreateOrderPageClient() {
       return;
     }
 
+    const paidPayments = paymentEntries
+      .map((entry) => ({ paymentSourceId: entry.paymentSourceId, amount: parseNumber(entry.amount) }))
+      .filter((entry) => entry.amount > 0);
+    if (paidPayments.some((entry) => !entry.paymentSourceId)) {
+      setError("Mỗi khoản đã thu phải chọn nguồn tiền.");
+      return;
+    }
+    if (paidPayments.some((entry) => isCodPaymentSource(entry.paymentSourceId))) {
+      setError("COD chưa thu không được ghi nhận là khách đã thanh toán.");
+      return;
+    }
+    if (paid > customerMustPay) {
+      setError("Tổng tiền khách đã trả không được vượt quá số tiền phải trả.");
+      return;
+    }
+
     const nextStockWarnings = lines
       .map((line) => buildStockWarning(line, Number(line.qty || 1)))
       .filter(Boolean);
@@ -5464,8 +5489,9 @@ export default function CreateOrderPageClient() {
 
       // Nhận tại cửa hàng vẫn dùng đúng số tiền nhân viên nhập ở "Khách đã trả".
       // Không được tự coi pickup là đã thanh toán đủ toàn bộ đơn.
-      const effectivePaymentSourceId = paymentSourceId;
-      const effectivePaidAmount = parseNumber(customerPaid);
+      const effectivePaymentSourceId = paidPayments.length === 1
+        ? paidPayments[0].paymentSourceId : undefined;
+      const effectivePaidAmount = paid;
 
       const isGhnPartialDelivery =
         !isPickupOrder && shippingUiMode === "carrier" && shippingPartner === "ghn" && ghnPartialDelivery;
@@ -5583,6 +5609,9 @@ export default function CreateOrderPageClient() {
           ? { paymentSourceId: effectivePaymentSourceId }
           : {}),
         paidAmount: effectivePaidAmount,
+        // Backend phải ghi từng khoản trong cùng transaction với tạo đơn.
+        // Không được gán toàn bộ tổng tiền vào paymentSourceId đầu tiên.
+        payments: paidPayments,
         paymentNote: note,
         discountAmount: manualDiscount + lineDiscountTotal,
         shippingFee: isPickupOrder ? 0 : Number(fee || 0),
@@ -7889,34 +7918,57 @@ export default function CreateOrderPageClient() {
                     <span>{currency(customerMustPay)}</span>
                   </div>
 
-                  <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-neutral-500">Khách đã trả</span>
-                    <input
-                      className="w-28 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none"
-                      value={formatVndInput(customerPaid)}
-                      onChange={(e) =>
-                        setCustomerPaid(String(parseNumber(e.target.value)))
-                      }
-                    />
-                    {/* 🔥 Nguồn tiền */}
-                    <div className="mt-3">
-                      <label className="text-xs font-medium text-neutral-500">
-                        Nguồn tiền
-                      </label>
-
-                      <select
-                        value={paymentSourceId}
-                        onChange={(e) => setPaymentSourceId(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"
-                      >
-                        <option value="">Chọn nguồn tiền</option>
-                        {visiblePaymentSources.map((source) => (
-                          <option key={source.id} value={source.id}>
-                            {source.name || source.label || source.code}
-                          </option>
-                        ))}
-                      </select>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">Các khoản khách đã thanh toán</span>
+                      <button type="button" className="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium hover:bg-neutral-50"
+                        onClick={() => setAdditionalPayments((previous) => [
+                          ...previous, { id: nextPaymentId.current++, amount: "0", paymentSourceId: "" },
+                        ])}>+ Thêm thanh toán</button>
                     </div>
+                    {paymentEntries.map((entry, index) => (
+                      <div key={entry.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 p-2">
+                        <span className="w-12 text-xs text-neutral-500">Lần {index + 1}</span>
+                        <input className="min-w-0 w-28 flex-1 rounded-xl border border-neutral-300 px-3 py-2 text-right outline-none focus:border-neutral-900"
+                          inputMode="numeric" aria-label={`Số tiền lần ${index + 1}`}
+                          value={formatVndInput(entry.amount)}
+                          onChange={(e) => {
+                            const value = String(parseNumber(e.target.value));
+                            if (entry.id === 0) setCustomerPaid(value);
+                            else setAdditionalPayments((previous) => previous.map((row) => row.id === entry.id ? { ...row, amount: value } : row));
+                          }} />
+                        <select aria-label={`Nguồn tiền lần ${index + 1}`} value={entry.paymentSourceId}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (entry.id === 0) {
+                              setPaymentSourceId(value);
+                            } else {
+                              setAdditionalPayments((previous) => previous.map((row) => row.id === entry.id
+                                ? { ...row, paymentSourceId: value, amount: isCodPaymentSource(value) ? "0" : row.amount }
+                                : row));
+                            }
+                          }}
+                          className="min-w-0 flex-[2] rounded-xl border border-neutral-200 bg-white px-2 py-2">
+                          <option value="">Chọn nguồn tiền</option>
+                          {visiblePaymentSources.map((source) => (
+                            <option key={source.id} value={source.id}>
+                              {source.name || source.label || source.code}
+                            </option>
+                          ))}
+                        </select>
+                        {entry.id !== 0 && (
+                          <button type="button" aria-label={`Xóa lần thanh toán ${index + 1}`}
+                            className="rounded-lg px-2 py-2 text-red-600 hover:bg-red-50"
+                            onClick={() => setAdditionalPayments((previous) => previous.filter((row) => row.id !== entry.id))}>Xóa</button>
+                        )}
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm">
+                      <span className="text-neutral-500">Tổng đã thu</span>
+                      <span className="font-semibold">{currency(paid)}</span>
+                    </div>
+                    {paid > customerMustPay && <p className="text-xs text-red-600">Tổng đã thu vượt số tiền phải trả.</p>}
+                    <p className="text-xs text-neutral-500">COD chưa đối soát không tính là tiền khách đã trả.</p>
                   </div>
 
                   <div className="flex items-center justify-between text-base font-semibold">

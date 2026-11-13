@@ -533,6 +533,23 @@ export default function ReturnCreatePageClient({
   const [shippingUiMode, setShippingUiMode] =
     useState<ShippingUiMode>("carrier");
   const [shippingPartner, setShippingPartner] = useState("ghn");
+  const [collectOldOnDelivery, setCollectOldOnDelivery] = useState(false);
+  const [collectionMethod, setCollectionMethod] = useState<"COMBINED" | "SEPARATE" | "CUSTOMER" | "LEGACY">("LEGACY");
+  const [existingReturnId, setExistingReturnId] = useState("");
+  const [receiptConfirmed, setReceiptConfirmed] = useState(false);
+  const [stagedReturnCode, setStagedReturnCode] = useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const method = params.get("collectionMethod");
+    const stageId = params.get("returnId");
+    if (stageId) setExistingReturnId(stageId);
+    if (method === "COMBINED") {
+      setCollectionMethod("COMBINED"); setCollectOldOnDelivery(true);
+      setShippingUiMode("carrier"); setShippingPartner("ghn"); setStatusMode("DRAFT");
+    } else if (method === "CUSTOMER") { setCollectionMethod("CUSTOMER"); setCollectOldOnDelivery(false); setShippingUiMode("pickup"); setShippingFeeInput("0"); }
+    else if (method === "SEPARATE") { setCollectionMethod("SEPARATE"); setCollectOldOnDelivery(false); setStatusMode(stageId ? "COMPLETED" : "DRAFT"); setShippingUiMode(stageId ? "carrier" : "pickup"); setShippingFeeInput(stageId ? "30000" : "0"); }
+  }, []);
+  const [ghnCollectionConfirmed, setGhnCollectionConfirmed] = useState(false);
   const [shippingWeight, setShippingWeight] = useState(200);
   const [shippingLength, setShippingLength] = useState(10);
   const [shippingWidth, setShippingWidth] = useState(10);
@@ -610,12 +627,13 @@ export default function ReturnCreatePageClient({
   }, [exchangeLines]);
 
   const selectedShippingQuote = useMemo(() => {
+    if (shippingUiMode === "pickup") return null;
     return (
       shippingQuotes.find(
         (row) => getQuoteKey(row) === selectedShippingQuoteKey,
       ) || null
     );
-  }, [shippingQuotes, selectedShippingQuoteKey]);
+  }, [shippingQuotes, selectedShippingQuoteKey, shippingUiMode]);
 
   const selectedQuoteFee = useMemo(
     () => getQuoteFee(selectedShippingQuote),
@@ -637,7 +655,7 @@ export default function ReturnCreatePageClient({
   const shippingAddressText = buildOrderFullAddress(order) || "—";
 
   const autoQuoteKey = useMemo(() => {
-    if (!order?.id || !exchangeLines.length) return "";
+    if (shippingUiMode === "pickup" || !order?.id || !exchangeLines.length) return "";
     const toAddress = buildOrderFullAddress(order);
     if (!toAddress) return "";
 
@@ -675,6 +693,7 @@ export default function ReturnCreatePageClient({
     shippingLength,
     shippingWidth,
     shippingHeight,
+    shippingUiMode,
   ]);
 
   const groupedQuotes = useMemo(() => {
@@ -767,8 +786,10 @@ export default function ReturnCreatePageClient({
   }, [selectedShippingQuote, shippingFeeInput]);
 
   const shippingFee = useMemo(() => {
-    return exchangeLines.length ? Math.max(0, toNumber(shippingFeeInput || 0)) : 0;
-  }, [exchangeLines.length, shippingFeeInput]);
+    return shippingUiMode === "pickup" || !exchangeLines.length
+      ? 0
+      : Math.max(0, toNumber(shippingFeeInput || 0));
+  }, [exchangeLines.length, shippingFeeInput, shippingUiMode]);
 
   // Tiền khách cần trả cho đơn đổi mới = hàng đổi + phí ship - hàng trả.
   const customerPayableAmount = Math.max(
@@ -779,10 +800,12 @@ export default function ReturnCreatePageClient({
   const refundAmount = differenceAmount > 0 ? differenceAmount : 0;
   const extraChargeAmount = customerPayableAmount;
   const returnReceiveLabel =
+    collectionMethod === "SEPARATE" && !receiptConfirmed ? "Chờ kho xác nhận nhận hàng cũ" :
+    collectOldOnDelivery ? "Chờ kho xác nhận nhận hàng cũ" :
     statusMode === "COMPLETED"
       ? "Đã nhận hàng khách gửi đổi/trả"
       : "Chưa nhận hàng khách gửi đổi/trả";
-  const isReturnReceived = statusMode === "COMPLETED";
+  const isReturnReceived = !collectOldOnDelivery && (receiptConfirmed || (collectionMethod !== "SEPARATE" && statusMode === "COMPLETED"));
 
   const selectedReturnQty = useMemo(() => {
     return returnLines.reduce((sum, line) => sum + toNumber(line.returnQty), 0);
@@ -795,8 +818,9 @@ export default function ReturnCreatePageClient({
   const canSubmit = useMemo(() => {
     if (!order) return false;
     if (!isReturnableOrder(order)) return false;
-    if (saving) return false;
+    if (saving || collectOldOnDelivery || receiptConfirmed) return false;
     if (!receiveBranchId) return false;
+    if (collectionMethod === "SEPARATE" && !receiptConfirmed && selectedReturnQty <= 0) return false;
     if (selectedReturnQty <= 0 && selectedExchangeQty <= 0) return false;
     if (isReturnReceived && refundAmount > 0 && !refundPaymentSourceId) return false;
     if (isReturnReceived && extraChargeAmount > 0 && !extraChargePaymentSourceId) return false;
@@ -812,12 +836,20 @@ export default function ReturnCreatePageClient({
     refundPaymentSourceId,
     extraChargePaymentSourceId,
     isReturnReceived,
+    collectOldOnDelivery,
+    receiptConfirmed,
   ]);
+
+  const coDeliveryReady = !collectOldOnDelivery || (
+    selectedReturnQty > 0 && selectedExchangeQty > 0 &&
+    normalizeCarrierCode(selectedShippingQuote?._carrier || shippingPartner) === "ghn" &&
+    shippingUiMode === "carrier" && ghnCollectionConfirmed && refundAmount === 0
+  );
 
   const canShipSubmit = useMemo(() => {
     if (!order) return false;
     if (!isReturnableOrder(order)) return false;
-    if (saving) return false;
+    if (saving || !coDeliveryReady || (collectionMethod === "SEPARATE" && !receiptConfirmed)) return false;
     if (!receiveBranchId) return false;
     if (selectedReturnQty <= 0 && selectedExchangeQty <= 0) return false;
     if (selectedExchangeQty <= 0) return false;
@@ -832,6 +864,8 @@ export default function ReturnCreatePageClient({
     refundAmount,
     refundPaymentSourceId,
     isReturnReceived,
+    coDeliveryReady,
+    collectionMethod, receiptConfirmed,
   ]);
 
   useEffect(() => {
@@ -917,10 +951,26 @@ export default function ReturnCreatePageClient({
 
         const items = Array.isArray(detail.items) ? detail.items : [];
 
+        const stageId = new URLSearchParams(window.location.search).get("returnId");
+        let staged: any = null;
+        if (stageId) {
+          const result = await apiGet(`/returns/${encodeURIComponent(stageId)}`);
+          staged = result?.data || result?.return || result;
+          if (!String(staged?.note || "").includes("[SEPARATE_COLLECTION]") || staged?.status !== "COMPLETED" || !String(staged?.note || "").includes("Kho đã nhận hàng cũ:") || staged?.exchangeOrderId) {
+            throw new Error("Phiếu thu hồi chưa được kho xác nhận hoặc đã tạo đơn đổi.");
+          }
+          if (String(staged.originalOrderId) !== String(detail.id)) throw new Error("Phiếu thu hồi không thuộc đơn gốc này.");
+          setReceiptConfirmed(true);
+          setStagedReturnCode(String(staged.code || ""));
+          setExchangeLines((staged.items || []).filter((i: any) => i.itemType === "EXCHANGE").map((i: any) => ({
+            id: String(i.variantId), variantId: String(i.variantId), sku: i.sku, productName: i.productName,
+            price: Number(i.refundPrice ?? i.unitPrice ?? 0), qty: Number(i.qty || 0),
+          })));
+        }
         setReturnLines(
           items.map((item) => ({
             ...item,
-            returnQty: Number(item.qty || 0),
+            returnQty: staged ? Number((staged.items || []).filter((i: any) => i.itemType === "RETURN" && i.orderItemId === item.id).reduce((sum: number, i: any) => sum + Number(i.qty || 0), 0)) : Number(item.qty || 0),
             reason: "Khách trả hàng",
             alreadyReturnedQty: 0,
             maxReturnQty: Number(item.qty || 0),
@@ -1175,6 +1225,7 @@ export default function ReturnCreatePageClient({
       return "Chưa chọn chi nhánh/kho nhận hàng trả.";
     }
 
+    if (collectionMethod === "SEPARATE" && !receiptConfirmed && selectedReturnQty <= 0) return "Chọn sản phẩm cần thu hồi trước khi lưu phiếu.";
     if (selectedReturnQty <= 0 && selectedExchangeQty <= 0) {
       return "Chưa có sản phẩm trả hoặc sản phẩm đổi.";
     }
@@ -1189,7 +1240,7 @@ export default function ReturnCreatePageClient({
       return `Sản phẩm ${invalidReturn.sku || invalidReturn.productName || ""} vượt số lượng được trả.`;
     }
 
-    if (isReturnReceived && refundAmount > 0 && !refundPaymentSourceId) {
+    if (isReturnReceived && refundAmount > 0 && !refundPaymentSourceId && !forShipping) {
       return "Chưa chọn nguồn tiền hoàn khách.";
     }
 
@@ -1202,6 +1253,16 @@ export default function ReturnCreatePageClient({
       return "Chưa chọn nguồn tiền khách bù thêm.";
     }
 
+    if (collectOldOnDelivery && !forShipping) {
+      return "Giao hàng kèm thu hồi phải dùng nút Tạo đơn đổi & gửi HVC, không lưu phiếu riêng.";
+    }
+    if (collectOldOnDelivery && forShipping && !coDeliveryReady) {
+      return "Thu hồi cùng chuyến cần có hàng cũ/hàng mới, chọn GHN, không hoàn tiền và xác nhận đã thống nhất nghiệp vụ với GHN.";
+    }
+
+    if (forShipping && shippingUiMode === "pickup") {
+      return "Khách nhận tại cửa hàng: lưu phiếu đổi/trả, không tạo vận đơn.";
+    }
     if (forShipping && exchangeLines.length && !selectedShippingQuote) {
       return "Chưa chọn gói vận chuyển HVC. Bấm lấy báo giá rồi chọn một gói trước khi gửi.";
     }
@@ -1210,7 +1271,7 @@ export default function ReturnCreatePageClient({
   };
 
   const refreshShippingQuotes = async () => {
-    if (!order) return;
+    if (!order || shippingUiMode === "pickup") return;
 
     if (!exchangeLines.length) {
       setShippingQuoteError("Chưa có sản phẩm đổi để báo giá vận chuyển.");
@@ -1509,13 +1570,18 @@ export default function ReturnCreatePageClient({
     skipExchangeStockCheck: true,
 
     type: exchangeLines.length ? "RETURN_EXCHANGE" : "RETURN",
-    status: statusMode,
+    status: collectOldOnDelivery || (collectionMethod === "SEPARATE" && !receiptConfirmed) ? "PENDING" : statusMode,
+    collectOldOnDelivery,
+    existingReturnId: receiptConfirmed ? existingReturnId : undefined,
+    deferExtraChargeToShipment: collectionMethod === "SEPARATE",
+    ghnCollectionConfirmed: collectOldOnDelivery ? ghnCollectionConfirmed : false,
 
     shippingFee,
     customerPayableAmount,
-    shippingPartner: normalizeCarrierCode(
+    shippingPartner: shippingUiMode === "pickup" ? null : normalizeCarrierCode(
       selectedShippingQuote?._carrier || shippingPartner,
     ),
+    shippingUiMode,
     selectedQuoteKey: selectedShippingQuote
       ? getQuoteKey(selectedShippingQuote)
       : selectedShippingQuoteKey || null,
@@ -1549,7 +1615,7 @@ export default function ReturnCreatePageClient({
     extraChargePaymentSourceId:
       isReturnReceived && extraChargeAmount > 0 ? extraChargePaymentSourceId : null,
 
-    note: buildReturnNote(),
+    note: [buildReturnNote(), collectionMethod === "SEPARATE" ? "[SEPARATE_COLLECTION] Chờ kho nhận hàng trước khi tạo đơn đổi" : ""].filter(Boolean).join(" | "),
 
     items: [
       ...selectedReturnItems.map((line) => ({
@@ -1604,7 +1670,16 @@ export default function ReturnCreatePageClient({
         buildReturnPayload(selectedReturnItems),
       );
 
-      setMessage(`Đã tạo phiếu đổi/trả ${created?.code || ""}.`);
+      if (collectionMethod === "SEPARATE" && !receiptConfirmed) {
+        setStagedReturnCode(String(created?.code || ""));
+        setExistingReturnId(String(created?.id || ""));
+        setMessage(`Đã tạo phiếu ${created?.code || ""} chờ kho nhận. Mở đơn gốc để xác nhận nhận hàng, sau đó mới tạo đơn gửi khách.`);
+        window.location.assign(`/orders/${encodeURIComponent(order.id)}`);
+        return;
+      }
+      setMessage(shippingUiMode === "pickup"
+        ? `Đã lưu phiếu đổi tại cửa hàng ${created?.code || ""}. Không tạo vận đơn và không tính phí ship.`
+        : `Đã tạo phiếu đổi/trả ${created?.code || ""}.`);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Không lưu được phiếu đổi trả.",
@@ -1646,6 +1721,8 @@ export default function ReturnCreatePageClient({
       setMessage(
         `Đã tạo đơn đổi/trả ${created?.code || ""}${created?.exchangeOrderCode ? ` · Đơn đổi ${created.exchangeOrderCode}` : ""}${created?.exchangeTrackingCode ? ` · VĐ ${created.exchangeTrackingCode}` : ""}.`,
       );
+      // Tránh nhân viên vô ý tạo phiếu/đơn đổi thứ hai sau khi thành công.
+      window.location.assign(`/orders/${encodeURIComponent(order.id)}`);
     } catch (err) {
       setError(
         err instanceof Error
@@ -1707,14 +1784,14 @@ export default function ReturnCreatePageClient({
           </p>
         </div>
 
-        <button
+        {!receiptConfirmed ? <button
           type="button"
           onClick={handleSave}
           disabled={!canSubmit}
-          className="rounded-2xl bg-neutral-950 px-5 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:bg-neutral-300"
+          className="rounded-md bg-neutral-950 px-5 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:bg-neutral-300"
         >
-          {saving ? "Đang lưu..." : "Lưu phiếu đổi/trả"}
-        </button>
+          {saving ? "Đang lưu..." : collectionMethod === "SEPARATE" ? "Lưu phiếu chờ thu hồi" : "Lưu phiếu đổi/trả"}
+        </button> : null}
       </div>
 
       {!returnable ? (
@@ -1815,6 +1892,7 @@ export default function ReturnCreatePageClient({
               <div className="flex gap-2">
                 <button
                   type="button"
+                  disabled={receiptConfirmed}
                   onClick={() =>
                     setReturnLines((prev) =>
                       prev.map((line) => ({
@@ -1825,7 +1903,7 @@ export default function ReturnCreatePageClient({
                   }
                   className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-neutral-50"
                 >
-                  Trả toàn bộ
+                  Chọn lại tất cả
                 </button>
 
                 <button
@@ -1843,22 +1921,23 @@ export default function ReturnCreatePageClient({
             </div>
 
             <div className="overflow-auto">
-              <div className="grid min-w-[880px] grid-cols-[1fr_80px_100px_120px_130px_180px] border-b border-neutral-100 bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase text-neutral-500">
+              <div className="grid min-w-[880px] grid-cols-[1fr_80px_100px_120px_130px_180px_72px] border-b border-neutral-100 bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase text-neutral-500">
                 <div>Sản phẩm</div>
                 <div>Đã mua</div>
                 <div>Còn trả</div>
                 <div>SL trả</div>
                 <div>Tiền hoàn</div>
                 <div>Lý do</div>
+                <div>Thao tác</div>
               </div>
 
-              {returnLines.map((line) => {
+              {returnLines.filter((line) => Number(line.returnQty) > 0).map((line) => {
                 const maxReturnQty = Number(line.maxReturnQty ?? line.qty ?? 0);
 
                 return (
                   <div
                     key={line.id}
-                    className="grid min-w-[880px] grid-cols-[1fr_80px_100px_120px_130px_180px] items-center border-b border-neutral-100 px-5 py-3 text-sm"
+                    className="grid min-w-[880px] grid-cols-[1fr_80px_100px_120px_130px_180px_72px] items-center border-b border-neutral-100 px-5 py-3 text-sm"
                   >
                     <div>
                       <div className="font-semibold text-neutral-900">
@@ -1874,6 +1953,7 @@ export default function ReturnCreatePageClient({
                     <div>{maxReturnQty}</div>
 
                     <input
+                      disabled={receiptConfirmed}
                       value={line.returnQty}
                       onChange={(e) =>
                         updateReturnQty(line.id, Number(e.target.value || 0))
@@ -1900,13 +1980,18 @@ export default function ReturnCreatePageClient({
                       }
                       className="h-10 rounded-xl border border-neutral-200 px-3 outline-none focus:border-neutral-900"
                     />
+                    <button type="button" disabled={receiptConfirmed} onClick={() => updateReturnQty(line.id, 0)}
+                      className="rounded-md border border-neutral-200 px-2 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-900"
+                      title={`Bỏ thu hồi ${line.sku || line.productName || "sản phẩm"}`}>
+                      Xóa
+                    </button>
                   </div>
                 );
               })}
             </div>
           </section>
 
-          <section className="rounded-3xl border border-neutral-200 bg-white">
+          {(collectionMethod !== "SEPARATE" || receiptConfirmed) ? <section className="rounded-3xl border border-neutral-200 bg-white">
             <div className="border-b border-neutral-200 px-5 py-4">
               <h2 className="font-semibold text-neutral-900">Sản phẩm đổi</h2>
               <p className="mt-1 text-xs text-neutral-500">
@@ -2016,9 +2101,9 @@ export default function ReturnCreatePageClient({
                 )}
               </div>
             </div>
-          </section>
+          </section> : null}
 
-          {exchangeLines.length ? (
+          {exchangeLines.length && collectionMethod !== "CUSTOMER" && (collectionMethod !== "SEPARATE" || receiptConfirmed) ? (
             <section className="rounded-3xl border border-neutral-200 bg-white p-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -2043,7 +2128,18 @@ export default function ReturnCreatePageClient({
                   <button
                     key={item.value}
                     type="button"
-                    onClick={() => setShippingUiMode(item.value)}
+                    disabled={(collectOldOnDelivery || (collectionMethod === "SEPARATE" && receiptConfirmed)) && item.value === "pickup"}
+                    onClick={() => {
+                      if ((collectOldOnDelivery || (collectionMethod === "SEPARATE" && receiptConfirmed)) && item.value === "pickup") return;
+                      setShippingUiMode(item.value);
+                      if (item.value === "pickup") {
+                        setShippingFeeInput("0");
+                        setShippingQuotes([]);
+                        setSelectedShippingQuoteKey("");
+                        setShippingQuoteError("");
+                        lastAutoQuoteKeyRef.current = "";
+                      }
+                    }}
                     className={`rounded-2xl border p-3 text-left transition ${
                       shippingUiMode === item.value
                         ? "border-neutral-900 bg-neutral-50"
@@ -2060,6 +2156,14 @@ export default function ReturnCreatePageClient({
                 ))}
               </div>
 
+                      {shippingUiMode === "pickup" ? (
+                <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
+                  <strong>Đổi hàng trực tiếp tại cửa hàng</strong>
+                  <p className="mt-1 text-xs text-neutral-500">Không tạo vận đơn, không báo giá GHN / Viettel Post / AhaMove và không thu phí giao hàng. Chỉ chọn hàng khách trả, hàng đổi và nguồn tiền thanh toán.</p>
+                  <p className="mt-2 font-semibold">Phí vận chuyển: 0đ · Khách bù thêm: {money(customerPayableAmount)}</p>
+                </div>
+              ) : (
+                <>
               <div className="mt-4 grid gap-3 md:grid-cols-6">
                 {shippingPartnerOptions.map((item) => (
                   <button
@@ -2090,6 +2194,36 @@ export default function ReturnCreatePageClient({
                     </div>
                   </button>
                 ))}
+              </div>
+
+              <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Phương thức đã chọn</p>
+                <p className="mt-1 text-sm font-semibold text-neutral-900">
+                  {{
+                    COMBINED: "Giao hàng mới, thu hồi hàng cũ cùng chuyến (GHN)",
+                    SEPARATE: "Thu hồi riêng – chờ kho rồi mới gửi",
+                    CUSTOMER: "Khách gửi trả hoặc đổi trực tiếp tại shop",
+                    LEGACY: "Quy trình đổi/trả thông thường",
+                  }[collectionMethod]}
+                </p>
+                <p className="mt-1 text-xs text-neutral-600">Phương thức được chọn ở đơn hàng trước khi mở trang này; không cần chọn lại.</p>
+                {collectOldOnDelivery ? (
+                  <div className="mt-3 space-y-3 text-xs leading-5 text-neutral-800">
+                    <div className="rounded-md border border-neutral-200 bg-white p-3">
+                      <p><b>Giao:</b> {exchangeLines.map(i => `${i.sku || i.productName || "SP"} ×${i.qty}`).join(", ") || "Chưa chọn"}</p>
+                      <p><b>Thu:</b> {returnLines.filter(i => Number(i.returnQty) > 0).map(i => `${i.sku || i.productName || "SP"} ×${i.returnQty}`).join(", ") || "Chưa chọn"}</p>
+                      <p><b>COD:</b> {money(customerPayableAmount)} (đã cấn trừ {money(returnTotal)})</p>
+                    </div>
+                    <label className="flex cursor-pointer items-start gap-2 font-medium">
+                      <input className="mt-1 h-4 w-4" type="checkbox" checked={ghnCollectionConfirmed}
+                        onChange={(e) => setGhnCollectionConfirmed(e.target.checked)} />
+                      <span>Đã thống nhất với GHN/shipper về việc nhận hàng cũ khi giao hàng mới. Sẽ xác nhận kho khi hàng thực tế về.</span>
+                    </label>
+                    <p className="font-semibold">Chỉ dùng “Tạo đơn đổi & gửi HVC” để giữ liên kết chứng từ.</p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-neutral-600">Trạng thái vận chuyển thu hồi và xác nhận kho được theo dõi riêng. Chỉ nhập kho khi thực nhận hàng.</p>
+                )}
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -2366,6 +2500,8 @@ export default function ReturnCreatePageClient({
                   </div>
                 </div>
               ) : null}
+                </>
+              )}
             </section>
           ) : null}
         </div>
@@ -2444,7 +2580,7 @@ export default function ReturnCreatePageClient({
               ))}
             </select>
 
-            {exchangeLines.length ? (
+            {exchangeLines.length && shippingUiMode !== "pickup" ? (
               <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
                 <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Phí ship thu khách
@@ -2476,7 +2612,7 @@ export default function ReturnCreatePageClient({
               </div>
             ) : null}
 
-            {refundAmount > 0 ? (
+            {refundAmount > 0 && collectionMethod !== "SEPARATE" ? (
               <>
                 <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Nguồn tiền hoàn khách
@@ -2526,11 +2662,13 @@ export default function ReturnCreatePageClient({
               </div>
             ) : null}
 
+            {collectionMethod !== "SEPARATE" ? <>
             <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Tình trạng nhận hàng trả
             </label>
             <select
-              value={statusMode}
+              value={collectOldOnDelivery ? "DRAFT" : statusMode}
+              disabled={collectOldOnDelivery}
               onChange={(e) =>
                 setStatusMode(e.target.value as "COMPLETED" | "DRAFT")
               }
@@ -2548,10 +2686,15 @@ export default function ReturnCreatePageClient({
               }`}
             >
               {isReturnReceived
-                ? "Đã nhận hàng: phiếu được xử lý hoàn tất, backend có thể cộng lại kho hàng trả và sinh phiếu thu/chi nếu có chênh lệch."
-                : "Chưa nhận hàng: phiếu lưu ở trạng thái nháp/chờ nhận, không bắt buộc chọn nguồn tiền hoàn khách và không gửi nguồn tiền hoàn/thu thêm về backend."}
+                ? "Đã nhận hàng: phiếu có thể xử lý hoàn tất, kho và thanh toán ghi nhận theo thực tế."
+                : "Chưa nhận hàng: không nhập kho tự động. Với giao kèm thu hồi, kho xác nhận sau khi hàng cũ thực về."}
             </div>
 
+            </> : (
+              <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700">
+                {receiptConfirmed ? "Kho đã xác nhận nhận hàng cũ. Không nhập kho lần hai." : "Chờ kho nhận hàng cũ theo RTN. Chưa xuất hàng mới và chưa hoàn tiền."}
+              </div>
+            )}
             <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Ghi chú
             </label>
@@ -2563,6 +2706,12 @@ export default function ReturnCreatePageClient({
             />
           </section>
 
+          {collectionMethod === "SEPARATE" ? (
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm">
+              <div className="font-semibold">Thu hồi hàng riêng – {receiptConfirmed ? "Giai đoạn 2: gửi hàng mới" : "Giai đoạn 1: chờ hàng cũ về"}</div>
+              <p className="mt-1 text-neutral-600">{receiptConfirmed ? `Kho đã nhận hàng theo phiếu ${stagedReturnCode}. Chọn gói giao hàng rồi gửi. Không lập phiếu RTN mới.` : "Tài khoản GHN thu hồi ở ngoài hệ thống. Lưu yêu cầu trước, xác nhận kho trên đơn gốc khi hàng về. Chưa gọi báo giá, chưa xuất hàng đổi, chưa thu/hoàn tiền."}</p>
+            </div>
+          ) : null}
           <section className="rounded-3xl border border-neutral-200 bg-white p-5">
             <h2 className="font-semibold text-neutral-900">Tổng kết</h2>
 
@@ -2597,20 +2746,24 @@ export default function ReturnCreatePageClient({
 
               <div className="flex justify-between text-base">
                 <span className="font-semibold">
-                  {refundAmount > 0
+                  {collectionMethod === "SEPARATE" && !receiptConfirmed
+                    ? "Giá trị hàng đang chờ thu hồi"
+                    : refundAmount > 0
                     ? "Shop hoàn khách"
                     : customerPayableAmount > 0
                       ? "Khách cần trả / COD"
                       : "Đổi ngang"}
                 </span>
                 <strong className="text-xl">
-                  {refundAmount > 0
+                  {collectionMethod === "SEPARATE" && !receiptConfirmed
+                    ? money(returnTotal)
+                    : refundAmount > 0
                     ? money(refundAmount)
                     : money(customerPayableAmount)}
                 </strong>
               </div>
 
-              {differenceAmount > 0 ? (
+              {differenceAmount > 0 && (collectionMethod !== "SEPARATE" || receiptConfirmed) ? (
                 <div
                   className={`rounded-2xl px-4 py-3 text-xs leading-5 ${
                     isReturnReceived
@@ -2624,7 +2777,7 @@ export default function ReturnCreatePageClient({
                 </div>
               ) : null}
 
-              {customerPayableAmount > 0 ? (
+              {customerPayableAmount > 0 && (collectionMethod !== "SEPARATE" || receiptConfirmed) ? (
                 <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-700">
                   Nếu gửi vận chuyển, COD của đơn đổi sẽ là{" "}
                   {money(customerPayableAmount)}.
@@ -2632,16 +2785,16 @@ export default function ReturnCreatePageClient({
               ) : null}
             </div>
 
-            <button
+            {!receiptConfirmed ? <button
               type="button"
               onClick={handleSave}
               disabled={!canSubmit}
               className="mt-5 h-12 w-full rounded-2xl bg-neutral-950 font-bold text-white hover:bg-neutral-800 disabled:bg-neutral-300"
             >
-              {saving ? "Đang lưu..." : "Lưu phiếu đổi/trả"}
-            </button>
+              {saving ? "Đang lưu..." : collectionMethod === "SEPARATE" ? "Lưu yêu cầu thu hồi – chờ kho nhận" : "Lưu phiếu đổi/trả"}
+            </button> : null}
 
-            {exchangeLines.length ? (
+            {exchangeLines.length && shippingUiMode !== "pickup" ? (
               <button
                 type="button"
                 onClick={handleSaveAndShip}

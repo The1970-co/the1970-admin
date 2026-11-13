@@ -4772,6 +4772,7 @@ export default function OrdersPageClient() {
   const [appliedCodFilter, setAppliedCodFilter] = useState<MultiFilterValue>(["ALL"]);
   const [codReconciliationFilter, setCodReconciliationFilter] = useState<MultiFilterValue>(["ALL"]);
   const [appliedCodReconciliationFilter, setAppliedCodReconciliationFilter] = useState<MultiFilterValue>(["ALL"]);
+  const [exchangeReturnStatus, setExchangeReturnStatus] = useState("ALL");
   const [amountDueFilter, setAmountDueFilter] = useState<MultiFilterValue>(["ALL"]);
   const [appliedAmountDueFilter, setAppliedAmountDueFilter] = useState<MultiFilterValue>(["ALL"]);
   const [itemCountFilter, setItemCountFilter] = useState<MultiFilterValue>(["ALL"]);
@@ -5378,6 +5379,7 @@ export default function OrdersPageClient() {
           params.set("branchId", selectedBranchIds[0]);
         }
 
+        if (exchangeReturnStatus !== "ALL") params.set("exchangeReturnStatus", exchangeReturnStatus);
         const advancedFilters: Array<[string, string[]]> = [
           ["branchIds", selectedBranchIds], ["orderStatuses", selectedOrderStatuses],
           ["paymentStatuses", selectedPaymentStatuses],
@@ -5714,6 +5716,7 @@ export default function OrdersPageClient() {
     appliedTrackingFilter,
     appliedCodFilter,
     appliedAmountDueFilter,
+    exchangeReturnStatus,
     appliedItemCountFilter,
     appliedCodReconciliationFilter,
     appliedDateFrom,
@@ -7158,6 +7161,7 @@ export default function OrdersPageClient() {
         if (dateRange.from) params.set("dateFrom", dateRange.from);
         if (dateRange.to) params.set("dateTo", dateRange.to);
         if (appliedQuickStatus !== "ALL") params.set("quickStatus", appliedQuickStatus);
+        if (exchangeReturnStatus !== "ALL") params.set("exchangeReturnStatus", exchangeReturnStatus);
         const excelAdvancedFilters: Array<[string, string[]]> = [
           ["orderStatuses", selectedOrderStatuses], ["paymentStatuses", selectedPaymentStatuses],
           ["fulfillmentStatuses", selectedMultiFilterValues(appliedFulfillmentFilter)],
@@ -8982,6 +8986,18 @@ getPaidRevenueAmount(o)
                       { value: "SAVED", label: "Đã lưu đối soát" },
                     ]}
                   />
+
+                  <select
+                    aria-label="Trạng thái nhận hàng đổi"
+                    className="min-h-[46px] rounded-2xl border border-neutral-300 bg-white px-3 text-sm"
+                    value={exchangeReturnStatus}
+                    onChange={(e) => { setExchangeReturnStatus(e.target.value); setPage(1); }}
+                  >
+                    <option value="ALL">Tất cả nhận hàng đổi</option>
+                    <option value="PENDING">Chưa xác nhận nhận hàng cũ</option>
+                    <option value="RECEIVED">Kho đã nhận hàng cũ</option>
+                    <option value="ALL_EXCHANGE">Tất cả đơn đổi có thu hồi</option>
+                  </select>
 
                   <MultiFilterSelect
                     value={amountDueFilter}

@@ -143,6 +143,8 @@ export type CreateOrderPayload = {
   deliveryFee?: number;
   paidAmount?: number;
   paymentSourceId?: string | null;
+  /** Các khoản thanh toán đã thu theo từng nguồn tiền. */
+  payments?: Array<{ paymentSourceId: string; amount: number; note?: string }>;
   paymentNote?: string;
   skipAutoShipment?: boolean;
   deliveryMethod?: string;
@@ -651,6 +653,11 @@ export async function createOrder(
         ? toNumber(payload.paidAmount)
         : undefined,
     paymentSourceId: payload.paymentSourceId || undefined,
+    payments: payload.payments?.map((payment) => ({
+      paymentSourceId: String(payment.paymentSourceId),
+      amount: toNumber(payment.amount),
+      note: payment.note || undefined,
+    })),
     paymentNote: payload.paymentNote || payload.note || "",
     skipAutoShipment: payload.skipAutoShipment,
     deliveryMethod: payload.deliveryMethod,

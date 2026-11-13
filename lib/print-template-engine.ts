@@ -735,6 +735,26 @@ function isGhnPartialDeliveryOrder(order: any) {
   );
 }
 
+/** Only an explicit exchange collection link can turn a partial-delivery label into an old-goods collection label. */
+function getExchangeCollectionPrintInfo(order: any): { items: string; returnCode: string } | null {
+  const shipment = order?.shipment || {};
+  const metadata = parseMaybeJson(shipment.metadata) || shipment.metadata || {};
+  const collection = metadata?.exchangeCollection;
+  const mode = String(collection?.mode || "").toUpperCase();
+  // Do not infer a collection from phone number, COD difference, or generic GHN notes.
+  if (mode !== "DELIVER_AND_COLLECT_OLD" || !collection?.returnExchangeId) return null;
+
+  const lines = Array.isArray(collection?.returnItemSkus) ? collection.returnItemSkus : [];
+  const items = lines
+    .filter((item: any) => Number(item?.qty || 0) > 0)
+    .map((item: any) => `${String(item.sku || "Sản phẩm cũ").trim()} x${Number(item.qty)}`)
+    .join(", ");
+
+  const text = String(order?.note || "");
+  const matched = text.match(/(?:phiếu|phieu)\s+(RTN-[A-Za-z0-9-]+)/i);
+  return { items, returnCode: matched?.[1] || "" };
+}
+
 function withoutPartialDeliveryNote(note: string) {
   return String(note || "")
     .split(/\s*\|\s*/g)
@@ -782,7 +802,7 @@ function buildShippingTemplateHtml(params: {
   const hasTracking = Boolean(trackingCode);
   const isSquare80 = template.paperSize === "80mm";
   const ghnSortCodeBlock = buildGhnSortCodeBlock(ghnSortCode, isSquare80);
-  const squareItemsTop = `${(ghnSortCodeBlock ? 36 : 29) + (data.partialDeliveryBlock ? 6 : 0)}mm`;
+  const squareItemsTop = `${(ghnSortCodeBlock ? 36 : 29) + Number(data.partialBlockHeightMm || 0)}mm`;
 
   if (isSquare80) {
     return `
@@ -860,7 +880,6 @@ function buildShippingTemplateHtml(params: {
     <div style="margin-top:2px;"><strong>Đ/C:</strong> ${data.shippingAddress}</div>
   </div>
 
-  ${data.partialDeliveryBlock || ""}
   ${noteValue ? `<div style="border:1px dashed #999;padding:5px 6px;margin-bottom:8px;"><div style="font-weight:700;margin-bottom:2px;">Ghi chú</div><div>${escapeHtml(noteValue)}</div></div>` : ""}
 
   ${data.financialBlock || ""}
@@ -1282,15 +1301,21 @@ export function renderOrderTemplateHtml(params: {
 
   const itemsRows = `${baseItemsRows}${totalQtyRow}`;
   const shippingAddress = buildShippingAddress(order, meta.address || "");
-  const hasPartialDelivery = template.templateType === "shipping" && isGhnPartialDeliveryOrder(order);
+  const collectionInfo = template.templateType === "shipping" ? getExchangeCollectionPrintInfo(order) : null;
+  const hasPartialDelivery = template.templateType === "shipping" && (isGhnPartialDeliveryOrder(order) || Boolean(collectionInfo));
   const noteValue = template.showNote
     ? hasPartialDelivery
       ? withoutPartialDeliveryNote(buildCleanNote(order, meta))
       : buildCleanNote(order, meta)
     : "";
-  const partialDeliveryBlock = hasPartialDelivery
-    ? `<div style="border:1.5px solid #000;padding:2px 3px;margin:2px 0;font-size:10px;font-weight:900;line-height:1.15;text-align:center;">GIAO HÀNG 1 PHẦN - THU HỒI SP CŨ</div>`
+  const exchangeCollectionDetails = collectionInfo
+    ? [collectionInfo.items ? `THU: ${collectionInfo.items}` : "", collectionInfo.returnCode ? `Phiếu: ${collectionInfo.returnCode}` : ""].filter(Boolean).join(" | ")
     : "";
+  const partialDeliveryBlock = hasPartialDelivery
+    ? `<div style="border:1.5px solid #000;padding:2px 3px;margin:2px 0;text-align:center;line-height:1.15;"><div style="font-size:9.5px;font-weight:900;">${collectionInfo ? "GIAO HÀNG MỚI - THU HỒI HÀNG CŨ" : "GIAO 1 PHẦN - TRẢ 1 PHẦN"}</div>${exchangeCollectionDetails ? `<div style="font-size:8px;font-weight:800;margin-top:2px;">${escapeHtml(exchangeCollectionDetails)}</div>` : ""}</div>`
+    : "";
+  // Reserve extra space for SKU/RTN on an 80 mm label, keeping the item list clear.
+  const partialBlockHeightMm = partialDeliveryBlock ? (exchangeCollectionDetails ? 10 : 6) : 0;
 
   const orderMetaCells = [
     showOrderCode
@@ -1399,6 +1424,7 @@ export function renderOrderTemplateHtml(params: {
     ),
     note: escapeHtml(noteValue),
     partialDeliveryBlock,
+    partialBlockHeightMm: String(partialBlockHeightMm),
     ghnSortCode: escapeHtml(ghnSortCode),
     ghnSortCodeBlock,
 
@@ -1498,7 +1524,7 @@ export function renderOrderTemplateHtml(params: {
   ${ghnSortCodeBlock}
   ${requiredNoteBlock}
 
-  ${showItems ? `<div style="position:absolute;left:2.2mm;right:2.2mm;top:${parseInt(ghnSortCodeBlock || requiredNoteBlock ? (codBlock ? "37" : "34") : codBlock ? "29" : "25", 10) + (partialDeliveryBlock ? 6 : 0)}mm;bottom:15.5mm;overflow:hidden;">
+  ${showItems ? `<div style="position:absolute;left:2.2mm;right:2.2mm;top:${parseInt(ghnSortCodeBlock || requiredNoteBlock ? (codBlock ? "37" : "34") : codBlock ? "29" : "25", 10) + partialBlockHeightMm}mm;bottom:15.5mm;overflow:hidden;">
     <table style="width:100%;border-collapse:collapse;font-size:9px;line-height:1.03;">
       <thead>
         <tr>
@@ -1569,7 +1595,7 @@ export function renderOrderTemplateHtml(params: {
         : noteValue
           ? (hasCod ? 34 : 31)
           : (hasCod ? 29 : 25);
-      const nextItemsTop = `${baseTopMm + (partialDeliveryBlock ? 6 : 0)}mm`;
+      const nextItemsTop = `${baseTopMm + partialBlockHeightMm}mm`;
 
       html = html
         .replaceAll("top:29mm;bottom:15.5mm", `top:${nextItemsTop};bottom:15.5mm`)
