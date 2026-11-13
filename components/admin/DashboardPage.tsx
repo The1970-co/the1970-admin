@@ -54,6 +54,7 @@ type ProductOrderReportItem = {
   orderStatuses?: string[];
   cancelledOrderCount?: number;
   orderDetails?: ProductReportOrderDetail[];
+  channelQty?: { pos: number; facebook: number; other: number };
 };
 
 type ProductOrderReportApi = {
@@ -765,6 +766,21 @@ async function dashboardPostJson<T>(path: string, body: Record<string, unknown> 
   return (await res.json()) as T;
 }
 
+function sumProductChannelQty(details: ProductReportOrderDetail[]) {
+  return details.reduce(
+    (acc, detail) => {
+      const group = String(detail.group || "").toLowerCase();
+      const source = String(detail.source || "").toLowerCase();
+      const qty = toNumber(detail.quantity);
+      if (group === "pos" || (!group && source.includes("pos"))) acc.pos += qty;
+      else if (group === "facebook" || (!group && /facebook|fb|cod|meta/.test(source))) acc.facebook += qty;
+      else acc.other += qty;
+      return acc;
+    },
+    { pos: 0, facebook: 0, other: 0 },
+  );
+}
+
 function normalizeProductOrderReportRows(
   payload: ProductOrderReportApi | null,
 ): ProductOrderReportItem[] {
@@ -896,6 +912,15 @@ function normalizeProductOrderReportRows(
         orderStatuses: detailStatuses.length ? detailStatuses : rowStatuses,
         cancelledOrderCount,
         orderDetails: activeDetails,
+        channelQty: activeDetails.length
+          ? sumProductChannelQty(activeDetails)
+          : row.channelQty && typeof row.channelQty === "object"
+            ? {
+                pos: toNumber(row.channelQty.pos),
+                facebook: toNumber(row.channelQty.facebook),
+                other: toNumber(row.channelQty.other),
+              }
+            : undefined,
         shippedQty,
         unshippedQty,
         shippedOrderCount: toNumber(
@@ -1693,6 +1718,7 @@ function productReportFromOrders(
       customerNames: Array.from(item.customerSet).slice(0, 12),
       sources: Array.from(item.sourceSet).slice(0, 12),
       orderStatuses: Array.from(item.orderStatusSet).slice(0, 8),
+      channelQty: sumProductChannelQty(item.orderDetails),
       orderDetails: item.orderDetails.slice(0, 200),
       orderIds: undefined,
       orderCodeSet: undefined,
@@ -1761,6 +1787,7 @@ function mergeProductRowsByMainProduct(
         variantSet: new Set<string>(),
         skuSet: new Set<string>(),
         detailRows: [],
+        channelQty: { pos: 0, facebook: 0, other: 0 },
       });
     }
 
@@ -1792,6 +1819,15 @@ function mergeProductRowsByMainProduct(
     }
     if (row.sku) target.skuSet.add(String(row.sku));
 
+    const perChannel = row.channelQty || (details.length ? sumProductChannelQty(details) : null);
+    if (perChannel && target.channelQty) {
+      target.channelQty.pos += toNumber(perChannel.pos);
+      target.channelQty.facebook += toNumber(perChannel.facebook);
+      target.channelQty.other += toNumber(perChannel.other);
+    } else {
+      // Không suy đoán số lượng từ danh sách tên nguồn nếu API không trả chi tiết.
+      target.channelQty = undefined;
+    }
     target.quantity += toNumber(row.quantity);
     target.revenue += toNumber(row.revenue);
     target.shippedQty += toNumber(row.shippedQty);
@@ -2426,11 +2462,31 @@ export default function DashboardPage() {
     sku: true,
     fulfillment: true,
     avg: true,
-    source: false,
+    source: true,
     customer: false,
     orderCode: false,
     orderStatus: true,
   });
+  const [productConfigSaved, setProductConfigSaved] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("the1970_dashboard_product_columns_v1");
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+        setProductColumns((prev) => {
+          const next = { ...prev };
+          (Object.keys(prev) as Array<keyof typeof prev>).forEach((key) => {
+            if (typeof saved[key] === "boolean") next[key] = saved[key];
+          });
+          return next;
+        });
+      }
+    } catch {
+      // Cấu hình cũ không hợp lệ: giữ mặc định.
+    }
+  }, []);
+
   const [productReportRows, setProductReportRows] = useState<
     ProductOrderReportItem[]
   >([]);
@@ -3256,6 +3312,17 @@ export default function DashboardPage() {
 
   function toggleProductColumn(key: keyof typeof productColumns) {
     setProductColumns((prev) => ({ ...prev, [key]: !prev[key] }));
+    setProductConfigSaved(false);
+  }
+
+  function saveProductColumnConfig() {
+    try {
+      window.localStorage.setItem("the1970_dashboard_product_columns_v1", JSON.stringify(productColumns));
+      setProductConfigSaved(true);
+    } catch {
+      setProductConfigSaved(false);
+      window.alert("Không lưu được cấu hình trên trình duyệt này.");
+    }
   }
 
   function openOrderCreatedBreakdown() {
@@ -4191,6 +4258,18 @@ export default function DashboardPage() {
                 </label>
               ))}
             </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={saveProductColumnConfig}
+                className="rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+              >
+                Lưu cấu hình
+              </button>
+              {productConfigSaved ? (
+                <span className="text-xs text-emerald-700">Đã lưu trên trình duyệt</span>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -4386,8 +4465,19 @@ export default function DashboardPage() {
                         </td>
                       ) : null}
                       {productColumns.source ? (
-                        <td className="px-4 py-4 text-neutral-600">
-                          {shortListText(item.sources)}
+                        <td className="px-4 py-4 text-neutral-700">
+                          {item.channelQty &&
+                          item.channelQty.pos + item.channelQty.facebook + item.channelQty.other === item.quantity ? (
+                            <div className="space-y-1 whitespace-nowrap">
+                              <div>POS: <span className="font-semibold">{formatQty(item.channelQty.pos)}</span> SP</div>
+                              <div>Facebook/COD: <span className="font-semibold">{formatQty(item.channelQty.facebook)}</span> SP</div>
+                              {item.channelQty.other > 0 ? (
+                                <div>Khác: <span className="font-semibold">{formatQty(item.channelQty.other)}</span> SP</div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-neutral-500" title="Cần dữ liệu nguồn và số lượng của từng dòng đơn từ API">Chưa có SL theo nguồn</span>
+                          )}
                         </td>
                       ) : null}
                       {productColumns.customer ? (

@@ -12,6 +12,7 @@ const ISSUE_LABELS: Record<string, string> = {
   MATCHED_BY_PARTIAL_DELIVERY: "Khớp qua phiếu giao 1 phần",
   PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hàng hoàn",
   COD_MISMATCH: "Lệch COD",
+  MISSING_PARTNER_COD: "Chưa nhập COD GHN",
   FEE_MISMATCH: "Lệch phí",
 };
 
@@ -1282,7 +1283,8 @@ export default function GhnCodReconciliationPage() {
               <p className="mt-1 text-sm text-neutral-500">
                 Dán 1 hoặc nhiều mã đơn nội bộ / mã vận đơn GHN. Có thể xuống
                 dòng, cách nhau bằng dấu phẩy, dấu cách hoặc paste nguyên đoạn
-                từ Excel.
+                từ Excel. Đối soát thực tế: mỗi dòng gồm mã vận đơn, COD GHN,
+                phí GHN (ngăn cách bằng Tab hoặc dấu |).
               </p>
             </div>
             <button
@@ -1298,15 +1300,15 @@ export default function GhnCodReconciliationPage() {
             value={manualCodes}
             onChange={(e) => setManualCodes(e.target.value)}
             placeholder={
-              "Ví dụ:\nORD-1778494005942\nGYWCK8AN\nORD-1778909171401, GYWC8T4"
+              "Ví dụ (mã | COD GHN | phí GHN):\nGYWCK8AN | 570000 | 30000\nORD-1778494005942 | 90000 | 18000\nGYWC8T4"
             }
             className="mt-3 min-h-[110px] w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
           />
 
           <div className="mt-2 text-xs text-neutral-500">
             Cách này tạo một phiên đối soát nhập tay, lưu DB như upload Excel.
-            Nếu chỉ dán mã đơn, hệ thống tự lấy COD/phí từ shipment nội bộ để
-            kiểm nhanh.
+            Chỉ dán mã: xem COD hệ thống, trạng thái chờ nhập COD đối tác (chưa được xác nhận).
+            Dán mã kèm COD GHN: đối chiếu và tính tiền lệch thực tế.
           </div>
         </div>
       </section>
@@ -1511,7 +1513,7 @@ export default function GhnCodReconciliationPage() {
         </div>
 
         <div className="mt-4 overflow-auto rounded-2xl border">
-          <table className="min-w-[1700px] w-full text-sm">
+          <table className="min-w-[1950px] w-full text-sm">
             <thead className="bg-neutral-50 text-left text-neutral-500">
               <tr>
                 <th className="px-4 py-3 w-10">
@@ -1527,7 +1529,9 @@ export default function GhnCodReconciliationPage() {
                 <th className="px-4 py-3">Mã đơn GHN</th>
                 <th className="px-4 py-3">Cửa hàng</th>
                 <th className="px-4 py-3">Trạng thái giao hàng</th>
-                <th className="px-4 py-3 text-right">COD GHN</th>
+                <th className="px-4 py-3 text-right">COD hệ thống</th>
+                <th className="px-4 py-3 text-right">COD đối tác GHN</th>
+                <th className="px-4 py-3 text-right">Tiền lệch</th>
                 <th className="px-4 py-3 text-right">Phí GHN</th>
                 <th className="px-4 py-3 text-right">Tổng đối soát</th>
                 <th className="px-4 py-3">Trạng thái nội bộ</th>
@@ -1584,8 +1588,10 @@ export default function GhnCodReconciliationPage() {
                         </span>
                       </td>
 
-                      <td className="px-4 py-3 text-right">
-                        {money(row.codAmount)}
+                      <td className="px-4 py-3 text-right">{row.systemCodAmount == null ? "—" : money(row.systemCodAmount)}</td>
+                      <td className="px-4 py-3 text-right">{getBusinessIssues(row).includes("MISSING_PARTNER_COD") ? "Chưa nhập" : money(row.codAmount)}</td>
+                      <td className={`px-4 py-3 text-right font-semibold ${row.systemCodAmount != null && !getBusinessIssues(row).includes("MISSING_PARTNER_COD") && Number(row.codAmount) !== Number(row.systemCodAmount) ? "text-rose-600" : "text-neutral-700"}`}>
+                        {row.systemCodAmount == null || getBusinessIssues(row).includes("MISSING_PARTNER_COD") ? "—" : money(Number(row.codAmount) - Number(row.systemCodAmount))}
                       </td>
                       <td className="px-4 py-3 text-right">{money(fee)}</td>
                       <td className="px-4 py-3 text-right">
@@ -2056,6 +2062,7 @@ function filterLabel(filter: string) {
     MATCHED: "Khớp",
     NOT_FOUND_INTERNAL_ORDER: "Không tìm thấy đơn",
     COD_MISMATCH: "Lệch COD",
+  MISSING_PARTNER_COD: "Chưa nhập COD GHN",
     FEE_MISMATCH: "Lệch phí",
     PARTIAL_RETURN: "Giao 1 phần",
     PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hoàn",

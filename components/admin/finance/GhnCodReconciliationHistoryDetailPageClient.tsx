@@ -12,6 +12,7 @@ const ISSUE_LABELS: Record<string, string> = {
   MATCHED_BY_PARTIAL_DELIVERY: "Khớp qua giao 1 phần",
   PARTIAL_RETURN_NOT_RECEIVED: "Chưa nhập kho hoàn",
   COD_MISMATCH: "Lệch COD",
+  MISSING_PARTNER_COD: "Chưa nhập COD GHN",
   FEE_MISMATCH: "Lệch phí",
 };
 
@@ -65,6 +66,7 @@ type HistoryRow = {
   customerOrderCode?: string | null;
   ghnStatus?: string | null;
   codAmount?: number | null;
+  systemCodAmount?: number | null;
   serviceFee?: number | null;
   totalReconcileAmount?: number | null;
   reconciliationStatus?: string | null;
@@ -339,13 +341,15 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
         </div>
 
         <div className="mt-4 overflow-auto rounded-2xl border border-neutral-200">
-          <table className="w-full min-w-[1420px] text-sm">
+          <table className="w-full min-w-[1650px] text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-4 py-3">Đơn nội bộ</th>
                 <th className="px-4 py-3">Mã GHN</th>
                 <th className="px-4 py-3">Trạng thái GHN</th>
-                <th className="px-4 py-3 text-right">COD</th>
+                <th className="px-4 py-3 text-right">COD hệ thống</th>
+                <th className="px-4 py-3 text-right">COD đối tác GHN</th>
+                <th className="px-4 py-3 text-right">Tiền lệch</th>
                 <th className="px-4 py-3 text-right">Phí</th>
                 <th className="px-4 py-3 text-right">Thực nhận</th>
                 <th className="px-4 py-3">Đối soát</th>
@@ -358,7 +362,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-neutral-500">
                     Đang tải chi tiết phiên đối soát...
                   </td>
                 </tr>
@@ -377,7 +381,9 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                     <td className="px-4 py-3">
                       {formatGhnStatus(row.ghnStatus)}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold">{money(row.codAmount)}</td>
+                    <td className="px-4 py-3 text-right">{row.systemCodAmount == null ? "—" : money(row.systemCodAmount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{String(row.issues || "").includes("MISSING_PARTNER_COD") ? "Chưa nhập" : money(row.codAmount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{row.systemCodAmount == null || String(row.issues || "").includes("MISSING_PARTNER_COD") ? "—" : money(Number(row.codAmount || 0) - row.systemCodAmount)}</td>
                     <td className="px-4 py-3 text-right">{money(row.serviceFee)}</td>
                     <td className="px-4 py-3 text-right font-semibold">{money(row.totalReconcileAmount)}</td>
                     <td className="px-4 py-3">
@@ -407,7 +413,7 @@ export default function GhnCodReconciliationHistoryDetailPageClient({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-neutral-500">
                     Không có dòng nào phù hợp bộ lọc.
                   </td>
                 </tr>
