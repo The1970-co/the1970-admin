@@ -565,6 +565,9 @@ export default function StockTransfersPageClient() {
   const [salesVelocityDays, setSalesVelocityDays] = useState(14);
   const [minSoldQty, setMinSoldQty] = useState(0);
   const [autoEnabled, setAutoEnabled] = useState(false);
+  const [autoMode, setAutoMode] = useState<"CLASSIC" | "POS_YESTERDAY">("CLASSIC");
+  const [posPreview, setPosPreview] = useState<any>(null);
+  const [posLoading, setPosLoading] = useState(false);
   const [runHour, setRunHour] = useState(9);
   const [runMinute, setRunMinute] = useState(0);
 
@@ -1620,9 +1623,10 @@ export default function StockTransfersPageClient() {
       }
 
       if (Array.isArray(data.categoryNames)) {
-        setSelectedCategoryNames(data.categoryNames);
+        setAutoMode(data.categoryNames.includes("__POS_YESTERDAY__") ? "POS_YESTERDAY" : "CLASSIC");
+        setSelectedCategoryNames(data.categoryNames.filter((item: string) => item !== "__POS_YESTERDAY__"));
         setSelectedCategoryGroupMap({
-          summer: data.categoryNames,
+          summer: data.categoryNames.filter((item: string) => item !== "__POS_YESTERDAY__"),
           winter: [],
           other: [],
         });
@@ -2313,10 +2317,8 @@ export default function StockTransfersPageClient() {
       return;
     }
 
-    if (selectedCategoryNames.length === 0) {
-      setError(
-        "Chưa bật nhóm mùa hoặc chưa chọn danh mục nào cho cấu hình tự động.",
-      );
+    if (autoMode === "CLASSIC" && selectedCategoryNames.length === 0) {
+      setError("Chưa chọn danh mục để cấu hình tự động.");
       return;
     }
 
@@ -2333,7 +2335,7 @@ export default function StockTransfersPageClient() {
           runMinute,
           toBranchIds: selectedTargetBranches,
           // [] = quét tất cả danh mục. Nếu có chọn thì backend filter theo list này.
-          categoryNames: selectedCategoryNames,
+          categoryNames: autoMode === "POS_YESTERDAY" ? ["__POS_YESTERDAY__"] : selectedCategoryNames,
           branchMinTargets: branchTargets,
           maxPerVariant,
           salesVelocityDays,
@@ -2380,6 +2382,38 @@ export default function StockTransfersPageClient() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+
+  async function handlePosPreview() {
+    try {
+      setPosLoading(true); setError(null);
+      const response = await apiFetch("/stock-transfers/pos-yesterday/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toBranchIds: selectedTargetBranches, branchMinTargets: branchTargets, maxPerVariant }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.message || "Không thể quét POS hôm qua");
+      setPosPreview(data);
+    } catch (err) { setError(err instanceof Error ? err.message : "Lỗi quét POS"); }
+    finally { setPosLoading(false); }
+  }
+
+  async function handlePosCreate() {
+    if (!posPreview?.suggestions?.length) return;
+    if (!window.confirm(`Tạo phiếu NHÁP cho ${posPreview.suggestions.length} dòng hàng POS hôm qua?`)) return;
+    try {
+      setPosLoading(true); setError(null);
+      const response = await apiFetch("/stock-transfers/pos-yesterday/create", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toBranchIds: selectedTargetBranches, branchMinTargets: branchTargets, maxPerVariant }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.message || "Không thể tạo phiếu nháp");
+      setNotice(`Đã tạo ${data.createdCount || 0} phiếu NHÁP từ POS hôm qua, chưa xuất kho.`);
+      setPosPreview(null); await loadAll();
+    } catch (err) { setError(err instanceof Error ? err.message : "Lỗi tạo phiếu"); }
+    finally { setPosLoading(false); }
   }
 
   return (
@@ -2767,6 +2801,12 @@ export default function StockTransfersPageClient() {
 
           {autoConfigOpen ? (
             <>
+              <label className="mb-3 block text-sm font-semibold">Chế độ quét tự động
+                <select value={autoMode} onChange={(e) => setAutoMode(e.target.value as "CLASSIC" | "POS_YESTERDAY")} className="ml-3 rounded-lg border px-3 py-2 text-sm">
+                  <option value="CLASSIC">Bù tồn theo quy tắc cũ</option>
+                  <option value="POS_YESTERDAY">Bù hàng theo POS hôm qua</option>
+                </select>
+              </label>
               <div className="grid gap-3 md:grid-cols-4">
                 <label className="text-xs text-neutral-500">
                   THÁI HÀ dưới
@@ -3150,6 +3190,29 @@ export default function StockTransfersPageClient() {
               tối đa {maxPerVariant} sản phẩm / mã.
             </div>
           )}
+        </Panel>
+      ) : null}
+
+
+      {canManageAutoTransfer ? (
+        <Panel className="p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-base font-semibold">Bù hàng theo POS hôm qua</p>
+              <p className="text-xs text-neutral-500">Chỉ quét sản phẩm/size bán qua POS hôm qua tại TH, CL, XD. Kiểm tra tồn QO và phiếu chưa hoàn tất; ưu tiên TH khi thiếu hàng.</p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => void handlePosPreview()} disabled={posLoading} className="rounded-lg border px-3 py-2 text-sm font-medium">{posLoading ? "Đang quét..." : "Quét POS hôm qua"}</button>
+              <button type="button" onClick={() => void handlePosCreate()} disabled={posLoading || !posPreview?.suggestions?.length} className="rounded-lg bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-40">Tạo phiếu nháp</button>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-neutral-500">Dùng mức tồn TH / CL / XD và giới hạn mỗi size trong cấu hình phía dưới. Muốn chạy theo giờ, chọn chế độ “POS hôm qua”, bật auto và lưu cấu hình.</p>
+          {posPreview ? <div className="mt-3 overflow-x-auto">
+            <p className="mb-2 text-xs font-medium">Ngày POS: {posPreview.date} · {posPreview.total} dòng đề xuất</p>
+            <table className="w-full text-left text-xs"><thead><tr className="border-b"><th className="p-2">Kho nhận</th><th className="p-2">Sản phẩm / size</th><th className="p-2">Bán hôm qua</th><th className="p-2">Tồn cửa hàng</th><th className="p-2">QO còn</th><th className="p-2">Đề xuất</th></tr></thead>
+            <tbody>{(posPreview.suggestions || []).map((item: any) => <tr className="border-b" key={`${item.toBranchId}:${item.variantId}`}><td className="p-2">{item.toBranchId}</td><td className="p-2">{item.productName} · {item.sku} · {item.color} / {item.size}</td><td className="p-2">{item.soldQty}</td><td className="p-2">{item.storeAvailableQty}</td><td className="p-2">{item.qoAvailableQty}</td><td className="p-2 font-semibold">{item.suggestedQty}</td></tr>)}</tbody></table>
+            {!posPreview.total ? <p className="p-3 text-neutral-500">Không có mặt hàng cần bù hoặc đã có phiếu chờ xử lý.</p> : null}
+          </div> : null}
         </Panel>
       ) : null}
 
